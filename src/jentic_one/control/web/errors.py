@@ -46,6 +46,7 @@ from jentic_one.control.services.integrations.errors import (
     NothingToChangeError,
     OAuthAppChangedError,
     OwnClientInvalidError,
+    PointsAtAccessError,
     RecentlyRejectedError,
     ReservedAuthFieldError,
     ReviewStaleError,
@@ -175,6 +176,32 @@ _CONNECT_SESSION_SAFE_DETAILS: dict[type[Exception], str] = {
 }
 
 
+#: What an agent should do when an edit or amend refusal means its picture of
+#: its access is wrong (the broker's ``agent_directive`` shape).
+_CHECK_ACCESS_INSTRUCTION = (
+    "Your request didn't match your current access. Check it with show_access "
+    "(`jentic access show <credential_id>`), then retry."
+)
+
+
+def _check_access_directive(request: Request, exc: PointsAtAccessError) -> dict[str, object]:
+    """The ``check_access`` directive pointing an agent at the binding's current access."""
+    parameters: dict[str, object] = {
+        "credential_id": exc.credential_id,
+        "suggested_command": f"jentic access show {exc.credential_id}",
+    }
+    if exc.agent_id is not None:
+        base = str(request.base_url).rstrip("/")
+        parameters["access_url"] = (
+            f"{base}/credentials/{exc.credential_id}/agents/{exc.agent_id}/permissions"
+        )
+    return {
+        "strategy": "check_access",
+        "parameters": parameters,
+        "human_readable_instruction": _CHECK_ACCESS_INSTRUCTION,
+    }
+
+
 def _connect_session_response_hook(
     request: Request, exc: Exception, status_code: int, response: JSONResponse
 ) -> JSONResponse:
@@ -202,6 +229,8 @@ def _connect_session_response_hook(
         extra.update(session_id=exc.session_id, approval_url=exc.approval_url)
     elif isinstance(exc, AmendFieldsMismatchError):
         extra["fields"] = exc.fields
+    if isinstance(exc, PointsAtAccessError) and exc.credential_id is not None:
+        extra["agent_directive"] = _check_access_directive(request, exc)
     elif isinstance(exc, RevisionChangedError | BaselineChangedError):
         extra["current_revision_id"] = exc.current_revision_id
     if not extra and not headers:

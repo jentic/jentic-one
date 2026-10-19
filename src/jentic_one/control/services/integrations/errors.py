@@ -10,6 +10,21 @@ class ConnectSessionServiceError(Exception):
     """Base class for connect-session service errors."""
 
 
+class PointsAtAccessError(ConnectSessionServiceError):
+    """An edit or amend refusal that means the caller's picture of its access is wrong.
+
+    The response carries a ``check_access`` agent directive pointing at the
+    binding's current access; :meth:`point_at` names the binding.
+    """
+
+    credential_id: str | None = None
+    agent_id: str | None = None
+
+    def point_at(self, credential_id: str | None, agent_id: str | None) -> None:
+        self.credential_id = credential_id
+        self.agent_id = agent_id
+
+
 class SessionNotFoundError(ConnectSessionServiceError):
     pass
 
@@ -313,14 +328,14 @@ class EditBindingNotFoundError(ConnectSessionServiceError):
         self.credential_id = credential_id
 
 
-class NothingToChangeError(ConnectSessionServiceError):
+class NothingToChangeError(PointsAtAccessError):
     """The edit would leave the binding exactly as it is."""
 
     def __init__(self) -> None:
         super().__init__("the requested change is already in place; nothing to change")
 
 
-class UnknownRuleError(ConnectSessionServiceError):
+class UnknownRuleError(PointsAtAccessError):
     """A ``remove`` or ``before`` names a rule the binding does not hold."""
 
     def __init__(self, rule_id: str) -> None:
@@ -328,7 +343,7 @@ class UnknownRuleError(ConnectSessionServiceError):
         self.rule_id = rule_id
 
 
-class EditOpenError(ConnectSessionServiceError):
+class EditOpenError(PointsAtAccessError):
     """The binding already has an open edit session; amend that one instead."""
 
     def __init__(self, session_id: str) -> None:
@@ -375,7 +390,7 @@ class RevisionRequiredError(ConnectSessionServiceError):
         super().__init__("revision_id is required: confirm the revision the review shows")
 
 
-class SessionClosedError(ConnectSessionServiceError):
+class SessionClosedError(PointsAtAccessError):
     """The session was confirmed or has ended, so its ask can no longer change."""
 
     def __init__(self, session_id: str) -> None:

@@ -1519,6 +1519,11 @@ def test_edit_connection_round_trip(
         json={"credential_id": credential_id, "agent_id": agent_id, "rules": {"remove": ["apr_x"]}},
     )
     assert (resp.status_code, resp.json()["type"]) == (422, "unknown_rule"), resp.text
+    directive = resp.json()["agent_directive"]
+    assert directive["strategy"] == "check_access"
+    assert directive["parameters"]["credential_id"] == credential_id
+    assert directive["parameters"]["suggested_command"] == f"jentic access show {credential_id}"
+    assert directive["parameters"]["access_url"].endswith(base)
 
     send = {"effect": "allow", "methods": ["POST"], "path": "/v1/send"}
     resp = cred_writer_client.post(
@@ -1541,6 +1546,7 @@ def test_edit_connection_round_trip(
     )
     assert resp.status_code == 409, resp.text
     assert resp.json()["session_id"] == created["session_id"]
+    assert resp.json()["agent_directive"]["strategy"] == "check_access"
 
     review = cred_writer_client.get(f"/connect-sessions/{created['session_id']}").json()
     edit = review["edit"]

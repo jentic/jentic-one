@@ -112,6 +112,7 @@ from jentic_one.control.services.integrations.errors import (
     InvalidStateTransitionError,
     ManualFlowsDisabledError,
     NoOpForFlowError,
+    NothingToChangeError,
     OAuthAppChangedError,
     OwnClientInvalidError,
     RecentlyRejectedError,
@@ -130,6 +131,7 @@ from jentic_one.control.services.integrations.errors import (
     SessionNotFoundError,
     TooManyOpenSessionsError,
     UnknownApiError,
+    UnknownRuleError,
     UnsupportedTargetKindError,
 )
 from jentic_one.control.services.integrations.flow_handlers import (
@@ -887,6 +889,14 @@ def _require_revision(row: ConnectSession, revision_id: str | None) -> None:
         raise RevisionRequiredError()
     if revision_id != row.current_revision_id:
         raise RevisionChangedError(row.id, row.current_revision_id)
+
+
+def _session_closed(row: ConnectSession) -> SessionClosedError:
+    """The refusal of an amend on a closed session; an edit's points at the binding."""
+    error = SessionClosedError(row.id)
+    if row.intent == INTENT_EDIT:
+        error.point_at(row.credential_id, row.agent_id)
+    return error
 
 
 def _forbid_agent_confirm(caller_actor_type: ActorType) -> None:
@@ -1660,7 +1670,9 @@ class ConnectSessionService:
             )
         if row is None:
             if outcome is not None and outcome.created_by == identity.sub:
-                raise SessionClosedError(session_id)
+                closed = SessionClosedError(session_id)
+                closed.point_at(outcome.credential_id, outcome.agent_id)
+                raise closed
             raise InvalidPollTokenError("invalid poll_token")
         if row.initiator_actor_id != identity.sub:
             raise InvalidPollTokenError("invalid poll_token")
@@ -1668,10 +1680,10 @@ class ConnectSessionService:
             ("created",) if row.intent == INTENT_EDIT else ("created", AWAITING_APP)
         )
         if row.state not in open_states:
-            raise SessionClosedError(row.id)
+            raise _session_closed(row)
         current = await self._current_revision(row)
         if current is None:
-            raise SessionClosedError(row.id)
+            raise _session_closed(row)
 
         fields: dict[str, Any]
         if row.intent == INTENT_EDIT:
@@ -1692,8 +1704,12 @@ class ConnectSessionService:
                 resume=amend.resume if "resume" in amend.fields else previous.resume,
                 reason=amend.reason if "reason" in amend.fields else previous.reason,
             )
-            result, _ = resolve_edit(row.baseline, request)
-            require_change(row.baseline, result)
+            try:
+                result, _ = resolve_edit(row.baseline, request)
+                require_change(row.baseline, result)
+            except (UnknownRuleError, NothingToChangeError) as exc:
+                exc.point_at(row.credential_id, row.agent_id)
+                raise
             proposal = request.as_proposal()
             digest = revision_digest(baseline=row.baseline, result=result, reason=request.reason)
             fields = {"reason": request.reason}
@@ -1746,7 +1762,7 @@ class ConnectSessionService:
                 if not won:
                     latest = await ConnectSessionRepository.get_by_id(session, row.id)
                     if latest is None or latest.state not in open_states:
-                        raise SessionClosedError(row.id)
+                        raise _session_closed(row)
                     raise RevisionChangedError(row.id, latest.current_revision_id)
                 await ConnectSessionRevisionRepository.insert(session, revision)
         except DatabaseIntegrityError:
@@ -1861,11 +1877,17 @@ class ConnectSessionService:
         if credential is None or credential.state == "pending":
             raise EditBindingNotFoundError(credential_id)
         if open_edit is not None:
-            raise EditOpenError(open_edit.id)
+            error = EditOpenError(open_edit.id)
+            error.point_at(credential_id, agent_id)
+            raise error
         baseline = await self._binding_snapshot(agent_id, credential_id, binding.rule_set_id)
         baseline["suspended"] = binding.suspended
-        result, _ = resolve_edit(baseline, request)
-        require_change(baseline, result)
+        try:
+            result, _ = resolve_edit(baseline, request)
+            require_change(baseline, result)
+        except (UnknownRuleError, NothingToChangeError) as exc:
+            exc.point_at(credential_id, agent_id)
+            raise
         # The vendor-registry key a consent for added scopes re-opens, kept
         # on the session like a vendor connect's; ``None`` when the
         # credential cannot be re-consented here.
