@@ -116,7 +116,7 @@ async def check_login_rate_limit(request: Request, ctx: Context = Depends(get_ct
 async def _acquire_authorize_bucket(
     request: Request, ctx: Context, *, client_id: str | None
 ) -> None:
-    trusted = frozenset(ctx.config.auth.oauth_rate_limit.trusted_proxies)
+    trusted = ctx.config.auth.oauth_rate_limit.trusted_networks
     ip = client_ip(request, trusted)
     key = f"{client_id}:{ip}" if client_id else ip
     limiter = _get_authorize_limiter(request, ctx)
@@ -154,7 +154,7 @@ async def check_approval_status_rate_limit(
     and a self-chosen key component would let one host sidestep the bucket by
     re-minting blobs (every /authorize render hands out a fresh one).
     """
-    trusted = frozenset(ctx.config.auth.oauth_rate_limit.trusted_proxies)
+    trusted = ctx.config.auth.oauth_rate_limit.trusted_networks
     ip = client_ip(request, trusted)
     limiter = _get_approval_status_limiter(request, ctx)
     outcome = await limiter.acquire(ip)

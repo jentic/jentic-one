@@ -376,7 +376,7 @@ def _csrf_client_key(request: Request, ctx: Context) -> str:
     address, and hex so it cannot contain the ``:`` that separates key
     segments.
     """
-    trusted = frozenset(ctx.config.auth.oauth_rate_limit.trusted_proxies)
+    trusted = ctx.config.auth.oauth_rate_limit.trusted_networks
     network = _client_network(client_ip(request, trusted))
     key = derive_key(ctx.config.admin.auth.jwt_secret.get_secret_value(), "login-csrf-client")
     return hmac.new(key.encode(), network.encode(), hashlib.sha256).hexdigest()[:32]
@@ -735,7 +735,7 @@ async def check_session_continue_rate_limit(
     and the signed blob, and both are caller-supplied — a self-chosen key
     component would let one host sidestep the bucket.
     """
-    trusted = frozenset(ctx.config.auth.oauth_rate_limit.trusted_proxies)
+    trusted = ctx.config.auth.oauth_rate_limit.trusted_networks
     ip = client_ip(request, trusted)
     limiter = _get_session_continue_limiter(request, ctx)
     outcome = await limiter.acquire(ip)

@@ -5,7 +5,7 @@ SERVICES := app registry admin control broker
 
 BUILD_DIR := build
 
-.PHONY: perf-help help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check detect-secrets secrets-baseline score openapi openapi-parity config-schema config-reference endpoints cli-reference broker-reference skills hooks clean dev start-fixtures stop-fixtures destroy-fixtures start-app start-registry start-admin start-control start-broker start-local build-wheel build-base build-all save-all images release-image $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES))
+.PHONY: perf-help help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check detect-secrets secrets-baseline score openapi openapi-parity config-schema config-reference endpoints cli-reference broker-reference skills hooks clean dev start-fixtures stop-fixtures destroy-fixtures start-app start-registry start-admin start-control start-broker start-local build-wheel build-base build-all save-all images check-image-lock release-image $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES))
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -42,34 +42,43 @@ typecheck: ## Run mypy
 
 test: test-unit ## Run tests (unit only by default)
 
-test-unit: ## Run unit tests
-	uv run pytest tests/unit/
+# Parallel test execution (pytest-xdist). `loadfile` keeps each test module on
+# one worker, so module-scoped fixtures and in-module ordering hold; Postgres
+# suites get one database per worker (tests/harness/postgres.py). Run serially
+# with `make <target> PYTEST_XDIST=`. PYTEST_ARGS appends extra flags (CI sets
+# `--durations=25`).
+PYTEST_XDIST ?= -n auto --dist loadfile
+PYTEST_ARGS ?=
+COV_FLAGS := --cov=jentic_one --cov-report=term-missing
 
-test-fast: ## Run unit + arch tests (no external services)
-	uv run pytest tests/unit/ tests/arch/
+test-unit: ## Run unit tests (with coverage)
+	uv run pytest tests/unit/ $(PYTEST_XDIST) $(COV_FLAGS) $(PYTEST_ARGS)
+
+test-fast: ## Run unit + arch tests (no external services, no coverage)
+	uv run pytest tests/unit/ tests/arch/ $(PYTEST_XDIST) $(PYTEST_ARGS)
 
 test-integration: ## Run all integration tests against PostgreSQL (requires running fixtures)
-	uv run pytest tests/ -m integration --no-cov
+	uv run pytest tests/ -m integration $(PYTEST_XDIST) $(PYTEST_ARGS)
 
 test-integration-sqlite: ## Run backend-agnostic integration tests against SQLite (no external services)
-	JENTIC_TEST_BACKEND=sqlite uv run pytest tests/integration/ -m integration --no-cov
+	JENTIC_TEST_BACKEND=sqlite uv run pytest tests/integration/ -m integration $(PYTEST_XDIST) $(PYTEST_ARGS)
 
 test-integration-all: test-integration test-integration-sqlite ## Run integration tests on both backends
 
 test-arch: ## Run architecture enforcement tests
-	uv run pytest tests/arch/ -m arch --no-cov
+	uv run pytest tests/arch/ -m arch $(PYTEST_XDIST) $(PYTEST_ARGS)
 
 test-smoke: ## Run smoke tests (requires running services)
-	uv run pytest tests/smoke/ -m smoke --no-cov
+	uv run pytest tests/smoke/ -m smoke
 
 smoke-packaging: ## Build UI+wheel, install in a clean venv, verify the SPA is packaged & served (DB-free)
 	./scripts/spa_packaging_smoke.sh
 
 cov: ## Run unit + arch tests with coverage report
-	uv run pytest tests/unit/ tests/arch/ --cov-report=term-missing --cov-report=html
+	uv run pytest tests/unit/ tests/arch/ $(PYTEST_XDIST) $(COV_FLAGS) --cov-report=html
 
 cov-all: ## Run all tests with coverage (requires running fixtures/services)
-	uv run pytest tests/ --cov-report=term-missing --cov-report=html
+	uv run pytest tests/ $(PYTEST_XDIST) $(COV_FLAGS) --cov-report=html
 
 openapi: ## Regenerate the control-plane OpenAPI spec (+ UI client schema) from code
 	uv run python -m tools.openapi_export
@@ -230,8 +239,14 @@ ui-lint: ## Lint the UI
 ui-test: ## Run UI unit/component tests
 	cd $(UI_DIR) && npm ci && npm run test:run
 
-build-base: ## Build the Python base Docker image (builder + runtime stages)
-	docker build -f deploy/docker/python-base.Dockerfile --target builder -t python-base:builder .
+# Optional extras to bake into the images, space-separated (e.g. EXTRAS=redis).
+# They go through the builder's lock export: the wheel installs --no-deps, so
+# `[extra]` on the wheel itself installs nothing.
+EXTRAS ?=
+EXTRAS_BUILD_ARG = $(if $(strip $(EXTRAS)),--build-arg EXTRAS="$(strip $(EXTRAS))")
+
+build-base: ## Build the Python base Docker image (builder + runtime stages; optional EXTRAS=redis)
+	docker build -f deploy/docker/python-base.Dockerfile --target builder $(EXTRAS_BUILD_ARG) -t python-base:builder .
 	docker build -f deploy/docker/python-base.Dockerfile --target runtime -t python-base:runtime .
 
 # Per-service build / push / save rules generated explicitly (no pattern rules,
@@ -262,6 +277,10 @@ save-all: $(addprefix save-,$(SERVICES)) ## Save all built images as tarballs un
 images: ## List locally built jentic-one images
 	@docker images "$(IMG_PREFIX)/*"
 
+check-image-lock: ## Fail if IMAGE's Python packages differ from uv.lock (IMAGE=<tag>, optional PLATFORM=linux/arm64, EXTRAS=redis)
+	@test -n "$(IMAGE)" || { echo "usage: make check-image-lock IMAGE=<tag> [PLATFORM=linux/<arch>] [EXTRAS=<extra> ...]"; exit 1; }
+	./scripts/check-image-lock.sh $(foreach e,$(EXTRAS),--extra "$(e)") "$(IMAGE)" $(if $(PLATFORM),--platform "$(PLATFORM)")
+
 # ─── Release (publish the app image to a real registry) ───────────────────
 # One `app` image serves every surface — the surface set is chosen at runtime
 # via JENTIC__APPS (see deploy/README.md "One image, runtime surfaces"). So
@@ -290,7 +309,7 @@ release-image: ## Build + push the multi-arch app image to REGISTRY (e.g. REGIST
 		echo "ERROR: set REGISTRY, e.g. make release-image REGISTRY=ghcr.io/jentic"; exit 1; \
 	fi
 	docker buildx build -f deploy/docker/app.multiarch.Dockerfile \
-		--platform $(RELEASE_PLATFORMS) \
+		--platform $(RELEASE_PLATFORMS) $(EXTRAS_BUILD_ARG) \
 		-t $(RELEASE_IMAGE):$(VERSION) \
 		-t $(RELEASE_IMAGE):$(GIT_SHA) \
 		--push .
