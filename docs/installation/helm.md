@@ -211,9 +211,14 @@ That last `extraEnv` is **required**, and the install fails without it. The
 pre-auth OAuth rate limiter keys on the client IP, so behind an ingress every
 request arrives from the controller's address and all clients share one bucket —
 a single noisy caller then rate-limits your whole fleet out of `/authorize`. Set
-it to the ingress controller's pod CIDR or IPs (or
+it to the ingress controller's pod CIDR or IPs (a comma-separated list of
+addresses and CIDR networks — escape each comma as `\,` under `--set`; an
+invalid entry fails startup), or
 `ingress.skipTrustedProxiesCheck=true` if you enforce rate limits upstream of
-the cluster). Bringing your own Ingress manifest instead works the same way:
+the cluster. Keep the range as narrow as your cluster allows: any pod inside a
+trusted network can set `X-Forwarded-For` and pick its own rate-limit identity,
+so `10.0.0.0/8` is only a sensible default when nothing untrusted shares it.
+Bringing your own Ingress manifest instead works the same way:
 point it at the `<release>-app` and `<release>-broker` Services on port 8000,
 and set the same key. Then walk through
 the [first brokered call](../guides/first-call.md).
@@ -506,12 +511,17 @@ is an OOM-kill, not a slowdown. Do not set the app's memory limit below
   `broker.resilience.backend.redis_url` (via `extraEnv`:
   `JENTIC__BROKER__RESILIENCE__BACKEND__BACKEND` /
   `…__REDIS_URL`, identical on every replica). The chart does not bundle
-  Redis — bring your own. **One hard caveat:** the Redis client is an
-  optional extra (`pip install jentic-one[redis]`) that the published
+  Redis — bring your own. **One hard caveat:** the Redis client is the
+  optional `redis` extra, which the published
   `ghcr.io/jentic/jentic-one-app` image does **not** include — configuring
   the redis backend on that image crash-loops every replica at startup. On
   the published image today, keep `broker.replicas: 1`; scaling out means
-  building your own image with the `[redis]` extra.
+  building your own image with the extra baked in through the `EXTRAS`
+  build arg: `docker buildx build -f deploy/docker/app.multiarch.Dockerfile
+  --build-arg EXTRAS=redis …` (single-arch: `make build-app EXTRAS=redis`).
+  Adding `[redis]` to the image's `pip install` line does not work: the
+  wheel installs `--no-deps`, so its extras are ignored
+  ([deploy/README.md](../../deploy/README.md#reproducibility-python-dependencies-come-from-uvlock)).
 - **App** — the same shared-state backend also carries the auth surface's
   OAuth rate limiters and consent-nonce anti-replay, so the same rule
   applies: keep `app.replicas: 1` on the `memory` backend; configure Redis

@@ -1,0 +1,36 @@
+name: Install Playwright Chromium (cached)
+description: >-
+  Restore the Playwright Chromium download from the Actions cache, keyed on the
+  playwright-core version pinned in ui/package-lock.json. A hit only installs
+  the OS libraries; a miss downloads the browser too and saves it. Run after
+  `npm ci` in ui/.
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve the pinned Playwright version
+      id: version
+      shell: bash
+      working-directory: ui
+      run: |
+        version="$(node -p "require('./package-lock.json').packages['node_modules/playwright-core'].version")"
+        echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+    - name: Restore the browser cache
+      id: cache
+      uses: actions/cache@v6
+      with:
+        path: ~/.cache/ms-playwright
+        key: playwright-chromium-${{ runner.os }}-${{ steps.version.outputs.version }}
+
+    - name: Download Chromium + OS libraries (cache miss)
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: ui
+      run: npx playwright install --with-deps chromium
+
+    - name: Install OS libraries only (cache hit)
+      if: steps.cache.outputs.cache-hit == 'true'
+      shell: bash
+      working-directory: ui
+      run: npx playwright install-deps chromium

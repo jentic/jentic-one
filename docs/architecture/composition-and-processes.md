@@ -102,9 +102,12 @@ flowchart TB
   balancer. Set `broker.resilience.backend.backend` to `redis` (and give
   every replica the same `broker.resilience.backend.redis_url`) so rate
   limits, circuit breakers, and idempotency records are shared across
-  replicas. The redis client is an optional extra
-  (`pip install jentic-one[redis]`), not part of the published container
-  image — scaling out on that image means building your own with the extra.
+  replicas. The redis client is the optional `redis` extra
+  (`pip install jentic-one[redis]` for a pip install), not part of the
+  published container image — scaling out on that image means building
+  your own with `--build-arg EXTRAS=redis` (`make build-app EXTRAS=redis`
+  single-arch). The image installs the wheel `--no-deps`, so extras reach
+  it only through that build arg.
 
 ## The memory shared-state backend is bounded
 

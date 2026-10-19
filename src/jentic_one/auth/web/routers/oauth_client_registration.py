@@ -162,7 +162,7 @@ async def _check_registration_rate_limit(request: Request, ctx: Context = Depend
     caller is registering to *get* one, and a self-chosen key component would
     let one host sidestep the bucket.
     """
-    trusted = frozenset(ctx.config.auth.oauth_rate_limit.trusted_proxies)
+    trusted = ctx.config.auth.oauth_rate_limit.trusted_networks
     ip = client_ip(request, trusted)
     limiter = _get_registration_limiter(request, ctx)
     outcome = await limiter.acquire(ip)
