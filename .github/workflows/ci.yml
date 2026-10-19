@@ -479,7 +479,9 @@ jobs:
           tags: jentic-one/app:scan
           load: true
           cache-from: type=gha,scope=app-image
-          cache-to: type=gha,scope=app-image,mode=max
+          # Only main writes the layer cache (PRs read it): per-PR writes would
+          # compete with every other cache for the repo's 10 GB budget.
+          cache-to: ${{ github.ref == 'refs/heads/main' && 'type=gha,scope=app-image,mode=max' || '' }}
 
       - name: Trivy image scan (fixable HIGH/CRITICAL)
         uses: aquasecurity/trivy-action@v0.36.0
@@ -1039,8 +1041,13 @@ jobs:
           # updated build cache on every run instead.
           cache: false
 
-      - name: Go module + build cache (sha-keyed, incremental)
-        uses: actions/cache@v6
+      # Restore-only on PRs: each sha-keyed save is ~0.5 GB, and per-PR saves
+      # pushed the repo past the 10 GB Actions cache limit, so LRU eviction
+      # kept discarding every other cache (uv, npm, pass markers). PRs restore
+      # main's latest entry via restore-keys; main saves (step at the end).
+      - name: Go module + build cache (restore)
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ~/go/pkg/mod
@@ -1136,6 +1143,15 @@ jobs:
             exit 1
           fi
 
+      - name: Go module + build cache (save, main only)
+        if: github.ref == 'refs/heads/main' && steps.go-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-cli-${{ runner.os }}-${{ hashFiles('cli/go.sum') }}-${{ github.sha }}
+
       - uses: ./.github/actions/ci-pass-marker
         with:
           key: ${{ fromJSON(needs.changes.outputs.keys)['cli'] }}
@@ -1168,8 +1184,9 @@ jobs:
           # go.sum-keyed one, so warm runs reuse the -trimpath build cache.
           cache: false
 
-      - name: Go module + build cache (sha-keyed, incremental)
-        uses: actions/cache@v6
+      - name: Go module + build cache (restore; saved from main only, see `cli`)
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ~/go/pkg/mod
@@ -1249,6 +1266,15 @@ jobs:
             || { echo "::error::no scoop manifest generated at ${dist}/scoop/jentic.json"; exit 1; }
           grep -q '"jentic.exe"' "${dist}/scoop/jentic.json" \
             || { echo "::error::scoop manifest does not install jentic.exe"; exit 1; }
+
+      - name: Go module + build cache (save, main only)
+        if: github.ref == 'refs/heads/main' && steps.go-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-cli-smoke-${{ runner.os }}-${{ hashFiles('cli/go.sum') }}-${{ github.sha }}
 
   installer:
     name: Installer script tests
