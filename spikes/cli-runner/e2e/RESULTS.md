@@ -159,3 +159,23 @@ trace view already groups by `trace_id`. A forwarder that sends one trace-id
 per invocation therefore gets per-invocation grouping with no broker change.
 `X-Jentic-Session-Id` is **not** stored on execution records; the broker only
 uses it for MCP session events.
+
+### Denied calls and invocation grouping (tested 2026-10-19)
+
+I sent a call that the binding rules deny directly to the broker, with a known
+`traceparent` trace-id:
+
+- The broker returns 403 `action_denied`, as before.
+- The `broker.pbac_denied` event has a `trace_id` field, but it is **`null`**.
+  Its `data` holds only `{mode, reason}`: **no operation, path or API**.
+- `GET /events?trace_id=<id>` → 0, and `GET /executions?trace_id=<id>` → 0.
+
+So **a denied child call can't be tied back to its invocation**, and the event
+doesn't say what was denied. The cause is that `_deny`
+(`src/jentic_one/broker/services/execution/authorization.py:349-357`) emits
+the event without a trace id and with only `reason`/`mode`. The event helper
+forwards extra fields to the `events` row, which has an indexed nullable
+`trace_id` column (`src/jentic_one/admin/core/schema/events.py:62`). The fix is
+a small broker change outside the forwarder: pass the request's trace id and
+the operation/API into that emit. Until then, a "what did this command do"
+view can't show denied calls.
