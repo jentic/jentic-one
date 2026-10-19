@@ -18,15 +18,30 @@ if [ -n "${JENTIC_PG_PORT:-}" ]; then
 fi
 
 COMPOSE_FILE="docker/local-setup/docker-compose.yaml"
+INIT_SQL="docker/local-setup/init-schemas.sql"
 
-# Run psql inside the db container against the jentic database.
+# JENTIC_PG_EXTERNAL=1: Postgres is already running (e.g. a CI service
+# container on localhost:$PG_PORT, same image and superuser as the compose
+# file). Skip compose and talk to it over TCP instead of `docker compose exec`.
+EXTERNAL="${JENTIC_PG_EXTERNAL:-0}"
+
+# Run psql against the jentic database (inside the db container by default).
 psql_db() {
-    docker compose -f "$COMPOSE_FILE" exec -T db \
-        psql -U postgres -d jentic "$@"
+    if [ "$EXTERNAL" = "1" ]; then
+        PGPASSWORD="${POSTGRES_PASSWORD:-postgres}" \
+            psql -h "${JENTIC_PG_HOST:-localhost}" -p "$PG_PORT" -U postgres -d jentic "$@"
+    else
+        docker compose -f "$COMPOSE_FILE" exec -T db \
+            psql -U postgres -d jentic "$@"
+    fi
 }
 
-echo "==> Starting Docker services..."
-docker compose -f "$COMPOSE_FILE" up -d
+if [ "$EXTERNAL" = "1" ]; then
+    echo "==> Using the already-running Postgres on ${JENTIC_PG_HOST:-localhost}:${PG_PORT}"
+else
+    echo "==> Starting Docker services..."
+    docker compose -f "$COMPOSE_FILE" up -d
+fi
 
 echo "==> Waiting for database to become healthy..."
 MAX_WAIT="${JENTIC_DB_MAX_WAIT:-60}"
@@ -72,6 +87,16 @@ retry_psql() {
 }
 
 echo "==> Ensuring schemas exist..."
+# The compose fixture applies $INIT_SQL (per-surface roles + grants) through
+# the image's first-boot entrypoint. An external Postgres has no such hook, so
+# apply it here, once: CREATE ROLE is not idempotent, so a server that already
+# has the roles is left alone.
+if [ "$EXTERNAL" = "1" ]; then
+    if [ "$(psql_db -tAc "SELECT 1 FROM pg_roles WHERE rolname = 'registry_user'")" != "1" ]; then
+        psql_db -v ON_ERROR_STOP=1 -q -f - < "$INIT_SQL"
+        echo "    applied ${INIT_SQL}"
+    fi
+fi
 for schema in registry control admin; do
     retry_psql "CREATE SCHEMA ${schema}" -c "CREATE SCHEMA IF NOT EXISTS ${schema};"
     echo "    schema '$schema' ensured"

@@ -18,9 +18,10 @@ Two TTLs guard against a poison-pill (a pending claim must be short):
 Per-caller keyspace (``idem:{caller}:{key}``) stops one caller replaying
 another's response; ``caller`` is the resolved ``actor_id``, never the raw
 token. A record is small and bounded (status, fingerprint, capped headers);
-the response body is a separate ``idem-body:{caller}:{key}`` entry, so on the
-memory backend bodies spend their own budget and a full body budget only
-drops bodies from replays, never refuses claims.
+the response body is a separate ``idem-body:{caller}:{key}:{tag}`` entry
+(``tag`` is the start of the request fingerprint), so on the memory backend
+bodies spend their own budget and a full body budget only drops bodies from
+replays, never refuses claims.
 """
 
 from __future__ import annotations
@@ -58,6 +59,8 @@ class IdempotencyStateStore(KeyValueStore, AtomicStore, Protocol):
 _KEY_PREFIX = "idem:"
 # Stored bodies live in their own namespace so they have their own budget.
 _BODY_KEY_PREFIX = "idem-body:"
+# Fingerprint characters (hex) a body key carries to bind it to its record.
+_BODY_FINGERPRINT_TAG_LEN = 16
 # Most serialized header bytes one record carries.
 MAX_RECORD_HEADER_BYTES = 512
 _MAX_STATUS_CODE = 999
@@ -186,8 +189,12 @@ class SharedStateIdempotencyStore:
     def _slot(self, caller: str, key: str) -> str:
         return f"{_KEY_PREFIX}{self._caller_segment(caller)}:{key}"
 
-    def _body_slot(self, caller: str, key: str) -> str:
-        return f"{_BODY_KEY_PREFIX}{self._caller_segment(caller)}:{key}"
+    def _body_slot(self, caller: str, key: str, fingerprint: str) -> str:
+        # Keyed by the request's fingerprint too, so a record only ever reads the
+        # body its own request stored: when a claim expires mid-call and the key
+        # is re-claimed by a different request, the two bodies cannot cross.
+        tag = fingerprint[:_BODY_FINGERPRINT_TAG_LEN]
+        return f"{_BODY_KEY_PREFIX}{self._caller_segment(caller)}:{key}:{tag}"
 
     async def begin(self, caller: str, key: str, fingerprint: str) -> IdempotencyOutcome:
         """Atomically claim ``(caller, key)`` or classify an existing claim.
@@ -237,7 +244,7 @@ class SharedStateIdempotencyStore:
             )
         body: bytes | None = None
         if record.get("body_ref"):
-            body = await self._store.get(self._body_slot(caller, key))
+            body = await self._store.get(self._body_slot(caller, key, fingerprint))
         return IdempotencyOutcome(
             IdempotencyState.REPLAY, stored=self._decode_response(record, body)
         )
@@ -270,7 +277,7 @@ class SharedStateIdempotencyStore:
         than left spending the caller's ``idem-body`` share.
         """
         omit = len(body) > self._max_response_bytes
-        body_slot = self._body_slot(caller, key)
+        body_slot = self._body_slot(caller, key, fingerprint)
         body_stored = False
         if body and not omit:
             try:

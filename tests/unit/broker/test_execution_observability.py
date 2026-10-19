@@ -15,6 +15,7 @@ from jentic_one.broker.adapters.runners.base import RunnerRequest, RunnerResult,
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.services.execution.service import default_broker, run_execution
 from jentic_one.shared.schemas import OperationInfo
+from tests.unit.fake_tx import SessionScope
 
 
 class _StubRunner(UpstreamRunner):
@@ -66,7 +67,7 @@ async def test_broker_execute_span_created(span_exporter: InMemorySpanExporter) 
             _ctx_req(),
             body=None,
             headers=None,
-            session=session,
+            admin_db=SessionScope(session),
             broker=broker,
             actor_id="agt_abc123",
             actor_type="agent",
@@ -105,7 +106,7 @@ async def test_execution_started_and_finished_log_events() -> None:
             _ctx_req(),
             body=None,
             headers=None,
-            session=session,
+            admin_db=SessionScope(session),
             broker=broker,
             actor_id="agt_abc123",
             actor_type="agent",

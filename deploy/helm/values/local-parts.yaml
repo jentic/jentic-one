@@ -21,6 +21,10 @@ broker:
     # re-resolves to the same service IP, which this subnet/domain pair permits.
     JENTIC__BROKER__EGRESS__ALLOWED_INTERNAL_DOMAINS: .svc.cluster.local
     JENTIC__BROKER__EGRESS__ALLOWED_PRIVATE_SUBNETS: 10.0.0.0/8
+    # The broker refreshes OAuth2 tokens under control.egress read from its own
+    # config, so it must match the control pod's value below.
+    JENTIC__CONTROL__EGRESS__ALLOWED_INTERNAL_DOMAINS: .svc.cluster.local
+    JENTIC__CONTROL__EGRESS__ALLOWED_PRIVATE_SUBNETS: 10.0.0.0/8
 
 registry:
   enabled: true
@@ -66,6 +70,10 @@ control:
     # The control surface builds access-request approval links and the OAuth
     # callback base from the public base URL; front it with the gateway origin.
     JENTIC__SERVER__PUBLIC_BASE_URL: http://localhost:8000
+    # In-cluster OAuth2 credential / OAuth app endpoints. Must match the broker
+    # pod's control.egress, which refreshes tokens.
+    JENTIC__CONTROL__EGRESS__ALLOWED_INTERNAL_DOMAINS: .svc.cluster.local
+    JENTIC__CONTROL__EGRESS__ALLOWED_PRIVATE_SUBNETS: 10.0.0.0/8
     # See the note on registry.extraEnv — this pod verifies the same JWTs.
     JENTIC__ADMIN__AUTH__JWT_SECRET: local-parts-dev-jwt-secret  # pragma: allowlist secret
   # Credential-at-rest encryption keyset (+ the platform OAuth2 provider) —

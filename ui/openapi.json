@@ -18521,7 +18521,7 @@
             "title": "P95 Ms"
           },
           "pending": {
-            "description": "Number of asynchronous executions queued in the window that have not finished yet (still queued or running). They are not part of `total`, which counts finished executions only. A synchronous execution is counted once it finishes, never here. The `toolkit_id`, `api_id` and `agent_id` filters apply; a `status` filter makes this 0, since no unfinished execution has a final status.",
+            "description": "Number of asynchronous executions queued in the window that have not finished yet (still queued or running). They are not part of `total`, which counts finished executions only. A synchronous execution is counted once it finishes, never here. The `api_id` and `agent_id` filters apply; a `status` filter makes this 0, since no unfinished execution has a final status.",
             "examples": [
               3
             ],
@@ -40079,36 +40079,6 @@
         "operationId": "listExecutions",
         "parameters": [
           {
-            "description": "Legacy: only return executions mediated by this toolkit.",
-            "examples": {
-              "example": {
-                "summary": "Toolkit ID",
-                "value": "tk_6968b3981ec22d56dbbc91e8"
-              }
-            },
-            "in": "query",
-            "name": "toolkit_id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "examples": [
-                    "tk_6968b3981ec22d56dbbc91e8"
-                  ],
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Legacy: only return executions mediated by this toolkit.",
-              "examples": [
-                "tk_6968b3981ec22d56dbbc91e8"
-              ],
-              "title": "Toolkit Id"
-            }
-          },
-          {
             "description": "Only return executions with this trace ID.",
             "examples": {
               "example": {
@@ -44179,36 +44149,6 @@
               "minimum": 1,
               "title": "Top Limit",
               "type": "integer"
-            }
-          },
-          {
-            "description": "Legacy: only count executions mediated by this toolkit.",
-            "examples": {
-              "example": {
-                "summary": "Toolkit ID",
-                "value": "tk_6968b3981ec22d56dbbc91e8"
-              }
-            },
-            "in": "query",
-            "name": "toolkit_id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "examples": [
-                    "tk_6968b3981ec22d56dbbc91e8"
-                  ],
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Legacy: only count executions mediated by this toolkit.",
-              "examples": [
-                "tk_6968b3981ec22d56dbbc91e8"
-              ],
-              "title": "Toolkit Id"
             }
           },
           {

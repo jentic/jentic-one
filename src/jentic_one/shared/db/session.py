@@ -19,6 +19,7 @@ from sqlalchemy.exc import (
     OperationalError,
 )
 from sqlalchemy.ext.asyncio import (
+    AsyncConnection,
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
@@ -65,6 +66,23 @@ def _is_data_error(exc: DBAPIError) -> bool:
 def get_database_url(config: DatabaseConfig) -> URL:
     """Build an async SQLAlchemy database URL from a DatabaseConfig."""
     return get_backend(config).make_url(config)
+
+
+async def _release_advisory_lock(conn: AsyncConnection, key: int) -> None:
+    """Best-effort ``pg_advisory_unlock`` on the lock's dedicated connection.
+
+    A failing unlock (the connection was lost, or the releasing task was
+    cancelled again mid-unlock) discards the connection instead of handing one
+    that may still hold the lock back to the pool; closing it releases the
+    lock server-side. A cancellation is re-raised after the discard.
+    """
+    try:
+        await conn.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": key})
+    except BaseException as exc:
+        logger.warning("advisory_lock_release_failed", key=key, error=repr(exc))
+        await conn.invalidate()
+        if not isinstance(exc, Exception):
+            raise
 
 
 class DatabaseSession:
@@ -127,18 +145,18 @@ class DatabaseSession:
                 await sess.close()
 
     @asynccontextmanager
-    async def transaction(self, *, retries: int = 1) -> AsyncGenerator[AsyncSession, None]:
+    async def transaction(self) -> AsyncGenerator[AsyncSession, None]:
         """Yield a session inside a transaction that commits on clean exit.
 
         On IntegrityError (in the body or at commit): rolls back and raises
         DatabaseIntegrityError.
         On DataError (e.g. a value too long for its column): rolls back and
         raises DatabaseDataError.
-        On OperationalError/DisconnectionError: raises DatabaseUnavailableError.
+        On OperationalError/DisconnectionError (in the body or at commit): rolls
+        back and raises DatabaseUnavailableError. A failed commit is not retried:
+        the body has already run, and only :meth:`run_in_transaction` can replay
+        it on a fresh session.
         On any other exception: rolls back and re-raises unchanged.
-
-        The *retries* parameter controls how many times a transient error during
-        commit is retried before giving up (default 1 retry).
 
         On SQLite this opens the transaction with ``BEGIN IMMEDIATE`` so the
         write lock is taken up front (see ``enable_sqlite_manual_begin``): it
@@ -185,37 +203,32 @@ class DatabaseSession:
                 await sess.rollback()
                 raise
             else:
-                commit_attempts = 0
-                while True:
-                    try:
-                        await sess.commit()
-                        return
-                    except IntegrityError as exc:
-                        # A constraint can surface at commit rather than inside the
-                        # body (deferred constraints, or backends/flush strategies
-                        # that defer the write). Map it to the same clean error as
-                        # an in-body IntegrityError so callers see one contract
-                        # regardless of when the violation lands.
-                        await sess.rollback()
-                        raise DatabaseIntegrityError(str(exc)) from exc
-                    except (OperationalError, DisconnectionError) as exc:
-                        await sess.rollback()
-                        commit_attempts += 1
-                        if commit_attempts > retries:
-                            raise DatabaseUnavailableError(str(exc)) from exc
-                        logger.warning(
-                            "transient_commit_error_retrying",
-                            attempt=commit_attempts,
-                            max_retries=retries,
-                        )
-                    except DBAPIError as exc:
-                        # A too-long value can also surface at commit (deferred
-                        # flush). Map data exceptions to the same clean error as
-                        # the in-body path; re-raise anything else (#690).
-                        await sess.rollback()
-                        if _is_data_error(exc):
-                            raise DatabaseDataError(str(exc)) from exc
-                        raise
+                try:
+                    await sess.commit()
+                except IntegrityError as exc:
+                    # A constraint can surface at commit rather than inside the
+                    # body (deferred constraints, or backends/flush strategies
+                    # that defer the write). Map it to the same clean error as
+                    # an in-body IntegrityError so callers see one contract
+                    # regardless of when the violation lands.
+                    await sess.rollback()
+                    raise DatabaseIntegrityError(str(exc)) from exc
+                except (OperationalError, DisconnectionError) as exc:
+                    # Never retried here: the rollback discards the body's
+                    # writes, so a second commit would commit an empty
+                    # transaction and report success for work that was lost
+                    # (e.g. an audit event the caller relies on being durable).
+                    # Replaying the body is ``run_in_transaction``'s job.
+                    await sess.rollback()
+                    raise DatabaseUnavailableError(str(exc)) from exc
+                except DBAPIError as exc:
+                    # A too-long value can also surface at commit (deferred
+                    # flush). Map data exceptions to the same clean error as
+                    # the in-body path; re-raise anything else (#690).
+                    await sess.rollback()
+                    if _is_data_error(exc):
+                        raise DatabaseDataError(str(exc)) from exc
+                    raise
 
     @asynccontextmanager
     async def advisory_lock(self, key: int) -> AsyncGenerator[None, None]:
@@ -248,13 +261,7 @@ class DatabaseSession:
             try:
                 yield
             finally:
-                try:
-                    await conn.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": key})
-                except Exception as exc:  # best-effort release
-                    logger.warning("advisory_lock_release_failed", key=key, error=str(exc))
-                    # Never hand a connection that may still hold the lock back
-                    # to the pool.
-                    await conn.invalidate()
+                await _release_advisory_lock(conn, key)
 
     @asynccontextmanager
     async def try_advisory_lock(self, key: int) -> AsyncGenerator[bool, None]:
@@ -290,11 +297,7 @@ class DatabaseSession:
                 yield acquired
             finally:
                 if acquired:
-                    try:
-                        await conn.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": key})
-                    except Exception as exc:  # best-effort release
-                        logger.warning("advisory_lock_release_failed", key=key, error=str(exc))
-                        await conn.invalidate()
+                    await _release_advisory_lock(conn, key)
 
     async def run_in_transaction(
         self,
@@ -305,8 +308,9 @@ class DatabaseSession:
     ) -> T:
         """Run ``fn(session)`` inside a transaction, retrying transient failures.
 
-        Unlike :meth:`transaction` — a single-``yield`` context manager that can
-        only retry at commit — this re-invokes ``fn`` on a *fresh* session when a
+        Unlike :meth:`transaction` — a single-``yield`` context manager that
+        cannot replay its body, so never retries — this re-invokes ``fn`` on a
+        *fresh* session when a
         transient failure (``OperationalError``/``DisconnectionError``, e.g. a
         SQLite ``database is locked``) is raised either inside ``fn`` or at
         commit. It waits ``backoff_s`` between attempts and gives up after

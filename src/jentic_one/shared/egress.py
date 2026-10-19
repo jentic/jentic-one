@@ -38,20 +38,33 @@ from jentic_one.shared.url_validation import assert_ip_allowed
 _IpAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 
 
+class UpstreamHostUnresolvedError(ValueError):
+    """The upstream host did not resolve, or resolved to no address, at connect time.
+
+    A ``ValueError`` so ``except ValueError`` callers keep failing closed on it;
+    the broker's runner maps it to a connect failure rather than a policy refusal.
+    """
+
+    def __init__(self, host: str) -> None:
+        self.host = host
+        super().__init__(f"upstream host did not resolve: {host}")
+
+
 def resolve_and_validate(host: str, egress: EgressConfig | None) -> _IpAddress:
     """Resolve *host* and return the first IP that passes the egress policy.
 
     Validates **every** resolved address against ``assert_ip_allowed`` so a
     multi-record answer can't smuggle a blocked IP past the check, then returns
-    the first one to pin the connection to. Raises ``ValueError`` if the host
-    can't be resolved or any resolved IP is blocked (the rebind guard).
+    the first one to pin the connection to. Raises :class:`UpstreamHostUnresolvedError`
+    if the host can't be resolved, or ``ValueError`` if any resolved IP is
+    blocked (the rebind guard).
 
     Blocking; :func:`resolve_and_validate_async` is the event-loop variant.
     """
     try:
         addrs = resolve_host_blocking(host)
     except socket.gaierror as exc:
-        raise ValueError(f"upstream host did not resolve: {host}") from exc
+        raise UpstreamHostUnresolvedError(host) from exc
     return _validated_pin(host, addrs, egress)
 
 
@@ -67,7 +80,7 @@ async def resolve_and_validate_async(host: str, egress: EgressConfig | None) -> 
     try:
         addrs = await resolve_host(host)
     except socket.gaierror as exc:
-        raise ValueError(f"upstream host did not resolve: {host}") from exc
+        raise UpstreamHostUnresolvedError(host) from exc
     return _validated_pin(host, addrs, egress)
 
 
@@ -76,7 +89,7 @@ def _validated_pin(
 ) -> _IpAddress:
     """Validate every address in *addrs* and return the first (the pin target)."""
     if not addrs:
-        raise ValueError(f"upstream host did not resolve: {host}")
+        raise UpstreamHostUnresolvedError(host)
 
     for addr in addrs:
         # A DNS name re-resolved here, so pass the hostname for the suffix
@@ -143,12 +156,14 @@ def build_pinned_transport(egress: EgressConfig | None) -> httpx.AsyncBaseTransp
     return DnsPinningTransport(httpx.AsyncHTTPTransport(), egress)
 
 
-def build_strict_pinned_transport() -> httpx.AsyncBaseTransport:
-    """Build a DNS-pinning transport under the strict default egress policy.
+def build_always_pinned_transport(egress: EgressConfig | None = None) -> httpx.AsyncBaseTransport:
+    """Build a DNS-pinning transport that always pins, whatever the policy says.
 
-    For outbound calls that have no operator-configurable egress policy (the
-    control plane's OAuth token / device-authorization / identity-probe calls):
-    every private, loopback, and non-global target is refused at connect time,
-    and a host that does not resolve fails closed.
+    For the control plane's OAuth token / device-authorization / identity-probe
+    calls. Every connection is resolved, validated against *egress*, and pinned —
+    ``dns_pinning_enabled`` is not consulted. With no *egress* (the strict
+    default) every private, loopback, and non-global target is refused at
+    connect time; an allowlist exempts only what it names. A host that does not
+    resolve fails closed.
     """
-    return DnsPinningTransport(httpx.AsyncHTTPTransport(), None)
+    return DnsPinningTransport(httpx.AsyncHTTPTransport(), egress)

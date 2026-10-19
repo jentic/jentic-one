@@ -34,6 +34,7 @@ from jentic_one.shared.jobs.protocols import UpstreamExecResult
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.events import EVENT_TYPE_SEVERITIES, EventSeverity, EventType
 from jentic_one.shared.schemas import OperationInfo
+from tests.unit.fake_tx import SessionScope
 
 _ACTOR = "agt_repeat"
 _TOOLKIT = "tk_repeat0000000000000000000"
@@ -368,7 +369,7 @@ async def test_execution_handler_emits_repeated_failure(session: AsyncSession) -
     """The async-worker handler drives repeated-failure detection on a FAILED call."""
 
     class _FailingExecutor:
-        async def execute(self, request: object, *, session: object) -> UpstreamExecResult:
+        async def execute(self, request: object, *, db: object) -> UpstreamExecResult:
             return UpstreamExecResult(
                 status_code=500, body=b"boom", content_type="text/plain", duration_ms=1
             )
@@ -390,7 +391,7 @@ async def test_execution_handler_emits_repeated_failure(session: AsyncSession) -
     # window with enough failed records to cross the threshold at detection time.
     await _add_failures(session, 3)
     await handler.execute(
-        "job_handler", session, payload=payload, created_by=_ACTOR, actor_type="agent"
+        "job_handler", SessionScope(session), payload=payload, created_by=_ACTOR, actor_type="agent"
     )
 
     events = await _repeated_events(session)

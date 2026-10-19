@@ -239,8 +239,9 @@ auth:
 > same way. The budgets track real memory to within about 15% (measured
 > with `tracemalloc`), so on the defaults the broker's state stays under
 > about 192 MiB on top of a ~130 MiB process baseline, which the broker
-> chart's 512Mi memory limit holds. The combined app runs up to three such
-> backends (auth, broker, control) in one process.
+> chart's 512Mi memory limit holds. The broker always runs as its own
+> process; the combined app holds one such backend each for the auth and
+> control surfaces.
 >
 > To raise it: raise `broker.resilience.backend.memory.namespaces.idem`
 > (and its `max_owner_share`) together with `max_total_bytes`, or lower
@@ -347,7 +348,11 @@ OAuth endpoints by the connecting socket IP — behind a proxy that is one IP,
 so **all** OAuth clients share one bucket and busy instances see spurious
 `429`s. The value must be the source IP the app actually sees; for the
 port-published containers above that is the Docker bridge gateway (commonly
-`172.17.0.1`), not `127.0.0.1`:
+`172.17.0.1`), not `127.0.0.1`. Entries are IP addresses or CIDR networks
+(`JENTIC__AUTH__OAUTH_RATE_LIMIT__TRUSTED_PROXIES` takes them comma-separated),
+and an invalid entry fails startup. List only addresses your proxy holds: any
+host inside a trusted network can set `X-Forwarded-For` and pick its own
+rate-limit identity.
 
 ```yaml
 # production.yaml

@@ -94,7 +94,10 @@ helm install jentic deploy/helm/jentic-one \
   otherwise key every request on the controller's IP, so one caller locks the
   whole fleet out of `/authorize`. Set
   `<svc>.extraEnv.JENTIC__AUTH__OAUTH_RATE_LIMIT__TRUSTED_PROXIES` (or the same
-  key in a mounted config file), or `ingress.skipTrustedProxiesCheck=true` if
+  key in a mounted config file) to the controller's pod CIDR or IPs — addresses
+  and CIDR networks, comma-separated (`\,` under `--set`), kept as narrow as the
+  cluster allows, since any pod inside a trusted network can pick its own
+  rate-limit identity — or `ingress.skipTrustedProxiesCheck=true` if
   you rate-limit upstream of the cluster.
 - **PodDisruptionBudget** is per enabled surface at `minAvailable: 1`. Only
   enable it above `replicas: 1` — at one replica a budget has no spare pod to
