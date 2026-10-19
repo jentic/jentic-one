@@ -175,7 +175,8 @@ credentials:
 # for a single-worker install, but a multi-worker or multi-instance deployment
 # needs Redis so the token-endpoint limiter and consent-nonce anti-replay
 # survive across workers. The redis client is an optional extra
-# (pip install jentic-one[redis]) and is NOT in the published container
+# (pip install jentic-one[redis]; for an image, build with
+# --build-arg EXTRAS=redis) and is NOT in the published container
 # image — enabling this backend there fails at startup.
 broker:
   resilience:
