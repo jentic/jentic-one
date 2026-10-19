@@ -2,8 +2,8 @@
 
 The JWKS is served from a real loopback socket (``http.server``), and the token
 goes through the validator ``install_broker_auth`` wires onto the broker app —
-config validation, ``build_jwt_verifier``, PyJWT's ``PyJWKClient`` fetch and the
-claim checks, with nothing stubbed.
+config validation, ``build_jwt_verifier``, PyJWT's ``PyJWKClient`` fetch, the
+claim checks and the agent status check, with nothing stubbed.
 """
 
 from __future__ import annotations
@@ -22,7 +22,9 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi import FastAPI
 from jwt.algorithms import ECAlgorithm
+from sqlalchemy import delete, update
 
+from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.broker.core.setup import install_broker_auth
 from jentic_one.shared.auth.errors import TokenValidationError
 from jentic_one.shared.config import AppConfig, BrokerConfig
@@ -34,6 +36,7 @@ pytestmark = pytest.mark.integration
 _ISS = "https://idp.perf.local"
 _AUD = "jentic-broker"
 _KID = "k1"
+_AGENT_ID = "agnt_http_jwks"
 
 
 class _JwksServer:
@@ -99,7 +102,7 @@ def _token(key: ec.EllipticCurvePrivateKey, *, iss: str = _ISS) -> str:
     claims = {
         "iss": iss,
         "aud": _AUD,
-        "sub": "agnt_http_jwks",
+        "sub": _AGENT_ID,
         "exp": int(time.time()) + 300,
         "actor_type": ActorType.AGENT.value,
         "scopes": ["broker:execute"],
@@ -107,26 +110,62 @@ def _token(key: ec.EllipticCurvePrivateKey, *, iss: str = _ISS) -> str:
     return jwt.encode(claims, key, algorithm="ES256", headers={"kid": _KID})
 
 
+async def _set_agent_status(ctx: Context, status: str) -> None:
+    async with ctx.admin_db.session() as session:
+        await session.execute(update(Agent).where(Agent.id == _AGENT_ID).values(status=status))
+        await session.commit()
+
+
 async def test_broker_verifies_jwt_against_plain_http_jwks_outside_production(
     integration_config: AppConfig,
     jwks_server: _JwksServer,
     signing_key: ec.EllipticCurvePrivateKey,
 ) -> None:
-    config = integration_config.model_copy(update={"broker": _broker_config(jwks_server.url)})
+    broker = _broker_config(jwks_server.url).model_copy(update={"resolve_cache_ttl_seconds": 0})
+    config = integration_config.model_copy(update={"broker": broker})
     app = FastAPI()
     async with Context(config) as ctx:
-        install_broker_auth(app, ctx)
-        validator = app.state.broker_token_validator
+        async with ctx.admin_db.session() as session:
+            session.add(
+                Agent(
+                    id=_AGENT_ID,
+                    name="http-jwks",
+                    registered_by="usr_test",
+                    created_by="usr_test",
+                    status="active",
+                )
+            )
+            await session.commit()
+        try:
+            await _check_validator(app, ctx, jwks_server, signing_key)
+        finally:
+            async with ctx.admin_db.session() as session:
+                await session.execute(delete(Agent).where(Agent.id == _AGENT_ID))
+                await session.commit()
 
-        identity = await validator.validate(_token(signing_key))
-        assert identity.sub == "agnt_http_jwks"
-        assert identity.actor_type is ActorType.AGENT
-        assert jwks_server.fetches == 1
 
-        # ``iss`` enforcement is unchanged on the http path: a token from an
-        # issuer that isn't trusted is refused before any key fetch.
-        with pytest.raises(TokenValidationError, match="jwt_untrusted_issuer"):
-            await validator.validate(_token(signing_key, iss="https://evil.local"))
-        # A token signed by a key absent from the served JWKS still fails.
-        with pytest.raises(TokenValidationError, match="jwt_invalid"):
-            await validator.validate(_token(ec.generate_private_key(ec.SECP256R1())))
+async def _check_validator(
+    app: FastAPI,
+    ctx: Context,
+    jwks_server: _JwksServer,
+    signing_key: ec.EllipticCurvePrivateKey,
+) -> None:
+    install_broker_auth(app, ctx)
+    validator = app.state.broker_token_validator
+    identity = await validator.validate(_token(signing_key))
+    assert identity.sub == _AGENT_ID
+    assert identity.actor_type is ActorType.AGENT
+    assert jwks_server.fetches == 1
+
+    # ``iss`` enforcement is unchanged on the http path: a token from an
+    # issuer that isn't trusted is refused before any key fetch.
+    with pytest.raises(TokenValidationError, match="jwt_untrusted_issuer"):
+        await validator.validate(_token(signing_key, iss="https://evil.local"))
+    # A token signed by a key absent from the served JWKS still fails.
+    with pytest.raises(TokenValidationError, match="jwt_invalid"):
+        await validator.validate(_token(ec.generate_private_key(ec.SECP256R1())))
+
+    # A correctly signed token for an agent that is no longer active is refused.
+    await _set_agent_status(ctx, "suspended")
+    with pytest.raises(TokenValidationError, match="jwt_actor_inactive"):
+        await validator.validate(_token(signing_key))

@@ -13,9 +13,12 @@ from jentic_one.shared.models import ActorType
 
 Row = namedtuple("Row", ["permission"])
 # Mirrors the resolver's agent-arm SELECT. ``name`` rides off the already-joined
-# ``agents`` row so the Identity can carry a display name (#1543); it defaults
-# here so only the tests that care about naming have to mention it.
-AgentRow = namedtuple("AgentRow", ["agent_id", "status", "owner_id", "name"], defaults=(None,))
+# ``agents`` row so the Identity can carry a display name (#1543), and
+# ``owner_active`` off the joined owner row; both default here so only the
+# tests that care about them have to mention them.
+AgentRow = namedtuple(
+    "AgentRow", ["agent_id", "status", "owner_id", "name", "owner_active"], defaults=(None, True)
+)
 
 
 @pytest.fixture()

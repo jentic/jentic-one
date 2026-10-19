@@ -11,10 +11,11 @@ from dataclasses import dataclass
 from typing import Any
 
 import structlog
-from sqlalchemy import text
+from sqlalchemy import Boolean, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.owner_status import log_agent_owner_inactive
 from jentic_one.shared.db import DatabaseSession
 from jentic_one.shared.models import ActorType
 
@@ -56,19 +57,25 @@ class _AgentArm(enum.Enum):
 
 @dataclass(frozen=True)
 class _InactiveAgent:
-    """Agent-arm outcome: the digest is present, but its agent is not active.
+    """Agent-arm outcome: the digest is present, but its agent may not act.
 
     Carries the agent id so the fail-closed WARNING can name the successor
-    the operator must re-enable.
+    the operator must re-enable. ``owner_inactive`` is set when the agent
+    itself is active but its owning user is not: an owned agent follows its
+    owner's account status.
     """
 
     agent_id: str
+    owner_inactive: bool = False
 
 
 class ApiKeyResolver:
     """Resolves API keys to an Identity by digest lookup in ``agent_credentials``.
 
-    - ``jak_`` keys query ``agent_credentials`` joined to ``agents``.
+    - ``jak_`` keys query ``agent_credentials`` joined to ``agents`` and the
+      owner's ``users`` row: an owned agent authenticates only while both it
+      and its owner are active (an ownerless agent depends on its own status
+      alone).
     - ``jntc_live_`` keys (retired, deprecated) go through the same lookup:
       the theme-5 migration copied each retired key's digest onto its
       successor agent, so the key resolves as that agent. A digest miss, or a
@@ -78,7 +85,10 @@ class ApiKeyResolver:
       INFO line naming the successor agent when one holds the digest.
 
     Implements ``TokenResolverProtocol`` (via ``resolve_access_token``) so it
-    can be wrapped by ``CachedTokenValidator``.
+    can be wrapped by ``CachedTokenValidator``. Behind that cache (the broker),
+    a status change to the agent or its owner takes effect once the cached
+    verdict expires (``broker.resolve_cache_ttl_seconds``); the admin and auth
+    surfaces resolve uncached, so it takes effect on the next request.
     """
 
     def __init__(self, admin_db: DatabaseSession) -> None:
@@ -123,7 +133,13 @@ class ApiKeyResolver:
     async def _resolve_retired(
         self, raw_key: str, *, event: str, deadline_note: str
     ) -> Identity | None:
-        """Retired-prefix arm: resolve as the successor agent, or fail closed."""
+        """Retired-prefix arm: resolve as the successor agent, or fail closed.
+
+        A successor refused only because its owner is not active returns early
+        with the ``agent_owner_inactive`` event alone: the key is not logged as
+        ``migrated_key_fail_closed``, which is reserved for a successor agent
+        whose own status is not active.
+        """
         arm = await self._lookup_agent(raw_key)
         if isinstance(arm, Identity):
             # One WARNING per resolve, naming the successor now serving the
@@ -138,6 +154,9 @@ class ApiKeyResolver:
             )
             return arm
         if isinstance(arm, _InactiveAgent):
+            if arm.owner_inactive:
+                # Already logged as ``agent_owner_inactive`` by the lookup.
+                return None
             # The successor is the authoritative identity and it is
             # disabled/archived: fail closed (the operator kill lever).
             logger.warning(
@@ -175,31 +194,41 @@ class ApiKeyResolver:
             return await self._fetch_credential_row(session, raw_key)
 
     async def _fetch_credential_row(self, session: AsyncSession, raw_key: str) -> Any:
-        """The agent holding ``raw_key``'s digest: ``agent_id, name, status, owner_id``.
+        """The agent holding ``raw_key``'s digest.
 
+        Columns: ``agent_id, name, status, owner_id, owner_active``.
         ``name`` rides along off the already-joined ``agents`` row (no extra
         query) so the resolved ``Identity`` can carry a human-readable actor
-        name into audit event summaries (#1543).
+        name into audit event summaries (#1543). ``owner_active`` is the
+        owner's ``users.active``, read by the same statement (an outer join):
+        NULL for an ownerless agent or a missing owner row.
         """
         key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
         stmt = text(
-            "SELECT a.id AS agent_id, a.name, a.status, a.owner_id"
+            "SELECT a.id AS agent_id, a.name, a.status, a.owner_id, u.active AS owner_active"
             " FROM agent_credentials ac"
             " JOIN agents a ON a.id = ac.agent_id"
+            " LEFT JOIN users u ON u.id = a.owner_id"
             " WHERE ac.api_key_hash = :key_hash"
-        )
+        ).columns(owner_active=Boolean)
         return (await session.execute(stmt, {"key_hash": key_hash})).one_or_none()
 
     async def _lookup_agent(self, raw_key: str) -> Identity | _AgentArm | _InactiveAgent:
         # One admin session per lookup: the credential row and the active
         # agent's grants are read on the same pooled connection (#1703), as the
-        # ``at_`` path does. Grants are only read for an active agent.
+        # ``at_`` path does. Grants are only read for an agent that may act.
         async with self._admin_db.session() as session:
             row = await self._fetch_credential_row(session, raw_key)
             if row is None:
                 return _AgentArm.MISS
             if row.status != "active":
                 return _InactiveAgent(agent_id=row.agent_id)
+            if row.owner_id is not None and not row.owner_active:
+                # The owner is disabled or deleted, or its row is missing:
+                # fail closed. A soft-deleted user has ``active`` false, so
+                # this covers delete too.
+                log_agent_owner_inactive(row.agent_id, row.owner_id)
+                return _InactiveAgent(agent_id=row.agent_id, owner_inactive=True)
             permissions = await self._load_permissions(session, row.agent_id, ActorType.AGENT)
         return Identity(
             sub=row.agent_id,
