@@ -65,6 +65,10 @@ what you've imported. You can also register your own OpenAPI description for a
 private service — same custody, permissions, and audit trail. To correct an
 imported description without editing the original, use [Overlays](overlays.md).
 
+The broker routes every call by its upstream host, so a relative server URL
+(`url: /api/v3`, as in the stock Petstore) must resolve to an absolute one at
+import — see [how server URLs are resolved](../agent/troubleshoot.md#import-fails-server-url-cant-be-made-absolute).
+
 ## 4. Store a credential *(authenticated APIs only)*
 
 httpbin takes no secret — its no-auth credential is created in step 5. For an API that does authenticate, the

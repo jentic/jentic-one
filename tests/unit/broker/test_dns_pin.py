@@ -11,6 +11,7 @@ import pytest
 from jentic_one.broker.adapters.egress import DnsPinningTransport, resolve_and_validate
 from jentic_one.broker.adapters.http_client import build_client
 from jentic_one.shared.config import EgressConfig, UpstreamClientConfig
+from jentic_one.shared.egress import UpstreamHostUnresolvedError
 
 
 def _fake_getaddrinfo(*ips: str):
@@ -82,8 +83,11 @@ def test_resolve_raises_on_nxdomain(monkeypatch: pytest.MonkeyPatch) -> None:
         raise socket.gaierror("nope")
 
     monkeypatch.setattr(socket, "getaddrinfo", _boom)
-    with pytest.raises(ValueError, match="did not resolve"):
+    with pytest.raises(UpstreamHostUnresolvedError, match="did not resolve") as excinfo:
         resolve_and_validate("ghost.example.com", None)
+    # Typed so the runner can map it, still a ValueError so callers fail closed.
+    assert isinstance(excinfo.value, ValueError)
+    assert excinfo.value.host == "ghost.example.com"
 
 
 # --- DnsPinningTransport (the pin) --------------------------------------------

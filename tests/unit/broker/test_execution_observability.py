@@ -21,6 +21,7 @@ from jentic_one.broker.services.execution.service import (
 )
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.schemas import OperationInfo
+from tests.unit.fake_tx import SessionScope
 
 
 class _StubRunner(UpstreamRunner):
@@ -72,7 +73,7 @@ async def test_broker_execute_span_created(span_exporter: InMemorySpanExporter) 
             _ctx_req(),
             body=None,
             headers=None,
-            session=session,
+            admin_db=SessionScope(session),
             broker=broker,
             actor_id="agt_abc123",
             actor_type="agent",
@@ -111,7 +112,7 @@ async def test_execution_started_and_finished_log_events() -> None:
             _ctx_req(),
             body=None,
             headers=None,
-            session=session,
+            admin_db=SessionScope(session),
             broker=broker,
             actor_id="agt_abc123",
             actor_type="agent",
@@ -146,7 +147,7 @@ async def test_buffered_duration_histogram_records_fractional_ms() -> None:
             _ctx_req(),
             body=None,
             headers=None,
-            session=AsyncMock(),
+            admin_db=SessionScope(AsyncMock()),
             broker=default_broker(_SubMillisecondRunner()),
             actor_id="agt_abc123",
             actor_type="agent",

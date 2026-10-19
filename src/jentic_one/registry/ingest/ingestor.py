@@ -19,6 +19,7 @@ from jentic_one.registry.ingest.observability import (
 from jentic_one.registry.ingest.pipeline.ctx import PipelineContext
 from jentic_one.registry.ingest.pipeline.pipeline import PipelineFactory
 from jentic_one.registry.ingest.schemas import HeldHostChange, IngestResult
+from jentic_one.registry.ingest.server_urls import ServerResolution
 from jentic_one.shared import Context
 from jentic_one.shared.models import ORIGIN_OVERLAY, ApiRevisionState
 
@@ -73,6 +74,9 @@ class Ingestor:
                         "superseded_revision_id"
                     )
                     held: dict[str, list[str]] | None = pipeline_ctx.get("held_host_change")
+                    server_resolution: ServerResolution | None = pipeline_ctx.get(
+                        "server_resolution"
+                    )
 
                 held_host_change = HeldHostChange(**held) if held is not None else None
 
@@ -90,6 +94,9 @@ class Ingestor:
                     state=result_state,
                     operation_count=len(operation_ids),
                     held_host_change=held_host_change,
+                    server_url_changes=(
+                        server_resolution.summary() if server_resolution is not None else None
+                    ),
                 )
                 if held_host_change is not None:
                     logger.info(

@@ -34,12 +34,8 @@ class _RecordingSink:
         self.records.append((name, tuple(tags), actor_type))
 
 
-class _FakeEvent:
-    id = "evt_123"
-
-
 def _fake_create() -> AsyncMock:
-    return AsyncMock(return_value=_FakeEvent())
+    return AsyncMock(return_value="evt_123")
 
 
 @pytest.mark.asyncio

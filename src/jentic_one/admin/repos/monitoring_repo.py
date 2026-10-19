@@ -81,7 +81,6 @@ def _group_key(
 
 @dataclass(slots=True, frozen=True)
 class UsageQueryFilters:
-    toolkit_id: str | None = None
     api_vendor: str | None = None
     api_name: str | None = None
     actor_id: str | None = None
@@ -89,8 +88,6 @@ class UsageQueryFilters:
 
     def to_clauses(self) -> list[ColumnElement[bool]]:
         clauses: list[ColumnElement[bool]] = []
-        if self.toolkit_id is not None:
-            clauses.append(ExecutionRecord.toolkit_id == self.toolkit_id)
         if self.api_vendor is not None:
             clauses.append(ExecutionRecord.api_vendor == self.api_vendor)
         if self.api_name is not None:
@@ -105,17 +102,11 @@ class UsageQueryFilters:
         """The same filters applied to execution jobs.
 
         An execution job carries its attribution in its payload and its actor
-        on ``created_by``. Two filters can never match an unfinished job, so
-        each excludes every job:
-
-        - ``toolkit_id`` is legacy. Toolkits were removed (#1498) and no
-          execution job is attributed to one since, so the filter only
-          narrows historical ``execution_records``.
-        - ``status`` names a terminal execution status, which an unfinished
-          job never has.
+        on ``created_by``. A ``status`` filter names a terminal execution
+        status, which an unfinished job never has, so it excludes every job.
         """
         clauses: list[ColumnElement[bool]] = []
-        if self.toolkit_id is not None or self.status is not None:
+        if self.status is not None:
             clauses.append(false())
         if self.api_vendor is not None:
             clauses.append(Job.payload["api_vendor"].as_string() == self.api_vendor)

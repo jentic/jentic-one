@@ -9,6 +9,7 @@ from typing import Any, Protocol
 
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.aws.sigv4 import SigV4Material
+from jentic_one.shared.db.protocols import TransactionalDatabase
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,6 +187,35 @@ class UpstreamExecResult:
     duration_ms: int
 
 
+class ExecutionRecordNotPersistedError(Exception):
+    """The upstream call was dispatched but its ``executions`` record was not written.
+
+    An ``UpstreamExecutor`` raises it for **any** failure after the call was
+    dispatched other than the broker's own failure with its record committed:
+    the record write failing for any reason (pool checkout timeout, lost
+    connection, driver error, a bug), or the call dying without a record.
+    ``result`` is the verbatim upstream result when the call returned one, and
+    ``None`` otherwise; ``upstream_error`` is then the broker's failure reason.
+    ``runner_failed`` is true when the dispatched call itself crashed (a
+    non-``BrokerError``), so no record write was attempted. It is distinct
+    from a pipeline failure so the worker reports what the upstream actually
+    did, and never requeues a job whose upstream side effect may already have
+    happened.
+    """
+
+    def __init__(
+        self,
+        result: UpstreamExecResult | None,
+        *,
+        upstream_error: str | None = None,
+        runner_failed: bool = False,
+    ) -> None:
+        super().__init__("execution record not persisted")
+        self.result = result
+        self.upstream_error = upstream_error
+        self.runner_failed = runner_failed
+
+
 class UpstreamExecutor(Protocol):
     """Runs one upstream call through the **shared** ``BrokerExecutionPipeline``.
 
@@ -200,10 +230,16 @@ class UpstreamExecutor(Protocol):
 
     Implementations own the ``executions`` record write (the pipeline persists
     it); the worker keeps only the job-result + lifecycle-event persistence.
+    ``db`` is the worker's database: the record is written in a transaction
+    opened on it after the upstream call, never one held across the call.
+    Once the call is dispatched, the only exceptions an implementation raises
+    are the broker's own failure (its record committed) and
+    :class:`ExecutionRecordNotPersistedError`; anything raised before dispatch
+    propagates as itself.
     """
 
     async def execute(
-        self, request: UpstreamExecRequest, *, session: Any
+        self, request: UpstreamExecRequest, *, db: TransactionalDatabase
     ) -> UpstreamExecResult: ...
 
 

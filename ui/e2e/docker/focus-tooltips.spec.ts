@@ -84,14 +84,30 @@ test('a keyboard user tabbing onto Pause still gets its tooltip', async ({ page 
 		.getByRole('button', { name: /^Manage access for / })
 		.first()
 		.click();
-	await expect(page.getByTestId('sheet-primitive')).toBeVisible();
-	const pause = page.getByRole('button', { name: /^Suspend binding for / });
+	const sheet = page.getByTestId('sheet-primitive');
+	await expect(sheet).toBeVisible();
+	const pause = sheet.getByRole('button', { name: /^Suspend binding for / });
 	await expect(pause).toBeVisible();
-	// Walk focus with the keyboard until it lands on Pause.
-	for (let i = 0; i < 12; i++) {
-		if (await pause.evaluate((el) => el === document.activeElement)) break;
+	// The sheet hands focus to its first control a beat after it opens. Wait for that
+	// hand-off before touching the keyboard: a Tab pressed ahead of it walks the page
+	// behind the sheet, and the hand-off itself is programmatic focus, not a keyboard
+	// arrival — so neither may stand in for the keyboard user this test is about.
+	await expect.poll(() => sheet.evaluate((el) => el.contains(document.activeElement))).toBe(true);
+	if (await pause.evaluate((el) => el === document.activeElement)) {
+		// The hand-off landed on Pause: step off and back so the keyboard brings focus there.
 		await page.keyboard.press('Tab');
+		await expect(pause).not.toBeFocused();
+		await page.keyboard.press('Shift+Tab');
+	} else {
+		for (let i = 0; i < 12; i++) {
+			if (await pause.evaluate((el) => el === document.activeElement)) break;
+			await page.keyboard.press('Tab');
+		}
 	}
 	await expect(pause).toBeFocused();
-	await expect(page.getByRole('tooltip')).toBeVisible();
+	expect(await pause.evaluate((el) => el.matches(':focus-visible'))).toBe(true);
+	// Exactly one bubble, and it is Pause's: the one its keyboard focus opened.
+	const tooltip = page.getByRole('tooltip');
+	await expect(tooltip).toBeVisible();
+	await expect(tooltip).toHaveText(/^Pause this binding/);
 });

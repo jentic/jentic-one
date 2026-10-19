@@ -165,7 +165,9 @@ async def test_delete_records_audit_entry(integration_context: Context, admin_us
     )
     user_id = created.user.id
 
-    await service.delete(user_id, identity=Identity(sub=admin_user, email="test@local"))
+    await service.delete(
+        user_id, identity=Identity(sub=admin_user, email="test@local", permissions=["org:admin"])
+    )
 
     entries = await _audit_entries_for(ctx, user_id)
     delete_entries = [e for e in entries if e.action == AuditAction.DELETE.value]
@@ -185,7 +187,9 @@ async def test_disable_records_audit_entry(integration_context: Context, admin_u
     )
     user_id = created.user.id
 
-    await service.disable(user_id, identity=Identity(sub=admin_user, email="test@local"))
+    await service.disable(
+        user_id, identity=Identity(sub=admin_user, email="test@local", permissions=["org:admin"])
+    )
 
     entries = await _audit_entries_for(ctx, user_id)
     disable_entries = [e for e in entries if e.action == AuditAction.DISABLE.value]
@@ -205,8 +209,12 @@ async def test_enable_records_audit_entry(integration_context: Context, admin_us
     )
     user_id = created.user.id
 
-    await service.disable(user_id, identity=Identity(sub=admin_user, email="test@local"))
-    await service.enable(user_id, identity=Identity(sub=admin_user, email="test@local"))
+    await service.disable(
+        user_id, identity=Identity(sub=admin_user, email="test@local", permissions=["org:admin"])
+    )
+    await service.enable(
+        user_id, identity=Identity(sub=admin_user, email="test@local", permissions=["org:admin"])
+    )
 
     entries = await _audit_entries_for(ctx, user_id)
     enable_entries = [e for e in entries if e.action == AuditAction.ENABLE.value]

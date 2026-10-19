@@ -16,7 +16,12 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 import jentic_one.broker.adapters.runners.http as http_runner_mod
 from jentic_one.broker.adapters.runners.base import RunnerRequest
 from jentic_one.broker.adapters.runners.http import HttpRunner, _HostBulkhead
-from jentic_one.broker.core.exceptions import BrokerError, ErrorOrigin, UpstreamTimeoutError
+from jentic_one.broker.core.exceptions import (
+    BrokerError,
+    ErrorOrigin,
+    UpstreamTimeoutError,
+    UpstreamTransportError,
+)
 
 
 def _asgi_client(app: FastAPI) -> httpx.AsyncClient:
@@ -145,14 +150,17 @@ async def test_stream_read_timeout_maps_to_broker_origin_upstream_timeout() -> N
 
 
 @pytest.mark.asyncio
-async def test_transport_error_maps_to_broker_error() -> None:
+async def test_connect_error_maps_to_upstream_connect_failed_502() -> None:
     def handle(_req: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("refused")
 
     async with _mock_client(httpx.MockTransport(handle)) as client:
         runner = HttpRunner(client)
-        with pytest.raises(BrokerError):
+        with pytest.raises(UpstreamTransportError) as excinfo:
             await runner.run(RunnerRequest(method="GET", url="https://api.example.com/x"))
+    # A refused connect is a 502 gateway failure, connect phase (#1706).
+    assert excinfo.value.type == "upstream_connect_failed"
+    assert excinfo.value.pre_send is True
 
 
 _INJECTED_SECRET = "SECRET_TRAILING_NL"

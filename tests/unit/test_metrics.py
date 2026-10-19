@@ -19,13 +19,7 @@ from jentic_one.shared.metrics import (
     reset_metrics,
 )
 
-
-@pytest.fixture(autouse=True)
-def _reset_metrics_state():
-    """Reset global metrics state between tests."""
-    reset_metrics()
-    yield
-    reset_metrics()
+pytestmark = pytest.mark.usefixtures("isolated_meter_provider")
 
 
 def test_none_exporter_is_noop():

@@ -412,12 +412,56 @@
       "title": "ControlConnectConfig",
       "type": "object"
     },
+    "ControlEgressConfig": {
+      "additionalProperties": false,
+      "description": "Private-network allowlist for the platform's OAuth and credential calls.\n\nHolds only the two allowlist keys. A key left unset takes its value from\nthe matching ``broker.egress`` key. These calls always pin DNS, so there is\nno ``dns_pinning_enabled`` key here, and unknown keys are rejected.",
+      "properties": {
+        "allowed_internal_domains": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Domain suffixes (e.g. ``[\".corp.internal\"]``) whose resolved private IP is permitted for these calls; unset inherits `broker.egress.allowed_internal_domains`. The resolved IP must still fall in an allowed subnet. Accepts a YAML list or a comma-separated string.",
+          "title": "Allowed Internal Domains"
+        },
+        "allowed_private_subnets": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "CIDRs exempted from the private-IP block for these calls (e.g. ``[\"10.50.0.0/16\"]``); unset inherits `broker.egress.allowed_private_subnets`, and `[]` blocks every private range for these calls even when the broker allows one. The cloud-metadata and platform-credential IPs are never exempted. Accepts a YAML list or a comma-separated string.",
+          "title": "Allowed Private Subnets"
+        }
+      },
+      "title": "ControlEgressConfig",
+      "type": "object"
+    },
     "ControlSurfaceConfig": {
-      "description": "Control surface configuration.\n\nUnknown subkeys are ignored, so a ``control:`` section written for another\nrelease keeps validating.",
+      "description": "Control surface configuration.\n\n``egress`` is the allowlist for the platform's outbound OAuth and credential\ncalls. Each ``control.egress`` key left unset takes its value from the\nmatching ``broker.egress`` key. The policy is read by whichever process makes\nthe call: the control surface for credential and OAuth app writes, the\nconnect-session confirm, code exchange, device authorization and the\nidentity probe, and the broker surface for the token refresh it runs before\ninjecting a credential. With one process per surface, set ``control.egress``\n(and the ``broker.egress`` keys it inherits) identically on both.\n\nUnknown subkeys of ``control:`` are ignored, so a section written for\nanother release keeps validating; ``control.egress`` rejects unknown keys so\na mistyped allowlist key fails at startup instead of silently allowing less.",
       "properties": {
         "connect": {
           "$ref": "#/$defs/ControlConnectConfig",
           "description": "Agent connect-session settings."
+        },
+        "egress": {
+          "$ref": "#/$defs/ControlEgressConfig",
+          "description": "Private-network allowlist for the platform's OAuth and credential calls: OAuth2 credential and OAuth app registration URL checks, own-client endpoints confirmed on a connect session, token exchange and refresh, device authorization, and the vendor identity probe. Each key left unset takes its value from `broker.egress`; set a key (e.g. `allowed_private_subnets: []`) to override it for these calls alone. These calls always pin DNS. The process making the call reads it, and the broker surface makes token refresh calls, so with one process per surface set it identically on the control and broker surfaces."
         }
       },
       "title": "ControlSurfaceConfig",
@@ -892,9 +936,18 @@
           "type": "number"
         },
         "ttl_s": {
-          "default": 86400.0,
-          "title": "Ttl S",
-          "type": "number"
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Replay window of a completed Idempotency-Key record, in seconds. Unset, it is 3600 (1 h) on the memory shared-state backend and 86400 (24 h) on redis. On memory, every record is held in process for this long, so the TTL divides the sustained idempotent request rate the idem budget can hold.",
+          "title": "Ttl S"
         }
       },
       "title": "IdempotencyConfig",
@@ -1148,6 +1201,80 @@
       "title": "McpOAuthConfig",
       "type": "object"
     },
+    "MemoryBackendConfig": {
+      "description": "Bounds for the in-process (``memory``) shared-state backend.\n\nEvery key belongs to a namespace, its prefix up to the first ``:``\n(``idem`` for Idempotency-Key records, ``idem-body`` for their stored\nresponse bodies, ``auth`` for the auth surface's single-use markers,\n``login-csrf`` for login CSRF nonces, ``cb`` for circuit-breaker counters,\nand so on). Each namespace has its own budget, so one key kind filling up\nnever starves another. A namespace that is full of live entries refuses\nnew writes (the request that needed it gets a 503) rather than evicting a\nlive entry. Ignored by the redis backend.",
+      "properties": {
+        "max_bytes_per_namespace": {
+          "default": 16777216,
+          "description": "Default most approximate bytes (key + value + about 750 bytes of per-entry overhead) one key namespace may hold before its writes are refused.",
+          "minimum": 1,
+          "title": "Max Bytes Per Namespace",
+          "type": "integer"
+        },
+        "max_entries_per_namespace": {
+          "default": 100000,
+          "description": "Default most live entries one key namespace may hold before its writes are refused.",
+          "minimum": 1,
+          "title": "Max Entries Per Namespace",
+          "type": "integer"
+        },
+        "max_total_bytes": {
+          "default": 201326592,
+          "description": "Most approximate bytes all namespaces of one memory backend may hold together (201326592, 192 MiB, by default); a write past it is refused like a full namespace, never by evicting a live entry. Each surface that keeps shared state (auth, broker, control) has its own backend, so a process holds up to this much per such surface. Raise the container memory limit together with it.",
+          "minimum": 1,
+          "title": "Max Total Bytes",
+          "type": "integer"
+        },
+        "namespaces": {
+          "additionalProperties": {
+            "$ref": "#/$defs/MemoryNamespaceBudgetConfig"
+          },
+          "description": "Per-namespace budget overrides, keyed by namespace (the key prefix before the first ``:``). Unless overridden here, idem (Idempotency-Key records) is 250000 entries / 134217728 bytes (128 MiB) and idem-body (their stored response bodies) 1000000 entries / 33554432 bytes (32 MiB), each with a 0.1 per-caller share; every other namespace uses max_entries_per_namespace / max_bytes_per_namespace. The sustained idempotent request rate idem can hold is min(max_entries, max_bytes / record_bytes) / broker.idempotency.ttl_s, where record_bytes is about 1000 bytes plus the response headers (capped at 512 bytes): about 30 req/s at the defaults and a 1 h TTL, and a tenth of that per caller. Above it, Idempotency-Key requests get 503 idempotency_unavailable; bodies (about 830 bytes + body length each) stop being stored for replay sooner, about 5 req/s of 1 KiB bodies, without refusing requests.",
+          "title": "Namespaces",
+          "type": "object"
+        }
+      },
+      "title": "MemoryBackendConfig",
+      "type": "object"
+    },
+    "MemoryNamespaceBudgetConfig": {
+      "description": "Entry-count and approximate byte budget for one memory-backend key namespace.",
+      "properties": {
+        "max_bytes": {
+          "description": "Most approximate bytes (key + value + about 750 bytes of per-entry overhead) the namespace may hold.",
+          "minimum": 1,
+          "title": "Max Bytes",
+          "type": "integer"
+        },
+        "max_entries": {
+          "description": "Most live entries the namespace may hold.",
+          "minimum": 1,
+          "title": "Max Entries",
+          "type": "integer"
+        },
+        "max_owner_share": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 1,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Most of max_entries and max_bytes that one owner (the key's second ``:`` segment, for idem and idem-body the calling actor) may hold; an owner over its share is refused without affecting the others. Unset, it is 0.1 for idem and idem-body and unlimited elsewhere; 1.0 lets one owner use the whole namespace.",
+          "title": "Max Owner Share"
+        }
+      },
+      "required": [
+        "max_entries",
+        "max_bytes"
+      ],
+      "title": "MemoryNamespaceBudgetConfig",
+      "type": "object"
+    },
     "MetricsConfig": {
       "description": "Metrics exporter configuration.",
       "properties": {
@@ -1251,7 +1378,7 @@
           "type": "integer"
         },
         "trusted_proxies": {
-          "description": "Socket IPs of reverse proxies whose ``X-Forwarded-For`` header is honored when deriving the per-client rate-limit identity. Empty (default) means the socket address is used as-is — behind a reverse proxy every request then carries the proxy's IP and all clients share one bucket, so list the proxy IPs when deploying behind one.",
+          "description": "Reverse proxies whose ``X-Forwarded-For`` header is honored when deriving the per-client rate-limit identity: IP addresses or CIDR networks (e.g. ``10.0.0.0/8``, ``fd00::/8``), matched against the socket address and each forwarded hop by network membership. Accepts a YAML list or a comma-separated string. Invalid entries fail config load. Empty (default) means the socket address is used as-is — behind a reverse proxy every request then carries the proxy's IP and all clients share one bucket, so list the proxy IPs or pod CIDR when deploying behind one. Only list ranges your proxies alone hold: any host inside a trusted network can choose its own rate-limit identity.",
           "items": {
             "type": "string"
           },
@@ -1603,6 +1730,9 @@
           "$ref": "#/$defs/BackendKind",
           "default": "memory"
         },
+        "memory": {
+          "$ref": "#/$defs/MemoryBackendConfig"
+        },
         "redis_key_prefix": {
           "default": "jentic:broker:",
           "title": "Redis Key Prefix",
@@ -1692,12 +1822,21 @@
       "properties": {
         "exporter": {
           "default": "otlp",
+          "description": "Where spans go. ``none`` records no spans at all (every span is non-recording), while trace ids are still generated and propagated: an inbound ``traceparent`` is honoured, outbound requests carry ``traceparent``/``tracestate``, and execution records and logs keep their ``trace_id``. With ``none`` the outbound ``traceparent`` has the sampled flag unset (``-00``) even when the caller sent ``-01``, since this process records nothing.",
           "enum": [
             "otlp",
             "none"
           ],
           "title": "Exporter",
           "type": "string"
+        },
+        "sample_ratio": {
+          "default": 1.0,
+          "description": "Fraction of traces recorded and exported when ``exporter`` is ``otlp`` (1.0 records every trace). It caps every trace entering the process, including requests that arrive with a sampled ``traceparent`` (the CLI and MCP send one on every call), so a caller cannot force recording. A caller's unsampled ``traceparent`` stays unsampled. Ignored with ``exporter: none``, and overridden by the standard ``OTEL_TRACES_SAMPLER`` environment variable when that is set (a warning is logged if this field is not 1.0).",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Sample Ratio",
+          "type": "number"
         }
       },
       "title": "TracingConfig",

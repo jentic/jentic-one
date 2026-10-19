@@ -10,9 +10,10 @@ hardcoding, no header dropping) and **streams the raw, still-compressed bytes**
 (``aiter_raw``) so httpx never transparently decompresses the upstream body — a
 zip-bomb vector for a passthrough that has no reason to decode. Status mirroring
 + header filtering are the caller's concern. On a transport-level failure it
-raises the domain ``UpstreamTimeoutError`` (timeout) or a generic ``BrokerError``
-(other transport errors) so the central handler maps it — the runner never
-raises a web/HTTP exception.
+raises a domain error — ``UpstreamTimeoutError`` (504) for a timeout,
+``UpstreamTransportError`` (502) when the upstream leg fails, including a host
+the DNS-pinning transport (``shared/egress``) cannot resolve at connect time —
+so the central handler maps it; the runner never raises a web/HTTP exception.
 """
 
 from __future__ import annotations
@@ -39,15 +40,23 @@ from jentic_one.broker.core.exceptions import (
     BrokerError,
     UpstreamResponseTooLargeError,
     UpstreamTimeoutError,
+    UpstreamTransportError,
     switch_toolkit_directive,
 )
 from jentic_one.shared.broker.protocols import RunnerCapabilities
+from jentic_one.shared.egress import UpstreamHostUnresolvedError
 
 logger = structlog.get_logger(__name__)
 _tracer = trace.get_tracer("broker.runner")
 
+#: A connection-phase failure from the client stack: an ``httpx`` error, or a
+#: host the DNS-pinning transport cannot resolve. The pinning transport raises
+#: the latter before httpx's own transport runs, so httpx never wraps it.
+_TransportFailure = httpx.HTTPError | UpstreamHostUnresolvedError
+_TRANSPORT_FAILURES = (httpx.HTTPError, UpstreamHostUnresolvedError)
 
-def _transport_error_detail(exc: httpx.HTTPError) -> str:
+
+def _transport_error_detail(exc: _TransportFailure) -> str:
     """Caller-facing detail for a transport failure: the exception class only.
 
     httpx/h11 exception messages can quote request material verbatim (e.g. an
@@ -57,7 +66,7 @@ def _transport_error_detail(exc: httpx.HTTPError) -> str:
     return f"Upstream transport error ({type(exc).__name__})"
 
 
-def _record_transport_error(span: Span, exc: httpx.HTTPError) -> None:
+def _record_transport_error(span: Span, exc: _TransportFailure) -> None:
     """Record a transport failure on the span without the exception message.
 
     ``span.record_exception`` would store ``str(exc)`` plus a traceback that
@@ -72,6 +81,53 @@ def _record_transport_error(span: Span, exc: httpx.HTTPError) -> None:
         },
     )
     span.set_status(StatusCode.ERROR)
+
+
+#: Transport failures on the upstream leg — the connection dropped (including
+#: mid-body), broke the protocol, or a proxy in front of the upstream failed.
+#: The broker answers these as a gateway: 502.
+_UPSTREAM_LEG_ERRORS = (httpx.NetworkError, httpx.RemoteProtocolError, httpx.ProxyError)
+
+
+def _map_transport_error(exc: _TransportFailure) -> BrokerError:
+    """The domain error for a transport failure on either runner path.
+
+    - ``ConnectTimeout`` → :class:`UpstreamTimeoutError` (504),
+      ``upstream_connect_failed``, ``pre_send``.
+    - Any other timeout → :class:`UpstreamTimeoutError` (504), ``upstream_timeout``.
+    - ``ConnectError``, or :class:`UpstreamHostUnresolvedError` from the
+      DNS-pinning transport → :class:`UpstreamTransportError` (502),
+      ``upstream_connect_failed``, ``pre_send``.
+    - Any other upstream-leg failure (:data:`_UPSTREAM_LEG_ERRORS`) →
+      :class:`UpstreamTransportError` (502), ``upstream_transport_error``.
+    - Anything else (``LocalProtocolError``: the broker built a request httpx
+      refuses to send; ``UnsupportedProtocol``) → a plain :class:`BrokerError`
+      (500), ``upstream_transport_error``.
+
+    ``pre_send`` marks a connect-phase failure: no request bytes reached the
+    upstream, so a retry is safe for any method. The caller-facing detail never
+    carries the exception message (see :func:`_transport_error_detail`).
+    """
+    if isinstance(exc, httpx.ConnectTimeout):
+        return UpstreamTimeoutError(
+            detail="The upstream connection could not be established in time.",
+            type="upstream_connect_failed",
+            pre_send=True,
+        )
+    if isinstance(exc, httpx.TimeoutException):
+        return UpstreamTimeoutError(
+            detail="The upstream did not respond within the deadline.",
+            type="upstream_timeout",
+        )
+    if isinstance(exc, httpx.ConnectError | UpstreamHostUnresolvedError):
+        return UpstreamTransportError(
+            detail="The upstream connection could not be established.",
+            type="upstream_connect_failed",
+            pre_send=True,
+        )
+    if isinstance(exc, _UPSTREAM_LEG_ERRORS):
+        return UpstreamTransportError(detail=_transport_error_detail(exc))
+    return BrokerError(detail=_transport_error_detail(exc), type="upstream_transport_error")
 
 
 class _HostSlot:
@@ -199,34 +255,15 @@ class HttpRunner(UpstreamRunner):
                     body = await self._read_capped(resp)
                 finally:
                     await resp.aclose()
-            except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
-                # Connect-phase failure: no request bytes reached the upstream, so
-                # a retry is safe for ANY method. ConnectTimeout
-                # subclasses both ConnectError and TimeoutException — handle it
-                # here, before the generic timeout branch.
-                _record_transport_error(span, exc)
-                logger.error("upstream_network_failure", host=host, error_type=type(exc).__name__)
-                raise UpstreamTimeoutError(
-                    detail="The upstream connection could not be established in time.",
-                    type="upstream_connect_failed",
-                    pre_send=True,
-                ) from exc
-            except httpx.TimeoutException as exc:
-                _record_transport_error(span, exc)
-                logger.error("upstream_network_failure", host=host, error_type=type(exc).__name__)
-                raise UpstreamTimeoutError(
-                    detail="The upstream did not respond within the deadline.",
-                    type="upstream_timeout",
-                ) from exc
-            except httpx.HTTPError as exc:
+            except _TRANSPORT_FAILURES as exc:
+                # One mapping for every transport failure (see
+                # ``_map_transport_error``); a connect-phase failure is
+                # ``pre_send`` so the retry decorator may retry it for any method.
                 _record_transport_error(span, exc)
                 logger.error("upstream_network_failure", host=host, error_type=type(exc).__name__)
                 # ``from None``: a chained cause would put the raw message back
                 # into any traceback rendered from this error (span, log).
-                raise BrokerError(
-                    detail=_transport_error_detail(exc),
-                    type="upstream_transport_error",
-                ) from None
+                raise _map_transport_error(exc) from None
 
         elapsed_ms = (time.perf_counter() - start) * 1000
         return RunnerResult(
@@ -303,16 +340,12 @@ class HttpRunner(UpstreamRunner):
                         content_type=resp.headers.get("content-type"),
                         aiter=self._cap_iter(resp.aiter_raw(), resp.status_code),
                     )
-            except httpx.TimeoutException as exc:
-                raise UpstreamTimeoutError(
-                    detail="The upstream did not respond within the deadline.",
-                    type="upstream_timeout",
-                ) from exc
-            except httpx.HTTPError as exc:
+            except _TRANSPORT_FAILURES as exc:
+                # Same mapping as the buffered path. The edge drains the body
+                # outside this block (its exit stack), so what lands here is a
+                # failure opening the stream — before any response has started,
+                # while the status is still the broker's to choose.
                 logger.error("upstream_network_failure", host=host, error_type=type(exc).__name__)
                 # ``from None``: a chained cause would put the raw message back
                 # into any traceback rendered from this error (span, log).
-                raise BrokerError(
-                    detail=_transport_error_detail(exc),
-                    type="upstream_transport_error",
-                ) from None
+                raise _map_transport_error(exc) from None

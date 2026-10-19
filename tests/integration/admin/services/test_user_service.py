@@ -228,7 +228,7 @@ async def test_delete_anonymises(integration_context: Context, admin_user: str) 
     )
     user_id = created.user.id
 
-    await service.delete(user_id, identity=Identity(sub="usr_test", email="test@local"))
+    await service.delete(user_id, identity=_ORG_ADMIN)
 
     async with ctx.admin_db.session() as session:
         user = await UserRepository.get_by_id(session, user_id)
@@ -266,11 +266,11 @@ async def test_disable_and_enable(integration_context: Context, admin_user: str)
     )
     user_id = created.user.id
 
-    await service.disable(user_id, identity=Identity(sub="usr_test", email="test@local"))
+    await service.disable(user_id, identity=_ORG_ADMIN)
     user_after_disable = await service.get_by_id(user_id)
     assert user_after_disable.active is False
 
-    await service.enable(user_id, identity=Identity(sub="usr_test", email="test@local"))
+    await service.enable(user_id, identity=_ORG_ADMIN)
     user_after_enable = await service.get_by_id(user_id)
     assert user_after_enable.active is True
 
@@ -295,9 +295,7 @@ async def test_reissue_invite(integration_context: Context, admin_user: str) -> 
     )
     user_id = created.user.id
 
-    invite = await service.reissue_invite(
-        user_id, identity=Identity(sub="usr_test", email="test@local")
-    )
+    invite = await service.reissue_invite(user_id, identity=_ORG_ADMIN)
     assert invite.token.startswith("inv_")
     assert invite.token != created.invite_token
 
@@ -331,7 +329,7 @@ async def test_reissue_invite_redeemed_raises(
 
     service = UserService(ctx)
     with pytest.raises(ConflictError):
-        await service.reissue_invite(user_id, identity=Identity(sub="usr_test", email="test@local"))
+        await service.reissue_invite(user_id, identity=_ORG_ADMIN)
 
     # Cleanup
     async with ctx.admin_db.session() as session:

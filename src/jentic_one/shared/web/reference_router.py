@@ -11,10 +11,13 @@ keeping it out of the spec keeps the spec clean.
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Callable
 from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from jentic_one.shared.web.endpoint_reference import (
     build_reference_payload,
@@ -23,28 +26,57 @@ from jentic_one.shared.web.endpoint_reference import (
 
 REFERENCE_PATH = "/reference/endpoints.json"
 
+_CACHE_ATTR = "endpoint_reference_payload"
 
-def _reference_payload(app: Any) -> dict[str, Any]:
+
+def _cached_payload(app: Any) -> dict[str, Any] | None:
+    cached: dict[str, Any] | None = getattr(app.state, _CACHE_ATTR, None)
+    return dict(cached) if cached is not None else None
+
+
+def _reference_payload(app: Any, source_app: Callable[[], Any] | None) -> dict[str, Any]:
     """Build (and cache on app.state) the reference payload for this app.
 
     The join introspects routes + the curated permission map, which is stable for the
-    lifetime of the process, so it is computed once and cached.
+    lifetime of the process, so it is computed once and cached. ``source_app``, when
+    given, builds the app to introspect instead of the serving one (a partial
+    control-plane process documents the whole control plane, not only its own
+    routes). A build that raises caches nothing, so the next request retries it.
     """
-    cached = getattr(app.state, "endpoint_reference_payload", None)
+    cached = _cached_payload(app)
     if cached is not None:
-        return dict(cached)
-    endpoints = collect_endpoints(app)
+        return cached
+    endpoints = collect_endpoints(source_app() if source_app is not None else app)
     payload = build_reference_payload(endpoints)
-    app.state.endpoint_reference_payload = payload
+    setattr(app.state, _CACHE_ATTR, payload)
     return payload
 
 
-def get_reference_router() -> APIRouter:
-    """Router exposing the public, schema-hidden endpoint reference."""
+def get_reference_router(source_app: Callable[[], Any] | None = None) -> APIRouter:
+    """Router exposing the public, schema-hidden endpoint reference.
+
+    By default the reference introspects the serving app. ``source_app`` is a
+    zero-argument factory for the app to introspect instead. Building it is
+    CPU-bound, so the first (cold) request builds it off the event loop, exactly
+    once however many cold requests race: the waiters park on an
+    :class:`asyncio.Lock` on the loop, so a cold burst occupies one threadpool
+    worker, not one per request. Every later request is answered from the cached
+    payload on the loop.
+    """
     router = APIRouter()
+    build_lock = asyncio.Lock()
 
     @router.get(REFERENCE_PATH, include_in_schema=False)
     async def endpoints_reference(request: Request) -> JSONResponse:
-        return JSONResponse(_reference_payload(request.app))
+        if source_app is None:
+            return JSONResponse(_reference_payload(request.app, None))
+        cached = _cached_payload(request.app)
+        if cached is not None:
+            return JSONResponse(cached)
+        async with build_lock:
+            payload = _cached_payload(request.app)
+            if payload is None:
+                payload = await run_in_threadpool(_reference_payload, request.app, source_app)
+        return JSONResponse(payload)
 
     return router
