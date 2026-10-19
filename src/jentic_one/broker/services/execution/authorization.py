@@ -369,15 +369,18 @@ async def _deny(
                 created_by=identity.sub,
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
+                # Flat keys, matching the other broker events that name an API
+                # or operation (``credential.accessed``,
+                # ``broker.execution_repeated_failure``).
                 data={
                     "reason": reason.value,
                     "mode": "direct",
-                    "api": {"vendor": api.vendor, "name": api.name, "version": api.version},
-                    "operation": {
-                        "id": operation_id,
-                        "method": operation_method,
-                        "path": operation_path,
-                    },
+                    "api_vendor": api.vendor,
+                    "api_name": api.name,
+                    "api_version": api.version,
+                    "operation_id": operation_id,
+                    "operation_method": operation_method,
+                    "operation_path": operation_path,
                 },
             )
     except Exception:

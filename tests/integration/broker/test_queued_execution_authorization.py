@@ -6,19 +6,27 @@ the broker lifespan does, and asserts that a change made *after* enqueue —
 agent suspended, execute scope revoked, binding suspended or removed,
 credential deactivated, rule changed — is honoured when
 the job runs, with the same problem type the sync execute route returns.
+Also pins the ``broker.pbac_denied`` / ``broker.credential_binding_unserved``
+events both paths record: trace-correlated, naming the API and operation
+template, never the concrete request path or query.
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncGenerator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 import structlog
+from fastapi import FastAPI
 from sqlalchemy import delete, select, update
+from starlette.requests import Request
 
+import jentic_one.broker.web.routers.execute as execute_mod
 from jentic_one.admin.core.schema.actor_permission_grants import ActorPermissionGrant
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.agents import Agent
@@ -27,13 +35,17 @@ from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.admin.core.schema.job_results import JobResult
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.core.schema.users import User
+from jentic_one.broker.core.exceptions import ActionDeniedError
 from jentic_one.broker.core.setup import build_queued_execution_authorizer
+from jentic_one.broker.repos import AgentRuleEvaluator, CredentialBindingResolver
 from jentic_one.broker.repos.actor_status import ActorStatusResolver
 from jentic_one.broker.services.execution import authorization
 from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.customer_api_keys import CustomerAPIKey
+from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION
+from jentic_one.shared.broker.protocols import ResolveResult
 from jentic_one.shared.config import WorkerConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.ids import generate_ksuid
@@ -46,7 +58,14 @@ from jentic_one.shared.jobs.protocols import (
     UpstreamExecResult,
 )
 from jentic_one.shared.jobs.worker import WorkerLoop
-from jentic_one.shared.models import EventType, JobKind, JobStatus, StoredCredentialType
+from jentic_one.shared.models import (
+    ActorType,
+    EventType,
+    JobKind,
+    JobStatus,
+    StoredCredentialType,
+)
+from jentic_one.shared.schemas import APIReference, OperationInfo
 
 pytestmark = pytest.mark.integration
 
@@ -284,6 +303,14 @@ async def test_rule_changed_after_enqueue_is_denied(
 
 
 _TRACE_ID = "0af7651916cd43dd8448eb211c80319c"
+_DENIAL_IDENTITY_KEYS = (
+    "api_vendor",
+    "api_name",
+    "api_version",
+    "operation_id",
+    "operation_method",
+    "operation_path",
+)
 
 
 async def _denial_events(ctx: Context) -> list[Event]:
@@ -323,8 +350,14 @@ async def test_rule_denial_event_carries_trace_id_and_resolved_operation(
     assert event.trace_id == _TRACE_ID
     assert event.data is not None
     assert event.data["reason"] == "no_rule_matched"
-    assert event.data["api"] == {"vendor": _VENDOR, "name": _API_NAME, "version": _API_VERSION}
-    assert event.data["operation"] == {"id": "listPets", "method": "GET", "path": "/pets/{petId}"}
+    assert {k: event.data[k] for k in _DENIAL_IDENTITY_KEYS} == {
+        "api_vendor": _VENDOR,
+        "api_name": _API_NAME,
+        "api_version": _API_VERSION,
+        "operation_id": "listPets",
+        "operation_method": "GET",
+        "operation_path": "/pets/{petId}",
+    }
     # The concrete request path never reaches the event.
     assert "secret-id-123" not in str(event.data)
     assert "secret-id-123" not in event.summary
@@ -376,6 +409,81 @@ async def test_unserved_api_denial_event_carries_trace_id(
         )
         (event,) = result.scalars()
     assert event.trace_id == _TRACE_ID
+
+
+class _PetsResolver:
+    """Discovery stand-in: resolves every URL to one templated pets operation."""
+
+    async def resolve_operation(
+        self, *, method: str, url: str, revision_id: Any = None
+    ) -> ResolveResult | None:
+        return ResolveResult(
+            operation=OperationInfo(
+                id="getPet",
+                path="/pets/{petId}",
+                method=method,
+                relative_path="/pets/secret-id-123",
+            ),
+            api=APIReference(vendor=_VENDOR, name=_API_NAME, version=_API_VERSION),
+            path_params={"petId": "secret-id-123"},
+        )
+
+
+async def test_sync_route_denial_event_carries_the_traceparent_trace_id(
+    integration_context: Context, clean_tables: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The direct execute route stamps the request's ``traceparent`` trace id
+    and the operation template on the denial event — never the concrete path
+    or query."""
+    ctx = integration_context
+    agent_id, _ = await _seed_bound_agent(ctx)
+    await _deny_by_rule(ctx, agent_id)
+
+    async def _no_dns(raw_url: str, egress: Any = None) -> str:
+        return raw_url
+
+    monkeypatch.setattr(execute_mod, "validate_upstream_url_async", _no_dns)
+    app = FastAPI()
+    app.state.broker_registry_resolver = _PetsResolver()
+    raw_path = b"/api.acme.com/v1/pets/secret-id-123"
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": raw_path.decode(),
+            "raw_path": raw_path,
+            "query_string": b"token=QUERYSECRET456",
+            "headers": [(b"traceparent", f"00-{_TRACE_ID}-00f067aa0ba902b7-01".encode())],
+            "app": app,
+        }
+    )
+
+    with pytest.raises(ActionDeniedError):
+        await execute_mod._handle(
+            request,
+            "GET",
+            ctx,
+            Identity(sub=agent_id, actor_type=ActorType.AGENT, permissions=[]),
+            CredentialBindingResolver(ctx.admin_db, ctx.control_db),
+            AgentRuleEvaluator(ctx.control_db, cache_ttl_seconds=0),
+            MagicMock(),  # runner — never reached: authorization denies first
+            None,  # idempotency
+        )
+
+    (event,) = await _denial_events(ctx)
+    assert event.trace_id == _TRACE_ID
+    assert event.data is not None
+    assert {k: event.data[k] for k in _DENIAL_IDENTITY_KEYS} == {
+        "api_vendor": _VENDOR,
+        "api_name": _API_NAME,
+        "api_version": _API_VERSION,
+        "operation_id": "getPet",
+        "operation_method": "GET",
+        "operation_path": "/pets/{petId}",
+    }
+    recorded = f"{event.summary} {event.detail} {json.dumps(event.data)}"
+    assert "secret-id-123" not in recorded
+    assert "QUERYSECRET456" not in recorded
 
 
 async def test_actor_status_resolver_reads_user_and_agent_rows(
