@@ -1,7 +1,6 @@
 package skillgen
 
 import (
-	"os"
 	"strconv"
 	"strings"
 )
@@ -71,7 +70,7 @@ func installStates(a Adapter, name, available string, env DetectEnv) []InstallSt
 		}
 		seen[target] = true
 		st := InstallState{Skill: name, Scope: scope, Path: target, AvailableVersion: available}
-		if data, err := os.ReadFile(target); err == nil { //nolint:gosec // target comes from adapter rules + env, not user input.
+		if data, err := readTarget(target); err == nil {
 			norm := []byte(normalizeNewlines(string(data)))
 			st.Installed, st.UserEdits, st.InstalledVersion = probeInstall(a, target, norm, name)
 		}
