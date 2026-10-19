@@ -33,6 +33,7 @@ from jentic_one.control.services.credentials.schemas.credentials import Credenti
 from jentic_one.control.services.credentials.schemas.provision import APIReference
 from jentic_one.control.services.credentials.service import CredentialService
 from jentic_one.control.services.integrations.connect_session_service import (
+    ConnectedConfirmResult,
     ConnectSessionService,
     SessionAmend,
 )
@@ -212,7 +213,7 @@ async def test_agent_edit_applies_the_reviewers_rules(
         permission_rules=[_READ, narrowed],
         resume=False,
     )
-    assert result.credential_id == binding
+    assert isinstance(result, ConnectedConfirmResult) and result.credential_id == binding
     assert await _rules(ctx, binding) == [("allow", "/v1/"), ("allow", "/v1/send/reply")]
 
     status = await svc.get_status(

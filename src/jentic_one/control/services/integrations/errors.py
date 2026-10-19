@@ -412,3 +412,28 @@ class AmendFieldsMismatchError(ConnectSessionServiceError):
         super().__init__(f"fields {fields!r} do not apply to a {intent} session")
         self.intent = intent
         self.fields = fields
+
+
+class ScopesNotSupportedError(ConnectSessionServiceError):
+    """The edit adds scopes to a credential whose access the platform cannot widen.
+
+    Only OAuth credentials connected through an authorization-code or
+    device-authorization app can be re-consented with more scopes.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "scopes can only be added to an OAuth credential connected through an "
+            "authorization-code or device-authorization app"
+        )
+
+
+class ScopeWideningForbiddenError(ConnectSessionServiceError):
+    """Adding scopes would widen a credential other agents use; the caller may not."""
+
+    def __init__(self, credential_id: str) -> None:
+        super().__init__(
+            f"adding scopes to credential {credential_id!r} widens it for other bound agents; "
+            "only its owner or an org admin may confirm that"
+        )
+        self.credential_id = credential_id

@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { EditRulesRequest } from './EditRulesRequest';
+import type { EditScopesRequest } from './EditScopesRequest';
 /**
  * Ask to change an existing credential binding; a human approves the change.
  */
@@ -27,5 +28,9 @@ export type EditConnectionRequest = {
      * The rule change. While the binding points at a shared rule set, it changes that set's rules.
      */
     rules?: (EditRulesRequest | null);
+    /**
+     * Scopes to add. OAuth credentials connected through an authorization-code or device-authorization app only; others are 422 scopes_not_supported.
+     */
+    scopes?: (EditScopesRequest | null);
 };
 

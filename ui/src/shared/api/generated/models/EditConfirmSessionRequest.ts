@@ -8,6 +8,10 @@ import type { PermissionRuleSchema } from './PermissionRuleSchema';
  */
 export type EditConfirmSessionRequest = {
     /**
+     * The final scope set (at most 100). Scopes beyond the credential's grant start a vendor consent; the rules and scopes land together when it completes. Omit to keep the grant as it is.
+     */
+    confirmed_scopes?: (Array<string> | null);
+    /**
      * Confirm variant; always `edit`.
      */
     kind: string;

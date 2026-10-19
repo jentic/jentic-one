@@ -18,6 +18,7 @@ from jentic_one.control.services.integrations.edits import (
 )
 from jentic_one.control.services.integrations.errors import (
     NothingToChangeError,
+    ScopesNotSupportedError,
     UnknownRuleError,
 )
 
@@ -140,3 +141,23 @@ def test_baseline_matches_ignores_scopes_but_not_rules_or_suspension() -> None:
     assert baseline_matches(stored, stored | {"granted_scopes": ["repo", "gist"]})
     assert not baseline_matches(stored, stored | {"suspended": True})
     assert not baseline_matches(stored, stored | {"rules": stored["rules"][:1]})
+
+
+def test_adding_scopes_widens_and_counts_as_a_change() -> None:
+    result, _ = resolve_edit(_baseline(), EditRequest(add_scopes=["gist"]))
+    assert result["scopes"] == ["gist", "repo"]
+    require_change(_baseline(), result)
+    assert widens_access(_baseline(), result) is True
+    already, _ = resolve_edit(_baseline(), EditRequest(add_scopes=["repo"]))
+    with pytest.raises(NothingToChangeError):
+        require_change(_baseline(), already)
+
+
+def test_scopes_cannot_be_added_without_an_oauth_grant() -> None:
+    with pytest.raises(ScopesNotSupportedError):
+        resolve_edit(_baseline() | {"granted_scopes": None}, EditRequest(add_scopes=["x"]))
+
+
+def test_a_proposal_round_trips_its_scopes() -> None:
+    request = EditRequest(add=[RuleAdd(_SEND)], add_scopes=["gist"], resume=True, reason="r")
+    assert EditRequest.from_proposal(request.as_proposal()) == request

@@ -3,7 +3,9 @@
 A connect session can now edit an existing binding (``intent = 'edit'``) as
 well as create a credential, and its ask is versioned: every session has
 revision 1, each amend appends the next, and ``current_revision_id`` names
-the live one. An edit snapshots the binding it started from in ``baseline``.
+the live one. An edit snapshots the binding it started from in ``baseline``,
+and holds what its approver confirmed in ``approved_change`` while a vendor
+consent for added scopes is in flight.
 One open edit per (agent, credential) is enforced by a partial unique index.
 
 Schema only; ``d9305dcd765e`` backfills revision 1 for open sessions.
@@ -42,6 +44,7 @@ def upgrade() -> None:
     op.add_column(
         "connect_sessions", sa.Column("current_revision_id", sa.String(30), nullable=True)
     )
+    op.add_column("connect_sessions", sa.Column("approved_change", json_type, nullable=True))
     op.create_index(
         "ix_connect_sessions_open_edit",
         "connect_sessions",
@@ -94,6 +97,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_table("connect_session_revisions")
     op.drop_index("ix_connect_sessions_open_edit", table_name="connect_sessions")
+    op.drop_column("connect_sessions", "approved_change")
     op.drop_column("connect_sessions", "current_revision_id")
     op.drop_column("connect_sessions", "baseline")
     op.drop_column("connect_sessions", "intent")

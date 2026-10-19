@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { EditRulesRequest } from './EditRulesRequest';
+import type { EditScopesRequest } from './EditScopesRequest';
 import type { PermissionRuleSchema } from './PermissionRuleSchema';
 /**
  * Change an open session's ask; fields sent replace those parts, the rest stay.
@@ -28,5 +29,9 @@ export type AmendSessionRequest = {
      * Edit sessions: the rule change, relative to the baseline.
      */
     rules?: (EditRulesRequest | null);
+    /**
+     * Edit sessions: the scopes to add, replacing the current ask.
+     */
+    scopes?: (EditScopesRequest | null);
 };
 

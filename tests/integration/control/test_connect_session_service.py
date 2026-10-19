@@ -19,6 +19,7 @@ import json
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import AsyncMock, patch
 from urllib.parse import parse_qs, urlsplit
 
@@ -43,7 +44,11 @@ from jentic_one.control.core.schema.device_authorization_credentials import (
 )
 from jentic_one.control.core.schema.oauth_client_credentials import OAuthClientCredential
 from jentic_one.control.core.schema.oauth_tokens import OAuthToken
-from jentic_one.control.repos import CredentialRepository
+from jentic_one.control.repos import (
+    AgentPermissionRuleRepository,
+    CredentialRepository,
+    OAuthTokenRepository,
+)
 from jentic_one.control.repos.connect_session_outcome_repo import (
     ConnectSessionOutcomeRepository,
 )
@@ -51,7 +56,10 @@ from jentic_one.control.repos.connect_session_repo import ConnectSessionReposito
 from jentic_one.control.repos.connect_session_revision_repo import (
     ConnectSessionRevisionRepository,
 )
+from jentic_one.control.repos.effects_repo import EffectsRepository
 from jentic_one.control.services.credentials.errors import CredentialNotFoundError
+from jentic_one.control.services.credentials.schemas.credentials import CredentialCreate
+from jentic_one.control.services.credentials.schemas.provision import APIReference
 from jentic_one.control.services.credentials.service import CredentialService
 from jentic_one.control.services.credentials.state import StateReplayedError
 from jentic_one.control.services.integrations import device_authorization as df
@@ -62,7 +70,9 @@ from jentic_one.control.services.integrations.connect_session_service import (
     ConnectSessionService,
     DeviceAuthorizationConfirmResult,
     SessionAmend,
+    StatusResult,
 )
+from jentic_one.control.services.integrations.edits import EditRequest, RuleAdd
 from jentic_one.control.services.integrations.errors import (
     AgentInactiveError,
     AgentNotFoundError,
@@ -76,9 +86,11 @@ from jentic_one.control.services.integrations.errors import (
     OAuthAppChangedError,
     RevisionChangedError,
     RevisionRequiredError,
+    ScopesNotSupportedError,
+    ScopeWideningForbiddenError,
     SecuritySchemesLookupUnavailableError,
 )
-from jentic_one.control.services.integrations.flow_handlers.base import StatusReport
+from jentic_one.control.services.integrations.flow_handlers.base import StatusReport, SuccessTokens
 from jentic_one.control.services.integrations.flow_handlers.device_authorization import (
     DeviceAuthorizationHandler,
 )
@@ -110,6 +122,7 @@ from jentic_one.shared.db.errors import DatabaseIntegrityError
 from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType
+from jentic_one.shared.models.credentials import CredentialType
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.web.deps import resolve_identity
 from jentic_one.wiring import InProcessCatalogAutoImporter
@@ -2459,3 +2472,386 @@ async def test_amending_a_create_session_replaces_its_ask(
             identity=_AGENT_IDENTITY,
             amend=SessionAmend(fields=frozenset({"resume"}), resume=True),
         )
+
+
+# ---------------------------------------------------------------------------
+# Edit sessions that add scopes: a vendor consent on the credential's own flow
+# ---------------------------------------------------------------------------
+
+_DEVICE_BEGIN = df.BeginResult(
+    device_code="dev-code-edit",
+    user_code="EDIT-1234",
+    verification_uri="https://idp.example.com/device",
+    verification_uri_complete=None,
+    expires_in=900,
+    interval=5,
+)
+_READ_RULE: dict[str, object] = {
+    "effect": "allow",
+    "methods": ["GET"],
+    "path": "/repos",
+    "match_mode": "prefix",
+}
+_WRITE_RULE: dict[str, object] = {
+    "effect": "allow",
+    "methods": ["POST"],
+    "path": "/repos",
+    "match_mode": "prefix",
+}
+
+
+def _success(scopes: list[str]) -> StatusReport:
+    return StatusReport(
+        kind="success",
+        tokens=SuccessTokens(
+            access_token="at_" + "_".join(scopes),
+            refresh_token="rt",
+            expires_in=3600,
+            scope=" ".join(scopes),
+            granted_scopes=scopes,
+        ),
+    )
+
+
+async def _connected_device_credential(ctx: Context, svc: ConnectSessionService) -> str:
+    """A device-flow credential the agent is bound to, granted ``read:user``."""
+    created = await svc.create_session(
+        vendor_key="testdev", agent_id=_AGENT_ID, initiator_actor_id=_USER_ID
+    )
+    with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)):
+        await svc.confirm(
+            created.session_id,
+            revision_id=await _revision(ctx, created.session_id),
+            poll_token=created.poll_token,
+            confirmed_scopes=["read:user"],
+            permission_rules=[_READ_RULE],
+            identity=_USER_IDENTITY,
+        )
+    echo = identity_echo.IdentityEchoResult(display="octo", raw={"login": "octo"})
+    with (
+        patch.object(
+            DeviceAuthorizationHandler,
+            "advance",
+            new=AsyncMock(return_value=_success(["read:user"])),
+        ),
+        patch.object(identity_echo, "echo_identity", new=AsyncMock(return_value=echo)),
+    ):
+        await svc.advance_polling_session(created.session_id)
+    async with ctx.control_db.session() as session:
+        row = await ConnectSessionRepository.get_by_id(session, created.session_id)
+    assert row is not None and row.state == "connected"
+    return row.credential_id
+
+
+async def _token_scope(ctx: Context, credential_id: str) -> str | None:
+    async with ctx.control_db.session() as session:
+        token = await OAuthTokenRepository.get_by_credential(session, credential_id)
+    return token.scope if token is not None else None
+
+
+async def test_an_edit_adding_scopes_lands_with_the_device_grant(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    credential_id = await _connected_device_credential(ctx, svc)
+
+    edit = await svc.create_edit_session(
+        credential_id=credential_id,
+        agent_id=_AGENT_ID,
+        identity=_AGENT_IDENTITY,
+        request=EditRequest(add=[RuleAdd(_WRITE_RULE)], add_scopes=["repo"]),
+    )
+    assert edit.resolved_flow == "device_authorization"
+    review = await svc.get_review_data(edit.session_id, poll_token=None, identity=_USER_IDENTITY)
+    assert review.edit is not None and review.edit.needs_vendor_consent is True
+    assert review.edit.result["scopes"] == ["read:user", "repo"]
+
+    with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)):
+        challenge = await svc.confirm_edit(
+            edit.session_id,
+            poll_token=None,
+            identity=_USER_IDENTITY,
+            revision_id=edit.revision_id,
+            permission_rules=[_READ_RULE, _WRITE_RULE],
+            resume=False,
+            confirmed_scopes=["read:user", "repo"],
+        )
+    assert isinstance(challenge, DeviceAuthorizationConfirmResult)
+    assert challenge.user_code == "EDIT-1234"
+    # Until the grant lands the binding keeps its rules and token.
+    assert await _token_scope(ctx, credential_id) == "read:user"
+    status = await svc.get_status(
+        edit.session_id, poll_token=edit.poll_token, identity=_AGENT_IDENTITY
+    )
+    assert status.status == "pending"
+
+    echo = identity_echo.IdentityEchoResult(display="octo", raw={"login": "octo"})
+    with (
+        patch.object(
+            DeviceAuthorizationHandler,
+            "advance",
+            new=AsyncMock(return_value=_success(["read:user", "repo"])),
+        ),
+        patch.object(identity_echo, "echo_identity", new=AsyncMock(return_value=echo)),
+    ):
+        await svc.advance_polling_target(credential_id)
+
+    assert await _token_scope(ctx, credential_id) == "read:user repo"
+    async with ctx.control_db.session() as session:
+        rules = await AgentPermissionRuleRepository.list_rules(session, _AGENT_ID, credential_id)
+    assert [r.methods for r in rules if not r.is_system] == [["GET"], ["POST"]]
+    status = await svc.get_status(
+        edit.session_id, poll_token=edit.poll_token, identity=_AGENT_IDENTITY
+    )
+    assert (status.status, status.credential_id) == ("applied", credential_id)
+
+
+async def test_a_failed_consent_leaves_the_credential_as_it_was(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    credential_id = await _connected_device_credential(ctx, svc)
+    edit = await svc.create_edit_session(
+        credential_id=credential_id,
+        agent_id=_AGENT_ID,
+        identity=_AGENT_IDENTITY,
+        request=EditRequest(add_scopes=["repo"]),
+    )
+    with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)):
+        await svc.confirm_edit(
+            edit.session_id,
+            poll_token=None,
+            identity=_USER_IDENTITY,
+            revision_id=edit.revision_id,
+            permission_rules=[_READ_RULE],
+            resume=False,
+            confirmed_scopes=["read:user", "repo"],
+        )
+    with patch.object(
+        DeviceAuthorizationHandler,
+        "advance",
+        new=AsyncMock(return_value=StatusReport(kind="failed", error_code="access_denied")),
+    ):
+        await svc.advance_polling_session(edit.session_id)
+
+    assert await _token_scope(ctx, credential_id) == "read:user"
+    async with ctx.control_db.session() as session:
+        credential = await CredentialRepository.get_by_id(session, credential_id)
+        aux = await session.get(DeviceAuthorizationCredential, credential_id)
+        assert await ConnectSessionRepository.get_by_id(session, edit.session_id) is None
+    assert credential is not None and credential.state == "connected"
+    assert aux is not None and aux.encrypted_device_code is None
+    async with ctx.admin_db.session() as session:
+        bound = await session.execute(
+            select(AgentCredentialBinding).where(
+                AgentCredentialBinding.agent_id == _AGENT_ID,
+                AgentCredentialBinding.credential_id == credential_id,
+            )
+        )
+    assert bound.scalars().first() is not None
+
+
+async def test_adding_scopes_to_a_credential_other_agents_use_needs_its_owner(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    credential_id = await _connected_device_credential(ctx, svc)
+    async with ctx.admin_db.transaction() as session:
+        await session.execute(
+            text(
+                "INSERT INTO agents (id, name, registered_by, owner_id, status) "
+                "VALUES ('agnt_other_bound', 'other', :u, :u, 'approved')"
+            ),
+            {"u": _USER_ID},
+        )
+        await EffectsRepository.bind_agent_to_credential(
+            session,
+            agent_id="agnt_other_bound",
+            credential_id=credential_id,
+            rule_set_id=None,
+            created_by=_USER_ID,
+        )
+    # The credential belongs to someone else now.
+    async with ctx.control_db.transaction() as session:
+        await CredentialRepository.set_created_by(session, credential_id, created_by="usr_else")
+    edit = await svc.create_edit_session(
+        credential_id=credential_id,
+        agent_id=_AGENT_ID,
+        identity=_AGENT_IDENTITY,
+        request=EditRequest(add_scopes=["repo"]),
+    )
+    review = await svc.get_review_data(edit.session_id, poll_token=None, identity=_USER_IDENTITY)
+    assert review.edit is not None
+    assert [a.agent_id for a in review.edit.other_bound_agents] == ["agnt_other_bound"]
+    with pytest.raises(ScopeWideningForbiddenError):
+        await svc.confirm_edit(
+            edit.session_id,
+            poll_token=None,
+            identity=_USER_IDENTITY,
+            revision_id=edit.revision_id,
+            permission_rules=[_READ_RULE],
+            resume=False,
+            confirmed_scopes=["read:user", "repo"],
+        )
+    async with ctx.admin_db.transaction() as session:
+        await session.execute(
+            text("DELETE FROM agent_credential_bindings WHERE agent_id = 'agnt_other_bound'")
+        )
+        await session.execute(text("DELETE FROM agents WHERE id = 'agnt_other_bound'"))
+
+
+async def test_scopes_cannot_be_added_to_a_static_credential(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    ctx = integration_context
+    created = await CredentialService(ctx).create(
+        CredentialCreate(
+            type=CredentialType.BEARER_TOKEN,
+            name="static",
+            api=APIReference(vendor="test-vendor", name="test-api", version="v1"),
+            token="sk-static",
+        ),
+        identity=_USER_IDENTITY,
+    )
+    async with ctx.admin_db.transaction() as session:
+        await EffectsRepository.bind_agent_to_credential(
+            session,
+            agent_id=_AGENT_ID,
+            credential_id=created.credential_id,
+            rule_set_id=None,
+            created_by=_USER_ID,
+        )
+    with pytest.raises(ScopesNotSupportedError):
+        await ConnectSessionService(ctx).create_edit_session(
+            credential_id=created.credential_id,
+            agent_id=_AGENT_ID,
+            identity=_AGENT_IDENTITY,
+            request=EditRequest(add_scopes=["repo"]),
+        )
+
+
+class _TokenClient:
+    """httpx.AsyncClient stand-in answering the token exchange."""
+
+    def __init__(self, scope: str) -> None:
+        self._response = Response(
+            200,
+            json={
+                "access_token": "at_" + scope.replace(" ", "_"),
+                "refresh_token": "rt",
+                "expires_in": 3600,
+                "scope": scope,
+            },
+        )
+
+    async def __aenter__(self) -> _TokenClient:
+        return self
+
+    async def __aexit__(self, *a: object) -> bool:
+        return False
+
+    async def post(self, *args: object, **kwargs: object) -> Response:
+        return self._response
+
+
+async def _callback(
+    svc: ConnectSessionService, authorize_url: str, *, scope: str, account: str
+) -> StatusResult:
+    echo = identity_echo.IdentityEchoResult(display=account, raw={"username": account})
+    with (
+        patch("httpx.AsyncClient", return_value=_TokenClient(scope)),
+        patch.object(identity_echo, "echo_identity", new=AsyncMock(return_value=echo)),
+    ):
+        return await svc.complete_from_callback(
+            raw_state=_state_from_authorize_url(authorize_url), code="the-code"
+        )
+
+
+async def test_an_edit_adding_scopes_lands_with_the_auth_code_grant_of_the_same_account(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    ctx = integration_context
+    ctx.config.vendors.entries["testauth"].scopes.append(
+        VendorScopeConfig(name="scope-b", classification="write", default=False)
+    )
+    svc = ConnectSessionService(ctx)
+    created = await svc.create_session(
+        vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_USER_ID
+    )
+    confirmed = await svc.confirm(
+        created.session_id,
+        revision_id=await _revision(ctx, created.session_id),
+        poll_token=created.poll_token,
+        confirmed_scopes=["scope-a"],
+        permission_rules=[_READ_RULE],
+        identity=_USER_IDENTITY,
+    )
+    assert isinstance(confirmed, AuthCodeConfirmResult)
+    assert (
+        await _callback(svc, confirmed.authorize_url, scope="scope-a", account="alice")
+    ).status == "connected"
+    async with ctx.control_db.session() as session:
+        row = await ConnectSessionRepository.get_by_id(session, created.session_id)
+    assert row is not None
+    credential_id = row.credential_id
+
+    async def _edit_and_consent(account: str) -> tuple[Any, StatusResult]:
+        edit = await svc.create_edit_session(
+            credential_id=credential_id,
+            agent_id=_AGENT_ID,
+            identity=_AGENT_IDENTITY,
+            request=EditRequest(add_scopes=["scope-b"]),
+        )
+        assert edit.resolved_flow == "authorization_code"
+        challenge = await svc.confirm_edit(
+            edit.session_id,
+            poll_token=None,
+            identity=_USER_IDENTITY,
+            revision_id=edit.revision_id,
+            permission_rules=[_READ_RULE, _WRITE_RULE],
+            resume=False,
+            confirmed_scopes=["scope-a", "scope-b"],
+        )
+        assert isinstance(challenge, AuthCodeConfirmResult)
+        return edit, await _callback(
+            svc, challenge.authorize_url, scope="scope-a scope-b", account=account
+        )
+
+    # Consenting as another vendor account never swaps whose account it is.
+    _, refused = await _edit_and_consent("mallory")
+    assert (refused.status, refused.error_code) == ("failed", "account_changed")
+    assert await _token_scope(ctx, credential_id) == "scope-a"
+
+    edit, landed = await _edit_and_consent("alice")
+    assert landed.status == "applied"
+    assert await _token_scope(ctx, credential_id) == "scope-a scope-b"
+    async with ctx.control_db.session() as session:
+        rules = await AgentPermissionRuleRepository.list_rules(session, _AGENT_ID, credential_id)
+    assert [r.methods for r in rules if not r.is_system] == [["GET"], ["POST"]]
+    status = await svc.get_status(
+        edit.session_id, poll_token=edit.poll_token, identity=_AGENT_IDENTITY
+    )
+    assert status.status == "applied"

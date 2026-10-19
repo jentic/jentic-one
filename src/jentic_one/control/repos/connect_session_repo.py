@@ -137,14 +137,14 @@ class ConnectSessionRepository:
         Used by the connect-poll scanner to dispatch: a candidate credential
         with a live session takes the session-mode advancement path, one
         without takes the raw-credential path. Only sessions in
-        ``LIVE_STATES`` count (terminal states are already frozen), and only
-        create sessions: an edit session wraps a live credential it never
-        connects.
+        ``LIVE_STATES`` count (terminal states are already frozen). An edit
+        session counts only once confirmed (``polling``): before that it
+        wraps a live credential without driving any flow on it.
         """
         stmt = select(ConnectSession).where(
             ConnectSession.credential_id == credential_id,
             ConnectSession.state.in_(LIVE_STATES),
-            ConnectSession.intent == INTENT_CREATE,
+            or_(ConnectSession.intent == INTENT_CREATE, ConnectSession.state == "polling"),
         )
         result = await session.execute(stmt)
         return result.scalars().first()
@@ -184,13 +184,14 @@ class ConnectSessionRepository:
 
     @staticmethod
     async def transition_edit(
-        session: AsyncSession, session_id: str, *, revision_id: str, to_state: str
+        session: AsyncSession, session_id: str, *, revision_id: str, to_state: str, **fields: Any
     ) -> bool:
         """Compare-and-swap an edit session out of ``created`` on its current revision.
 
         The revision check rides the same UPDATE, so an amend that lands
         between the caller's read and this write makes it lose: an approval
-        only ever applies to the revision its reviewer saw.
+        only ever applies to the revision its reviewer saw. ``fields`` ride
+        the same UPDATE.
         """
         stmt = (
             update(ConnectSession)
@@ -200,7 +201,7 @@ class ConnectSessionRepository:
                 ConnectSession.state == "created",
                 ConnectSession.current_revision_id == revision_id,
             )
-            .values(state=to_state)
+            .values(state=to_state, **fields)
         )
         result = await session.execute(stmt)
         await session.flush()
@@ -216,6 +217,7 @@ class ConnectSessionRepository:
         exclude_flows: Sequence[str] | None = None,
         target_kind: str | None = None,
         exclude_target_kind: str | None = None,
+        intent: str | None = None,
     ) -> list[str]:
         """Return ids of live sessions created before ``older_than``.
 
@@ -225,7 +227,8 @@ class ConnectSessionRepository:
         they — and their upfront ``pending`` credential rows — would
         otherwise leak forever. ``flows`` / ``exclude_flows`` narrow the
         sweep by ``resolved_flow`` so each flow family gets its own cutoff;
-        ``target_kind`` / ``exclude_target_kind`` narrow it by target kind.
+        ``target_kind`` / ``exclude_target_kind`` narrow it by target kind,
+        ``intent`` by create or edit.
         """
         stmt = select(ConnectSession.id).where(
             ConnectSession.state.in_(LIVE_STATES),
@@ -239,6 +242,8 @@ class ConnectSessionRepository:
             stmt = stmt.where(ConnectSession.target_kind == target_kind)
         if exclude_target_kind is not None:
             stmt = stmt.where(ConnectSession.target_kind != exclude_target_kind)
+        if intent is not None:
+            stmt = stmt.where(ConnectSession.intent == intent)
         stmt = stmt.order_by(ConnectSession.created_at.asc()).limit(limit)
         result = await session.execute(stmt)
         return [str(row_id) for row_id in result.scalars().all()]

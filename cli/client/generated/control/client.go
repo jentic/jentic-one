@@ -1463,7 +1463,7 @@ type AgentResponse struct {
 
 // AmendSessionRequest Change an open session's ask; fields sent replace those parts, the rest stay.
 //
-// Examples: {"reason":"Also needs to label issues","requested_permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"requested_scopes":["repo"],"resume":true,"rules":{"add":[{"before":"apr_6968b3987c22b63e87e79f06","rule":{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}}],"remove":["apr_6968b3987c22b63e87e79f06"],"set":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}}
+// Examples: {"reason":"Also needs to label issues","requested_permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"requested_scopes":["repo"],"resume":true,"rules":{"add":[{"before":"apr_6968b3987c22b63e87e79f06","rule":{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}}],"remove":["apr_6968b3987c22b63e87e79f06"],"set":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]},"scopes":{"add":["gmail.send"]}}
 type AmendSessionRequest struct {
 	// Reason Why, shown to the reviewer.
 	//
@@ -1489,6 +1489,11 @@ type AmendSessionRequest struct {
 	//
 	// Examples: {"add":[{"before":"apr_6968b3987c22b63e87e79f06","rule":{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}}],"remove":["apr_6968b3987c22b63e87e79f06"],"set":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
 	Rules *EditRulesRequest `json:"rules,omitempty"`
+
+	// Scopes Edit sessions: the scopes to add, replacing the current ask.
+	//
+	// Examples: {"add":["gmail.send"]}
+	Scopes *EditScopesRequest `json:"scopes,omitempty"`
 }
 
 // ApiImportLinksResponse Hypermedia links for an import response.
@@ -3349,8 +3354,13 @@ type DeviceAuthorizationRegistrationCreateRequestFlowKind string
 
 // EditConfirmSessionRequest Approve an edit session's change with the final rules the reviewer chose.
 //
-// Examples: {"kind":"edit","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"resume":false,"revision_id":"csr_6968b3983b8b91c75627bee6"}
+// Examples: {"confirmed_scopes":["gmail.readonly","gmail.send"],"kind":"edit","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"resume":false,"revision_id":"csr_6968b3983b8b91c75627bee6"}
 type EditConfirmSessionRequest struct {
+	// ConfirmedScopes The final scope set (at most 100). Scopes beyond the credential's grant start a vendor consent; the rules and scopes land together when it completes. Omit to keep the grant as it is.
+	//
+	// Examples: ["gmail.readonly","gmail.send"]
+	ConfirmedScopes *[]string `json:"confirmed_scopes,omitempty"`
+
 	// Kind Confirm variant; always `edit`.
 	//
 	// Examples: edit
@@ -3379,7 +3389,7 @@ type EditConfirmSessionRequestKind string
 
 // EditConnectionRequest Ask to change an existing credential binding; a human approves the change.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32","reason":"Needs to send replies, not just read","rules":{"add":[{"before":"apr_6968b3987c22b63e87e79f06","rule":{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}}],"remove":["apr_6968b3987c22b63e87e79f06"],"set":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32","reason":"Needs to send replies, not just read","rules":{"add":[{"before":"apr_6968b3987c22b63e87e79f06","rule":{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}}],"remove":["apr_6968b3987c22b63e87e79f06"],"set":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]},"scopes":{"add":["gmail.send"]}}
 type EditConnectionRequest struct {
 	// AgentId The binding's agent. Required for humans; agent callers must omit it.
 	//
@@ -3403,6 +3413,11 @@ type EditConnectionRequest struct {
 	//
 	// Examples: {"add":[{"before":"apr_6968b3987c22b63e87e79f06","rule":{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}}],"remove":["apr_6968b3987c22b63e87e79f06"],"set":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
 	Rules *EditRulesRequest `json:"rules,omitempty"`
+
+	// Scopes Scopes to add. OAuth credentials connected through an authorization-code or device-authorization app only; others are 422 scopes_not_supported.
+	//
+	// Examples: {"add":["gmail.send"]}
+	Scopes *EditScopesRequest `json:"scopes,omitempty"`
 }
 
 // EditRuleAdd One rule to add to the binding.
@@ -3438,6 +3453,16 @@ type EditRulesRequest struct {
 	//
 	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	Set *[]PermissionRuleSchema `json:"set,omitempty"`
+}
+
+// EditScopesRequest Scopes to add to the binding's OAuth credential.
+//
+// Examples: {"add":["gmail.send"]}
+type EditScopesRequest struct {
+	// Add Scopes to add (at most 100). Confirming runs a vendor consent on the credential; other agents bound to it gain them too.
+	//
+	// Examples: ["gmail.send"]
+	Add *[]string `json:"add,omitempty"`
 }
 
 // EffectivePermission A single effective permission with provenance.

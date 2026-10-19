@@ -44,6 +44,7 @@ from jentic_one.control.core.schema.permission_rule_sets import PermissionRuleSe
 from jentic_one.control.repos import (
     AgentPermissionRuleRepository,
     CredentialRepository,
+    OAuthAppRegistrationRepository,
     OAuthTokenRepository,
     PermissionRuleSetRepository,
 )
@@ -86,6 +87,7 @@ from jentic_one.control.services.integrations.api_targets import (
 from jentic_one.control.services.integrations.dedupe import oauth_dedupe_key
 from jentic_one.control.services.integrations.edits import (
     EditRequest,
+    added_scopes,
     baseline_matches,
     require_change,
     resolve_edit,
@@ -122,7 +124,9 @@ from jentic_one.control.services.integrations.errors import (
     RuleSetConfirmForbiddenError,
     RulesRequiredError,
     SchemeChangedError,
+    ScopesNotSupportedError,
     ScopeValidationError,
+    ScopeWideningForbiddenError,
     SecuritySchemesLookupUnavailableError,
     ServersChangedError,
     SessionClosedError,
@@ -263,7 +267,8 @@ class CreatedEditSession:
 class SessionAmend:
     """What an amend changes; ``fields`` names the parts it carries.
 
-    ``rules`` and ``resume`` apply to edit sessions;
+    ``rules``, ``resume`` and ``add_scopes`` (the ``scopes`` field) apply to
+    edit sessions;
     ``requested_permission_rules`` and ``requested_scopes`` to create
     sessions; ``reason`` to both.
     """
@@ -274,6 +279,7 @@ class SessionAmend:
     reason: str | None = None
     requested_permission_rules: list[dict[str, object]] | None = None
     requested_scopes: list[str] | None = None
+    add_scopes: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True, frozen=True)
@@ -300,6 +306,8 @@ class EditReview:
     result: dict[str, Any]
     widens_access: bool
     other_bound_agents: list[AgentView]
+    # The result adds scopes: confirming starts a vendor consent.
+    needs_vendor_consent: bool = False
 
 
 @dataclass(slots=True, frozen=True)
@@ -569,7 +577,7 @@ AWAITING_APP = "awaiting_app"
 
 #: Amend fields that apply only to one intent.
 _CREATE_AMEND_FIELDS = frozenset({"requested_permission_rules", "requested_scopes"})
-_EDIT_AMEND_FIELDS = frozenset({"rules", "resume"})
+_EDIT_AMEND_FIELDS = frozenset({"rules", "resume", "scopes"})
 
 #: ``resolved_flow`` of an edit session: no vendor conversation.
 EDIT_FLOW = "edit"
@@ -847,6 +855,17 @@ def _rule_snapshot(rule: AgentPermissionRule | PermissionRuleSetRule) -> dict[st
         "operations": rule.operations,
         "comment": rule.comment,
     }
+
+
+def _consent_handler_for(credential: Credential) -> type[AuthFlowHandler] | None:
+    """The session flow that can re-consent ``credential`` with more scopes, if any."""
+    for handler_cls in (AuthCodeFlowHandler, DeviceAuthorizationHandler):
+        if (
+            credential.type == handler_cls.stored_type.value
+            and credential.provider == handler_cls.provider_id
+        ):
+            return handler_cls
+    return None
 
 
 def _is_oauth_type(credential_type: str) -> bool:
@@ -1663,6 +1682,9 @@ class ConnectSessionService:
                 add=rules.add,
                 remove=rules.remove,
                 set_rules=rules.set_rules,
+                add_scopes=(
+                    list(amend.add_scopes) if "scopes" in amend.fields else previous.add_scopes
+                ),
                 resume=amend.resume if "resume" in amend.fields else previous.resume,
                 reason=amend.reason if "reason" in amend.fields else previous.reason,
             )
@@ -1840,6 +1862,12 @@ class ConnectSessionService:
         baseline["suspended"] = binding.suspended
         result, _ = resolve_edit(baseline, request)
         require_change(baseline, result)
+        # The vendor-registry key a consent for added scopes re-opens, kept
+        # on the session like a vendor connect's; ``None`` when the
+        # credential cannot be re-consented here.
+        consent = await self._consent_source(credential)
+        if added_scopes(baseline, result) and consent is None:
+            raise ScopesNotSupportedError()
 
         cap_scope = await self._check_open_session_caps(agent_id, identity.sub)
         poll_token = secrets.token_urlsafe(32)
@@ -1851,7 +1879,11 @@ class ConnectSessionService:
                     intent=INTENT_EDIT,
                     baseline=baseline,
                     credential_id=credential_id,
-                    vendor=credential.api_vendor or credential.catalog_api_id or credential.name,
+                    vendor=(
+                        consent[0]
+                        if consent is not None
+                        else credential.api_vendor or credential.catalog_api_id or credential.name
+                    ),
                     agent_id=agent_id,
                     initiator_actor_id=identity.sub,
                     state="created",
@@ -1908,6 +1940,11 @@ class ConnectSessionService:
             approval_url=self._approval_url_for(row.id),
             poll_token=poll_token,
             revision_id=revision.id,
+            resolved_flow=(
+                consent[2].kind
+                if consent is not None and added_scopes(baseline, result)
+                else EDIT_FLOW
+            ),
         )
 
     async def confirm_edit(
@@ -1919,7 +1956,8 @@ class ConnectSessionService:
         revision_id: str,
         permission_rules: list[dict[str, object]],
         resume: bool,
-    ) -> ConnectedConfirmResult:
+        confirmed_scopes: list[str] | None = None,
+    ) -> ConfirmResult:
         """Apply an edit session's change as the reviewer submitted it.
 
         ``revision_id`` must be the session's current revision
@@ -1927,13 +1965,20 @@ class ConnectSessionService:
         match the session's baseline: when it changed since the session
         opened, the session is rebased onto it as a new revision and the
         confirm is :class:`BaselineChangedError`. The reviewer's
-        ``permission_rules`` and ``resume`` are what gets applied, never the
-        initiator's proposal.
+        ``permission_rules``, ``resume`` and ``confirmed_scopes`` are what
+        gets applied, never the initiator's proposal.
 
         While the binding points at a shared rule set, the rules replace that
         set's rules, and only the set's owner or an org admin may confirm. A
         curated set is never changed: the rules become the binding's own and
         the set is detached from this binding only.
+
+        ``confirmed_scopes`` beyond the credential's grant start a vendor
+        consent on the credential's own flow (authorization code or device
+        authorization). The session goes ``polling``, the approved change is
+        held on it, and rules and scopes land together when the grant
+        arrives; until then the binding keeps its rules and token. Widening a
+        credential other agents use needs its owner or an org admin.
         """
         async with self._ctx.control_db.session() as read_session:
             row = await ConnectSessionRepository.get_by_id(read_session, session_id)
@@ -1962,8 +2007,22 @@ class ConnectSessionService:
             owner = rule_set.get("created_by")
             if ORG_ADMIN not in identity.permissions and owner != identity.sub:
                 raise RuleSetConfirmForbiddenError(rule_set["id"])
-        rules = [rule_to_write(r) for r in permission_rules]
-        resumed = resume and bool(row.baseline["suspended"])
+        granted = list(row.baseline.get("granted_scopes") or [])
+        scopes = sorted(set(granted) | set(confirmed_scopes or []))
+        change: dict[str, Any] = {
+            "rules": [rule_to_write(r) for r in permission_rules],
+            "rule_set_id": rule_set["id"] if rule_set is not None and not copy_curated else None,
+            "detach_rule_set": copy_curated,
+            "resume": resume and bool(row.baseline["suspended"]),
+            "bind": False,
+            "scopes": scopes,
+            "outcome": OUTCOME_APPLIED,
+            "approved_by": identity.sub,
+            "revision_id": revision_id,
+        }
+
+        if set(scopes) - set(granted):
+            return await self._begin_edit_consent(row, change, identity=identity)
 
         async with self._ctx.control_db.transaction() as session:
             won = await ConnectSessionRepository.transition_edit(
@@ -1974,46 +2033,50 @@ class ConnectSessionService:
                 if current is not None and current.state == "created":
                     raise RevisionChangedError(row.id, current.current_revision_id)
                 raise InvalidStateTransitionError(row.id, row.state, "confirm")
-            if rule_set is not None and not copy_curated:
-                await PermissionRuleSetRepository.replace_user_rules(
-                    session, rule_set["id"], rules, created_by=identity.sub
-                )
-            else:
-                await AgentPermissionRuleRepository.replace_user_rules(
-                    session, row.agent_id, row.credential_id, rules, created_by=identity.sub
-                )
-            await ConnectSessionOutcomeRepository.record(
-                session,
-                row=row,
-                outcome=OUTCOME_APPLIED,
-                error_code=None,
-                ended_at=datetime.now(UTC),
-                credential_id=row.credential_id,
-            )
-            await ConnectSessionRepository.delete(session, row.id)
-        if copy_curated or resumed:
-            async with self._ctx.admin_db.transaction() as admin_session:
-                if copy_curated:
-                    await PrerequisiteRepository.set_binding_rule_set(
-                        admin_session,
-                        agent_id=row.agent_id,
-                        credential_id=row.credential_id,
-                        rule_set_id=None,
-                    )
-                if resumed:
-                    await PrerequisiteRepository.resume_binding(
-                        admin_session, agent_id=row.agent_id, credential_id=row.credential_id
-                    )
+            await self._write_change(session, row, change)
+        await self._apply_admin_change(row, change)
+        await self._record_change_applied(row, change, origin=identity.origin.value)
+        return ConnectedConfirmResult(credential_id=row.credential_id)
 
-        _, before = target_rules(row.baseline)
-        before_content = [rule_content(r) for r in before]
-        after_content = [rule_content(r) for r in rules]
+    async def _begin_edit_consent(
+        self, row: ConnectSession, change: dict[str, Any], *, identity: Identity
+    ) -> ConfirmResult:
+        """Hold ``change`` on the session and start the vendor consent for its scopes."""
+        assert row.agent_id is not None
+        async with self._ctx.control_db.session() as session:
+            credential = await CredentialRepository.get_by_id(session, row.credential_id)
+        consent = await self._consent_source(credential) if credential is not None else None
+        if credential is None or consent is None:
+            raise ScopesNotSupportedError()
+        _, source, handler_cls = consent
+        unknown = self._vendors.validate_scopes(source.entry, change["scopes"])
+        if unknown:
+            raise ScopeValidationError(unknown)
+        await self._require_scope_widening_allowed(credential, row.agent_id, identity)
+
+        async with self._ctx.control_db.transaction() as session:
+            won = await ConnectSessionRepository.transition_edit(
+                session,
+                row.id,
+                revision_id=change["revision_id"],
+                to_state="polling",
+                resolved_flow=handler_cls.kind,
+                approved_change=change,
+            )
+            if not won:
+                current = await ConnectSessionRepository.get_by_id(session, row.id)
+                if current is not None and current.state == "created":
+                    raise RevisionChangedError(row.id, current.current_revision_id)
+                raise InvalidStateTransitionError(row.id, row.state, "confirm")
+            polling = await ConnectSessionRepository.get_by_id(session, row.id)
+        assert polling is not None
+        challenge = await self._begin_consent(polling, source, handler_cls, change["scopes"])
         _logger.info(
-            "connect_session.edit_applied",
+            "connect_session.edit_consent_started",
             session_id=row.id,
-            agent_id=row.agent_id,
             credential_id=row.credential_id,
-            revision_id=revision_id,
+            flow=handler_cls.kind,
+            scopes=change["scopes"],
         )
         await record_audit_best_effort(
             self._ctx,
@@ -2027,17 +2090,201 @@ class ConnectSessionService:
                 "intent": INTENT_EDIT,
                 "agent_id": row.agent_id,
                 "credential_id": row.credential_id,
-                "revision_id": revision_id,
-                "rule_set_id": rule_set["id"]
-                if rule_set is not None and not copy_curated
-                else None,
-                "rules_added": sum(1 for r in after_content if r not in before_content),
-                "rules_removed": sum(1 for r in before_content if r not in after_content),
-                "resumed": resumed,
+                "revision_id": change["revision_id"],
+                "confirmed_scopes": change["scopes"],
+                "awaiting": "vendor_consent",
             },
         )
-        await self._emit_edit_applied(row, identity, resumed=resumed)
-        return ConnectedConfirmResult(credential_id=row.credential_id)
+        return challenge
+
+    async def _begin_consent(
+        self,
+        row: ConnectSession,
+        source: ResolvedVendorSource,
+        handler_cls: type[AuthFlowHandler],
+        scopes: list[str],
+    ) -> ConfirmResult:
+        """Start the vendor consent for a polling edit session; undo the confirm on failure.
+
+        A vendor-side failure puts the session back to ``created`` so the
+        reviewer can retry; nothing on the credential has changed.
+        """
+        handler = handler_cls(self._ctx)
+        try:
+            challenge = await handler.begin(
+                row, app=self._session_app_for(source), confirmed_scopes=scopes
+            )
+        except Exception:
+            async with self._ctx.control_db.transaction() as session:
+                await ConnectSessionRepository.transition_state(
+                    session,
+                    row.id,
+                    to_state="created",
+                    from_states=("polling",),
+                    resolved_flow=EDIT_FLOW,
+                    approved_change=None,
+                )
+            raise
+        if challenge.kind == "device_authorization":
+            return DeviceAuthorizationConfirmResult(
+                user_code=challenge.user_code,
+                verification_uri=challenge.verification_uri,
+                verification_uri_complete=challenge.verification_uri_complete,
+                poll_interval_seconds=challenge.poll_interval_seconds,
+            )
+        return AuthCodeConfirmResult(authorize_url=challenge.authorize_url)
+
+    async def _require_scope_widening_allowed(
+        self, credential: Credential, agent_id: str, identity: Identity
+    ) -> None:
+        """Widening a credential other agents use is its owner's or an org admin's call."""
+        others = await self._other_bound_agent_ids(credential.id, agent_id)
+        if not others or ORG_ADMIN in identity.permissions:
+            return
+        if credential.created_by != identity.sub:
+            raise ScopeWideningForbiddenError(credential.id)
+
+    async def _consent_source(
+        self, credential: Credential
+    ) -> tuple[str, ResolvedVendorSource, type[AuthFlowHandler]] | None:
+        """The vendor-registry key, app and flow a credential is re-consented through.
+
+        ``None`` when its access cannot be widened here: not an OAuth
+        credential connected through a session flow, or its app is gone.
+        """
+        handler_cls = _consent_handler_for(credential)
+        if handler_cls is None:
+            return None
+        key: str | None
+        if credential.oauth_app_registration_id is not None:
+            async with self._ctx.control_db.session() as session:
+                registration = await OAuthAppRegistrationRepository.get_by_id(
+                    session, credential.oauth_app_registration_id
+                )
+            key = registration.api_vendor if registration is not None else None
+        else:
+            key = next(
+                (
+                    k
+                    for k, entry in self._ctx.config.vendors.entries.items()
+                    if entry.vendor == credential.catalog_api_id
+                ),
+                None,
+            )
+        if key is None:
+            return None
+        try:
+            source = await self._vendors.resolve_session_source(
+                key,
+                registration_id=credential.oauth_app_registration_id,
+                flow_kind=handler_cls.kind,
+            )
+        except (
+            InvalidOAuthAppRegistrationError,
+            UnknownVendorError,
+            UnsupportedFlowError,
+            VendorNotConfiguredError,
+        ):
+            return None
+        return key, source, handler_cls
+
+    async def _write_change(
+        self, session: Any, row: ConnectSession, change: dict[str, Any]
+    ) -> None:
+        """Write an approved change's rules, record its outcome and close the session."""
+        assert row.agent_id is not None
+        if change["rule_set_id"] is not None:
+            await PermissionRuleSetRepository.replace_user_rules(
+                session, change["rule_set_id"], change["rules"], created_by=change["approved_by"]
+            )
+        else:
+            await AgentPermissionRuleRepository.replace_user_rules(
+                session,
+                row.agent_id,
+                row.credential_id,
+                change["rules"],
+                created_by=change["approved_by"],
+            )
+        await ConnectSessionOutcomeRepository.record(
+            session,
+            row=row,
+            outcome=change["outcome"],
+            error_code=None,
+            ended_at=datetime.now(UTC),
+            credential_id=row.credential_id,
+        )
+        await ConnectSessionRepository.delete(session, row.id)
+
+    async def _apply_admin_change(self, row: ConnectSession, change: dict[str, Any]) -> None:
+        """The admin-DB half of an approved change: bind, detach a curated set, resume."""
+        assert row.agent_id is not None
+        if not (change["bind"] or change["detach_rule_set"] or change["resume"]):
+            return
+        async with self._ctx.admin_db.transaction() as admin_session:
+            if change["bind"]:
+                await EffectsRepository.bind_agent_to_credential(
+                    admin_session,
+                    agent_id=row.agent_id,
+                    credential_id=row.credential_id,
+                    rule_set_id=None,
+                    created_by=change["approved_by"],
+                )
+            if change["detach_rule_set"]:
+                await PrerequisiteRepository.set_binding_rule_set(
+                    admin_session,
+                    agent_id=row.agent_id,
+                    credential_id=row.credential_id,
+                    rule_set_id=None,
+                )
+            if change["resume"]:
+                await PrerequisiteRepository.resume_binding(
+                    admin_session, agent_id=row.agent_id, credential_id=row.credential_id
+                )
+
+    async def _record_change_applied(
+        self, row: ConnectSession, change: dict[str, Any], *, origin: str
+    ) -> None:
+        """Log, audit and emit events for an approved change that has landed.
+
+        ``origin`` is the confirming request's, or ``system`` when the change
+        landed with a vendor grant after the confirm.
+        """
+        assert row.agent_id is not None
+        before: list[dict[str, Any]] = []
+        if row.baseline is not None:
+            _, before = target_rules(row.baseline)
+        before_content = [rule_content(r) for r in before]
+        after_content = [rule_content(r) for r in change["rules"]]
+        _logger.info(
+            "connect_session.edit_applied",
+            session_id=row.id,
+            agent_id=row.agent_id,
+            credential_id=row.credential_id,
+            revision_id=change["revision_id"],
+        )
+        approver = change["approved_by"]
+        await record_audit_best_effort(
+            self._ctx,
+            action=AuditAction.UPDATE,
+            target_type=AuditTargetType.CREDENTIAL_BINDING,
+            target_id=row.credential_id,
+            target_parent_id=row.agent_id,
+            actor_type=actor_type_label_from_id(approver),
+            actor_id=approver,
+            origin=origin,
+            reason="connect session approved",
+            after={
+                "session_id": row.id,
+                "revision_id": change["revision_id"],
+                "rule_set_id": change["rule_set_id"],
+                "rules_added": sum(1 for r in after_content if r not in before_content),
+                "rules_removed": sum(1 for r in before_content if r not in after_content),
+                "scopes": change["scopes"],
+                "resumed": change["resume"],
+                "bound": change["bind"],
+            },
+        )
+        await self._emit_edit_applied(row, approver, bound=change["bind"] or change["resume"])
 
     async def _rebase_edit(self, row: ConnectSession, live: dict[str, Any]) -> str:
         """Re-resolve the edit's latest ask onto the binding as it is now.
@@ -2073,13 +2320,11 @@ class ConnectSessionService:
         )
         return revision.id
 
-    async def _emit_edit_applied(
-        self, row: ConnectSession, identity: Identity, *, resumed: bool
-    ) -> None:
-        """``credential.permission_rule_set`` (and ``credential.bound_to_agent`` on resume)."""
+    async def _emit_edit_applied(self, row: ConnectSession, actor_id: str, *, bound: bool) -> None:
+        """``credential.permission_rule_set`` (and ``credential.bound_to_agent`` when bound)."""
         assert row.agent_id is not None
         events = [EventType.CREDENTIAL_PERMISSION_RULE_SET]
-        if resumed:
+        if bound:
             events.append(EventType.CREDENTIAL_BOUND_TO_AGENT)
         for event_type in events:
             try:
@@ -2090,7 +2335,7 @@ class ConnectSessionService:
                         severity=EventSeverity.INFO,
                         summary=(
                             f"Access of agent {row.agent_id} to credential {row.credential_id} "
-                            "changed by an approved edit"
+                            "changed by an approved connect request"
                         ),
                         data={
                             "agent_id": row.agent_id,
@@ -2098,8 +2343,8 @@ class ConnectSessionService:
                             "session_id": row.id,
                         },
                         created_by=row.agent_id,
-                        actor_id=identity.sub,
-                        actor_type=identity.actor_type.value,
+                        actor_id=actor_id,
+                        actor_type=actor_type_label_from_id(actor_id),
                     )
             except Exception:
                 _logger.warning("telemetry_emit_failed", event_type=event_type, exc_info=True)
@@ -2196,6 +2441,7 @@ class ConnectSessionService:
             result=dict(revision.result),
             widens_access=widens_access(row.baseline, revision.result),
             other_bound_agents=others,
+            needs_vendor_consent=bool(added_scopes(row.baseline, revision.result)),
         )
 
     async def _edit_review_data(self, row: ConnectSession, identity: Identity) -> ReviewData:
@@ -3770,7 +4016,13 @@ class ConnectSessionService:
         )
 
     def _ttl_seconds(self, row: ConnectSession) -> float:
-        if row.target_kind == TARGET_KIND_VENDOR and row.resolved_flow in _OAUTH_FLOWS:
+        # An edit waits for a human before its consent starts, so it keeps
+        # the human-approval TTL throughout (the device code has its own).
+        if (
+            row.intent != INTENT_EDIT
+            and row.target_kind == TARGET_KIND_VENDOR
+            and row.resolved_flow in _OAUTH_FLOWS
+        ):
             return _SESSION_TTL_SECONDS
         return self._ctx.config.control.connect.manual_flows_ttl_hours * 3600.0
 
@@ -3952,6 +4204,9 @@ class ConnectSessionService:
                 )
                 return StatusResult(status="failed", error_code="identity_echo_failed")
 
+        if row.intent == INTENT_EDIT:
+            return await self._finalise_edit(row, handler, tokens, connected_as)
+
         await self._write_finalise(
             credential_id=row.credential_id,
             handler=handler,
@@ -3967,6 +4222,65 @@ class ConnectSessionService:
         )
         return StatusResult(
             status="connected",
+            connected_as=connected_as,
+            credential_id=row.credential_id,
+            bound_scopes=tokens.granted_scopes,
+        )
+
+    async def _finalise_edit(
+        self,
+        row: ConnectSession,
+        handler: AuthFlowHandler,
+        tokens: SuccessTokens,
+        connected_as: str | None,
+    ) -> StatusResult:
+        """The vendor grant for an edit's added scopes landed: apply the held change.
+
+        The new token replaces the credential's, then the approved rules (and
+        any bind or resume) land and the session closes with its outcome. A
+        grant for a different vendor account than the credential's is
+        refused: re-consenting must never swap whose account the agent uses.
+        """
+        change = row.approved_change
+        if change is None:
+            await self._mark_terminal(
+                row.id, "failed", "no approved change held", error_code="approval_missing"
+            )
+            return StatusResult(status="failed", error_code="approval_missing")
+        async with self._ctx.control_db.session() as session:
+            credential = await CredentialRepository.get_by_id(session, row.credential_id)
+        previous = credential.provider_account_ref if credential is not None else None
+        if previous is not None and connected_as is not None and previous != connected_as:
+            _logger.warning(
+                "connect_session.edit_account_changed",
+                session_id=row.id,
+                credential_id=row.credential_id,
+            )
+            await self._mark_terminal(
+                row.id, "failed", "consented as another account", error_code="account_changed"
+            )
+            return StatusResult(status="failed", error_code="account_changed")
+
+        await self._write_finalise(
+            credential_id=row.credential_id,
+            handler=handler,
+            tokens=tokens,
+            connected_as=connected_as,
+            created_by=change["approved_by"],
+            close_session_id=None,
+        )
+        async with self._ctx.control_db.transaction() as session:
+            won = await ConnectSessionRepository.transition_state(
+                session, row.id, to_state=change["outcome"], from_states=("polling",)
+            )
+            if won:
+                await self._write_change(session, row, change)
+        if not won:
+            return StatusResult(status="failed", error_code="session_closed")
+        await self._apply_admin_change(row, change)
+        await self._record_change_applied(row, change, origin=Origin.SYSTEM.value)
+        return StatusResult(
+            status=change["outcome"],
             connected_as=connected_as,
             credential_id=row.credential_id,
             bound_scopes=tokens.granted_scopes,
@@ -4248,7 +4562,13 @@ class ConnectSessionService:
                 )
                 if row.intent == INTENT_EDIT:
                     # An edit's credential is the live one the binding uses:
-                    # only the session goes, its outcome stays.
+                    # only the session goes, its outcome stays. A device
+                    # consent in flight leaves the credential's token alone;
+                    # only its transient device code is cleared.
+                    if row.resolved_flow == DeviceAuthorizationHandler.kind:
+                        await DeviceAuthorizationHandler(self._ctx).on_finalise(
+                            session, credential_id=row.credential_id
+                        )
                     await ConnectSessionRepository.delete(session, row.id)
                 else:
                     await CredentialRepository.delete(session, row.credential_id)
@@ -4360,9 +4680,19 @@ class ConnectSessionService:
                 limit=limit,
                 flows=_OAUTH_FLOWS,
                 target_kind=TARGET_KIND_VENDOR,
+                intent=INTENT_CREATE,
             )
             stale_ids += await ConnectSessionRepository.list_stale_live_ids(
                 read_session, older_than=manual_cutoff, limit=limit, exclude_flows=_OAUTH_FLOWS
+            )
+            # An edit keeps the human-approval TTL even once its consent runs
+            # on an OAuth flow.
+            stale_ids += await ConnectSessionRepository.list_stale_live_ids(
+                read_session,
+                older_than=manual_cutoff,
+                limit=limit,
+                flows=_OAUTH_FLOWS,
+                intent=INTENT_EDIT,
             )
             # An API target that resolved to an OAuth flow keeps the
             # human-approval TTL it was opened with.

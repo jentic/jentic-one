@@ -22,6 +22,7 @@ from typing import Any
 
 from jentic_one.control.services.integrations.errors import (
     NothingToChangeError,
+    ScopesNotSupportedError,
     UnknownRuleError,
 )
 
@@ -55,6 +56,7 @@ class EditRequest:
     add: list[RuleAdd] = field(default_factory=list)
     remove: list[str] = field(default_factory=list)
     set_rules: list[dict[str, Any]] | None = None
+    add_scopes: list[str] = field(default_factory=list)
     resume: bool = False
     reason: str | None = None
 
@@ -69,6 +71,7 @@ class EditRequest:
             ],
             remove=list(rules.get("remove", [])),
             set_rules=[dict(r) for r in set_rules] if set_rules is not None else None,
+            add_scopes=list((proposal.get("scopes") or {}).get("add", [])),
             resume=bool(proposal.get("resume", False)),
             reason=proposal.get("reason"),
         )
@@ -83,7 +86,12 @@ class EditRequest:
                 "add": [{"rule": dict(a.rule), "before": a.before} for a in self.add],
                 "remove": list(self.remove),
             }
-        return {"rules": rules, "resume": self.resume, "reason": self.reason}
+        return {
+            "rules": rules,
+            "scopes": {"add": list(self.add_scopes)},
+            "resume": self.resume,
+            "reason": self.reason,
+        }
 
 
 def rule_content(rule: Mapping[str, Any]) -> dict[str, Any]:
@@ -153,10 +161,14 @@ def resolve_edit(
                 index = next(i for i, r in enumerate(resolved) if r["id"] == add.before)
             resolved.insert(index, new)
 
+    granted = baseline.get("granted_scopes")
+    if request.add_scopes and granted is None:
+        # Only an OAuth grant has scopes the platform can widen.
+        raise ScopesNotSupportedError()
     result = {
         "target": target,
         "rules": resolved,
-        "scopes": sorted(baseline.get("granted_scopes") or []),
+        "scopes": sorted(set(granted or []) | set(request.add_scopes)),
         "suspended": bool(baseline["suspended"]) and not request.resume,
     }
     return result, dropped
@@ -174,7 +186,8 @@ def require_change(baseline: Mapping[str, Any], result: Mapping[str, Any]) -> No
     """Refuse a result that leaves the binding exactly as it is."""
     _, rules = target_rules(baseline)
     same_rules = [rule_content(r) for r in rules] == [rule_content(r) for r in result["rules"]]
-    if same_rules and result["suspended"] == bool(baseline["suspended"]):
+    same_scopes = set(result["scopes"]) == set(baseline.get("granted_scopes") or [])
+    if same_rules and same_scopes and result["suspended"] == bool(baseline["suspended"]):
         raise NothingToChangeError()
 
 
@@ -182,13 +195,15 @@ def widens_access(baseline: Mapping[str, Any], result: Mapping[str, Any]) -> boo
     """Whether confirming ``result`` could let the agent do more than today.
 
     Conservative: adding an allow or Ask rule, dropping a deny rule,
-    re-ordering the rules (first match wins), and resuming a suspended
-    binding all count.
+    re-ordering the rules (first match wins), adding scopes and resuming a
+    suspended binding all count.
     """
     _, rules = target_rules(baseline)
     before = [rule_content(r) for r in rules]
     after = [rule_content(r) for r in result["rules"]]
     if bool(baseline["suspended"]) and not result["suspended"]:
+        return True
+    if added_scopes(baseline, result):
         return True
     if any(r not in before and r["effect"] in _GRANTING_EFFECTS for r in after):
         return True
@@ -197,6 +212,11 @@ def widens_access(baseline: Mapping[str, Any], result: Mapping[str, Any]) -> boo
     kept_before = [r for r in before if r in after]
     kept_after = [r for r in after if r in before]
     return kept_before != kept_after
+
+
+def added_scopes(baseline: Mapping[str, Any], result: Mapping[str, Any]) -> list[str]:
+    """Scopes ``result`` holds that the credential's grant does not (a vendor consent)."""
+    return sorted(set(result["scopes"]) - set(baseline.get("granted_scopes") or []))
 
 
 def baseline_matches(stored: Mapping[str, Any], live: Mapping[str, Any]) -> bool:

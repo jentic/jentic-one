@@ -867,6 +867,11 @@
                   "path": "/v1/charges"
                 }
               ]
+            },
+            "scopes": {
+              "add": [
+                "gmail.send"
+              ]
             }
           }
         ],
@@ -997,6 +1002,24 @@
                     ],
                     "path": "/v1/charges"
                   }
+                ]
+              }
+            ]
+          },
+          "scopes": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EditScopesRequest"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Edit sessions: the scopes to add, replacing the current ask.",
+            "examples": [
+              {
+                "add": [
+                  "gmail.send"
                 ]
               }
             ]
@@ -6444,6 +6467,10 @@
         "description": "Approve an edit session's change with the final rules the reviewer chose.",
         "examples": [
           {
+            "confirmed_scopes": [
+              "gmail.readonly",
+              "gmail.send"
+            ],
             "kind": "edit",
             "permission_rules": [
               {
@@ -6463,6 +6490,28 @@
           }
         ],
         "properties": {
+          "confirmed_scopes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The final scope set (at most 100). Scopes beyond the credential's grant start a vendor consent; the rules and scopes land together when it completes. Omit to keep the grant as it is.",
+            "examples": [
+              [
+                "gmail.readonly",
+                "gmail.send"
+              ]
+            ],
+            "title": "Confirmed Scopes"
+          },
           "kind": {
             "const": "edit",
             "description": "Confirm variant; always `edit`.",
@@ -6565,6 +6614,11 @@
                   "path": "/v1/charges"
                 }
               ]
+            },
+            "scopes": {
+              "add": [
+                "gmail.send"
+              ]
             }
           }
         ],
@@ -6660,6 +6714,24 @@
                     ],
                     "path": "/v1/charges"
                   }
+                ]
+              }
+            ]
+          },
+          "scopes": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EditScopesRequest"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Scopes to add. OAuth credentials connected through an authorization-code or device-authorization app only; others are 422 scopes_not_supported.",
+            "examples": [
+              {
+                "add": [
+                  "gmail.send"
                 ]
               }
             ]
@@ -6845,6 +6917,35 @@
           }
         },
         "title": "EditRulesRequest",
+        "type": "object"
+      },
+      "EditScopesRequest": {
+        "additionalProperties": false,
+        "description": "Scopes to add to the binding's OAuth credential.",
+        "examples": [
+          {
+            "add": [
+              "gmail.send"
+            ]
+          }
+        ],
+        "properties": {
+          "add": {
+            "description": "Scopes to add (at most 100). Confirming runs a vendor consent on the credential; other agents bound to it gain them too.",
+            "examples": [
+              [
+                "gmail.send"
+              ]
+            ],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Add",
+            "type": "array"
+          }
+        },
+        "title": "EditScopesRequest",
         "type": "object"
       },
       "EffectivePermission": {
@@ -35652,6 +35753,11 @@
                       "path": "/v1/charges"
                     }
                   ]
+                },
+                "scopes": {
+                  "add": [
+                    "gmail.send"
+                  ]
                 }
               },
               "schema": {
@@ -43232,6 +43338,11 @@
                       ],
                       "path": "/v1/charges"
                     }
+                  ]
+                },
+                "scopes": {
+                  "add": [
+                    "gmail.send"
                   ]
                 }
               },

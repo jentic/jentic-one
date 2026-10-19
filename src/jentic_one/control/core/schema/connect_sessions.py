@@ -189,6 +189,11 @@ class ConnectSession(AuditableMixin, ControlBase):
     # tables would otherwise reference each other. NULL only on rows written
     # before revisions existed.
     current_revision_id: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    # What the approver confirmed, held while the vendor consent for added
+    # scopes is in flight (state ``polling``) and applied when the grant
+    # lands: the final rules and scopes, whether to resume or bind, and the
+    # outcome to record. NULL otherwise.
+    approved_change: Mapped[dict[str, Any] | None] = mapped_column(json_variant(), nullable=True)
     # Identity echo result (e.g. "@octocat"); set on `connected`.
     connected_as: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # Terminal failure code (see `error-taxonomy` — machine-readable slug).

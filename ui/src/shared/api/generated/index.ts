@@ -86,6 +86,7 @@ export type { EditConfirmSessionRequest } from './models/EditConfirmSessionReque
 export type { EditConnectionRequest } from './models/EditConnectionRequest';
 export type { EditRuleAdd } from './models/EditRuleAdd';
 export type { EditRulesRequest } from './models/EditRulesRequest';
+export type { EditScopesRequest } from './models/EditScopesRequest';
 export type { EffectivePermission } from './models/EffectivePermission';
 export type { ErrorItem } from './models/ErrorItem';
 export type { EventLinks } from './models/EventLinks';

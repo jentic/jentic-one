@@ -327,6 +327,22 @@ class EditRulesRequest(BaseModel):
         return self
 
 
+class EditScopesRequest(BaseModel):
+    """Scopes to add to the binding's OAuth credential."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    add: list[str] = Field(
+        default_factory=list,
+        max_length=100,
+        examples=[["gmail.send"]],
+        description=(
+            "Scopes to add (at most 100). Confirming runs a vendor consent on the credential; "
+            "other agents bound to it gain them too."
+        ),
+    )
+
+
 class EditConnectionRequest(BaseModel):
     """Ask to change an existing credential binding; a human approves the change."""
 
@@ -351,6 +367,13 @@ class EditConnectionRequest(BaseModel):
             "that set's rules."
         ),
     )
+    scopes: EditScopesRequest | None = Field(
+        default=None,
+        description=(
+            "Scopes to add. OAuth credentials connected through an authorization-code or "
+            "device-authorization app only; others are 422 scopes_not_supported."
+        ),
+    )
     resume: bool = Field(
         default=False,
         description="Switch a suspended binding back on; a no-op if it is already active.",
@@ -373,6 +396,9 @@ class AmendSessionRequest(BaseModel):
     )
     resume: bool | None = Field(
         default=None, examples=[True], description="Edit sessions: resume a suspended binding."
+    )
+    scopes: EditScopesRequest | None = Field(
+        default=None, description="Edit sessions: the scopes to add, replacing the current ask."
     )
     requested_permission_rules: list[PermissionRuleSchema] | None = Field(
         default=None,
@@ -418,7 +444,11 @@ class EditConnectionResponse(BaseModel):
         examples=[ex.CONNECT_SESSION_REVISION_ID],
     )
     resolved_flow: str = Field(
-        description="`edit`: the change needs no vendor step.", examples=["edit"]
+        description=(
+            "`edit` when the change needs no vendor step; otherwise the vendor flow confirming "
+            "it runs (`authorization_code` or `device_authorization`)."
+        ),
+        examples=["edit"],
     )
 
 
@@ -658,7 +688,14 @@ class ReviewEditResponse(BaseModel):
     )
     other_bound_agents: list[EditAgentRef] = Field(
         default_factory=list,
-        description="Other agents bound to the credential; a shared rule set change reaches them.",
+        description=(
+            "Other agents bound to the credential; added scopes and a shared rule set change "
+            "reach them."
+        ),
+    )
+    needs_vendor_consent: bool = Field(
+        default=False,
+        description="True when the result adds scopes, so confirming starts a vendor consent.",
     )
 
 
@@ -960,6 +997,16 @@ class EditConfirmSessionRequest(BaseModel):
         default=False,
         examples=[False],
         description="Switch the binding back on if it is suspended.",
+    )
+    confirmed_scopes: list[str] | None = Field(
+        default=None,
+        max_length=100,
+        examples=[["gmail.readonly", "gmail.send"]],
+        description=(
+            "The final scope set (at most 100). Scopes beyond the credential's grant start a "
+            "vendor consent; the rules and scopes land together when it completes. Omit to "
+            "keep the grant as it is."
+        ),
     )
 
 

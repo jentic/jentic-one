@@ -55,7 +55,9 @@ from jentic_one.control.services.integrations.errors import (
     RuleSetConfirmForbiddenError,
     RulesRequiredError,
     SchemeChangedError,
+    ScopesNotSupportedError,
     ScopeValidationError,
+    ScopeWideningForbiddenError,
     SecuritySchemesLookupUnavailableError,
     ServersChangedError,
     SessionClosedError,
@@ -164,6 +166,8 @@ _CONNECT_SESSION_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     SessionClosedError: (409, "session_closed"),
     ConnectOpenError: (409, "connect_open"),
     AmendFieldsMismatchError: (422, "amend_fields_mismatch"),
+    ScopesNotSupportedError: (422, "scopes_not_supported"),
+    ScopeWideningForbiddenError: (403, "scope_widening_forbidden"),
     ConnectSessionServiceError: (500, "connect_session_error"),
 }
 

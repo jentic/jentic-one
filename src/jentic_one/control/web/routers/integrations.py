@@ -293,6 +293,7 @@ async def integrations_edit_connection(
                 if rules.set_rules is not None
                 else None
             ),
+            add_scopes=list(body.scopes.add) if body.scopes is not None else [],
             resume=body.resume,
             reason=body.reason,
         ),
@@ -525,6 +526,7 @@ def _edit_response(edit: EditReview) -> ReviewEditResponse:
         ),
         result=EditResultAccess.model_validate(edit.result),
         widens_access=edit.widens_access,
+        needs_vendor_consent=edit.needs_vendor_consent,
         other_bound_agents=[
             EditAgentRef(agent_id=a.agent_id, name=a.name) for a in edit.other_bound_agents
         ],
@@ -601,6 +603,7 @@ async def confirm_connect_session(
             revision_id=body.revision_id,
             permission_rules=[r.model_dump(exclude_none=True) for r in body.permission_rules],
             resume=body.resume,
+            confirmed_scopes=body.confirmed_scopes,
         )
     elif isinstance(body, OAuthConfirmSessionRequest):
         result = await svc.confirm(
@@ -743,6 +746,7 @@ async def amend_connect_session(
                 else None
             ),
             requested_scopes=body.requested_scopes,
+            add_scopes=list(body.scopes.add) if body.scopes is not None else [],
         ),
     )
     return AmendSessionResponse(
