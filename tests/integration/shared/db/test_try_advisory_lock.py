@@ -11,7 +11,8 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from sqlalchemy import text
+import structlog
+from sqlalchemy import event, text
 
 from jentic_one.shared.db.locks import advisory_lock_key
 from jentic_one.shared.db.session import DatabaseSession
@@ -114,5 +115,49 @@ async def test_cancelled_holder_releases_the_lock(registry_db: DatabaseSession) 
         await task
 
     assert await _holder_states(registry_db) == []
+    async with registry_db.try_advisory_lock(_KEY) as again:
+        assert again is True
+
+
+async def test_cancellation_during_the_unlock_discards_the_lock_connection(
+    registry_db: DatabaseSession,
+) -> None:
+    """A cancel landing on ``pg_advisory_unlock`` itself never pools a held lock."""
+    _require_postgres(registry_db)
+    entered = asyncio.Event()
+    holder: asyncio.Task[None] | None = None
+
+    def _cancel_on_unlock(_conn: object, _cursor: object, statement: str, *_args: object) -> None:
+        # Runs inside the holder task just before the unlock is sent; a running
+        # task's cancel() takes effect at its next suspension, which is the
+        # unlock's round trip, so the cancellation lands there.
+        task = asyncio.current_task()
+        if "pg_advisory_unlock" in statement and task is not None and task is holder:
+            task.cancel()
+
+    async def hold() -> None:
+        async with registry_db.try_advisory_lock(_KEY) as acquired:
+            assert acquired is True
+            entered.set()
+
+    sync_engine = registry_db.engine.sync_engine
+    event.listen(sync_engine, "before_cursor_execute", _cancel_on_unlock)
+    try:
+        with structlog.testing.capture_logs() as logs:
+            holder = asyncio.create_task(hold())
+            with pytest.raises(asyncio.CancelledError):
+                await holder
+    finally:
+        event.remove(sync_engine, "before_cursor_execute", _cancel_on_unlock)
+
+    assert entered.is_set()
+    # SQLAlchemy also invalidates a connection whose execute is cancelled; the
+    # warning shows the release path itself handled the cancellation.
+    failures = [entry for entry in logs if entry["event"] == "advisory_lock_release_failed"]
+    assert [(f["key"], f["error"].startswith("CancelledError")) for f in failures] == [(_KEY, True)]
+    # The discarded connection's backend exits asynchronously; wait for it.
+    async with asyncio.timeout(5):
+        while await _holder_states(registry_db):
+            await asyncio.sleep(0.05)
     async with registry_db.try_advisory_lock(_KEY) as again:
         assert again is True

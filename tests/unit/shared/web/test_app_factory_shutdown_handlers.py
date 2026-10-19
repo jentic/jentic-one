@@ -1,10 +1,10 @@
 """Shutdown handlers registered by surface installers run when the app stops.
 
-FastAPI runs ``add_event_handler("shutdown", …)`` handlers only for an app
-without its own ``lifespan``. Every app the factory builds has one, so the
-factory's lifespan runs them; otherwise the auth and control surfaces'
-shared-state backends (a Redis connection pool on the redis backend) would
-never be closed.
+FastAPI runs an app's own ``add_event_handler("shutdown", …)`` handlers only
+from its default lifespan. Every app the factory builds has its own
+``lifespan``, so the factory's lifespan runs them; otherwise the auth and
+control surfaces' shared-state backends (a Redis connection pool on the redis
+backend) would never be closed.
 """
 
 from __future__ import annotations
