@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import base64
+import builtins
+import io
 import os
 import threading
 import time
@@ -1157,51 +1159,228 @@ def test_oneshot_cache_entry_with_recycled_inode_is_not_served(
         _ONESHOT_CONFIG_CACHE.clear()
 
 
-def test_oneshot_cache_survives_writes_after_open(sample_config_dict: dict[str, Any]):
+def test_oneshot_cache_survives_writes_after_open(
+    sample_config_dict: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+):
     """Every pipe write bumps its ctime, so a supervisor still streaming the
     document after the loaders opened the fd must not leave any of them keyed
     on a pre-drain identity: a concurrent loader waiting on the drain, and a
     repeat load after it, must both take the cached document instead of
-    hitting EOF on the drained pipe."""
+    hitting EOF on the drained pipe.
+
+    The test couples to _read_config_text at three seams, and each failure
+    message names the seam it depends on:
+
+    - open: every open of the pipe path goes through io.open or builtins.open
+      (Path.open included); the opened file is where a loader parks.
+    - lock: _ONESHOT_CACHE_LOCK is looked up at call time, so a loader that
+      would block on it parks too.
+    - read gate: the writer holds its first write until a loader starts
+      draining the opened file through read(), readline(), readlines(), or
+      iteration. The drainer's in-lock fstat runs before that, which pins it
+      to the pre-write identity. A drain that bypasses the file object (e.g.
+      os.read on its fileno) never opens the gate, and the writer reports
+      that it is still waiting for a loader to start reading."""
+    # One deadline bounds every wait and join in the test, and all threads are
+    # daemons, so a wedged loader fails the test without holding the process.
+    timeout_s = 10.0
+    # The writer's read gate expires this long before the shared deadline.
+    gate_margin_s = 1.0
+    deadline = time.monotonic() + timeout_s
+
+    def remaining() -> float:
+        return max(0.0, deadline - time.monotonic())
+
+    # Each write lands on a later timestamp tick so it moves the ctime: a Linux
+    # tick is one jiffy (at most 10 ms), and macOS pipe timestamps are finer.
+    ctime_tick_s = 0.05
     doc = yaml.dump(sample_config_dict).encode()
     read_fd, write_fd = os.pipe()
-
-    def stream() -> None:
-        # The first delay lets both loaders open and stat the fd before any
-        # data arrives; each delay outlasts a Linux timestamp tick, so every
-        # write moves the ctime.
-        for chunk in (doc[: len(doc) // 2], doc[len(doc) // 2 :]):
-            time.sleep(0.1)
-            os.write(write_fd, chunk)
-        os.close(write_fd)
-
-    pipe_path = Path(f"/dev/fd/{read_fd}")
+    pipe_path = f"/dev/fd/{read_fd}"
     loaded: list[AppConfig] = []
     errors: list[BaseException] = []
 
+    # The writer and both loaders meet at one barrier before any byte is
+    # written. A loader parks right after it opens the pipe (it has stat'ed the
+    # pre-write identity and holds the fd), or when it would block on the cache
+    # lock, so an implementation that opens under the lock parks too. The hooks
+    # see every open of the pipe through io.open or builtins.open (Path.open
+    # included) and every acquire of _ONESHOT_CACHE_LOCK.
+    released = threading.Event()
+    rendezvous = threading.Barrier(3, action=released.set, timeout=timeout_s)
+    parked = {name: threading.Event() for name in ("loader-0", "loader-1")}
+    read_started = threading.Event()
+    # Set on teardown so the writer stops waiting on the read gate.
+    stop = threading.Event()
+
+    def park() -> None:
+        signal = parked.get(threading.current_thread().name)
+        if signal is None or signal.is_set() or released.is_set():
+            return
+        signal.set()
+        rendezvous.wait(remaining())
+
+    class _ReadGateFile:
+        """Wraps the opened pipe so any read-style call or iteration opens the gate."""
+
+        def __init__(self, f: Any) -> None:
+            self._f = f
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._f, name)
+
+        def __enter__(self) -> _ReadGateFile:
+            self._f.__enter__()
+            return self
+
+        def __exit__(self, *exc_info: Any) -> Any:
+            return self._f.__exit__(*exc_info)
+
+        def read(self, *args: Any) -> Any:
+            read_started.set()
+            return self._f.read(*args)
+
+        def readline(self, *args: Any) -> Any:
+            read_started.set()
+            return self._f.readline(*args)
+
+        def readlines(self, *args: Any) -> Any:
+            read_started.set()
+            return self._f.readlines(*args)
+
+        def __iter__(self) -> _ReadGateFile:
+            return self
+
+        def __next__(self) -> Any:
+            read_started.set()
+            return next(self._f)
+
+    real_open = io.open
+
+    def hooked_open(file: Any, *args: Any, **kwargs: Any) -> Any:
+        f: Any = real_open(file, *args, **kwargs)
+        if not isinstance(file, str | os.PathLike) or os.fspath(file) != pipe_path:
+            return f
+        try:
+            park()
+        except BaseException:
+            f.close()
+            raise
+        return _ReadGateFile(f)
+
+    class _ParkingLock:
+        """Stands in for _ONESHOT_CACHE_LOCK; a loader that would block parks first."""
+
+        def __init__(self) -> None:
+            self._lock = threading.Lock()
+
+        def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+            if self._lock.acquire(blocking=False):
+                return True
+            if not blocking:
+                return False
+            park()
+            return self._lock.acquire(timeout=timeout)
+
+        def release(self) -> None:
+            self._lock.release()
+
+        def __enter__(self) -> bool:
+            return self.acquire()
+
+        def __exit__(self, *exc_info: object) -> None:
+            self.release()
+
+    monkeypatch.setattr(config_module, "_ONESHOT_CACHE_LOCK", _ParkingLock())
+    monkeypatch.setattr(io, "open", hooked_open)
+    monkeypatch.setattr(builtins, "open", hooked_open)
+
+    def stream() -> None:
+        try:
+            rendezvous.wait(remaining())
+            # The drainer takes its in-lock fstat before it reads, so holding
+            # the first write until a read starts pins that fstat to the
+            # pre-write identity: a key taken there must never be what gets
+            # stored. The gate gives up a margin before the shared deadline so
+            # its error is recorded before the main thread's joins expire.
+            while not read_started.wait(0.05):
+                if stop.is_set():
+                    return
+                if remaining() <= gate_margin_s:
+                    errors.append(
+                        AssertionError(
+                            f"writer still waiting for a loader to start reading {pipe_path}: "
+                            "the read gate needs _read_config_text to drain the opened file "
+                            "through read(), readline(), readlines(), or iteration"
+                        )
+                    )
+                    return
+            for chunk in (doc[: len(doc) // 2], doc[len(doc) // 2 :]):
+                time.sleep(ctime_tick_s)
+                os.write(write_fd, chunk)
+        except threading.BrokenBarrierError:
+            return
+        finally:
+            # Closing even on a failed handshake lets a blocked loader see EOF.
+            os.close(write_fd)
+
     def load() -> None:
         try:
-            loaded.append(load_config(pipe_path))
+            loaded.append(load_config(Path(pipe_path)))
         except BaseException as exc:  # surfaced via the assertion below
             errors.append(exc)
+            # A loader that dies before the rendezvous breaks it, so the writer
+            # and the other loader stop waiting for a party that never arrives.
+            rendezvous.abort()
 
-    threads = [threading.Thread(target=stream)] + [threading.Thread(target=load) for _ in range(2)]
+    writer = threading.Thread(target=stream, name="writer", daemon=True)
+    loaders = [threading.Thread(target=load, name=name, daemon=True) for name in parked]
+    threads = [writer, *loaders]
     try:
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+        writer.start()
+        # Start the second loader only once the first has parked: on macOS,
+        # stat() of /dev/fd/N can fail with EBADF while another thread opens the
+        # same /dev/fd/N (#1803), a platform race and not the one under test.
+        for loader in loaders:
+            loader.start()
+            while not parked[loader.name].wait(0.05) and loader.is_alive() and remaining():
+                pass
+            assert parked[loader.name].is_set(), (
+                f"{loader.name} never parked: the rendezvous needs _read_config_text to "
+                f"open {pipe_path} through io.open or builtins.open (Path.open included), "
+                f"or to block on _ONESHOT_CACHE_LOCK; errors={errors!r}"
+            )
+        # Loaders first: a hung loader is the thread the failure names.
+        for loader in loaders:
+            loader.join(remaining())
+            if loader.is_alive():
+                stage = (
+                    "wedged in read (a read started; the loader is stuck in it or "
+                    "behind the cache lock)"
+                    if read_started.is_set()
+                    else "and the writer is still waiting for a loader to start reading"
+                )
+                raise AssertionError(
+                    f"{loader.name} still running after {timeout_s}s, {stage}; {errors=!r}"
+                )
+        writer.join(remaining())
+        assert not writer.is_alive(), f"writer still running after {timeout_s}s; {errors=!r}"
         assert errors == []
-        loaded.append(load_config(pipe_path))
+        loaded.append(load_config(Path(pipe_path)))
         assert {c.databases.registry.name for c in loaded} == {
             sample_config_dict["databases"]["registry"]["name"]
         }
         assert len(loaded) == 3
     finally:
+        rendezvous.abort()
+        stop.set()
         for t in threads:
             if t.is_alive():
-                t.join()
-        os.close(read_fd)
+                t.join(remaining())
+        # A thread still running may be reading read_fd; closing it under that
+        # thread could hand the fd number to an unrelated file, so it leaks.
+        if not any(t.is_alive() for t in threads):
+            os.close(read_fd)
         _ONESHOT_CONFIG_CACHE.clear()
 
 
