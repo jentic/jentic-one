@@ -24,6 +24,7 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
+    PrivateAttr,
     SecretStr,
     ValidationError,
     ValidationInfo,
@@ -213,6 +214,20 @@ class DatabaseConfig(BaseModel):
     pool_max: int = Field(
         default=10,
         description="Maximum connections in the PostgreSQL connection pool (ignored for SQLite).",
+    )
+    pool_pre_ping: bool = Field(
+        default=True,
+        description=(
+            "PostgreSQL: test each pooled connection on checkout and transparently "
+            "replace a dead one. On asyncpg the ping costs three round trips "
+            "(``BEGIN``, ``;``, ``ROLLBACK``) per checkout. With ``false``, "
+            "``pool_recycle_s`` and TCP keepalive do not cover a Postgres restart or "
+            "failover, a pooler/proxy restart, or a terminated backend: after such an "
+            "event the first request on each pool per process can fail with an HTTP "
+            "503 (work run through the retrying transaction helper is re-run on a "
+            "fresh connection instead). Only disable it where those events are rare "
+            "and that error is acceptable. Ignored for SQLite."
+        ),
     )
     pool_recycle_s: int = Field(
         default=POOL_RECYCLE_S,
@@ -739,6 +754,80 @@ _SPA_CALLBACK_PATH = "/app/auth/callback"
 _LOCAL_DEV_KEY_FINGERPRINT = "d35355bfb727b96b885e0ff817efd947bc5d8a88f169cabfa764932b57b3f3db"
 _LOCAL_DEV_KEY_KID = "local-dev-key"
 
+TrustedProxyNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
+
+_IPV4_MAPPED_NETWORK = ipaddress.IPv6Network("::ffff:0:0/96")
+
+# Address space no arbitrary internet host can hold. A trusted-proxy network
+# outside it lets any host in that range pick its own rate-limit identity via
+# ``X-Forwarded-For``, so such an entry is warned about at load.
+_NON_PUBLIC_IPV4_NETWORKS: tuple[ipaddress.IPv4Network, ...] = (
+    ipaddress.IPv4Network("10.0.0.0/8"),
+    ipaddress.IPv4Network("100.64.0.0/10"),
+    ipaddress.IPv4Network("127.0.0.0/8"),
+    ipaddress.IPv4Network("169.254.0.0/16"),
+    ipaddress.IPv4Network("172.16.0.0/12"),
+    ipaddress.IPv4Network("192.168.0.0/16"),
+)
+_NON_PUBLIC_IPV6_NETWORKS: tuple[ipaddress.IPv6Network, ...] = (
+    ipaddress.IPv6Network("::1/128"),
+    ipaddress.IPv6Network("fc00::/7"),
+    ipaddress.IPv6Network("fe80::/10"),
+)
+
+# Networks already warned about: config is validated more than once per
+# process, and one warning per network is enough.
+_warned_public_trusted_proxies: set[str] = set()
+
+
+def parse_trusted_proxy(entry: str) -> TrustedProxyNetwork:
+    """Parse one ``trusted_proxies`` entry into the network it trusts.
+
+    A bare address becomes a /32 (IPv4) or /128 (IPv6); host bits in a CIDR
+    are ignored (``10.1.2.3/8`` is ``10.0.0.0/8``). An IPv4-mapped IPv6 entry
+    is unmapped to IPv4, matching how request addresses are compared. Zone IDs
+    are rejected: matching is by address only, so a zone would silently trust
+    that range on every interface.
+    """
+    if "%" in entry:
+        raise ValueError(
+            f"invalid auth.oauth_rate_limit.trusted_proxies entry {entry!r}: "
+            "zone IDs ('%' suffix) are not supported"
+        )
+    try:
+        network = ipaddress.ip_network(entry, strict=False)
+    except ValueError as exc:
+        raise ValueError(
+            f"invalid auth.oauth_rate_limit.trusted_proxies entry {entry!r}: "
+            "expected an IP address or CIDR network (e.g. 10.0.0.0/8)"
+        ) from exc
+    if isinstance(network, ipaddress.IPv6Network) and network.subnet_of(_IPV4_MAPPED_NETWORK):
+        mapped = int(network.network_address) & 0xFFFFFFFF
+        return ipaddress.IPv4Network((mapped, network.prefixlen - 96))
+    return network
+
+
+def _is_non_public_network(network: TrustedProxyNetwork) -> bool:
+    if isinstance(network, ipaddress.IPv4Network):
+        return any(network.subnet_of(allowed) for allowed in _NON_PUBLIC_IPV4_NETWORKS)
+    return any(network.subnet_of(allowed) for allowed in _NON_PUBLIC_IPV6_NETWORKS)
+
+
+def _warn_public_trusted_proxy_once(entry: str, network: TrustedProxyNetwork) -> None:
+    if str(network) in _warned_public_trusted_proxies:
+        return
+    _warned_public_trusted_proxies.add(str(network))
+    _logger.warning(
+        "trusted_proxies_network_includes_public_addresses",
+        entry=entry,
+        network=str(network),
+        detail=(
+            "any host inside a trusted proxy network can set X-Forwarded-For "
+            "and so choose its own OAuth rate-limit identity; list only the "
+            "addresses your reverse proxies hold"
+        ),
+    )
+
 
 class OAuthRateLimitConfig(BaseModel):
     """Pre-auth rate limit tunables for OAuth endpoints."""
@@ -748,8 +837,8 @@ class OAuthRateLimitConfig(BaseModel):
         description=(
             "Sustained requests/minute allowed on the unauthenticated "
             "``/authorize`` endpoints, keyed per ``client_id``+IP — except "
-            "the local-login routes, which carry no query ``client_id`` and "
-            "fall back to a bare-IP key. Behind a proxy, set "
+            "the local-login routes, whose ``client_id`` rides inside the signed "
+            "login state and which are always keyed by bare IP. Behind a proxy, set "
             "``auth.oauth_rate_limit.trusted_proxies`` or every client "
             "shares the proxy's IP bucket."
         ),
@@ -783,12 +872,17 @@ class OAuthRateLimitConfig(BaseModel):
     trusted_proxies: list[str] = Field(
         default_factory=list,
         description=(
-            "Socket IPs of reverse proxies whose ``X-Forwarded-For`` header is "
-            "honored when deriving the per-client rate-limit identity. Empty "
-            "(default) means the socket address is used as-is — behind a "
-            "reverse proxy every request then carries the proxy's IP and all "
-            "clients share one bucket, so list the proxy IPs when deploying "
-            "behind one."
+            "Reverse proxies whose ``X-Forwarded-For`` header is honored when "
+            "deriving the per-client rate-limit identity: IP addresses or CIDR "
+            "networks (e.g. ``10.0.0.0/8``, ``fd00::/8``), matched against the "
+            "socket address and each forwarded hop by network membership. "
+            "Accepts a YAML list or a comma-separated string. Invalid entries "
+            "fail config load. Empty (default) means the socket address is used "
+            "as-is — behind a reverse proxy every request then carries the "
+            "proxy's IP and all clients share one bucket, so list the proxy "
+            "IPs or pod CIDR when deploying behind one. Only list ranges your "
+            "proxies alone hold: any host inside a trusted network can choose "
+            "its own rate-limit identity."
         ),
     )
     approval_status_rpm: int = Field(
@@ -807,6 +901,47 @@ class OAuthRateLimitConfig(BaseModel):
         default=60,
         description="Burst allowance on top of ``approval_status_rpm``.",
     )
+
+    # (entries, parsed networks): keyed on the entries so an assignment or a
+    # ``model_copy(update=...)`` after load can never leave a stale trust set.
+    _trusted_networks_cache: tuple[tuple[str, ...], tuple[TrustedProxyNetwork, ...]] = PrivateAttr(
+        default=((), ())
+    )
+
+    @field_validator("trusted_proxies", mode="before")
+    @classmethod
+    def _split_trusted_proxies(cls, value: Any) -> Any:
+        # The env var arrives as one string; a YAML list passes through.
+        return _csv_to_list(value) if isinstance(value, str) else value
+
+    @field_validator("trusted_proxies", mode="after")
+    @classmethod
+    def _validate_trusted_proxies(cls, value: list[str]) -> list[str]:
+        entries = [entry.strip() for entry in value]
+        for entry in entries:
+            network = parse_trusted_proxy(entry)
+            if not _is_non_public_network(network):
+                _warn_public_trusted_proxy_once(entry, network)
+        return entries
+
+    def model_post_init(self, __context: object) -> None:
+        """Parse ``trusted_proxies`` at load so request-time matching never parses it."""
+        entries = tuple(self.trusted_proxies)
+        self._trusted_networks_cache = (entries, tuple(parse_trusted_proxy(e) for e in entries))
+
+    @property
+    def trusted_networks(self) -> tuple[TrustedProxyNetwork, ...]:
+        """The parsed ``trusted_proxies`` networks, for ``client_ip`` matching.
+
+        Parsed once per distinct entry list; a request only compares the
+        entries against the cache key.
+        """
+        entries = tuple(self.trusted_proxies)
+        cached_entries, networks = self._trusted_networks_cache
+        if entries != cached_entries:
+            networks = tuple(parse_trusted_proxy(e.strip()) for e in entries)
+            self._trusted_networks_cache = (entries, networks)
+        return networks
 
 
 class LocalLoginConfig(BaseModel):
@@ -1360,14 +1495,55 @@ class ControlConnectConfig(BaseModel):
 class ControlSurfaceConfig(BaseModel):
     """Control surface configuration.
 
-    Unknown subkeys are ignored, so a ``control:`` section written for another
-    release keeps validating.
+    ``egress`` is the allowlist for the platform's outbound OAuth and credential
+    calls. Each ``control.egress`` key left unset takes its value from the
+    matching ``broker.egress`` key. The policy is read by whichever process makes
+    the call: the control surface for credential and OAuth app writes, the
+    connect-session confirm, code exchange, device authorization and the
+    identity probe, and the broker surface for the token refresh it runs before
+    injecting a credential. With one process per surface, set ``control.egress``
+    (and the ``broker.egress`` keys it inherits) identically on both.
+
+    Unknown subkeys of ``control:`` are ignored, so a section written for
+    another release keeps validating; ``control.egress`` rejects unknown keys so
+    a mistyped allowlist key fails at startup instead of silently allowing less.
     """
 
     connect: ControlConnectConfig = Field(
         default_factory=ControlConnectConfig,
         description="Agent connect-session settings.",
     )
+    egress: ControlEgressConfig = Field(
+        default_factory=lambda: ControlEgressConfig(),
+        description=(
+            "Private-network allowlist for the platform's OAuth and credential "
+            "calls: OAuth2 credential and OAuth app registration URL checks, "
+            "own-client endpoints confirmed on a connect session, token "
+            "exchange and refresh, device authorization, and the vendor "
+            "identity probe. Each key left unset takes its value from "
+            "`broker.egress`; set a key (e.g. `allowed_private_subnets: []`) to "
+            "override it for these calls alone. These calls always pin DNS. "
+            "The process making the call reads it, and the broker surface "
+            "makes token refresh calls, so with one process per surface set it "
+            "identically on the control and broker surfaces."
+        ),
+    )
+
+
+def resolved_control_egress(config: AppConfig) -> EgressConfig:
+    """The egress policy for the platform's OAuth and credential calls.
+
+    Each ``control.egress`` key that is set (not ``None``) wins; every other
+    key, and ``dns_pinning_enabled``, comes from ``broker.egress``. With neither
+    configured this is the strict default. Callers always pin DNS, whatever
+    ``dns_pinning_enabled`` says.
+    """
+    overrides = {
+        name: value
+        for name, value in config.control.egress.model_dump().items()
+        if value is not None
+    }
+    return config.broker.egress.model_copy(update=overrides)
 
 
 class UpstreamClientConfig(BaseModel):
@@ -1545,12 +1721,62 @@ class EgressConfig(BaseModel):
     @field_validator("allowed_private_subnets")
     @classmethod
     def _validate_cidrs(cls, value: list[str]) -> list[str]:
-        for cidr in value:
-            try:
-                ipaddress.ip_network(cidr, strict=False)
-            except ValueError as exc:
-                raise ValueError(f"invalid CIDR in allowed_private_subnets: {cidr!r}") from exc
-        return value
+        return _validate_cidr_list(value)
+
+
+def _validate_cidr_list(value: list[str]) -> list[str]:
+    for cidr in value:
+        try:
+            ipaddress.ip_network(cidr, strict=False)
+        except ValueError as exc:
+            raise ValueError(f"invalid CIDR in allowed_private_subnets: {cidr!r}") from exc
+    return value
+
+
+def _csv_to_optional_list(value: Any) -> list[str] | None:
+    return None if value is None else _csv_to_list(value)
+
+
+class ControlEgressConfig(BaseModel):
+    """Private-network allowlist for the platform's OAuth and credential calls.
+
+    Holds only the two allowlist keys. A key left unset takes its value from
+    the matching ``broker.egress`` key. These calls always pin DNS, so there is
+    no ``dns_pinning_enabled`` key here, and unknown keys are rejected.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    allowed_private_subnets: Annotated[list[str] | None, BeforeValidator(_csv_to_optional_list)] = (
+        Field(
+            default=None,
+            description=(
+                "CIDRs exempted from the private-IP block for these calls (e.g. "
+                '``["10.50.0.0/16"]``); unset inherits '
+                "`broker.egress.allowed_private_subnets`, and `[]` blocks every "
+                "private range for these calls even when the broker allows one. "
+                "The cloud-metadata and platform-credential IPs are never exempted. "
+                "Accepts a YAML list or a comma-separated string."
+            ),
+        )
+    )
+    allowed_internal_domains: Annotated[
+        list[str] | None, BeforeValidator(_csv_to_optional_list)
+    ] = Field(
+        default=None,
+        description=(
+            'Domain suffixes (e.g. ``[".corp.internal"]``) whose resolved '
+            "private IP is permitted for these calls; unset inherits "
+            "`broker.egress.allowed_internal_domains`. The resolved IP must "
+            "still fall in an allowed subnet. Accepts a YAML list or a "
+            "comma-separated string."
+        ),
+    )
+
+    @field_validator("allowed_private_subnets")
+    @classmethod
+    def _validate_cidrs(cls, value: list[str] | None) -> list[str] | None:
+        return None if value is None else _validate_cidr_list(value)
 
 
 class BrokerResilienceConfig(BaseModel):

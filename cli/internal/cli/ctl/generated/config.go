@@ -711,13 +711,71 @@ func (j *ControlConnectConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
+// Private-network allowlist for the platform's OAuth and credential calls.
+//
+// Holds only the two allowlist keys. A key left unset takes its value from
+// the matching “broker.egress“ key. These calls always pin DNS, so there is
+// no “dns_pinning_enabled“ key here, and unknown keys are rejected.
+type ControlEgressConfig struct {
+	// Domain suffixes (e.g. ``[".corp.internal"]``) whose resolved private IP is
+	// permitted for these calls; unset inherits
+	// `broker.egress.allowed_internal_domains`. The resolved IP must still fall in an
+	// allowed subnet. Accepts a YAML list or a comma-separated string.
+	AllowedInternalDomains *ControlEgressConfigAllowedInternalDomains `json:"allowed_internal_domains,omitempty,omitzero" yaml:"allowed_internal_domains,omitempty" mapstructure:"allowed_internal_domains,omitempty"`
+
+	// CIDRs exempted from the private-IP block for these calls (e.g.
+	// ``["10.50.0.0/16"]``); unset inherits `broker.egress.allowed_private_subnets`,
+	// and `[]` blocks every private range for these calls even when the broker allows
+	// one. The cloud-metadata and platform-credential IPs are never exempted. Accepts
+	// a YAML list or a comma-separated string.
+	AllowedPrivateSubnets *ControlEgressConfigAllowedPrivateSubnets `json:"allowed_private_subnets,omitempty,omitzero" yaml:"allowed_private_subnets,omitempty" mapstructure:"allowed_private_subnets,omitempty"`
+}
+
+// Domain suffixes (e.g. “[".corp.internal"]“) whose resolved private IP is
+// permitted for these calls; unset inherits
+// `broker.egress.allowed_internal_domains`. The resolved IP must still fall in an
+// allowed subnet. Accepts a YAML list or a comma-separated string.
+type ControlEgressConfigAllowedInternalDomains []string
+
+type ControlEgressConfigAllowedInternalDomains_0 []string
+
+// CIDRs exempted from the private-IP block for these calls (e.g.
+// “["10.50.0.0/16"]“); unset inherits `broker.egress.allowed_private_subnets`,
+// and `[]` blocks every private range for these calls even when the broker allows
+// one. The cloud-metadata and platform-credential IPs are never exempted. Accepts
+// a YAML list or a comma-separated string.
+type ControlEgressConfigAllowedPrivateSubnets []string
+
+type ControlEgressConfigAllowedPrivateSubnets_0 []string
+
 // Control surface configuration.
 //
-// Unknown subkeys are ignored, so a “control:“ section written for another
-// release keeps validating.
+// “egress“ is the allowlist for the platform's outbound OAuth and credential
+// calls. Each “control.egress“ key left unset takes its value from the
+// matching “broker.egress“ key. The policy is read by whichever process makes
+// the call: the control surface for credential and OAuth app writes, the
+// connect-session confirm, code exchange, device authorization and the
+// identity probe, and the broker surface for the token refresh it runs before
+// injecting a credential. With one process per surface, set “control.egress“
+// (and the “broker.egress“ keys it inherits) identically on both.
+//
+// Unknown subkeys of “control:“ are ignored, so a section written for
+// another release keeps validating; “control.egress“ rejects unknown keys so
+// a mistyped allowlist key fails at startup instead of silently allowing less.
 type ControlSurfaceConfig struct {
 	// Agent connect-session settings.
 	Connect *ControlConnectConfig `json:"connect,omitempty,omitzero" yaml:"connect,omitempty" mapstructure:"connect,omitempty"`
+
+	// Private-network allowlist for the platform's OAuth and credential calls: OAuth2
+	// credential and OAuth app registration URL checks, own-client endpoints
+	// confirmed on a connect session, token exchange and refresh, device
+	// authorization, and the vendor identity probe. Each key left unset takes its
+	// value from `broker.egress`; set a key (e.g. `allowed_private_subnets: []`) to
+	// override it for these calls alone. These calls always pin DNS. The process
+	// making the call reads it, and the broker surface makes token refresh calls, so
+	// with one process per surface set it identically on the control and broker
+	// surfaces.
+	Egress *ControlEgressConfig `json:"egress,omitempty,omitzero" yaml:"egress,omitempty" mapstructure:"egress,omitempty"`
 }
 
 // Credentials subsystem configuration.
@@ -769,6 +827,16 @@ type DatabaseConfig struct {
 
 	// Maximum connections in the PostgreSQL connection pool (ignored for SQLite).
 	PoolMax int `json:"pool_max,omitempty,omitzero" yaml:"pool_max,omitempty" mapstructure:"pool_max,omitempty"`
+
+	// PostgreSQL: test each pooled connection on checkout and transparently replace a
+	// dead one. On asyncpg the ping costs three round trips (``BEGIN``, ``;``,
+	// ``ROLLBACK``) per checkout. With ``false``, ``pool_recycle_s`` and TCP
+	// keepalive do not cover a Postgres restart or failover, a pooler/proxy restart,
+	// or a terminated backend: after such an event the first request on each pool per
+	// process can fail with an HTTP 503 (work run through the retrying transaction
+	// helper is re-run on a fresh connection instead). Only disable it where those
+	// events are rare and that error is acceptable. Ignored for SQLite.
+	PoolPrePing bool `json:"pool_pre_ping,omitempty,omitzero" yaml:"pool_pre_ping,omitempty" mapstructure:"pool_pre_ping,omitempty"`
 
 	// PostgreSQL: replace a pooled connection once it is this many seconds old, on
 	// its next checkout, so a connection silently dropped by a middlebox or left
@@ -874,6 +942,9 @@ func (j *DatabaseConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["pool_max"]; !ok || v == nil {
 		plain.PoolMax = 10
+	}
+	if v, ok := raw["pool_pre_ping"]; !ok || v == nil {
+		plain.PoolPrePing = true
 	}
 	if v, ok := raw["pool_recycle_s"]; !ok || v == nil {
 		plain.PoolRecycleS = 1800
@@ -1713,14 +1784,18 @@ type MemoryBackendConfig struct {
 	// first ``:``). Unless overridden here, idem (Idempotency-Key records) is 250000
 	// entries / 134217728 bytes (128 MiB) and idem-body (their stored response
 	// bodies) 1000000 entries / 33554432 bytes (32 MiB), each with a 0.1 per-caller
-	// share; every other namespace uses max_entries_per_namespace /
-	// max_bytes_per_namespace. The sustained idempotent request rate idem can hold is
-	// min(max_entries, max_bytes / record_bytes) / broker.idempotency.ttl_s, where
-	// record_bytes is about 1000 bytes plus the response headers (capped at 512
-	// bytes): about 30 req/s at the defaults and a 1 h TTL, and a tenth of that per
-	// caller. Above it, Idempotency-Key requests get 503 idempotency_unavailable;
-	// bodies (about 830 bytes + body length each) stop being stored for replay
-	// sooner, about 5 req/s of 1 KiB bodies, without refusing requests.
+	// share; login-csrf (login page CSRF nonces) uses max_entries_per_namespace /
+	// max_bytes_per_namespace with a 0.02 per-client share, about 370 live nonces per
+	// IPv4 address or IPv6 /64 at the defaults (about 900 bytes each, 5-minute TTL),
+	// twice what the default authorize rate limit lets one IP request in that time;
+	// every other namespace uses max_entries_per_namespace / max_bytes_per_namespace.
+	// The sustained idempotent request rate idem can hold is min(max_entries,
+	// max_bytes / record_bytes) / broker.idempotency.ttl_s, where record_bytes is
+	// about 1000 bytes plus the response headers (capped at 512 bytes): about 30
+	// req/s at the defaults and a 1 h TTL, and a tenth of that per caller. Above it,
+	// Idempotency-Key requests get 503 idempotency_unavailable; bodies (about 830
+	// bytes + body length each) stop being stored for replay sooner, about 5 req/s of
+	// 1 KiB bodies, without refusing requests.
 	Namespaces MemoryBackendConfigNamespaces `json:"namespaces,omitempty,omitzero" yaml:"namespaces,omitempty" mapstructure:"namespaces,omitempty"`
 }
 
@@ -1728,6 +1803,10 @@ type MemoryBackendConfig struct {
 // first “:“). Unless overridden here, idem (Idempotency-Key records) is 250000
 // entries / 134217728 bytes (128 MiB) and idem-body (their stored response bodies)
 // 1000000 entries / 33554432 bytes (32 MiB), each with a 0.1 per-caller share;
+// login-csrf (login page CSRF nonces) uses max_entries_per_namespace /
+// max_bytes_per_namespace with a 0.02 per-client share, about 370 live nonces per
+// IPv4 address or IPv6 /64 at the defaults (about 900 bytes each, 5-minute TTL),
+// twice what the default authorize rate limit lets one IP request in that time;
 // every other namespace uses max_entries_per_namespace / max_bytes_per_namespace.
 // The sustained idempotent request rate idem can hold is min(max_entries,
 // max_bytes / record_bytes) / broker.idempotency.ttl_s, where record_bytes is
@@ -1781,9 +1860,10 @@ type MemoryNamespaceBudgetConfig struct {
 	MaxEntries int `json:"max_entries" yaml:"max_entries" mapstructure:"max_entries"`
 
 	// Most of max_entries and max_bytes that one owner (the key's second ``:``
-	// segment, for idem and idem-body the calling actor) may hold; an owner over its
-	// share is refused without affecting the others. Unset, it is 0.1 for idem and
-	// idem-body and unlimited elsewhere; 1.0 lets one owner use the whole namespace.
+	// segment: for idem and idem-body the calling actor, for login-csrf the client's
+	// IPv4 address or IPv6 /64) may hold; an owner over its share is refused without
+	// affecting the others. Unset, it is 0.1 for idem and idem-body, 0.02 for
+	// login-csrf and unlimited elsewhere; 1.0 lets one owner use the whole namespace.
 	MaxOwnerShare interface{} `json:"max_owner_share,omitempty,omitzero" yaml:"max_owner_share,omitempty" mapstructure:"max_owner_share,omitempty"`
 }
 
@@ -1896,10 +1976,10 @@ type OAuthRateLimitConfig struct {
 	AuthorizeBurst int `json:"authorize_burst,omitempty,omitzero" yaml:"authorize_burst,omitempty" mapstructure:"authorize_burst,omitempty"`
 
 	// Sustained requests/minute allowed on the unauthenticated ``/authorize``
-	// endpoints, keyed per ``client_id``+IP — except the local-login routes, which
-	// carry no query ``client_id`` and fall back to a bare-IP key. Behind a proxy,
-	// set ``auth.oauth_rate_limit.trusted_proxies`` or every client shares the
-	// proxy's IP bucket.
+	// endpoints, keyed per ``client_id``+IP — except the local-login routes, whose
+	// ``client_id`` rides inside the signed login state and which are always keyed by
+	// bare IP. Behind a proxy, set ``auth.oauth_rate_limit.trusted_proxies`` or every
+	// client shares the proxy's IP bucket.
 	AuthorizeRpm int `json:"authorize_rpm,omitempty,omitzero" yaml:"authorize_rpm,omitempty" mapstructure:"authorize_rpm,omitempty"`
 
 	// Burst allowance on top of ``exchange_rpm``.
@@ -1916,11 +1996,15 @@ type OAuthRateLimitConfig struct {
 	// registration (``POST /oauth-clients``).
 	RegistrationRpm int `json:"registration_rpm,omitempty,omitzero" yaml:"registration_rpm,omitempty" mapstructure:"registration_rpm,omitempty"`
 
-	// Socket IPs of reverse proxies whose ``X-Forwarded-For`` header is honored when
-	// deriving the per-client rate-limit identity. Empty (default) means the socket
+	// Reverse proxies whose ``X-Forwarded-For`` header is honored when deriving the
+	// per-client rate-limit identity: IP addresses or CIDR networks (e.g.
+	// ``10.0.0.0/8``, ``fd00::/8``), matched against the socket address and each
+	// forwarded hop by network membership. Accepts a YAML list or a comma-separated
+	// string. Invalid entries fail config load. Empty (default) means the socket
 	// address is used as-is — behind a reverse proxy every request then carries the
-	// proxy's IP and all clients share one bucket, so list the proxy IPs when
-	// deploying behind one.
+	// proxy's IP and all clients share one bucket, so list the proxy IPs or pod CIDR
+	// when deploying behind one. Only list ranges your proxies alone hold: any host
+	// inside a trusted network can choose its own rate-limit identity.
 	TrustedProxies []string `json:"trusted_proxies,omitempty,omitzero" yaml:"trusted_proxies,omitempty" mapstructure:"trusted_proxies,omitempty"`
 }
 
@@ -3214,6 +3298,33 @@ func (j *VendorScopeConfigClassification) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["name"]; raw != nil && !ok {
+		return fmt.Errorf("field name in VendorScopeConfig: required")
+	}
+	type Plain VendorScopeConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["classification"]; !ok || v == nil {
+		plain.Classification = "read"
+	}
+	if v, ok := raw["default"]; !ok || v == nil {
+		plain.Default = false
+	}
+	if v, ok := raw["description"]; !ok || v == nil {
+		plain.Description = ""
+	}
+	*j = VendorScopeConfig(plain)
+	return nil
+}
+
 // Background job-worker durability knobs.
 //
 // The worker claims a job, sets a **visibility deadline**
@@ -3354,30 +3465,3 @@ func (j *WorkerConfig) UnmarshalJSON(value []byte) error {
 }
 
 type VendorAuthConfigIdentityProbe_0 = VendorIdentityProbeConfig
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
-	var raw map[string]interface{}
-	if err := json.Unmarshal(value, &raw); err != nil {
-		return err
-	}
-	if _, ok := raw["name"]; raw != nil && !ok {
-		return fmt.Errorf("field name in VendorScopeConfig: required")
-	}
-	type Plain VendorScopeConfig
-	var plain Plain
-	if err := json.Unmarshal(value, &plain); err != nil {
-		return err
-	}
-	if v, ok := raw["classification"]; !ok || v == nil {
-		plain.Classification = "read"
-	}
-	if v, ok := raw["default"]; !ok || v == nil {
-		plain.Default = false
-	}
-	if v, ok := raw["description"]; !ok || v == nil {
-		plain.Description = ""
-	}
-	*j = VendorScopeConfig(plain)
-	return nil
-}

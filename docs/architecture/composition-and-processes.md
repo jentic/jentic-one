@@ -102,9 +102,12 @@ flowchart TB
   balancer. Set `broker.resilience.backend.backend` to `redis` (and give
   every replica the same `broker.resilience.backend.redis_url`) so rate
   limits, circuit breakers, and idempotency records are shared across
-  replicas. The redis client is an optional extra
-  (`pip install jentic-one[redis]`), not part of the published container
-  image — scaling out on that image means building your own with the extra.
+  replicas. The redis client is the optional `redis` extra
+  (`pip install jentic-one[redis]` for a pip install), not part of the
+  published container image — scaling out on that image means building
+  your own with `--build-arg EXTRAS=redis` (`make build-app EXTRAS=redis`
+  single-arch). The image installs the wheel `--no-deps`, so extras reach
+  it only through that build arg.
 
 ## The memory shared-state backend is bounded
 
@@ -142,6 +145,17 @@ flowchart TB
 > chart's 512Mi memory limit holds. The broker always runs as its own
 > process; the combined app holds one such backend each for the auth and
 > control surfaces.
+>
+> The local login page stores one CSRF nonce per page load in `login-csrf`
+> (16 MiB, about 18,600 nonces of about 900 bytes for their 5-minute TTL).
+> Each client, an IPv4 address or an IPv6 /64, may hold 2% of it, about 370
+> nonces: twice what the default authorize rate limit lets one IP request in
+> that time. A client flooding the page gets 503 with `Retry-After` while
+> other clients still sign in; a flood spread over about 50 or more networks
+> at once (one IPv6 /56 alone holds 256 /64s) can still fill it, which the
+> redis backend or a larger budget absorbs. Behind a reverse proxy, list it in
+> `auth.oauth_rate_limit.trusted_proxies`, or every client shares the
+> proxy's address and its share.
 >
 > To raise it: raise `broker.resilience.backend.memory.namespaces.idem`
 > (and its `max_owner_share`) together with `max_total_bytes`, or lower

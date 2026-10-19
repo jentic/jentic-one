@@ -36,7 +36,7 @@ class _Job:
 
 
 class _NoopHandler:
-    async def execute(self, job_id: str, session: Any, **_: Any) -> JobResultPayload:
+    async def execute(self, job_id: str, db: Any, **_: Any) -> JobResultPayload:
         return JobResultPayload(body={})
 
 
