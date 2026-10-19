@@ -35,6 +35,17 @@ PYTHONPATH=. uv run python spikes/cli-runner/e2e/setup.py
 | `POST http://127.0.0.1:58100/http://127.0.0.1:58200/graphql` with the agent token | ✅ `200`, `jentic-execution-id: exec_…`, gh-shaped `pullRequests` body |
 | What the upstream received | `Authorization: Bearer ghp_SPIKE_FAKE_…`, the **stored credential**. The agent's Jentic token was not forwarded |
 
+### Policy and audit
+
+| Check | Result |
+|---|---|
+| `GET /repos/cli/cli/pulls` (allowed by regex rule) | ✅ 200, credential injected |
+| `GET /repos/cli/cli/readme` (not in the spec) | ✅ 404 `operation_not_found`, **never reaches upstream** |
+| Rules narrowed to `GET /repos/.*`, then `POST /graphql` | ✅ 403 `action_denied` with `agent_directive.strategy: prompt_human` ("ask your operator to adjust the binding's permission rules"). **Zero upstream calls** |
+| `GET /executions` (admin) | allowed calls recorded with operation, credential name and agent. **Denied calls are not execution records** |
+| `GET /events` (admin) | allowed: `execution.completed` + `credential.accessed`. Denied: `broker.pbac_denied`. Rule edits: `credential.permission_rule_set` |
+| Re-running `setup.py` | the re-import dead-letters as `job.failed_permanently` (identical revision). Harmless, but noisy |
+
 ## Findings
 
 - **Matching and injection work for a GitHub-shaped GraphQL call.** The broker
@@ -45,6 +56,9 @@ PYTHONPATH=. uv run python spikes/cli-runner/e2e/setup.py
   don't route. Profile packaging must import **and promote** its operations.
 - **The vendor is stored slugified** (`github.com` → `github-com`). Profile
   manifests have to use the slug in API references.
+- **Denials only show up in the event stream.** A CLI invocation view that
+  lists "what this command did" must merge `/executions` with
+  `broker.pbac_denied` events, or a denied child call won't appear.
 - **Local-run gotcha:** with `server.reload` on, file writes in the worktree
   restart the servers and issued tokens stop working. `e2e.env` sets
   `JENTIC__SERVER__RELOAD=false`.
