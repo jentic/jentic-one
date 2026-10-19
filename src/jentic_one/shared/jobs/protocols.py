@@ -115,6 +115,11 @@ class QueuedExecutionRequest:
     # The job id — used by the authorizer to look up an approved held_executions
     # row when re-evaluating a rule that carries require-approval effect.
     job_id: str | None = None
+    # The enqueue-time request's trace id and the operation's spec path template
+    # (``OperationInfo.path``) — recorded on a denial event so it correlates with
+    # the request and names what was denied without the concrete request path.
+    trace_id: str | None = None
+    operation_path: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

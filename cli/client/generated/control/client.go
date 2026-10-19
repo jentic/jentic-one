@@ -9571,11 +9571,21 @@ type ClientInterface interface {
 	// may call it, so a UI can label the owners, approvers and actors it
 	// already holds by id without `users:read`.
 	//
-	// Users resolve for every caller. Agents resolve only when visible to the
-	// caller: itself, its own agents, its owner's agents with
-	// `owner:agents:read`, or every agent for `org:admin`. Ids that match no
-	// visible actor are silently left out rather than reported as errors.
-	// Listing the whole directory needs `users:read` on `GET /actors`.
+	// Agents resolve when visible to the caller: itself, its own agents, its
+	// owner's agents with `owner:agents:read`, or every agent for `org:admin`.
+	// Users resolve when the caller can already see them by id: itself; the
+	// owner, registrant, approver or denier of an agent it can see, and the
+	// API key creator and key rotation/revocation actor of an agent it owns
+	// (with `agents:read`); the actor on an event it can see (with
+	// `events:read`); the decider of a held execution it can see; the
+	// consenting user of an OAuth grant bound to an agent it owns; the creator
+	// of a credential it can read (with `credentials:read` or
+	// `owner:credentials:read`); and, with `oauth-clients:read`, the
+	// consenting user of a grant bound to the caller itself and the creator of
+	// any OAuth client. `org:admin` resolves every user.
+	// Ids that match no visible actor are silently left
+	// out, exactly like unknown ids. Listing the whole directory needs
+	// `users:read` on `GET /actors`.
 	//
 	// Corresponds with GET /actors/lookup (the `LookupActors` operationId).
 	LookupActors(ctx context.Context, params *LookupActorsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -10020,8 +10030,8 @@ type ClientInterface interface {
 	// granted scopes, the consenting user, its `status`, created and last-used
 	// timestamps, and `can_revoke` for the caller. Filter by `status`
 	// (`active` or `revoked`); results are cursor-paginated. Allowed for the
-	// agent's owner or an admin. An agent the caller cannot see answers 404,
-	// the same as one that does not exist. Revoke a grant with
+	// agent's owner or an admin; any other caller gets 404, the same as for an
+	// agent that does not exist. Revoke a grant with
 	// `POST /oauth-grants/{grant_id}:revoke`.
 	//
 	// Corresponds with GET /agents/{agent_id}/oauth-grants (the `ListAgentOauthGrants` operationId).
@@ -11516,7 +11526,10 @@ type ClientInterface interface {
 	//
 	// Revoke a consent→agent grant — one of the three revocation kill radii.
 	//
-	// Allowed for the grant's owner (the consenting user) or an admin. Marks
+	// Allowed for the grant's owner (the consenting user) or an admin. A grant
+	// the caller cannot see answers 404, the same as one that does not exist;
+	// a caller who can see it but may not revoke it (the bound agent, or the
+	// agent's owner when someone else consented) gets 403. Marks
 	// the grant ``revoked`` and revokes every outstanding access/refresh token
 	// minted under it in the same transaction; the live resolvers also re-check
 	// grant status on every verdict (belt + braces). The client's next token
@@ -12350,11 +12363,21 @@ func (c *Client) ListActors(ctx context.Context, params *ListActorsParams, reqEd
 // may call it, so a UI can label the owners, approvers and actors it
 // already holds by id without `users:read`.
 //
-// Users resolve for every caller. Agents resolve only when visible to the
-// caller: itself, its own agents, its owner's agents with
-// `owner:agents:read`, or every agent for `org:admin`. Ids that match no
-// visible actor are silently left out rather than reported as errors.
-// Listing the whole directory needs `users:read` on `GET /actors`.
+// Agents resolve when visible to the caller: itself, its own agents, its
+// owner's agents with `owner:agents:read`, or every agent for `org:admin`.
+// Users resolve when the caller can already see them by id: itself; the
+// owner, registrant, approver or denier of an agent it can see, and the
+// API key creator and key rotation/revocation actor of an agent it owns
+// (with `agents:read`); the actor on an event it can see (with
+// `events:read`); the decider of a held execution it can see; the
+// consenting user of an OAuth grant bound to an agent it owns; the creator
+// of a credential it can read (with `credentials:read` or
+// `owner:credentials:read`); and, with `oauth-clients:read`, the
+// consenting user of a grant bound to the caller itself and the creator of
+// any OAuth client. `org:admin` resolves every user.
+// Ids that match no visible actor are silently left
+// out, exactly like unknown ids. Listing the whole directory needs
+// `users:read` on `GET /actors`.
 //
 // Corresponds with GET /actors/lookup (the `LookupActors` operationId).
 func (c *Client) LookupActors(ctx context.Context, params *LookupActorsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -13149,8 +13172,8 @@ func (c *Client) UpdateAgentJwks(ctx context.Context, agentId string, body Updat
 // granted scopes, the consenting user, its `status`, created and last-used
 // timestamps, and `can_revoke` for the caller. Filter by `status`
 // (`active` or `revoked`); results are cursor-paginated. Allowed for the
-// agent's owner or an admin. An agent the caller cannot see answers 404,
-// the same as one that does not exist. Revoke a grant with
+// agent's owner or an admin; any other caller gets 404, the same as for an
+// agent that does not exist. Revoke a grant with
 // `POST /oauth-grants/{grant_id}:revoke`.
 //
 // Corresponds with GET /agents/{agent_id}/oauth-grants (the `ListAgentOauthGrants` operationId).
@@ -15915,7 +15938,10 @@ func (c *Client) RegisterOauthClientEndpoint(ctx context.Context, body RegisterO
 //
 // Revoke a consent→agent grant — one of the three revocation kill radii.
 //
-// Allowed for the grant's owner (the consenting user) or an admin. Marks
+// Allowed for the grant's owner (the consenting user) or an admin. A grant
+// the caller cannot see answers 404, the same as one that does not exist;
+// a caller who can see it but may not revoke it (the bound agent, or the
+// agent's owner when someone else consented) gets 403. Marks
 // the grant “revoked“ and revokes every outstanding access/refresh token
 // minted under it in the same transaction; the live resolvers also re-check
 // grant status on every verdict (belt + braces). The client's next token
@@ -25891,11 +25917,21 @@ type ClientWithResponsesInterface interface {
 	// may call it, so a UI can label the owners, approvers and actors it
 	// already holds by id without `users:read`.
 	//
-	// Users resolve for every caller. Agents resolve only when visible to the
-	// caller: itself, its own agents, its owner's agents with
-	// `owner:agents:read`, or every agent for `org:admin`. Ids that match no
-	// visible actor are silently left out rather than reported as errors.
-	// Listing the whole directory needs `users:read` on `GET /actors`.
+	// Agents resolve when visible to the caller: itself, its own agents, its
+	// owner's agents with `owner:agents:read`, or every agent for `org:admin`.
+	// Users resolve when the caller can already see them by id: itself; the
+	// owner, registrant, approver or denier of an agent it can see, and the
+	// API key creator and key rotation/revocation actor of an agent it owns
+	// (with `agents:read`); the actor on an event it can see (with
+	// `events:read`); the decider of a held execution it can see; the
+	// consenting user of an OAuth grant bound to an agent it owns; the creator
+	// of a credential it can read (with `credentials:read` or
+	// `owner:credentials:read`); and, with `oauth-clients:read`, the
+	// consenting user of a grant bound to the caller itself and the creator of
+	// any OAuth client. `org:admin` resolves every user.
+	// Ids that match no visible actor are silently left
+	// out, exactly like unknown ids. Listing the whole directory needs
+	// `users:read` on `GET /actors`.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -26378,8 +26414,8 @@ type ClientWithResponsesInterface interface {
 	// granted scopes, the consenting user, its `status`, created and last-used
 	// timestamps, and `can_revoke` for the caller. Filter by `status`
 	// (`active` or `revoked`); results are cursor-paginated. Allowed for the
-	// agent's owner or an admin. An agent the caller cannot see answers 404,
-	// the same as one that does not exist. Revoke a grant with
+	// agent's owner or an admin; any other caller gets 404, the same as for an
+	// agent that does not exist. Revoke a grant with
 	// `POST /oauth-grants/{grant_id}:revoke`.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -28020,7 +28056,10 @@ type ClientWithResponsesInterface interface {
 	//
 	// Revoke a consent→agent grant — one of the three revocation kill radii.
 	//
-	// Allowed for the grant's owner (the consenting user) or an admin. Marks
+	// Allowed for the grant's owner (the consenting user) or an admin. A grant
+	// the caller cannot see answers 404, the same as one that does not exist;
+	// a caller who can see it but may not revoke it (the bound agent, or the
+	// agent's owner when someone else consented) gets 403. Marks
 	// the grant ``revoked`` and revokes every outstanding access/refresh token
 	// minted under it in the same transaction; the live resolvers also re-check
 	// grant status on every verdict (belt + braces). The client's next token
@@ -43638,11 +43677,21 @@ func (c *ClientWithResponses) ListActorsWithResponse(ctx context.Context, params
 // may call it, so a UI can label the owners, approvers and actors it
 // already holds by id without `users:read`.
 //
-// Users resolve for every caller. Agents resolve only when visible to the
-// caller: itself, its own agents, its owner's agents with
-// `owner:agents:read`, or every agent for `org:admin`. Ids that match no
-// visible actor are silently left out rather than reported as errors.
-// Listing the whole directory needs `users:read` on `GET /actors`.
+// Agents resolve when visible to the caller: itself, its own agents, its
+// owner's agents with `owner:agents:read`, or every agent for `org:admin`.
+// Users resolve when the caller can already see them by id: itself; the
+// owner, registrant, approver or denier of an agent it can see, and the
+// API key creator and key rotation/revocation actor of an agent it owns
+// (with `agents:read`); the actor on an event it can see (with
+// `events:read`); the decider of a held execution it can see; the
+// consenting user of an OAuth grant bound to an agent it owns; the creator
+// of a credential it can read (with `credentials:read` or
+// `owner:credentials:read`); and, with `oauth-clients:read`, the
+// consenting user of a grant bound to the caller itself and the creator of
+// any OAuth client. `org:admin` resolves every user.
+// Ids that match no visible actor are silently left
+// out, exactly like unknown ids. Listing the whole directory needs
+// `users:read` on `GET /actors`.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -44335,8 +44384,8 @@ func (c *ClientWithResponses) UpdateAgentJwksWithResponse(ctx context.Context, a
 // granted scopes, the consenting user, its `status`, created and last-used
 // timestamps, and `can_revoke` for the caller. Filter by `status`
 // (`active` or `revoked`); results are cursor-paginated. Allowed for the
-// agent's owner or an admin. An agent the caller cannot see answers 404,
-// the same as one that does not exist. Revoke a grant with
+// agent's owner or an admin; any other caller gets 404, the same as for an
+// agent that does not exist. Revoke a grant with
 // `POST /oauth-grants/{grant_id}:revoke`.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -46739,7 +46788,10 @@ func (c *ClientWithResponses) RegisterOauthClientEndpointWithResponse(ctx contex
 //
 // Revoke a consent→agent grant — one of the three revocation kill radii.
 //
-// Allowed for the grant's owner (the consenting user) or an admin. Marks
+// Allowed for the grant's owner (the consenting user) or an admin. A grant
+// the caller cannot see answers 404, the same as one that does not exist;
+// a caller who can see it but may not revoke it (the bound agent, or the
+// agent's owner when someone else consented) gets 403. Marks
 // the grant “revoked“ and revokes every outstanding access/refresh token
 // minted under it in the same transaction; the live resolvers also re-check
 // grant status on every verdict (belt + braces). The client's next token

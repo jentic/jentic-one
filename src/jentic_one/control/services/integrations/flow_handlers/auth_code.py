@@ -58,7 +58,7 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.egress import build_always_pinned_transport
 from jentic_one.shared.models.actors import actor_type_label_from_id
 from jentic_one.shared.models.credentials import StoredCredentialType
-from jentic_one.shared.url_validation import validate_upstream_url
+from jentic_one.shared.url_validation import validate_upstream_url_async
 
 _logger = structlog.get_logger(__name__)
 
@@ -267,7 +267,7 @@ class AuthCodeFlowHandler:
         # Defense-in-depth SSRF guard.
         egress = resolved_control_egress(self._ctx.config)
         try:
-            safe_url = validate_upstream_url(token_url, egress)
+            safe_url = await validate_upstream_url_async(token_url, egress)
         except ValueError as exc:
             raise AuthCodeExchangeError(f"unsafe upstream URL: {exc}") from exc
 

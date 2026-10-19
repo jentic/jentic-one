@@ -7,11 +7,21 @@ holds the execute permission — from credential resolution (``InProcessTokenRes
 has no credential to resolve when the worker picks it up, so this answers the
 same questions directly from the actor rows, with the same semantics:
 
-- ``agent`` → ``agents.status = 'active'`` (suspended/archived/missing → inactive);
+- ``agent`` → ``agents.status = 'active'`` (suspended/archived/missing → inactive)
+  and, for an owned agent, the owner's ``users.active`` (an owned agent follows
+  its owner's account status; ownerless agents depend on their own status);
 - ``user`` → ``users.active`` (disabled/missing → inactive);
 - anything else → inactive. That covers the retired ``toolkit`` and
   ``service_account`` identities (theme 8 Phase 4 dropped the
   service-account tables; a job queued under one can never run).
+
+The verdict is terminal for the work being checked. A queued job or approved
+hold that comes up while its agent's owner is disabled is refused, not
+deferred: re-enabling the owner restores new requests, and refused work must
+be submitted again.
+
+The broker's self-contained JWT path asks the same question (behind a
+short-TTL cache) once a signed agent token's claims check out.
 
 Raw SQL against the admin schema — the broker may not import the ``admin`` ORM.
 """
@@ -20,10 +30,24 @@ from __future__ import annotations
 
 from sqlalchemy import Boolean, text
 
+from jentic_one.shared.auth.owner_status import log_agent_owner_inactive
 from jentic_one.shared.db import DatabaseSession
 from jentic_one.shared.models import ActorType
 
-_AGENT_STATUS = text("SELECT status FROM agents WHERE id = :actor_id")
+#: ``status`` of an active, owned agent whose owner is not active.
+_OWNER_INACTIVE = "owner_inactive"
+# The same owner clause as the broker's ``InProcessTokenResolver``: a queued
+# job or approved hold of an owned agent must not run while the owner is
+# disabled or deleted. A soft-deleted user has ``active`` false, so ``o.active``
+# covers delete too. One PK probe on agents, one on users.
+_AGENT_STATUS = text(
+    "SELECT CASE"
+    " WHEN a.status <> 'active' THEN a.status"
+    " WHEN a.owner_id IS NULL THEN 'active'"
+    " WHEN EXISTS (SELECT 1 FROM users o WHERE o.id = a.owner_id AND o.active) THEN 'active'"
+    f" ELSE '{_OWNER_INACTIVE}' END AS status, a.owner_id"
+    " FROM agents a WHERE a.id = :actor_id"
+)
 _USER_ACTIVE = text("SELECT active FROM users WHERE id = :actor_id").columns(active=Boolean)
 _PERMISSION_GRANTED = text(
     "SELECT 1 FROM actor_permission_grants"
@@ -41,10 +65,12 @@ class ActorStatusResolver:
         """``True`` only when the actor row exists and is active."""
         if actor_type == ActorType.AGENT.value:
             async with self._admin_db.session() as session:
-                status = (
-                    await session.execute(_AGENT_STATUS, {"actor_id": actor_id})
-                ).scalar_one_or_none()
-            return status == "active"
+                row = (await session.execute(_AGENT_STATUS, {"actor_id": actor_id})).one_or_none()
+            if row is None:
+                return False
+            if row.status == _OWNER_INACTIVE:
+                log_agent_owner_inactive(actor_id, row.owner_id)
+            return bool(row.status == "active")
         if actor_type == ActorType.USER.value:
             async with self._admin_db.session() as session:
                 active = (

@@ -120,6 +120,27 @@ still marks the sets, prints one `could not list cross-owner bindings`
 warning, and reports `cross_owner_bindings: null`; the upgrade does not
 fail on it.
 
+## Broker JWTs must name an active, registered agent
+
+A signed JWT presented to the broker (`broker.jwt_secret` or
+`broker.jwt_verification.trusted_issuers`) is accepted only when its `sub`
+is the id of an agent registered on the platform, that agent is `active`,
+and, for an owned agent, its owner is active. Check before upgrading:
+
+- **`sub` must be an existing agent id.** An issuer that signs `sub` values
+  which are not platform agent ids gets a `401` on every call. Register the
+  agents and sign their ids as `sub`.
+- **Inactive agents and owners are refused.** Suspending or archiving an
+  agent, or disabling or deleting its owner, refuses that agent's JWTs
+  within `broker.resolve_cache_ttl_seconds`, the same bound the opaque
+  token path has.
+- **The admin database must be reachable.** The broker reads the agent's
+  status from it on a cache miss; if it cannot, the JWT call fails rather
+  than being let through.
+
+A refused token logs a `jwt_refused` WARNING with
+`reason: jwt_actor_inactive`; look for it after upgrading.
+
 ## Binding rules written against the full upstream path
 
 The broker evaluates binding permission rules on the request path relative

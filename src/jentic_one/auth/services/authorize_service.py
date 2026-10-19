@@ -38,8 +38,12 @@ from jentic_one.auth.core.idp import (
     get_default_idp_grants,
 )
 from jentic_one.auth.services.errors import InvalidGrantError, UserNotAdmittedError
-from jentic_one.auth.services.token_service import TokenService, resolve_effective_scopes
+from jentic_one.auth.services.token_service import (
+    TokenService,
+    resolve_effective_scopes,
+)
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
+from jentic_one.shared.auth.owner_status import log_agent_owner_inactive
 from jentic_one.shared.config import AuthConfig, resolved_auth_base_url
 from jentic_one.shared.context import Context
 from jentic_one.shared.db import DatabaseIntegrityError
@@ -575,8 +579,14 @@ class AuthorizeService:
                     or oauth_client.approval_status != OAuthClientApprovalStatus.APPROVED.value
                 ):
                     raise InvalidGrantError("issuing OAuth client is not active")
-                agent = await AgentRepository.get_by_id(session, grant.agent_id)
+                found = await AgentRepository.get_with_owner_active(session, grant.agent_id)
+                agent, owner_active = found if found is not None else (None, False)
                 if agent is None or agent.status != ActorStatus.ACTIVE.value:
+                    raise InvalidGrantError("granted agent is not active")
+                if not owner_active:
+                    # An owned agent follows its owner's account status (a
+                    # soft-deleted user has ``active`` false).
+                    log_agent_owner_inactive(agent.id, agent.owner_id)
                     raise InvalidGrantError("granted agent is not active")
                 grant_id = grant.id
                 grant_agent_id = grant.agent_id

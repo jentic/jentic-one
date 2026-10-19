@@ -12,8 +12,11 @@ upstream URLs to operations without importing ``jentic_one.registry``; a
 auto-import a vendor's OpenAPI spec after a credential connects (broker requires
 a registered API before it can route); a ``SecuritySchemesLookupProtocol`` onto
 the same app so connect sessions that target a registry API can read its
-declared schemes, hosts and provenance; and carrying the ``/mcp`` mount
-(``jentic_one.mcp``) onto control-plane app shapes via the container seam.
+declared schemes, hosts and provenance; a ``CredentialCreatorLookupProtocol``
+onto combined app shapes that serve admin and can read the control DB, so the
+actor lookup can label the creator of a credential the caller can read (a
+standalone admin process does not get it); and carrying the ``/mcp``
+mount (``jentic_one.mcp``) onto control-plane app shapes via the container seam.
 Swapping an implementation later (e.g. an HTTP-backed resolver) is a change
 here only — the surfaces are unaffected.
 """
@@ -28,6 +31,7 @@ from fastapi import FastAPI
 from sqlalchemy import select
 
 from jentic_one.broker.core.discovery_cache import DiscoveryCache
+from jentic_one.control.services.credentials.service import CredentialService
 from jentic_one.mcp.installer import (
     install_mcp_challenge_placeholder,
     install_mcp_mount,
@@ -250,6 +254,23 @@ def install_control_security_schemes_lookup(app: FastAPI, ctx: Context) -> None:
     app.state.security_schemes_lookup = ApiSecurityLookupService(ctx)
 
 
+def install_credential_creator_lookup(app: FastAPI, ctx: Context) -> None:
+    """Inject the credential-creator lookup onto the app state for the admin actor lookup.
+
+    ``GET /actors/lookup`` labels the creator of a credential the caller can
+    read; the credentials and their read scoping live with control, so the
+    control ``CredentialService`` answers it. Installed only on a combined
+    process that serves admin and can read the control DB.
+
+    A standalone admin process (``jentic-one admin``) has only the admin DB
+    and builds its app without this container, so it never carries the
+    lookup: there the actor lookup does not label credential creators, and a
+    user the caller knows only as the creator of a credential it can read
+    (including one shared with it) stays unresolved, like an unknown id.
+    """
+    app.state.credential_creator_lookup = CredentialService(ctx)
+
+
 def build_default_container(ctx: Context) -> AppContainer:
     """Assemble the default ``AppContainer`` for this process's surface set.
 
@@ -268,6 +289,12 @@ def build_default_container(ctx: Context) -> AppContainer:
     documents, so the ``resource_metadata`` pointers must keep landing on the
     discovery-chain 401 challenge (never a dangling 404) even though the real
     transport lives with control.
+
+    Combined shapes that serve admin and can read the control DB carry the
+    credential-creator lookup (:func:`install_credential_creator_lookup`), so
+    the actor lookup can label the creator of a credential the caller can read.
+    A standalone admin process builds no container and has no control DB, so
+    it does not carry it (see that function for the effect).
     """
     container = AppContainer.default(ctx)
     if "control" in ctx.config.apps:
@@ -280,5 +307,10 @@ def build_default_container(ctx: Context) -> AppContainer:
         container = replace(
             container,
             extra_installers=(*container.extra_installers, install_mcp_challenge_placeholder),
+        )
+    if "admin" in ctx.config.apps and ctx.is_db_allowed("control"):
+        container = replace(
+            container,
+            extra_installers=(*container.extra_installers, install_credential_creator_lookup),
         )
     return container
