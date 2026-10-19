@@ -276,11 +276,8 @@ func (ProviderDiscoveryEntryResponse) RequiredFields() []string {
 	return []string{"configured", "id", "label", "managed", "types"}
 }
 func (ProviderDiscoveryResponse) RequiredFields() []string { return []string{"providers"} }
-func (ReauthorizeConfirmSessionRequest) RequiredFields() []string {
-	return []string{"credential_id", "digest", "kind", "permission_rules"}
-}
-func (RedeemInviteRequest) RequiredFields() []string { return []string{"invite_token", "password"} }
-func (RegisterRequest) RequiredFields() []string     { return []string{"client_name", "jwks"} }
+func (RedeemInviteRequest) RequiredFields() []string       { return []string{"invite_token", "password"} }
+func (RegisterRequest) RequiredFields() []string           { return []string{"client_name", "jwks"} }
 func (RegisterResponse) RequiredFields() []string {
 	return []string{"client_id", "registration_access_token", "registration_client_uri", "status"}
 }

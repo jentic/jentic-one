@@ -70,8 +70,6 @@ from jentic_one.control.web.schemas.integrations import (
     IntegrationsConnectResponse,
     OAuthConfirmSessionRequest,
     OwnOAuthClientConfirmSessionRequest,
-    ReauthorizeConfirmSessionRequest,
-    ReauthorizeConfirmSessionResponse,
     ReviewAgentResponse,
     ReviewEditResponse,
     ReviewProvenanceResponse,
@@ -498,9 +496,11 @@ def _review_response(data: ReviewData) -> ReviewSessionResponse:
                 type=c.type,
                 granted_scopes=c.granted_scopes,
                 missing_scopes=c.missing_scopes,
-                other_bound_agent_ids=c.other_bound_agent_ids,
+                other_bound_agents=[
+                    EditAgentRef(agent_id=a.agent_id, name=a.name) for a in c.other_bound_agents
+                ],
                 can_bind=c.can_bind,
-                can_reauthorize=c.can_reauthorize,
+                needs_vendor_consent=c.needs_vendor_consent,
             )
             for c in data.existing_credentials
         ],
@@ -582,7 +582,7 @@ async def confirm_connect_session(
     variant): OAuth scopes, a secret for a ``manual_*`` session
     (``api_key`` / ``bearer`` / ``basic``), the approver's own OAuth client
     for an ``awaiting_app`` session, or a credential the approver already
-    holds (``existing_credential``, ``reauthorize``), or an edit session's
+    holds (``existing_credential``), or an edit session's
     final rules (``edit``, naming the reviewed ``revision_id``). Secrets are write-only:
     they never appear in a response, audit entry or log.
 
@@ -631,11 +631,8 @@ async def confirm_connect_session(
         )
     if isinstance(result, AuthCodeConfirmResult):
         return AuthCodeConfirmSessionResponse(authorize_url=result.authorize_url)
-    if isinstance(result, ConnectedConfirmResult):
-        return ConnectedConfirmSessionResponse(credential_id=result.credential_id)
-    return ReauthorizeConfirmSessionResponse(
-        credential_id=result.credential_id, authorize_url=result.authorize_url
-    )
+    assert isinstance(result, ConnectedConfirmResult)
+    return ConnectedConfirmSessionResponse(credential_id=result.credential_id)
 
 
 def _to_variant(
@@ -643,8 +640,7 @@ def _to_variant(
     | BearerConfirmSessionRequest
     | BasicConfirmSessionRequest
     | OwnOAuthClientConfirmSessionRequest
-    | ExistingCredentialConfirmSessionRequest
-    | ReauthorizeConfirmSessionRequest,
+    | ExistingCredentialConfirmSessionRequest,
 ) -> ConfirmVariant:
     checks = ConfirmChecks(
         permission_rules=[r.model_dump() for r in body.permission_rules],
@@ -672,11 +668,7 @@ def _to_variant(
             confirmed_scopes=body.confirmed_scopes,
             checks=checks,
         )
-    return ExistingCredentialConfirm(
-        credential_id=body.credential_id,
-        reauthorize=isinstance(body, ReauthorizeConfirmSessionRequest),
-        checks=checks,
-    )
+    return ExistingCredentialConfirm(credential_id=body.credential_id, checks=checks)
 
 
 # ---------------------------------------------------------------------------

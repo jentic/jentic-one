@@ -4,7 +4,10 @@
 /* eslint-disable */
 import type { PermissionRuleSchema } from './PermissionRuleSchema';
 /**
- * Bind a credential the approver already holds (OAuth only if its grant covers the ask).
+ * Bind a credential the approver already holds.
+ *
+ * When its OAuth grant lacks scopes the session asks for, the response is
+ * the vendor challenge for them and the bind lands with the grant.
  */
 export type ExistingCredentialConfirmSessionRequest = {
     /**

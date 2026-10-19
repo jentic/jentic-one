@@ -515,7 +515,7 @@ function allowedConfirmKinds(session: MockConnectSession): string[] {
 		session.state === 'awaiting_app'
 			? 'own_oauth_client'
 			: (MANUAL_CONFIRM_KINDS[session.resolved_flow ?? ''] ?? 'oauth');
-	return [primary, 'existing_credential', 'reauthorize'];
+	return [primary, 'existing_credential'];
 }
 
 function reviewDigest(session: MockConnectSession): string {
@@ -766,7 +766,7 @@ const connectSessionsHandlers = [
 		if (needsReview && body.permission_rules.length === 0) {
 			return problem(422, 'Unprocessable Entity', 'Rules required.', 'rules_required');
 		}
-		if (kind === 'existing_credential' || kind === 'reauthorize') {
+		if (kind === 'existing_credential') {
 			const credentialId = (body as { credential_id: string }).credential_id;
 			const candidate = (gated.existing_credentials ?? []).find(
 				(c) => c.credential_id === credentialId,
@@ -779,10 +779,7 @@ const connectSessionsHandlers = [
 					'existing_credential_not_found',
 				);
 			}
-			if (kind === 'reauthorize' && !candidate.can_reauthorize) {
-				return problem(409, 'Conflict', 'Cannot re-authorize.', 'reauthorize_unavailable');
-			}
-			if (kind === 'existing_credential' && !candidate.can_bind) {
+			if (!candidate.can_bind) {
 				return problem(
 					409,
 					'Conflict',
@@ -793,16 +790,18 @@ const connectSessionsHandlers = [
 					},
 				);
 			}
+			if (candidate.needs_vendor_consent && (candidate.missing_scopes ?? []).length > 0) {
+				// The vendor is asked for the missing scopes first; the session
+				// binds the credential once that grant lands.
+				gated.state = 'polling';
+				return HttpResponse.json({
+					kind: 'authorization_code',
+					authorize_url: `https://vendor.example.test/oauth/authorize?consent=${credentialId}`,
+				});
+			}
 			// The session's own pending credential is not needed; it takes the
 			// session row with it.
 			endMockConnectSession(gated, 'connected');
-			if (kind === 'reauthorize') {
-				return HttpResponse.json({
-					kind: 'reauthorize',
-					credential_id: credentialId,
-					authorize_url: `https://vendor.example.test/oauth/authorize?reauthorize=${credentialId}`,
-				});
-			}
 			return HttpResponse.json({ kind: 'connected', credential_id: credentialId });
 		}
 		if (kind === 'api_key' || kind === 'bearer' || kind === 'basic') {

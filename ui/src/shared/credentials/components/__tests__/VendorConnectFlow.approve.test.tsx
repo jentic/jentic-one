@@ -97,9 +97,9 @@ function candidate(overrides: Partial<ExistingCredential> = {}): ExistingCredent
 		type: 'oauth2_authorization_code',
 		granted_scopes: ['repo'],
 		missing_scopes: [],
-		other_bound_agent_ids: [],
+		other_bound_agents: [],
 		can_bind: true,
-		can_reauthorize: false,
+		needs_vendor_consent: false,
 		...overrides,
 	};
 }
@@ -595,16 +595,16 @@ describe('VendorConnectFlow approve — awaiting_app', () => {
 		});
 	});
 
-	it('refuses a narrower credential shared with other agents and explains why', async () => {
+	it('refuses a narrower credential it may not widen and explains why', async () => {
 		const seeded = seedAwaitingAppSession({
 			requested_scopes: ['repo', 'admin:org'],
 			existing_credentials: [
 				candidate({
 					granted_scopes: ['repo'],
 					missing_scopes: ['admin:org'],
-					other_bound_agent_ids: ['agnt_2'],
+					other_bound_agents: [{ agent_id: 'agnt_2', name: 'Helper' }],
 					can_bind: false,
-					can_reauthorize: false,
+					needs_vendor_consent: true,
 				}),
 			],
 		});
@@ -613,9 +613,8 @@ describe('VendorConnectFlow approve — awaiting_app', () => {
 		const option = await screen.findByRole('radio', { name: /Use Personal GitHub/ });
 		expect(option).toBeDisabled();
 		expect(option).toHaveAccessibleDescription(/Missing admin:org/);
-		expect(option).toHaveAccessibleDescription(/Used by 1 other agent/);
-		expect(option).toHaveAccessibleDescription(/Connect a new credential instead/);
-		expect(screen.queryByRole('radio', { name: /Re-authorize/ })).not.toBeInTheDocument();
+		expect(option).toHaveAccessibleDescription(/used by 1 other agent/);
+		expect(option).toHaveAccessibleDescription(/only its owner or an admin can widen it/);
 		// The way forward is a new credential: the session's own flow.
 		expect(screen.getByRole('radio', { name: /Bring your own OAuth client/ })).toHaveAttribute(
 			'aria-checked',
@@ -623,35 +622,37 @@ describe('VendorConnectFlow approve — awaiting_app', () => {
 		);
 	});
 
-	it('re-authorizes a narrower credential no other agent uses', async () => {
+	it('uses a narrower credential in one step, naming the other agents it reaches', async () => {
 		const seeded = seedAwaitingAppSession({
 			requested_scopes: ['repo', 'admin:org'],
 			existing_credentials: [
 				candidate({
 					granted_scopes: ['repo'],
 					missing_scopes: ['admin:org'],
-					can_bind: false,
-					can_reauthorize: true,
+					other_bound_agents: [{ agent_id: 'agnt_2', name: 'Helper' }],
+					can_bind: true,
+					needs_vendor_consent: true,
 				}),
 			],
 		});
 		renderApprove(seeded.session_id);
 		const user = userEvent.setup();
 
-		expect(await screen.findByRole('radio', { name: /Use Personal GitHub/ })).toBeDisabled();
-		await user.click(
-			screen.getByRole('radio', { name: /Re-authorize Personal GitHub with more scopes/ }),
-		);
+		const option = await screen.findByRole('radio', {
+			name: /Use Personal GitHub and add the missing scopes/,
+		});
+		expect(option).toHaveAccessibleDescription(/sign in again to add admin:org/);
+		expect(option).toHaveAccessibleDescription(/also gives admin:org to 1 other agent/);
+		await user.click(option);
 		await continueFromReview(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 
-		expect(await screen.findByText(/Finish granting the extra scopes/)).toBeInTheDocument();
-		expect(getEndedMockConnectSessions()[0].confirmBodies[0]).toMatchObject({
-			kind: 'reauthorize',
+		expect(getMockConnectSessions()[0].confirmBodies[0]).toMatchObject({
+			kind: 'existing_credential',
 			credential_id: 'cred_gh_personal',
 		});
 		expect(window.open).toHaveBeenCalledWith(
-			'https://vendor.example.test/oauth/authorize?reauthorize=cred_gh_personal',
+			'https://vendor.example.test/oauth/authorize?consent=cred_gh_personal',
 			'_blank',
 			'noopener,noreferrer',
 		);

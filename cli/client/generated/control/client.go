@@ -1029,21 +1029,6 @@ func (e PermissionRuleSchemaMatchMode) Valid() bool {
 	}
 }
 
-// Defines values for ReauthorizeConfirmSessionRequestKind.
-const (
-	Reauthorize ReauthorizeConfirmSessionRequestKind = "reauthorize"
-)
-
-// Valid indicates whether the value is a known member of the ReauthorizeConfirmSessionRequestKind enum.
-func (e ReauthorizeConfirmSessionRequestKind) Valid() bool {
-	switch e {
-	case Reauthorize:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for Sigv4CreateRequestType.
 const (
 	Sigv4CreateRequestTypeSigv4 Sigv4CreateRequestType = "sigv4"
@@ -3790,7 +3775,10 @@ type ExecutionStatsResponse struct {
 	TotalExecutions int `json:"total_executions"`
 }
 
-// ExistingCredentialConfirmSessionRequest Bind a credential the approver already holds (OAuth only if its grant covers the ask).
+// ExistingCredentialConfirmSessionRequest Bind a credential the approver already holds.
+//
+// When its OAuth grant lacks scopes the session asks for, the response is
+// the vendor challenge for them and the bind lands with the grant.
 //
 // Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"existing_credential","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"revision_id":"csr_6968b3983b8b91c75627bee6"}
 type ExistingCredentialConfirmSessionRequest struct {
@@ -6734,53 +6722,6 @@ type ProviderDiscoveryResponse struct {
 	Providers []ProviderDiscoveryEntryResponse `json:"providers"`
 }
 
-// ReauthorizeConfirmSessionRequest Bind the approver's OAuth credential and re-consent it with the requested scopes.
-//
-// Refused when another agent is bound to the credential.
-//
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"reauthorize","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"revision_id":"csr_6968b3983b8b91c75627bee6"}
-type ReauthorizeConfirmSessionRequest struct {
-	// AgentId Agent to bind when the session has none; ignored if the session already has one.
-	//
-	// Examples: agnt_6968b3984d1c238dbe7e2e29
-	AgentId *string `json:"agent_id,omitempty"`
-
-	// CredentialId ID of the approver's OAuth credential to bind and re-consent.
-	//
-	// Examples: cred_6968b39855d91a3561684b32
-	CredentialId string `json:"credential_id"`
-
-	// Digest Review digest echoed from the review data; a mismatch is 409 review_stale.
-	//
-	// Examples: 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
-	Digest string `json:"digest"`
-
-	// ExpectedAgentId Agent ID from the review the approver saw; a mismatch is 409 review_stale.
-	//
-	// Examples: agnt_6968b3984d1c238dbe7e2e29
-	ExpectedAgentId *string `json:"expected_agent_id,omitempty"`
-
-	// Kind Confirm variant; always `reauthorize`.
-	//
-	// Examples: reauthorize
-	Kind ReauthorizeConfirmSessionRequestKind `json:"kind"`
-
-	// PermissionRules Permission rules to bind for the agent (at most 100).
-	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
-	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
-
-	// RevisionId The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.
-	//
-	// Examples: csr_6968b3983b8b91c75627bee6
-	RevisionId *string `json:"revision_id,omitempty"`
-}
-
-// ReauthorizeConfirmSessionRequestKind Confirm variant; always `reauthorize`.
-//
-// Examples: reauthorize
-type ReauthorizeConfirmSessionRequestKind string
-
 // RedeemInviteRequest Payload for redeeming an invite token.
 //
 // Examples: {"invite_token":"dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk","password":"example-password"}
@@ -9000,40 +8941,6 @@ func (t *ConfirmConnectSessionJSONBody) MergeExistingCredentialConfirmSessionReq
 	return err
 }
 
-// AsReauthorizeConfirmSessionRequest returns the union data inside the ConfirmConnectSessionJSONBody as a ReauthorizeConfirmSessionRequest
-func (t ConfirmConnectSessionJSONBody) AsReauthorizeConfirmSessionRequest() (ReauthorizeConfirmSessionRequest, error) {
-	var body ReauthorizeConfirmSessionRequest
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromReauthorizeConfirmSessionRequest overwrites any union data inside the ConfirmConnectSessionJSONBody as the provided ReauthorizeConfirmSessionRequest
-func (t *ConfirmConnectSessionJSONBody) FromReauthorizeConfirmSessionRequest(v ReauthorizeConfirmSessionRequest) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	b, err = runtime.JSONMerge(b, []byte(`{"kind":"reauthorize"}`))
-	t.union = b
-	return err
-}
-
-// MergeReauthorizeConfirmSessionRequest performs a merge with any union data inside the ConfirmConnectSessionJSONBody, using the provided ReauthorizeConfirmSessionRequest
-func (t *ConfirmConnectSessionJSONBody) MergeReauthorizeConfirmSessionRequest(v ReauthorizeConfirmSessionRequest) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	b, err = runtime.JSONMerge(b, []byte(`{"kind":"reauthorize"}`))
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
 // AsEditConfirmSessionRequest returns the union data inside the ConfirmConnectSessionJSONBody as a EditConfirmSessionRequest
 func (t ConfirmConnectSessionJSONBody) AsEditConfirmSessionRequest() (EditConfirmSessionRequest, error) {
 	var body EditConfirmSessionRequest
@@ -9096,8 +9003,6 @@ func (t ConfirmConnectSessionJSONBody) ValueByDiscriminator() (interface{}, erro
 		return t.AsOAuthConfirmSessionRequest()
 	case "own_oauth_client":
 		return t.AsOwnOAuthClientConfirmSessionRequest()
-	case "reauthorize":
-		return t.AsReauthorizeConfirmSessionRequest()
 	default:
 		return nil, errors.New("unknown discriminator value: " + discriminator)
 	}
@@ -11075,7 +10980,7 @@ type ClientInterface interface {
 	// variant): OAuth scopes, a secret for a ``manual_*`` session
 	// (``api_key`` / ``bearer`` / ``basic``), the approver's own OAuth client
 	// for an ``awaiting_app`` session, or a credential the approver already
-	// holds (``existing_credential``, ``reauthorize``), or an edit session's
+	// holds (``existing_credential``), or an edit session's
 	// final rules (``edit``, naming the reviewed ``revision_id``). Secrets are write-only:
 	// they never appear in a response, audit entry or log.
 	//
@@ -11098,7 +11003,7 @@ type ClientInterface interface {
 	// variant): OAuth scopes, a secret for a ``manual_*`` session
 	// (``api_key`` / ``bearer`` / ``basic``), the approver's own OAuth client
 	// for an ``awaiting_app`` session, or a credential the approver already
-	// holds (``existing_credential``, ``reauthorize``), or an edit session's
+	// holds (``existing_credential``), or an edit session's
 	// final rules (``edit``, naming the reviewed ``revision_id``). Secrets are write-only:
 	// they never appear in a response, audit entry or log.
 	//
@@ -14923,7 +14828,7 @@ func (c *Client) CancelConnectSession(ctx context.Context, sessionId string, par
 // variant): OAuth scopes, a secret for a “manual_*“ session
 // (“api_key“ / “bearer“ / “basic“), the approver's own OAuth client
 // for an “awaiting_app“ session, or a credential the approver already
-// holds (“existing_credential“, “reauthorize“), or an edit session's
+// holds (“existing_credential“), or an edit session's
 // final rules (“edit“, naming the reviewed “revision_id“). Secrets are write-only:
 // they never appear in a response, audit entry or log.
 //
@@ -14956,7 +14861,7 @@ func (c *Client) ConfirmConnectSessionWithBody(ctx context.Context, sessionId st
 // variant): OAuth scopes, a secret for a “manual_*“ session
 // (“api_key“ / “bearer“ / “basic“), the approver's own OAuth client
 // for an “awaiting_app“ session, or a credential the approver already
-// holds (“existing_credential“, “reauthorize“), or an edit session's
+// holds (“existing_credential“), or an edit session's
 // final rules (“edit“, naming the reviewed “revision_id“). Secrets are write-only:
 // they never appear in a response, audit entry or log.
 //
@@ -27874,7 +27779,7 @@ type ClientWithResponsesInterface interface {
 	// variant): OAuth scopes, a secret for a ``manual_*`` session
 	// (``api_key`` / ``bearer`` / ``basic``), the approver's own OAuth client
 	// for an ``awaiting_app`` session, or a credential the approver already
-	// holds (``existing_credential``, ``reauthorize``), or an edit session's
+	// holds (``existing_credential``), or an edit session's
 	// final rules (``edit``, naming the reviewed ``revision_id``). Secrets are write-only:
 	// they never appear in a response, audit entry or log.
 	//
@@ -27897,7 +27802,7 @@ type ClientWithResponsesInterface interface {
 	// variant): OAuth scopes, a secret for a ``manual_*`` session
 	// (``api_key`` / ``bearer`` / ``basic``), the approver's own OAuth client
 	// for an ``awaiting_app`` session, or a credential the approver already
-	// holds (``existing_credential``, ``reauthorize``), or an edit session's
+	// holds (``existing_credential``), or an edit session's
 	// final rules (``edit``, naming the reviewed ``revision_id``). Secrets are write-only:
 	// they never appear in a response, audit entry or log.
 	//
@@ -46546,7 +46451,7 @@ func (c *ClientWithResponses) CancelConnectSessionWithResponse(ctx context.Conte
 // variant): OAuth scopes, a secret for a “manual_*“ session
 // (“api_key“ / “bearer“ / “basic“), the approver's own OAuth client
 // for an “awaiting_app“ session, or a credential the approver already
-// holds (“existing_credential“, “reauthorize“), or an edit session's
+// holds (“existing_credential“), or an edit session's
 // final rules (“edit“, naming the reviewed “revision_id“). Secrets are write-only:
 // they never appear in a response, audit entry or log.
 //
@@ -46575,7 +46480,7 @@ func (c *ClientWithResponses) ConfirmConnectSessionWithBodyWithResponse(ctx cont
 // variant): OAuth scopes, a secret for a “manual_*“ session
 // (“api_key“ / “bearer“ / “basic“), the approver's own OAuth client
 // for an “awaiting_app“ session, or a credential the approver already
-// holds (“existing_credential“, “reauthorize“), or an edit session's
+// holds (“existing_credential“), or an edit session's
 // final rules (“edit“, naming the reviewed “revision_id“). Secrets are write-only:
 // they never appear in a response, audit entry or log.
 //

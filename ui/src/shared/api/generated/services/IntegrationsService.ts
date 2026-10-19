@@ -13,7 +13,6 @@ import type { ExistingCredentialConfirmSessionRequest } from '../models/Existing
 import type { IntegrationsConnectRequest } from '../models/IntegrationsConnectRequest';
 import type { OAuthConfirmSessionRequest } from '../models/OAuthConfirmSessionRequest';
 import type { OwnOAuthClientConfirmSessionRequest } from '../models/OwnOAuthClientConfirmSessionRequest';
-import type { ReauthorizeConfirmSessionRequest } from '../models/ReauthorizeConfirmSessionRequest';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
@@ -274,7 +273,7 @@ export class IntegrationsService {
      * variant): OAuth scopes, a secret for a ``manual_*`` session
      * (``api_key`` / ``bearer`` / ``basic``), the approver's own OAuth client
      * for an ``awaiting_app`` session, or a credential the approver already
-     * holds (``existing_credential``, ``reauthorize``), or an edit session's
+     * holds (``existing_credential``), or an edit session's
      * final rules (``edit``, naming the reviewed ``revision_id``). Secrets are write-only:
      * they never appear in a response, audit entry or log.
      *
@@ -298,7 +297,7 @@ export class IntegrationsService {
         /**
          * How to complete the session, selected by `kind`. A body without `kind` is the `oauth` variant.
          */
-        requestBody: (OAuthConfirmSessionRequest | ApiKeyConfirmSessionRequest | BearerConfirmSessionRequest | BasicConfirmSessionRequest | OwnOAuthClientConfirmSessionRequest | ExistingCredentialConfirmSessionRequest | ReauthorizeConfirmSessionRequest | EditConfirmSessionRequest),
+        requestBody: (OAuthConfirmSessionRequest | ApiKeyConfirmSessionRequest | BearerConfirmSessionRequest | BasicConfirmSessionRequest | OwnOAuthClientConfirmSessionRequest | ExistingCredentialConfirmSessionRequest | EditConfirmSessionRequest),
         /**
          * Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
          */

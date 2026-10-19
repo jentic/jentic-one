@@ -55,6 +55,9 @@ from jentic_one.control.repos.connect_session_repo import LIVE_STATES, ConnectSe
 from jentic_one.control.repos.connect_session_revision_repo import (
     ConnectSessionRevisionRepository,
 )
+from jentic_one.control.repos.device_authorization_credential_repo import (
+    DeviceAuthorizationCredentialRepository,
+)
 from jentic_one.control.repos.effects_repo import AgentOwnerRow, EffectsRepository
 from jentic_one.control.repos.oauth_client_credential_repo import (
     OAuthClientCredentialRepository,
@@ -64,13 +67,8 @@ from jentic_one.control.repos.prerequisite_repo import (
     PrerequisiteRepository,
 )
 from jentic_one.control.scoping.filters import build_access_filters
-from jentic_one.control.services.credentials.connect_service import ConnectService
 from jentic_one.control.services.credentials.mapping import to_wire
-from jentic_one.control.services.credentials.schemas.connect import (
-    AuthCodeChallenge,
-    ConnectRequest,
-)
-from jentic_one.control.services.credentials.state import consume_callback_state, decode_state
+from jentic_one.control.services.credentials.state import consume_callback_state
 from jentic_one.control.services.integrations import identity_echo
 from jentic_one.control.services.integrations.api_targets import (
     SCHEME_OAUTH2,
@@ -116,7 +114,6 @@ from jentic_one.control.services.integrations.errors import (
     NoOpForFlowError,
     OAuthAppChangedError,
     OwnClientInvalidError,
-    ReauthorizeUnavailableError,
     RecentlyRejectedError,
     ReviewStaleError,
     RevisionChangedError,
@@ -143,7 +140,6 @@ from jentic_one.control.services.integrations.flow_handlers import (
 )
 from jentic_one.control.services.integrations.flow_handlers.auth_code import (
     RegistrationInactiveError,
-    platform_redirect_uri,
 )
 from jentic_one.control.services.integrations.flow_handlers.base import (
     AuthCodeBeginResult,
@@ -179,7 +175,11 @@ from jentic_one.shared.catalog import (
     CatalogAutoImportProtocol,
     SecuritySchemesLookupProtocol,
 )
-from jentic_one.shared.config import connect_approval_url, resolved_control_egress
+from jentic_one.shared.config import (
+    VendorAuthConfig,
+    connect_approval_url,
+    resolved_control_egress,
+)
 from jentic_one.shared.context import Context
 from jentic_one.shared.crypto import hash_secret
 from jentic_one.shared.db.errors import DatabaseIntegrityError
@@ -261,6 +261,22 @@ class CreatedEditSession:
     poll_token: str
     revision_id: str
     resolved_flow: str = "edit"
+
+
+@dataclass(slots=True, frozen=True)
+class ConsentSource:
+    """How a credential is re-consented with more scopes.
+
+    ``app`` is the client the credential was connected through (a shared
+    registration, or its own stored client); ``key`` / ``entry`` are its
+    vendor-registry source when it has one, for scope validation and the
+    identity echo.
+    """
+
+    handler_cls: type[AuthFlowHandler]
+    app: SessionApp
+    key: str | None
+    entry: VendorAuthConfig | None
 
 
 @dataclass(slots=True, frozen=True)
@@ -400,8 +416,12 @@ class ExistingCredentialView:
 
     ``granted_scopes`` / ``missing_scopes`` are set for OAuth credentials
     only (``None`` for static ones, whose upstream permissions the platform
-    cannot see). ``other_bound_agent_ids`` are the agents other than the
-    session's that are bound to it — re-authorizing would widen theirs too.
+    cannot see). ``other_bound_agents`` are the agents other than the
+    session's that are bound to it: granting the missing scopes widens
+    their access too. ``needs_vendor_consent`` is set when binding it runs a
+    vendor consent for ``missing_scopes`` first, and ``can_bind`` says
+    whether this viewer may use it (widening a credential others use is
+    its owner's or an org admin's call).
     """
 
     credential_id: str
@@ -410,9 +430,9 @@ class ExistingCredentialView:
     type: str
     granted_scopes: list[str] | None
     missing_scopes: list[str] | None
-    other_bound_agent_ids: list[str]
+    other_bound_agents: list[AgentView]
     can_bind: bool
-    can_reauthorize: bool
+    needs_vendor_consent: bool
 
 
 @dataclass(slots=True, frozen=True)
@@ -474,21 +494,7 @@ class ConnectedConfirmResult:
     kind: str = "connected"
 
 
-@dataclass(slots=True, frozen=True)
-class ReauthorizeConfirmResult:
-    """The agent is bound to ``credential_id``; the approver re-consents at ``authorize_url``."""
-
-    credential_id: str
-    authorize_url: str
-    kind: str = "reauthorize"
-
-
-ConfirmResult = (
-    DeviceAuthorizationConfirmResult
-    | AuthCodeConfirmResult
-    | ConnectedConfirmResult
-    | ReauthorizeConfirmResult
-)
+ConfirmResult = DeviceAuthorizationConfirmResult | AuthCodeConfirmResult | ConnectedConfirmResult
 
 
 @dataclass(slots=True, frozen=True)
@@ -530,10 +536,9 @@ class OwnClientConfirm:
 
 @dataclass(slots=True, frozen=True)
 class ExistingCredentialConfirm:
-    """Bind a credential the approver already holds, or re-authorize it with more scopes."""
+    """Bind a credential the approver already holds (consenting to any missing scopes)."""
 
     credential_id: str
-    reauthorize: bool
     checks: ConfirmChecks
 
 
@@ -543,7 +548,6 @@ ConfirmVariant = SecretConfirm | OwnClientConfirm | ExistingCredentialConfirm
 CONFIRM_KIND_OAUTH = "oauth"
 CONFIRM_KIND_OWN_CLIENT = "own_oauth_client"
 CONFIRM_KIND_EXISTING = "existing_credential"
-CONFIRM_KIND_REAUTHORIZE = "reauthorize"
 CONFIRM_KIND_EDIT = "edit"
 
 
@@ -757,7 +761,7 @@ def _variant_kind(variant: ConfirmVariant) -> str:
         return variant.kind
     if isinstance(variant, OwnClientConfirm):
         return CONFIRM_KIND_OWN_CLIENT
-    return CONFIRM_KIND_REAUTHORIZE if variant.reauthorize else CONFIRM_KIND_EXISTING
+    return CONFIRM_KIND_EXISTING
 
 
 def _allowed_confirm_kinds(row: ConnectSession) -> list[str]:
@@ -769,7 +773,7 @@ def _allowed_confirm_kinds(row: ConnectSession) -> list[str]:
     else:
         manual = manual_handler_for(row.resolved_flow)
         primary = manual.scheme_kind if manual is not None else CONFIRM_KIND_OAUTH
-    return [primary, CONFIRM_KIND_EXISTING, CONFIRM_KIND_REAUTHORIZE]
+    return [primary, CONFIRM_KIND_EXISTING]
 
 
 def _require_confirm_kind(row: ConnectSession, kind: str) -> None:
@@ -1880,9 +1884,10 @@ class ConnectSessionService:
                     baseline=baseline,
                     credential_id=credential_id,
                     vendor=(
-                        consent[0]
-                        if consent is not None
-                        else credential.api_vendor or credential.catalog_api_id or credential.name
+                        (consent.key if consent is not None else None)
+                        or credential.api_vendor
+                        or credential.catalog_api_id
+                        or credential.name
                     ),
                     agent_id=agent_id,
                     initiator_actor_id=identity.sub,
@@ -1941,7 +1946,7 @@ class ConnectSessionService:
             poll_token=poll_token,
             revision_id=revision.id,
             resolved_flow=(
-                consent[2].kind
+                consent.handler_cls.kind
                 if consent is not None and added_scopes(baseline, result)
                 else EDIT_FLOW
             ),
@@ -2048,10 +2053,11 @@ class ConnectSessionService:
         consent = await self._consent_source(credential) if credential is not None else None
         if credential is None or consent is None:
             raise ScopesNotSupportedError()
-        _, source, handler_cls = consent
-        unknown = self._vendors.validate_scopes(source.entry, change["scopes"])
-        if unknown:
-            raise ScopeValidationError(unknown)
+        handler_cls = consent.handler_cls
+        if consent.entry is not None:
+            unknown = self._vendors.validate_scopes(consent.entry, change["scopes"])
+            if unknown:
+                raise ScopeValidationError(unknown)
         await self._require_scope_widening_allowed(credential, row.agent_id, identity)
 
         async with self._ctx.control_db.transaction() as session:
@@ -2070,7 +2076,7 @@ class ConnectSessionService:
                 raise InvalidStateTransitionError(row.id, row.state, "confirm")
             polling = await ConnectSessionRepository.get_by_id(session, row.id)
         assert polling is not None
-        challenge = await self._begin_consent(polling, source, handler_cls, change["scopes"])
+        challenge = await self._begin_consent(polling, consent, change["scopes"])
         _logger.info(
             "connect_session.edit_consent_started",
             session_id=row.id,
@@ -2100,21 +2106,27 @@ class ConnectSessionService:
     async def _begin_consent(
         self,
         row: ConnectSession,
-        source: ResolvedVendorSource,
-        handler_cls: type[AuthFlowHandler],
+        consent: ConsentSource,
         scopes: list[str],
+        *,
+        retryable: bool = True,
     ) -> ConfirmResult:
         """Start the vendor consent for a polling edit session; undo the confirm on failure.
 
         A vendor-side failure puts the session back to ``created`` so the
-        reviewer can retry; nothing on the credential has changed.
+        reviewer can retry; nothing on the credential has changed. A session
+        moved onto an existing credential cannot go back (its own pending
+        credential is gone), so it ends instead (``retryable=False``).
         """
-        handler = handler_cls(self._ctx)
+        handler = consent.handler_cls(self._ctx)
         try:
-            challenge = await handler.begin(
-                row, app=self._session_app_for(source), confirmed_scopes=scopes
-            )
+            challenge = await handler.begin(row, app=consent.app, confirmed_scopes=scopes)
         except Exception:
+            if not retryable:
+                await self._mark_terminal(
+                    row.id, "failed", "vendor consent could not start", error_code="consent_failed"
+                )
+                raise
             async with self._ctx.control_db.transaction() as session:
                 await ConnectSessionRepository.transition_state(
                     session,
@@ -2144,49 +2156,87 @@ class ConnectSessionService:
         if credential.created_by != identity.sub:
             raise ScopeWideningForbiddenError(credential.id)
 
-    async def _consent_source(
-        self, credential: Credential
-    ) -> tuple[str, ResolvedVendorSource, type[AuthFlowHandler]] | None:
-        """The vendor-registry key, app and flow a credential is re-consented through.
+    async def _consent_source(self, credential: Credential) -> ConsentSource | None:
+        """How ``credential`` is re-consented with more scopes, or ``None`` if it can't be.
 
-        ``None`` when its access cannot be widened here: not an OAuth
-        credential connected through a session flow, or its app is gone.
+        Only OAuth credentials connected through an authorization-code or
+        device-authorization flow qualify. The consent runs through the
+        client the credential already uses: its shared registration (which
+        must be active), else the client stored on it.
         """
         handler_cls = _consent_handler_for(credential)
         if handler_cls is None:
             return None
-        key: str | None
-        if credential.oauth_app_registration_id is not None:
-            async with self._ctx.control_db.session() as session:
+        key: str | None = None
+        entry: VendorAuthConfig | None = None
+        app: SessionApp | None = None
+        async with self._ctx.control_db.session() as session:
+            if credential.oauth_app_registration_id is not None:
                 registration = await OAuthAppRegistrationRepository.get_by_id(
                     session, credential.oauth_app_registration_id
                 )
-            key = registration.api_vendor if registration is not None else None
-        else:
+                if registration is None or not registration.is_active:
+                    return None
+                if registration.flow_kind != handler_cls.kind:
+                    return None
+                app = _session_app_from_registration(self._ctx, registration)
+                key = registration.api_vendor
+            elif handler_cls is AuthCodeFlowHandler:
+                occ = await OAuthClientCredentialRepository.get_by_credential(
+                    session, credential.id
+                )
+                if occ is not None and occ.authorize_url:
+                    app = SessionApp(
+                        flow_kind="authorization_code",
+                        client_id=occ.client_id,
+                        client_secret_provider=None,
+                        default_scopes=[],
+                        registration_id=None,
+                        authorize_url=occ.authorize_url,
+                        token_url=occ.token_url,
+                    )
+            else:
+                dac = await DeviceAuthorizationCredentialRepository.get_by_credential(
+                    session, credential.id
+                )
+                if dac is not None:
+                    app = SessionApp(
+                        flow_kind="device_authorization",
+                        client_id=dac.client_id,
+                        client_secret_provider=None,
+                        default_scopes=[],
+                        registration_id=None,
+                        authorization_endpoint=dac.authorization_endpoint,
+                        token_endpoint=dac.token_url,
+                    )
+        if app is None:
+            return None
+        if key is None:
             key = next(
                 (
                     k
-                    for k, entry in self._ctx.config.vendors.entries.items()
-                    if entry.vendor == credential.catalog_api_id
+                    for k, cfg in self._ctx.config.vendors.entries.items()
+                    if cfg.vendor == credential.catalog_api_id
                 ),
                 None,
             )
-        if key is None:
-            return None
-        try:
-            source = await self._vendors.resolve_session_source(
-                key,
-                registration_id=credential.oauth_app_registration_id,
-                flow_kind=handler_cls.kind,
-            )
-        except (
-            InvalidOAuthAppRegistrationError,
-            UnknownVendorError,
-            UnsupportedFlowError,
-            VendorNotConfiguredError,
-        ):
-            return None
-        return key, source, handler_cls
+        if key is not None:
+            try:
+                entry = (
+                    await self._vendors.resolve_session_source(
+                        key,
+                        registration_id=credential.oauth_app_registration_id,
+                        flow_kind=handler_cls.kind,
+                    )
+                ).entry
+            except (
+                InvalidOAuthAppRegistrationError,
+                UnknownVendorError,
+                UnsupportedFlowError,
+                VendorNotConfiguredError,
+            ):
+                entry = None
+        return ConsentSource(handler_cls=handler_cls, app=app, key=key, entry=entry)
 
     async def _write_change(
         self, session: Any, row: ConnectSession, change: dict[str, Any]
@@ -2426,11 +2476,7 @@ class ConnectSessionService:
             credential = await CredentialRepository.get_by_id(session, row.credential_id)
         if revision is None:
             raise SessionNotFoundError(row.id)
-        others: list[AgentView] = []
-        for other_id in await self._other_bound_agent_ids(row.credential_id, row.agent_id):
-            view = await self._agent_view(other_id)
-            if view is not None:
-                others.append(view)
+        others = await self._other_bound_agents(row.credential_id, row.agent_id)
         return EditReview(
             agent_id=row.agent_id,
             credential_id=row.credential_id,
@@ -2724,41 +2770,53 @@ class ConnectSessionService:
         requested = list(row.requested_scopes or [])
         views: list[ExistingCredentialView] = []
         for credential in candidates:
-            others = await self._other_bound_agent_ids(credential.id, row.agent_id)
-            if _is_oauth_type(credential.type):
-                token = tokens.get(credential.id)
-                granted = token.scope.split() if token is not None and token.scope else []
-                missing = missing_scopes(requested, granted)
-                reauthorizable = (
-                    credential.type == StoredCredentialType.OAUTH2_AUTHORIZATION_CODE.value
-                    and credential.provider == AuthCodeFlowHandler.provider_id
-                    and not others
-                )
+            others = await self._other_bound_agents(credential.id, row.agent_id)
+            wire_type = to_wire(StoredCredentialType(credential.type)).value
+            if not _is_oauth_type(credential.type):
                 views.append(
                     ExistingCredentialView(
                         credential_id=credential.id,
                         name=credential.name,
-                        type=to_wire(StoredCredentialType(credential.type)).value,
-                        granted_scopes=granted,
-                        missing_scopes=missing,
-                        other_bound_agent_ids=others,
-                        can_bind=not missing,
-                        can_reauthorize=reauthorizable,
-                    )
-                )
-            else:
-                views.append(
-                    ExistingCredentialView(
-                        credential_id=credential.id,
-                        name=credential.name,
-                        type=to_wire(StoredCredentialType(credential.type)).value,
+                        type=wire_type,
                         granted_scopes=None,
                         missing_scopes=None,
-                        other_bound_agent_ids=others,
+                        other_bound_agents=others,
                         can_bind=True,
-                        can_reauthorize=False,
+                        needs_vendor_consent=False,
                     )
                 )
+                continue
+            token = tokens.get(credential.id)
+            granted = token.scope.split() if token is not None and token.scope else []
+            missing = missing_scopes(requested, granted)
+            consentable = bool(missing) and _consent_handler_for(credential) is not None
+            may_widen = (
+                not others
+                or ORG_ADMIN in identity.permissions
+                or credential.created_by == identity.sub
+            )
+            views.append(
+                ExistingCredentialView(
+                    credential_id=credential.id,
+                    name=credential.name,
+                    type=wire_type,
+                    granted_scopes=granted,
+                    missing_scopes=missing,
+                    other_bound_agents=others,
+                    can_bind=not missing or (consentable and may_widen),
+                    needs_vendor_consent=consentable,
+                )
+            )
+        return views
+
+    async def _other_bound_agents(
+        self, credential_id: str, agent_id: str | None
+    ) -> list[AgentView]:
+        """The agents other than ``agent_id`` bound to the credential, with their names."""
+        views: list[AgentView] = []
+        for other_id in await self._other_bound_agent_ids(credential_id, agent_id):
+            view = await self._agent_view(other_id)
+            views.append(view or AgentView(agent_id=other_id, name=None, owner_id=None, status=""))
         return views
 
     async def _other_bound_agent_ids(self, credential_id: str, agent_id: str | None) -> list[str]:
@@ -3211,10 +3269,11 @@ class ConnectSessionService:
           session to ``connected`` and writes the typed secret, the
           credential's state and the rules.
         * :class:`ExistingCredentialConfirm` binds a credential the approver
-          already holds (OAuth only when its granted scopes cover the
-          request) and ends the session ``connected``; with ``reauthorize``
-          it also starts a consent for more scopes on that credential, which
-          is allowed only when no other agent is bound to it.
+          already holds and ends the session ``connected``. When its OAuth
+          grant lacks scopes the session asks for, it runs a vendor consent
+          for them first and the bind, rules and scopes land with the grant;
+          widening a credential other agents use needs its owner or an org
+          admin.
         * :class:`OwnClientConfirm` (``awaiting_app``) stores the approver's
           OAuth client on the pending credential and continues as an
           authorization-code connect.
@@ -3494,46 +3553,19 @@ class ConnectSessionService:
         *,
         late_bound: bool,
         identity: Identity,
-    ) -> ConnectedConfirmResult | ReauthorizeConfirmResult:
+    ) -> ConfirmResult:
         async with self._ctx.control_db.session() as session:
             pending = await CredentialRepository.get_by_id(session, row.credential_id)
         candidates = await self._existing_candidates(row, identity, pending)
         chosen = next((c for c in candidates if c.credential_id == variant.credential_id), None)
         if chosen is None:
             raise ExistingCredentialNotFoundError(variant.credential_id)
-
-        authorize_url: str | None = None
-        if variant.reauthorize:
-            if not chosen.can_reauthorize:
-                reason = (
-                    "other agents are bound to it"
-                    if chosen.other_bound_agent_ids
-                    else "it is not an OAuth authorization-code credential"
-                )
-                raise ReauthorizeUnavailableError(chosen.credential_id, reason)
-            scopes = sorted(set(chosen.granted_scopes or []) | set(row.requested_scopes or []))
-            # The callback re-checks that this agent is still the only one bound
-            # (``sole_agent_id`` rides the signed state), so a binding made while
-            # the approver is at the vendor's consent screen cannot widen.
-            challenge = await ConnectService(self._ctx).begin(
-                chosen.credential_id,
-                ConnectRequest(scopes=scopes),
-                identity=identity,
-                redirect_uri=platform_redirect_uri(self._ctx),
-                sole_agent_id=agent_id,
+        if chosen.missing_scopes:
+            if not chosen.needs_vendor_consent:
+                raise InsufficientGrantedScopesError(chosen.credential_id, chosen.missing_scopes)
+            return await self._confirm_existing_with_consent(
+                row, variant, chosen, agent_id, late_bound=late_bound, identity=identity
             )
-            if not isinstance(challenge, AuthCodeChallenge):
-                raise ReauthorizeUnavailableError(
-                    chosen.credential_id, "it is not an OAuth authorization-code credential"
-                )
-            if decode_state(_state_secret(self._ctx), challenge.state).sole_agent_id != agent_id:
-                # Fail closed on a provider whose state cannot carry the re-check.
-                raise ReauthorizeUnavailableError(
-                    chosen.credential_id, "its provider cannot re-check the bound agents"
-                )
-            authorize_url = challenge.authorize_url
-        elif not chosen.can_bind:
-            raise InsufficientGrantedScopesError(chosen.credential_id, chosen.missing_scopes or [])
 
         newly_bound = await self._bind_for_confirm(
             agent_id, chosen.credential_id, created_by=identity.sub
@@ -3579,11 +3611,87 @@ class ConnectSessionService:
                 row, agent_id=agent_id, credential_id=chosen.credential_id, newly_bound=newly_bound
             )
         self._record_connected(row)
-        if authorize_url is not None:
-            return ReauthorizeConfirmResult(
-                credential_id=chosen.credential_id, authorize_url=authorize_url
-            )
         return ConnectedConfirmResult(credential_id=chosen.credential_id)
+
+    async def _confirm_existing_with_consent(
+        self,
+        row: ConnectSession,
+        variant: ExistingCredentialConfirm,
+        chosen: ExistingCredentialView,
+        agent_id: str,
+        *,
+        late_bound: bool,
+        identity: Identity,
+    ) -> ConfirmResult:
+        """Use an existing credential that lacks scopes the session asks for, in one step.
+
+        The session moves onto that credential as an edit of the agent's
+        future binding: the approved rules and the bind are held on it, a
+        vendor consent for the missing scopes runs on the credential's own
+        flow, and the bind, rules and new scopes land together with the
+        grant. The session's own pending credential is dropped. Until the
+        grant lands nothing changes for the credential or the agents already
+        bound to it; a failed consent only ends the session.
+        """
+        async with self._ctx.control_db.session() as session:
+            credential = await CredentialRepository.get_by_id(session, chosen.credential_id)
+        consent = await self._consent_source(credential) if credential is not None else None
+        if credential is None or consent is None:
+            raise InsufficientGrantedScopesError(chosen.credential_id, chosen.missing_scopes or [])
+        scopes = sorted(set(chosen.granted_scopes or []) | set(row.requested_scopes or []))
+        if consent.entry is not None:
+            unknown = self._vendors.validate_scopes(consent.entry, scopes)
+            if unknown:
+                raise ScopeValidationError(unknown)
+        await self._require_scope_widening_allowed(credential, agent_id, identity)
+        change: dict[str, Any] = {
+            "rules": [rule_to_write(r) for r in variant.checks.permission_rules],
+            "rule_set_id": None,
+            "detach_rule_set": False,
+            "resume": False,
+            "bind": True,
+            "scopes": scopes,
+            "outcome": OUTCOME_CONNECTED,
+            "approved_by": identity.sub,
+            "revision_id": variant.checks.revision_id,
+        }
+        cas_fields: dict[str, Any] = {"agent_id": agent_id} if late_bound else {}
+        try:
+            async with self._ctx.control_db.transaction() as session:
+                won = await ConnectSessionRepository.transition_state(
+                    session,
+                    row.id,
+                    to_state="polling",
+                    from_states=(row.state,),
+                    revision_id=variant.checks.revision_id,
+                    intent=INTENT_EDIT,
+                    credential_id=credential.id,
+                    target_kind=TARGET_KIND_VENDOR,
+                    vendor=consent.key or credential.api_vendor,
+                    vendor_key=None,
+                    dedupe_key=None,
+                    resolved_flow=consent.handler_cls.kind,
+                    approved_change=change,
+                    **cas_fields,
+                )
+                if won:
+                    # The session now points at the chosen credential, so its
+                    # own pending one goes alone.
+                    await CredentialRepository.delete(session, row.credential_id)
+        except DatabaseIntegrityError:
+            async with self._ctx.control_db.session() as session:
+                open_edit = await ConnectSessionRepository.get_open_edit(
+                    session, agent_id=agent_id, credential_id=credential.id
+                )
+            if open_edit is None:
+                raise
+            raise EditOpenError(open_edit.id) from None
+        if not won:
+            raise InvalidStateTransitionError(row.id, row.state, "confirm")
+        async with self._ctx.control_db.session() as session:
+            polling = await ConnectSessionRepository.get_by_id(session, row.id)
+        assert polling is not None
+        return await self._begin_consent(polling, consent, scopes, retryable=False)
 
     async def _confirm_own_client(
         self,
@@ -4137,6 +4245,8 @@ class ConnectSessionService:
         failed echo marks the session ``failed`` (no vaulting) so we don't
         strand a credential we can't tie back to a human.
         """
+        if row.intent == INTENT_EDIT:
+            return await self._finalise_edit(row, handler, tokens)
         key = _source_key(row)
         if key is None:
             # An API target on the approver's own OAuth client: no registry
@@ -4204,9 +4314,6 @@ class ConnectSessionService:
                 )
                 return StatusResult(status="failed", error_code="identity_echo_failed")
 
-        if row.intent == INTENT_EDIT:
-            return await self._finalise_edit(row, handler, tokens, connected_as)
-
         await self._write_finalise(
             credential_id=row.credential_id,
             handler=handler,
@@ -4232,7 +4339,6 @@ class ConnectSessionService:
         row: ConnectSession,
         handler: AuthFlowHandler,
         tokens: SuccessTokens,
-        connected_as: str | None,
     ) -> StatusResult:
         """The vendor grant for an edit's added scopes landed: apply the held change.
 
@@ -4249,6 +4355,20 @@ class ConnectSessionService:
             return StatusResult(status="failed", error_code="approval_missing")
         async with self._ctx.control_db.session() as session:
             credential = await CredentialRepository.get_by_id(session, row.credential_id)
+        consent = await self._consent_source(credential) if credential is not None else None
+        connected_as: str | None = None
+        if consent is not None and consent.entry is not None and consent.entry.identity_probe:
+            # Identity echo — outside the DB transaction (external HTTP).
+            try:
+                echo = await identity_echo.echo_identity(
+                    probe=consent.entry.identity_probe, access_token=tokens.access_token
+                )
+                connected_as = echo.display
+            except identity_echo.IdentityEchoError as exc:
+                await self._mark_terminal(
+                    row.id, "failed", str(exc), error_code="identity_echo_failed"
+                )
+                return StatusResult(status="failed", error_code="identity_echo_failed")
         previous = credential.provider_account_ref if credential is not None else None
         if previous is not None and connected_as is not None and previous != connected_as:
             _logger.warning(

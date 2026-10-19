@@ -591,13 +591,19 @@ class ReviewSchemeResponse(BaseModel):
     token_url: str | None = None
 
 
+class EditAgentRef(BaseModel):
+    agent_id: str = Field(examples=[ex.AGENT_ID])
+    name: str | None = None
+
+
 class ExistingCredentialResponse(BaseModel):
     """A credential the viewer already holds for the target.
 
     ``granted_scopes`` / ``missing_scopes`` are set for OAuth credentials
     only; a static credential's upstream permissions are not visible to the
-    platform. ``can_reauthorize`` is false whenever another agent is bound
-    (``other_bound_agent_ids``) — widening it would widen theirs too.
+    platform. Binding one with ``missing_scopes`` runs a vendor consent for
+    them first (``needs_vendor_consent``), which widens the access of every
+    agent in ``other_bound_agents`` too.
     """
 
     credential_id: str
@@ -605,9 +611,20 @@ class ExistingCredentialResponse(BaseModel):
     type: str
     granted_scopes: list[str] | None = None
     missing_scopes: list[str] | None = None
-    other_bound_agent_ids: list[str] = Field(default_factory=list)
-    can_bind: bool
-    can_reauthorize: bool
+    other_bound_agents: list[EditAgentRef] = Field(
+        default_factory=list,
+        description="Other agents bound to the credential; added scopes reach them too.",
+    )
+    can_bind: bool = Field(
+        description=(
+            "Whether this viewer may use it: its grant covers the request, or the missing "
+            "scopes can be consented and the viewer may widen it."
+        )
+    )
+    needs_vendor_consent: bool = Field(
+        default=False,
+        description="Binding it first runs a vendor consent for missing_scopes.",
+    )
 
 
 class EditRuleView(BaseModel):
@@ -669,11 +686,6 @@ class SessionRevisionRef(BaseModel):
         examples=[ex.CONNECT_SESSION_REVISION_ID],
     )
     number: int = Field(description="1 for the first ask, one more per amend.", examples=[2])
-
-
-class EditAgentRef(BaseModel):
-    agent_id: str = Field(examples=[ex.AGENT_ID])
-    name: str | None = None
 
 
 class ReviewEditResponse(BaseModel):
@@ -940,7 +952,11 @@ class OwnOAuthClientConfirmSessionRequest(_ReviewedConfirm):
 
 
 class ExistingCredentialConfirmSessionRequest(_ReviewedConfirm):
-    """Bind a credential the approver already holds (OAuth only if its grant covers the ask)."""
+    """Bind a credential the approver already holds.
+
+    When its OAuth grant lacks scopes the session asks for, the response is
+    the vendor challenge for them and the bind lands with the grant.
+    """
 
     kind: Literal["existing_credential"] = Field(
         description="Confirm variant; always `existing_credential`.",
@@ -950,23 +966,6 @@ class ExistingCredentialConfirmSessionRequest(_ReviewedConfirm):
         min_length=1,
         max_length=30,
         description="ID of the approver's credential to bind.",
-        examples=[ex.CREDENTIAL_ID],
-    )
-
-
-class ReauthorizeConfirmSessionRequest(_ReviewedConfirm):
-    """Bind the approver's OAuth credential and re-consent it with the requested scopes.
-
-    Refused when another agent is bound to the credential.
-    """
-
-    kind: Literal["reauthorize"] = Field(
-        description="Confirm variant; always `reauthorize`.", examples=["reauthorize"]
-    )
-    credential_id: str = Field(
-        min_length=1,
-        max_length=30,
-        description="ID of the approver's OAuth credential to bind and re-consent.",
         examples=[ex.CREDENTIAL_ID],
     )
 
@@ -1023,7 +1022,6 @@ ConfirmSessionRequest = Annotated[
     | Annotated[BasicConfirmSessionRequest, Tag("basic")]
     | Annotated[OwnOAuthClientConfirmSessionRequest, Tag("own_oauth_client")]
     | Annotated[ExistingCredentialConfirmSessionRequest, Tag("existing_credential")]
-    | Annotated[ReauthorizeConfirmSessionRequest, Tag("reauthorize")]
     | Annotated[EditConfirmSessionRequest, Tag("edit")],
     Discriminator(_confirm_kind),
 ]
@@ -1061,19 +1059,10 @@ class ConnectedConfirmSessionResponse(BaseModel):
     credential_id: str
 
 
-class ReauthorizeConfirmSessionResponse(BaseModel):
-    """The agent is bound to ``credential_id``; open ``authorize_url`` to grant more scopes."""
-
-    kind: Literal["reauthorize"] = "reauthorize"
-    credential_id: str
-    authorize_url: str
-
-
 ConfirmSessionResponse = Annotated[
     DeviceAuthorizationConfirmSessionResponse
     | AuthCodeConfirmSessionResponse
-    | ConnectedConfirmSessionResponse
-    | ReauthorizeConfirmSessionResponse,
+    | ConnectedConfirmSessionResponse,
     Field(discriminator="kind"),
 ]
 

@@ -54,7 +54,6 @@ from jentic_one.control.services.integrations.connect_session_service import (
     ConnectSessionService,
     ExistingCredentialConfirm,
     OwnClientConfirm,
-    ReauthorizeConfirmResult,
     ReviewData,
     SecretConfirm,
 )
@@ -64,11 +63,9 @@ from jentic_one.control.services.integrations.errors import (
     AuthTypeRequiredError,
     ConfirmKindMismatchError,
     ConnectOpenError,
-    InsufficientGrantedScopesError,
     InvalidPollTokenError,
     InvalidStateTransitionError,
     NoDeclaredSchemeError,
-    ReauthorizeUnavailableError,
     RecentlyRejectedError,
     ReservedAuthFieldError,
     ReviewStaleError,
@@ -846,7 +843,7 @@ async def test_confirm_refuses_a_mismatched_kind(env: Context) -> None:
             ),
             identity=_OWNER,
         )
-    assert mismatch.value.allowed == ["api_key", "existing_credential", "reauthorize"]
+    assert mismatch.value.allowed == ["api_key", "existing_credential"]
     with pytest.raises(ConfirmKindMismatchError):
         await _svc(env).confirm(
             created.session_id,
@@ -1108,15 +1105,12 @@ async def _existing_credential(
     return credential_id
 
 
-async def _confirm_existing(
-    ctx: Context, session_id: str, credential_id: str, *, reauthorize: bool = False
-) -> Any:
+async def _confirm_existing(ctx: Context, session_id: str, credential_id: str) -> Any:
     return await _svc(ctx).confirm_variant(
         session_id,
         poll_token=None,
         variant=ExistingCredentialConfirm(
             credential_id=credential_id,
-            reauthorize=reauthorize,
             checks=_checks(await _review(ctx, session_id)),
         ),
         identity=_OWNER,
@@ -1160,19 +1154,19 @@ async def test_granted_scope_check_for_an_existing_oauth_credential(env: Context
     review = await _svc(env).get_review_data(created.session_id, poll_token=None, identity=_OWNER)
     views = {c.credential_id: c for c in review.existing_credentials}
     assert views[wide].can_bind and views[wide].missing_scopes == []
+    assert views[wide].needs_vendor_consent is False
     assert views[wide].type == views[narrow].type == "oauth2"
-    assert not views[narrow].can_bind and views[narrow].missing_scopes == ["write"]
-    assert views[narrow].can_reauthorize is True
+    # The narrow one is usable too: binding it runs a consent for ``write`` first.
+    assert views[narrow].can_bind and views[narrow].missing_scopes == ["write"]
+    assert views[narrow].needs_vendor_consent is True
 
-    with pytest.raises(InsufficientGrantedScopesError) as narrower:
-        await _confirm_existing(env, created.session_id, narrow)
-    assert narrower.value.missing == ["write"]
-    assert not await _bound(env, _AGENT_ID, narrow)
     result = await _confirm_existing(env, created.session_id, wide)
     assert isinstance(result, ConnectedConfirmResult)
 
 
-async def test_reauthorize_only_when_no_other_agent_is_bound(env: Context) -> None:
+async def test_a_narrow_credential_consents_first_and_binds_only_with_the_grant(
+    env: Context,
+) -> None:
     await _import(env, _OAUTH_SCHEME)
     created = await _connect(env, requested_scopes=["read", "write"])
     narrow = await _existing_credential(env, oauth_scope="read")
@@ -1186,22 +1180,19 @@ async def test_reauthorize_only_when_no_other_agent_is_bound(env: Context) -> No
         )
     review = await _svc(env).get_review_data(created.session_id, poll_token=None, identity=_OWNER)
     (view,) = review.existing_credentials
-    assert view.other_bound_agent_ids == [_OTHER_AGENT_ID]
-    assert view.can_reauthorize is False
-    with pytest.raises(ReauthorizeUnavailableError):
-        await _confirm_existing(env, created.session_id, narrow, reauthorize=True)
+    # The other agent is named: the wider grant reaches it too.
+    assert [a.agent_id for a in view.other_bound_agents] == [_OTHER_AGENT_ID]
+    assert view.can_bind is True  # the approver owns the credential
 
-    async with env.admin_db.transaction() as session:
-        await session.execute(
-            text("DELETE FROM agent_credential_bindings WHERE agent_id = :a"),
-            {"a": _OTHER_AGENT_ID},
-        )
-    result = await _confirm_existing(env, created.session_id, narrow, reauthorize=True)
-    assert isinstance(result, ReauthorizeConfirmResult)
-    assert result.credential_id == narrow
+    result = await _confirm_existing(env, created.session_id, narrow)
+    assert isinstance(result, AuthCodeConfirmResult)
     assert result.authorize_url.startswith("https://auth.widgets.example/authorize?")
     assert "write" in result.authorize_url and "read" in result.authorize_url
-    assert await _bound(env, _AGENT_ID, narrow)
+    # Not bound until the grant lands; the session now targets the credential.
+    assert not await _bound(env, _AGENT_ID, narrow)
+    row = await _row(env, created.session_id)
+    assert row is not None
+    assert (row.intent, row.credential_id, row.state) == ("edit", narrow, "polling")
 
 
 async def test_own_oauth_client_resolves_awaiting_app(env: Context) -> None:

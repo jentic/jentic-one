@@ -106,10 +106,18 @@ export interface ReviewScheme {
 	token_url?: string | null;
 }
 
+/** Another agent bound to a credential the approver could use. */
+export interface BoundAgentRef {
+	agent_id: string;
+	name: string | null;
+}
+
 /**
  * A credential the viewer already holds for the session's target.
  * ``granted_scopes`` / ``missing_scopes`` are set for OAuth credentials only.
- * ``can_reauthorize`` is false whenever another agent is bound to it.
+ * When ``needs_vendor_consent`` is set, using it first asks the vendor for
+ * ``missing_scopes``, which widens the access of every agent in
+ * ``other_bound_agents`` too.
  */
 export interface ExistingCredential {
 	credential_id: string;
@@ -117,9 +125,9 @@ export interface ExistingCredential {
 	type: string;
 	granted_scopes: string[] | null;
 	missing_scopes: string[] | null;
-	other_bound_agent_ids: string[];
+	other_bound_agents: BoundAgentRef[];
 	can_bind: boolean;
-	can_reauthorize: boolean;
+	needs_vendor_consent: boolean;
 }
 
 /**
@@ -199,9 +207,9 @@ export interface OwnOAuthClientConfirmRequest extends ReviewedConfirm {
 	confirmed_scopes: string[];
 }
 
-/** Bind a credential the approver already holds (optionally re-consenting it). */
+/** Bind a credential the approver already holds (consenting to any missing scopes first). */
 export interface ExistingCredentialConfirmRequest extends ReviewedConfirm {
-	kind: 'existing_credential' | 'reauthorize';
+	kind: 'existing_credential';
 	credential_id: string;
 }
 
@@ -227,25 +235,17 @@ export type ConfirmSessionBody =
 export type ConfirmResponse = DeviceAuthorizationConfirmResponse | AuthCodeConfirmResponse;
 
 /**
- * Every ``:confirm`` result. Beyond the vendor challenges above:
- *
- * * ``connected`` — the confirm finished the session (a typed secret or an
- *   existing credential); ``credential_id`` is bound to the agent.
- * * ``reauthorize`` — the agent is bound to ``credential_id``; ``authorize_url``
- *   asks the vendor for the wider scopes on that credential.
+ * Every ``:confirm`` result. Beyond the vendor challenges above, ``connected``
+ * means the confirm finished the session (a typed secret or an existing
+ * credential); ``credential_id`` is bound to the agent. An existing credential
+ * that lacks scopes answers with a vendor challenge instead, and binds once
+ * the grant lands.
  */
-export type ConfirmSessionResponse =
-	ConfirmResponse | ConnectedConfirmResponse | ReauthorizeConfirmResponse;
+export type ConfirmSessionResponse = ConfirmResponse | ConnectedConfirmResponse;
 
 export interface ConnectedConfirmResponse {
 	kind: 'connected';
 	credential_id: string;
-}
-
-export interface ReauthorizeConfirmResponse {
-	kind: 'reauthorize';
-	credential_id: string;
-	authorize_url: string;
 }
 
 export interface DeviceAuthorizationConfirmResponse {

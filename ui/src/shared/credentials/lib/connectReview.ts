@@ -164,11 +164,11 @@ export function describeConfirmError(error: unknown): ConfirmErrorCopy {
 				}. Pick another option.`,
 			};
 		}
-		case 'reauthorize_unavailable':
+		case 'scope_widening_forbidden':
 			return {
 				action: 'reload',
 				message:
-					"That credential is used by other agents, so it can't be re-authorized with more scopes. Connect a new credential instead.",
+					'That credential is used by other agents, and only its owner or an admin can widen it. Connect a new credential instead.',
 			};
 		case 'existing_credential_not_found':
 			return {
@@ -205,8 +205,8 @@ export function describeConfirmError(error: unknown): ConfirmErrorCopy {
 	};
 }
 
-/** "Used by 2 other agents" — the reason a credential can't be widened. */
+/** "1 other agent" / "2 other agents" — who else a wider grant reaches. */
 export function sharedWithCount(credential: ExistingCredential): string {
-	const n = credential.other_bound_agent_ids.length;
-	return n === 1 ? 'Used by 1 other agent' : `Used by ${n} other agents`;
+	const n = credential.other_bound_agents.length;
+	return n === 1 ? '1 other agent' : `${n} other agents`;
 }

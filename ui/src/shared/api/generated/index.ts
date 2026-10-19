@@ -185,7 +185,6 @@ export type { ProviderConfigResponse } from './models/ProviderConfigResponse';
 export type { ProviderConfigSetRequest } from './models/ProviderConfigSetRequest';
 export type { ProviderDiscoveryEntryResponse } from './models/ProviderDiscoveryEntryResponse';
 export type { ProviderDiscoveryResponse } from './models/ProviderDiscoveryResponse';
-export type { ReauthorizeConfirmSessionRequest } from './models/ReauthorizeConfirmSessionRequest';
 export type { RedeemInviteRequest } from './models/RedeemInviteRequest';
 export type { RegisterRequest } from './models/RegisterRequest';
 export type { RegisterResponse } from './models/RegisterResponse';

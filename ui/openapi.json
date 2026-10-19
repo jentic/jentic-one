@@ -7980,7 +7980,7 @@
       },
       "ExistingCredentialConfirmSessionRequest": {
         "additionalProperties": false,
-        "description": "Bind a credential the approver already holds (OAuth only if its grant covers the ask).",
+        "description": "Bind a credential the approver already holds.\n\nWhen its OAuth grant lacks scopes the session asks for, the response is\nthe vendor challenge for them and the bind lands with the grant.",
         "examples": [
           {
             "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
@@ -16503,142 +16503,6 @@
           "providers"
         ],
         "title": "ProviderDiscoveryResponse",
-        "type": "object"
-      },
-      "ReauthorizeConfirmSessionRequest": {
-        "additionalProperties": false,
-        "description": "Bind the approver's OAuth credential and re-consent it with the requested scopes.\n\nRefused when another agent is bound to the credential.",
-        "examples": [
-          {
-            "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
-            "credential_id": "cred_6968b39855d91a3561684b32",
-            "digest": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
-            "expected_agent_id": "agnt_6968b3984d1c238dbe7e2e29",
-            "kind": "reauthorize",
-            "permission_rules": [
-              {
-                "effect": "allow",
-                "match_mode": "prefix",
-                "methods": [
-                  "GET"
-                ],
-                "operations": [
-                  "listCharges"
-                ],
-                "path": "/v1/charges"
-              }
-            ],
-            "revision_id": "csr_6968b3983b8b91c75627bee6"
-          }
-        ],
-        "properties": {
-          "agent_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Agent to bind when the session has none; ignored if the session already has one.",
-            "examples": [
-              "agnt_6968b3984d1c238dbe7e2e29"
-            ],
-            "title": "Agent Id"
-          },
-          "credential_id": {
-            "description": "ID of the approver's OAuth credential to bind and re-consent.",
-            "examples": [
-              "cred_6968b39855d91a3561684b32"
-            ],
-            "maxLength": 30,
-            "minLength": 1,
-            "title": "Credential Id",
-            "type": "string"
-          },
-          "digest": {
-            "description": "Review digest echoed from the review data; a mismatch is 409 review_stale.",
-            "examples": [
-              "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
-            ],
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Digest",
-            "type": "string"
-          },
-          "expected_agent_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Agent ID from the review the approver saw; a mismatch is 409 review_stale.",
-            "examples": [
-              "agnt_6968b3984d1c238dbe7e2e29"
-            ],
-            "title": "Expected Agent Id"
-          },
-          "kind": {
-            "const": "reauthorize",
-            "description": "Confirm variant; always `reauthorize`.",
-            "examples": [
-              "reauthorize"
-            ],
-            "title": "Kind",
-            "type": "string"
-          },
-          "permission_rules": {
-            "description": "Permission rules to bind for the agent (at most 100).",
-            "examples": [
-              [
-                {
-                  "effect": "allow",
-                  "match_mode": "prefix",
-                  "methods": [
-                    "GET"
-                  ],
-                  "operations": [
-                    "listCharges"
-                  ],
-                  "path": "/v1/charges"
-                }
-              ]
-            ],
-            "items": {
-              "$ref": "#/components/schemas/PermissionRuleSchema"
-            },
-            "maxItems": 100,
-            "title": "Permission Rules",
-            "type": "array"
-          },
-          "revision_id": {
-            "anyOf": [
-              {
-                "maxLength": 30,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.",
-            "examples": [
-              "csr_6968b3983b8b91c75627bee6"
-            ],
-            "title": "Revision Id"
-          }
-        },
-        "required": [
-          "permission_rules",
-          "digest",
-          "kind",
-          "credential_id"
-        ],
-        "title": "ReauthorizeConfirmSessionRequest",
         "type": "object"
       },
       "RedeemInviteRequest": {
@@ -36106,7 +35970,7 @@
     "/connect-sessions/{session_id}:confirm": {
       "description": "`POST`: Confirm a connect session.",
       "post": {
-        "description": "Called by the review page after the human confirms selections.\n\nThe body's ``kind`` picks the variant (no ``kind`` is the OAuth\nvariant): OAuth scopes, a secret for a ``manual_*`` session\n(``api_key`` / ``bearer`` / ``basic``), the approver's own OAuth client\nfor an ``awaiting_app`` session, or a credential the approver already\nholds (``existing_credential``, ``reauthorize``), or an edit session's\nfinal rules (``edit``, naming the reviewed ``revision_id``). Secrets are write-only:\nthey never appear in a response, audit entry or log.\n\nShares the ``:connect`` per-actor rate bucket — this is the endpoint\nthat actually fires the vendor's device-authorization call, and a\nfailed ``begin`` leaves the session retryable, so it must not be\nfree to hammer during a vendor incident. Gated like the review read\n(``poll_token`` or owner / ``org:admin``; 403 otherwise).",
+        "description": "Called by the review page after the human confirms selections.\n\nThe body's ``kind`` picks the variant (no ``kind`` is the OAuth\nvariant): OAuth scopes, a secret for a ``manual_*`` session\n(``api_key`` / ``bearer`` / ``basic``), the approver's own OAuth client\nfor an ``awaiting_app`` session, or a credential the approver already\nholds (``existing_credential``), or an edit session's\nfinal rules (``edit``, naming the reviewed ``revision_id``). Secrets are write-only:\nthey never appear in a response, audit entry or log.\n\nShares the ``:connect`` per-actor rate bucket — this is the endpoint\nthat actually fires the vendor's device-authorization call, and a\nfailed ``begin`` leaves the session retryable, so it must not be\nfree to hammer during a vendor incident. Gated like the review read\n(``poll_token`` or owner / ``org:admin``; 403 otherwise).",
         "operationId": "confirmConnectSession",
         "parameters": [
           {
@@ -36173,8 +36037,7 @@
                     "edit": "#/components/schemas/EditConfirmSessionRequest",
                     "existing_credential": "#/components/schemas/ExistingCredentialConfirmSessionRequest",
                     "oauth": "#/components/schemas/OAuthConfirmSessionRequest",
-                    "own_oauth_client": "#/components/schemas/OwnOAuthClientConfirmSessionRequest",
-                    "reauthorize": "#/components/schemas/ReauthorizeConfirmSessionRequest"
+                    "own_oauth_client": "#/components/schemas/OwnOAuthClientConfirmSessionRequest"
                   },
                   "propertyName": "kind"
                 },
@@ -36196,9 +36059,6 @@
                   },
                   {
                     "$ref": "#/components/schemas/ExistingCredentialConfirmSessionRequest"
-                  },
-                  {
-                    "$ref": "#/components/schemas/ReauthorizeConfirmSessionRequest"
                   },
                   {
                     "$ref": "#/components/schemas/EditConfirmSessionRequest"

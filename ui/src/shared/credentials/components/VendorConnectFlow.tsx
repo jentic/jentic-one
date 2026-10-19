@@ -831,8 +831,7 @@ interface StepError {
 
 /** How the session ended inside the dialog, when `:confirm` (not `/status`) decided it. */
 type LocalOutcome =
-	| { status: 'connected'; credentialId: string; reauthorizeUrl?: string }
-	| { status: 'failed'; message: string };
+	{ status: 'connected'; credentialId: string } | { status: 'failed'; message: string };
 
 function VendorApproveFlow({
 	sessionId,
@@ -1108,8 +1107,8 @@ function VendorApproveFlow({
 		}
 	};
 
-	const finishConnected = (credentialId: string, reauthorizeUrl?: string): void => {
-		setOutcome({ status: 'connected', credentialId, reauthorizeUrl });
+	const finishConnected = (credentialId: string): void => {
+		setOutcome({ status: 'connected', credentialId });
 		goToPhase('terminal');
 		void queryClient.invalidateQueries({ queryKey: connectRequestsKey });
 		void queryClient.invalidateQueries({ queryKey: ['credentials'] });
@@ -1134,13 +1133,6 @@ function VendorApproveFlow({
 			finishConnected(result.credential_id);
 			return;
 		}
-		if (result.kind === 'reauthorize') {
-			finishConnected(result.credential_id, result.authorize_url);
-			if (isHttpsVendorUrl(result.authorize_url)) {
-				openVendorUrl(result.authorize_url, '_blank', 'noopener,noreferrer');
-			}
-			return;
-		}
 		startVendorChallenge(result);
 	};
 
@@ -1150,11 +1142,11 @@ function VendorApproveFlow({
 	const afterRules = async (finalRules: PermissionRule[]): Promise<void> => {
 		setStepError(null);
 		setRules(finalRules);
-		if (method.kind === 'existing' || method.kind === 'reauthorize') {
+		if (method.kind === 'existing') {
 			handleResult(
 				await sendConfirm(
 					{
-						kind: method.kind === 'existing' ? 'existing_credential' : 'reauthorize',
+						kind: 'existing_credential',
 						credential_id: method.credentialId,
 						...reviewed(finalRules),
 					},
@@ -1249,11 +1241,7 @@ function VendorApproveFlow({
 					renderPostConnect={renderPostConnect}
 					boundAgentId={boundAgentId}
 					onDone={onDone}
-				>
-					{outcome.status === 'connected' && outcome.reauthorizeUrl && (
-						<ReauthorizeNotice display={display} url={outcome.reauthorizeUrl} />
-					)}
-				</TerminalStep>
+				></TerminalStep>
 			);
 		}
 		return (
@@ -1508,33 +1496,6 @@ function VendorApproveFlow({
 				onConfirm={(): void => void handleReject()}
 				onClose={(): void => setRejectOpen(false)}
 			/>
-		</div>
-	);
-}
-
-/** After a re-authorize: the agent is bound; the vendor consent for more scopes runs on. */
-function ReauthorizeNotice({ display, url }: { display: VendorDisplay; url: string }) {
-	return (
-		<div className="space-y-3">
-			<p className="text-muted-foreground text-center text-sm">
-				Finish granting the extra scopes in the {display.displayName} window. Until you do,
-				calls that need them still fail.
-			</p>
-			{isHttpsVendorUrl(url) ? (
-				<Button
-					type="button"
-					variant="secondary"
-					className="w-full"
-					onClick={(): void => {
-						openVendorUrl(url, '_blank', 'noopener,noreferrer');
-					}}
-				>
-					<ExternalLink className="h-4 w-4" />
-					Open {display.displayName}
-				</Button>
-			) : (
-				<UnsafeVendorUrlNotice />
-			)}
 		</div>
 	);
 }

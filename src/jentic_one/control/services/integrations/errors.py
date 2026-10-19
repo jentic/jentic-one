@@ -294,15 +294,6 @@ class InsufficientGrantedScopesError(ConnectSessionServiceError):
         self.missing = missing
 
 
-class ReauthorizeUnavailableError(ConnectSessionServiceError):
-    """Widening the credential's scopes is not allowed (shared with other agents, or not OAuth)."""
-
-    def __init__(self, credential_id: str, reason: str) -> None:
-        super().__init__(f"credential {credential_id!r} cannot be re-authorized: {reason}")
-        self.credential_id = credential_id
-        self.reason = reason
-
-
 class OwnClientInvalidError(ConnectSessionServiceError):
     """The approver's own OAuth client is missing an endpoint or names an unsafe one."""
 
