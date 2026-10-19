@@ -257,12 +257,13 @@ type BrokerProblem struct {
 
 	// ErrorOrigin Who generated the error response: `broker` (the Broker
 	// itself — overloaded, misconfigured, rejecting the request
-	// shape, or giving up on the call: an upstream timeout or
-	// connect failure, the overall deadline, a failed token
-	// refresh, an oversized upstream response) or `upstream` (the
-	// external API answered with this error and the Broker
-	// mirrored it). Mirrored in the `Jentic-Error-Origin`
-	// response header. Absent on authentication errors.
+	// shape, or giving up on the call: an upstream timeout, a
+	// dropped or refused upstream connection, the overall
+	// deadline, a failed token refresh, an oversized upstream
+	// response) or `upstream` (the external API answered with
+	// this error and the Broker mirrored it). Mirrored in the
+	// `Jentic-Error-Origin` response header. Absent on
+	// authentication errors.
 	//
 	//
 	// Examples: broker
@@ -309,12 +310,13 @@ type BrokerProblem struct {
 
 // BrokerProblemErrorOrigin Who generated the error response: `broker` (the Broker
 // itself — overloaded, misconfigured, rejecting the request
-// shape, or giving up on the call: an upstream timeout or
-// connect failure, the overall deadline, a failed token
-// refresh, an oversized upstream response) or `upstream` (the
-// external API answered with this error and the Broker
-// mirrored it). Mirrored in the `Jentic-Error-Origin`
-// response header. Absent on authentication errors.
+// shape, or giving up on the call: an upstream timeout, a
+// dropped or refused upstream connection, the overall
+// deadline, a failed token refresh, an oversized upstream
+// response) or `upstream` (the external API answered with
+// this error and the Broker mirrored it). Mirrored in the
+// `Jentic-Error-Origin` response header. Absent on
+// authentication errors.
 //
 // Examples: broker
 type BrokerProblemErrorOrigin string
