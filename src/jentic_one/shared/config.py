@@ -1313,14 +1313,55 @@ class ControlConnectConfig(BaseModel):
 class ControlSurfaceConfig(BaseModel):
     """Control surface configuration.
 
-    Unknown subkeys are ignored, so a ``control:`` section written for another
-    release keeps validating.
+    ``egress`` is the allowlist for the platform's outbound OAuth and credential
+    calls. Each ``control.egress`` key left unset takes its value from the
+    matching ``broker.egress`` key. The policy is read by whichever process makes
+    the call: the control surface for credential and OAuth app writes, the
+    connect-session confirm, code exchange, device authorization and the
+    identity probe, and the broker surface for the token refresh it runs before
+    injecting a credential. With one process per surface, set ``control.egress``
+    (and the ``broker.egress`` keys it inherits) identically on both.
+
+    Unknown subkeys of ``control:`` are ignored, so a section written for
+    another release keeps validating; ``control.egress`` rejects unknown keys so
+    a mistyped allowlist key fails at startup instead of silently allowing less.
     """
 
     connect: ControlConnectConfig = Field(
         default_factory=ControlConnectConfig,
         description="Agent connect-session settings.",
     )
+    egress: ControlEgressConfig = Field(
+        default_factory=lambda: ControlEgressConfig(),
+        description=(
+            "Private-network allowlist for the platform's OAuth and credential "
+            "calls: OAuth2 credential and OAuth app registration URL checks, "
+            "own-client endpoints confirmed on a connect session, token "
+            "exchange and refresh, device authorization, and the vendor "
+            "identity probe. Each key left unset takes its value from "
+            "`broker.egress`; set a key (e.g. `allowed_private_subnets: []`) to "
+            "override it for these calls alone. These calls always pin DNS. "
+            "The process making the call reads it, and the broker surface "
+            "makes token refresh calls, so with one process per surface set it "
+            "identically on the control and broker surfaces."
+        ),
+    )
+
+
+def resolved_control_egress(config: AppConfig) -> EgressConfig:
+    """The egress policy for the platform's OAuth and credential calls.
+
+    Each ``control.egress`` key that is set (not ``None``) wins; every other
+    key, and ``dns_pinning_enabled``, comes from ``broker.egress``. With neither
+    configured this is the strict default. Callers always pin DNS, whatever
+    ``dns_pinning_enabled`` says.
+    """
+    overrides = {
+        name: value
+        for name, value in config.control.egress.model_dump().items()
+        if value is not None
+    }
+    return config.broker.egress.model_copy(update=overrides)
 
 
 class UpstreamClientConfig(BaseModel):
@@ -1498,12 +1539,62 @@ class EgressConfig(BaseModel):
     @field_validator("allowed_private_subnets")
     @classmethod
     def _validate_cidrs(cls, value: list[str]) -> list[str]:
-        for cidr in value:
-            try:
-                ipaddress.ip_network(cidr, strict=False)
-            except ValueError as exc:
-                raise ValueError(f"invalid CIDR in allowed_private_subnets: {cidr!r}") from exc
-        return value
+        return _validate_cidr_list(value)
+
+
+def _validate_cidr_list(value: list[str]) -> list[str]:
+    for cidr in value:
+        try:
+            ipaddress.ip_network(cidr, strict=False)
+        except ValueError as exc:
+            raise ValueError(f"invalid CIDR in allowed_private_subnets: {cidr!r}") from exc
+    return value
+
+
+def _csv_to_optional_list(value: Any) -> list[str] | None:
+    return None if value is None else _csv_to_list(value)
+
+
+class ControlEgressConfig(BaseModel):
+    """Private-network allowlist for the platform's OAuth and credential calls.
+
+    Holds only the two allowlist keys. A key left unset takes its value from
+    the matching ``broker.egress`` key. These calls always pin DNS, so there is
+    no ``dns_pinning_enabled`` key here, and unknown keys are rejected.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    allowed_private_subnets: Annotated[list[str] | None, BeforeValidator(_csv_to_optional_list)] = (
+        Field(
+            default=None,
+            description=(
+                "CIDRs exempted from the private-IP block for these calls (e.g. "
+                '``["10.50.0.0/16"]``); unset inherits '
+                "`broker.egress.allowed_private_subnets`, and `[]` blocks every "
+                "private range for these calls even when the broker allows one. "
+                "The cloud-metadata and platform-credential IPs are never exempted. "
+                "Accepts a YAML list or a comma-separated string."
+            ),
+        )
+    )
+    allowed_internal_domains: Annotated[
+        list[str] | None, BeforeValidator(_csv_to_optional_list)
+    ] = Field(
+        default=None,
+        description=(
+            'Domain suffixes (e.g. ``[".corp.internal"]``) whose resolved '
+            "private IP is permitted for these calls; unset inherits "
+            "`broker.egress.allowed_internal_domains`. The resolved IP must "
+            "still fall in an allowed subnet. Accepts a YAML list or a "
+            "comma-separated string."
+        ),
+    )
+
+    @field_validator("allowed_private_subnets")
+    @classmethod
+    def _validate_cidrs(cls, value: list[str] | None) -> list[str] | None:
+        return None if value is None else _validate_cidr_list(value)
 
 
 class BrokerResilienceConfig(BaseModel):

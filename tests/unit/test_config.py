@@ -28,6 +28,7 @@ from jentic_one.shared.config import (
     CatalogConfig,
     ConfigError,
     ConnectConfig,
+    ControlEgressConfig,
     CredentialsConfig,
     DirectOAuth2ProviderConfig,
     EgressConfig,
@@ -53,6 +54,7 @@ from jentic_one.shared.config import (
     has_spa_platform_client,
     load_config,
     resolved_auth_base_url,
+    resolved_control_egress,
 )
 from jentic_one.shared.state import (
     BackendKind,
@@ -1618,6 +1620,167 @@ def test_egress_allowed_internal_domains_comma_separated():
 def test_egress_empty_string_produces_empty_list():
     cfg = EgressConfig(allowed_private_subnets="")  # type: ignore[arg-type]
     assert cfg.allowed_private_subnets == []
+
+
+def _config_with(**sections: Any) -> AppConfig:
+    return AppConfig.model_validate(
+        {
+            "databases": {
+                "registry": {"name": "reg"},
+                "admin": {"name": "admin"},
+                "control": {"name": "ctrl"},
+            },
+            **sections,
+        }
+    )
+
+
+def test_control_egress_defaults_to_strict_broker_policy():
+    config = _config_with()
+    assert config.control.egress == ControlEgressConfig()
+    assert config.control.egress.allowed_private_subnets is None
+    assert config.control.egress.allowed_internal_domains is None
+    assert resolved_control_egress(config) == EgressConfig()
+
+
+def test_control_egress_inherits_broker_egress_when_unset():
+    config = _config_with(
+        broker={
+            "egress": {
+                "allowed_private_subnets": ["10.50.0.0/16"],
+                "allowed_internal_domains": [".corp.internal"],
+                "dns_pinning_enabled": False,
+            }
+        }
+    )
+    assert resolved_control_egress(config) == config.broker.egress
+
+
+def test_control_egress_override_differs_from_broker():
+    config = _config_with(
+        broker={"egress": {"allowed_private_subnets": ["10.50.0.0/16"]}},
+        control={"egress": {"allowed_private_subnets": ["10.60.0.0/16"]}},
+    )
+    assert resolved_control_egress(config).allowed_private_subnets == ["10.60.0.0/16"]
+    # The broker's own policy is untouched.
+    assert config.broker.egress.allowed_private_subnets == ["10.50.0.0/16"]
+
+
+def test_control_egress_unset_fields_fall_back_per_field():
+    config = _config_with(
+        broker={
+            "egress": {
+                "allowed_private_subnets": ["10.50.0.0/16"],
+                "allowed_internal_domains": [".corp.internal"],
+            }
+        },
+        control={"egress": {"allowed_internal_domains": [".svc.cluster.local"]}},
+    )
+    resolved = resolved_control_egress(config)
+    assert resolved.allowed_private_subnets == ["10.50.0.0/16"]
+    assert resolved.allowed_internal_domains == [".svc.cluster.local"]
+
+
+def test_control_egress_explicit_empty_list_is_stricter_than_broker():
+    config = _config_with(
+        broker={"egress": {"allowed_private_subnets": ["10.50.0.0/16"]}},
+        control={"egress": {"allowed_private_subnets": []}},
+    )
+    assert resolved_control_egress(config).allowed_private_subnets == []
+
+
+def test_control_egress_from_env_vars(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        yaml.dump(
+            {
+                "databases": {
+                    "registry": {"name": "reg"},
+                    "admin": {"name": "admin"},
+                    "control": {"name": "ctrl"},
+                },
+                "broker": {"egress": {"allowed_internal_domains": [".corp.internal"]}},
+            }
+        )
+    )
+    monkeypatch.setenv(
+        "JENTIC__CONTROL__EGRESS__ALLOWED_PRIVATE_SUBNETS", "10.50.0.0/16,10.51.0.0/16"
+    )
+    config = load_config(path)
+    assert config.control.egress.allowed_internal_domains is None
+    resolved = resolved_control_egress(config)
+    assert resolved.allowed_private_subnets == ["10.50.0.0/16", "10.51.0.0/16"]
+    # Not set for control, so inherited from broker.egress.
+    assert resolved.allowed_internal_domains == [".corp.internal"]
+    assert config.broker.egress.allowed_private_subnets == []
+
+
+def test_control_egress_empty_env_string_is_an_explicit_empty_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        yaml.dump(
+            {
+                "databases": {
+                    "registry": {"name": "reg"},
+                    "admin": {"name": "admin"},
+                    "control": {"name": "ctrl"},
+                },
+                "broker": {"egress": {"allowed_private_subnets": ["10.50.0.0/16"]}},
+            }
+        )
+    )
+    monkeypatch.setenv("JENTIC__CONTROL__EGRESS__ALLOWED_PRIVATE_SUBNETS", "")
+    config = load_config(path)
+    assert resolved_control_egress(config).allowed_private_subnets == []
+
+
+@pytest.mark.parametrize(
+    "key", ["dns_pinning_enabled", "allowed_private_subnet", "unknown"], ids=str
+)
+def test_control_egress_rejects_keys_outside_the_allowlist(key: str):
+    # Control-plane calls always pin DNS, so a pinning toggle here would be a
+    # silent no-op; it and any other unknown key fail validation instead.
+    with pytest.raises(ValidationError, match=key):
+        _config_with(control={"egress": {key: False}})
+
+
+def test_control_egress_dns_pinning_env_var_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        yaml.dump(
+            {
+                "databases": {
+                    "registry": {"name": "reg"},
+                    "admin": {"name": "admin"},
+                    "control": {"name": "ctrl"},
+                }
+            }
+        )
+    )
+    monkeypatch.setenv("JENTIC__CONTROL__EGRESS__DNS_PINNING_ENABLED", "false")
+    with pytest.raises(ConfigError, match="dns_pinning_enabled"):
+        load_config(path)
+
+
+def test_control_egress_round_trips_through_dump_and_validate():
+    # "Unset" is an explicit None in the model, so a dump/re-validate round trip
+    # keeps inheritance intact.
+    config = _config_with(
+        broker={"egress": {"allowed_private_subnets": ["10.50.0.0/16"]}},
+        control={"egress": {"allowed_internal_domains": [".corp.internal"]}},
+    )
+    again = AppConfig.model_validate(config.model_dump(mode="python"))
+    assert resolved_control_egress(again) == resolved_control_egress(config)
+    assert resolved_control_egress(again).allowed_private_subnets == ["10.50.0.0/16"]
+
+
+def test_control_egress_invalid_cidr_rejected():
+    with pytest.raises(ValidationError, match="invalid CIDR"):
+        _config_with(control={"egress": {"allowed_private_subnets": ["not-a-cidr"]}})
 
 
 def test_csv_to_list_rejects_non_string_non_list():
