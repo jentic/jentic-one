@@ -97,11 +97,26 @@ async def check_rate_limit(request: Request, ctx: Context = Depends(get_ctx)) ->
     """Per-client+IP rate limiter for unauthenticated authorization endpoints.
 
     Keyed ``client_id:ip`` when a ``client_id`` query parameter is present,
-    plain IP otherwise (the local-login routes — their client_id rides inside
-    the signed state, not the query string).
+    plain IP otherwise.
     """
-    trusted = frozenset(ctx.config.auth.oauth_rate_limit.trusted_proxies)
     client_id = request.query_params.get("client_id")
+    await _acquire_authorize_bucket(request, ctx, client_id=client_id)
+
+
+async def check_login_rate_limit(request: Request, ctx: Context = Depends(get_ctx)) -> None:
+    """The authorize rate limiter for the local-login routes, keyed by plain IP.
+
+    Their ``client_id`` rides inside the signed ``ls``, so any ``client_id``
+    query parameter on them is caller-chosen: keying on it would hand a
+    caller a fresh bucket per value.
+    """
+    await _acquire_authorize_bucket(request, ctx, client_id=None)
+
+
+async def _acquire_authorize_bucket(
+    request: Request, ctx: Context, *, client_id: str | None
+) -> None:
+    trusted = ctx.config.auth.oauth_rate_limit.trusted_networks
     ip = client_ip(request, trusted)
     key = f"{client_id}:{ip}" if client_id else ip
     limiter = _get_authorize_limiter(request, ctx)
@@ -139,7 +154,7 @@ async def check_approval_status_rate_limit(
     and a self-chosen key component would let one host sidestep the bucket by
     re-minting blobs (every /authorize render hands out a fresh one).
     """
-    trusted = frozenset(ctx.config.auth.oauth_rate_limit.trusted_proxies)
+    trusted = ctx.config.auth.oauth_rate_limit.trusted_networks
     ip = client_ip(request, trusted)
     limiter = _get_approval_status_limiter(request, ctx)
     outcome = await limiter.acquire(ip)

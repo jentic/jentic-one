@@ -150,6 +150,28 @@ Two layers keep the proxy from being used against the network it runs in:
 Validation runs again after server-variable substitution, in both the sync
 and async callers, so an injected variable cannot smuggle in a new host.
 
+The platform's own OAuth calls (credential and OAuth app `token_url` /
+`authorize_url` checks, the endpoints an approver confirms for their own
+client on a connect session, token exchange and refresh, device authorization,
+the identity probe) use the same two layers under `control.egress`, and always
+pin DNS. `control.egress` holds only `allowed_private_subnets` and
+`allowed_internal_domains`; each one left unset is taken from `broker.egress`,
+so an in-network token endpoint allowlisted for the broker is reachable for
+these calls too. Set a key to give these calls a different value (`[]` blocks
+every private range for them even when the broker allows one).
+
+The policy is read by whichever process makes the call. The control surface
+makes the credential and OAuth app writes, the connect-session confirm, the
+code exchange, device authorization and the identity probe; the **broker
+surface** makes the token refresh it runs before injecting an OAuth2
+credential, under its own `control.egress` (inherited from its own
+`broker.egress`). In a combined deployment that is one config. With one process
+per surface, set `control.egress`, and the `broker.egress` keys it inherits,
+identically on the control and broker surfaces; otherwise a token endpoint
+accepted at create time can be refused at refresh (or the reverse), and a
+narrower `control.egress` set on the control surface alone does not constrain
+the refreshes the broker sends.
+
 ## Credential injection
 
 `CredentialService` ([`broker/services/credentials/orchestrator.py`](../../src/jentic_one/broker/services/credentials/orchestrator.py)) is the

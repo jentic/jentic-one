@@ -203,7 +203,58 @@ docker buildx imagetools inspect ubuntu:24.04
 ```
 
 `uv` is pinned to a major.minor (`ghcr.io/astral-sh/uv:0.7`); pin further to
-a digest if you need to.
+a digest if you need to. The builder's uv reads `uv.lock` (for the export
+below), so bump it together with the uv that writes the lock: a lock written
+by a newer uv can carry a format revision the builder's uv rejects.
+
+## Reproducibility: Python dependencies come from `uv.lock`
+
+The builder stage writes `uv export --locked --no-dev --no-emit-project` (hash
+pinned, universal markers) next to the wheel. `--locked` fails the build when
+`uv.lock` is out of date with `pyproject.toml`. Every service image installs
+that file with `pip install --require-hashes --only-binary=:all: -r
+requirements.txt`, then the wheel with `--no-deps`, then runs `pip check`.
+pip never re-resolves the wheel's open `pyproject.toml` ranges, so an image
+ships exactly the dependency set the test suite runs against, whatever day it
+is built. `--only-binary` stops pip from building an sdist, whose build
+backend would come from PyPI without hash checking, and `pip check` fails the
+build when the wheel declares a requirement the locked set doesn't satisfy.
+To change a dependency, update `uv.lock` (`make lock` / `make upgrade`); the
+image follows.
+
+**Extras.** The published image installs no extras. Because the wheel
+installs `--no-deps`, `pip install "<wheel>[redis]"` installs nothing extra;
+extras go through the lock export instead, with the `EXTRAS` build arg
+(space-separated):
+
+```bash
+make build-app EXTRAS=redis                    # single-arch: python-base gets the arg
+docker buildx build -f deploy/docker/app.multiarch.Dockerfile \
+  --build-arg EXTRAS=redis --platform linux/amd64,linux/arm64 -t <image> --push .
+make check-image-lock IMAGE=<tag> EXTRAS=redis # the guard must expect the same extras
+```
+
+`make check-image-lock IMAGE=<tag> [PLATFORM=linux/<arch>] [EXTRAS=…]` fails
+when a built image's installed distributions differ from the lock export
+(missing, extra, different version, duplicated or unnamed), or when the
+project itself is missing or not at the `pyproject.toml` version. It runs the
+export in the builder's own Python and uv images, read from
+`python-base.Dockerfile`, so it needs Docker but no local uv. CI runs it on
+the scanned app image, and the release job runs it on each arch before
+pushing. The per-service images (`admin`, `broker`, `control`, `registry`)
+aren't built in CI; `tests/arch/test_image_lock_install.py` pins the same
+install step in every Dockerfile that installs the wheel instead. Run the
+guard on them after `make build-all` if you change that step.
+
+**Derived images.** An image built `FROM` a published one that runs
+`pip install <more packages>` into `/opt/venv` lets pip upgrade or downgrade
+locked packages again. Constrain it to the installed set:
+
+```dockerfile
+RUN pip freeze --exclude jentic-one > /tmp/constraints.txt && \
+    pip install --no-cache-dir -c /tmp/constraints.txt <your-wheel> && \
+    pip check && rm /tmp/constraints.txt
+```
 
 ## .dockerignore
 
@@ -226,6 +277,7 @@ add it to `.dockerignore` immediately.
 | `make push-<svc>`       | Push `<svc>` image with both tags (single-arch; registry must be configured) |
 | `make release-image`    | Build + push the multi-arch `app` image to `REGISTRY` (see Multi-arch)   |
 | `make images`           | List all locally-built `jentic-one/*` images                             |
+| `make check-image-lock` | Fail if `IMAGE`'s Python packages differ from `uv.lock` (optional `PLATFORM`, `EXTRAS`) |
 | `make clean`            | Remove caches, `dist/`, and `build/`                                     |
 
 `SERVICES` is defined at the top of `Makefile`; `build/` is gitignored and

@@ -33,7 +33,11 @@ from jentic_one.control.services.credentials.schemas.provision import (
     RefreshResult,
 )
 from jentic_one.control.services.credentials.state import encode_state, generate_nonce
-from jentic_one.shared.config import DirectOAuth2ProviderConfig
+from jentic_one.shared.config import (
+    DirectOAuth2ProviderConfig,
+    EgressConfig,
+    resolved_control_egress,
+)
 from jentic_one.shared.context import Context
 
 # Re-exported for existing importers of these error types through
@@ -213,6 +217,7 @@ class DirectOAuth2Provider(OAuth2Provider):
 
         token_data = await self._exchange_code(
             token_url=token_url,
+            egress=resolved_control_egress(ctx.config),
             code=callback.code,
             client_id=client_id,
             client_secret=client_secret,
@@ -242,6 +247,7 @@ class DirectOAuth2Provider(OAuth2Provider):
 
         token_data = await self._refresh_token(
             token_url=token_url,
+            egress=resolved_control_egress(ctx.config),
             client_id=client_id,
             client_secret=client_secret,
             refresh_token=refresh_token_value,
@@ -308,6 +314,7 @@ class DirectOAuth2Provider(OAuth2Provider):
         self,
         *,
         token_url: str,
+        egress: EgressConfig,
         code: str,
         client_id: str,
         client_secret: str,
@@ -320,12 +327,13 @@ class DirectOAuth2Provider(OAuth2Provider):
             "client_secret": client_secret,
             "redirect_uri": redirect_uri,
         }
-        return await self._post_token(token_url, payload)
+        return await self._post_token(token_url, payload, egress=egress)
 
     async def _refresh_token(
         self,
         *,
         token_url: str,
+        egress: EgressConfig,
         client_id: str,
         client_secret: str,
         refresh_token: str,
@@ -336,4 +344,4 @@ class DirectOAuth2Provider(OAuth2Provider):
             "client_id": client_id,
             "client_secret": client_secret,
         }
-        return await self._post_token(token_url, payload)
+        return await self._post_token(token_url, payload, egress=egress)

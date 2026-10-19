@@ -7,6 +7,10 @@ import typing
 from typing import Any, cast
 
 import pytest
+import structlog
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from sqlalchemy.exc import DBAPIError
 
 from jentic_one.broker.core.exceptions import (
     AgentDirective,
@@ -32,10 +36,19 @@ from jentic_one.broker.core.exceptions import (
 )
 from jentic_one.broker.core.headers import JenticHeader
 from jentic_one.broker.core.problem import STATUS_BY_ERROR, broker_error_problem
-from jentic_one.broker.web.errors import handle_broker_error, problem_response
+from jentic_one.broker.web.errors import (
+    handle_broker_error,
+    install_broker_error_handlers,
+    problem_response,
+)
 from jentic_one.control.web.schemas.permission_rules import PermissionRuleSchema
 from jentic_one.shared.access_guidance import ConnectTarget
 from jentic_one.shared.broker.protocols import IdentityMismatch
+from jentic_one.shared.db.errors import (
+    DatabaseCommitOutcomeUnknownError,
+    DatabaseUnavailableError,
+)
+from jentic_one.shared.web.errors import DB_COMMIT_OUTCOME_UNKNOWN_DETAIL
 
 
 def _body(resp: Any) -> dict[str, Any]:
@@ -449,3 +462,82 @@ def test_explicit_type_overrides_the_class_default() -> None:
     assert UpstreamTimeoutError("x", type="upstream_connect_failed").type == (
         "upstream_connect_failed"
     )
+
+
+def test_database_unavailable_is_a_broker_origin_503_without_internals() -> None:
+    """A lost broker-DB connection answers a typed 503, not a bare 500.
+
+    The driver message (host, user, SQL) never reaches the client, and no
+    retry directive is offered because the failure may follow dispatch.
+    """
+    app = FastAPI()
+    install_broker_error_handlers(app)
+
+    @app.get("/boom")
+    async def boom() -> None:
+        raise DatabaseUnavailableError("connection is closed host=db.internal user=broker")
+
+    resp = TestClient(app).get("/boom")
+
+    assert resp.status_code == 503
+    assert resp.headers["content-type"].startswith("application/problem+json")
+    assert resp.headers[JenticHeader.ERROR_ORIGIN.value] == "broker"
+    body = resp.json()
+    assert body["type"] == "database_unavailable"
+    assert body["error_origin"] == "broker"
+    assert "agent_directive" not in body
+    assert "db.internal" not in resp.text
+
+
+def test_database_unavailable_log_has_no_traceback_or_sql() -> None:
+    """The 503 log names the error type and a short detail, never the chained SQL.
+
+    The cause is a SQLAlchemy error whose ``str()`` carries the statement and
+    bound parameters; a traceback would render it. A subclass (connection lost
+    at commit) resolves to the same 503 handler.
+    """
+    app = FastAPI()
+    install_broker_error_handlers(app)
+
+    @app.get("/boom")
+    async def boom() -> None:
+        cause = DBAPIError(
+            "SELECT secret FROM creds WHERE id = %(id)s",
+            {"id": "hunter2"},
+            Exception("connection is closed"),
+            connection_invalidated=True,
+        )
+        raise DatabaseCommitOutcomeUnknownError("connection is closed") from cause
+
+    with structlog.testing.capture_logs() as logs:
+        resp = TestClient(app).get("/boom")
+
+    assert resp.status_code == 503
+    assert resp.json()["type"] == "database_unavailable"
+    [entry] = [e for e in logs if e["event"] == "broker_database_unavailable"]
+    assert entry["log_level"] == "warning"
+    assert "exc_info" not in entry
+    assert entry["error_type"] == "DatabaseCommitOutcomeUnknownError"
+    assert entry["cause"] == "DBAPIError"
+    assert entry["error"] == "connection is closed"
+    rendered = repr(entry)
+    assert "SELECT" not in rendered
+    assert "hunter2" not in rendered
+
+
+def test_commit_outcome_unknown_asks_the_client_to_check_before_retrying() -> None:
+    """A write that may have landed gets the shared check-before-retrying detail."""
+    app = FastAPI()
+    install_broker_error_handlers(app)
+
+    @app.get("/boom")
+    async def boom() -> None:
+        raise DatabaseCommitOutcomeUnknownError("connection is closed")
+
+    resp = TestClient(app).get("/boom")
+
+    assert resp.status_code == 503
+    body = resp.json()
+    assert body["type"] == "database_unavailable"
+    assert body["detail"] == DB_COMMIT_OUTCOME_UNKNOWN_DETAIL
+    assert "agent_directive" not in body

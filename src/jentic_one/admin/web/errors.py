@@ -38,7 +38,7 @@ from jentic_one.admin.services.errors import (
 )
 from jentic_one.shared.db.errors import DatabaseIntegrityError, DatabaseUnavailableError
 from jentic_one.shared.pagination import InvalidCursorError
-from jentic_one.shared.web.errors import make_service_error_handler
+from jentic_one.shared.web.errors import DB_UNAVAILABLE_SAFE_DETAILS, make_service_error_handler
 
 _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     UserNotFoundError: (404, "user_not_found"),
@@ -108,7 +108,7 @@ _DB_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
 # detail while the raw message is logged server-side (handled by the factory).
 _DB_SAFE_DETAILS: dict[type[Exception], str] = {
     DatabaseIntegrityError: "The request conflicts with the current state of the resource.",
-    DatabaseUnavailableError: "The database is temporarily unavailable; please retry.",
+    **DB_UNAVAILABLE_SAFE_DETAILS,
 }
 
 database_error_handler = make_service_error_handler(_DB_ERROR_MAP, safe_details=_DB_SAFE_DETAILS)

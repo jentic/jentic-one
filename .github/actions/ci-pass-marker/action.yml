@@ -1,0 +1,28 @@
+name: Save CI pass marker
+description: >-
+  Record that this job passed on its exact inputs by saving an empty Actions
+  cache entry under the key the `changes` job computed (tools/ci_pass_markers.py).
+  Add it as the job's last step. A later run with the same inputs skips the job.
+  Saving an existing key is a no-op warning, never a failure.
+
+inputs:
+  key:
+    description: The marker key, from fromJSON(needs.changes.outputs.keys)['<job id>'].
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Write the marker file
+      if: inputs.key != ''
+      shell: bash
+      run: |
+        mkdir -p "${RUNNER_TEMP}/ci-pass-marker"
+        printf '%s\n' "${GITHUB_SHA}" > "${RUNNER_TEMP}/ci-pass-marker/passed"
+
+    - name: Save the marker
+      if: inputs.key != ''
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ runner.temp }}/ci-pass-marker
+        key: ${{ inputs.key }}

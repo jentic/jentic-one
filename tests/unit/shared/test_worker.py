@@ -12,6 +12,7 @@ import structlog
 from sqlalchemy.exc import DBAPIError, OperationalError
 
 from jentic_one.shared.config import WorkerConfig
+from jentic_one.shared.db.errors import DatabaseCommitOutcomeUnknownError, DatabaseUnavailableError
 from jentic_one.shared.jobs.handlers import JobHandlerRegistry, JobResultPayload
 from jentic_one.shared.jobs.worker import WorkerLoop, _backoff_s, _reconnect_backoff_s
 from jentic_one.shared.models.jobs import JobKind
@@ -392,8 +393,11 @@ async def test_tick_mid_job_connection_loss_with_db_still_down_defers_to_run_loo
 
 
 @pytest.mark.asyncio
-async def test_tick_job_db_error_keeps_traceback_but_persists_no_sql() -> None:
-    """A non-connection DB error is a real failure: traceback kept, SQL never persisted."""
+async def test_tick_job_db_error_logs_no_traceback_or_sql() -> None:
+    """A non-connection DB error is a real failure, logged and persisted without SQL.
+
+    A rendered traceback would print the chained statement and bound values.
+    """
     exc = OperationalError(
         "SELECT * FROM jobs WHERE secret = ?", ("s3cr3t",), Exception("no such table: jobs")
     )
@@ -401,10 +405,138 @@ async def test_tick_job_db_error_keeps_traceback_but_persists_no_sql() -> None:
     with structlog.testing.capture_logs() as logs:
         assert await worker._tick() is True
 
-    failed = _events(logs, "job_failed")
-    assert len(failed) == 1 and failed[0]["exc_info"] is True
+    [failed] = _events(logs, "job_failed")
+    assert failed["log_level"] == "error"
+    assert "exc_info" not in failed
+    assert failed["error_type"] == "OperationalError"
+    assert "no such table: jobs" in failed["error"]
+    assert "SELECT" not in repr(failed) and "s3cr3t" not in repr(failed)
     assert not _events(logs, "job_interrupted_db_connection_lost")
     assert len(worker.persisted) == 1
     persisted = worker.persisted[0]
     assert "no such table: jobs" in persisted
     assert "SELECT" not in persisted and "s3cr3t" not in persisted
+
+
+def _locked_after_retries() -> DatabaseUnavailableError:
+    """``run_in_transaction``'s error once SQLite stays locked past its retries."""
+    cause = OperationalError(
+        "UPDATE jobs SET token = ?", ("s3cr3t",), Exception("database is locked")
+    )
+    try:
+        raise DatabaseUnavailableError("database is locked") from cause
+    except DatabaseUnavailableError as caught:
+        return caught
+
+
+@pytest.mark.asyncio
+async def test_tick_job_database_unavailable_logs_no_traceback_or_sql() -> None:
+    """A wrapped DB error whose chained cause carries SQL is logged without a traceback."""
+    worker = _MidJobWorker(_locked_after_retries())
+    with structlog.testing.capture_logs() as logs:
+        assert await worker._tick() is True
+
+    [failed] = _events(logs, "job_failed")
+    assert "exc_info" not in failed
+    assert failed["error_type"] == "DatabaseUnavailableError"
+    assert failed["cause"] == "OperationalError"
+    assert failed["error"] == "database is locked"
+    assert "UPDATE jobs" not in repr(failed) and "s3cr3t" not in repr(failed)
+
+
+@pytest.mark.asyncio
+async def test_tick_job_sql_in_context_chain_logs_no_traceback() -> None:
+    """An error raised while handling a DB error would render it via ``__context__``."""
+    try:
+        try:
+            raise _locked_after_retries()
+        except DatabaseUnavailableError:
+            raise RuntimeError("handler gave up") from None
+    except RuntimeError as caught:
+        # ``from None`` suppresses display but keeps ``__context__``; restore it.
+        caught.__suppress_context__ = False
+        exc: BaseException = caught
+    worker = _MidJobWorker(exc)
+    with structlog.testing.capture_logs() as logs:
+        assert await worker._tick() is True
+
+    [failed] = _events(logs, "job_failed")
+    assert "exc_info" not in failed
+    assert failed["error"] == "handler gave up"
+
+
+@pytest.mark.asyncio
+async def test_tick_job_plain_error_keeps_traceback() -> None:
+    """A handler bug with no SQL in its chain keeps the full traceback."""
+    worker = _MidJobWorker(RuntimeError("real bug"))
+    with structlog.testing.capture_logs() as logs:
+        assert await worker._tick() is True
+
+    [failed] = _events(logs, "job_failed")
+    assert failed["log_level"] == "error"
+    assert failed["exc_info"] is True
+    assert worker.persisted == ["real bug"]
+
+
+@pytest.mark.asyncio
+async def test_run_tick_error_with_sql_logs_no_traceback() -> None:
+    """A claim that fails with a SQL-carrying error is logged without the traceback."""
+    worker = _ScriptedWorker([_locked_after_retries(), False])
+    with structlog.testing.capture_logs() as logs:
+        await asyncio.wait_for(worker.run(), timeout=2.0)
+
+    [entry] = _events(logs, "worker_loop_tick_error")
+    assert entry["log_level"] == "error"
+    assert "exc_info" not in entry
+    assert entry["error_type"] == "DatabaseUnavailableError"
+    assert entry["cause"] == "OperationalError"
+    assert entry["error"] == "database is locked"
+    assert "UPDATE jobs" not in repr(entry) and "s3cr3t" not in repr(entry)
+
+
+class _CompletionLostWorker(_MidJobWorker):
+    """The handler succeeds; the completion commit loses its connection."""
+
+    def __init__(self, exc: DatabaseCommitOutcomeUnknownError) -> None:
+        super().__init__(exc)
+
+    async def _execute_handler(self, handler: Any, job: Any) -> JobResultPayload:
+        return JobResultPayload(body={"ok": True})
+
+    async def _complete_job(self, job_id: str, kind: str, result: JobResultPayload) -> None:
+        raise self._exc
+
+
+def _outcome_unknown(cause: BaseException | None) -> DatabaseCommitOutcomeUnknownError:
+    try:
+        raise DatabaseCommitOutcomeUnknownError("connection is closed") from cause
+    except DatabaseCommitOutcomeUnknownError as caught:
+        return caught
+
+
+@pytest.mark.asyncio
+async def test_commit_outcome_unknown_logs_the_connection_loss_leaf() -> None:
+    """The log names the driver error, like ``job_interrupted_db_connection_lost``."""
+    worker = _CompletionLostWorker(_outcome_unknown(_connection_dropped()))
+    with structlog.testing.capture_logs() as logs:
+        assert await worker._tick() is True
+
+    [entry] = _events(logs, "job_commit_outcome_unknown")
+    assert entry["log_level"] == "warning"
+    assert "exc_info" not in entry
+    assert entry["error_type"] == "ConnectionDoesNotExistError"
+    assert entry["error"] == "connection was closed in the middle of operation"
+    assert "UPDATE jobs" not in repr(entry)
+    assert worker.persisted == []
+
+
+@pytest.mark.asyncio
+async def test_commit_outcome_unknown_without_a_loss_leaf_logs_the_detail() -> None:
+    """With no connection-loss cause in the chain, the capped detail is logged."""
+    worker = _CompletionLostWorker(_outcome_unknown(None))
+    with structlog.testing.capture_logs() as logs:
+        assert await worker._tick() is True
+
+    [entry] = _events(logs, "job_commit_outcome_unknown")
+    assert entry["error_type"] == "DatabaseCommitOutcomeUnknownError"
+    assert entry["error"] == "connection is closed"

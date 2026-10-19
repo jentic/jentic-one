@@ -140,11 +140,17 @@ async def test_db_unavailable_returns_503_without_leaking_sql() -> None:
     assert "password_hash" not in body
     assert "The database is temporarily unavailable" in body
 
-    # 503 is a server-side fault (>= 500), so it logs at error level with the
-    # full exception attached for diagnosis — the raw message is not lost.
-    error_logs = [log for log in logs if log["log_level"] == "error"]
-    assert len(error_logs) == 1
-    assert error_logs[0]["exc_info"] is exc
+    # A lost database is infrastructure, not a code fault: one warning with
+    # type names and the SQL-free detail, no traceback (the chained SQLAlchemy
+    # cause renders the statement and its bound parameters).
+    [entry] = logs
+    assert entry["log_level"] == "warning"
+    assert entry["event"] == "database_unavailable"
+    assert "exc_info" not in entry
+    assert entry["error_type"] == "DatabaseUnavailableError"
+    rendered = repr(entry)
+    assert "SQL:" not in rendered
+    assert "password_hash" not in rendered
 
 
 @pytest.mark.asyncio

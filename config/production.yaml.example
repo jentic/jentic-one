@@ -15,6 +15,14 @@ databases:
     password: CHANGE_ME
     pool_max: 20
     schema_name: registry
+    # Connection health checks (defaults shown). On asyncpg pre-ping costs three
+    # round trips (BEGIN, `;`, ROLLBACK) per pool checkout. If you disable it,
+    # keep pool_recycle_s below the server/proxy idle timeout (0 disables
+    # recycling) — and note recycling does not cover a Postgres restart,
+    # failover or pooler restart: the first request per pool per process after
+    # one can fail with a 503. Applies to each database section.
+    # pool_pre_ping: true
+    # pool_recycle_s: 1800
   control:
     host: db.internal
     port: 5432
@@ -175,7 +183,8 @@ credentials:
 # for a single-worker install, but a multi-worker or multi-instance deployment
 # needs Redis so the token-endpoint limiter and consent-nonce anti-replay
 # survive across workers. The redis client is an optional extra
-# (pip install jentic-one[redis]) and is NOT in the published container
+# (pip install jentic-one[redis]; for an image, build with
+# --build-arg EXTRAS=redis) and is NOT in the published container
 # image — enabling this backend there fails at startup.
 broker:
   resilience:
@@ -203,6 +212,11 @@ broker:
       #     # The built-in defaults:
       #     idem: {max_entries: 250000, max_bytes: 134217728, max_owner_share: 0.1}
       #     idem-body: {max_entries: 1000000, max_bytes: 33554432, max_owner_share: 0.1}
+      #     # Login page CSRF nonces: the per-namespace defaults above, and each
+      #     # client (IPv4 address or IPv6 /64) may hold 2% of them, about 370
+      #     # nonces in their 5-minute TTL, so one flooding client gets 503 while
+      #     # everyone else can still sign in.
+      #     login-csrf: {max_entries: 100000, max_bytes: 16777216, max_owner_share: 0.02}
 
 admin:
   auth:
