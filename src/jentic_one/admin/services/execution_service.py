@@ -49,7 +49,6 @@ class ExecutionService:
                 limit=limit + 1,
                 cursor_ts=cursor_ts,
                 cursor_id=cursor_id,
-                toolkit_id=filter.toolkit_id,
                 trace_id=filter.trace_id,
                 status=filter.status,
                 from_=filter.from_,

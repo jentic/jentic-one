@@ -38,6 +38,7 @@ import itertools
 import re
 from collections.abc import Iterable, Mapping
 from typing import Any
+from urllib.parse import urlsplit
 
 #: Upper bound on variable-expansion combinations per server URL. Past this the
 #: server contributes one canonical, value-sensitive member (see module docstring).
@@ -177,6 +178,33 @@ def _origins_of(url: str) -> set[str]:
         if host is not None:
             origins.add(f"{scheme}://{host}")
     return origins
+
+
+def expand_variable_defaults(url: str, variables: Any) -> str:
+    """``url`` with each ``{name}`` that declares a ``default`` replaced by it."""
+    defaults: dict[str, str] = {}
+    if isinstance(variables, Mapping):
+        for name, spec in variables.items():
+            if isinstance(spec, Mapping) and spec.get("default") is not None:
+                defaults[str(name)] = str(spec["default"])
+    return _VARIABLE.sub(lambda m: defaults.get(m.group(1), m.group(0)), url)
+
+
+def is_hostless_server_url(url: str, variables: Any = None) -> bool:
+    """Whether a server URL has no host once its variables take their defaults.
+
+    The same predicate the host guard relies on (``_origins_of`` yields no
+    origin for such a URL). A leading variable that has no default stays
+    unexpanded; the URL is then opaque (it may well name a host) and does not
+    count as host-less.
+    """
+    expanded = expand_variable_defaults(url, variables).strip()
+    if expanded.startswith("{"):
+        return False
+    try:
+        return not urlsplit(expanded).netloc
+    except ValueError:
+        return False
 
 
 def hosts_from_servers(servers: Iterable[ServerSpec]) -> frozenset[str]:

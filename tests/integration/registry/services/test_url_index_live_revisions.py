@@ -406,7 +406,7 @@ async def test_widened_key_keeps_the_previous_constraint_name(
     )
 
 
-def _as_legacy_set(rows: Sequence[tuple[Any, ...]]) -> set[tuple[Any, ...]]:
+def _as_legacy_set(rows: Sequence[Sequence[Any]]) -> set[tuple[Any, ...]]:
     """Hashable row set (``param_names`` is a list column), with ``path_regex`` in
     the format rows had before the format marker."""
     return {
@@ -433,7 +433,7 @@ async def test_rebuild_migration_restores_displaced_rows(
         OperationURLIndex.segment_count,
     )
     async with registry_db.session() as session:
-        ingested = _as_legacy_set((await session.execute(select(*columns))).tuples().all())
+        ingested = _as_legacy_set((await session.execute(select(*columns))).all())
         # Simulate the pre-change displacement: the live revision lost its rows.
         await session.execute(delete(OperationURLIndex).where(OperationURLIndex.revision_id == v1))
         await session.commit()
@@ -447,7 +447,7 @@ async def test_rebuild_migration_restores_displaced_rows(
     assert inserted == 1
 
     async with registry_db.session() as session:
-        rebuilt = _as_legacy_set((await session.execute(select(*columns))).tuples().all())
+        rebuilt = _as_legacy_set((await session.execute(select(*columns))).all())
         again = await session.run_sync(
             lambda sync: rebuild_migration.rebuild_url_index(sync.connection())
         )

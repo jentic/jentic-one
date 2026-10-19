@@ -21,6 +21,7 @@ from jentic_one.broker.core.exceptions import (
     TooManyCandidatesError,
     UpstreamResponseTooLargeError,
     UpstreamTimeoutError,
+    UpstreamTransportError,
     ambiguous_credential_binding_directive,
     credential_identity_mismatch_directive,
     direct_action_denied_directive,
@@ -382,6 +383,7 @@ def test_problem_response_merges_extra_and_headers() -> None:
 def test_status_table_maps_taxonomy() -> None:
     assert STATUS_BY_ERROR[OperationNotFoundError] == 404
     assert STATUS_BY_ERROR[UpstreamTimeoutError] == 504
+    assert STATUS_BY_ERROR[UpstreamTransportError] == 502
 
 
 def test_status_table_maps_credential_errors() -> None:
@@ -429,6 +431,7 @@ def test_broker_error_carries_contract() -> None:
         (CredentialRefreshTransientError("cred_1: Timeout"), 502, "refresh_transient_error"),
         (UpstreamResponseTooLargeError("too big"), 502, "upstream_response_too_large"),
         (TooManyCandidatesError("too many"), 503, "too_many_candidates"),
+        (UpstreamTransportError("transport"), 502, "upstream_transport_error"),
     ],
     ids=lambda v: type(v).__name__ if isinstance(v, Exception) else str(v),
 )

@@ -446,16 +446,15 @@ class WorkerLoop:
         return await self._db.run_in_transaction(_claim)
 
     async def _execute_handler(self, handler: Any, job: Any) -> JobResultPayload:
-        """Run the handler within a transaction."""
-        async with self._db.transaction() as session:
-            result: JobResultPayload = await handler.execute(
-                job.id,
-                session,
-                payload=job.payload,
-                created_by=job.created_by,
-                actor_type=job.actor_type,
-            )
-            return result
+        """Run the handler; it opens its own transactions on the worker's database."""
+        result: JobResultPayload = await handler.execute(
+            job.id,
+            self._db,
+            payload=job.payload,
+            created_by=job.created_by,
+            actor_type=job.actor_type,
+        )
+        return result
 
     async def _is_approved_execution(self, session: Any, job_id: str) -> bool:
         """True when the job is a held execution a reviewer approved."""

@@ -87,10 +87,6 @@ class _RecordingSink:
         self.calls.append(args)
 
 
-class _FakeEvent:
-    id = "evt_1"
-
-
 @pytest.mark.asyncio
 async def test_summary_names_never_reach_the_telemetry_sink() -> None:
     """The sink gets the event's wire name, tags and actor type, never its summary."""
@@ -98,7 +94,7 @@ async def test_summary_names_never_reach_the_telemetry_sink() -> None:
     with (
         patch(
             "jentic_one.shared.events.EventRepository.create",
-            AsyncMock(return_value=_FakeEvent()),
+            AsyncMock(return_value="evt_1"),
         ),
         patch("jentic_one.shared.events.get_active_sink", return_value=sink),
     ):

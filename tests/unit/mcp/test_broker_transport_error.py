@@ -30,6 +30,7 @@ from jentic_one.broker.core.exceptions import (
     TooManyCandidatesError,
     UpstreamResponseTooLargeError,
     UpstreamTimeoutError,
+    UpstreamTransportError,
 )
 from jentic_one.broker.core.problem import status_for_broker_error
 from jentic_one.broker.web.errors import handle_broker_error
@@ -73,6 +74,13 @@ def _body(problem: dict[str, Any]) -> bytes:
             ex.RECOVER_SCHEME,
         ),
         (UpstreamResponseTooLargeError("too big"), True, False, ex.RECOVER_UNKNOWN),
+        (
+            UpstreamTransportError("refused", type="upstream_connect_failed", pre_send=True),
+            False,
+            True,
+            ex.RECOVER_WAIT,
+        ),
+        (UpstreamTransportError("dropped"), True, False, ex.RECOVER_UNKNOWN),
     ],
     ids=lambda v: type(v).__name__ if isinstance(v, Exception) else str(v),
 )
@@ -216,13 +224,14 @@ def test_retry_after_seconds() -> None:
         (503, "too_many_candidates", ex.RECOVER_WAIT),
         (502, "refresh_transient_error", ex.RECOVER_WAIT),
         (504, "upstream_connect_failed", ex.RECOVER_WAIT),
+        (502, "upstream_connect_failed", ex.RECOVER_WAIT),
         (429, "rate_limit_exceeded", ex.RECOVER_WAIT),
         (429, "", ex.RECOVER_WAIT),
         (504, "upstream_timeout", ex.RECOVER_TIMEOUT),
         (504, "deadline_exceeded", ex.RECOVER_TIMEOUT),
         (501, "runner_scheme_unsupported", ex.RECOVER_SCHEME),
         (502, "upstream_response_too_large", ex.RECOVER_UNKNOWN),
-        (500, "upstream_transport_error", ex.RECOVER_UNKNOWN),
+        (502, "upstream_transport_error", ex.RECOVER_UNKNOWN),
         (504, "about:blank", ex.RECOVER_UNKNOWN),
         (504, "", ex.RECOVER_UNKNOWN),
         (503, "about:blank", ex.RECOVER_UNKNOWN),
@@ -311,6 +320,10 @@ def _read_timeout(_req: httpx.Request) -> httpx.Response:
     raise httpx.ReadTimeout("slow")
 
 
+def _connect_refused(_req: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectError("refused")
+
+
 def _protocol_error(_req: httpx.Request) -> httpx.Response:
     raise httpx.RemoteProtocolError("peer closed")
 
@@ -333,13 +346,22 @@ async def _stalls(_req: httpx.Request) -> httpx.Response:
     ("handler", "kwargs", "status", "problem_type", "retry_safe", "want_retryable"),
     [
         (_connect_timeout, {}, 504, "upstream_connect_failed", False, True),
+        (_connect_refused, {}, 502, "upstream_connect_failed", False, True),
         (_read_timeout, {}, 504, "upstream_timeout", False, False),
         (_read_timeout, {}, 504, "upstream_timeout", True, True),
-        (_protocol_error, {}, 500, "upstream_transport_error", True, False),
+        (_protocol_error, {}, 502, "upstream_transport_error", True, False),
         (_oversized, {"max_response_bytes": 8}, 502, "upstream_response_too_large", True, False),
         (_stalls, {"deadline_s": 0.01}, 504, "deadline_exceeded", True, True),
     ],
-    ids=["connect", "read-unsafe", "read-safe", "transport", "too-large", "deadline"],
+    ids=[
+        "connect",
+        "connect-refused",
+        "read-unsafe",
+        "read-safe",
+        "transport",
+        "too-large",
+        "deadline",
+    ],
 )
 async def test_real_broker_5xx_is_a_transport_error(
     handler, kwargs, status, problem_type, retry_safe, want_retryable
