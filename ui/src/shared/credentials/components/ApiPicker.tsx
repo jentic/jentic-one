@@ -15,6 +15,7 @@ import { useDebouncedValue } from '@/shared/hooks';
 import { apiRefDisplayName } from '@/shared/lib';
 import { cn } from '@/shared/lib/utils';
 import { apiRefKey } from '@/shared/credentials/lib/apiIdentity';
+import { schemeTypeIcon } from '@/shared/credentials/lib/authTypeIcons';
 import {
 	apiRowToSelected,
 	catalogToSelected,
@@ -470,7 +471,9 @@ function LocalApiRow({
 				schemes.length > 0 && (
 					<div className="flex shrink-0 gap-1">
 						{schemes.slice(0, 2).map((t) => (
-							<Tag key={t}>{prettySchemeType(t)}</Tag>
+							<Tag key={t} icon={schemeTypeIcon(t)}>
+								{prettySchemeType(t)}
+							</Tag>
 						))}
 					</div>
 				)

@@ -27,6 +27,8 @@ export interface ApiTileModel {
 	/** Null when the API is not imported into the workspace. */
 	version: string | null;
 	authLabel: string | null;
+	/** The credential's auth type, for its icon; null when the credential is unreachable. */
+	authType: CredentialType | null;
 	/** Null when the API is not imported into the workspace. */
 	operationCount: number | null;
 	/** One binding can fan out to several tiles. */
@@ -192,6 +194,7 @@ export function composeApiTiles(
 			suspendedReason: binding.suspendedReason,
 			awaitingConsent: credentialAwaitsConsent(credential),
 			authLabel: credential ? (AUTH_TILE_LABEL[credential.type] ?? null) : null,
+			authType: credential?.type ?? null,
 		};
 
 		if (api == null) {

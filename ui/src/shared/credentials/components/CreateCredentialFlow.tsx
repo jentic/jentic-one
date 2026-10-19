@@ -1,16 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import {
-	ArrowLeft,
-	ChevronDown,
-	Download,
-	Info,
-	Loader2,
-	LockOpen,
-	Upload,
-	Users,
-	X,
-} from 'lucide-react';
+import { ArrowLeft, ChevronDown, Download, Info, Loader2, Upload, Users, X } from 'lucide-react';
 import {
 	Button,
 	Dialog,
@@ -88,6 +78,7 @@ import {
 	type OAuth2FlowDef,
 	type SchemeOption,
 } from '@/shared/credentials/lib/schemes';
+import { CREDENTIAL_TYPE_ICONS } from '@/shared/credentials/lib/authTypeIcons';
 import {
 	enhancedScopesFromSchemes,
 	getRecommendedScopes,
@@ -1727,6 +1718,7 @@ function FormSectionLabel({ children }: { children: React.ReactNode }) {
  * that leaves its auth out.
  */
 function NoAuthNote({ onSetUpAnyway }: { onSetUpAnyway: () => void }) {
+	const NoAuthIcon = CREDENTIAL_TYPE_ICONS[CredentialType.NO_AUTH];
 	return (
 		<div
 			className="bg-surface-tonal flex items-start gap-3 rounded-lg p-3.5"
@@ -1736,7 +1728,7 @@ function NoAuthNote({ onSetUpAnyway }: { onSetUpAnyway: () => void }) {
 				aria-hidden="true"
 				className="bg-surface-field text-foreground-sub grid h-8 w-8 shrink-0 place-items-center rounded-full"
 			>
-				<LockOpen className="h-4 w-4" />
+				<NoAuthIcon className="h-4 w-4" />
 			</span>
 			<div className="min-w-0 flex-1">
 				<p className="text-foreground text-sm font-medium">No authentication declared</p>

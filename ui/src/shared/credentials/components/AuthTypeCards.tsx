@@ -1,14 +1,15 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { motion, type Variants } from 'framer-motion';
-import { Ban, Check, Cloud, Key, KeyRound, Shield, Ticket, User } from 'lucide-react';
+import { Check } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 import { Button, ExpandReveal } from '@/shared/ui';
 import {
 	CREDENTIAL_TYPE_DESCRIPTIONS,
 	CREDENTIAL_TYPE_LABELS,
-	CredentialType,
+	type CredentialType,
 } from '@/shared/credentials/api';
 import { OptionCard } from '@/shared/credentials/components/CredentialOptions';
+import { credentialTypeIcon } from '@/shared/credentials/lib/authTypeIcons';
 
 /**
  * Radio-card picker for the credential type, modelled on jentic-webapp's
@@ -27,14 +28,11 @@ import { OptionCard } from '@/shared/credentials/components/CredentialOptions';
  * Pure presentation; the parent owns selection state.
  */
 
-const ICONS: Record<CredentialType, React.ReactNode> = {
-	[CredentialType.BEARER_TOKEN]: <Ticket className="h-5 w-5" />,
-	[CredentialType.API_KEY]: <Key className="h-5 w-5" />,
-	[CredentialType.BASIC]: <User className="h-5 w-5" />,
-	[CredentialType.OAUTH2]: <Shield className="h-5 w-5" />,
-	[CredentialType.NO_AUTH]: <Ban className="h-5 w-5" />,
-	[CredentialType.SIGV4]: <Cloud className="h-5 w-5" />,
-};
+/** The type's shared icon, inline beside its label in the compact chooser. */
+function MethodIcon({ type }: { type: CredentialType }) {
+	const Icon = credentialTypeIcon(type);
+	return <Icon className="text-foreground-sub h-3.5 w-3.5 shrink-0" aria-hidden="true" />;
+}
 
 const GRID_VARIANTS: Variants = {
 	hidden: {},
@@ -99,6 +97,7 @@ function AuthTypeCard({
 	detected: boolean;
 	onSelect: () => void;
 }) {
+	const Icon = credentialTypeIcon(type);
 	return (
 		<motion.button
 			type="button"
@@ -127,7 +126,7 @@ function AuthTypeCard({
 				)}
 				aria-hidden
 			>
-				{ICONS[type] ?? <KeyRound className="h-5 w-5" />}
+				<Icon className="h-5 w-5" />
 			</span>
 			<div className="min-w-0 flex-1">
 				<p className="text-foreground text-sm font-medium">
@@ -176,8 +175,11 @@ export function AuthMethodChooser({
 		return (
 			<p className="flex min-w-0 items-center gap-2 text-sm" data-testid="auth-method-row">
 				<span className="text-foreground shrink-0 font-medium">Authentication</span>
-				<span className="text-foreground-name min-w-0 truncate font-medium">
-					{CREDENTIAL_TYPE_LABELS[options[0]]}
+				<span className="flex min-w-0 items-center gap-1.5">
+					<MethodIcon type={options[0]} />
+					<span className="text-foreground-name min-w-0 truncate font-medium">
+						{CREDENTIAL_TYPE_LABELS[options[0]]}
+					</span>
 				</span>
 				<span className="text-foreground-sub min-w-0 truncate text-xs">
 					· from the API&apos;s spec
@@ -244,8 +246,11 @@ function MethodList({
 					data-testid="auth-method-chosen"
 				>
 					<span className="text-foreground shrink-0 font-medium">Authentication</span>
-					<span className="text-foreground-name min-w-0 truncate font-medium">
-						{CREDENTIAL_TYPE_LABELS[value]}
+					<span className="flex min-w-0 items-center gap-1.5">
+						<MethodIcon type={value} />
+						<span className="text-foreground-name min-w-0 truncate font-medium">
+							{CREDENTIAL_TYPE_LABELS[value]}
+						</span>
 					</span>
 					<Button
 						ref={changeRef}
@@ -298,6 +303,7 @@ function MethodList({
 							onSelect={(): void => select(type)}
 							title={CREDENTIAL_TYPE_LABELS[type]}
 							detail={CREDENTIAL_TYPE_DESCRIPTIONS[type]}
+							icon={<MethodIcon type={type} />}
 							inputRef={(el): void => {
 								if (el) radios.current.set(type, el);
 								else radios.current.delete(type);

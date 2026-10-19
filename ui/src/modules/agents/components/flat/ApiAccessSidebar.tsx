@@ -43,6 +43,7 @@ import {
 	EditCredentialSheet,
 } from '@/shared/credentials/components';
 import { credentialEditableBy } from '@/shared/credentials/lib/credentialAuthority';
+import { credentialTypeIcon } from '@/shared/credentials/lib/authTypeIcons';
 import {
 	summarizeBindingRules,
 	useAgentBindingEffectiveRules,
@@ -154,6 +155,7 @@ export function ApiAccessSidebar({
 		if (tile) setStickyTile(tile);
 	}, [tile]);
 	const shown = tile ?? stickyTile;
+	const SidebarAuthIcon = shown?.authType ? credentialTypeIcon(shown.authType) : null;
 
 	// The editor's live draft-vs-saved dirtiness — gates the tester.
 	const [rulesDirty, setRulesDirty] = useState(false);
@@ -484,6 +486,12 @@ export function ApiAccessSidebar({
 											<UserText>{shown.credentialName}</UserText>
 										</p>
 										<p className="text-muted-foreground text-xs">
+											{SidebarAuthIcon && (
+												<SidebarAuthIcon
+													aria-hidden="true"
+													className="mr-1 inline-block h-3 w-3 align-[-2px]"
+												/>
+											)}
 											{shown.authLabel ?? 'Credential'} · bound{' '}
 											<Tooltip content={formatTimestamp(shown.boundAt)}>
 												<span>{timeAgo(shown.boundAt)}</span>
