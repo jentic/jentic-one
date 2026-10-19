@@ -20,6 +20,10 @@ export type EditConfirmSessionRequest = {
      */
     permission_rules: Array<PermissionRuleSchema>;
     /**
+     * Approve a revision that lists `conflicts`: the reviewer's `permission_rules` settle them. Without it, such a confirm is 409 edit_conflicted.
+     */
+    resolve_conflicts?: boolean;
+    /**
      * Switch the binding back on if it is suspended.
      */
     resume?: boolean;

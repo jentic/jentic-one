@@ -3423,7 +3423,7 @@ type DeviceAuthorizationRegistrationCreateRequestFlowKind string
 
 // EditConfirmSessionRequest Approve an edit session's change with the final rules the reviewer chose.
 //
-// Examples: {"confirmed_scopes":["gmail.readonly","gmail.send"],"kind":"edit","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"resume":false,"revision_id":"csr_6968b3983b8b91c75627bee6"}
+// Examples: {"confirmed_scopes":["gmail.readonly","gmail.send"],"kind":"edit","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"resolve_conflicts":false,"resume":false,"revision_id":"csr_6968b3983b8b91c75627bee6"}
 type EditConfirmSessionRequest struct {
 	// ConfirmedScopes The final scope set (at most 100). Scopes beyond the credential's grant start a vendor consent; the rules and scopes land together when it completes. Omit to keep the grant as it is.
 	//
@@ -3439,6 +3439,11 @@ type EditConfirmSessionRequest struct {
 	//
 	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
+
+	// ResolveConflicts Approve a revision that lists `conflicts`: the reviewer's `permission_rules` settle them. Without it, such a confirm is 409 edit_conflicted.
+	//
+	// Examples: false
+	ResolveConflicts *bool `json:"resolve_conflicts,omitempty"`
 
 	// Resume Switch the binding back on if it is suspended.
 	//
@@ -3458,12 +3463,17 @@ type EditConfirmSessionRequestKind string
 
 // EditConnectionRequest Ask to change an existing credential binding; a human approves the change.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32","reason":"Needs to send replies, not just read","rules":{"add":[{"before":"apr_6968b3987c22b63e87e79f06","rule":{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}}],"remove":["apr_6968b3987c22b63e87e79f06"],"set":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]},"scopes":{"add":["gmail.send"]}}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","apply":true,"credential_id":"cred_6968b39855d91a3561684b32","reason":"Needs to send replies, not just read","rules":{"add":[{"before":"apr_6968b3987c22b63e87e79f06","rule":{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}}],"remove":["apr_6968b3987c22b63e87e79f06"],"set":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]},"scopes":{"add":["gmail.send"]}}
 type EditConnectionRequest struct {
 	// AgentId The binding's agent. Required for humans; agent callers must omit it.
 	//
 	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	AgentId *string `json:"agent_id,omitempty"`
+
+	// Apply A human approving their own change as they make it: it is written at once, with no review. A change that adds scopes starts the vendor consent instead (`challenge`). Agent callers are 403.
+	//
+	// Examples: true
+	Apply *bool `json:"apply,omitempty"`
 
 	// CredentialId The binding's credential; it must already be bound to the agent.
 	//

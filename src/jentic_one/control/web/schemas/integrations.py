@@ -384,6 +384,15 @@ class EditConnectionRequest(BaseModel):
         examples=["Needs to send replies, not just read"],
         description="Why the change is needed, shown to the reviewer.",
     )
+    apply: bool = Field(
+        default=False,
+        examples=[True],
+        description=(
+            "A human approving their own change as they make it: it is written at once, with "
+            "no review. A change that adds scopes starts the vendor consent instead "
+            "(`challenge`). Agent callers are 403."
+        ),
+    )
 
 
 class AmendSessionRequest(BaseModel):
@@ -449,6 +458,18 @@ class EditConnectionResponse(BaseModel):
             "it runs (`authorization_code` or `device_authorization`)."
         ),
         examples=["edit"],
+    )
+    status: Literal["pending", "applied", "consenting"] = Field(
+        default="pending",
+        description=(
+            "`pending` waits on a human's approval; with `apply`, `applied` is written and "
+            "`consenting` waits on the vendor sign-in in `challenge`."
+        ),
+        examples=["pending"],
+    )
+    challenge: ConfirmSessionResponse | None = Field(
+        default=None,
+        description="With `apply` and added scopes: the vendor sign-in to complete.",
     )
 
 
@@ -599,6 +620,22 @@ class ReviewSchemeResponse(BaseModel):
     token_url: str | None = None
 
 
+class EditConflict(BaseModel):
+    """One part of an edit request the binding's change since has broken."""
+
+    kind: Literal["missing_rule", "rules_changed", "rule_set_changed"] = Field(
+        description=(
+            "`missing_rule`: a rule the request removes or adds before is gone. "
+            "`rules_changed`: the request replaces rules that changed since. "
+            "`rule_set_changed`: a shared rule set was attached or detached since."
+        ),
+        examples=["missing_rule"],
+    )
+    rule_id: str | None = Field(
+        default=None, description="The missing rule, for `missing_rule`.", examples=["apr_1"]
+    )
+
+
 class EditAgentRef(BaseModel):
     agent_id: str = Field(examples=[ex.AGENT_ID])
     name: str | None = None
@@ -716,6 +753,13 @@ class ReviewEditResponse(BaseModel):
     needs_vendor_consent: bool = Field(
         default=False,
         description="True when the result adds scopes, so confirming starts a vendor consent.",
+    )
+    conflicts: list[EditConflict] = Field(
+        default_factory=list,
+        description=(
+            "What the request can't follow since the binding changed under it. While any are "
+            "listed, a confirm must set `resolve_conflicts`."
+        ),
     )
 
 
@@ -1025,6 +1069,14 @@ class EditConfirmSessionRequest(BaseModel):
         default=False,
         examples=[False],
         description="Switch the binding back on if it is suspended.",
+    )
+    resolve_conflicts: bool = Field(
+        default=False,
+        examples=[False],
+        description=(
+            "Approve a revision that lists `conflicts`: the reviewer's `permission_rules` "
+            "settle them. Without it, such a confirm is 409 edit_conflicted."
+        ),
     )
     confirmed_scopes: list[str] | None = Field(
         default=None,

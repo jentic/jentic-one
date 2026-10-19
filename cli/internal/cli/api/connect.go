@@ -364,6 +364,11 @@ func (a *app) waitForConnectSession(
 		if connectTerminalStatuses[status.Status] {
 			return &status, nil
 		}
+		// An edit its binding moved under in a way it can't follow waits on an
+		// amend, not on the approver: stop and say so.
+		if status.Status == "pending" && status.ErrorCode == "conflicted" {
+			return &status, nil
+		}
 		if time.Now().After(deadline) {
 			actionable := "The approval is still with your operator; re-run with --wait later, or " +
 				"confirm the binding with `jentic whoami` once they approve."

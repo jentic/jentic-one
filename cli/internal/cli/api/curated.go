@@ -120,6 +120,7 @@ func CuratedBindings() []CuratedBinding {
 			},
 			NotExposed: map[string]string{
 				"agent_id": "never sent: an agent caller IS the agent (identity injected server-side; an override is refused 403); editing FOR an agent is a dashboard action",
+				"apply":    "never sent: an agent can't approve its own change (refused 403); applying at once is a human's dashboard action",
 			},
 		},
 		{

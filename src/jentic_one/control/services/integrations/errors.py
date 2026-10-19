@@ -372,6 +372,23 @@ class BaselineChangedError(ConnectSessionServiceError):
         self.current_revision_id = current_revision_id
 
 
+class EditConflictedError(ConnectSessionServiceError):
+    """The binding changed under an open edit in a way its request can't follow.
+
+    ``conflicts`` names each part (a rule the request names that is gone, a
+    full replacement of rules that changed since). The agent amends the
+    request, or the reviewer approves their own rules with ``resolve_conflicts``.
+    """
+
+    def __init__(self, session_id: str, conflicts: list[dict[str, str]]) -> None:
+        super().__init__(
+            f"session {session_id!r} conflicts with a change to the binding: amend it, "
+            "or approve your own rules with resolve_conflicts"
+        )
+        self.session_id = session_id
+        self.conflicts = conflicts
+
+
 class RuleSetConfirmForbiddenError(ConnectSessionServiceError):
     """The edit changes a shared rule set the confirming caller does not own."""
 

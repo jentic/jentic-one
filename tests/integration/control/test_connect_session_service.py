@@ -80,6 +80,7 @@ from jentic_one.control.services.integrations.errors import (
     ConfirmationForbiddenError,
     ConfirmKindMismatchError,
     ConnectOpenError,
+    EditOpenError,
     InvalidPollTokenError,
     InvalidStateTransitionError,
     ManualFlowsDisabledError,
@@ -2610,6 +2611,62 @@ async def test_an_edit_adding_scopes_lands_with_the_device_grant(
         edit.session_id, poll_token=edit.poll_token, identity=_AGENT_IDENTITY
     )
     assert (status.status, status.credential_id) == ("applied", credential_id)
+
+
+async def test_a_human_applying_added_scopes_goes_straight_to_the_vendor_sign_in(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    credential_id = await _connected_device_credential(ctx, svc)
+
+    with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)):
+        applied = await svc.create_edit_session(
+            credential_id=credential_id,
+            agent_id=_AGENT_ID,
+            identity=_USER_IDENTITY,
+            request=EditRequest(add_scopes=["repo"]),
+            apply=True,
+        )
+    assert not applied.applied
+    assert isinstance(applied.challenge, DeviceAuthorizationConfirmResult)
+    assert applied.challenge.user_code == "EDIT-1234"
+    status = await svc.get_status(
+        applied.session_id, poll_token=applied.poll_token, identity=_USER_IDENTITY
+    )
+    assert status.status == "pending"
+
+
+async def test_adding_scopes_waits_for_an_open_agent_edit(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    credential_id = await _connected_device_credential(ctx, svc)
+    open_edit = await svc.create_edit_session(
+        credential_id=credential_id,
+        agent_id=_AGENT_ID,
+        identity=_AGENT_IDENTITY,
+        request=EditRequest(add=[RuleAdd(_WRITE_RULE)]),
+    )
+    # A consent needs the binding's one open-edit slot.
+    with pytest.raises(EditOpenError) as err:
+        await svc.create_edit_session(
+            credential_id=credential_id,
+            agent_id=_AGENT_ID,
+            identity=_USER_IDENTITY,
+            request=EditRequest(add_scopes=["repo"]),
+            apply=True,
+        )
+    assert err.value.session_id == open_edit.session_id
 
 
 async def test_a_failed_consent_leaves_the_credential_as_it_was(

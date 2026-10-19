@@ -185,3 +185,29 @@ func TestAccessEdit_PrintsTheApprovalURL(t *testing.T) {
 		t.Errorf("rules = %v", cp.seen["rules"])
 	}
 }
+
+func TestAccessEditWait_AConflictedRequestPointsAtAmend(t *testing.T) {
+	withXDG(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/integrations:edit-connection" {
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(editCreatedBody))
+			return
+		}
+		// The binding moved under the request in a way it can't follow.
+		_, _ = w.Write([]byte(`{"status":"pending","error_code":"conflicted"}`))
+	}))
+	defer srv.Close()
+
+	out, err := runConnectTree(t, srv.URL, "access", "edit", "cred_1", "--resume", "--wait", "--timeout", "5s")
+	if err == nil {
+		t.Fatalf("want a coded error for a conflicted request, got output %s", out)
+	}
+	if !strings.Contains(err.Error(), "conflicts with a change to your access") {
+		t.Errorf("err = %v, want the conflict named", err)
+	}
+	if coded := accessEditConflicted("cs_e", "cred_1"); !strings.Contains(coded.Actionable, "jentic access amend cs_e") {
+		t.Errorf("actionable = %q, want the amend step", coded.Actionable)
+	}
+}

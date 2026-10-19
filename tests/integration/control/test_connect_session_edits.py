@@ -43,6 +43,7 @@ from jentic_one.control.services.integrations.errors import (
     BaselineChangedError,
     ConfirmationForbiddenError,
     EditBindingNotFoundError,
+    EditConflictedError,
     EditOpenError,
     InvalidPollTokenError,
     NothingToChangeError,
@@ -349,6 +350,8 @@ async def test_a_direct_rule_change_rebases_the_open_edit(
     rebased = revisions[-1]
     assert (rebased.id, rebased.number) == (rebased_id, 2)
     assert rebased.proposal["dropped"] == [read_id, read_id]
+    # The rule it removes and inserts before is gone: a conflict, not a silent drop.
+    assert rebased.proposal["conflicts"] == [{"kind": "missing_rule", "rule_id": read_id}]
     assert [r["path"] for r in rebased.result["rules"]] == ["/v2/", "/v1/send"]
 
     await svc.confirm_edit(
@@ -358,6 +361,7 @@ async def test_a_direct_rule_change_rebases_the_open_edit(
         revision_id=rebased_id,
         permission_rules=[_READ | {"path": "/v2/"}, _SEND],
         resume=False,
+        resolve_conflicts=True,
     )
     assert await _rules(ctx, binding) == [("allow", "/v2/"), ("allow", "/v1/send")]
 
@@ -570,3 +574,140 @@ async def test_a_cancelled_edit_does_not_hold_back_the_next_one(
         created.session_id, poll_token=created.poll_token, identity=_AGENT_IDENTITY
     )
     await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+
+
+async def _apply(ctx: Context, credential_id: str, request: EditRequest) -> Any:
+    return await ConnectSessionService(ctx).create_edit_session(
+        credential_id=credential_id,
+        agent_id=_AGENT,
+        identity=_OWNER,
+        request=request,
+        apply=True,
+    )
+
+
+async def test_a_human_applies_their_own_change_at_once(
+    integration_context: Context, binding: str
+) -> None:
+    ctx = integration_context
+    applied = await _apply(ctx, binding, EditRequest(set_rules=[_SEND]))
+    assert applied.applied and applied.challenge is None
+    assert await _rules(ctx, binding) == [("allow", "/v1/send")]
+    # Nothing is left open, and the session reads as applied.
+    async with ctx.control_db.session() as session:
+        assert (
+            await ConnectSessionRepository.get_open_edit(
+                session, agent_id=_AGENT, credential_id=binding
+            )
+            is None
+        )
+    status = await ConnectSessionService(ctx).get_status(
+        applied.session_id, poll_token=applied.poll_token, identity=_OWNER
+    )
+    assert status.status == "applied"
+
+
+async def test_an_agent_never_applies_its_own_change(
+    integration_context: Context, binding: str
+) -> None:
+    with pytest.raises(ConfirmationForbiddenError):
+        await ConnectSessionService(integration_context).create_edit_session(
+            credential_id=binding,
+            agent_id=_AGENT,
+            identity=_AGENT_IDENTITY,
+            request=EditRequest(add=[RuleAdd(_SEND)]),
+            apply=True,
+        )
+
+
+async def test_an_open_edit_merges_onto_a_human_change_that_doesnt_touch_it(
+    integration_context: Context, binding: str
+) -> None:
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    created = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+    # The owner changes the rules while the agent's request is open.
+    await _apply(ctx, binding, EditRequest(set_rules=[_READ | {"path": "/v2/"}]))
+
+    review = await svc.get_review_data(created.session_id, poll_token=None, identity=_OWNER)
+    assert review.edit is not None and review.edit.conflicts == []
+    assert review.revision_id != created.revision_id
+    assert [r["path"] for r in review.edit.result["rules"]] == ["/v2/", "/v1/send"]
+    status = await svc.get_status(
+        created.session_id, poll_token=created.poll_token, identity=_AGENT_IDENTITY
+    )
+    assert (status.status, status.error_code) == ("pending", None)
+
+    await svc.confirm_edit(
+        created.session_id,
+        poll_token=None,
+        identity=_OWNER,
+        revision_id=review.edit.revision_id,
+        permission_rules=[_READ | {"path": "/v2/"}, _SEND],
+        resume=False,
+    )
+    assert await _rules(ctx, binding) == [("allow", "/v2/"), ("allow", "/v1/send")]
+
+
+async def test_an_open_edit_the_human_change_breaks_is_conflicted_until_resolved(
+    integration_context: Context, binding: str
+) -> None:
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    [read_id] = await _rule_ids(ctx, binding)
+    created = await _begin(ctx, binding, EditRequest(remove=[read_id], add=[RuleAdd(_SEND)]))
+    # The owner replaces the rule the agent's request removes.
+    await _apply(ctx, binding, EditRequest(set_rules=[_READ | {"path": "/v2/"}]))
+
+    status = await svc.get_status(
+        created.session_id, poll_token=created.poll_token, identity=_AGENT_IDENTITY
+    )
+    assert (status.status, status.error_code) == ("pending", "conflicted")
+    review = await svc.get_review_data(created.session_id, poll_token=None, identity=_OWNER)
+    assert review.edit is not None
+    assert review.edit.conflicts == [{"kind": "missing_rule", "rule_id": read_id}]
+
+    with pytest.raises(EditConflictedError) as err:
+        await svc.confirm_edit(
+            created.session_id,
+            poll_token=None,
+            identity=_OWNER,
+            revision_id=review.edit.revision_id,
+            permission_rules=[_SEND],
+            resume=False,
+        )
+    assert err.value.conflicts == review.edit.conflicts
+
+    # The agent resolves it: amending against the binding as it is now.
+    amended = await svc.amend_session(
+        created.session_id,
+        identity=_AGENT_IDENTITY,
+        amend=SessionAmend(fields=frozenset({"rules"}), rules=EditRequest(add=[RuleAdd(_SEND)])),
+    )
+    review = await svc.get_review_data(created.session_id, poll_token=None, identity=_OWNER)
+    assert review.edit is not None and review.edit.conflicts == []
+    assert review.revision_id == amended.revision_id
+
+
+async def test_the_reviewer_resolves_a_conflict_with_their_own_rules(
+    integration_context: Context, binding: str
+) -> None:
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    created = await _begin(ctx, binding, EditRequest(set_rules=[_SEND]))
+    # A full replacement of rules that changed since can't merge.
+    await _apply(ctx, binding, EditRequest(add=[RuleAdd(_READ | {"path": "/v2/"})]))
+    review = await svc.get_review_data(created.session_id, poll_token=None, identity=_OWNER)
+    assert review.edit is not None
+    assert review.edit.conflicts == [{"kind": "rules_changed"}]
+
+    await svc.confirm_edit(
+        created.session_id,
+        poll_token=None,
+        identity=_OWNER,
+        revision_id=review.edit.revision_id,
+        permission_rules=[_READ | {"path": "/v2/"}, _SEND],
+        resume=False,
+        resolve_conflicts=True,
+    )
+    assert await _rules(ctx, binding) == [("allow", "/v2/"), ("allow", "/v1/send")]

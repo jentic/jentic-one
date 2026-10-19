@@ -57,6 +57,7 @@ from jentic_one.control.web.schemas.integrations import (
     EditAgentRef,
     EditBindingRef,
     EditConfirmSessionRequest,
+    EditConflict,
     EditConnectionRequest,
     EditConnectionResponse,
     EditCurrentAccess,
@@ -297,6 +298,7 @@ async def integrations_edit_connection(
             resume=body.resume,
             reason=body.reason,
         ),
+        apply=body.apply,
     )
     return EditConnectionResponse(
         session_id=created.session_id,
@@ -304,6 +306,8 @@ async def integrations_edit_connection(
         poll_token=created.poll_token,
         revision_id=created.revision_id,
         resolved_flow=created.resolved_flow,
+        status=("applied" if created.applied else "consenting" if created.challenge else "pending"),
+        challenge=_confirm_response(created.challenge) if created.challenge else None,
     )
 
 
@@ -530,6 +534,7 @@ def _edit_response(edit: EditReview) -> ReviewEditResponse:
         result=EditResultAccess.model_validate(edit.result),
         widens_access=edit.widens_access,
         needs_vendor_consent=edit.needs_vendor_consent,
+        conflicts=[EditConflict.model_validate(c) for c in edit.conflicts],
         other_bound_agents=[
             EditAgentRef(agent_id=a.agent_id, name=a.name) for a in edit.other_bound_agents
         ],
@@ -650,6 +655,7 @@ async def confirm_connect_session(
             permission_rules=[r.model_dump(exclude_none=True) for r in body.permission_rules],
             resume=body.resume,
             confirmed_scopes=body.confirmed_scopes,
+            resolve_conflicts=body.resolve_conflicts,
         )
     elif isinstance(body, OAuthConfirmSessionRequest):
         result = await svc.confirm(
@@ -668,6 +674,11 @@ async def confirm_connect_session(
             session_id, poll_token=poll_token, variant=_to_variant(body), identity=identity
         )
 
+    return _confirm_response(result)
+
+
+def _confirm_response(result: ConfirmResult) -> ConfirmSessionResponse:
+    """A confirm's outcome on the wire: the vendor step to run, or the connected credential."""
     if isinstance(result, DeviceAuthorizationConfirmResult):
         return DeviceAuthorizationConfirmSessionResponse(
             user_code=result.user_code,

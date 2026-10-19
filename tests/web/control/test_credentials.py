@@ -1599,3 +1599,53 @@ def test_edit_connection_round_trip(
     ]
     status = cred_writer_client.get(f"/connect-sessions/{created['session_id']}/status").json()
     assert status["status"] == "applied"
+
+
+def test_edit_connection_apply_and_conflicts(
+    cred_writer_client: TestClient, bound_agents: tuple[str, list[str]]
+) -> None:
+    """A human's applied change lands at once; an open edit it breaks is conflicted."""
+    credential_id, (agent_id, _) = bound_agents
+    base = f"/credentials/{credential_id}/agents/{agent_id}/permissions"
+    read = {"effect": "allow", "methods": ["GET"], "path": "/v1/.*"}
+    assert cred_writer_client.put(base, json=[read]).status_code == 200
+    [rule_id] = [r["id"] for r in cred_writer_client.get(base).json()["data"]]
+
+    # An open request that removes the read rule.
+    resp = cred_writer_client.post(
+        "/integrations:edit-connection",
+        json={"credential_id": credential_id, "agent_id": agent_id, "rules": {"remove": [rule_id]}},
+    )
+    assert resp.status_code == 201, resp.text
+    open_id = resp.json()["session_id"]
+
+    # Applying a change writes it at once, beside the open request.
+    send = {"effect": "allow", "methods": ["POST"], "path": "/v1/send"}
+    resp = cred_writer_client.post(
+        "/integrations:edit-connection",
+        json={
+            "credential_id": credential_id,
+            "agent_id": agent_id,
+            "rules": {"set": [send]},
+            "apply": True,
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    assert (resp.json()["status"], resp.json()["challenge"]) == ("applied", None)
+    assert [r["path"] for r in cred_writer_client.get(base).json()["data"]] == ["/v1/send"]
+
+    # The open request's rule is gone: it's conflicted until resolved.
+    review = cred_writer_client.get(f"/connect-sessions/{open_id}").json()
+    assert review["edit"]["conflicts"] == [{"kind": "missing_rule", "rule_id": rule_id}]
+    confirm = {
+        "kind": "edit",
+        "revision_id": review["revision"]["id"],
+        "permission_rules": [send],
+    }
+    resp = cred_writer_client.post(f"/connect-sessions/{open_id}:confirm", json=confirm)
+    assert (resp.status_code, resp.json()["type"]) == (409, "edit_conflicted"), resp.text
+    assert resp.json()["conflicts"] == review["edit"]["conflicts"]
+    resp = cred_writer_client.post(
+        f"/connect-sessions/{open_id}:confirm", json=confirm | {"resolve_conflicts": True}
+    )
+    assert resp.status_code == 200, resp.text

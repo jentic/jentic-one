@@ -13,6 +13,10 @@ export type EditConnectionRequest = {
      */
     agent_id?: (string | null);
     /**
+     * A human approving their own change as they make it: it is written at once, with no review. A change that adds scopes starts the vendor consent instead (`challenge`). Agent callers are 403.
+     */
+    apply?: boolean;
+    /**
      * The binding's credential; it must already be bound to the agent.
      */
     credential_id: string;

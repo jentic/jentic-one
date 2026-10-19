@@ -115,7 +115,10 @@ access change — amend it (`jentic access amend <session_id>` /
 `amend_request`) instead of asking again: asking again while one is open
 returns that open request (`already_open`). When a request is refused with an
 `agent_directive` whose strategy is `check_access`, your picture of your
-access is wrong: check it, then retry. After the human replies, check once
+access is wrong: check it, then retry. Your human can change your access while
+a request is open; it follows their change unless it no longer fits (a rule it
+names is gone), and then it waits on you: `jentic access edit --wait` says it
+conflicts. Read your access again and amend the request to fit. After the human replies, check once
 (`jentic access show` / `show_access`) before retrying the blocked call.
 
 - **`no_credential_binding` (403)** — no credential binding of yours covers

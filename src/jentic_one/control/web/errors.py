@@ -39,6 +39,7 @@ from jentic_one.control.services.integrations.errors import (
     ConnectOpenError,
     ConnectSessionServiceError,
     EditBindingNotFoundError,
+    EditConflictedError,
     EditOpenError,
     ExistingCredentialNotFoundError,
     InsufficientGrantedScopesError,
@@ -169,6 +170,7 @@ _CONNECT_SESSION_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     EditOpenError: (409, "edit_open"),
     RevisionChangedError: (409, "revision_changed"),
     BaselineChangedError: (409, "baseline_changed"),
+    EditConflictedError: (409, "edit_conflicted"),
     RuleSetConfirmForbiddenError: (403, "rule_set_confirm_forbidden"),
     RevisionRequiredError: (422, "revision_required"),
     SessionClosedError: (409, "session_closed"),
@@ -294,6 +296,8 @@ def _connect_session_response_hook(
         )
     elif isinstance(exc, RevisionChangedError | BaselineChangedError):
         extra["current_revision_id"] = exc.current_revision_id
+    elif isinstance(exc, EditConflictedError):
+        extra["conflicts"] = exc.conflicts
     if not extra and not headers:
         return response
     content: dict[str, object] = json.loads(bytes(response.body))

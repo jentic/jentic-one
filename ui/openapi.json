@@ -6590,6 +6590,7 @@
                 "path": "/v1/charges"
               }
             ],
+            "resolve_conflicts": false,
             "resume": false,
             "revision_id": "csr_6968b3983b8b91c75627bee6"
           }
@@ -6650,6 +6651,15 @@
             "title": "Permission Rules",
             "type": "array"
           },
+          "resolve_conflicts": {
+            "default": false,
+            "description": "Approve a revision that lists `conflicts`: the reviewer's `permission_rules` settle them. Without it, such a confirm is 409 edit_conflicted.",
+            "examples": [
+              false
+            ],
+            "title": "Resolve Conflicts",
+            "type": "boolean"
+          },
           "resume": {
             "default": false,
             "description": "Switch the binding back on if it is suspended.",
@@ -6684,6 +6694,7 @@
         "examples": [
           {
             "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
+            "apply": true,
             "credential_id": "cred_6968b39855d91a3561684b32",
             "reason": "Needs to send replies, not just read",
             "rules": {
@@ -6743,6 +6754,15 @@
               "agnt_6968b3984d1c238dbe7e2e29"
             ],
             "title": "Agent Id"
+          },
+          "apply": {
+            "default": false,
+            "description": "A human approving their own change as they make it: it is written at once, with no review. A change that adds scopes starts the vendor consent instead (`challenge`). Agent callers are 403.",
+            "examples": [
+              true
+            ],
+            "title": "Apply",
+            "type": "boolean"
           },
           "credential_id": {
             "description": "The binding's credential; it must already be bound to the agent.",
@@ -43468,6 +43488,7 @@
             "application/json": {
               "example": {
                 "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
+                "apply": true,
                 "credential_id": "cred_6968b39855d91a3561684b32",
                 "reason": "Needs to send replies, not just read",
                 "rules": {

@@ -285,6 +285,17 @@ func (a *app) amendRequest(ctx context.Context, sessionID string, in editInput) 
 	return &amended, nil
 }
 
+// accessEditConflicted is an open request the binding changed under in a way
+// it can't follow: the agent amends it against the access as it is now.
+func accessEditConflicted(sessionID, credentialID string) *ux.CodedError {
+	return &ux.CodedError{
+		Code: ux.CodeResolveFailed,
+		Msg:  fmt.Sprintf("access change %s conflicts with a change to your access since you asked", sessionID),
+		Actionable: "Read your access again with `jentic access show " + credentialID + "`, then " +
+			"amend the request (`jentic access amend " + sessionID + "`) so it fits the access as it is now.",
+	}
+}
+
 const accessEditNextStep = "Relay the approval_url to your human operator — they review the change " +
 	"in the browser; you cannot approve it yourself. Once they confirm, check it with " +
 	"`jentic access show <credential_id>` and retry the call that was blocked."
@@ -386,6 +397,9 @@ func newAccessEditCmd(a *app) *cobra.Command {
 			}
 			if err != nil {
 				return reportCoded(aud, asCoded(err))
+			}
+			if final.ErrorCode == "conflicted" {
+				return reportCoded(aud, accessEditConflicted(created.SessionID, args[0]))
 			}
 			if final.Status == "applied" {
 				envelope["status"] = final.Status
