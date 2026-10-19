@@ -53,6 +53,7 @@ from jentic_one.shared.jobs.hold import (
     ENCRYPTED_PAYLOAD_KEY,
     PROBLEM_CONTENT_TYPE,
     approval_denied_problem,
+    held_call_summary,
 )
 from jentic_one.shared.models.actors import ActorType
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
@@ -261,6 +262,7 @@ class HeldExecutionService:
                     content_type=PROBLEM_CONTENT_TYPE,
                     created_by=identity.sub,
                 )
+            agent = await AgentRepository.get_by_id(session, updated.agent_id)
             await AuditRepository.record(
                 session,
                 action=AuditAction.APPROVE if approve else AuditAction.DENY,
@@ -276,7 +278,13 @@ class HeldExecutionService:
                 session,
                 type=EventType.EXECUTION_APPROVAL_DECIDED,
                 severity=EventSeverity.INFO,
-                summary=f"Execution approval {approval_id} {new_state.value}",
+                summary=held_call_summary(
+                    agent_name=agent.name if agent is not None else None,
+                    agent_id=updated.agent_id,
+                    method=updated.method,
+                    path=updated.path,
+                    outcome=new_state.value,
+                ),
                 job_id=updated.job_id,
                 created_by=identity.sub,
                 actor_id=identity.sub,
@@ -335,6 +343,7 @@ class HeldExecutionService:
             )
             if not moved:
                 raise HeldExecutionJobNotHeldError(approval_id, updated.job_id)
+            agent = await AgentRepository.get_by_id(session, updated.agent_id)
             await AuditRepository.record(
                 session,
                 action=AuditAction.WITHDRAW,
@@ -349,7 +358,13 @@ class HeldExecutionService:
                 session,
                 type=EventType.EXECUTION_APPROVAL_WITHDRAWN,
                 severity=EventSeverity.INFO,
-                summary=f"Execution approval {approval_id} withdrawn",
+                summary=held_call_summary(
+                    agent_name=agent.name if agent is not None else None,
+                    agent_id=updated.agent_id,
+                    method=updated.method,
+                    path=updated.path,
+                    outcome="withdrawn",
+                ),
                 job_id=updated.job_id,
                 created_by=identity.sub,
                 actor_id=identity.sub,

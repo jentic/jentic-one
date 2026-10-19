@@ -111,8 +111,10 @@ def _authorization() -> ExecutionAuthorization:
     )
 
 
-async def _hold(ctx: Context, body: bytes = _BODY, query: str = "") -> dict[str, Any]:
-    response = await _handle_hold(_request(body), _ctx_req(query), ctx, _AGENT, _authorization())
+async def _hold(
+    ctx: Context, body: bytes = _BODY, query: str = "", agent: Identity = _AGENT
+) -> dict[str, Any]:
+    response = await _handle_hold(_request(body), _ctx_req(query), ctx, agent, _authorization())
     assert response.status_code == 202
     assert response.headers["Preference-Applied"] == "respond-async"
     return dict(json.loads(bytes(response.body)))
@@ -174,11 +176,34 @@ async def test_hold_answers_the_held_envelope_and_stores_an_encrypted_payload(
 
     (event,) = events
     assert event.requires_action is True
+    # An identity resolved without a name falls back to the agent's id.
+    assert event.summary == "Agent agnt_holdpath wants to POST /v1/charges"
     assert event.data["review_url"] == envelope["review_url"]
     assert event.data["method"] == "POST"
     assert event.data["path"] == "/v1/charges"
     assert "body" not in json.dumps(event.data)
     assert "amount" not in json.dumps(event.data)
+
+
+async def test_the_requested_event_names_the_agent(
+    integration_context: Context, clean: None
+) -> None:
+    ctx = integration_context
+    named = _AGENT.model_copy(update={"actor_name": "billing-bot"})
+    envelope = await _hold(ctx, agent=named)
+    async with ctx.admin_db.session() as session:
+        (event,) = (
+            (
+                await session.execute(
+                    select(Event).where(Event.type == EventType.EXECUTION_APPROVAL_REQUESTED)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert event.summary == "Agent 'billing-bot' wants to POST /v1/charges"
+    assert event.data["agent_id"] == "agnt_holdpath"
+    assert event.data["held_execution_id"] == envelope["held_execution_id"]
 
 
 async def test_held_links_root_on_the_admin_api_origin(

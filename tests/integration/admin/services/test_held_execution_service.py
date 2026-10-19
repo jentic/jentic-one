@@ -367,7 +367,8 @@ async def test_approve_releases_the_job_once_with_audit_and_event(
         )
     assert audit.action == "approve"
     assert audit.actor_id == actors.owner.sub
-    assert {e.type for e in events} >= {EventType.EXECUTION_APPROVAL_DECIDED}
+    (decided,) = [e for e in events if e.type == EventType.EXECUTION_APPROVAL_DECIDED]
+    assert decided.summary == "Call POST /v1/charges by agent 'held-agent' approved"
 
 
 async def test_deny_fails_the_job_with_a_readable_permission_denied_result(
@@ -567,6 +568,7 @@ async def test_withdraw_cancels_the_held_job_without_a_result_with_audit_and_eve
     assert audit.action == "withdraw"
     assert audit.actor_id == actors.agent.sub
     (event,) = [e for e in events if e.type == EventType.EXECUTION_APPROVAL_WITHDRAWN]
+    assert event.summary == "Call POST /v1/charges by agent 'held-agent' withdrawn"
     assert event.data["held_execution_id"] == hold.approval_id
     assert "body" not in json.dumps(event.data)
     with pytest.raises(HeldExecutionAlreadyDecidedError):
@@ -693,6 +695,7 @@ async def test_expiry_sweep_expires_and_fails_with_a_permission_denied_result(
     assert audit.origin == "system"
     assert audit.job_id == lapsed.job_id
     (event,) = events
+    assert event.summary == "Call POST /v1/lapsed by agent 'held-agent' expired"
     assert event.job_id == lapsed.job_id
     assert event.data["held_execution_id"] == lapsed.approval_id
     assert event.data["path"] == "/v1/lapsed"
