@@ -54,6 +54,7 @@ from jentic_one.shared.models import ActorType, ExecutionStatus
 from jentic_one.shared.schemas import OperationInfo
 from jentic_one.shared.web import background_tasks as background_tasks_module
 from jentic_one.shared.web.background_tasks import install_background_tasks
+from tests.unit.fake_tx import SessionScope
 
 _DELAY_S = 0.03
 
@@ -90,7 +91,7 @@ async def _run(runner: UpstreamRunner, **kwargs: Any) -> None:
         _ctx_req(),
         body=None,
         headers=None,
-        session=AsyncMock(),
+        admin_db=SessionScope(AsyncMock()),
         broker=default_broker(runner),
         execution_id="exec_buffered_unmapped",
         actor_id="agt_abc123",
@@ -218,7 +219,7 @@ def _failure() -> UnmappedFailure:
 
 @pytest.mark.asyncio
 async def test_router_recorder_without_a_registry_skips_the_write() -> None:
-    """No inline write inside the router's open (on SQLite, write-locked) transaction."""
+    """No inline write: the 500 never waits on the admin database."""
     request = Request({"type": "http", "app": Starlette()})
     ctx = MagicMock()
     ctx.config.broker.streaming_persist_timeout_s = 5.0

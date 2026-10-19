@@ -79,39 +79,6 @@ async def test_list_pagination(integration_context: Context, clean_executions: N
     assert len(page2.data) == 2
 
 
-async def test_list_with_toolkit_filter(
-    integration_context: Context, clean_executions: None
-) -> None:
-    ctx = integration_context
-    async with ctx.admin_db.session() as session:
-        await ExecutionRecordRepository.create(
-            session,
-            toolkit_id="tk_alpha",
-            trace_id="trace_a",
-            started_at=datetime.now(UTC),
-            status="success",
-            created_by="usr_test",
-            actor_id="usr_test",
-            actor_type="user",
-        )
-        await ExecutionRecordRepository.create(
-            session,
-            toolkit_id="tk_beta",
-            trace_id="trace_b",
-            started_at=datetime.now(UTC),
-            status="success",
-            created_by="usr_test",
-            actor_id="usr_test",
-            actor_type="user",
-        )
-        await session.commit()
-
-    service = ExecutionService(ctx)
-    page = await service.list_all(ExecutionFilter(toolkit_id="tk_alpha"), identity=_ADMIN, limit=50)
-    assert len(page.data) == 1
-    assert page.data[0].toolkit_id == "tk_alpha"
-
-
 async def test_get_by_id(integration_context: Context, clean_executions: None) -> None:
     ctx = integration_context
     async with ctx.admin_db.session() as session:

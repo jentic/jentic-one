@@ -85,20 +85,19 @@ async def test_unmapped_failure_lands_one_failed_record_after_the_raise(
 
     with patch.object(execute_router, "_persist_unmapped_failure", _gated_persist):
         with pytest.raises(_UnmappedError):
-            async with integration_context.admin_db.transaction() as session:
-                await run_execution(
-                    ctx_req,
-                    body=None,
-                    headers=None,
-                    session=session,
-                    broker=default_broker(_UnmappedRunner()),
-                    execution_id=_EXECUTION_ID,
-                    actor_id=_IDENTITY.sub,
-                    actor_type=_IDENTITY.actor_type.value,
-                    on_unmapped_failure=execute_router._unmapped_failure_recorder(
-                        request, integration_context, ctx_req, _IDENTITY
-                    ),
-                )
+            await run_execution(
+                ctx_req,
+                body=None,
+                headers=None,
+                admin_db=integration_context.admin_db,
+                broker=default_broker(_UnmappedRunner()),
+                execution_id=_EXECUTION_ID,
+                actor_id=_IDENTITY.sub,
+                actor_type=_IDENTITY.actor_type.value,
+                on_unmapped_failure=execute_router._unmapped_failure_recorder(
+                    request, integration_context, ctx_req, _IDENTITY
+                ),
+            )
         # The exception reached the caller while the write is still pending.
         assert registry.pending == 1
         release.set()

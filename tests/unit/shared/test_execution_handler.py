@@ -20,8 +20,10 @@ import pytest
 import structlog
 from sqlalchemy.exc import OperationalError
 
+from jentic_one.shared.db.errors import DatabaseIntegrityError, DatabaseUnavailableError
 from jentic_one.shared.jobs.execution_handler import ExecutionHandler
 from jentic_one.shared.jobs.protocols import (
+    ExecutionRecordNotPersistedError,
     InjectedAuth,
     QueuedExecutionRequest,
     QueuedExecutionVerdict,
@@ -31,6 +33,7 @@ from jentic_one.shared.jobs.protocols import (
 from jentic_one.shared.models.actors import Origin
 from jentic_one.shared.models.events import EventType
 from jentic_one.shared.schemas import OperationInfo
+from tests.unit.fake_tx import FailingTransactions, SessionScope, post_upstream_write_failures
 
 
 class _FakeSession:
@@ -46,7 +49,7 @@ class _RecordingExecutor:
         self._result = result
         self.last_request: UpstreamExecRequest | None = None
 
-    async def execute(self, request: UpstreamExecRequest, *, session: Any) -> UpstreamExecResult:
+    async def execute(self, request: UpstreamExecRequest, *, db: Any) -> UpstreamExecResult:
         self.last_request = request
         return self._result
 
@@ -56,7 +59,7 @@ class _RaisingExecutor:
         self._exc = exc
         self.called = False
 
-    async def execute(self, request: UpstreamExecRequest, *, session: Any) -> UpstreamExecResult:
+    async def execute(self, request: UpstreamExecRequest, *, db: Any) -> UpstreamExecResult:
         self.called = True
         raise self._exc
 
@@ -127,7 +130,11 @@ async def test_handler_delegates_to_executor_no_raw_http() -> None:
     handler = ExecutionHandler(executor=executor)
 
     result = await handler.execute(
-        "job1", _FakeSession(), payload=_payload(), created_by="usr_test", actor_type="user"
+        "job1",
+        SessionScope(_FakeSession()),
+        payload=_payload(),
+        created_by="usr_test",
+        actor_type="user",
     )
 
     assert executor.last_request is not None
@@ -147,7 +154,11 @@ async def test_handler_marks_4xx_5xx_failed() -> None:
     handler = ExecutionHandler(executor=executor)
 
     result = await handler.execute(
-        "job2", _FakeSession(), payload=_payload(), created_by="usr_test", actor_type="user"
+        "job2",
+        SessionScope(_FakeSession()),
+        payload=_payload(),
+        created_by="usr_test",
+        actor_type="user",
     )
 
     assert result.body["status"] == "failed"
@@ -166,7 +177,11 @@ async def test_handler_pipeline_error_is_recorded_not_raised() -> None:
     handler = ExecutionHandler(executor=executor)
 
     result = await handler.execute(
-        "job3", _FakeSession(), payload=_payload(), created_by="usr_test", actor_type="user"
+        "job3",
+        SessionScope(_FakeSession()),
+        payload=_payload(),
+        created_by="usr_test",
+        actor_type="user",
     )
 
     assert executor.called is True
@@ -189,7 +204,11 @@ async def test_handler_pipeline_db_error_redacts_sql_from_log_and_event_summary(
         ) as mock_emit,
     ):
         result = await handler.execute(
-            "job-sql", _FakeSession(), payload=_payload(), created_by="usr_test", actor_type="user"
+            "job-sql",
+            SessionScope(_FakeSession()),
+            payload=_payload(),
+            created_by="usr_test",
+            actor_type="user",
         )
 
     assert result.body["status"] == "failed"
@@ -223,7 +242,11 @@ async def test_handler_applies_header_query_and_cookie_credentials() -> None:
     )
 
     await handler.execute(
-        "job4", _FakeSession(), payload=_payload(), created_by="usr_test", actor_type="user"
+        "job4",
+        SessionScope(_FakeSession()),
+        payload=_payload(),
+        created_by="usr_test",
+        actor_type="user",
     )
 
     req = executor.last_request
@@ -241,7 +264,11 @@ async def test_handler_no_injector_sends_no_auth() -> None:
     handler = ExecutionHandler(executor=executor)
 
     await handler.execute(
-        "job5", _FakeSession(), payload=_payload(), created_by="usr_test", actor_type="user"
+        "job5",
+        SessionScope(_FakeSession()),
+        payload=_payload(),
+        created_by="usr_test",
+        actor_type="user",
     )
 
     req = executor.last_request
@@ -283,7 +310,7 @@ async def test_handler_bounds_injection_to_the_run_time_boundary(
 
     await handler.execute(
         "job_bound",
-        _FakeSession(),
+        SessionScope(_FakeSession()),
         payload=_payload(allowed_credential_ids=["cred_stale"], credential_id="cred_stale"),
         created_by="usr_test",
         actor_type="user",
@@ -308,7 +335,7 @@ async def test_handler_passes_the_enqueue_selection_to_the_authorizer() -> None:
 
     await handler.execute(
         "job_req",
-        _FakeSession(),
+        SessionScope(_FakeSession()),
         payload=_payload(
             operation={"id": "listThings", "path": "/v1/things", "method": "GET"},
             credential_id="cred_a",
@@ -367,7 +394,7 @@ async def test_handler_denied_job_fails_without_injecting_or_dispatching() -> No
     ):
         result = await handler.execute(
             "job_denied",
-            _FakeSession(),
+            SessionScope(_FakeSession()),
             payload=_payload(credential_id="cred_a", allowed_credential_ids=["cred_a"]),
             created_by="agt_abc123",
             actor_type="agent",
@@ -413,7 +440,7 @@ async def test_handler_denied_job_keys_repeated_failure_on_the_folded_operation(
     ):
         await handler.execute(
             "job_denied_op",
-            _FakeSession(),
+            SessionScope(_FakeSession()),
             payload=_payload(operation=operation, credential_id="cred_a"),
             created_by="agt_abc123",
             actor_type="agent",
@@ -436,7 +463,7 @@ async def test_handler_reauthorizes_on_the_operation_dict_id() -> None:
 
     await handler.execute(
         "job_dict_only",
-        _FakeSession(),
+        SessionScope(_FakeSession()),
         payload=_payload(operation={"id": "op_dict", "path": "/v1/things", "method": "GET"}),
         created_by="agt_abc123",
         actor_type="agent",
@@ -463,7 +490,7 @@ async def test_handler_reauthorizes_on_the_operation_relative_path() -> None:
 
     await handler.execute(
         "job_relative",
-        _FakeSession(),
+        SessionScope(_FakeSession()),
         payload=_payload(
             operation={
                 "id": "op_w",
@@ -504,7 +531,7 @@ async def test_handler_passes_actor_fields_in_metadata() -> None:
 
     await handler.execute(
         "job6",
-        _FakeSession(),
+        SessionScope(_FakeSession()),
         payload=_payload(),
         created_by="agt_abc123",
         actor_type="agent",
@@ -541,7 +568,7 @@ async def test_handler_carries_credential_attribution_and_trace_id() -> None:
 
     await handler.execute(
         "job8",
-        _FakeSession(),
+        SessionScope(_FakeSession()),
         payload=_payload(trace_id="ab" * 16),
         created_by="agt_abc123",
         actor_type="agent",
@@ -579,7 +606,7 @@ async def test_handler_mints_a_valid_trace_id_for_garbage_payloads(
 
     await handler.execute(
         "job9",
-        _FakeSession(),
+        SessionScope(_FakeSession()),
         payload=payload,
         created_by="agt_abc123",
         actor_type="agent",
@@ -606,7 +633,11 @@ async def test_handler_no_credential_leaves_attribution_none() -> None:
     )
 
     await handler.execute(
-        "job9", _FakeSession(), payload=_payload(), created_by="usr_test", actor_type="user"
+        "job9",
+        SessionScope(_FakeSession()),
+        payload=_payload(),
+        created_by="usr_test",
+        actor_type="user",
     )
 
     req = executor.last_request
@@ -624,7 +655,7 @@ async def test_handler_rejects_missing_actor_fields() -> None:
     handler = ExecutionHandler(executor=executor)
 
     with pytest.raises(ValueError, match="created_by and actor_type are required"):
-        await handler.execute("job7", _FakeSession(), payload=_payload())
+        await handler.execute("job7", SessionScope(_FakeSession()), payload=_payload())
 
 
 @pytest.mark.asyncio
@@ -648,7 +679,7 @@ async def test_handler_tags_lifecycle_events_with_payload_origin(
     ) as mock_emit:
         await handler.execute(
             "job10",
-            _FakeSession(),
+            SessionScope(_FakeSession()),
             payload=_payload(origin="mcp"),
             created_by="agt_abc123",
             actor_type="agent",
@@ -673,7 +704,7 @@ async def test_handler_missing_origin_emits_untagged_event() -> None:
     ) as mock_emit:
         await handler.execute(
             "job11",
-            _FakeSession(),
+            SessionScope(_FakeSession()),
             payload=_payload(),
             created_by="agt_abc123",
             actor_type="agent",
@@ -696,7 +727,7 @@ async def test_handler_forwards_operation_dict_in_metadata() -> None:
 
     await handler.execute(
         "job_op",
-        _FakeSession(),
+        SessionScope(_FakeSession()),
         payload=_payload(operation=operation),
         created_by="agt_abc123",
         actor_type="agent",
@@ -722,7 +753,7 @@ async def test_handler_scopes_credentials_on_payload_server_variables() -> None:
 
     await handler.execute(
         "job11",
-        _FakeSession(),
+        SessionScope(_FakeSession()),
         payload=_payload(
             upstream_url="https://api.example.com/eu/things",
             server_variables={"region": "eu"},
@@ -752,7 +783,7 @@ async def test_handler_propagates_unresolved_server_variables() -> None:
 
     await handler.execute(
         "job13",
-        _FakeSession(),
+        SessionScope(_FakeSession()),
         payload=_payload(
             upstream_url="https://api.example.com/us/things", server_variables_unresolved=True
         ),
@@ -779,7 +810,7 @@ async def test_handler_substitutes_server_variable_defaults() -> None:
 
     await handler.execute(
         "job12",
-        _FakeSession(),
+        SessionScope(_FakeSession()),
         payload=_payload(
             upstream_url="https://api.example.com/{region}/things",
             server_variable_defaults={"region": "us"},
@@ -810,7 +841,7 @@ async def test_handler_replays_payload_headers_under_injected_credentials() -> N
 
     await handler.execute(
         "job_hdr",
-        _FakeSession(),
+        SessionScope(_FakeSession()),
         payload=_payload(
             method="POST",
             body_b64="eyJhIjoxfQ==",
@@ -831,3 +862,215 @@ async def test_handler_replays_payload_headers_under_injected_credentials() -> N
     assert req.body == b'{"a":1}'
     assert req.headers["Authorization"] == "Bearer tok"
     assert "authorization" not in req.headers
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [pytest.param(DatabaseIntegrityError("dup"), id="integrity"), *post_upstream_write_failures()],
+)
+async def test_handler_lifecycle_write_failure_still_returns_the_upstream_result(
+    error: Exception,
+) -> None:
+    """The lifecycle transaction runs after the upstream call. Whatever it fails
+    with, the job still completes with the real result: raising would requeue
+    the job and send the upstream request a second time."""
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=201, body=b"made", content_type="text/plain", duration_ms=4)
+    )
+    handler = ExecutionHandler(executor=executor)
+    db = FailingTransactions(error)
+
+    with structlog.testing.capture_logs() as logs:
+        result = await handler.execute(
+            "job-lifecycle",
+            db,
+            payload=_payload(),
+            created_by="usr_test",
+            actor_type="user",
+        )
+
+    assert db.opened == 1
+    assert result.body["status"] == "completed"
+    assert result.body["http_status"] == 201
+    assert result.body["body_b64"]
+    assert result.content_type == "text/plain"
+    failed = [e for e in logs if e["event"] == "queued_execution_lifecycle_write_failed"]
+    assert len(failed) == 1
+    assert failed[0]["error_type"] == type(error).__name__
+    # A swallowed bug keeps its traceback; a DB error (SQL + params) does not.
+    assert failed[0]["exc_info"] is (error if isinstance(error, TypeError) else False)
+
+
+@pytest.mark.asyncio
+async def test_handler_denial_lifecycle_write_failure_still_returns_the_denial() -> None:
+    """A denied job whose lifecycle write fails still completes with its problem."""
+    problem = {"type": "no_credential_binding", "status": 403}
+    handler = ExecutionHandler(
+        executor=_RecordingExecutor(
+            UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=0)
+        ),
+        execution_authorizer=_FakeAuthorizer(
+            QueuedExecutionVerdict(allowed=False, problem=problem)
+        ),
+    )
+    db = FailingTransactions(DatabaseUnavailableError("connection lost"))
+
+    result = await handler.execute(
+        "job-denied-lifecycle",
+        db,
+        payload=_payload(),
+        created_by="usr_test",
+        actor_type="user",
+    )
+
+    assert db.opened == 1
+    assert result.body["status"] == "failed"
+    assert result.body["http_status"] == 403
+    assert result.body["problem"] == problem
+
+
+@pytest.mark.asyncio
+async def test_handler_unpersisted_record_reports_the_real_upstream_result() -> None:
+    """A record write that fails after a 2xx upstream reports the 2xx (body kept),
+    not a pipeline failure, and still emits EXECUTION_COMPLETED."""
+    upstream = UpstreamExecResult(
+        status_code=200, body=b"ok", content_type="application/json", duration_ms=9
+    )
+    exc = ExecutionRecordNotPersistedError(upstream)
+    exc.__cause__ = DatabaseUnavailableError("connection lost")
+    handler = ExecutionHandler(executor=_RaisingExecutor(exc))
+    scope = SessionScope(_FakeSession())
+
+    with (
+        structlog.testing.capture_logs() as logs,
+        patch(
+            "jentic_one.shared.jobs.execution_handler.emit_event", new_callable=AsyncMock
+        ) as mock_emit,
+    ):
+        result = await handler.execute(
+            "job-unpersisted",
+            scope,
+            payload=_payload(),
+            created_by="usr_test",
+            actor_type="user",
+        )
+
+    assert result.body["status"] == "completed"
+    assert result.body["http_status"] == 200
+    assert result.body["duration_ms"] == 9
+    assert result.body["body_b64"]
+    assert result.content_type == "application/json"
+    assert scope.opened == 1
+    assert mock_emit.call_args.kwargs["type"] == EventType.EXECUTION_COMPLETED
+    assert not [e for e in logs if e["event"] == "pipeline_error"]
+    logged = [e for e in logs if e["event"] == "queued_execution_record_not_persisted"]
+    assert len(logged) == 1
+    assert logged[0]["error_type"] == "DatabaseUnavailableError"
+    assert logged[0]["http_status"] == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("cause", "runner_failed", "label", "traceback"),
+    [
+        pytest.param(DatabaseUnavailableError("lost"), False, "record", False, id="db-write"),
+        pytest.param(TypeError("bad argument"), False, "record", True, id="bug-in-write"),
+        pytest.param(RuntimeError("runner crashed"), True, "runner", True, id="runner-crash"),
+    ],
+)
+async def test_handler_unpersisted_record_counts_and_logs_what_failed(
+    cause: Exception, runner_failed: bool, label: str, traceback: bool
+) -> None:
+    """A crashed call counts as ``write=runner``, not as a failed record write,
+    and a swallowed bug keeps its traceback while a DB error does not."""
+    exc = ExecutionRecordNotPersistedError(
+        None, upstream_error=type(cause).__name__, runner_failed=runner_failed
+    )
+    exc.__cause__ = cause
+    handler = ExecutionHandler(executor=_RaisingExecutor(exc))
+
+    with (
+        structlog.testing.capture_logs() as logs,
+        patch("jentic_one.shared.jobs.execution_handler._record_write_failure") as counted,
+        patch("jentic_one.shared.jobs.execution_handler.emit_event", new_callable=AsyncMock),
+    ):
+        result = await handler.execute(
+            "job-unpersisted-label",
+            SessionScope(_FakeSession()),
+            payload=_payload(),
+            created_by="usr_test",
+            actor_type="user",
+        )
+
+    assert result.body["status"] == "failed"
+    counted.assert_called_once_with(label)
+    logged = [e for e in logs if e["event"] == "queued_execution_record_not_persisted"]
+    assert len(logged) == 1
+    assert logged[0]["exc_info"] is (exc if traceback else False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("upstream_error", "reason"),
+    [
+        (None, "Execution record not persisted"),
+        ("circuit open", "circuit open (execution record not persisted)"),
+    ],
+)
+async def test_handler_unpersisted_record_without_a_result_fails_without_raising(
+    upstream_error: str | None, reason: str
+) -> None:
+    """A record write that fails after the upstream raised completes the job as
+    failed (never requeued). The reason keeps the broker's failure and names
+    the lost record."""
+    handler = ExecutionHandler(
+        executor=_RaisingExecutor(
+            ExecutionRecordNotPersistedError(None, upstream_error=upstream_error)
+        )
+    )
+
+    with patch(
+        "jentic_one.shared.jobs.execution_handler.emit_event", new_callable=AsyncMock
+    ) as mock_emit:
+        result = await handler.execute(
+            "job-unpersisted-failed",
+            SessionScope(_FakeSession()),
+            payload=_payload(),
+            created_by="usr_test",
+            actor_type="user",
+        )
+
+    assert result.body["status"] == "failed"
+    assert result.body["http_status"] is None
+    assert mock_emit.call_args.kwargs["type"] == EventType.EXECUTION_FAILED
+    assert mock_emit.call_args.kwargs["summary"] == f"Execution failed: {reason}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", post_upstream_write_failures())
+async def test_handler_audit_failure_before_dispatch_propagates(error: Exception) -> None:
+    """A credential-audit failure happens before the upstream call, so it
+    propagates (the worker requeues the job) and nothing is dispatched."""
+    executor = _RaisingExecutor(AssertionError("must not dispatch"))
+
+    class _FailingInjector(_FakeInjector):
+        async def inject(self, **_kwargs: Any) -> InjectedAuth:
+            raise error
+
+    handler = ExecutionHandler(
+        executor=executor,
+        credential_injector=_FailingInjector(InjectedAuth(headers={}, query_params={}, cookies={})),
+        execution_authorizer=_FakeAuthorizer(),
+    )
+
+    with pytest.raises(type(error)):
+        await handler.execute(
+            "job-audit-failed",
+            SessionScope(_FakeSession()),
+            payload=_payload(),
+            created_by="usr_test",
+            actor_type="user",
+        )
+
+    assert executor.called is False

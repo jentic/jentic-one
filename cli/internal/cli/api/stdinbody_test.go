@@ -200,18 +200,18 @@ func TestResolveExecuteBody_PipedStdinIsRead(t *testing.T) {
 	_ = w.Close() // EOF so the drain returns
 
 	var body io.Reader
-	var ct string
+	var mp *multipartBody
 	var rerr error
 	withStdin(t, r, func() {
 		runWithTimeout(t, 5*time.Second, "resolveExecuteBody with piped stdin", func() {
-			body, ct, rerr = resolveExecuteBody(&executeOptions{})
+			body, mp, rerr = resolveExecuteBody(&executeOptions{})
 		})
 	})
 	if rerr != nil {
 		t.Fatalf("resolveExecuteBody: %v", rerr)
 	}
-	if ct != "" {
-		t.Errorf("multipart content type = %q, want empty for a raw stdin body", ct)
+	if mp != nil {
+		t.Errorf("multipart body = %+v, want nil for a raw stdin body", mp)
 	}
 	if body == nil {
 		t.Fatal("body = nil, want the piped payload")

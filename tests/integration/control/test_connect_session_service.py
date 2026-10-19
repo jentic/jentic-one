@@ -437,7 +437,7 @@ async def _import_testdev_from_catalog(ctx: Context, *, name: str | None = None)
     with patch("jentic_one.registry.ingest.fetch.httpx.AsyncClient", return_value=_spec_client()):
         await ImportHandler(ctx).execute(
             job_id=str(uuid.uuid4()),
-            session=None,
+            db=None,
             payload={"sources": [source]},
             created_by=_USER_ID,
         )

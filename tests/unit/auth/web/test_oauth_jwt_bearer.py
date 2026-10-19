@@ -12,6 +12,8 @@ from jentic_one.auth.services.errors import AuthServiceError, InvalidGrantError
 from jentic_one.auth.web.errors import service_error_handler
 from jentic_one.auth.web.routers import oauth
 from jentic_one.shared.config import AuthConfig
+from jentic_one.shared.state.backend import StateBackendCapacityError
+from jentic_one.shared.web.errors import state_backend_capacity_error_handler
 
 
 @pytest.fixture()
@@ -19,6 +21,7 @@ def client() -> TestClient:
     app = FastAPI()
     app.include_router(oauth.router)
     app.add_exception_handler(AuthServiceError, service_error_handler)
+    app.add_exception_handler(StateBackendCapacityError, state_backend_capacity_error_handler)  # type: ignore[arg-type]
 
     mock_ctx = MagicMock()
     mock_ctx.config.auth = AuthConfig(
@@ -128,3 +131,30 @@ def test_unsupported_grant_type_returns_400(
     # Theme-8 Phase 2 removed the client_credentials grant with the
     # service-account surface: it is now an unsupported grant type (§5.2).
     assert data["error"] == "unsupported_grant_type"
+
+
+@patch("jentic_one.auth.web.routers.oauth.AssertionService")
+@patch("jentic_one.auth.web.routers.oauth.TokenService")
+def test_jwt_bearer_grant_refused_when_the_state_backend_is_full(
+    mock_token_cls: MagicMock, mock_assertion_cls: MagicMock, client: TestClient
+) -> None:
+    """A refused shared-state write during the grant answers 503 + ``Retry-After``, never tokens."""
+    mock_assertion_instance = MagicMock()
+    mock_assertion_instance.verify_and_exchange = AsyncMock(
+        side_effect=StateBackendCapacityError("auth", retry_after_s=30)
+    )
+    mock_assertion_cls.return_value = mock_assertion_instance
+    mock_token_cls.return_value = MagicMock(access_ttl_seconds=3600)
+
+    resp = client.post(
+        "/oauth/token",
+        json={
+            "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+            "assertion": "eyJ.test.assertion",
+        },
+    )
+
+    assert resp.status_code == 503
+    assert resp.json()["type"] == "state_backend_capacity"
+    assert resp.headers["Retry-After"] == "30"
+    assert "access_token" not in resp.text

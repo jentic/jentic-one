@@ -67,7 +67,16 @@ async def edge_multipart(request: Request) -> dict[str, object]:
             fields[key] = value
         else:
             contents = await value.read()
-            files.append({"field": key, "filename": value.filename, "size": len(contents)})
+            # sha256 (like /edge/binary) so a length-preserving corruption
+            # of a part fails the round-trip assertion, not just a resize.
+            files.append(
+                {
+                    "field": key,
+                    "filename": value.filename,
+                    "size": len(contents),
+                    "sha256": hashlib.sha256(contents).hexdigest(),
+                }
+            )
     return {"fields": fields, "files": files}
 
 

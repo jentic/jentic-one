@@ -29,10 +29,15 @@ _REQUEST_ID_PATTERN = re.compile(r"^[a-zA-Z0-9\-_]+$")
 def add_otel_context(
     logger: Any, method_name: str, event_dict: MutableMapping[str, Any]
 ) -> MutableMapping[str, Any]:
-    """Inject trace_id and span_id from the active OpenTelemetry span."""
-    span = trace.get_current_span()
-    if span.is_recording():
-        ctx = span.get_span_context()
+    """Inject trace_id and span_id from the active OpenTelemetry span.
+
+    Keyed on a valid span context, not on recording: with ``exporter: none``
+    (or an unsampled trace) spans are non-recording but still carry the trace
+    id that execution records and outbound ``traceparent`` use, so log lines
+    keep correlating with them.
+    """
+    ctx = trace.get_current_span().get_span_context()
+    if ctx.is_valid:
         event_dict["trace_id"] = format(ctx.trace_id, "032x")
         event_dict["span_id"] = format(ctx.span_id, "016x")
     return event_dict

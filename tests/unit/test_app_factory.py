@@ -3,24 +3,32 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
 from jentic_one import __version__
 from jentic_one.__main__ import _expand_allowed_dbs
+from jentic_one.admin.web.app import create_app as create_admin_app
 from jentic_one.auth.web.app import create_app as create_auth_app
 from jentic_one.control.web.app import create_app as create_control_app
+from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
+from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web.app_factory import (
     SURFACE_MODULES,
     create_combined_app,
     create_surface_app,
+    get_control_plane_reference_router,
 )
 from jentic_one.shared.web.background_tasks import get_background_tasks
+from jentic_one.shared.web.container import AppContainer
+from jentic_one.shared.web.endpoint_permissions import _iter_api_routes
 
 _AF = "jentic_one.shared.web.app_factory"
 
@@ -86,7 +94,9 @@ def test_single_surface_app_factory(ctx: Context) -> None:
 
 
 def test_context_scoped_to_allowed_dbs(app_config: AppConfig) -> None:
-    scoped_ctx = Context(app_config, allowed_dbs={"control"})
+    # ``admin`` is the platform verifier's DB, which every control-plane app needs
+    # (``__main__`` always grants it — see test_control_plane_app_without_admin_db_fails_at_build).
+    scoped_ctx = Context(app_config, allowed_dbs={"control", "admin"})
     app = create_combined_app(scoped_ctx, ["control"])
     client = TestClient(app, raise_server_exceptions=False)
     assert client.get("/control/health").status_code == 200
@@ -188,6 +198,108 @@ def test_reference_endpoint_hidden_from_schema(ctx: Context) -> None:
     """The reference endpoint is tooling metadata, kept out of the OpenAPI spec."""
     app = create_combined_app(ctx, ["control"])
     assert "/reference/endpoints.json" not in app.openapi()["paths"]
+
+
+def _reference_route_count(app: FastAPI) -> int:
+    return sum(
+        prefix + route.path == "/reference/endpoints.json"
+        for prefix, route in _iter_api_routes(app.routes)
+    )
+
+
+@pytest.mark.parametrize("apps", [["registry", "admin", "control", "auth"], ["admin", "auth"]])
+def test_reference_endpoint_mounted_once(ctx: Context, apps: list[str]) -> None:
+    """Full or partial combined app: exactly one /reference/endpoints.json route."""
+    app = create_combined_app(ctx, apps)
+    assert _reference_route_count(app) == 1
+
+
+@pytest.mark.parametrize("surface", ["registry", "admin", "control", "auth"])
+def test_standalone_surface_without_admin_db_fails_at_build(
+    app_config: AppConfig, surface: str
+) -> None:
+    """No admin DB → no platform verifier: refuse to build instead of 500ing every request."""
+    ctx = Context(app_config, allowed_dbs={"registry", "control"})
+    with pytest.raises(RuntimeError, match="needs access to the 'admin' database"):
+        importlib.import_module(SURFACE_MODULES[surface]).create_app(ctx)
+
+
+def test_combined_app_without_admin_db_fails_at_build(app_config: AppConfig) -> None:
+    ctx = Context(app_config, allowed_dbs={"registry", "control"})
+    with pytest.raises(RuntimeError, match="needs access to the 'admin' database"):
+        create_combined_app(ctx, ["registry", "control"])
+
+
+def test_standalone_broker_builds_without_admin_db(app_config: AppConfig) -> None:
+    """The broker verifies callers with its own validator; the admin-DB gate skips it."""
+    ctx = Context(app_config, allowed_dbs={"control"})
+    create_surface_app(ctx, title="broker", routers=[], enabled_apps={"broker"})
+
+
+_JOBS_READER = get_current_identity(required_permissions=["jobs:read"])
+
+
+def _extra_router() -> APIRouter:
+    router = APIRouter()
+
+    @router.get("/overlay-ping", operation_id="getOverlayPing", summary="Overlay ping")
+    async def overlay_ping(_identity: Identity = _JOBS_READER) -> dict[str, str]:
+        return {"status": "ok"}
+
+    return router
+
+
+@pytest.mark.parametrize("apps", [["registry", "admin", "control", "auth"], ["admin", "auth"]])
+def test_reference_documents_container_extra_routers(ctx: Context, apps: list[str]) -> None:
+    """Full and partial combined apps both list the routers the container injects."""
+    container = AppContainer(ctx=ctx, extra_routers=((_extra_router(), "/overlay", []),))
+    app = create_combined_app(ctx, apps, container=container)
+
+    resp = TestClient(app, raise_server_exceptions=False).get("/reference/endpoints.json")
+
+    assert resp.status_code == 200
+    paths = {ep["path"] for ep in resp.json()["endpoints"]}
+    assert "/overlay/overlay-ping" in paths
+    # A partial app still documents the whole control plane.
+    assert any(path.startswith("/credentials") for path in paths)
+
+
+def test_reference_reuses_prebuilt_routers_without_rebuilding(ctx: Context) -> None:
+    """A cold reference build mounts the serving app's prebuilt router objects as is.
+
+    A route factory that resolves state at build (runs contributors, logs, may
+    raise) must run once, at app build, never again on the unauthenticated cold
+    reference request.
+    """
+    factory_calls = 0
+
+    def _side_effecting_factory() -> APIRouter:
+        nonlocal factory_calls
+        factory_calls += 1
+        return _extra_router()
+
+    prebuilt = _side_effecting_factory()
+    app = FastAPI()
+    app.include_router(get_control_plane_reference_router(ctx, prebuilt_routers=(prebuilt,)))
+
+    resp = TestClient(app, raise_server_exceptions=False).get("/reference/endpoints.json")
+
+    assert resp.status_code == 200
+    paths = [ep["path"] for ep in resp.json()["endpoints"]]
+    assert paths.count("/overlay-ping") == 1
+    assert factory_calls == 1
+
+
+def test_standalone_admin_serves_reference(ctx: Context) -> None:
+    """Split mode: the admin surface (it serves the docs SPA) answers the reference (#1445)."""
+    app = create_admin_app(ctx)
+    assert _reference_route_count(app) == 1
+    resp = TestClient(app, raise_server_exceptions=False).get("/reference/endpoints.json")
+    assert resp.status_code == 200
+    payload = resp.json()
+    # The whole control plane is documented, not just admin's own routes.
+    assert any(ep["path"].startswith("/credentials") for ep in payload["endpoints"])
+    assert any(ep["path"].startswith("/apis") for ep in payload["endpoints"])
 
 
 # ── Anonymous HTML navigations that 401 land in the SPA (#813) ──────────────

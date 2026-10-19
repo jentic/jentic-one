@@ -158,6 +158,29 @@ async def test_valid_redirect_followed_successfully() -> None:
 
 
 @pytest.mark.asyncio
+async def test_redirect_target_is_recorded_as_the_retrieval_url() -> None:
+    """Relative servers resolve against where the document was retrieved (RFC
+    3986 §5.1.3): the end of the redirect chain, here an http→https upgrade on
+    another host. ``source_url`` stays the URL that was asked for."""
+
+    def redirect_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "example.com":
+            return httpx.Response(
+                status_code=301,
+                headers={"location": "https://cdn.example.com/specs/openapi.json"},
+            )
+        return httpx.Response(status_code=200, content=_SPEC_BYTES)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(redirect_handler))
+    with patch("jentic_one.registry.ingest.fetch.httpx.AsyncClient") as mock_cls:
+        mock_cls.return_value = client
+        result = await load_specification(_url_source(url="http://example.com/openapi.json"))
+
+    assert result.source_url == "http://example.com/openapi.json"
+    assert result.retrieval_url == "https://cdn.example.com/specs/openapi.json"
+
+
+@pytest.mark.asyncio
 async def test_relative_redirect_resolved_via_urljoin() -> None:
     call_count = 0
 

@@ -20,6 +20,12 @@ const MaxBodyBytes int64 = 64 << 20
 // a size refusal from an ordinary transport error with errors.Is.
 var ErrBodyTooLarge = errors.New("response body exceeds maximum allowed size")
 
+// ErrRequestBodyTooLarge is returned by the SDK transport when an outbound
+// request body is larger than MaxBodyBytes and so cannot be buffered for retry
+// rewind. It is distinct from ErrBodyTooLarge so an oversize upload is never
+// reported as a response-side failure.
+var ErrRequestBodyTooLarge = errors.New("request body exceeds maximum allowed size")
+
 // ReadAllBounded reads from r into memory like io.ReadAll but refuses to buffer
 // more than limit bytes, returning ErrBodyTooLarge instead of growing without
 // bound. It is the single funnel every "read the whole body into a []byte" site

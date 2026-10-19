@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 import structlog
 from opentelemetry import trace
 
-from jentic_one.broker.adapters.runners.base import RunnerRequest, RunnerResult, UpstreamRunner
+from jentic_one.broker.adapters.runners.base import RunnerRequest, UpstreamRunner
 from jentic_one.broker.core.exceptions import BrokerError, CircuitOpenError
 from jentic_one.broker.core.execution import execution_error, mint_execution_id
 from jentic_one.broker.core.schemas import ExecuteRequestContext
@@ -32,6 +32,7 @@ from jentic_one.broker.services.execution.pipeline import (
 from jentic_one.shared.aws.sigv4 import SigV4Material
 from jentic_one.shared.broker.broker import Broker
 from jentic_one.shared.config import SecurityConfig
+from jentic_one.shared.db.protocols import TransactionalDatabase
 from jentic_one.shared.events import (
     MAX_EVENT_SUMMARY_FIELD_LEN,
     emit_event,
@@ -180,7 +181,7 @@ async def run_execution(
     *,
     body: bytes | None,
     headers: dict[str, str] | None,
-    session: Any,
+    admin_db: TransactionalDatabase,
     timeout: float = 30.0,
     broker: Broker,
     execution_id: str | None = None,
@@ -195,8 +196,13 @@ async def run_execution(
 ) -> ExecutionOutcome:
     """Run the upstream call through the injected ``Broker`` and persist the record.
 
+    ``admin_db`` is the admin ``DatabaseSession``. The record and its lifecycle
+    events are written in one ``admin_db.transaction()`` opened only after the
+    upstream call returns or raises, so no admin connection (and, on SQLite, no
+    write lock) is held while the upstream is awaited.
+
     On a transport-level failure the broker's pipeline raises a ``BrokerError``;
-    we persist a FAILED record before re-raising so the central handler can map
+    we commit a FAILED record before re-raising so the central handler can map
     it to problem+json. The ``broker`` (and thus the shared upstream client it
     wraps) is supplied by the caller (one client per process); the default
     builds a :class:`DefaultBroker` per request, a caller may inject its own.
@@ -275,41 +281,39 @@ async def run_execution(
         _executions_total.add(
             1, {"operation": operation_id or "", "status": ExecutionStatus.FAILED}
         )
-        await _persist(
-            ctx_req,
-            session=session,
-            execution_id=execution_id,
-            started_at=started_at,
-            status=ExecutionStatus.FAILED,
-            http_status=None,
-            duration_ms=duration_ms,
-            error=error,
-            actor_id=actor_id,
-            actor_type=actor_type,
-            origin=origin,
-        )
-        await _emit_execution_lifecycle(
-            session,
-            execution_id=execution_id,
-            status=ExecutionStatus.FAILED,
-            error_msg=error,
-            trace_id=ctx_req.trace_id,
-            actor_id=actor_id,
-            actor_type=actor_type,
-            toolkit_id=ctx_req.toolkit_id,
-            credential_id=ctx_req.credential_id,
-            operation=ctx_req.operation,
-            security_config=security_config,
-            origin=origin,
-        )
-        if isinstance(exc, CircuitOpenError):
-            await _emit_circuit_open_event(
-                session, ctx_req, actor_id=actor_id, actor_type=actor_type
+        # Committed before the re-raise that maps the BrokerError to HTTP.
+        async with admin_db.transaction() as session:
+            await _persist(
+                ctx_req,
+                session=session,
+                execution_id=execution_id,
+                started_at=started_at,
+                status=ExecutionStatus.FAILED,
+                http_status=None,
+                duration_ms=duration_ms,
+                error=error,
+                actor_id=actor_id,
+                actor_type=actor_type,
+                origin=origin,
             )
-        # The sync router wraps this call in ``ctx.admin_db.transaction()``,
-        # which rolls back on any exception. Commit the FAILED record + events
-        # now so they survive the re-raise that maps the BrokerError to HTTP.
-        await session.commit()  # arch-allow: manual-commit
+            await _emit_execution_lifecycle(
+                session,
+                execution_id=execution_id,
+                status=ExecutionStatus.FAILED,
+                error_msg=error,
+                trace_id=ctx_req.trace_id,
+                actor_id=actor_id,
+                actor_type=actor_type,
+                toolkit_id=ctx_req.toolkit_id,
+                credential_id=ctx_req.credential_id,
+                operation=ctx_req.operation,
+                security_config=security_config,
+                origin=origin,
+            )
+            if isinstance(exc, CircuitOpenError):
+                await _emit_circuit_open_event(
+                    session, ctx_req, actor_id=actor_id, actor_type=actor_type
+                )
         raise
     except Exception as exc:
         if is_server_error is not None and not is_server_error(exc):
@@ -344,49 +348,50 @@ async def run_execution(
     _executions_total.add(1, {"operation": operation_id or "", "status": status})
     _execution_duration.record(result.duration_ms, {"operation": operation_id or ""})
 
-    await _persist(
-        ctx_req,
-        session=session,
-        execution_id=execution_id,
-        started_at=started_at,
-        status=status,
-        http_status=result.status_code,
-        duration_ms=result.duration_ms,
-        error=error_msg,
-        actor_id=actor_id,
-        actor_type=actor_type,
-        origin=origin,
-    )
+    async with admin_db.transaction() as session:
+        await _persist(
+            ctx_req,
+            session=session,
+            execution_id=execution_id,
+            started_at=started_at,
+            status=status,
+            http_status=result.status_code,
+            duration_ms=result.duration_ms,
+            error=error_msg,
+            actor_id=actor_id,
+            actor_type=actor_type,
+            origin=origin,
+        )
 
-    # Third-party auth failure: the upstream rejected the auth the user
-    # configured (401/403). Only when a credential path was attempted
-    # (api_vendor set) — a vendorless call has no auth to reject. Tagged by
-    # status so 401 (credential rejection) stays distinct from 403
-    # (permission/business). We fold this into the EXECUTION_FAILED event as a
-    # tag rather than emit a separate ``auth_failure``: the flat telemetry
-    # payload carries no per-request correlation id, so two events sharing a
-    # timestamp are indistinguishable from two concurrent requests downstream —
-    # a separate event would permanently skew the funnel (see #446 review).
-    thirdparty_tag = _THIRDPARTY_AUTH_TAGS.get(result.status_code)
-    error_tags: set[EventTag] | None = (
-        {thirdparty_tag} if thirdparty_tag is not None and ctx_req.api_vendor else None
-    )
+        # Third-party auth failure: the upstream rejected the auth the user
+        # configured (401/403). Only when a credential path was attempted
+        # (api_vendor set) — a vendorless call has no auth to reject. Tagged by
+        # status so 401 (credential rejection) stays distinct from 403
+        # (permission/business). We fold this into the EXECUTION_FAILED event as a
+        # tag rather than emit a separate ``auth_failure``: the flat telemetry
+        # payload carries no per-request correlation id, so two events sharing a
+        # timestamp are indistinguishable from two concurrent requests downstream —
+        # a separate event would permanently skew the funnel (see #446 review).
+        thirdparty_tag = _THIRDPARTY_AUTH_TAGS.get(result.status_code)
+        error_tags: set[EventTag] | None = (
+            {thirdparty_tag} if thirdparty_tag is not None and ctx_req.api_vendor else None
+        )
 
-    await _emit_execution_lifecycle(
-        session,
-        execution_id=execution_id,
-        status=status,
-        error_msg=error_msg,
-        trace_id=ctx_req.trace_id,
-        actor_id=actor_id,
-        actor_type=actor_type,
-        toolkit_id=ctx_req.toolkit_id,
-        credential_id=ctx_req.credential_id,
-        operation=ctx_req.operation,
-        security_config=security_config,
-        error_tags=error_tags,
-        origin=origin,
-    )
+        await _emit_execution_lifecycle(
+            session,
+            execution_id=execution_id,
+            status=status,
+            error_msg=error_msg,
+            trace_id=ctx_req.trace_id,
+            actor_id=actor_id,
+            actor_type=actor_type,
+            toolkit_id=ctx_req.toolkit_id,
+            credential_id=ctx_req.credential_id,
+            operation=ctx_req.operation,
+            security_config=security_config,
+            error_tags=error_tags,
+            origin=origin,
+        )
 
     return outcome
 
@@ -463,35 +468,6 @@ async def persist_unmapped_failure(
         security_config=security_config,
         origin=origin,
     )
-
-
-async def execute_upstream(
-    ctx_req: ExecuteRequestContext,
-    *,
-    body: bytes | None = None,
-    headers: dict[str, str] | None = None,
-    session: Any,
-    timeout: float = 30.0,
-    broker: Broker,
-    actor_id: str,
-    actor_type: str,
-    origin: str | None = None,
-    security_config: SecurityConfig | None = None,
-) -> RunnerResult:
-    """Run the broker and return only the upstream result (status/headers/body)."""
-    outcome = await run_execution(
-        ctx_req,
-        body=body,
-        headers=headers,
-        session=session,
-        timeout=timeout,
-        broker=broker,
-        actor_id=actor_id,
-        actor_type=actor_type,
-        origin=origin,
-        security_config=security_config,
-    )
-    return outcome.result
 
 
 async def persist_streaming_execution(

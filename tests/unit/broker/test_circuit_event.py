@@ -19,6 +19,7 @@ from jentic_one.broker.services.execution.service import (
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.events import EVENT_TYPE_SEVERITIES, EventType
 from jentic_one.shared.schemas import OperationInfo
+from tests.unit.fake_tx import SessionScope
 
 
 class _CircuitOpenRunner(UpstreamRunner):
@@ -57,13 +58,14 @@ def _clear_dedup() -> None:
 async def test_circuit_open_emits_event() -> None:
     """When CircuitOpenError is raised, emit_event should be called."""
     session = AsyncMock()
+    scope = SessionScope(session)
     broker = default_broker(_CircuitOpenRunner())
 
     with (
         patch(
             "jentic_one.broker.services.execution.service.record_execution",
             new_callable=AsyncMock,
-        ),
+        ) as mock_record,
         patch(
             "jentic_one.broker.services.execution.service.emit_event",
             new_callable=AsyncMock,
@@ -74,7 +76,7 @@ async def test_circuit_open_emits_event() -> None:
             _ctx_req(),
             body=None,
             headers=None,
-            session=session,
+            admin_db=scope,
             broker=broker,
             actor_id="agt_abc123",
             actor_type="agent",
@@ -92,6 +94,10 @@ async def test_circuit_open_emits_event() -> None:
     assert call_kwargs["severity"] in EVENT_TYPE_SEVERITIES[EventType.UPSTREAM_CIRCUIT_OPEN]
     assert "api.example.com" in call_kwargs["summary"]
     assert call_kwargs["data"] == {"host": "api.example.com"}
+    # The record and every event (incl. the circuit-open event) share one transaction.
+    assert scope.opened == 1
+    assert mock_record.call_args.args[0] is session
+    assert all(c.args[0] is session for c in mock_emit.call_args_list)
 
 
 @pytest.mark.asyncio
@@ -116,7 +122,7 @@ async def test_circuit_open_dedup_suppresses_second_emit() -> None:
                     _ctx_req(),
                     body=None,
                     headers=None,
-                    session=session,
+                    admin_db=SessionScope(session),
                     broker=broker,
                     actor_id="agt_abc123",
                     actor_type="agent",
@@ -150,7 +156,7 @@ async def test_circuit_open_different_hosts_emit_independently() -> None:
                     _ctx_req(host=host),
                     body=None,
                     headers=None,
-                    session=session,
+                    admin_db=SessionScope(session),
                     broker=broker,
                     actor_id="agt_abc123",
                     actor_type="agent",
@@ -180,7 +186,7 @@ async def test_buffered_circuit_open_records_the_problem_type_and_counts_a_failu
             _ctx_req(),
             body=None,
             headers=None,
-            session=AsyncMock(),
+            admin_db=SessionScope(AsyncMock()),
             broker=default_broker(_CircuitOpenRunner()),
             actor_id="agt_abc123",
             actor_type="agent",

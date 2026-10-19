@@ -110,7 +110,7 @@ async def seed(integration_context: Context) -> AsyncGenerator[_Seed, None]:
             created_by=owner.id,
             status=ActorStatus.ACTIVE,
         )
-        owner_event = await EventRepository.create(
+        owner_event_id = await EventRepository.create(
             session,
             type="credential.stored",
             severity="info",
@@ -119,7 +119,7 @@ async def seed(integration_context: Context) -> AsyncGenerator[_Seed, None]:
             actor_id=owner.id,
             actor_type="user",
         )
-        agent_event = await EventRepository.create(
+        agent_event_id = await EventRepository.create(
             session,
             type="execution.failed",
             severity="error",
@@ -129,7 +129,7 @@ async def seed(integration_context: Context) -> AsyncGenerator[_Seed, None]:
             actor_id=agent.id,
             actor_type="agent",
         )
-        subject_event = await EventRepository.create(
+        subject_event_id = await EventRepository.create(
             session,
             type="credential.expired",
             severity="error",
@@ -137,7 +137,7 @@ async def seed(integration_context: Context) -> AsyncGenerator[_Seed, None]:
             requires_action=True,
             created_by=owner.id,
         )
-        system_event = await EventRepository.create(
+        system_event_id = await EventRepository.create(
             session,
             type="catalog.update_available",
             severity="info",
@@ -149,10 +149,10 @@ async def seed(integration_context: Context) -> AsyncGenerator[_Seed, None]:
         seeded = _Seed(
             owner_id=owner.id,
             agent_id=agent.id,
-            owner_event_id=owner_event.id,
-            agent_event_id=agent_event.id,
-            subject_event_id=subject_event.id,
-            system_event_id=system_event.id,
+            owner_event_id=owner_event_id,
+            agent_event_id=agent_event_id,
+            subject_event_id=subject_event_id,
+            system_event_id=system_event_id,
         )
 
     yield seeded
@@ -273,7 +273,7 @@ async def test_owner_sees_events_naming_their_agent_as_creator(
     agent and its owner through ``created_by``."""
     ctx = integration_context
     async with ctx.admin_db.session() as session:
-        event = await EventRepository.create(
+        event_id = await EventRepository.create(
             session,
             type="credential.expiring_soon",
             severity="warning",
@@ -283,10 +283,10 @@ async def test_owner_sees_events_naming_their_agent_as_creator(
         await session.commit()
 
     owner = _user(seed.owner_id, "events:read")
-    assert event.id in await _listed_ids(ctx, owner)
-    assert (await EventService(ctx).get_by_id(event.id, identity=owner)).id == event.id
+    assert event_id in await _listed_ids(ctx, owner)
+    assert (await EventService(ctx).get_by_id(event_id, identity=owner)).id == event_id
     agent = _agent(seed.agent_id, parent=seed.owner_id)
-    assert await _listed_ids(ctx, agent) == {seed.agent_event_id, event.id}
+    assert await _listed_ids(ctx, agent) == {seed.agent_event_id, event_id}
     assert await _listed_ids(ctx, _user(_OTHER_SUB, "events:read")) == set()
 
 

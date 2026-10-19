@@ -13,21 +13,29 @@ from __future__ import annotations
 
 import base64
 import os
+import socket
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from pydantic import SecretStr
 
 from jentic_one.control.services.integrations import device_authorization as df
-from jentic_one.control.services.integrations.flow_handlers.base import StatusReport
+from jentic_one.control.services.integrations.flow_handlers.base import (
+    DeviceAuthorizationBeginResult,
+    StatusReport,
+)
 from jentic_one.control.services.integrations.flow_handlers.device_authorization import (
     DeviceAuthorizationHandler,
 )
+from jentic_one.control.services.integrations.flow_handlers.session_app import SessionApp
 from jentic_one.shared.config import (
     AppConfig,
     ConnectConfig,
+    ControlEgressConfig,
+    ControlSurfaceConfig,
     CredentialsConfig,
     DatabaseConfig,
     DatabasesConfig,
@@ -65,8 +73,9 @@ def _patch_credential_lookup():
         yield mock
 
 
-def _make_context() -> Context:
+def _make_context(*, control_egress: ControlEgressConfig | None = None) -> Context:
     cfg = AppConfig(
+        control=ControlSurfaceConfig(egress=control_egress or ControlEgressConfig()),
         databases=DatabasesConfig(
             registry=DatabaseConfig(backend="sqlite", path=":memory:"),
             admin=DatabaseConfig(backend="sqlite", path=":memory:"),
@@ -476,3 +485,153 @@ async def test_advance_fails_when_shared_registration_inactive(
     assert report.kind == "failed"
     assert report.error_code == "registration_inactive"
     poll_mock.assert_not_awaited()
+
+
+# --- control-plane egress allowlist, read from ``ctx.config`` -----------------
+
+_INTERNAL_HOST = "idp.corp.internal"
+_CORP_EGRESS = ControlEgressConfig(
+    allowed_private_subnets=["10.50.0.0/16"], allowed_internal_domains=[".corp.internal"]
+)
+_NOT_CORP_EGRESS = [
+    pytest.param(None, id="no-allowlist"),
+    pytest.param(
+        ControlEgressConfig(
+            allowed_private_subnets=["10.60.0.0/16"], allowed_internal_domains=[".corp.internal"]
+        ),
+        id="subnet-not-allowlisted",
+    ),
+]
+
+
+def _addrinfo(ip: str) -> list[tuple[object, ...]]:
+    return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (ip, 0))]
+
+
+def _device_app() -> SessionApp:
+    return SessionApp(
+        flow_kind="device_authorization",
+        client_id="public-client",
+        client_secret_provider=None,
+        default_scopes=[],
+        registration_id=None,
+        authorization_endpoint=f"https://{_INTERNAL_HOST}/device",
+        token_endpoint=f"https://{_INTERNAL_HOST}/token",
+    )
+
+
+def _session_row() -> MagicMock:
+    row = MagicMock()
+    row.credential_id = "cred_1"
+    return row
+
+
+def _vendor(sent: list[httpx.Request]):
+    def _send(_self: httpx.AsyncHTTPTransport, request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        body = {
+            "device_code": "dc",
+            "user_code": "UC",
+            "verification_uri": f"https://{_INTERNAL_HOST}/activate",
+            "access_token": "at_ok",
+        }
+        return httpx.Response(200, json=body, request=request)
+
+    async def _async_send(self: httpx.AsyncHTTPTransport, request: httpx.Request):
+        return _send(self, request)
+
+    return _async_send
+
+
+def _assert_pinned(sent: list[httpx.Request], path: str) -> None:
+    assert [(r.url.host, r.url.path, r.headers["Host"]) for r in sent] == [
+        ("10.50.0.7", path, _INTERNAL_HOST)
+    ]
+
+
+_SET_TRANSIENT = (
+    "jentic_one.control.services.integrations.flow_handlers.device_authorization."
+    "DeviceAuthorizationCredentialRepository.set_transient_state"
+)
+
+
+@pytest.mark.asyncio()
+async def test_begin_reaches_control_egress_allowlisted_endpoint_pinned() -> None:
+    ctx = _make_context(control_egress=_CORP_EGRESS)
+    sent: list[httpx.Request] = []
+    with (
+        patch(_SET_TRANSIENT, new_callable=AsyncMock),
+        patch.object(socket, "getaddrinfo", return_value=_addrinfo("10.50.0.7")),
+        patch.object(httpx.AsyncHTTPTransport, "handle_async_request", _vendor(sent)),
+    ):
+        result = await DeviceAuthorizationHandler(ctx).begin(
+            _session_row(), app=_device_app(), confirmed_scopes=[]
+        )
+    assert isinstance(result, DeviceAuthorizationBeginResult)
+    _assert_pinned(sent, "/device")
+
+
+@pytest.mark.parametrize("control_egress", _NOT_CORP_EGRESS)
+@pytest.mark.asyncio()
+async def test_begin_refuses_endpoint_outside_control_egress(
+    control_egress: ControlEgressConfig | None,
+) -> None:
+    ctx = _make_context(control_egress=control_egress)
+    with (
+        patch(_SET_TRANSIENT, new_callable=AsyncMock) as set_transient,
+        patch.object(socket, "getaddrinfo", return_value=_addrinfo("10.50.0.7")),
+        patch("httpx.AsyncClient") as mock_client_cls,
+        pytest.raises(df.DeviceAuthorizationUpstreamError, match="unsafe upstream URL"),
+    ):
+        await DeviceAuthorizationHandler(ctx).begin(
+            _session_row(), app=_device_app(), confirmed_scopes=[]
+        )
+    mock_client_cls.assert_not_called()
+    set_transient.assert_not_awaited()
+
+
+def _internal_dfc(ctx: Context) -> MagicMock:
+    dfc = _make_dfc(ctx, last_polled_at=None)
+    dfc.token_url = f"https://{_INTERNAL_HOST}/token"
+    return dfc
+
+
+@pytest.mark.asyncio()
+async def test_advance_polls_control_egress_allowlisted_endpoint_pinned() -> None:
+    ctx = _make_context(control_egress=_CORP_EGRESS)
+    sent: list[httpx.Request] = []
+    p_get, p_claim, p_update = _patch_repo(_internal_dfc(ctx))
+    with (
+        p_get,
+        p_claim,
+        p_update,
+        patch.object(socket, "getaddrinfo", return_value=_addrinfo("10.50.0.7")),
+        patch.object(httpx.AsyncHTTPTransport, "handle_async_request", _vendor(sent)),
+    ):
+        report = await DeviceAuthorizationHandler(ctx).advance("cred_1")
+    assert report.kind == "success"
+    _assert_pinned(sent, "/token")
+
+
+@pytest.mark.parametrize("control_egress", _NOT_CORP_EGRESS)
+@pytest.mark.asyncio()
+async def test_advance_refuses_endpoint_outside_control_egress(
+    control_egress: ControlEgressConfig | None,
+) -> None:
+    # The refusal is a terminal vendor_error (status 0) and no request is sent.
+    ctx = _make_context(control_egress=control_egress)
+    p_get, p_claim, p_update = _patch_repo(_internal_dfc(ctx))
+    with (
+        p_get,
+        p_claim,
+        p_update,
+        patch.object(socket, "getaddrinfo", return_value=_addrinfo("10.50.0.7")),
+        patch("httpx.AsyncClient") as mock_client_cls,
+    ):
+        report = await DeviceAuthorizationHandler(ctx).advance("cred_1")
+    assert (report.kind, report.error_code, report.terminal_detail) == (
+        "failed",
+        "vendor_error",
+        "vendor 0",
+    )
+    mock_client_cls.assert_not_called()

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import cast
 
 from sqlalchemy import Select, and_, delete, func, select, text
 from sqlalchemy.dialects.postgresql import insert
@@ -53,7 +55,8 @@ class UrlIndexCandidate:
         )
 
 
-_CandidateSelect = Select[tuple[OperationURLIndex, str, str, str, str, str]]
+_CandidateRow = tuple[OperationURLIndex, str, str, str, str, str]
+_CandidateSelect = Select[_CandidateRow]
 
 
 @dataclass(frozen=True)
@@ -141,8 +144,15 @@ def _live_rows() -> _CandidateSelect:
 async def _fetch_candidates(
     session: AsyncSession, stmt: _CandidateSelect
 ) -> list[UrlIndexCandidate]:
-    """Run a candidate select and wrap each result row."""
+    """Run a candidate select and wrap each result row.
+
+    Rows are unpacked directly rather than through ``Result.tuples()``: that is
+    deprecated in SQLAlchemy 2.1 and emits a warning on every call, whose stack
+    walk shows up in broker CPU since this runs on every URL lookup (#1820). The
+    ``cast`` only restores the column types for mypy; ``Row`` unpacks as a tuple.
+    """
     result = await session.execute(stmt)
+    rows = cast("Iterable[_CandidateRow]", result)
     return [
         UrlIndexCandidate(
             row=row,
@@ -152,7 +162,7 @@ async def _fetch_candidates(
             operation_path=path,
             operation_method=method,
         )
-        for row, vendor, name, version, path, method in result.tuples().all()
+        for row, vendor, name, version, path, method in rows
     ]
 
 
