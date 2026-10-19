@@ -354,6 +354,8 @@ async def test_handler_passes_the_enqueue_selection_to_the_authorizer() -> None:
         api_name="api",
         api_version="1.0.0",
         operation_id="listThings",
+        operation_path="/v1/things",
+        trace_id="ab" * 16,
         credential_id="cred_a",
         job_id="job_req",
     )
