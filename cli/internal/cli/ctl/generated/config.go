@@ -1784,14 +1784,18 @@ type MemoryBackendConfig struct {
 	// first ``:``). Unless overridden here, idem (Idempotency-Key records) is 250000
 	// entries / 134217728 bytes (128 MiB) and idem-body (their stored response
 	// bodies) 1000000 entries / 33554432 bytes (32 MiB), each with a 0.1 per-caller
-	// share; every other namespace uses max_entries_per_namespace /
-	// max_bytes_per_namespace. The sustained idempotent request rate idem can hold is
-	// min(max_entries, max_bytes / record_bytes) / broker.idempotency.ttl_s, where
-	// record_bytes is about 1000 bytes plus the response headers (capped at 512
-	// bytes): about 30 req/s at the defaults and a 1 h TTL, and a tenth of that per
-	// caller. Above it, Idempotency-Key requests get 503 idempotency_unavailable;
-	// bodies (about 830 bytes + body length each) stop being stored for replay
-	// sooner, about 5 req/s of 1 KiB bodies, without refusing requests.
+	// share; login-csrf (login page CSRF nonces) uses max_entries_per_namespace /
+	// max_bytes_per_namespace with a 0.02 per-client share, about 370 live nonces per
+	// IPv4 address or IPv6 /64 at the defaults (about 900 bytes each, 5-minute TTL),
+	// twice what the default authorize rate limit lets one IP request in that time;
+	// every other namespace uses max_entries_per_namespace / max_bytes_per_namespace.
+	// The sustained idempotent request rate idem can hold is min(max_entries,
+	// max_bytes / record_bytes) / broker.idempotency.ttl_s, where record_bytes is
+	// about 1000 bytes plus the response headers (capped at 512 bytes): about 30
+	// req/s at the defaults and a 1 h TTL, and a tenth of that per caller. Above it,
+	// Idempotency-Key requests get 503 idempotency_unavailable; bodies (about 830
+	// bytes + body length each) stop being stored for replay sooner, about 5 req/s of
+	// 1 KiB bodies, without refusing requests.
 	Namespaces MemoryBackendConfigNamespaces `json:"namespaces,omitempty,omitzero" yaml:"namespaces,omitempty" mapstructure:"namespaces,omitempty"`
 }
 
@@ -1799,6 +1803,10 @@ type MemoryBackendConfig struct {
 // first “:“). Unless overridden here, idem (Idempotency-Key records) is 250000
 // entries / 134217728 bytes (128 MiB) and idem-body (their stored response bodies)
 // 1000000 entries / 33554432 bytes (32 MiB), each with a 0.1 per-caller share;
+// login-csrf (login page CSRF nonces) uses max_entries_per_namespace /
+// max_bytes_per_namespace with a 0.02 per-client share, about 370 live nonces per
+// IPv4 address or IPv6 /64 at the defaults (about 900 bytes each, 5-minute TTL),
+// twice what the default authorize rate limit lets one IP request in that time;
 // every other namespace uses max_entries_per_namespace / max_bytes_per_namespace.
 // The sustained idempotent request rate idem can hold is min(max_entries,
 // max_bytes / record_bytes) / broker.idempotency.ttl_s, where record_bytes is
@@ -1852,9 +1860,10 @@ type MemoryNamespaceBudgetConfig struct {
 	MaxEntries int `json:"max_entries" yaml:"max_entries" mapstructure:"max_entries"`
 
 	// Most of max_entries and max_bytes that one owner (the key's second ``:``
-	// segment, for idem and idem-body the calling actor) may hold; an owner over its
-	// share is refused without affecting the others. Unset, it is 0.1 for idem and
-	// idem-body and unlimited elsewhere; 1.0 lets one owner use the whole namespace.
+	// segment: for idem and idem-body the calling actor, for login-csrf the client's
+	// IPv4 address or IPv6 /64) may hold; an owner over its share is refused without
+	// affecting the others. Unset, it is 0.1 for idem and idem-body, 0.02 for
+	// login-csrf and unlimited elsewhere; 1.0 lets one owner use the whole namespace.
 	MaxOwnerShare interface{} `json:"max_owner_share,omitempty,omitzero" yaml:"max_owner_share,omitempty" mapstructure:"max_owner_share,omitempty"`
 }
 
@@ -1967,10 +1976,10 @@ type OAuthRateLimitConfig struct {
 	AuthorizeBurst int `json:"authorize_burst,omitempty,omitzero" yaml:"authorize_burst,omitempty" mapstructure:"authorize_burst,omitempty"`
 
 	// Sustained requests/minute allowed on the unauthenticated ``/authorize``
-	// endpoints, keyed per ``client_id``+IP — except the local-login routes, which
-	// carry no query ``client_id`` and fall back to a bare-IP key. Behind a proxy,
-	// set ``auth.oauth_rate_limit.trusted_proxies`` or every client shares the
-	// proxy's IP bucket.
+	// endpoints, keyed per ``client_id``+IP — except the local-login routes, whose
+	// ``client_id`` rides inside the signed login state and which are always keyed by
+	// bare IP. Behind a proxy, set ``auth.oauth_rate_limit.trusted_proxies`` or every
+	// client shares the proxy's IP bucket.
 	AuthorizeRpm int `json:"authorize_rpm,omitempty,omitzero" yaml:"authorize_rpm,omitempty" mapstructure:"authorize_rpm,omitempty"`
 
 	// Burst allowance on top of ``exchange_rpm``.

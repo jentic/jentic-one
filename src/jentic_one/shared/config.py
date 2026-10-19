@@ -790,8 +790,8 @@ class OAuthRateLimitConfig(BaseModel):
         description=(
             "Sustained requests/minute allowed on the unauthenticated "
             "``/authorize`` endpoints, keyed per ``client_id``+IP — except "
-            "the local-login routes, which carry no query ``client_id`` and "
-            "fall back to a bare-IP key. Behind a proxy, set "
+            "the local-login routes, whose ``client_id`` rides inside the signed "
+            "login state and which are always keyed by bare IP. Behind a proxy, set "
             "``auth.oauth_rate_limit.trusted_proxies`` or every client "
             "shares the proxy's IP bucket."
         ),

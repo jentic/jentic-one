@@ -248,7 +248,13 @@ async def state_backend_capacity_error_handler(
     app, so a caller that lets the error propagate fails closed.
     """
     structlog.get_logger("jentic_one.shared.web.errors").warning(
-        "shared_state_write_refused", path=request.url.path, namespace=exc.namespace
+        "shared_state_write_refused",
+        path=request.url.path,
+        namespace=exc.namespace,
+        # Whether one owner's share (not the namespace or the backend) was
+        # full. The owner itself is not logged: for some namespaces it is
+        # derived from the client's address.
+        owner_share=exc.owner is not None,
     )
     problem = ProblemDetailException(
         status_code=503,
