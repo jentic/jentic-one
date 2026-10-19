@@ -20,7 +20,7 @@ from jentic_one.shared.web.app_factory import create_combined_app, create_surfac
 
 
 def _ctx(config: dict[str, Any]) -> Context:
-    return Context(AppConfig.model_validate(config), allowed_dbs=set())
+    return Context(AppConfig.model_validate(config), allowed_dbs={"admin"})
 
 
 @pytest.mark.asyncio
