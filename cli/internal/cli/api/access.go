@@ -18,11 +18,11 @@ import (
 func newAccessCmd(app *app) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "access",
-		Short: "Show what your credential bindings let you do",
+		Short: "Show and change what your credential bindings let you do",
 		Args:  cobra.NoArgs,
 		RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
-	cmd.AddCommand(newAccessShowCmd(app))
+	cmd.AddCommand(newAccessShowCmd(app), newAccessEditCmd(app), newAccessAmendCmd(app))
 	return cmd
 }
 

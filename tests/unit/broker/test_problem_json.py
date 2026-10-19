@@ -541,3 +541,22 @@ def test_commit_outcome_unknown_asks_the_client_to_check_before_retrying() -> No
     assert body["type"] == "database_unavailable"
     assert body["detail"] == DB_COMMIT_OUTCOME_UNKNOWN_DETAIL
     assert "agent_directive" not in body
+
+
+def test_action_denied_directive_offers_the_edit_or_points_at_the_open_one() -> None:
+    """A rules denial names the binding and the minimal rule to ask for; with an
+    edit already open it links the owner to that one instead."""
+    rules = suggested_permission_rules(method="post", path="/v1/send")
+    asked = direct_action_denied_directive(credential_id="cred_1", suggested_rules=rules)
+    assert asked.strategy == "prompt_human"
+    assert asked.parameters["edit"] == {"credential_id": "cred_1", "suggested_rules": rules}
+    assert asked.parameters["suggested_command"] == "jentic access edit cred_1"
+    assert "request_access_change" in asked.human_readable_instruction
+
+    pending = direct_action_denied_directive(
+        credential_id="cred_1",
+        suggested_rules=rules,
+        open_edit_url="https://one.example/app/agents?approve=cs_1",
+    )
+    assert pending.parameters == {"provisioning_url": "https://one.example/app/agents?approve=cs_1"}
+    assert "amend" in pending.human_readable_instruction

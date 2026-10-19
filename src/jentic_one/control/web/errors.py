@@ -184,16 +184,20 @@ _CHECK_ACCESS_INSTRUCTION = (
 )
 
 
-def _check_access_directive(request: Request, exc: PointsAtAccessError) -> dict[str, object]:
-    """The ``check_access`` directive pointing an agent at the binding's current access."""
+def check_access_directive(
+    *, credential_id: str, agent_id: str | None, base_url: str
+) -> dict[str, object]:
+    """The ``check_access`` directive pointing an agent at a binding's current access.
+
+    Shared with the hosted MCP mount, which renders the same refusals.
+    """
     parameters: dict[str, object] = {
-        "credential_id": exc.credential_id,
-        "suggested_command": f"jentic access show {exc.credential_id}",
+        "credential_id": credential_id,
+        "suggested_command": f"jentic access show {credential_id}",
     }
-    if exc.agent_id is not None:
-        base = str(request.base_url).rstrip("/")
+    if agent_id is not None:
         parameters["access_url"] = (
-            f"{base}/credentials/{exc.credential_id}/agents/{exc.agent_id}/permissions"
+            f"{base_url.rstrip('/')}/credentials/{credential_id}/agents/{agent_id}/permissions"
         )
     return {
         "strategy": "check_access",
@@ -230,7 +234,9 @@ def _connect_session_response_hook(
     elif isinstance(exc, AmendFieldsMismatchError):
         extra["fields"] = exc.fields
     if isinstance(exc, PointsAtAccessError) and exc.credential_id is not None:
-        extra["agent_directive"] = _check_access_directive(request, exc)
+        extra["agent_directive"] = check_access_directive(
+            credential_id=exc.credential_id, agent_id=exc.agent_id, base_url=str(request.base_url)
+        )
     elif isinstance(exc, RevisionChangedError | BaselineChangedError):
         extra["current_revision_id"] = exc.current_revision_id
     if not extra and not headers:

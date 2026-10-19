@@ -105,6 +105,39 @@ func CuratedBindings() []CuratedBinding {
 			},
 		},
 		{
+			// access edit: ask for a change to the caller's own binding. The
+			// credential is the positional argument; the rule change rides
+			// --add (with --before), --remove and --set, which together build
+			// the nested rules object.
+			Command: "access edit",
+			Params:  control.EditConnectionRequest{},
+			Bind: map[string]string{
+				"credential_id": PositionalArg,
+				"rules":         "add",
+				"scopes":        "scopes",
+				"resume":        "resume",
+				"reason":        "reason",
+			},
+			NotExposed: map[string]string{
+				"agent_id": "never sent: an agent caller IS the agent (identity injected server-side; an override is refused 403); editing FOR an agent is a dashboard action",
+			},
+		},
+		{
+			// access amend: change an open request (an edit's rule change via
+			// --add/--remove/--set, or a connect's ask via --requested-*).
+			Command: "access amend",
+			Params:  control.AmendSessionRequest{},
+			Bind: map[string]string{
+				"rules":                      "add",
+				"scopes":                     "scopes",
+				"resume":                     "resume",
+				"reason":                     "reason",
+				"requested_permission_rules": "requested-rules",
+				"requested_scopes":           "requested-scopes",
+			},
+			NotExposed: map[string]string{},
+		},
+		{
 			// connect --wait poll leg: the poll_token capability is threaded
 			// from the create response in memory, never a user flag.
 			Command: "connect",

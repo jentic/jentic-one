@@ -118,6 +118,12 @@ code:
   With `api_served: true` a credential already serves the API and you just
   aren't bound: ask your operator to bind you to it (dashboard, or
   `POST /agents/{agent_id}/credentials`). Then retry.
+- **`action_denied` (403)** — the binding's rules deny the call. Read your
+  access (`jentic access show <credential_id>`), then ask for the change:
+  `jentic access edit <credential_id> --add '<parameters.edit.suggested_rules>'
+  --reason "…"` (one request with every change you need), and relay the
+  printed `approval_url`. A `provisioning_url` instead means your earlier
+  request is still waiting: relay it, or `jentic access amend <session_id>`.
 - **`credential_not_provisioned` (424)** — if the directive carries a
   `provisioning_url`, your earlier connect request is still waiting: relay
   that link to your operator instead of connecting again. Otherwise, if it

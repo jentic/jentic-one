@@ -160,8 +160,8 @@ func TestMCPSession_ToolsListWorksWithNoConfig(t *testing.T) {
 	if importTool.Annotations == nil || !importTool.Annotations.IdempotentHint {
 		t.Errorf("import_api must carry idempotentHint (re-import of the same api_id converges)")
 	}
-	if len(names) != 11 {
-		t.Errorf("the stdio server serves exactly 11 tools, got %v", keys(names))
+	if len(names) != 13 {
+		t.Errorf("the stdio server serves exactly 13 tools, got %v", keys(names))
 	}
 }
 
@@ -181,7 +181,10 @@ func TestMCPSession_ReadOnlyWithholdsMutatingTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tools/list: %v", err)
 	}
-	withheld := map[string]bool{"execute": true, "import_api": true, "request_connection": true}
+	withheld := map[string]bool{
+		"execute": true, "import_api": true, "request_connection": true,
+		"request_access_change": true, "amend_request": true,
+	}
 	names := make([]string, 0, len(tools.Tools))
 	for _, tool := range tools.Tools {
 		names = append(names, tool.Name)
@@ -426,8 +429,8 @@ func TestMCPSession_ExcludeToolsFilters(t *testing.T) {
 			t.Errorf("--exclude-tools=whoami must withhold the tool")
 		}
 	}
-	if len(tools.Tools) != 10 {
-		t.Errorf("tools = %d, want 10 after exclusion", len(tools.Tools))
+	if len(tools.Tools) != 12 {
+		t.Errorf("tools = %d, want 12 after exclusion", len(tools.Tools))
 	}
 }
 

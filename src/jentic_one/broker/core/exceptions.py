@@ -662,19 +662,52 @@ def ambiguous_credential_binding_directive(candidates: list[str]) -> AgentDirect
     )
 
 
-def direct_action_denied_directive() -> AgentDirective:
+def direct_action_denied_directive(
+    *,
+    credential_id: str | None = None,
+    suggested_rules: list[dict[str, Any]] | None = None,
+    open_edit_url: str | None = None,
+) -> AgentDirective:
     """Directive for the direct-binding ``action_denied`` 403.
 
     The caller *is* bound to the selected credential, but the binding's
     permission rules (inline or via its attached rule set) deny this specific
     operation. Only a human can relax the rules, so the strategy is
-    ``prompt_human``.
+    ``prompt_human``; the agent can ask for the change itself.
+    ``parameters.edit`` (``{credential_id, suggested_rules}``) is the
+    structured ask: one allow rule for the exact denied method and path. When
+    the agent already has an edit open for this binding, ``provisioning_url``
+    links its owner to it instead.
     """
+    if open_edit_url is not None:
+        return AgentDirective(
+            strategy="prompt_human",
+            parameters={"provisioning_url": open_edit_url},
+            human_readable_instruction=(
+                "This operation is denied by your credential binding's permission rules, "
+                "and you already asked for a change to that binding that is waiting for "
+                f"your human user. Relay {open_edit_url} to them to approve it, or amend "
+                "that request if it does not cover this call. Retry once they confirm."
+            ),
+        )
+    parameters: dict[str, Any] = {}
+    if credential_id is not None:
+        parameters["edit"] = {
+            "credential_id": credential_id,
+            "suggested_rules": suggested_rules or [],
+        }
+        parameters["suggested_command"] = f"jentic access edit {credential_id}"
     return AgentDirective(
         strategy="prompt_human",
-        parameters={},
+        parameters=parameters,
         human_readable_instruction=(
-            "This operation is denied by your credential binding's permission "
+            "This operation is denied by your credential binding's permission rules. You "
+            "cannot grant it yourself, but you can ask: check your access with show_access "
+            "(`jentic access show`), then request the change with request_access_change "
+            "(`jentic access edit`), using parameters.edit, and relay the approval URL to "
+            "your human user."
+            if credential_id is not None
+            else "This operation is denied by your credential binding's permission "
             "rules. You are bound to a credential for this API, but the rules "
             "forbid this specific call — ask your operator to adjust the "
             "binding's permission rules. This is not something you can grant "

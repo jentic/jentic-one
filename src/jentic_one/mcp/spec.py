@@ -47,6 +47,8 @@ SERVED_TOOLS: tuple[str, ...] = (
     "import_api",
     "request_connection",
     "show_access",
+    "request_access_change",
+    "amend_request",
 )
 
 

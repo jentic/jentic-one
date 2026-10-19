@@ -25,6 +25,7 @@ import structlog
 from jentic_one.broker.core.denial import DenialReason
 from jentic_one.broker.core.exceptions import (
     ActionDeniedError,
+    AgentDirective,
     BrokerError,
     CredentialIdentityMismatchError,
     direct_action_denied_directive,
@@ -34,7 +35,10 @@ from jentic_one.broker.core.exceptions import (
 )
 from jentic_one.broker.services.credentials.connect_target import resolve_connect_target
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
-from jentic_one.broker.services.credentials.provisioning import open_session_provisioning_url
+from jentic_one.broker.services.credentials.provisioning import (
+    open_edit_provisioning_url,
+    open_session_provisioning_url,
+)
 from jentic_one.broker.services.credentials.resolver import ResolvedCredential
 from jentic_one.shared.access_guidance import ConnectTarget
 from jentic_one.shared.auth.identity import Identity
@@ -346,6 +350,7 @@ async def _deny(
     operation_id: str | None = None,
     operation_method: str | None = None,
     operation_path: str | None = None,
+    directive: AgentDirective | None = None,
 ) -> NoReturn:
     """Count, record (``PBAC_DENIED``) and raise a rule-level ``action_denied``.
 
@@ -389,7 +394,7 @@ async def _deny(
         detail=detail,
         type="action_denied",
         instance=instance,
-        directive=direct_action_denied_directive(),
+        directive=directive or direct_action_denied_directive(),
     )
 
 
@@ -551,6 +556,13 @@ async def authorize_execution(
                 "or attach a rule set."
                 if no_rules
                 else "The requested operation is denied by a credential-binding permission rule."
+            ),
+            directive=direct_action_denied_directive(
+                credential_id=selected_credential.credential_id,
+                suggested_rules=suggested_permission_rules(method=method, path=path),
+                open_edit_url=await open_edit_provisioning_url(
+                    ctx, identity=identity, credential_id=selected_credential.credential_id
+                ),
             ),
         )
 

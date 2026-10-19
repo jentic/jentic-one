@@ -45,11 +45,13 @@ const connectWaitDefault = 5 * time.Minute
 var errConnectSessionEnded = errors.New("connect session ended or replaced by a newer request")
 
 // connectTerminalStatuses ends the --wait loop
-// (GET /connect-sessions/{id}/status: pending|polling|connected|failed|expired).
+// (GET /connect-sessions/{id}/status: pending|polling|connected|applied|failed|expired;
+// applied is an edit session's success).
 // A rejection arrives as failed with error_code "rejected", a cancel as failed
 // with error_code "cancelled".
 var connectTerminalStatuses = map[string]bool{
 	"connected": true,
+	"applied":   true,
 	"failed":    true,
 	"expired":   true,
 }

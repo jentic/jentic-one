@@ -61,17 +61,25 @@ from jentic_one.control.services.credentials.service import CredentialService
 from jentic_one.control.services.integrations.connect_session_service import (
     ApiTarget,
     ConnectSessionService,
+    SessionAmend,
 )
+from jentic_one.control.services.integrations.edits import EditRequest, RuleAdd
 from jentic_one.control.services.integrations.errors import (
+    AmendFieldsMismatchError,
     AuthTypeNotDeclaredError,
     AuthTypeRequiredError,
     ConnectOpenError,
+    EditBindingNotFoundError,
+    EditOpenError,
     InvalidOAuthAppRegistrationError,
+    InvalidPollTokenError,
     ManualFlowsDisabledError,
     NoDeclaredSchemeError,
     NoOpForFlowError,
+    PointsAtAccessError,
     RecentlyRejectedError,
     ReservedAuthFieldError,
+    ScopesNotSupportedError,
     SecuritySchemesLookupUnavailableError,
     TooManyOpenSessionsError,
     UnknownApiError,
@@ -84,6 +92,7 @@ from jentic_one.control.services.vendors.service import (
     VendorNotConfiguredError,
     VendorRegistryService,
 )
+from jentic_one.control.web.errors import check_access_directive
 from jentic_one.control.web.routers.credentials import binding_access_response
 from jentic_one.control.web.schemas.permission_rules import PermissionRuleSchema
 from jentic_one.mcp import approvals
@@ -1974,6 +1983,216 @@ async def handle_show_access(env: CallEnv, arguments: dict[str, Any]) -> mcp_typ
     return tool_result(env.ctx, payload)
 
 
+# ── request_access_change / amend_request ─────────────────────────────────────
+
+_REQUEST_ACCESS_CHANGE_PARAMS = [
+    ParamSpec("credential_id", "string"),
+    ParamSpec("rules", "json"),
+    ParamSpec("scopes", "string_list"),
+    ParamSpec("resume", "json"),
+    ParamSpec("reason", "string"),
+]
+_AMEND_REQUEST_PARAMS = [
+    ParamSpec("session_id", "string"),
+    ParamSpec("rules", "json"),
+    ParamSpec("scopes", "string_list"),
+    ParamSpec("resume", "json"),
+    ParamSpec("reason", "string"),
+    ParamSpec("requested_permission_rules", "json", ("permission_rules",)),
+    ParamSpec("requested_scopes", "string_list"),
+]
+
+#: Go: ``requestAccessChangeInstruction`` in ``mcp_access.go``.
+_REQUEST_ACCESS_CHANGE_INSTRUCTION = (
+    "Relay the approval_url to your human operator — they review the change in the browser; "
+    "you cannot approve it yourself. Once they confirm, check it with show_access and retry "
+    "the call that was blocked. To change the request before then, use amend_request rather "
+    "than asking again."
+)
+
+
+def _edit_rule_list(raw: Any, field: str) -> list[dict[str, object]]:
+    """Validate a rule list with the route's schema; the route's wire shape back."""
+    if not isinstance(raw, list):
+        raise invalid_params(f"{field} must be a list of rule objects")
+    if len(raw) > _REQUEST_CONNECTION_RULES_MAX:
+        raise invalid_params(
+            f"{field} must list at most {_REQUEST_CONNECTION_RULES_MAX} rules, got {len(raw)}"
+        )
+    rules: list[dict[str, object]] = []
+    for idx, item in enumerate(raw):
+        try:
+            rules.append(PermissionRuleSchema.model_validate(item).model_dump(exclude_none=True))
+        except ValidationError as exc:
+            reasons = "; ".join(str(e.get("msg", "")) for e in exc.errors())
+            raise invalid_params(f"{field}[{idx}]: {reasons}") from None
+    return rules
+
+
+def _edit_request(args: dict[str, Any]) -> EditRequest:
+    """The edit ask in a tool call's arguments (Go: ``editInputFromArgs``)."""
+    rules = args.get("rules") or {}
+    if not isinstance(rules, dict):
+        raise invalid_params('rules must be an object {"add": […], "remove": […]} or {"set": […]}')
+    if rules.get("set") is not None and (rules.get("add") or rules.get("remove")):
+        raise invalid_params("pass either add/remove or set, not both")
+    adds: list[RuleAdd] = []
+    for idx, item in enumerate(rules.get("add") or []):
+        wrapped = isinstance(item, dict) and isinstance(item.get("rule"), dict)
+        rule = item["rule"] if wrapped else item
+        before = item.get("before") if wrapped else None
+        (validated,) = _edit_rule_list([rule], f"rules.add[{idx}]")
+        adds.append(RuleAdd(rule=validated, before=before or None))
+    remove = rules.get("remove") or []
+    if not isinstance(remove, list) or not all(isinstance(r, str) for r in remove):
+        raise invalid_params("rules.remove must be a list of rule ids")
+    resume = args.get("resume", False)
+    if not isinstance(resume, bool):
+        raise invalid_params("resume must be true or false")
+    reason = args.get("reason") or None
+    if reason is not None and len(reason) > _REQUEST_CONNECTION_REASON_MAX:
+        raise invalid_params(
+            f"reason must be at most {_REQUEST_CONNECTION_REASON_MAX} characters, got {len(reason)}"
+        )
+    return EditRequest(
+        add=adds,
+        remove=list(remove),
+        set_rules=(
+            _edit_rule_list(rules["set"], "rules.set") if rules.get("set") is not None else None
+        ),
+        add_scopes=list(args.get("scopes") or []),
+        resume=resume,
+        reason=reason,
+    )
+
+
+def _edit_refusal(env: CallEnv, exc: Exception, what: str) -> ToolError:
+    """A refused edit or amend as a coded error (Go: ``editErrorResult``)."""
+    extra: dict[str, Any] | None = None
+    next_tool = ""
+    if isinstance(exc, PointsAtAccessError) and exc.credential_id is not None:
+        extra = {
+            "agent_directive": check_access_directive(
+                credential_id=exc.credential_id, agent_id=exc.agent_id, base_url=env.base_url
+            )
+        }
+        next_tool = "show_access"
+    return ToolError(
+        CODE_RESOLVE_FAILED,
+        f"{what} was refused: {exc}",
+        actionable=(
+            "Your request didn't match your current access. Check it with show_access, then retry."
+            if next_tool
+            else "Fix the request the error names, then retry."
+        ),
+        next_tool=next_tool,
+        extra=extra,
+    )
+
+
+_EDIT_REFUSALS = (
+    PointsAtAccessError,
+    EditBindingNotFoundError,
+    ScopesNotSupportedError,
+    AmendFieldsMismatchError,
+    InvalidPollTokenError,
+    TooManyOpenSessionsError,
+)
+
+
+async def handle_request_access_change(
+    env: CallEnv, arguments: dict[str, Any]
+) -> mcp_types.CallToolResult:
+    """POST /integrations:edit-connection in-process (Go: ``handleRequestAccessChange``).
+
+    The caller is the agent whose binding changes (``agent_id`` is never an
+    argument). An edit already open for the binding comes back as that
+    session with ``next_tool: amend_request``; the poll token is never
+    surfaced.
+    """
+    args = normalize_tool_args(arguments, _REQUEST_ACCESS_CHANGE_PARAMS)
+    credential_id = args.get("credential_id", "")
+    if not credential_id:
+        raise invalid_params('request_access_change requires "credential_id"')
+    request = _edit_request(args)
+    require_permissions(env.identity, ["credentials:connect", "credentials:write"])
+    try:
+        created = await ConnectSessionService(env.ctx).create_edit_session(
+            credential_id=credential_id,
+            agent_id=env.identity.sub,
+            identity=env.identity,
+            request=request,
+        )
+    except EditOpenError as exc:
+        return tool_result(
+            env.ctx,
+            {
+                "schema_version": SCHEMA_VERSION,
+                "session_id": exc.session_id,
+                "already_open": True,
+                "instruction": "You already asked for a change to this binding and it is still "
+                "open: change it with amend_request instead of asking again.",
+                "next_tool": "amend_request",
+            },
+        )
+    except _EDIT_REFUSALS as exc:
+        raise _edit_refusal(env, exc, "the access change") from None
+    return tool_result(
+        env.ctx,
+        {
+            "schema_version": SCHEMA_VERSION,
+            "session_id": created.session_id,
+            "approval_url": created.approval_url,
+            "revision_id": created.revision_id,
+            "resolved_flow": created.resolved_flow,
+            "instruction": _REQUEST_ACCESS_CHANGE_INSTRUCTION,
+        },
+    )
+
+
+async def handle_amend_request(env: CallEnv, arguments: dict[str, Any]) -> mcp_types.CallToolResult:
+    """POST /connect-sessions/{id}:amend in-process (Go: ``handleAmendRequest``)."""
+    args = normalize_tool_args(arguments, _AMEND_REQUEST_PARAMS)
+    session_id = args.get("session_id", "")
+    if not session_id:
+        raise invalid_params('amend_request requires "session_id"')
+    fields = {k for k in args if k != "session_id"}
+    if not fields:
+        raise invalid_params("an amend must change something")
+    request = _edit_request(args)
+    require_permissions(env.identity, ["credentials:connect", "credentials:write"])
+    amend = SessionAmend(
+        fields=frozenset(fields),
+        rules=request if "rules" in fields else None,
+        resume=request.resume,
+        reason=request.reason,
+        requested_permission_rules=(
+            _edit_rule_list(args["requested_permission_rules"], "requested_permission_rules")
+            if "requested_permission_rules" in fields
+            else None
+        ),
+        requested_scopes=list(args["requested_scopes"]) if "requested_scopes" in fields else None,
+        add_scopes=request.add_scopes,
+    )
+    try:
+        amended = await ConnectSessionService(env.ctx).amend_session(
+            session_id, identity=env.identity, amend=amend
+        )
+    except _EDIT_REFUSALS as exc:
+        raise _edit_refusal(env, exc, "the amend") from None
+    return tool_result(
+        env.ctx,
+        {
+            "schema_version": SCHEMA_VERSION,
+            "session_id": amended.session_id,
+            "revision_id": amended.revision_id,
+            "revision_number": amended.revision_number,
+            "instruction": "Amended. The approval_url is unchanged; tell your human user the "
+            "request changed so they review the new version.",
+        },
+    )
+
+
 # ── dispatch ──────────────────────────────────────────────────────────────────
 
 #: name → handler for every tool this mount serves (must cover
@@ -1989,6 +2208,8 @@ HANDLERS: dict[str, Handler] = {
     "get_execution_result": handle_get_execution_result,
     "request_connection": handle_request_connection,
     "show_access": handle_show_access,
+    "request_access_change": handle_request_access_change,
+    "amend_request": handle_amend_request,
 }
 
 

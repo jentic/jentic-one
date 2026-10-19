@@ -36,6 +36,15 @@ _OPEN_SESSION_FOR_API = text(
 )
 
 
+# An agent's open edit of one binding (at most one: the open-edit index).
+_OPEN_EDIT_FOR_BINDING = text(
+    "SELECT cs.id FROM connect_sessions cs "
+    "WHERE cs.agent_id = :agent_id AND cs.credential_id = :credential_id "
+    "AND cs.intent = 'edit' AND cs.state IN ('created', 'awaiting_app', 'polling') "
+    "LIMIT 1"
+)
+
+
 class OpenConnectSessionReader:
     """Finds an agent's newest open connect session whose credential covers an API."""
 
@@ -51,6 +60,17 @@ class OpenConnectSessionReader:
                 await session.execute(
                     _OPEN_SESSION_FOR_API,
                     {"agent_id": agent_id, "vendor": vendor, "name": name, "version": version},
+                )
+            ).first()
+        return str(row[0]) if row is not None else None
+
+    async def find_open_edit_id(self, *, agent_id: str, credential_id: str) -> str | None:
+        """Return the agent's open edit session for one binding, or ``None``."""
+        async with self._control_db.session() as session:
+            row = (
+                await session.execute(
+                    _OPEN_EDIT_FOR_BINDING,
+                    {"agent_id": agent_id, "credential_id": credential_id},
                 )
             ).first()
         return str(row[0]) if row is not None else None
