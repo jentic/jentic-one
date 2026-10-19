@@ -112,12 +112,16 @@ class CredentialRepository:
         Widen the prefilter to also match the caller's raw (un-slugified) input so
         historical rows persisted before vendor normalization still surface as
         candidates; the final identity match is normalized in the resolver.
+
+        Rows are ordered by ``id`` so the ambiguity 409's candidate list and the
+        id its directive suggests are stable across calls.
         """
         normalized = slugify_api_field(api_vendor)
         result = await session.execute(
             select(Credential)
             .where(Credential.api_vendor.in_({api_vendor, normalized}))
             .options(*(raiseload(getattr(Credential, rel)) for rel in _CHILD_RELATIONSHIPS))
+            .order_by(Credential.id)
         )
         return list(result.scalars().all())
 
