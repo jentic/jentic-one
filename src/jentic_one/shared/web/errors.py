@@ -21,7 +21,25 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from jentic.problem_details import ProblemDetailException
 
+from jentic_one.shared.db.connectivity import redact_sql
+from jentic_one.shared.db.errors import DatabaseCommitOutcomeUnknownError, DatabaseUnavailableError
 from jentic_one.shared.state.backend import StateBackendCapacityError
+
+# The cap keeps the log line short.
+_MAX_LOGGED_DB_DETAIL = 200
+
+#: Client detail for a 503 whose write may already have been applied. It must
+#: not invite a blind retry, which could apply the write twice.
+DB_COMMIT_OUTCOME_UNKNOWN_DETAIL: Final = (
+    "The database connection was lost while saving; check whether the change "
+    "was applied before retrying."
+)
+
+#: Client details for the database errors every surface maps to a 503.
+DB_UNAVAILABLE_SAFE_DETAILS: Final[Mapping[type[Exception], str]] = {
+    DatabaseUnavailableError: "The database is temporarily unavailable; please retry.",
+    DatabaseCommitOutcomeUnknownError: DB_COMMIT_OUTCOME_UNKNOWN_DETAIL,
+}
 
 # ``ctx`` members that describe the *schema constraint* (never the submitted
 # value). Anything else in ``ctx`` — notably ``error``, which carries a custom
@@ -78,8 +96,39 @@ async def request_validation_error_handler(
     )
 
 
+def log_database_unavailable(
+    logger: Any, event: str, exc: DatabaseUnavailableError, **fields: Any
+) -> None:
+    """Log a transient database failure at warning level, without a traceback.
+
+    The chained SQLAlchemy cause renders the SQL statement and its bound
+    parameters, so only the exception and cause type names and the SQL-free
+    detail (capped) are logged.
+    """
+    cause = exc.__cause__
+    logger.warning(
+        event,
+        **fields,
+        error_type=type(exc).__name__,
+        cause=type(cause).__name__ if cause is not None else None,
+        error=redact_sql(exc.detail)[:_MAX_LOGGED_DB_DETAIL],
+    )
+
+
 ResponseHook = Callable[[Request, Exception, int, JSONResponse], JSONResponse]
 ServiceErrorHandler = Callable[[Request, Any], Coroutine[Any, Any, JSONResponse]]
+
+
+def _safe_detail_for(
+    exc: Exception, safe_details: Mapping[type[Exception], str] | None
+) -> str | None:
+    """The ``safe_details`` entry for the most specific class in ``exc``'s MRO."""
+    if not safe_details:
+        return None
+    for cls in type(exc).__mro__:
+        if cls in safe_details:
+            return safe_details[cls]
+    return None
 
 
 def make_service_error_handler(
@@ -96,11 +145,15 @@ def make_service_error_handler(
             (e.g. adding custom headers). Signature:
             ``(request, exc, status_code, response) -> response``.
         safe_details: Optional mapping from exception class to a static, generic
-            ``detail`` string to send to the client *instead* of ``str(exc)``. Use
+            ``detail`` string to send to the client *instead* of ``str(exc)``. The
+            most specific class in the exception's MRO wins, so a subclass can
+            override its parent's detail without its own ``error_map`` entry. Use
             this for infrastructure errors whose raw message would leak internals
             (e.g. a wrapped SQLAlchemy ``OperationalError`` carrying the full SQL
             statement, bound parameters, and connection URL — CWE-209). The raw
-            ``str(exc)`` is still logged server-side for diagnosis.
+            ``str(exc)`` is still logged server-side for diagnosis, except for
+            :class:`DatabaseUnavailableError`, which is logged by
+            :func:`log_database_unavailable` (type names and SQL-free detail).
     """
     logger = structlog.get_logger("jentic_one.shared.web.errors")
 
@@ -108,14 +161,23 @@ def make_service_error_handler(
         for error_cls in type(exc).__mro__:
             if error_cls in error_map:
                 status_code, type_slug = error_map[error_cls]
-                safe_detail = safe_details.get(error_cls) if safe_details else None
+                safe_detail = _safe_detail_for(exc, safe_details)
                 problem = ProblemDetailException(
                     status_code=status_code,
                     detail=safe_detail if safe_detail is not None else str(exc),
                     type=type_slug,
                     instance=request.url.path,
                 )
-                if status_code >= 500:
+                if isinstance(exc, DatabaseUnavailableError):
+                    log_database_unavailable(
+                        logger,
+                        "database_unavailable",
+                        exc,
+                        status=status_code,
+                        type=type_slug,
+                        path=request.url.path,
+                    )
+                elif status_code >= 500:
                     logger.error(
                         "unhandled_service_error",
                         status=status_code,
