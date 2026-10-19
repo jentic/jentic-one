@@ -134,3 +134,28 @@ Re-tested against a fake broker that records requests, then again with the real 
 
 Real chain after the fixes: `gh pr list` and `gh api` still return 200 with the stored
 credential at the upstream.
+
+### Re-check after the fixes (00773d369)
+
+Same harness as the review: a separate forwarder instance, a fake token file,
+and a capture server in place of the broker.
+
+| # | Result |
+|---|---|
+| R1 | ✅ 302 is returned to the client with its `Location`. The redirect target receives **no request** |
+| R2 | ✅ no `Jentic-*`, `Prefer` or `Idempotency-Key` reaches the broker side. The client's own `Authorization` is replaced |
+| R3 | ✅ the token isn't in the forwarder's argv |
+| R4 | ✅ chunked upload arrives with its full body (`content-length: 18`) |
+| R5 | ✅ `Link` and `ETag` reach the client |
+| R6 | ✅ `HEAD` is forwarded (the 501 seen came from the capture server, which doesn't implement HEAD) |
+| R7 | ✅ `502 {"error": "broker_unreachable"}` |
+| CONNECT / unmapped host | ✅ 403 / 403 |
+
+**R8, invocation grouping, via the broker as-is.** The broker stores the
+incoming W3C `traceparent` trace-id as `execution_records.trace_id`. Two
+calls sent with the same trace-id were both recorded with it, and
+`GET /executions?trace_id=<id>` returned exactly those two. The Monitor's
+trace view already groups by `trace_id`. A forwarder that sends one trace-id
+per invocation therefore gets per-invocation grouping with no broker change.
+`X-Jentic-Session-Id` is **not** stored on execution records; the broker only
+uses it for MCP session events.
