@@ -211,9 +211,14 @@ That last `extraEnv` is **required**, and the install fails without it. The
 pre-auth OAuth rate limiter keys on the client IP, so behind an ingress every
 request arrives from the controller's address and all clients share one bucket —
 a single noisy caller then rate-limits your whole fleet out of `/authorize`. Set
-it to the ingress controller's pod CIDR or IPs (or
+it to the ingress controller's pod CIDR or IPs (a comma-separated list of
+addresses and CIDR networks — escape each comma as `\,` under `--set`; an
+invalid entry fails startup), or
 `ingress.skipTrustedProxiesCheck=true` if you enforce rate limits upstream of
-the cluster). Bringing your own Ingress manifest instead works the same way:
+the cluster. Keep the range as narrow as your cluster allows: any pod inside a
+trusted network can set `X-Forwarded-For` and pick its own rate-limit identity,
+so `10.0.0.0/8` is only a sensible default when nothing untrusted shares it.
+Bringing your own Ingress manifest instead works the same way:
 point it at the `<release>-app` and `<release>-broker` Services on port 8000,
 and set the same key. Then walk through
 the [first brokered call](../guides/first-call.md).

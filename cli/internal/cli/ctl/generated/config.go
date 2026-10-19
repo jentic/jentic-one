@@ -1974,11 +1974,15 @@ type OAuthRateLimitConfig struct {
 	// registration (``POST /oauth-clients``).
 	RegistrationRpm int `json:"registration_rpm,omitempty,omitzero" yaml:"registration_rpm,omitempty" mapstructure:"registration_rpm,omitempty"`
 
-	// Socket IPs of reverse proxies whose ``X-Forwarded-For`` header is honored when
-	// deriving the per-client rate-limit identity. Empty (default) means the socket
+	// Reverse proxies whose ``X-Forwarded-For`` header is honored when deriving the
+	// per-client rate-limit identity: IP addresses or CIDR networks (e.g.
+	// ``10.0.0.0/8``, ``fd00::/8``), matched against the socket address and each
+	// forwarded hop by network membership. Accepts a YAML list or a comma-separated
+	// string. Invalid entries fail config load. Empty (default) means the socket
 	// address is used as-is — behind a reverse proxy every request then carries the
-	// proxy's IP and all clients share one bucket, so list the proxy IPs when
-	// deploying behind one.
+	// proxy's IP and all clients share one bucket, so list the proxy IPs or pod CIDR
+	// when deploying behind one. Only list ranges your proxies alone hold: any host
+	// inside a trusted network can choose its own rate-limit identity.
 	TrustedProxies []string `json:"trusted_proxies,omitempty,omitzero" yaml:"trusted_proxies,omitempty" mapstructure:"trusted_proxies,omitempty"`
 }
 
