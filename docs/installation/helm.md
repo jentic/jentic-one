@@ -211,9 +211,14 @@ That last `extraEnv` is **required**, and the install fails without it. The
 pre-auth OAuth rate limiter keys on the client IP, so behind an ingress every
 request arrives from the controller's address and all clients share one bucket —
 a single noisy caller then rate-limits your whole fleet out of `/authorize`. Set
-it to the ingress controller's pod CIDR or IPs (or
+it to the ingress controller's pod CIDR or IPs (a comma-separated list of
+addresses and CIDR networks — escape each comma as `\,` under `--set`; an
+invalid entry fails startup), or
 `ingress.skipTrustedProxiesCheck=true` if you enforce rate limits upstream of
-the cluster). Bringing your own Ingress manifest instead works the same way:
+the cluster. Keep the range as narrow as your cluster allows: any pod inside a
+trusted network can set `X-Forwarded-For` and pick its own rate-limit identity,
+so `10.0.0.0/8` is only a sensible default when nothing untrusted shares it.
+Bringing your own Ingress manifest instead works the same way:
 point it at the `<release>-app` and `<release>-broker` Services on port 8000,
 and set the same key. Then walk through
 the [first brokered call](../guides/first-call.md).
@@ -445,10 +450,51 @@ later rollback still decrypts what was written under the new key)
 
 ## Scaling and HA
 
+> **Warning: the default `memory` shared-state backend is bounded and fails
+> closed.**
+> `broker.resilience.backend.backend: memory` keeps `Idempotency-Key`
+> records, rate-limit buckets, circuit-breaker counters and the auth
+> surface's single-use markers in the process, with a fixed budget per key
+> namespace. It never evicts a live entry. When a namespace (or one caller's
+> share of it) is full, the request that needed the write gets a **503**
+> (`idempotency_unavailable` for an `Idempotency-Key` request) with a
+> `Retry-After` of when its earliest entry expires.
+>
+> With the defaults (`broker.idempotency.ttl_s` unset, which is a 1 h replay
+> window on memory and 24 h on redis; the `idem` budget of 128 MiB; about
+> 1.2 KiB budgeted per record with typical response headers), one broker
+> process sustains about **30 idempotent requests per second**, and about
+> **3 per second per caller**, because each caller may hold at most 10% of
+> the budget. Above that, `Idempotency-Key` requests get 503. Stored
+> response bodies have their own 32 MiB `idem-body` budget. Past about
+> 5 req/s of 1 KiB bodies, replays omit the body
+> (`Jentic-Idempotency-Body-Omitted: true`) but requests are not refused.
+> The ceiling is `min(max_entries, max_bytes / record_bytes) / ttl_s`, where
+> `record_bytes` is about 1000 bytes plus the response headers. A record keeps
+> at most 512 bytes of headers, `Content-Type`, `Location`, `ETag`,
+> `Content-Location` and `Retry-After` first, so a replay may lack the
+> others.
+>
+> Every other namespace defaults to 16 MiB, and all namespaces of one
+> backend together are capped at
+> `broker.resilience.backend.memory.max_total_bytes` (192 MiB), refused the
+> same way. The budgets track real memory to within about 15% (measured
+> with `tracemalloc`), so on the defaults the broker's state stays under
+> about 192 MiB on top of a ~130 MiB process baseline, which the broker
+> chart's 512Mi memory limit holds. The broker always runs as its own
+> process; the combined app holds one such backend each for the auth and
+> control surfaces.
+>
+> To raise it: raise `broker.resilience.backend.memory.namespaces.idem`
+> (and its `max_owner_share`) together with `max_total_bytes`, or lower
+> `broker.idempotency.ttl_s`. Raise the container memory limit by at least
+> as much as you raise the budgets.
+
 Every subchart exposes `replicas` and `resources` in its values
 (`--set broker.replicas=3`). The defaults are sized for evaluation, not
-load: broker/registry/control request 100m/128Mi with a 500m/256Mi limit,
-and app/admin request 256Mi with a 1Gi limit. The app's floor is real, not
+load: registry/control request 100m/128Mi with a 500m/256Mi limit, the
+broker requests 100m/256Mi with a 500m/512Mi limit (its default `memory`
+shared-state budgets, above), and app/admin request 256Mi with a 1Gi limit. The app's floor is real, not
 a hint: it boots at roughly 150Mi RSS, and every concurrent password or
 OAuth client-secret verification adds 64Mi (argon2id with
 `memory_cost=65536`) — so a handful of simultaneous logins on a 256Mi limit

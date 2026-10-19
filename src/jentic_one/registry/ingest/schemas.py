@@ -16,6 +16,24 @@ class HeldHostChange(BaseModel):
     new_hosts: list[str]
 
 
+class ServerUrlChanges(BaseModel):
+    """What ingest did to the spec's declared server URLs (capped samples plus counts).
+
+    Shown on the import job result so the importer sees the host a relative
+    server resolved to before binding a credential to the API.
+    """
+
+    #: Absolute URLs relative servers resolved to.
+    resolved: list[str]
+    resolved_count: int
+    #: Unresolvable URLs removed from a list that kept an absolute server.
+    dropped: list[str]
+    dropped_count: int
+    #: Unresolvable URLs kept as declared; the operations they cover are inspect-only.
+    unresolved: list[str]
+    unresolved_count: int
+
+
 class IngestResult(BaseModel):
     """Result of a successful ingest operation."""
 
@@ -33,3 +51,5 @@ class IngestResult(BaseModel):
     #: Set when the revision was held as a DRAFT for operator review because it
     #: would change the server hosts of an API with bound credentials.
     held_host_change: HeldHostChange | None = None
+    #: Set when ingest resolved, dropped, or kept back a relative server URL.
+    server_url_changes: ServerUrlChanges | None = None

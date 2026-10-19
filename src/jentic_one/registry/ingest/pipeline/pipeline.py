@@ -16,6 +16,7 @@ from jentic_one.registry.ingest.stages.extract_operations import ExtractOperatio
 from jentic_one.registry.ingest.stages.extract_security import ExtractSecuritySchemesStage
 from jentic_one.registry.ingest.stages.extract_servers import ExtractServersStage
 from jentic_one.registry.ingest.stages.persist import FinalizeStage, StoreSpecFileStage
+from jentic_one.registry.ingest.stages.resolve_servers import ResolveServerUrlsStage
 from jentic_one.registry.ingest.stages.search_text import BuildSearchTextForOperationsStage
 from jentic_one.registry.ingest.stages.url_index import BuildURLIndexStage
 from jentic_one.registry.ingest.stages.validation import ValidateOpenAPISpec
@@ -62,6 +63,7 @@ class PipelineFactory:
         if spec.spec_type == SpecType.OPENAPI:
             stages: list[BasePipelineStage] = [
                 ValidateOpenAPISpec(),
+                ResolveServerUrlsStage(),
                 ResolveApiStage(),
                 CreateDraftRevisionStage(),
                 ExtractOperationsStage(),

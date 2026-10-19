@@ -199,7 +199,7 @@ def _source(
 async def _import(ctx: Context, schemes: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
     result = await ImportHandler(ctx).execute(
         job_id=f"job_{uuid.uuid4().hex[:20]}",
-        session=None,
+        db=None,
         payload={"sources": [_source(schemes, **kwargs)]},
         created_by="usr_writer",
     )

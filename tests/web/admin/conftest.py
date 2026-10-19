@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Iterator
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import delete
 
+from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.admin.core.schema.invite_tokens import InviteToken
 from jentic_one.admin.core.schema.user_permission_grants import UserPermissionGrant
 from jentic_one.admin.core.schema.user_secrets import UserSecret
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import (
+    ExecutionRecordRepository,
     UserPermissionGrantRepository,
     UserRepository,
     UserSecretRepository,
@@ -95,6 +98,38 @@ async def managed_user_id(web_context: Context) -> AsyncGenerator[str, None]:
             delete(UserPermissionGrant).where(UserPermissionGrant.user_id == user.id)
         )
         await session.execute(delete(User).where(User.id == user.id))
+        await session.commit()
+
+
+@pytest.fixture()
+async def two_toolkit_executions(web_context: Context) -> AsyncGenerator[list[str], None]:
+    """Two execution records attributed to different historical toolkits.
+
+    The table is emptied around the test so list/aggregate assertions are exact.
+    """
+    ctx = web_context
+    started_at = datetime.now(UTC) - timedelta(minutes=5)
+    async with ctx.admin_db.session() as session:
+        await session.execute(delete(ExecutionRecord))
+        ids = []
+        for i, toolkit_id in enumerate(("tk_alpha00000000000000000", "tk_beta000000000000000000")):
+            record = await ExecutionRecordRepository.create(
+                session,
+                toolkit_id=toolkit_id,
+                trace_id=f"trace_toolkit_{i}",
+                started_at=started_at,
+                status="completed",
+                duration_ms=100,
+                created_by="usr_test",
+                actor_id="usr_test",
+                actor_type="user",
+            )
+            ids.append(record.id)
+        await session.commit()
+    yield ids
+
+    async with ctx.admin_db.session() as session:
+        await session.execute(delete(ExecutionRecord))
         await session.commit()
 
 

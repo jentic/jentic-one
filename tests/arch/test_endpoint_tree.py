@@ -14,9 +14,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
+from pathlib import Path
 
 import pytest
 from fastapi import APIRouter, FastAPI
+from fastapi.testclient import TestClient
 from tools.endpoint_tree import (
     ENDPOINTS_JSON,
     ENDPOINTS_MD,
@@ -27,6 +29,8 @@ from tools.endpoint_tree import (
     render_markdown,
 )
 
+from jentic_one.__main__ import _build_app, _build_context
+from jentic_one.shared.config import load_config
 from jentic_one.shared.models.actors import ActorType
 from jentic_one.shared.web.deps import get_current_identity
 from jentic_one.shared.web.endpoint_permissions import (
@@ -51,6 +55,9 @@ from jentic_one.shared.web.endpoint_reference import (
     build_reference_payload,
     collect_endpoints,
 )
+
+#: Dependency-free config for building apps (no DB connection is opened).
+DEFAULT_CONFIG = Path(__file__).resolve().parent.parent.parent / "config" / "local-sqlite.yaml"
 
 
 def _ep(
@@ -403,6 +410,34 @@ def test_live_reference_matches_committed() -> None:
         "Live GET /reference/endpoints.json (broker=None) differs from committed "
         "docs/reference/endpoints.json. The broker surface declaration or the "
         "committed file is stale; run `make endpoints` and reconcile."
+    )
+
+
+#: Split-deploy shapes that serve the docs SPA / ``/reference``: a pure standalone
+#: admin, and the admin+auth pod the Docker/Helm admin image runs.
+_SPLIT_REFERENCE_SHAPES: list[list[str]] = [["admin"], ["admin", "auth"]]
+
+
+@pytest.mark.arch
+@pytest.mark.parametrize("apps", _SPLIT_REFERENCE_SHAPES, ids=lambda apps: "+".join(apps))
+def test_split_deploy_reference_matches_committed(apps: list[str]) -> None:
+    """A process serving part of the control plane documents all of it (#1445).
+
+    In split mode the gateway routes ``/reference`` to the admin backend, which
+    mounts only its own routes. The reference it serves must still be the whole
+    control-plane payload — identical to the committed file — not just the routes
+    that happen to run in-process.
+    """
+    config = load_config(DEFAULT_CONFIG)
+    app = _build_app(_build_context(config, apps), apps)
+    # No ``with``: the lifespan (DB startup) is not needed to serve the reference.
+    resp = TestClient(app).get("/reference/endpoints.json")
+    assert resp.status_code == 200, resp.text
+    committed = json.loads(ENDPOINTS_JSON.read_text(encoding="utf-8"))
+    committed.pop("_generated", None)
+    assert resp.json() == committed, (
+        f"GET /reference/endpoints.json on apps={apps} differs from the committed "
+        "docs/reference/endpoints.json — it must document every control-plane surface."
     )
 
 

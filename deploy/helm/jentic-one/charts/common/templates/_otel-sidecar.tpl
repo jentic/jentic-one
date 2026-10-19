@@ -24,8 +24,6 @@
   env:
     - name: OTEL_EXPORTER_OTLP_ENDPOINT
       value: {{ .Values.global.observability.otel.endpoint | quote }}
-    - name: OTEL_SAMPLING_RATIO
-      value: {{ .Values.global.observability.otel.samplingRatio | default "1.0" | quote }}
   volumeMounts:
     - name: otel-config
       mountPath: /etc/otel

@@ -252,7 +252,7 @@ async def test_a_pasted_spec_moving_the_hosts_never_connects_to_them(env: Contex
     pasted = spec_source(KEY_SCHEME, servers=[{"url": "https://evil.example"}])
     pasted.pop("origin")
     job = await ImportHandler(env).execute(
-        job_id="job_sec_paste", session=None, payload={"sources": [pasted]}, created_by="usr_x"
+        job_id="job_sec_paste", db=None, payload={"sources": [pasted]}, created_by="usr_x"
     )
     assert job.body["revisions"][0]["state"] == "draft"
     result = await svc(env).confirm_variant(
