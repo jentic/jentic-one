@@ -9,6 +9,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 from jentic_one.shared.db.connectivity import (
     connection_loss_cause,
     describe_connection_loss,
+    involves_database_error,
     is_connection_loss,
     redact_sql,
 )
@@ -156,3 +157,42 @@ def test_describe_and_redact_strip_sql_from_wrapped_strings() -> None:
         assert "secret-value" not in text
         assert "gone" in text
     assert redact_sql("plain message") == "plain message"
+
+
+def _chained(error: BaseException, *, via_context: bool = False) -> TypeError:
+    """A bug raised while handling ``error`` (``raise ... from`` or implicitly)."""
+    bug = TypeError("bad argument")
+    if via_context:
+        bug.__context__ = error
+    else:
+        bug.__cause__ = error
+    return bug
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        pytest.param(OperationalError("SELECT 1", {}, Exception("x")), id="sqlalchemy"),
+        pytest.param(asyncpg.exceptions.ConnectionDoesNotExistError("closed"), id="driver"),
+        pytest.param(asyncpg.InterfaceError("closed"), id="driver-interface"),
+        pytest.param(DatabaseUnavailableError("lost"), id="domain"),
+        pytest.param(_chained(DatabaseUnavailableError("lost")), id="cause"),
+        pytest.param(_chained(IntegrityError("I", {}, Exception())), id="context"),
+        pytest.param(_wrapped(_AdapterError("adapter")), id="dbapi-orig"),
+    ],
+)
+def test_involves_database_error_matches_any_chained_database_error(exc: BaseException) -> None:
+    """A traceback renders every chained message, so a DB error anywhere counts."""
+    assert involves_database_error(exc)
+
+
+def test_involves_database_error_follows_implicit_context() -> None:
+    assert involves_database_error(_chained(DatabaseUnavailableError("lost"), via_context=True))
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [TypeError("bug"), RuntimeError("runner crashed"), _chained(KeyError("k"))],
+)
+def test_involves_database_error_ignores_other_errors(exc: BaseException) -> None:
+    assert not involves_database_error(exc)

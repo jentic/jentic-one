@@ -66,7 +66,7 @@ def _source(servers: list[dict[str, Any]], schemes: dict[str, Any]) -> dict[str,
 async def _import(ctx: Context, source: dict[str, Any]) -> dict[str, Any]:
     result = await ImportHandler(ctx).execute(
         job_id=f"job_{uuid.uuid4().hex[:20]}",
-        session=None,
+        db=None,
         payload={"sources": [source]},
         created_by="usr_writer",
     )

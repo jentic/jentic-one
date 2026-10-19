@@ -30,6 +30,7 @@ from jentic_one.registry.services.errors import RegistryServiceError
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseIntegrityError
+from jentic_one.shared.db.protocols import TransactionalDatabase
 from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.jobs.handlers import JobResultPayload
 from jentic_one.shared.models import (
@@ -87,13 +88,17 @@ class ImportHandler:
     async def execute(
         self,
         job_id: str,
-        session: Any,
+        db: TransactionalDatabase | None,
         *,
         payload: dict[str, Any] | None = None,
         created_by: str | None = None,
         actor_type: str | None = None,
     ) -> JobResultPayload:
-        """Process import sources and create draft ApiRevisions."""
+        """Process import sources and create draft ApiRevisions.
+
+        ``db`` is the worker's database, unused here: the import writes through
+        the ``Context`` databases in its own transactions.
+        """
         bind_contextvars(job_id=job_id)
         if created_by is None:
             raise IngestJobError("import job is missing the triggering actor (created_by)")

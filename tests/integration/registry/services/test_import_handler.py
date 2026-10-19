@@ -99,13 +99,13 @@ async def test_reimport_identical_content_is_idempotent(
     }
 
     first = await handler.execute(
-        job_id=str(uuid.uuid4()), session=None, payload=payload, created_by="usr_test"
+        job_id=str(uuid.uuid4()), db=None, payload=payload, created_by="usr_test"
     )
     first_revision_id = first.body["revisions"][0]["revision_id"]
 
     # Re-import the exact same content — must succeed, not raise.
     second = await handler.execute(
-        job_id=str(uuid.uuid4()), session=None, payload=payload, created_by="usr_test"
+        job_id=str(uuid.uuid4()), db=None, payload=payload, created_by="usr_test"
     )
     second_revision = second.body["revisions"][0]
     assert second_revision["state"] == "draft"
@@ -146,7 +146,7 @@ async def test_reimport_after_sibling_failure_is_idempotent(
 
     await handler.execute(
         job_id=str(uuid.uuid4()),
-        session=None,
+        db=None,
         payload={"sources": [good_source, bad_source]},
         created_by="usr_test",
     )
@@ -158,7 +158,7 @@ async def test_reimport_after_sibling_failure_is_idempotent(
     # Re-importing the same good content must not collide.
     result = await handler.execute(
         job_id=str(uuid.uuid4()),
-        session=None,
+        db=None,
         payload={"sources": [good_source]},
         created_by="usr_test",
     )
@@ -195,7 +195,7 @@ async def test_reimport_over_active_revision_surfaces_readable_error(
     }
 
     first = await handler.execute(
-        job_id=str(uuid.uuid4()), session=None, payload=payload, created_by="usr_test"
+        job_id=str(uuid.uuid4()), db=None, payload=payload, created_by="usr_test"
     )
     revision_id = uuid.UUID(first.body["revisions"][0]["revision_id"])
 
@@ -208,7 +208,7 @@ async def test_reimport_over_active_revision_surfaces_readable_error(
 
     with pytest.raises(IngestJobError) as exc_info:
         await handler.execute(
-            job_id=str(uuid.uuid4()), session=None, payload=payload, created_by="usr_test"
+            job_id=str(uuid.uuid4()), db=None, payload=payload, created_by="usr_test"
         )
 
     message = str(exc_info.value)
@@ -226,7 +226,7 @@ async def test_execute_inline_source(
     handler = ImportHandler(integration_context)
     result = await handler.execute(
         job_id=str(uuid.uuid4()),
-        session=None,
+        db=None,
         payload={
             "sources": [
                 {
@@ -266,7 +266,7 @@ async def test_partial_failure_skips_bad_source(
     handler = ImportHandler(integration_context)
     result = await handler.execute(
         job_id=str(uuid.uuid4()),
-        session=None,
+        db=None,
         payload={
             "sources": [
                 {
@@ -306,7 +306,7 @@ async def test_all_sources_failing_raises(
     with pytest.raises(IngestJobError, match=r"all .* source.*failed"):
         await handler.execute(
             job_id=str(uuid.uuid4()),
-            session=None,
+            db=None,
             payload={
                 "sources": [
                     {
@@ -356,7 +356,7 @@ async def _import_base(
     """Import a base spec with the given origin (imported + promoted to current)."""
     result = await handler.execute(
         job_id=str(uuid.uuid4()),
-        session=None,
+        db=None,
         payload={
             "sources": [
                 {
@@ -427,7 +427,7 @@ async def test_overlay_materialization_rewrites_served_spec_and_links_revision(
     )
     result = await handler.execute(
         job_id=str(uuid.uuid4()),
-        session=None,
+        db=None,
         payload={
             "sources": [
                 {
@@ -513,7 +513,7 @@ async def test_overlay_rollback_restores_superseded_revision(
     # Materialize the overlay (the job the confirm would enqueue).
     result = await handler.execute(
         job_id=str(uuid.uuid4()),
-        session=None,
+        db=None,
         payload={
             "sources": [
                 {
@@ -622,7 +622,7 @@ async def test_overlay_rollback_restores_published_base_as_published(
 
     await handler.execute(
         job_id=str(uuid.uuid4()),
-        session=None,
+        db=None,
         payload={
             "sources": [
                 {
@@ -761,7 +761,7 @@ async def test_overlay_rollback_refused_when_another_vendor_now_serves_the_host(
     overlaid["servers"] = [{"url": "https://new.example.com"}]
     result = await handler.execute(
         job_id=str(uuid.uuid4()),
-        session=None,
+        db=None,
         payload={
             "sources": [
                 {
@@ -839,7 +839,7 @@ async def _rematerialize_via_service(
     assert "overlaid_spec" in captured, "re-materialize did not enqueue a job"
     result = await handler.execute(
         job_id=str(uuid.uuid4()),
-        session=None,
+        db=None,
         payload={
             "sources": [
                 {
@@ -982,7 +982,7 @@ async def _rematerialize_via_service_first(
     """Run the initial materialize job (confirm path) and flip the overlay to CONFIRMED."""
     result = await handler.execute(
         job_id=str(uuid.uuid4()),
-        session=None,
+        db=None,
         payload={
             "sources": [
                 {
@@ -1072,7 +1072,7 @@ async def test_stacked_overlay_confirm_captures_prior_overlay_as_superseded(
     async def _materialize(overlay_id: str, url: str) -> uuid.UUID:
         result = await handler.execute(
             job_id=str(uuid.uuid4()),
-            session=None,
+            db=None,
             payload={
                 "sources": [
                     {
@@ -1170,7 +1170,7 @@ async def test_authorized_supersede_reimport_deprecates_overlay(
     # Materialize + confirm the overlay so it is the live served revision.
     result = await handler.execute(
         job_id=str(uuid.uuid4()),
-        session=None,
+        db=None,
         payload={
             "sources": [
                 {
@@ -1230,7 +1230,7 @@ async def test_authorized_supersede_reimport_deprecates_overlay(
     # The scope-checked enqueue path stamps supersede_active + supersede_overlay_id.
     reimport = await handler.execute(
         job_id=str(uuid.uuid4()),
-        session=None,
+        db=None,
         payload={
             "sources": [
                 {
@@ -1301,7 +1301,7 @@ async def test_authorized_supersede_reimport_deprecates_overlay(
     with patch("jentic_one.registry.ingest.fetch.httpx.AsyncClient", return_value=mock_client):
         retry = await handler.execute(
             job_id=str(uuid.uuid4()),
-            session=None,
+            db=None,
             payload={
                 "sources": [
                     {
@@ -1379,7 +1379,7 @@ async def test_supersede_deprecates_overlay_backing_archived_revision(
     # CONFIRMED and link confirmed_revision_id to the served revision (what confirm does).
     materialize = await handler.execute(
         job_id=str(uuid.uuid4()),
-        session=None,
+        db=None,
         payload={
             "sources": [
                 {
@@ -1439,7 +1439,7 @@ async def test_supersede_deprecates_overlay_backing_archived_revision(
     )
     reimport = await handler.execute(
         job_id=str(uuid.uuid4()),
-        session=None,
+        db=None,
         payload={
             "sources": [
                 {
@@ -1510,7 +1510,7 @@ async def test_supersede_deprecates_target_when_no_race(
 
     materialize = await handler.execute(
         job_id=str(uuid.uuid4()),
-        session=None,
+        db=None,
         payload={
             "sources": [
                 {
@@ -1568,7 +1568,7 @@ async def test_supersede_deprecates_target_when_no_race(
     )
     await handler.execute(
         job_id=str(uuid.uuid4()),
-        session=None,
+        db=None,
         payload={
             "sources": [
                 {
@@ -1635,7 +1635,7 @@ async def test_supersede_recovers_overlay_in_lazy_link_window(
 
     materialize = await handler.execute(
         job_id=str(uuid.uuid4()),
-        session=None,
+        db=None,
         payload={
             "sources": [
                 {
@@ -1695,7 +1695,7 @@ async def test_supersede_recovers_overlay_in_lazy_link_window(
     )
     await handler.execute(
         job_id=str(uuid.uuid4()),
-        session=None,
+        db=None,
         payload={
             "sources": [
                 {
@@ -1782,7 +1782,7 @@ async def test_supersede_falls_back_to_enqueue_id_when_no_backing_overlay(
     )
     await handler.execute(
         job_id=str(uuid.uuid4()),
-        session=None,
+        db=None,
         payload={
             "sources": [
                 {
@@ -1893,7 +1893,7 @@ async def test_overlay_materialization_archives_active_revision_of_other_origin(
     )
     result = await handler.execute(
         job_id=str(uuid.uuid4()),
-        session=None,
+        db=None,
         payload={
             "sources": [
                 {
@@ -1973,7 +1973,7 @@ async def test_overlay_materialization_supersedes_published_base(
     )
     result = await handler.execute(
         job_id=str(uuid.uuid4()),
-        session=None,
+        db=None,
         payload={
             "sources": [
                 {
@@ -2069,7 +2069,7 @@ async def test_overlay_materialization_recovers_link_on_duplicate_reingest(
 
     # First materialize job: produces the overlay revision + link.
     first = await handler.execute(
-        job_id=str(uuid.uuid4()), session=None, payload=job_payload, created_by="usr_test"
+        job_id=str(uuid.uuid4()), db=None, payload=job_payload, created_by="usr_test"
     )
     materialized_rev = uuid.UUID(first.body["revisions"][0]["revision_id"])
     superseded_rev = uuid.UUID(first.body["revisions"][0]["superseded_revision_id"])
@@ -2087,7 +2087,7 @@ async def test_overlay_materialization_recovers_link_on_duplicate_reingest(
 
     # Second (recovery) job with identical content: re-ingest dedupes, handler recovers.
     second = await handler.execute(
-        job_id=str(uuid.uuid4()), session=None, payload=job_payload, created_by="usr_test"
+        job_id=str(uuid.uuid4()), db=None, payload=job_payload, created_by="usr_test"
     )
     # No new revision produced, but the job did not fail.
     assert second.body["revisions"] == []
@@ -2123,7 +2123,7 @@ async def test_url_source_via_mock(
         handler = ImportHandler(integration_context)
         result = await handler.execute(
             job_id=str(uuid.uuid4()),
-            session=None,
+            db=None,
             payload={
                 "sources": [
                     {
@@ -2193,7 +2193,7 @@ async def test_catalog_import_lands_clean_identity_from_sub_segment(
     ):
         result = await ImportHandler(integration_context).execute(
             job_id=str(uuid.uuid4()),
-            session=None,
+            db=None,
             payload={"sources": [source]},
             created_by="usr_test",
         )
@@ -2240,7 +2240,7 @@ async def test_catalog_identity_conflict_surfaces_as_readable_job_failure(
     ):
         await ImportHandler(integration_context).execute(
             job_id=str(uuid.uuid4()),
-            session=None,
+            db=None,
             payload={
                 "sources": [
                     {
@@ -2287,7 +2287,7 @@ async def test_catalog_reimport_keeps_pre_existing_doubled_identity(
     ):
         await ImportHandler(integration_context).execute(
             job_id=str(uuid.uuid4()),
-            session=None,
+            db=None,
             payload={
                 "sources": [
                     {
@@ -2331,7 +2331,7 @@ async def test_catalog_reimport_keeps_pre_existing_doubled_identity(
     ):
         await ImportHandler(integration_context).execute(
             job_id=str(uuid.uuid4()),
-            session=None,
+            db=None,
             payload={"sources": [source]},
             created_by="usr_test",
         )
@@ -2364,7 +2364,7 @@ async def test_catalog_reimport_after_spec_url_move_keeps_identity_by_catalog_id
     ):
         await ImportHandler(integration_context).execute(
             job_id=str(uuid.uuid4()),
-            session=None,
+            db=None,
             payload={
                 "sources": [
                     {
@@ -2402,7 +2402,7 @@ async def test_catalog_reimport_after_spec_url_move_keeps_identity_by_catalog_id
     ):
         await ImportHandler(integration_context).execute(
             job_id=str(uuid.uuid4()),
-            session=None,
+            db=None,
             payload={"sources": [source]},
             created_by="usr_test",
         )
