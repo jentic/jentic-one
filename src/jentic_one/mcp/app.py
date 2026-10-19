@@ -26,7 +26,7 @@ that owns everything the platform — not the SDK — must decide:
   Absent ``Origin`` (non-browser clients — every real MCP client today)
   passes.
 - **Bearer auth** reusing the identity-resolution LOGIC — the app-state
-  ``verify_token`` the auth surface installs (``make_superset_verifier``),
+  ``verify_token`` the app factory installs (``install_platform_token_verifier``),
   which resolves ``jak_`` API keys (retired ``sak_`` ones are refused), ``at_``
   access tokens (including
   grant-channel bearers: actor=agent with ``oauth_grant_id``, resolved
