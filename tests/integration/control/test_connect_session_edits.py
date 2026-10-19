@@ -548,6 +548,10 @@ async def test_a_rejected_edit_holds_back_the_next_one_for_the_cooldown(
     with pytest.raises(RecentlyRejectedError):
         await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
 
+    # The hold is on the agent: its owner can still ask for the change.
+    by_owner = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]), identity=_OWNER)
+    await svc.cancel_session(by_owner.session_id, poll_token=by_owner.poll_token, identity=_OWNER)
+
     # The cooldown is the same setting as for connect requests.
     hours = ctx.config.control.connect.rejection_cooldown_hours
     ctx.config.control.connect.rejection_cooldown_hours = 0

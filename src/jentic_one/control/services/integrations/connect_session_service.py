@@ -1896,9 +1896,11 @@ class ConnectSessionService:
             error = EditOpenError(open_edit.id)
             error.point_at(credential_id, agent_id)
             raise error
-        await self._check_rejection_cooldown(
-            agent_id, target_kind=TARGET_KIND_VENDOR, vendor="", credential_id=credential_id
-        )
+        # The hold is on the agent asking again; its owner can still make the change.
+        if identity.actor_type == ActorType.AGENT:
+            await self._check_rejection_cooldown(
+                agent_id, target_kind=TARGET_KIND_VENDOR, vendor="", credential_id=credential_id
+            )
         baseline = await self._binding_snapshot(agent_id, credential_id, binding.rule_set_id)
         baseline["suspended"] = binding.suspended
         try:
