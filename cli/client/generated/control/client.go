@@ -324,6 +324,24 @@ func (e BearerTokenUpdateRequestType) Valid() bool {
 	}
 }
 
+// Defines values for ConnectSessionSummaryResponseIntent.
+const (
+	ConnectSessionSummaryResponseIntentCreate ConnectSessionSummaryResponseIntent = "create"
+	ConnectSessionSummaryResponseIntentEdit   ConnectSessionSummaryResponseIntent = "edit"
+)
+
+// Valid indicates whether the value is a known member of the ConnectSessionSummaryResponseIntent enum.
+func (e ConnectSessionSummaryResponseIntent) Valid() bool {
+	switch e {
+	case ConnectSessionSummaryResponseIntentCreate:
+		return true
+	case ConnectSessionSummaryResponseIntentEdit:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ConnectSessionSummaryResponseState.
 const (
 	ConnectSessionSummaryResponseStateAwaitingApp ConnectSessionSummaryResponseState = "awaiting_app"
@@ -437,13 +455,13 @@ func (e DeviceAuthorizationRegistrationCreateRequestFlowKind) Valid() bool {
 
 // Defines values for EditConfirmSessionRequestKind.
 const (
-	Edit EditConfirmSessionRequestKind = "edit"
+	EditConfirmSessionRequestKindEdit EditConfirmSessionRequestKind = "edit"
 )
 
 // Valid indicates whether the value is a known member of the EditConfirmSessionRequestKind enum.
 func (e EditConfirmSessionRequestKind) Valid() bool {
 	switch e {
-	case Edit:
+	case EditConfirmSessionRequestKindEdit:
 		return true
 	default:
 		return false
@@ -2760,11 +2778,11 @@ type ConnectRequestBody struct {
 
 // ConnectSessionListResponse Cursor-paginated envelope of connect-session summaries.
 //
-// Examples: {"data":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","connected_as":"octocat","created_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","error_code":"access_denied","reason":"Needs read access to triage issues in the platform repo.","requested_by_actor_id":"agnt_6968b3984d1c238dbe7e2e29","session_id":"cs_6968b3983b8b91c75627bee5","state":"connected","vendor_display_name":"GitHub","vendor_key":"github"}],"has_more":true,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
+// Examples: {"data":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","connected_as":"octocat","created_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","error_code":"access_denied","intent":"create","reason":"Needs read access to triage issues in the platform repo.","requested_by_actor_id":"agnt_6968b3984d1c238dbe7e2e29","session_id":"cs_6968b3983b8b91c75627bee5","state":"connected","vendor_display_name":"GitHub","vendor_key":"github"}],"has_more":true,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
 type ConnectSessionListResponse struct {
 	// Data The page of connect sessions.
 	//
-	// Examples: [{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","connected_as":"octocat","created_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","error_code":"access_denied","reason":"Needs read access to triage issues in the platform repo.","requested_by_actor_id":"agnt_6968b3984d1c238dbe7e2e29","session_id":"cs_6968b3983b8b91c75627bee5","state":"connected","vendor_display_name":"GitHub","vendor_key":"github"}]
+	// Examples: [{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","connected_as":"octocat","created_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","error_code":"access_denied","intent":"create","reason":"Needs read access to triage issues in the platform repo.","requested_by_actor_id":"agnt_6968b3984d1c238dbe7e2e29","session_id":"cs_6968b3983b8b91c75627bee5","state":"connected","vendor_display_name":"GitHub","vendor_key":"github"}]
 	Data []ConnectSessionSummaryResponse `json:"data"`
 
 	// HasMore Whether more results exist after this page.
@@ -2780,7 +2798,7 @@ type ConnectSessionListResponse struct {
 
 // ConnectSessionSummaryResponse Slim list row for the console — deliberately excludes “poll_token“.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","connected_as":"octocat","created_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","error_code":"access_denied","reason":"Needs read access to triage issues in the platform repo.","requested_by_actor_id":"agnt_6968b3984d1c238dbe7e2e29","session_id":"cs_6968b3983b8b91c75627bee5","state":"connected","vendor_display_name":"GitHub","vendor_key":"github"}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","connected_as":"octocat","created_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","error_code":"access_denied","intent":"create","reason":"Needs read access to triage issues in the platform repo.","requested_by_actor_id":"agnt_6968b3984d1c238dbe7e2e29","session_id":"cs_6968b3983b8b91c75627bee5","state":"connected","vendor_display_name":"GitHub","vendor_key":"github"}
 type ConnectSessionSummaryResponse struct {
 	// AgentId ID of the agent the credential is bound to on confirm; null when unbound.
 	//
@@ -2797,7 +2815,7 @@ type ConnectSessionSummaryResponse struct {
 	// Examples: 2026-01-15T09:30:00Z
 	CreatedAt time.Time `json:"created_at"`
 
-	// CredentialId ID of the session's credential (pending until the session connects).
+	// CredentialId ID of the session's credential: pending until a create session connects; an edit session's is the live credential it changes.
 	//
 	// Examples: cred_6968b39855d91a3561684b32
 	CredentialId string `json:"credential_id"`
@@ -2806,6 +2824,11 @@ type ConnectSessionSummaryResponse struct {
 	//
 	// Examples: access_denied
 	ErrorCode *string `json:"error_code,omitempty"`
+
+	// Intent `create` connects a new credential; `edit` changes an existing binding.
+	//
+	// Examples: create
+	Intent *ConnectSessionSummaryResponseIntent `json:"intent,omitempty"`
 
 	// Reason Free-text reason given when the session was started.
 	//
@@ -2837,6 +2860,11 @@ type ConnectSessionSummaryResponse struct {
 	// Examples: github
 	VendorKey string `json:"vendor_key"`
 }
+
+// ConnectSessionSummaryResponseIntent `create` connects a new credential; `edit` changes an existing binding.
+//
+// Examples: create
+type ConnectSessionSummaryResponseIntent string
 
 // ConnectSessionSummaryResponseState Current lifecycle state of the session.
 //
@@ -8080,6 +8108,12 @@ type GetConnectSessionParams struct {
 	PollToken *string `form:"poll_token,omitempty" json:"poll_token,omitempty"`
 }
 
+// ListConnectSessionRevisionsParams defines parameters for ListConnectSessionRevisions.
+type ListConnectSessionRevisionsParams struct {
+	// PollToken Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
+	PollToken *string `form:"poll_token,omitempty" json:"poll_token,omitempty"`
+}
+
 // PollConnectSessionStatusParams defines parameters for PollConnectSessionStatus.
 type PollConnectSessionStatusParams struct {
 	// PollToken Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
@@ -10896,6 +10930,17 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /connect-sessions/{session_id} (the `GetConnectSession` operationId).
 	GetConnectSession(ctx context.Context, sessionId string, params *GetConnectSessionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListConnectSessionRevisions List a connect session's revisions
+	//
+	// Every version of what the session asks for, oldest first.
+	//
+	// The review shows the current revision against today's access; this is the
+	// history behind it, one entry per ask and amend. Gated like the review
+	// read.
+	//
+	// Corresponds with GET /connect-sessions/{session_id}/revisions (the `ListConnectSessionRevisions` operationId).
+	ListConnectSessionRevisions(ctx context.Context, sessionId string, params *ListConnectSessionRevisionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PollConnectSessionStatus Poll a connect session's status
 	//
@@ -14695,6 +14740,27 @@ func (c *Client) ListConnectSessions(ctx context.Context, params *ListConnectSes
 // Corresponds with GET /connect-sessions/{session_id} (the `GetConnectSession` operationId).
 func (c *Client) GetConnectSession(ctx context.Context, sessionId string, params *GetConnectSessionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetConnectSessionRequest(c.Server, sessionId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListConnectSessionRevisions List a connect session's revisions
+//
+// Every version of what the session asks for, oldest first.
+//
+// The review shows the current revision against today's access; this is the
+// history behind it, one entry per ask and amend. Gated like the review
+// read.
+//
+// Corresponds with GET /connect-sessions/{session_id}/revisions (the `ListConnectSessionRevisions` operationId).
+func (c *Client) ListConnectSessionRevisions(ctx context.Context, sessionId string, params *ListConnectSessionRevisionsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListConnectSessionRevisionsRequest(c.Server, sessionId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -21734,6 +21800,67 @@ func NewGetConnectSessionRequest(server string, sessionId string, params *GetCon
 	return req, nil
 }
 
+// NewListConnectSessionRevisionsRequest constructs an http.Request for the ListConnectSessionRevisions method
+func NewListConnectSessionRevisionsRequest(server string, sessionId string, params *ListConnectSessionRevisionsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "session_id", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/connect-sessions/%s/revisions", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.PollToken != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "poll_token", *params.PollToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewPollConnectSessionStatusRequest constructs an http.Request for the PollConnectSessionStatus method
 func NewPollConnectSessionStatusRequest(server string, sessionId string, params *PollConnectSessionStatusParams) (*http.Request, error) {
 	var err error
@@ -27691,6 +27818,19 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /connect-sessions/{session_id} (the `GetConnectSession` operationId).
 	GetConnectSessionWithResponse(ctx context.Context, sessionId string, params *GetConnectSessionParams, reqEditors ...RequestEditorFn) (*GetConnectSessionHTTPResp, error)
+
+	// ListConnectSessionRevisionsWithResponse List a connect session's revisions
+	//
+	// Every version of what the session asks for, oldest first.
+	//
+	// The review shows the current revision against today's access; this is the
+	// history behind it, one entry per ask and amend. Gated like the review
+	// read.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /connect-sessions/{session_id}/revisions (the `ListConnectSessionRevisions` operationId).
+	ListConnectSessionRevisionsWithResponse(ctx context.Context, sessionId string, params *ListConnectSessionRevisionsParams, reqEditors ...RequestEditorFn) (*ListConnectSessionRevisionsHTTPResp, error)
 
 	// PollConnectSessionStatusWithResponse Poll a connect session's status
 	//
@@ -36164,6 +36304,96 @@ func (r GetConnectSessionHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetConnectSessionHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListConnectSessionRevisionsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *interface{}
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListConnectSessionRevisionsHTTPResp) GetJSON200() *interface{} {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListConnectSessionRevisionsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListConnectSessionRevisionsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListConnectSessionRevisionsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ListConnectSessionRevisionsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ListConnectSessionRevisionsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListConnectSessionRevisionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListConnectSessionRevisionsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListConnectSessionRevisionsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListConnectSessionRevisionsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListConnectSessionRevisionsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListConnectSessionRevisionsHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -46340,6 +46570,25 @@ func (c *ClientWithResponses) GetConnectSessionWithResponse(ctx context.Context,
 	return ParseGetConnectSessionHTTPResp(rsp)
 }
 
+// ListConnectSessionRevisionsWithResponse List a connect session's revisions
+//
+// Every version of what the session asks for, oldest first.
+//
+// The review shows the current revision against today's access; this is the
+// history behind it, one entry per ask and amend. Gated like the review
+// read.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /connect-sessions/{session_id}/revisions (the `ListConnectSessionRevisions` operationId).
+func (c *ClientWithResponses) ListConnectSessionRevisionsWithResponse(ctx context.Context, sessionId string, params *ListConnectSessionRevisionsParams, reqEditors ...RequestEditorFn) (*ListConnectSessionRevisionsHTTPResp, error) {
+	rsp, err := c.ListConnectSessionRevisions(ctx, sessionId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListConnectSessionRevisionsHTTPResp(rsp)
+}
+
 // PollConnectSessionStatusWithResponse Poll a connect session's status
 //
 // Poll the lifecycle status of a connect session.
@@ -54492,6 +54741,81 @@ func ParseGetConnectSessionHTTPResp(rsp *http.Response) (*GetConnectSessionHTTPR
 			return nil, err
 		}
 		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListConnectSessionRevisionsHTTPResp parses an HTTP response from a ListConnectSessionRevisionsWithResponse call
+func ParseListConnectSessionRevisionsHTTPResp(rsp *http.Response) (*ListConnectSessionRevisionsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListConnectSessionRevisionsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail

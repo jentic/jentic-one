@@ -509,8 +509,16 @@ class ConnectSessionSummaryResponse(BaseModel):
     # The session's pending (later connected) credential. Lets a list reader
     # tell a session's own credential apart from an unrelated unfinished one.
     credential_id: str = Field(
-        description="ID of the session's credential (pending until the session connects).",
+        description=(
+            "ID of the session's credential: pending until a create session connects; an edit "
+            "session's is the live credential it changes."
+        ),
         examples=[ex.CREDENTIAL_ID],
+    )
+    intent: Literal["create", "edit"] = Field(
+        default="create",
+        description="`create` connects a new credential; `edit` changes an existing binding.",
+        examples=["create"],
     )
 
 
@@ -742,6 +750,27 @@ class ReviewSessionResponse(BaseModel):
     revision: SessionRevisionRef | None = None
     # Edit sessions only.
     edit: ReviewEditResponse | None = None
+
+
+class SessionRevisionResponse(BaseModel):
+    """One version of what a connect session asks for."""
+
+    id: str = Field(examples=[ex.CONNECT_SESSION_REVISION_ID])
+    number: int = Field(description="1 for the first ask, one more per amend.", examples=[1])
+    created_by: str | None = Field(
+        default=None, description="Who began or amended the session; null for a rebase."
+    )
+    created_at: datetime
+    proposal: dict[str, Any] = Field(description="The ask as it was sent.")
+    result: dict[str, Any] = Field(
+        description="What confirming this revision would leave in place (rules, scopes, ...)."
+    )
+
+
+class SessionRevisionListResponse(BaseModel):
+    """A session's revisions, oldest first."""
+
+    data: list[SessionRevisionResponse]
 
 
 # ---------------------------------------------------------------------------

@@ -604,6 +604,7 @@ def test_list_sessions_never_includes_poll_token() -> None:
         "error_code",
         "created_at",
         "credential_id",
+        "intent",
     }
 
 

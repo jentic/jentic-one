@@ -25,6 +25,7 @@ import {
 	getVendorAuthCapabilities,
 	listAgentsForPicker,
 	listAllVendorOperations,
+	listConnectSessionRevisions,
 	listOpenConnectRequests,
 	listVendors,
 	pollConnectSessionStatus,
@@ -47,6 +48,7 @@ import type {
 	ConnectRequest,
 	ConnectResponse,
 	ReviewSession,
+	SessionRevision,
 	StatusResponse,
 	VendorAuthCapabilities,
 	VendorListResponse,
@@ -127,6 +129,9 @@ export function useConnectSession(
 			const status = (query.state.error as { status?: number | null } | null)?.status;
 			if (typeof status === 'number' && status >= 400 && status < 500) return false;
 			const data = query.state.data;
+			// An edit's review is re-read so a new revision (an amend) shows
+			// up while the reviewer has it open.
+			if (data?.edit) return 10_000;
 			if (data?.api_reference?.version) return false;
 			return 2_000;
 		},
@@ -502,6 +507,20 @@ export function useOpenConnectRequests(options?: { enabled?: boolean }) {
  * TanStack Query's `refetchInterval` drives the cadence. On terminal states
  * (connected / failed / expired) the caller should flip `enabled=false`.
  */
+/** A session's revisions, for the review's history view. */
+export function useConnectSessionRevisions(
+	sessionId: string,
+	pollToken: string | undefined,
+	options?: { enabled?: boolean },
+) {
+	return useQuery<SessionRevision[]>({
+		queryKey: ['integrations', 'session-revisions', sessionId, pollToken ?? ''] as const,
+		queryFn: () => listConnectSessionRevisions(sessionId, pollToken),
+		enabled: options?.enabled ?? true,
+		staleTime: 5_000,
+	});
+}
+
 export function usePollConnectSessionStatus(
 	sessionId: string,
 	pollToken: string | undefined,

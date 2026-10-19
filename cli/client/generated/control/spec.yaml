@@ -2939,6 +2939,7 @@ components:
           created_at: '2026-01-15T09:30:00Z'
           credential_id: cred_6968b39855d91a3561684b32
           error_code: access_denied
+          intent: create
           reason: Needs read access to triage issues in the platform repo.
           requested_by_actor_id: agnt_6968b3984d1c238dbe7e2e29
           session_id: cs_6968b3983b8b91c75627bee5
@@ -2983,6 +2984,7 @@ components:
         created_at: '2026-01-15T09:30:00Z'
         credential_id: cred_6968b39855d91a3561684b32
         error_code: access_denied
+        intent: create
         reason: Needs read access to triage issues in the platform repo.
         requested_by_actor_id: agnt_6968b3984d1c238dbe7e2e29
         session_id: cs_6968b3983b8b91c75627bee5
@@ -3014,7 +3016,7 @@ components:
           title: Created At
           type: string
         credential_id:
-          description: ID of the session's credential (pending until the session connects).
+          description: 'ID of the session''s credential: pending until a create session connects; an edit session''s is the live credential it changes.'
           examples:
           - cred_6968b39855d91a3561684b32
           title: Credential Id
@@ -3027,6 +3029,16 @@ components:
           examples:
           - access_denied
           title: Error Code
+        intent:
+          default: create
+          description: '`create` connects a new credential; `edit` changes an existing binding.'
+          enum:
+          - create
+          - edit
+          examples:
+          - create
+          title: Intent
+          type: string
         reason:
           anyOf:
           - type: string
@@ -20571,6 +20583,111 @@ paths:
       tags:
       - Integrations
     summary: Get review data for a connect session
+  /connect-sessions/{session_id}/revisions:
+    description: '`GET`: List a connect session''s revisions.'
+    get:
+      description: |-
+        Every version of what the session asks for, oldest first.
+
+        The review shows the current revision against today's access; this is the
+        history behind it, one entry per ask and amend. Gated like the review
+        read.
+      operationId: listConnectSessionRevisions
+      parameters:
+      - description: ID of the connect session.
+        examples:
+          example:
+            summary: Connect session ID
+            value: cs_6968b3983b8b91c75627bee5
+        in: path
+        name: session_id
+        required: true
+        schema:
+          description: ID of the connect session.
+          examples:
+          - cs_6968b3983b8b91c75627bee5
+          title: Session Id
+          type: string
+      - description: 'Opaque poll capability returned by :connect. Optional for the target agent''s owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.'
+        examples:
+          example:
+            summary: Opaque flow handle
+            value: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
+        in: query
+        name: poll_token
+        required: false
+        schema:
+          anyOf:
+          - examples:
+            - dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
+            type: string
+          - type: 'null'
+          description: 'Opaque poll capability returned by :connect. Optional for the target agent''s owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.'
+          examples:
+          - dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
+          title: Poll Token
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id190
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id191
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id192
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id193
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id187
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id194
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+        default:
+          content:
+            application/problem+json:
+              example: *id187
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unexpected error, as RFC 9457 Problem Details.
+      security:
+      - BearerAuth: []
+      - OAuth2: []
+      summary: List a connect session's revisions
+      tags:
+      - Integrations
+    summary: List a connect session's revisions
   /connect-sessions/{session_id}/status:
     description: '`GET`: Poll a connect session''s status.'
     get:

@@ -26,6 +26,7 @@ import type {
 	ConnectRequest,
 	ConnectResponse,
 	ReviewSession,
+	SessionRevision,
 	StatusResponse,
 	VendorAuthCapabilities,
 	VendorListResponse,
@@ -188,6 +189,17 @@ export function confirmConnectSession(
 		method: 'POST',
 		body: JSON.stringify(body),
 	});
+}
+
+/** Every revision of a session, oldest first; gated like the review read. */
+export async function listConnectSessionRevisions(
+	sessionId: string,
+	pollToken?: string,
+): Promise<SessionRevision[]> {
+	const body = await request<{ data: SessionRevision[] }>(
+		sessionUrl(sessionId, '/revisions', pollToken),
+	);
+	return body.data;
 }
 
 export function pollConnectSessionStatus(

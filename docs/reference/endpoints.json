@@ -1701,6 +1701,31 @@
       "authenticated": true,
       "group": "Any authenticated actor",
       "implied_permissions": {
+        "credentials:write": [
+          "credentials:connect",
+          "credentials:read"
+        ]
+      },
+      "method": "GET",
+      "operation_id": "listConnectSessionRevisions",
+      "path": "/connect-sessions/{session_id}/revisions",
+      "public": false,
+      "required_permissions": [
+        "credentials:write"
+      ],
+      "summary": "List a connect session's revisions",
+      "surface": "connect-sessions",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_permissions": {
         "credentials:connect": [],
         "credentials:write": [
           "credentials:connect",
@@ -4805,5 +4830,5 @@
     "total": 27
   },
   "schema": "jentic.endpoint-permission-tree/v1",
-  "total": 172
+  "total": 173
 }

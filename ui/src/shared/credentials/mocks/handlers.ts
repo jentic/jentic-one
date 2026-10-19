@@ -11,6 +11,8 @@ import type {
 	ExistingCredential,
 	PermissionRule,
 	ReviewAgent,
+	ReviewEdit,
+	SessionRevision,
 	ReviewProvenance,
 	ReviewScheme,
 	SessionStatus,
@@ -423,9 +425,13 @@ export interface MockConnectSession {
 	confirmProblem?: { status: number; type: string; endsSession?: boolean };
 	/** How the session ended once its row went (`:reject`, `:cancel`, an existing credential). */
 	outcome?: MockSessionOutcome;
+	/** An edit session's review block; set, the session edits an existing binding. */
+	edit?: ReviewEdit | null;
+	/** An edit session's revision history (defaults to its current revision alone). */
+	revisions?: SessionRevision[];
 }
 
-type MockSessionOutcome = 'rejected' | 'cancelled' | 'connected';
+type MockSessionOutcome = 'rejected' | 'cancelled' | 'connected' | 'applied';
 
 /** Sessions whose row went (`:reject`, `:cancel`, an existing credential), newest last. */
 let endedConnectSessions: MockConnectSession[] = [];
@@ -476,7 +482,8 @@ export function getEndedMockConnectSessions(): readonly MockConnectSession[] {
 /** End a session the way `_mark_terminal` does: the row and its pending credential go. */
 function endMockConnectSession(session: MockConnectSession, outcome: MockSessionOutcome): void {
 	connectSessionsStore = connectSessionsStore.filter((s) => s.session_id !== session.session_id);
-	store = store.filter((c) => c.credential_id !== session.credential_id);
+	// An edit's credential is the live one: only a create session takes its own with it.
+	if (!session.edit) store = store.filter((c) => c.credential_id !== session.credential_id);
 	endedConnectSessions.push({ ...session, outcome });
 }
 
@@ -511,6 +518,7 @@ const MANUAL_CONFIRM_KINDS: Record<string, string> = {
 
 /** `:confirm` kinds a session accepts, mirroring the backend's `_allowed_confirm_kinds`. */
 function allowedConfirmKinds(session: MockConnectSession): string[] {
+	if (session.edit) return ['edit'];
 	const primary =
 		session.state === 'awaiting_app'
 			? 'own_oauth_client'
@@ -714,7 +722,8 @@ const connectSessionsHandlers = [
 			scheme: gated.scheme ?? null,
 			pinned_hosts: gated.pinned_hosts ?? null,
 			digest: reviewDigest(gated),
-			revision: { id: `csr_${gated.session_id}_1`, number: 1 },
+			revision: gated.edit?.revision ?? { id: `csr_${gated.session_id}_1`, number: 1 },
+			edit: gated.edit ?? null,
 			can_confirm: gated.can_confirm ?? true,
 			existing_credentials: gated.existing_credentials ?? [],
 			requested_by_actor_id: gated.requested_by_actor_id,
@@ -728,6 +737,27 @@ const connectSessionsHandlers = [
 			reason: gated.reason,
 			requested_permission_rules: gated.requested_permission_rules,
 			api_reference: { vendor: gated.vendor_key, name: gated.vendor_key, version: '1.0.0' },
+		});
+	}),
+
+	http.get('/connect-sessions/:sessionId/revisions', ({ params, request }) => {
+		const gated = gateSession(params.sessionId, request.url);
+		if (!isMockSession(gated)) return gated;
+		const current = gated.edit?.revision ?? { id: `csr_${gated.session_id}_1`, number: 1 };
+		return HttpResponse.json({
+			data: gated.revisions ?? [
+				{
+					id: current.id,
+					number: current.number,
+					created_by: gated.requested_by_actor_id,
+					created_at: gated.created_at,
+					proposal: {},
+					result: gated.edit?.result ?? {
+						rules: gated.requested_permission_rules,
+						scopes: gated.requested_scopes,
+					},
+				},
+			],
 		});
 	}),
 
@@ -752,9 +782,30 @@ const connectSessionsHandlers = [
 				allowed_kinds: allowed,
 			});
 		}
+		if (body.kind === 'edit') {
+			const editBlock = gated.edit;
+			if (!editBlock)
+				return problem(400, 'Bad Request', 'Not an edit.', 'confirm_kind_mismatch');
+			if (body.revision_id !== editBlock.revision.id) {
+				return problem(409, 'Conflict', 'The request changed.', 'revision_changed', {
+					current_revision_id: editBlock.revision.id,
+				});
+			}
+			const granted = new Set(editBlock.current.granted_scopes ?? []);
+			if ((body.confirmed_scopes ?? []).some((scope) => !granted.has(scope))) {
+				// Added scopes: the vendor consent runs first; it applies with the grant.
+				gated.state = 'polling';
+				return HttpResponse.json({
+					kind: 'authorization_code',
+					authorize_url: `https://vendor.example.test/oauth/authorize?edit=${gated.session_id}`,
+				});
+			}
+			endMockConnectSession(gated, 'applied');
+			return HttpResponse.json({ kind: 'connected', credential_id: gated.credential_id });
+		}
 		// Checked when given; required for every non-OAuth variant.
 		const needsReview = kind !== 'oauth' || gated.target_kind === 'api';
-		if (needsReview || body.digest != null) {
+		if (needsReview || ('digest' in body && body.digest != null)) {
 			const expected = reviewAgent(gated)?.agent_id ?? null;
 			if (
 				body.digest !== reviewDigest(gated) ||

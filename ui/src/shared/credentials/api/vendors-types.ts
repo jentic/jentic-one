@@ -69,6 +69,8 @@ export interface ReviewSession {
 	digest: string;
 	/** The session's current revision; ``:confirm`` names it as ``revision_id``. */
 	revision?: { id: string; number: number } | null;
+	/** Edit sessions only: the binding change under review. */
+	edit?: ReviewEdit | null;
 	/** Whether this viewer may confirm the session as it stands. */
 	can_confirm: boolean;
 	/** Credentials the viewer already holds for the target. */
@@ -104,6 +106,62 @@ export interface ReviewScheme {
 	authorization_url?: string | null;
 	/** An OAuth scheme's token URL — set only when the API's spec is from the public catalog. */
 	token_url?: string | null;
+}
+
+/** A rule in an edit's current or resulting access; ``id`` is null for one the edit adds. */
+export interface EditRuleView extends PermissionRule {
+	id: string | null;
+}
+
+/** The shared rule set a binding points at; its rules apply instead of the binding's own. */
+export interface EditRuleSetView {
+	id: string;
+	name: string;
+	/** A curated set is never changed: approving copies the rules onto the binding. */
+	curated: boolean;
+	created_by?: string | null;
+	rules: EditRuleView[];
+}
+
+/** The binding as the edit session recorded it when it opened. */
+export interface EditCurrentAccess {
+	rules: EditRuleView[];
+	rule_set: EditRuleSetView | null;
+	suspended: boolean;
+	granted_scopes: string[] | null;
+}
+
+/** What approving the current revision leaves in place. */
+export interface EditResultAccess {
+	target: 'binding' | 'rule_set';
+	rules: EditRuleView[];
+	scopes: string[];
+	suspended: boolean;
+}
+
+/** The binding change an edit session asks a human to approve. */
+export interface ReviewEdit {
+	binding: { agent_id: string; credential_id: string; credential_name: string | null };
+	revision: { id: string; number: number };
+	current: EditCurrentAccess;
+	result: EditResultAccess;
+	/** True when the change could let the agent do more than today. */
+	widens_access: boolean;
+	/** Other agents bound to the credential: added scopes and shared-set changes reach them. */
+	other_bound_agents: BoundAgentRef[];
+	/** Approving starts a vendor consent for the added scopes. */
+	needs_vendor_consent: boolean;
+}
+
+/** One version of what a session asks for (``GET /connect-sessions/{id}/revisions``). */
+export interface SessionRevision {
+	id: string;
+	number: number;
+	/** Who began or amended the session; null for a rebase onto a changed binding. */
+	created_by: string | null;
+	created_at: string;
+	proposal: Record<string, unknown>;
+	result: { rules?: EditRuleView[]; scopes?: string[]; suspended?: boolean; target?: string };
 }
 
 /** Another agent bound to a credential the approver could use. */
@@ -213,6 +271,18 @@ export interface ExistingCredentialConfirmRequest extends ReviewedConfirm {
 	credential_id: string;
 }
 
+/**
+ * Approve an edit session's change with the final rules the reviewer chose.
+ * ``confirmed_scopes`` beyond the credential's grant start a vendor consent.
+ */
+export interface EditConfirmRequest {
+	kind: 'edit';
+	revision_id: string;
+	permission_rules: PermissionRule[];
+	resume: boolean;
+	confirmed_scopes?: string[] | null;
+}
+
 /** Every ``:confirm`` body; ``kind`` picks the variant server-side. */
 export type ConfirmSessionBody =
 	| ConfirmRequest
@@ -220,7 +290,8 @@ export type ConfirmSessionBody =
 	| BearerConfirmRequest
 	| BasicConfirmRequest
 	| OwnOAuthClientConfirmRequest
-	| ExistingCredentialConfirmRequest;
+	| ExistingCredentialConfirmRequest
+	| EditConfirmRequest;
 
 /**
  * Discriminated on ``kind`` — the UI branches on the tag, not on which
@@ -261,7 +332,8 @@ export interface AuthCodeConfirmResponse {
 	authorize_url: string;
 }
 
-export type SessionStatus = 'pending' | 'polling' | 'connected' | 'failed' | 'expired';
+/** ``applied``: an edit session's change was approved and landed (edit sessions only). */
+export type SessionStatus = 'pending' | 'polling' | 'connected' | 'applied' | 'failed' | 'expired';
 
 export interface StatusResponse {
 	status: SessionStatus;

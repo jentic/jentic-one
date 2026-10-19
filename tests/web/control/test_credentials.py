@@ -1548,6 +1548,13 @@ def test_edit_connection_round_trip(
     assert resp.json()["session_id"] == created["session_id"]
     assert resp.json()["agent_directive"]["strategy"] == "check_access"
 
+    listed = cred_writer_client.get("/connect-sessions").json()["data"]
+    assert {r["session_id"]: r["intent"] for r in listed}[created["session_id"]] == "edit"
+
+    history = cred_writer_client.get(f"/connect-sessions/{created['session_id']}/revisions")
+    assert history.status_code == 200, history.text
+    assert [(r["id"], r["number"]) for r in history.json()["data"]] == [(created["revision_id"], 1)]
+
     review = cred_writer_client.get(f"/connect-sessions/{created['session_id']}").json()
     edit = review["edit"]
     assert edit["revision"] == {"id": created["revision_id"], "number": 1}

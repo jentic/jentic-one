@@ -452,6 +452,8 @@ class SessionSummary:
     error_code: str | None
     created_at: datetime
     credential_id: str
+    #: ``create`` connects a new credential; ``edit`` changes an existing binding.
+    intent: str = INTENT_CREATE
 
 
 @dataclass(slots=True, frozen=True)
@@ -2727,6 +2729,16 @@ class ConnectSessionService:
                 session, row.current_revision_id
             )
 
+    async def list_revisions(
+        self, session_id: str, *, poll_token: str | None, identity: Identity
+    ) -> list[ConnectSessionRevision]:
+        """Every revision of a session, oldest first; gated like the review read."""
+        async with self._ctx.control_db.session() as session:
+            row = await ConnectSessionRepository.get_by_id(session, session_id)
+        row = await self._require_session_access(row, poll_token=poll_token, identity=identity)
+        async with self._ctx.control_db.session() as session:
+            return await ConnectSessionRevisionRepository.list_for_session(session, row.id)
+
     async def _agent_view(self, agent_id: str | None) -> AgentView | None:
         if agent_id is None:
             return None
@@ -3014,6 +3026,7 @@ class ConnectSessionService:
             error_code=row.error_code,
             created_at=row.created_at,
             credential_id=row.credential_id,
+            intent=row.intent,
         )
 
     def _vendor_display_name(self, row: ConnectSession, registration_name: str | None) -> str:

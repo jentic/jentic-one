@@ -118,6 +118,48 @@ export class IntegrationsService {
         });
     }
     /**
+     * List a connect session's revisions
+     * Every version of what the session asks for, oldest first.
+     *
+     * The review shows the current revision against today's access; this is the
+     * history behind it, one entry per ask and amend. Gated like the review
+     * read.
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static listConnectSessionRevisions({
+        sessionId,
+        pollToken,
+    }: {
+        /**
+         * ID of the connect session.
+         */
+        sessionId: string,
+        /**
+         * Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
+         */
+        pollToken?: (string | null),
+    }): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/connect-sessions/{session_id}/revisions',
+            path: {
+                'session_id': sessionId,
+            },
+            query: {
+                'poll_token': pollToken,
+            },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
      * Poll a connect session's status
      * Poll the lifecycle status of a connect session.
      *

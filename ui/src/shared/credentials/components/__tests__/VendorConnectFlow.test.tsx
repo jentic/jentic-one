@@ -1168,7 +1168,9 @@ describe('VendorConnectFlow — connect-wizard regressions', () => {
 		const sessions = getMockConnectSessions();
 		expect(sessions).toHaveLength(1);
 		expect(sessions[0].confirmBodies).toHaveLength(1);
-		expect(sessions[0].confirmBodies[0].agent_id ?? null).toBeNull();
+		expect(
+			(sessions[0].confirmBodies[0] as { agent_id?: string | null }).agent_id ?? null,
+		).toBeNull();
 	});
 
 	it('review GET requires the poll_token: 403 with a wrong token, 200 with the right one', async () => {

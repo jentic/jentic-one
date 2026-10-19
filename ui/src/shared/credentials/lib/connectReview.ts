@@ -164,6 +164,24 @@ export function describeConfirmError(error: unknown): ConfirmErrorCopy {
 				}. Pick another option.`,
 			};
 		}
+		case 'baseline_changed':
+			return {
+				action: 'reload',
+				message:
+					"The agent's access changed since it asked, so the request was updated to fit. Check the new version before you approve.",
+			};
+		case 'rule_set_confirm_forbidden':
+			return {
+				action: 'stay',
+				message:
+					"These rules belong to a shared rule set you don't own. Its owner or an admin has to approve this change.",
+			};
+		case 'scopes_not_supported':
+			return {
+				action: 'stay',
+				message:
+					"This credential's scopes can't be widened here. Approve the rules without new scopes, or connect a new credential.",
+			};
 		case 'scope_widening_forbidden':
 			return {
 				action: 'reload',

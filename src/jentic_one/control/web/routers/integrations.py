@@ -76,7 +76,9 @@ from jentic_one.control.web.schemas.integrations import (
     ReviewSchemeResponse,
     ReviewScopeResponse,
     ReviewSessionResponse,
+    SessionRevisionListResponse,
     SessionRevisionRef,
+    SessionRevisionResponse,
     StatusResponse,
 )
 from jentic_one.control.web.schemas.permission_rules import PermissionRuleSchema
@@ -368,6 +370,7 @@ async def list_connect_sessions(
                 error_code=s.error_code,
                 created_at=s.created_at,
                 credential_id=s.credential_id,
+                intent=s.intent,  # type: ignore[arg-type]
             )
             for s in page.data
         ],
@@ -530,6 +533,49 @@ def _edit_response(edit: EditReview) -> ReviewEditResponse:
         other_bound_agents=[
             EditAgentRef(agent_id=a.agent_id, name=a.name) for a in edit.other_bound_agents
         ],
+    )
+
+
+@router.get(
+    "/connect-sessions/{session_id}/revisions",
+    summary="List a connect session's revisions",
+    response_model=None,
+)
+async def list_connect_session_revisions(
+    session_id: Annotated[
+        str,
+        Path(
+            description="ID of the connect session.",
+            openapi_examples=ex.example(ex.CONNECT_SESSION_ID),
+        ),
+    ],
+    poll_token: str | None = Query(
+        default=None,
+        description=_POLL_TOKEN_DESCRIPTION,
+        openapi_examples=ex.example(ex.OPAQUE_TOKEN),
+    ),
+    identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
+    svc: ConnectSessionService = Depends(get_connect_session_service),
+) -> SessionRevisionListResponse:
+    """Every version of what the session asks for, oldest first.
+
+    The review shows the current revision against today's access; this is the
+    history behind it, one entry per ask and amend. Gated like the review
+    read.
+    """
+    revisions = await svc.list_revisions(session_id, poll_token=poll_token, identity=identity)
+    return SessionRevisionListResponse(
+        data=[
+            SessionRevisionResponse(
+                id=r.id,
+                number=r.number,
+                created_by=r.created_by,
+                created_at=r.created_at,
+                proposal=dict(r.proposal),
+                result=dict(r.result),
+            )
+            for r in revisions
+        ]
     )
 
 

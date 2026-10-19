@@ -31,6 +31,7 @@ import {
 	toast,
 } from '@/shared/ui';
 import type { RadioCardOption } from '@/shared/ui';
+import { cn } from '@/shared/lib/utils';
 import {
 	connectRequestsKey,
 	invalidateBindingSurfaces,
@@ -38,6 +39,7 @@ import {
 	useCancelConnectSession,
 	useConfirmConnectSession,
 	useConnectSession,
+	useConnectSessionRevisions,
 	usePollConnectSessionStatus,
 	useRejectConnectSession,
 	useStartIntegrationConnect,
@@ -74,7 +76,15 @@ import {
 	secretKindOf,
 	secretNoun,
 } from '@/shared/credentials/lib/connectReview';
+import {
+	addedScopes,
+	describeRuleMatch,
+	resumes,
+	ruleChanges,
+	rulesToConfirm,
+} from '@/shared/credentials/lib/connectEdit';
 import { isHttpsVendorUrl, openVendorUrl } from '@/shared/credentials/lib/safe-navigation';
+import { EffectBadge } from '@/shared/credentials/components/EffectBadge';
 import { useSharedAppSurface } from '@/shared/credentials/lib/sharedAppSurface';
 import type {
 	AuthCodeConfirmResponse,
@@ -82,7 +92,9 @@ import type {
 	ConfirmSessionBody,
 	ConfirmSessionResponse,
 	DeviceAuthorizationConfirmResponse,
+	EditConfirmRequest,
 	PermissionRule,
+	ReviewEdit,
 	ReviewScope,
 	ReviewSession,
 	ScopeClassification,
@@ -1201,6 +1213,18 @@ function VendorApproveFlow({
 	const errorFor = (step: ApprovePhase): string | null =>
 		stepError?.phase === step ? stepError.message : null;
 
+	if (session?.edit) {
+		return (
+			<EditApproveFlow
+				sessionId={sessionId}
+				pollToken={pollToken}
+				session={session as ReviewSession & { edit: ReviewEdit }}
+				onReload={(): void => void sessionQuery.refetch()}
+				onBack={onBack}
+				onDone={onDone}
+			/>
+		);
+	}
 	if (sessionQuery.isLoading) {
 		return (
 			<div className="space-y-4">
@@ -1519,6 +1543,438 @@ function VendorApproveFlow({
  * delete controls. Agent-requested rules (approve mode) carry a
  * "requested by agent" pill.
  */
+// ---------------------------------------------------------------------------
+// Edit sessions: approving a change to an existing binding
+// ---------------------------------------------------------------------------
+
+/** The edit review's steps. */
+type EditPhase = 'review' | 'rules' | 'awaiting' | 'terminal';
+
+/**
+ * The approve dialog for an edit session: the combined diff between the
+ * binding's access today and what approving the current revision leaves in
+ * place. A new revision (the agent amended its ask) pauses Approve behind a
+ * banner until the reviewer opens it; the reviewer's own rules are what get
+ * applied. Added OAuth scopes run a vendor consent before anything lands.
+ */
+function EditApproveFlow({
+	sessionId,
+	pollToken,
+	session,
+	onReload,
+	onBack,
+	onDone,
+}: {
+	sessionId: string;
+	pollToken?: string;
+	session: ReviewSession & { edit: ReviewEdit };
+	onReload: () => void;
+	onBack: () => void;
+	onDone: () => void;
+}) {
+	const latest = session.edit;
+	const queryClient = useQueryClient();
+	const confirmMutation = useConfirmConnectSession(sessionId, pollToken);
+	const rejectMutation = useRejectConnectSession();
+	const cancelMutation = useCancelConnectSession();
+	const [shown, setShown] = useState<ReviewEdit>(latest);
+	const [phase, setPhase] = useState<EditPhase>('review');
+	const phaseRef = useRef<EditPhase>('review');
+	const [rules, setRules] = useState<PermissionRule[]>(() => rulesToConfirm(latest.result.rules));
+	const [resume, setResume] = useState<boolean>(() => resumes(latest));
+	const [challenge, setChallenge] = useState<ConfirmResponse | null>(null);
+	const [error, setError] = useState<string | null>(null);
+	const [failure, setFailure] = useState<string | null>(null);
+	const [historyOpen, setHistoryOpen] = useState(false);
+	const [rejectOpen, setRejectOpen] = useState(false);
+
+	const goTo = (next: EditPhase): void => {
+		phaseRef.current = next;
+		setPhase(next);
+	};
+	const changed = latest.revision.id !== shown.revision.id;
+	const changes = useMemo(() => ruleChanges(shown), [shown]);
+	const newScopes = useMemo(() => addedScopes(shown), [shown]);
+	const editedRules =
+		JSON.stringify(rules) !== JSON.stringify(rulesToConfirm(shown.result.rules));
+	const credentialName = shown.binding.credential_name ?? session.vendor_display_name;
+	const display: VendorDisplay = { displayName: credentialName, iconKey: session.vendor_key };
+
+	const showLatest = (): void => {
+		setShown(latest);
+		setRules(rulesToConfirm(latest.result.rules));
+		setResume(resumes(latest));
+		setError(null);
+	};
+
+	const polling = usePollConnectSessionStatus(sessionId, pollToken, {
+		enabled: phase === 'awaiting',
+		intervalMs:
+			challenge?.kind === 'device_authorization'
+				? (challenge.poll_interval_seconds ?? 5) * 1000
+				: undefined,
+	});
+
+	useEffect(() => {
+		if (phase !== 'awaiting') return;
+		const err = polling.error as { status?: number } | undefined;
+		const status = polling.data?.status;
+		if (err?.status === 403 || status === 'failed' || status === 'expired') {
+			setFailure(
+				status === 'expired'
+					? 'The sign-in expired before the scopes were granted. Nothing changed.'
+					: 'The scopes weren’t granted, so nothing changed.',
+			);
+			goTo('terminal');
+			void queryClient.invalidateQueries({ queryKey: connectRequestsKey });
+			return;
+		}
+		if (status === 'applied') {
+			goTo('terminal');
+			void queryClient.invalidateQueries({ queryKey: connectRequestsKey });
+			void queryClient.invalidateQueries({ queryKey: ['credentials'] });
+			toast({ title: 'Access updated', variant: 'success' });
+		}
+	}, [phase, polling.data, polling.error, queryClient]);
+
+	// Closing the dialog while the vendor consent runs cancels it; before
+	// approving, closing leaves the request open.
+	useEffect(() => {
+		return () => {
+			if (phaseRef.current !== 'awaiting') return;
+			void cancelConnectSession(sessionId, pollToken).catch(() => {});
+		};
+	}, [sessionId, pollToken]);
+
+	const approve = async (): Promise<void> => {
+		setError(null);
+		const body: EditConfirmRequest = {
+			kind: 'edit',
+			revision_id: shown.revision.id,
+			permission_rules: rules,
+			resume,
+			confirmed_scopes: shown.needs_vendor_consent ? shown.result.scopes : null,
+		};
+		try {
+			const result = await confirmMutation.mutateAsync(body);
+			if (result.kind === 'connected') {
+				goTo('terminal');
+				void queryClient.invalidateQueries({ queryKey: connectRequestsKey });
+				void queryClient.invalidateQueries({ queryKey: ['credentials'] });
+				toast({ title: 'Access updated', variant: 'success' });
+				return;
+			}
+			setChallenge(result);
+			goTo('awaiting');
+			if (result.kind === 'authorization_code' && isHttpsVendorUrl(result.authorize_url)) {
+				openVendorUrl(result.authorize_url, '_blank', 'noopener,noreferrer');
+			}
+		} catch (err) {
+			const copy = describeConfirmError(err);
+			if (copy.action === 'ended') {
+				setFailure(copy.message);
+				goTo('terminal');
+				void queryClient.invalidateQueries({ queryKey: connectRequestsKey });
+				return;
+			}
+			if (copy.action === 'reload') onReload();
+			setError(copy.message);
+			goTo('review');
+		}
+	};
+
+	const handleReject = async (): Promise<void> => {
+		try {
+			await rejectMutation.mutateAsync({ sessionId });
+			setRejectOpen(false);
+			phaseRef.current = 'terminal';
+			toast({ title: 'Request rejected', variant: 'success' });
+			onDone();
+		} catch {
+			// surfaced in the confirm dialog below.
+		}
+	};
+
+	if (phase === 'terminal') {
+		return (
+			<TerminalStep
+				display={display}
+				status={failure ? 'failed' : 'applied'}
+				connectedAs={null}
+				errorCode={null}
+				failureMessage={failure ?? undefined}
+				credentialId={null}
+				boundAgentId={shown.binding.agent_id}
+				onDone={onDone}
+			/>
+		);
+	}
+	if (phase === 'awaiting' && challenge) {
+		return (
+			<AwaitingStep
+				display={display}
+				challenge={challenge}
+				status={polling.data?.status ?? 'pending'}
+				onCancel={(): void => {
+					cancelMutation.mutate({ sessionId, pollToken });
+					phaseRef.current = 'terminal';
+					onBack();
+				}}
+			/>
+		);
+	}
+	if (phase === 'rules') {
+		return (
+			<RulesStep
+				display={display}
+				requestedRules={rulesToConfirm(shown.result.rules)}
+				currentRules={rules}
+				onChange={setRules}
+				onBack={(): void => goTo('review')}
+				onContinue={(finalRules: PermissionRule[]): void => {
+					setRules(finalRules);
+					goTo('review');
+				}}
+				submitting={false}
+				error={null}
+				apiReference={session.api_reference}
+				requireRule
+			/>
+		);
+	}
+
+	const canConfirm = session.can_confirm;
+	const ruleSet = shown.current.rule_set;
+	const otherAgents = shown.other_bound_agents;
+	return (
+		<div className="space-y-5">
+			<VendorHeader
+				display={display}
+				subtitle={`An agent is asking to change what it can do with ${credentialName}.`}
+			/>
+
+			{changed && (
+				<div
+					role="alert"
+					className="border-warning/40 bg-warning/10 flex items-center justify-between gap-3 rounded-lg border p-3 text-sm"
+				>
+					<span>
+						This request changed while you were reviewing it (revision{' '}
+						{latest.revision.number}). Review the new version before approving.
+					</span>
+					<Button type="button" size="sm" variant="secondary" onClick={showLatest}>
+						Show the new version
+					</Button>
+				</div>
+			)}
+
+			{error && <ErrorAlert message={error} />}
+
+			<AgentRequestCard
+				agent={
+					session.agent?.name
+						? { id: session.agent.agent_id, name: session.agent.name }
+						: undefined
+				}
+				actorId={shown.binding.agent_id}
+				ownerId={session.agent?.owner_id ?? null}
+				reason={session.reason}
+				loading={false}
+			/>
+
+			<div className="text-muted-foreground flex items-center justify-between text-xs">
+				<span>Revision {shown.revision.number}</span>
+				<Button
+					type="button"
+					variant="ghost"
+					size="sm"
+					onClick={(): void => setHistoryOpen((open) => !open)}
+				>
+					{historyOpen ? 'Hide history' : 'History'}
+				</Button>
+			</div>
+			{historyOpen && <EditHistory sessionId={sessionId} pollToken={pollToken} />}
+
+			{shown.widens_access && (
+				<p className="text-warning flex items-center gap-2 text-sm">
+					<ShieldAlert className="h-4 w-4" />
+					This change gives the agent more access than it has today.
+				</p>
+			)}
+
+			{ruleSet && (
+				<p className="text-muted-foreground text-sm">
+					{ruleSet.curated
+						? `These rules come from the curated set ${ruleSet.name}. Approving copies them onto this binding; the set itself doesn't change.`
+						: `These rules belong to the shared rule set ${ruleSet.name}. Approving changes the set for every binding that uses it.`}
+				</p>
+			)}
+
+			<section aria-label="Rule changes" className="space-y-2">
+				<div className="flex items-center justify-between">
+					<h3 className="text-sm font-medium">Rules</h3>
+					{canConfirm && (
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							onClick={(): void => goTo('rules')}
+						>
+							Edit rules
+						</Button>
+					)}
+				</div>
+				{editedRules ? (
+					<p className="text-muted-foreground text-xs">
+						You edited the rules: your list is what gets applied.
+					</p>
+				) : null}
+				<ul className="space-y-1">
+					{changes.map((change, i) => (
+						<li
+							key={`${change.kind}-${change.rule.id ?? i}`}
+							className={cn(
+								'flex items-center gap-2 rounded px-2 py-1 text-sm',
+								change.kind === 'added' && 'bg-success/10',
+								change.kind === 'removed' && 'bg-danger/10 line-through',
+							)}
+						>
+							<EffectBadge effect={change.rule.effect}>
+								{change.rule.effect}
+							</EffectBadge>
+							<span className="font-mono text-xs">
+								{describeRuleMatch(change.rule)}
+							</span>
+							{change.kind !== 'kept' && (
+								<Badge variant={change.kind === 'added' ? 'success' : 'danger'}>
+									{change.kind === 'added' ? 'Added' : 'Removed'}
+								</Badge>
+							)}
+							{change.widens && <Badge variant="warning">Widens</Badge>}
+						</li>
+					))}
+				</ul>
+			</section>
+
+			{newScopes.length > 0 && (
+				<section aria-label="Scope changes" className="space-y-1 text-sm">
+					<h3 className="font-medium">Scopes to add</h3>
+					<p className="font-mono text-xs">{newScopes.join(', ')}</p>
+					<p className="text-muted-foreground text-xs">
+						Approving asks you to sign in again to grant them; nothing changes until you
+						do.
+					</p>
+					{otherAgents.length > 0 && (
+						<p className="text-muted-foreground text-xs">
+							They also reach{' '}
+							{otherAgents.length === 1
+								? '1 other agent'
+								: `${otherAgents.length} other agents`}{' '}
+							using this credential:{' '}
+							{otherAgents.map((agent, i) => (
+								<span key={agent.agent_id}>
+									{i > 0 && ', '}
+									<ActorLabel actorId={agent.agent_id} />
+								</span>
+							))}
+							.
+						</p>
+					)}
+				</section>
+			)}
+
+			{shown.current.suspended && (
+				<Checkbox checked={resume} onChange={setResume} className="text-sm">
+					Switch this binding back on (it is suspended)
+				</Checkbox>
+			)}
+
+			{!canConfirm && <ConfirmBlockedNotice reason={confirmBlockedReason(session)} />}
+
+			<div className="bg-surface-sheet-foot border-hairline-field sticky -bottom-4 z-10 -mx-5 mt-auto -mb-4 flex items-center justify-between gap-2 border-t px-5 py-3.5">
+				<div className="flex items-center gap-1">
+					<Button type="button" variant="ghost" size="sm" onClick={onBack}>
+						{canConfirm ? 'Not now' : 'Close'}
+					</Button>
+					{canConfirm && (
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							className="text-danger hover:text-danger"
+							onClick={(): void => {
+								rejectMutation.reset();
+								setRejectOpen(true);
+							}}
+						>
+							Reject
+						</Button>
+					)}
+				</div>
+				{canConfirm && (
+					<Button
+						type="button"
+						variant="primary"
+						disabled={changed || confirmMutation.isPending}
+						onClick={(): void => void approve()}
+					>
+						{confirmMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+						{shown.needs_vendor_consent ? 'Approve and sign in' : 'Approve'}
+					</Button>
+				)}
+			</div>
+
+			<ConfirmDialog
+				open={rejectOpen}
+				title="Reject this request?"
+				body={
+					<div className="space-y-2">
+						<p>The agent is told it was rejected. Its access stays as it is.</p>
+						{rejectMutation.error && (
+							<ErrorAlert message="The request couldn't be rejected. Try again." />
+						)}
+					</div>
+				}
+				confirmLabel="Reject"
+				onConfirm={(): void => void handleReject()}
+				onClose={(): void => setRejectOpen(false)}
+				pending={rejectMutation.isPending}
+			/>
+		</div>
+	);
+}
+
+/** The session's revisions, oldest first, each with its rule and scope count. */
+function EditHistory({ sessionId, pollToken }: { sessionId: string; pollToken?: string }) {
+	const revisions = useConnectSessionRevisions(sessionId, pollToken);
+	if (revisions.isLoading) return <Skeleton className="h-12 w-full" />;
+	if (revisions.error) return <ErrorAlert message="The history couldn't be loaded." />;
+	return (
+		<ol aria-label="Request history" className="space-y-1 text-xs">
+			{(revisions.data ?? []).map((revision) => (
+				<li key={revision.id} className="flex items-center gap-2">
+					<span className="font-medium">Revision {revision.number}</span>
+					<span className="text-muted-foreground">
+						{revision.created_by ? (
+							<ActorLabel actorId={revision.created_by} />
+						) : (
+							'Rebased'
+						)}
+						{' · '}
+						{new Date(revision.created_at).toLocaleString()}
+					</span>
+					<span className="text-muted-foreground ml-auto">
+						{(revision.result.rules ?? []).length} rules
+						{revision.result.scopes?.length
+							? ` · ${revision.result.scopes.join(', ')}`
+							: ''}
+					</span>
+				</li>
+			))}
+		</ol>
+	);
+}
+
 function RulesStep({
 	display,
 	requestedRules,
@@ -2096,7 +2552,7 @@ function TerminalStep({
 	// omit ``onRetry`` and the button is hidden.
 	onRetry?: () => void;
 }) {
-	const success = status === 'connected';
+	const success = status === 'connected' || status === 'applied';
 	// A finished connect closes itself after a short countdown — unless the step
 	// asks for something more (the re-authorize notice), or the operator does
 	// anything in it (pick agents to bind, Stay open), which keeps it open.
@@ -2124,7 +2580,9 @@ function TerminalStep({
 				<div>
 					<p className="text-foreground text-base font-semibold">
 						{success
-							? `Connected to ${display.displayName}`
+							? status === 'applied'
+								? `Access to ${display.displayName} updated`
+								: `Connected to ${display.displayName}`
 							: status === 'expired'
 								? 'The code expired'
 								: failureMessage
