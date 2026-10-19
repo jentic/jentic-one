@@ -158,7 +158,7 @@ from jentic_one.shared.models.api_identity import (
 from jentic_one.shared.models.credentials import StoredCredentialType
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
-from jentic_one.shared.url_validation import validate_upstream_url
+from jentic_one.shared.url_validation import validate_upstream_url_async
 from jentic_one.shared.vendor_domain import vendor_from_api_id
 
 _logger = structlog.get_logger(__name__)
@@ -2541,8 +2541,8 @@ class ConnectSessionService:
         # the ones the token exchange, refresh and later edits accept.
         egress = resolved_control_egress(self._ctx.config)
         try:
-            authorize_url = validate_upstream_url(variant.authorize_url, egress)
-            token_url = validate_upstream_url(variant.token_url, egress)
+            authorize_url = await validate_upstream_url_async(variant.authorize_url, egress)
+            token_url = await validate_upstream_url_async(variant.token_url, egress)
         except ValueError as exc:
             raise OwnClientInvalidError(str(exc)) from exc
 

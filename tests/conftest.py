@@ -13,8 +13,9 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
+from jentic_one.shared import dns_cache
 from jentic_one.shared import metrics as shared_metrics
-from jentic_one.shared.dns_cache import clear_resolution_cache
+from jentic_one.shared.dns_cache import ResolutionCache, clear_resolution_cache
 from jentic_one.shared.metrics import reset_metrics
 from jentic_one.shared.tracing import reset_tracing
 
@@ -47,6 +48,18 @@ def _isolated_resolution_cache() -> Iterator[None]:
     clear_resolution_cache()
     yield
     clear_resolution_cache()
+
+
+@pytest.fixture()
+def uncached_dns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make every lookup hit the resolver, as once a cached answer's TTL elapses.
+
+    Within the TTL the pre-flight check and the connect-time pin share one
+    answer, so a rebind cannot land between them. Rebinding tests use this to
+    feed the two lookups different answers and pin that the connect-time
+    re-validation still refuses a blocked address.
+    """
+    monkeypatch.setattr(dns_cache, "_CACHE", ResolutionCache(ttl_s=0.0))
 
 
 @pytest.fixture()

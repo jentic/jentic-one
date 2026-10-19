@@ -20,7 +20,7 @@ import structlog
 
 from jentic_one.shared.config import EgressConfig, VendorIdentityProbeConfig
 from jentic_one.shared.egress import build_always_pinned_transport
-from jentic_one.shared.url_validation import validate_upstream_url
+from jentic_one.shared.url_validation import validate_upstream_url_async
 
 _logger = structlog.get_logger(__name__)
 
@@ -62,7 +62,7 @@ async def echo_identity(
     # with the freshly minted bearer token — refuse to send it unless the
     # operator allowlisted that target.
     try:
-        safe_url = validate_upstream_url(probe.endpoint, egress)
+        safe_url = await validate_upstream_url_async(probe.endpoint, egress)
     except ValueError as exc:
         raise IdentityEchoError(f"unsafe upstream URL: {exc}") from exc
 

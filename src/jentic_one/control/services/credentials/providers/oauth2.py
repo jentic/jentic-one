@@ -40,7 +40,7 @@ from jentic_one.shared.config import EgressConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.egress import build_always_pinned_transport
 from jentic_one.shared.models.credentials import CredentialType
-from jentic_one.shared.url_validation import validate_upstream_url
+from jentic_one.shared.url_validation import validate_upstream_url_async
 
 
 class InvalidGrantError(ProviderError):
@@ -120,7 +120,7 @@ class OAuth2Provider(ABC):
         # aim this call at a private / metadata target unless the operator
         # allowlisted it.
         try:
-            safe_url = validate_upstream_url(token_url, egress)
+            safe_url = await validate_upstream_url_async(token_url, egress)
         except ValueError as exc:
             raise TokenExchangeError(0, f"unsafe upstream URL: {exc}") from exc
 
