@@ -31,6 +31,7 @@ from jentic_one.shared.jobs.execution_handler import ExecutionHandler
 from jentic_one.shared.jobs.hold import ENCRYPTED_PAYLOAD_KEY
 from jentic_one.shared.jobs.protocols import UpstreamExecRequest, UpstreamExecResult
 from jentic_one.shared.models import ActorType, CredentialType, StoredCredentialType
+from tests.unit.fake_tx import SessionScope
 
 _KEY = "vF7VWq2NJLr+uGDBFy9boIXfSJJIzqnTSF7iDDMKR5U="  # pragma: allowlist secret
 
@@ -98,7 +99,7 @@ async def test_the_broker_refuses_to_hold_without_a_keyset(
 class _NeverCalledExecutor:
     called = False
 
-    async def execute(self, request: UpstreamExecRequest, *, session: Any) -> UpstreamExecResult:
+    async def execute(self, request: UpstreamExecRequest, *, db: Any) -> UpstreamExecResult:
         self.called = True
         raise AssertionError("an undecryptable held payload must not run")
 
@@ -106,15 +107,17 @@ class _NeverCalledExecutor:
 async def test_a_worker_without_a_keyset_fails_a_held_job_instead_of_running_it() -> None:
     executor = _NeverCalledExecutor()
     handler = ExecutionHandler(executor=executor, encryption=None)
+    scope = SessionScope(object())
 
     result = await handler.execute(
         "job_held",
-        object(),
+        scope,
         payload={ENCRYPTED_PAYLOAD_KEY: "v1:opaque"},
         created_by="agnt_1",
         actor_type="agent",
     )
 
     assert executor.called is False
+    assert scope.opened == 0
     assert result.body["status"] == "failed"
     assert result.body["problem"]["type"] == "approval_hold_unavailable"

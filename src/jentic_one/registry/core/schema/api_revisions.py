@@ -71,7 +71,11 @@ class ApiRevision(AuditableMixin, RegistryBase):
     )
     state: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'draft'"))
     origin: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    #: sha256 of the spec content, or NULL when the source carried no sha. Must be
+    #: sha256 of the spec bytes as fetched or submitted, or NULL when the source
+    #: carried no sha. A revision whose relative servers ingest resolved stores
+    #: the fold from ``registry.ingest.server_urls.resolved_revision_digest``
+    #: instead, so the same bytes stored host-less and resolved get distinct
+    #: digests. Must be
     #: NULL — never '' — for sha-less specs: '' is a *value* under
     #: uq_api_revisions_api_id_spec_digest and would collapse distinct sha-less
     #: specs for the same api_id into one revision, whereas NULLs are distinct on

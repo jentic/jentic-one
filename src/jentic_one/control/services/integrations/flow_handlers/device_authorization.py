@@ -30,6 +30,7 @@ from jentic_one.control.services.integrations.flow_handlers.base import (
     SuccessTokens,
 )
 from jentic_one.control.services.integrations.flow_handlers.session_app import SessionApp
+from jentic_one.shared.config import resolved_control_egress
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.credentials import StoredCredentialType
 
@@ -107,6 +108,7 @@ class DeviceAuthorizationHandler:
             authorization_endpoint=app.authorization_endpoint,
             client_id=app.client_id,
             scopes=confirmed_scopes,
+            egress=resolved_control_egress(self._ctx.config),
         )
         encrypted_device_code = self._ctx.encryption.encrypt(result.device_code)
         expires_at = datetime.now(UTC) + timedelta(seconds=result.expires_in)
@@ -227,6 +229,7 @@ class DeviceAuthorizationHandler:
             token_endpoint=token_endpoint,
             client_id=client_id,
             device_code=device_code,
+            egress=resolved_control_egress(self._ctx.config),
         )
 
         # ``last_polled_at`` is stamped up in ``advance`` by

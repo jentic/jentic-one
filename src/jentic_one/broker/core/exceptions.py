@@ -144,6 +144,15 @@ class IdempotencyInProgressError(BrokerError):
     """
 
 
+class IdempotencyUnavailableError(BrokerError):
+    """The Idempotency-Key claim could not be recorded, so the call was not run (503).
+
+    Raised when the shared-state backend refuses the claim write (the
+    in-process backend's ``idem`` namespace is full). The call is refused
+    rather than run unclaimed, since an unrecorded claim cannot dedupe a retry.
+    """
+
+
 class InvalidRevisionPinError(BrokerError):
     """A ``Jentic-Revision`` pin that fails the spec regex / is unknown / is archived (422).
 
@@ -250,6 +259,21 @@ class UpstreamTimeoutError(BrokerError):
     """
 
     default_type = "upstream_timeout"
+
+
+class UpstreamTransportError(BrokerError):
+    """The broker could not talk to the upstream at the transport level (502).
+
+    The upstream dropped the connection (including partway through the response
+    body), refused it, or broke the HTTP protocol, so no usable upstream answer
+    exists. ``broker`` origin: the broker generated this response. Typed
+    ``upstream_transport_error`` (the request may have reached the upstream) or
+    ``upstream_connect_failed`` (connect phase, ``pre_send``: no request bytes
+    were sent). A connect or read *timeout* is :class:`UpstreamTimeoutError`
+    (504) instead.
+    """
+
+    default_type = "upstream_transport_error"
 
 
 class DeadlineExceededError(BrokerError):

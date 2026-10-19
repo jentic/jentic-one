@@ -124,7 +124,6 @@ def _evict_stale(cache: dict[Any, Any], now: float) -> None:
 
 @dataclass(slots=True, frozen=True)
 class UsageFilters:
-    toolkit_id: str | None = field(default=None)
     api_id: str | None = field(default=None)
     agent_id: str | None = field(default=None)
     status: str | None = field(default=None)
@@ -383,7 +382,6 @@ class MonitoringService:
             api_vendor = filters.api_id.split("/")[0]
             api_name = filters.api_id.split("/", 1)[1]
         f = UsageQueryFilters(
-            toolkit_id=filters.toolkit_id,
             api_vendor=api_vendor,
             api_name=api_name,
             actor_id=filters.agent_id,

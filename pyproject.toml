@@ -17,7 +17,6 @@ dependencies = [
     "opentelemetry-api>=1.20",
     "opentelemetry-exporter-otlp-proto-grpc>=1.20",
     "opentelemetry-exporter-prometheus>=0.44b0",
-    "opentelemetry-instrumentation-asyncpg>=0.44b0",
     "opentelemetry-instrumentation-fastapi>=0.65b0",
     "opentelemetry-instrumentation-sqlalchemy>=0.44b0",
     "opentelemetry-sdk>=1.20",
@@ -97,6 +96,8 @@ dev = [
     "redis>=8.0.0",
     "jsonschema>=4.26.0",
     "types-jsonschema>=4.26.0.20261006",
+    "pytest-xdist>=3.8.0",
+    "filelock>=3.16",
 ]
 
 # Conventional-commit enforcement (pure Python — no Node needed). Fires for
@@ -198,6 +199,17 @@ ignore_missing_imports = true
 module = "cryptography.*"
 ignore_missing_imports = true
 
+# The perf suite's locustfile runs only inside the locustio/locust image; locust
+# is deliberately not a project dependency (it pins gevent), so it's untyped here.
+[[tool.mypy.overrides]]
+module = "locust.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tests.perf.locustfile"
+disallow_subclassing_any = false
+disallow_untyped_decorators = false
+
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
@@ -205,8 +217,6 @@ addopts = [
     "-ra",
     "--strict-markers",
     "--strict-config",
-    "--cov=jentic_one",
-    "--cov-report=term-missing",
 ]
 markers = [
     "integration: marks tests requiring running database fixtures",
@@ -214,6 +224,15 @@ markers = [
     "smoke: lightweight liveness checks against a deployed environment",
 ]
 asyncio_mode = "auto"
+# A SQLAlchemy deprecation warning fails the test that triggers it: each one
+# walks the stack on every call, so a deprecated API on a hot path is a silent
+# per-request CPU cost (#1820). This entry raises at the call site during
+# collection and session/module fixture setup; inside each test the
+# `tests/harness/sqlalchemy_deprecations.py` recorder takes over, so a broad
+# `except Exception` on the path cannot swallow it.
+filterwarnings = [
+    "error::sqlalchemy.exc.SADeprecationWarning",
+]
 
 [tool.bandit]
 exclude_dirs = ["tests"]

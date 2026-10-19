@@ -13,7 +13,6 @@ against both backends so we catch dialect drift early.
 
 from __future__ import annotations
 
-import asyncio
 import os
 import tempfile
 from collections.abc import AsyncGenerator, Iterator
@@ -29,8 +28,9 @@ from tests.harness.postgres import (
     DB_NAMES,
     alembic_config_for,
     encryption_config,
-    ensure_schema,
+    migrate_to_head,
     postgres_config,
+    prepare_xdist_database,
 )
 
 
@@ -73,26 +73,23 @@ def integration_config() -> Iterator[AppConfig]:
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _apply_migrations(integration_config: AppConfig) -> Iterator[None]:
+def _apply_migrations(
+    integration_config: AppConfig, tmp_path_factory: pytest.TempPathFactory
+) -> Iterator[None]:
     """Bring every integration database up to ``head`` once per session.
 
-    On Postgres we first ensure the per-surface schema exists (Docker volumes
-    start empty). On SQLite there are no schemas, so we go straight to applying
-    migrations against the per-surface database files.
+    On Postgres we first give an xdist worker its own database (see
+    ``tests/harness/postgres.py``), then ensure the per-surface schemas exist
+    (Docker volumes start empty). On SQLite there are no schemas, so we go
+    straight to applying migrations against the per-surface database files.
     """
-    is_postgres = _test_backend() == "postgres"
-
-    if is_postgres:
-
-        async def _ensure_all_schemas() -> None:
-            for name in DB_NAMES:
-                await ensure_schema(getattr(integration_config.databases, name))
-
-        asyncio.run(_ensure_all_schemas())
-
-    for name in DB_NAMES:
-        cfg = alembic_config_for(name, getattr(integration_config.databases, name))
-        command.upgrade(cfg, "head")
+    if _test_backend() == "postgres":
+        prepare_xdist_database(tmp_path_factory.getbasetemp().parent)
+        migrate_to_head(integration_config)
+    else:
+        for name in DB_NAMES:
+            cfg = alembic_config_for(name, getattr(integration_config.databases, name))
+            command.upgrade(cfg, "head")
     yield
 
 

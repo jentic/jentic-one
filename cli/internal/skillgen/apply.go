@@ -18,12 +18,21 @@ type Outcome struct {
 	Changed   bool // the skill content was written/updated
 	Skipped   bool // nothing to do (already up to date)
 	UserEdits bool // an existing install had manual edits (needs --force)
+	// NewerInstalled reports that the existing install records a content
+	// version above the one being applied (written by a newer CLI); it was
+	// left alone, since rewriting it would downgrade it (needs --force).
+	NewerInstalled bool
+	// InstalledVersion and AppliedVersion are the version the existing
+	// install records and the one being applied, set alongside
+	// NewerInstalled so callers can name both.
+	InstalledVersion string
+	AppliedVersion   string
 }
 
 // ApplyOptions controls how Apply writes a skill.
 type ApplyOptions struct {
 	Scope  Scope // user vs project; zero value uses the adapter default
-	Force  bool  // overwrite a user-edited install
+	Force  bool  // overwrite a user-edited install, or downgrade a newer one
 	DryRun bool  // compute the outcome and target but write nothing
 }
 
@@ -31,7 +40,8 @@ type ApplyOptions struct {
 // target, idempotently. For a shared AGENTS.md it splices only that skill's
 // named block, leaving user content and sibling blocks intact; for an
 // owned-file SKILL.md it writes a clean spec file plus a provenance sidecar. It
-// refuses to overwrite a manually-edited install unless Force.
+// refuses to overwrite a manually-edited install, or one recording a newer
+// content version than c (an older CLI must not downgrade it), unless Force.
 func Apply(a Adapter, c Canonical, env DetectEnv, opts ApplyOptions) (Outcome, error) {
 	scope := opts.Scope
 	if scope == "" {
@@ -39,13 +49,30 @@ func Apply(a Adapter, c Canonical, env DetectEnv, opts ApplyOptions) (Outcome, e
 	}
 	target := a.Target(scope, c.Name, env)
 	out := Outcome{Operator: a.Operator(), Skill: c.Name, Path: target}
+	if scope == ScopeProject {
+		if err := confineToProject(env.Cwd, target); err != nil {
+			return out, err
+		}
+	}
 
-	existing, err := os.ReadFile(target) //nolint:gosec // target is derived from adapter rules + env, not arbitrary input.
+	existing, err := readTarget(target)
 	if err != nil && !os.IsNotExist(err) {
 		return out, fmt.Errorf("read %s: %w", target, err)
 	}
 	out.Created = os.IsNotExist(err)
 	norm := []byte(normalizeNewlines(string(existing)))
+
+	if !out.Created && !opts.Force {
+		// The user-edit guard reports first: an edited install needs --force
+		// whatever its version, so it keeps the more specific signal.
+		if installed, edited, v := probeInstall(a, target, norm, c.Name); installed && !edited &&
+			CompareVersions(v, versionToken(c.Version)) == FreshnessNewer {
+			out.NewerInstalled = true
+			out.InstalledVersion = v
+			out.AppliedVersion = versionToken(c.Version)
+			return out, nil
+		}
+	}
 
 	if a.OwnsWholeFile() {
 		return applyOwnedFile(a, c, target, norm, out, opts)
@@ -73,10 +100,20 @@ func applySharedFile(a Adapter, c Canonical, target string, norm []byte, out Out
 	}
 	out.Changed = changed
 	out.Skipped = !changed
-	if !changed || opts.DryRun {
+	if !changed {
 		return out, nil
 	}
-	if err := writeTarget(target, newBytes); err != nil {
+	// A symlinked AGENTS.md is updated at the file it points to, keeping the
+	// link (see resolveSharedTarget). Resolved before the dry-run return so a
+	// preview refuses exactly what the real write would.
+	resolved, err := resolveSharedTarget(target)
+	if err != nil {
+		return out, err
+	}
+	if opts.DryRun {
+		return out, nil
+	}
+	if err := writeTarget(resolved, newBytes); err != nil {
 		return out, err
 	}
 	return out, nil
@@ -116,6 +153,15 @@ func applyOwnedFile(a Adapter, c Canonical, target string, norm []byte, out Outc
 	// time, so a shipped-set rename cannot strand the old file.
 	prior, _ := readSidecar(target)
 	recorded := prior.References
+	// A recorded version that differs from the content being applied is a
+	// pending write even when the rendered bytes are identical (claude/cursor
+	// frontmatter carries no version): the sidecar stamp is what staleness
+	// detection reads, so refreshing it is a real change.
+	versionDrift := prior.BodyHash != "" && prior.Version != versionToken(c.Version)
+	if versionDrift {
+		out.Changed = true
+		out.Skipped = false
+	}
 
 	if opts.DryRun {
 		// A dry run must report the same Changed a real apply would, so
@@ -147,7 +193,9 @@ func applyOwnedFile(a Adapter, c Canonical, target string, norm []byte, out Outc
 	// predating the field). An install with NO sidecar and an unchanged body
 	// deliberately gains none here — that shape is user content force-applied
 	// over; stamping provenance onto it would claim a file we did not write.
-	if changed || (prior.BodyHash != "" && !slices.Equal(prior.References, renderedReferences(c.Name))) {
+	// A version-only bump (same rendered bytes) refreshes the recorded version
+	// the same way, so staleness clears once the install is re-applied.
+	if changed || versionDrift || (prior.BodyHash != "" && !slices.Equal(prior.References, renderedReferences(c.Name))) {
 		if err := writeSidecar(target, c, newBytes); err != nil {
 			return out, err
 		}
@@ -170,7 +218,8 @@ func applyOwnedReferences(target, name string, recorded []string) (changed bool,
 	if len(refs) == 0 && len(recorded) == 0 {
 		return false, nil
 	}
-	refDir := filepath.Join(filepath.Dir(target), "references")
+	skillDir := filepath.Dir(target)
+	refDir := filepath.Join(skillDir, referencesDir)
 	current := make(map[string]bool, len(refs))
 	for _, ref := range refs {
 		current[ref] = true
@@ -178,21 +227,21 @@ func applyOwnedReferences(target, name string, recorded []string) (changed bool,
 		if err != nil {
 			return changed, err
 		}
-		path := filepath.Join(refDir, ref)
-		if existing, rerr := os.ReadFile(path); rerr == nil && //nolint:gosec // path derives from adapter rules + embed names.
-			normalizeNewlines(string(existing)) == normalizeNewlines(string(data)) {
-			continue
-		}
-		if err := writeTarget(path, data); err != nil {
+		// Embed names are trusted, but the references dir on disk is not:
+		// writeManagedReference confines the write to the skill dir.
+		wrote, err := writeManagedReference(skillDir, ref, data)
+		if err != nil {
 			return changed, err
 		}
-		changed = true
+		changed = changed || wrote
 	}
 	for _, ref := range recorded {
 		if current[ref] {
 			continue
 		}
-		if rmErr := os.Remove(filepath.Join(refDir, ref)); rmErr == nil {
+		// The recorded set comes from the on-disk sidecar; an unsafe entry is
+		// skipped rather than failing the whole apply.
+		if removed, _ := removeManagedReference(skillDir, ref); removed {
 			changed = true
 		}
 	}
@@ -207,7 +256,7 @@ func applyOwnedReferences(target, name string, recorded []string) (changed bool,
 // or a recorded file awaiting pruning. This is the read-only mirror of
 // applyOwnedReferences for DryRun outcomes.
 func pendingReferenceChanges(target, name string, recorded []string) bool {
-	refDir := filepath.Join(filepath.Dir(target), "references")
+	skillDir := filepath.Dir(target)
 	refs := renderedReferences(name)
 	current := make(map[string]bool, len(refs))
 	for _, ref := range refs {
@@ -216,8 +265,7 @@ func pendingReferenceChanges(target, name string, recorded []string) bool {
 		if err != nil {
 			continue // build-time programming error; the write path reports it.
 		}
-		existing, rerr := os.ReadFile(filepath.Join(refDir, ref)) //nolint:gosec // path derives from adapter rules + embed names.
-		if rerr != nil || normalizeNewlines(string(existing)) != normalizeNewlines(string(data)) {
+		if ok, _ := referenceState(skillDir, ref, data); !ok {
 			return true
 		}
 	}
@@ -225,7 +273,8 @@ func pendingReferenceChanges(target, name string, recorded []string) bool {
 		if current[ref] {
 			continue
 		}
-		if _, err := os.Lstat(filepath.Join(refDir, ref)); err == nil {
+		// An unsafe name reads as absent: removeManagedReference skips it too.
+		if _, present := referenceState(skillDir, ref, nil); present {
 			return true
 		}
 	}
@@ -266,6 +315,7 @@ func writeSidecar(skillMD string, c Canonical, rendered []byte) error {
 		Source:     string(c.source()),
 		BaseURL:    c.BaseURL,
 		References: renderedReferences(c.Name),
+		Version:    versionToken(c.Version),
 	}
 	data, err := json.MarshalIndent(sc, "", "  ")
 	if err != nil {
@@ -277,7 +327,7 @@ func writeSidecar(skillMD string, c Canonical, rendered []byte) error {
 // readSidecar loads the provenance sidecar for an owned-file skill, reporting
 // whether a well-formed one was present.
 func readSidecar(skillMD string) (sidecar, bool) {
-	data, err := os.ReadFile(sidecarPath(skillMD))
+	data, err := readTarget(sidecarPath(skillMD))
 	if err != nil {
 		return sidecar{}, false
 	}
@@ -328,13 +378,18 @@ func Remove(a Adapter, c Canonical, env DetectEnv, opts RemoveOptions) (RemoveOu
 	target := a.Target(scope, c.Name, env)
 	out := RemoveOutcome{Path: target}
 
-	existing, err := os.ReadFile(target) //nolint:gosec // target is derived from adapter rules + env.
+	existing, err := readTarget(target)
 	if os.IsNotExist(err) {
 		out.Missing = true
 		return out, nil
 	}
 	if err != nil {
 		return out, fmt.Errorf("read %s: %w", target, err)
+	}
+	if scope == ScopeProject {
+		if err := confineToProject(env.Cwd, target); err != nil {
+			return out, err
+		}
 	}
 	norm := []byte(normalizeNewlines(string(existing)))
 
@@ -358,6 +413,14 @@ func removeSharedFile(target string, norm []byte, c Canonical, out RemoveOutcome
 		out.UserEdits = true
 		return out, nil
 	}
+	// A symlinked AGENTS.md is edited at the file it points to; the link
+	// itself is never replaced or deleted. Resolved before the dry-run return
+	// so a preview refuses exactly what the real removal would.
+	linked := isSymlink(target)
+	resolved, err := resolveSharedTarget(target)
+	if err != nil {
+		return out, err
+	}
 	if opts.DryRun {
 		out.Removed = true
 		return out, nil
@@ -365,14 +428,23 @@ func removeSharedFile(target string, norm []byte, c Canonical, out RemoveOutcome
 
 	remainder := trimSurrounding(string(norm[:blk.start]) + string(norm[blk.endPos:]))
 	if remainder == "" {
+		if linked {
+			// Deleting the link would leave the block in the real file, and
+			// deleting the real file would dangle the link: empty it instead.
+			if err := writeFileAtomic(resolved, nil); err != nil {
+				return out, fmt.Errorf("write %s: %w", resolved, err)
+			}
+			out.Removed = true
+			return out, nil
+		}
 		if err := os.Remove(target); err != nil {
 			return out, fmt.Errorf("remove %s: %w", target, err)
 		}
 		out.Removed = true
 		return out, nil
 	}
-	if err := writeFileAtomic(target, []byte(remainder+"\n")); err != nil {
-		return out, fmt.Errorf("write %s: %w", target, err)
+	if err := writeFileAtomic(resolved, []byte(remainder+"\n")); err != nil {
+		return out, fmt.Errorf("write %s: %w", resolved, err)
 	}
 	out.Removed = true
 	return out, nil
@@ -403,14 +475,18 @@ func removeOwnedFile(target string, norm []byte, name string, out RemoveOutcome,
 		return out, fmt.Errorf("remove %s: %w", target, err)
 	}
 	_ = os.Remove(sidecarPath(target))
-	refDir := filepath.Join(filepath.Dir(target), "references")
+	skillDir := filepath.Dir(target)
+	refDir := filepath.Join(skillDir, "references")
 	seen := map[string]bool{}
 	for _, ref := range append(recorded.References, renderedReferences(name)...) {
 		if seen[ref] {
 			continue
 		}
 		seen[ref] = true
-		_ = os.Remove(filepath.Join(refDir, ref))
+		// Best-effort and confined to the skill dir: an unsafe recorded
+		// name (absolute, "..", separators, or a references/ symlink out)
+		// is skipped, never resolved.
+		_, _ = removeManagedReference(skillDir, ref)
 	}
 	pruneEmptyDirs(refDir)
 	pruneEmptyDirs(filepath.Dir(target))
@@ -425,6 +501,11 @@ func removeOwnedFile(target string, norm []byte, name string, out RemoveOutcome,
 // our managed block with user-owned content. The target's existing mode is
 // preserved; new files default to 0o644 (skill files are meant to be read by
 // other tools).
+//
+// The rename replaces a symlinked target with a regular file and never writes
+// through the link. That is the safe default for generator-owned files
+// (SKILL.md, sidecar, references); shared files a user may symlink (AGENTS.md)
+// resolve the link first via resolveSharedTarget.
 func writeFileAtomic(target string, data []byte) error {
 	mode := os.FileMode(0o644)
 	if info, err := os.Stat(target); err == nil {
@@ -465,6 +546,35 @@ func writeFileAtomic(target string, data []byte) error {
 	}
 	renamed = true
 	return nil
+}
+
+// isSymlink reports whether path itself (not what it points to) is a symlink.
+func isSymlink(path string) bool {
+	fi, err := os.Lstat(path)
+	return err == nil && fi.Mode()&os.ModeSymlink != 0
+}
+
+// resolveSharedTarget returns the file a shared target (AGENTS.md) really
+// lives at. A symlinked AGENTS.md — commonly a link into a dotfiles repo, or
+// to a sibling CLAUDE.md — is edited in place at its resolved path, so the
+// link survives and the linked copy is the one updated; renaming over the link
+// would replace it with a regular file and leave the real file holding the
+// stale block. The link is only followed to a regular file; for project scope,
+// Apply and Remove have already required (confineToProject) that it resolves
+// inside the project. A link that cannot be resolved (dangling, loop) or that
+// points at anything else is refused with a message naming it.
+func resolveSharedTarget(target string) (string, error) {
+	if !isSymlink(target) {
+		return target, nil
+	}
+	resolved, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return "", fmt.Errorf("%s is a symlink that cannot be resolved; edit the file it points to by hand: %w", target, err)
+	}
+	if fi, err := os.Stat(resolved); err != nil || !fi.Mode().IsRegular() {
+		return "", fmt.Errorf("%s is a symlink to %s, which is not a regular file; edit it by hand", target, resolved)
+	}
+	return resolved, nil
 }
 
 // trimSurrounding collapses the blank lines left behind when a block is spliced

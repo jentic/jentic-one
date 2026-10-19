@@ -164,14 +164,15 @@ func endMarkerFor(name string) string {
 
 // block is the parsed metadata of a managed region found in an existing file.
 type block struct {
-	found  bool   // a managed region was present
-	legacy bool   // matched the old un-named markers (migration path)
-	begin  string // the begin marker string this block was located by
-	end    string // the end marker string this block was located by
-	hash   string // content hash recorded in the BEGIN line's metadata
-	source string // provenance recorded in the BEGIN line's metadata
-	start  int    // byte offset of the BEGIN marker
-	endPos int    // byte offset just past the END marker
+	found   bool   // a managed region was present
+	legacy  bool   // matched the old un-named markers (migration path)
+	begin   string // the begin marker string this block was located by
+	end     string // the end marker string this block was located by
+	hash    string // content hash recorded in the BEGIN line's metadata
+	source  string // provenance recorded in the BEGIN line's metadata
+	version string // content version recorded in the BEGIN line's metadata ("" when absent)
+	start   int    // byte offset of the BEGIN marker
+	endPos  int    // byte offset just past the END marker
 }
 
 // hashContent returns a short, stable hash of the rendered body so re-runs can
@@ -200,12 +201,18 @@ func normalizeNewlines(s string) string {
 
 // managedBlock wraps body in the named BEGIN/END sentinels for skill name,
 // annotating the BEGIN line with the content hash and source for provenance
-// and drift detection.
-func managedBlock(name, body string, src Source) string {
+// and drift detection, plus a `version=` token recording the content version
+// the block was rendered from, which `skill list` and `doctor` compare against
+// the bundled copy to report staleness (#1342). An empty (or marker-unsafe)
+// version omits the token.
+func managedBlock(name, body string, src Source, version string) string {
 	h := hashContent(body)
 	var b strings.Builder
 	b.WriteString(beginMarkerFor(name))
 	fmt.Fprintf(&b, " hash=%s source=%s", h, src)
+	if version = versionToken(version); version != "" {
+		fmt.Fprintf(&b, " version=%s", version)
+	}
 	b.WriteByte('\n')
 	b.WriteString(strings.TrimRight(body, "\n"))
 	b.WriteByte('\n')
@@ -271,6 +278,8 @@ func locateBlock(s, begin, end string, legacy bool) block {
 			blk.hash = v
 		case "source":
 			blk.source = v
+		case "version":
+			blk.version = v
 		}
 	}
 	return blk
@@ -325,10 +334,15 @@ func blockUserEdited(existing []byte, blk block) bool {
 //
 // When the existing block's recorded hash does not match the hash of its actual
 // on-disk body, userEdits is set so the caller can warn and require --force.
-func splice(existing []byte, name, body string, src Source) spliceResult {
+//
+// The content version is stamped on the BEGIN line; a block whose body is
+// current but whose recorded version differs is rewritten, so a version-only
+// bump still refreshes the stamp staleness detection reads.
+func splice(existing []byte, name, body string, src Source, version string) spliceResult {
 	existing = []byte(normalizeNewlines(string(existing)))
-	newBlock := managedBlock(name, body, src)
+	newBlock := managedBlock(name, body, src, version)
 	newHash := hashContent(body)
+	version = versionToken(version)
 
 	blk := findBlock(existing, name)
 	if !blk.found {
@@ -336,7 +350,7 @@ func splice(existing []byte, name, body string, src Source) spliceResult {
 		// place *only* for the skill it could belong to (jentic); otherwise we
 		// insert a fresh block.
 		if legacy := findMigratableLegacyBlock(existing, name); legacy.found {
-			return spliceReplace(existing, legacy, newBlock, newHash)
+			return spliceReplace(existing, legacy, newBlock, newHash, version)
 		}
 		trimmed := strings.TrimRight(string(existing), "\n")
 		if trimmed == "" {
@@ -349,18 +363,18 @@ func splice(existing []byte, name, body string, src Source) spliceResult {
 		}
 	}
 
-	return spliceReplace(existing, blk, newBlock, newHash)
+	return spliceReplace(existing, blk, newBlock, newHash, version)
 }
 
 // spliceReplace rewrites blk (a located existing region, named or legacy) with
 // newBlock, detecting a manual edit against the recorded hash.
-func spliceReplace(existing []byte, blk block, newBlock, newHash string) spliceResult {
+func spliceReplace(existing []byte, blk block, newBlock, newHash, version string) spliceResult {
 	userEdited := blockUserEdited(existing, blk)
 
 	// An untouched, already-current, already-named block is a no-op. A legacy
 	// block always rewrites (it must be migrated to the named form even when
 	// the body is identical).
-	if !blk.legacy && blk.hash == newHash && !userEdited {
+	if !blk.legacy && blk.hash == newHash && blk.version == version && !userEdited {
 		return spliceResult{out: existing, changed: false, userEdits: false}
 	}
 

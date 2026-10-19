@@ -30,6 +30,7 @@ from jentic_one.broker.core.exceptions import (
     ErrorOrigin,
     IdempotencyConflictError,
     IdempotencyInProgressError,
+    IdempotencyUnavailableError,
     InvalidCredentialNameError,
     InvalidRevisionPinError,
     MethodNotAllowedError,
@@ -45,6 +46,7 @@ from jentic_one.broker.core.exceptions import (
     UpstreamBodyInterruptedError,
     UpstreamResponseTooLargeError,
     UpstreamTimeoutError,
+    UpstreamTransportError,
     UpstreamUrlNotAllowedError,
 )
 
@@ -65,6 +67,7 @@ STATUS_BY_ERROR: dict[type[BrokerError], int] = {
     MutationRequiresIdempotencyKeyError: 428,
     IdempotencyConflictError: 409,
     IdempotencyInProgressError: 409,
+    IdempotencyUnavailableError: 503,
     InvalidRevisionPinError: 422,
     UnauthorizedRevisionPinError: 403,
     CircuitOpenError: 503,
@@ -74,6 +77,7 @@ STATUS_BY_ERROR: dict[type[BrokerError], int] = {
     CredentialNeedsReconnectError: 401,
     CredentialRefreshTransientError: 502,
     UpstreamTimeoutError: 504,
+    UpstreamTransportError: 502,
     DeadlineExceededError: 504,
     UpstreamResponseTooLargeError: 502,
     # Raised after the status line is sent, so normally never rendered; a

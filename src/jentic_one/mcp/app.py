@@ -26,7 +26,7 @@ that owns everything the platform — not the SDK — must decide:
   Absent ``Origin`` (non-browser clients — every real MCP client today)
   passes.
 - **Bearer auth** reusing the identity-resolution LOGIC — the app-state
-  ``verify_token`` the auth surface installs (``make_superset_verifier``),
+  ``verify_token`` the app factory installs (``install_platform_token_verifier``),
   which resolves ``jak_`` API keys (retired ``sak_`` ones are refused), ``at_``
   access tokens (including
   grant-channel bearers: actor=agent with ``oauth_grant_id``, resolved
@@ -79,6 +79,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import Receive, Scope, Send
 
+from jentic_one.control.web.connect_limits import MCP_LIMITER_ATTR, connect_limiter
 from jentic_one.mcp.approvals import client_capabilities
 from jentic_one.mcp.resources import read_skill_resource, skill_resources
 from jentic_one.mcp.spec import served_tools
@@ -356,6 +357,7 @@ def _call_env(
         protocol_version=sctx.protocol_version,
         catalog_auto_importer=state.get("mcp_catalog_auto_importer"),
         security_schemes_lookup=state.get("mcp_security_schemes_lookup"),
+        connect_limiter=state.get("mcp_connect_limiter"),
     )
 
 
@@ -665,6 +667,7 @@ class McpMount:
         state["mcp_security_schemes_lookup"] = getattr(
             self.parent_app.state, "security_schemes_lookup", None
         )
+        state["mcp_connect_limiter"] = connect_limiter(self.parent_app, MCP_LIMITER_ATTR)
 
     async def _buffered_body(self, receive: Receive) -> bytes | None:
         """Read the full request body (``None`` when it exceeds the bound)."""
