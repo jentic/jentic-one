@@ -46,6 +46,7 @@ from jentic_one.control.services.integrations.errors import (
     EditOpenError,
     InvalidPollTokenError,
     NothingToChangeError,
+    RecentlyRejectedError,
     RevisionChangedError,
     RuleSetConfirmForbiddenError,
     SessionClosedError,
@@ -277,8 +278,12 @@ async def test_an_ended_edit_never_touches_the_credential_or_binding(
         created.session_id, poll_token=created.poll_token, identity=_AGENT_IDENTITY
     )
     assert status.status in ("failed", "expired")
-    # The binding is free for a new edit.
-    await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+    # The binding is free for a new edit, except for the cooldown after a rejection.
+    if how == "reject":
+        with pytest.raises(RecentlyRejectedError):
+            await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+    else:
+        await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
 
 
 async def test_confirm_must_name_the_current_revision(
@@ -531,3 +536,33 @@ async def test_only_the_initiator_amends_and_only_with_the_sessions_fields(
             identity=_AGENT_IDENTITY,
             amend=SessionAmend(fields=frozenset({"rules"}), rules=EditRequest()),
         )
+
+
+async def test_a_rejected_edit_holds_back_the_next_one_for_the_cooldown(
+    integration_context: Context, binding: str
+) -> None:
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    created = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+    await svc.reject_session(created.session_id, identity=_OWNER)
+    with pytest.raises(RecentlyRejectedError):
+        await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+
+    # The cooldown is the same setting as for connect requests.
+    hours = ctx.config.control.connect.rejection_cooldown_hours
+    ctx.config.control.connect.rejection_cooldown_hours = 0
+    try:
+        await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+    finally:
+        ctx.config.control.connect.rejection_cooldown_hours = hours
+
+
+async def test_a_cancelled_edit_does_not_hold_back_the_next_one(
+    integration_context: Context, binding: str
+) -> None:
+    ctx = integration_context
+    created = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+    await ConnectSessionService(ctx).cancel_session(
+        created.session_id, poll_token=created.poll_token, identity=_AGENT_IDENTITY
+    )
+    await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))

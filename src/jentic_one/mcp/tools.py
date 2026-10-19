@@ -2092,6 +2092,7 @@ def _edit_refusal(env: CallEnv, exc: Exception, what: str) -> ToolError:
 
 _EDIT_REFUSALS = (
     PointsAtAccessError,
+    RecentlyRejectedError,
     EditBindingNotFoundError,
     ScopesNotSupportedError,
     AmendFieldsMismatchError,

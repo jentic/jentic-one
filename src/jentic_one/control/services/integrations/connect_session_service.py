@@ -1479,24 +1479,38 @@ class ConnectSessionService:
         vendor: str,
         api_name: str | None = None,
         api_version: str | None = None,
+        credential_id: str | None = None,
     ) -> None:
-        """Refuse an agent's repeat ask for a target a human rejected within the cooldown."""
+        """Refuse an agent's repeat ask for a target a human rejected within the cooldown.
+
+        With ``credential_id`` the ask is an edit, and the target is that
+        binding: a rejected edit of it holds back the next one.
+        """
         hours = self._ctx.config.control.connect.rejection_cooldown_hours
         if agent_id is None or hours <= 0:
             return
         now = datetime.now(UTC)
         cooldown = timedelta(hours=hours)
         async with self._ctx.control_db.session() as session:
-            ended = await ConnectSessionOutcomeRepository.latest_ended_at(
-                session,
-                agent_id=agent_id,
-                outcome=OUTCOME_REJECTED,
-                target_kind=target_kind,
-                vendor=vendor,
-                api_name=api_name,
-                api_version=api_version,
-                since=now - cooldown,
-            )
+            if credential_id is not None:
+                ended = await ConnectSessionOutcomeRepository.latest_edit_ended_at(
+                    session,
+                    agent_id=agent_id,
+                    credential_id=credential_id,
+                    outcome=OUTCOME_REJECTED,
+                    since=now - cooldown,
+                )
+            else:
+                ended = await ConnectSessionOutcomeRepository.latest_ended_at(
+                    session,
+                    agent_id=agent_id,
+                    outcome=OUTCOME_REJECTED,
+                    target_kind=target_kind,
+                    vendor=vendor,
+                    api_name=api_name,
+                    api_version=api_version,
+                    since=now - cooldown,
+                )
         if ended is None:
             return
         if ended.tzinfo is None:
@@ -1882,6 +1896,9 @@ class ConnectSessionService:
             error = EditOpenError(open_edit.id)
             error.point_at(credential_id, agent_id)
             raise error
+        await self._check_rejection_cooldown(
+            agent_id, target_kind=TARGET_KIND_VENDOR, vendor="", credential_id=credential_id
+        )
         baseline = await self._binding_snapshot(agent_id, credential_id, binding.rule_set_id)
         baseline["suspended"] = binding.suspended
         try:
@@ -4714,6 +4731,9 @@ class ConnectSessionService:
                     outcome=_outcome_for(state, error_code),
                     error_code=error_code,
                     ended_at=datetime.now(UTC),
+                    # An edit's outcome names its binding's credential (the
+                    # rejection cooldown keys on it); a create's has none.
+                    credential_id=row.credential_id if row.intent == INTENT_EDIT else None,
                 )
                 if row.intent == INTENT_EDIT:
                     # An edit's credential is the live one the binding uses:
