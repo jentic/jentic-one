@@ -1330,6 +1330,15 @@ async def test_reject_ends_the_session_and_starts_the_cooldown(env: Context) -> 
     assert 0 < cooldown.value.retry_after_seconds <= 24 * 3600
     # Another agent, or the same agent for another target, is unaffected.
     assert (await _connect(env, agent_id=_OTHER_AGENT_ID)).resolved_flow == "manual_api_key"
+    # The hold is on the agent: a person can still connect for it.
+    by_owner = await _svc(env).create_session(
+        vendor_key="",
+        agent_id=_AGENT_ID,
+        initiator_actor_id=_OWNER_ID,
+        api_target=_TARGET,
+        requested_permission_rules=_RULES,
+    )
+    assert by_owner.resolved_flow == "manual_api_key"
 
 
 async def test_cooldown_zero_disables_it(env: Context, monkeypatch: pytest.MonkeyPatch) -> None:

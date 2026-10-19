@@ -1080,8 +1080,11 @@ class ConnectSessionService:
             raise NoOpForFlowError(flow.kind) from exc
         handler = handler_cls(self._ctx)
 
+        # The hold is on the agent asking again; a person can still connect for it.
         await self._check_rejection_cooldown(
-            agent_id, target_kind=TARGET_KIND_VENDOR, vendor=vendor_key
+            agent_id if agent_id == initiator_actor_id else None,
+            target_kind=TARGET_KIND_VENDOR,
+            vendor=vendor_key,
         )
         # One open session per agent-started OAuth request: the same agent
         # asking again for the same vendor, app and scopes gets the open one.
@@ -1253,7 +1256,7 @@ class ConnectSessionService:
         require_pinnable_hosts(view)
 
         await self._check_rejection_cooldown(
-            agent_id,
+            agent_id if agent_id == initiator_actor_id else None,
             target_kind=TARGET_KIND_API,
             vendor=view.vendor,
             api_name=view.name,
