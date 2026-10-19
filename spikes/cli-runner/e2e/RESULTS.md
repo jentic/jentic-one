@@ -116,3 +116,21 @@ Required behaviour for the production version:
 - support chunked bodies or reject them explicitly;
 - pass response headers through, minus hop-by-hop;
 - return explicit errors.
+
+### Review fixes to the forwarder (R1–R8)
+
+Re-tested against a fake broker that records requests, then again with the real `gh` chain.
+
+| # | Fix | Verified |
+|---|---|---|
+| R1 | `http.client`, so redirects are never followed; 3xx goes back to the CLI | ✅ 302 + `Location` returned, no second broker call |
+| R2 | Request headers forwarded from an allowlist only | ✅ `Jentic-Revision`, `Jentic-Credential-Name`, `Prefer`, `Idempotency-Key` and the CLI's `Authorization` do not reach the broker |
+| R3 | Token read from a mode-0600 file | ✅ not in argv. It is still in the forwarder's memory; production keeps it outside the sandbox |
+| R4 | Chunked request bodies decoded | ✅ broker received `hello-chunked` |
+| R5 | Response headers passed through minus hop-by-hop | ✅ `Link` and `ETag` reach the client |
+| R6 | `HEAD` supported | ✅ 200, no body |
+| R7 | Broker unreachable | ✅ explicit `502 broker_unreachable` |
+| R8 | Per-process invocation ID | ✅ logged on every line; not yet sent to the broker |
+
+Real chain after the fixes: `gh pr list` and `gh api` still return 200 with the stored
+credential at the upstream.
