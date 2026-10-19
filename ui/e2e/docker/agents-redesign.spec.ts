@@ -282,9 +282,16 @@ test('Add APIs → the setup queue: ① Credential, ② Access defaulting to Rea
 	const errors = captureConsoleErrors(page);
 	const sfx = uniqueSuffix();
 	const agent = await provisionAdminOwnedAgent(request, { name: `e2e-access-${sfx}` });
-	const vendor = `e2e-access-${sfx}.example.com`;
+	const vendor = `e2e-access-${sfx}`;
 	const apiName = `access-${sfx}`;
-	await importInlineApi(request, { vendor, apiName });
+	await importInlineApi(request, {
+		vendor,
+		apiName,
+		content: apiKeySpec(`E2e access ${sfx}`, `${vendor}.example.com`),
+	});
+	// An inline import lands as a draft, whose operations can't be read: promote it
+	// so Custom rules can offer "By action".
+	await promoteLatestRevision(request, { vendor, name: apiName, version: '1.0.0' });
 	const credentialName = `e2e-access-key-${sfx}`;
 	await createApiKeyCredential(request, {
 		name: credentialName,
