@@ -45,8 +45,9 @@ const (
 // 503 + Retry-After), too_many_candidates (TooManyCandidatesError, 503:
 // operation resolution overloaded, before dispatch), refresh_transient_error
 // (CredentialRefreshTransientError, 502: the token refresh failed before
-// dispatch), upstream_connect_failed (UpstreamTimeoutError raised in the connect
-// phase, 504: no request bytes were sent) and rate_limit_exceeded
+// dispatch), upstream_connect_failed (raised in the connect phase — 504
+// UpstreamTimeoutError on a timeout, 502 UpstreamTransportError on a refused
+// connection: no request bytes were sent) and rate_limit_exceeded
 // (RateLimitExceededError, 429 + Retry-After).
 var brokerTransientProblemTypes = map[string]bool{
 	"circuit_open":            true,
@@ -73,8 +74,8 @@ var brokerTimeoutProblemTypes = map[string]bool{
 // runner_scheme_unsupported (RunnerSchemeUnsupportedError, 501) needs a
 // different operation. Everything else is unknown, including
 // upstream_response_too_large (UpstreamResponseTooLargeError, 502: the upstream
-// answered, so the call ran) and upstream_transport_error (the connection failed
-// mid-request).
+// answered, so the call ran) and upstream_transport_error
+// (UpstreamTransportError, 502: the connection failed mid-request).
 func BrokerTransportRecoveryFor(status int, problemType string) BrokerTransportRecovery {
 	switch {
 	case status == http.StatusTooManyRequests || brokerTransientProblemTypes[problemType]:

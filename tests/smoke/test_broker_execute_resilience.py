@@ -127,12 +127,16 @@ def test_mock_disconnect_maps_to_error(
     executable_harness: ExecutableHarness,
     upstream_incluster_url: str,
 ) -> None:
-    """``X-Mock-Disconnect: true`` → broker maps the mid-stream failure to an error.
+    """``X-Mock-Disconnect: true`` on the buffered path → broker answers 502 Bad Gateway.
 
-    The harness aborts the response body mid-stream (``RemoteProtocolError``); the
-    broker's runner catches the transport error and raises a ``BrokerError`` (→ 500
-    error envelope). The contract under test is "no hang, a clean error envelope,
-    not a raw stacktrace" — assert a 5xx with the broker's problem+json shape.
+    The harness sends a 200 head, then aborts the body mid-stream
+    (``RemoteProtocolError``). An ``Idempotency-Key`` forces the buffered path,
+    where the broker reads the whole body before answering, so the runner maps
+    the transport failure to ``UpstreamTransportError`` (→ 502 problem+json,
+    ``upstream_transport_error``). On the streaming path the upstream's 200 head
+    has already been relayed by the time the body breaks, so that path cannot
+    change the status. The contract under test is "no hang, a clean gateway
+    error envelope, not a raw stacktrace or a bare 500".
     """
     _skip_if_no_admin_surface()
     raw, status, _ = broker_call(
@@ -140,9 +144,11 @@ def test_mock_disconnect_maps_to_error(
         f"{upstream_incluster_url}/behavior/echo",
         method="POST",
         token=executable_harness.agent_token,
-        headers={"X-Mock-Disconnect": "true"},
+        headers={"X-Mock-Disconnect": "true", "Idempotency-Key": str(uuid.uuid4())},
         client_timeout=20.0,
     )
-    assert 500 <= status < 600, f"expected broker 5xx for transport failure, got {status}: {raw!r}"
+    assert status == 502, f"expected broker 502 for transport failure, got {status}: {raw!r}"
     body = json.loads(raw)
-    assert "error_origin" in body, f"expected problem+json envelope, got {body}"
+    assert body["status"] == 502, f"expected problem+json status 502, got {body}"
+    assert body["type"] == "upstream_transport_error", f"unexpected problem type: {body}"
+    assert body["error_origin"] == "broker", f"expected broker-origin envelope, got {body}"

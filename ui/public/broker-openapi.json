@@ -267,6 +267,28 @@
         "content": {
           "application/problem+json": {
             "examples": {
+              "upstream_connect_failed": {
+                "summary": "The upstream refused the connection or its host did not resolve; no request bytes were sent, so a retry is safe for any method.",
+                "value": {
+                  "detail": "The upstream connection could not be established.",
+                  "error_origin": "broker",
+                  "instance": "/api.example.com/v1/reports",
+                  "status": 502,
+                  "title": "The upstream connection could not be established.",
+                  "type": "upstream_connect_failed"
+                }
+              },
+              "upstream_connect_timeout": {
+                "summary": "Connecting to the upstream timed out; no request bytes were sent, so a retry is safe for any method.",
+                "value": {
+                  "detail": "The upstream connection could not be established in time.",
+                  "error_origin": "broker",
+                  "instance": "/api.example.com/v1/reports",
+                  "status": 504,
+                  "title": "The upstream connection could not be established in time.",
+                  "type": "upstream_connect_failed"
+                }
+              },
               "upstream_response_too_large": {
                 "summary": "The broker aborted an upstream response over its size cap.",
                 "value": {
@@ -289,6 +311,17 @@
                   "title": "The upstream did not respond within the deadline.",
                   "type": "upstream_timeout"
                 }
+              },
+              "upstream_transport_error": {
+                "summary": "The upstream connection failed (e.g. dropped mid-response); 502 Bad Gateway. The request may have reached the upstream, so retry only an idempotent or Idempotency-Key'd call.",
+                "value": {
+                  "detail": "Upstream transport error (RemoteProtocolError)",
+                  "error_origin": "broker",
+                  "instance": "/api.example.com/v1/reports",
+                  "status": 502,
+                  "title": "Upstream transport error (RemoteProtocolError)",
+                  "type": "upstream_transport_error"
+                }
               }
             },
             "schema": {
@@ -296,7 +329,7 @@
             }
           }
         },
-        "description": "Catch-all problem+json response for any status not enumerated on this operation."
+        "description": "Catch-all problem+json response for any status not enumerated on\nthis operation. Key recovery on the problem `type`, not the bare\nstatus: one status can carry types with different retry safety\n(a 502 `upstream_connect_failed` is safe to retry for any method;\na 502 `upstream_transport_error` may already have reached the\nupstream), and one type can appear at more than one status\n(`upstream_connect_failed` is 502 when the connection is refused\nor the host does not resolve, 504 when connecting times out).\n"
       },
       "ExecuteAsync": {
         "content": {
@@ -598,7 +631,7 @@
             }
           }
         },
-        "description": "Unexpected broker-side failure — bug, panic, or unhandled\nupstream exception bubble. Should be rare; report with the\n`traceparent` header for triage. Body is RFC 9457\n`application/problem+json`.\n"
+        "description": "Unexpected broker-side failure — a bug, a panic, or an outbound\nrequest the broker itself built and could not send. Should be\nrare; report with the `traceparent` header for triage. Body is\nRFC 9457 `application/problem+json`.\n"
       },
       "ServiceUnavailable": {
         "content": {
@@ -905,7 +938,7 @@
                 "type": "array"
               },
               "error_origin": {
-                "description": "Who generated the error response: `broker` (the Broker\nitself — overloaded, misconfigured, rejecting the request\nshape, or giving up on the call: an upstream timeout or\nconnect failure, the overall deadline, a failed token\nrefresh, an oversized upstream response) or `upstream` (the\nexternal API answered with this error and the Broker\nmirrored it). Mirrored in the `Jentic-Error-Origin`\nresponse header. Absent on authentication errors.\n",
+                "description": "Who generated the error response: `broker` (the Broker\nitself — overloaded, misconfigured, rejecting the request\nshape, or giving up on the call: an upstream timeout, a\ndropped or refused upstream connection, the overall\ndeadline, a failed token refresh, an oversized upstream\nresponse) or `upstream` (the external API answered with\nthis error and the Broker mirrored it). Mirrored in the\n`Jentic-Error-Origin` response header. Absent on\nauthentication errors.\n",
                 "enum": [
                   "broker",
                   "upstream"

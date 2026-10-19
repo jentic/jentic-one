@@ -88,7 +88,6 @@ class ExecutionRecordRepository:
         limit: int = 50,
         cursor_ts: datetime | None = None,
         cursor_id: str | None = None,
-        toolkit_id: str | None = None,
         trace_id: str | None = None,
         status: list[str] | None = None,
         from_: datetime | None = None,
@@ -112,8 +111,6 @@ class ExecutionRecordRepository:
             )
         elif cursor_ts is not None:
             stmt = stmt.where(ExecutionRecord.started_at < cursor_ts)
-        if toolkit_id is not None:
-            stmt = stmt.where(ExecutionRecord.toolkit_id == toolkit_id)
         if trace_id is not None:
             stmt = stmt.where(ExecutionRecord.trace_id == trace_id)
         if status is not None:

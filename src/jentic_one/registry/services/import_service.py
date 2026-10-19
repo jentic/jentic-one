@@ -30,6 +30,7 @@ from jentic_one.registry.services.errors import RegistryServiceError
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseIntegrityError
+from jentic_one.shared.db.protocols import TransactionalDatabase
 from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.jobs.handlers import JobResultPayload
 from jentic_one.shared.models import (
@@ -87,13 +88,17 @@ class ImportHandler:
     async def execute(
         self,
         job_id: str,
-        session: Any,
+        db: TransactionalDatabase | None,
         *,
         payload: dict[str, Any] | None = None,
         created_by: str | None = None,
         actor_type: str | None = None,
     ) -> JobResultPayload:
-        """Process import sources and create draft ApiRevisions."""
+        """Process import sources and create draft ApiRevisions.
+
+        ``db`` is the worker's database, unused here: the import writes through
+        the ``Context`` databases in its own transactions.
+        """
         bind_contextvars(job_id=job_id)
         if created_by is None:
             raise IngestJobError("import job is missing the triggering actor (created_by)")
@@ -138,6 +143,8 @@ class ImportHandler:
                         # Server-host change guard: kept as a draft for operator review.
                         revisions[-1]["held_for_review"] = True
                         revisions[-1]["host_change"] = held.model_dump()
+                    if result.server_url_changes is not None:
+                        revisions[-1]["server_url_changes"] = result.server_url_changes.model_dump()
                     await record_audit_best_effort(
                         self._ctx,
                         action=AuditAction.CREATE,
