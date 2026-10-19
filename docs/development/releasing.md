@@ -224,6 +224,21 @@ steps are what stands between you and Phase 6b.
 **Rollback after Phase 6b** is two steps, not one — see the Phase 6b
 section below.
 
+## Upgrading to 0.44.0
+
+- **Breaking: `toolkit_id` is no longer a filter on `GET /executions` or
+  `GET /monitoring/usage` (#1745).** A request that still sends
+  `?toolkit_id=` is served normally (`200`) and the parameter is ignored, so
+  the result is unfiltered: a dashboard or script that narrowed by toolkit
+  now gets the whole tenant's executions or totals. `toolkit_id` /
+  `toolkit_name` stay on execution responses as historical attribution.
+  Filter by `api` / `actor_id` (executions) or `api_id` / `agent_id`
+  (monitoring), or filter client-side on the response field. Each ignored
+  request logs one `removed_query_param_ignored` INFO line with
+  `param="toolkit_id"`, the route and the caller's `actor_id` (never the
+  value); use it to find the callers to update. The generated UI and Go
+  clients no longer expose the parameter.
+
 ## Upgrading to 0.42.3
 
 - **`owner:access-requests:read` maps onto `credentials:connect`.** The agent
@@ -580,8 +595,8 @@ acknowledged. Read this **before** running migrations.
   `flatten-toolkits`, which is why an acknowledgement from 0.40 does not
   unblock the drop) instead of resolved from the dropped `toolkits` table.
   Records whose toolkit was deleted before the backfill show `null`, exactly
-  as before. Monitoring `group_by=toolkit` keeps working off the surviving
-  `toolkit_id` attribution column.
+  as before. Monitoring has no toolkit axis or filter; `toolkit_id` survives
+  only as attribution on execution rows.
 
 ### Rollback (Phase 6b → 6a)
 

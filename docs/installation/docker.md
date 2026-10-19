@@ -348,7 +348,11 @@ OAuth endpoints by the connecting socket IP — behind a proxy that is one IP,
 so **all** OAuth clients share one bucket and busy instances see spurious
 `429`s. The value must be the source IP the app actually sees; for the
 port-published containers above that is the Docker bridge gateway (commonly
-`172.17.0.1`), not `127.0.0.1`:
+`172.17.0.1`), not `127.0.0.1`. Entries are IP addresses or CIDR networks
+(`JENTIC__AUTH__OAUTH_RATE_LIMIT__TRUSTED_PROXIES` takes them comma-separated),
+and an invalid entry fails startup. List only addresses your proxy holds: any
+host inside a trusted network can set `X-Forwarded-For` and pick its own
+rate-limit identity.
 
 ```yaml
 # production.yaml

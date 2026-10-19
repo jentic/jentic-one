@@ -166,7 +166,10 @@ load-bearing:
    `ctx.shutdown()` → container-injected lifespans exit in reverse → the
    surface lifespan closes the shared HTTP client. Draining the worker
    *before* closing the client matters: an async execution mid-flight must
-   finish over a live connection pool.
+   finish over a live connection pool. Between the telemetry flush and
+   `ctx.shutdown()` the lifespan also runs the shutdown handlers that surface
+   installers registered on the app; they close the auth and control
+   surfaces' shared-state backends.
 
 ## Background work
 

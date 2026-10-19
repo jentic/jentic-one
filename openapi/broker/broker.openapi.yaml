@@ -799,12 +799,13 @@ components:
               description: |
                 Who generated the error response: `broker` (the Broker
                 itself — overloaded, misconfigured, rejecting the request
-                shape, or giving up on the call: an upstream timeout or
-                connect failure, the overall deadline, a failed token
-                refresh, an oversized upstream response) or `upstream` (the
-                external API answered with this error and the Broker
-                mirrored it). Mirrored in the `Jentic-Error-Origin`
-                response header. Absent on authentication errors.
+                shape, or giving up on the call: an upstream timeout, a
+                dropped or refused upstream connection, the overall
+                deadline, a failed token refresh, an oversized upstream
+                response) or `upstream` (the external API answered with
+                this error and the Broker mirrored it). Mirrored in the
+                `Jentic-Error-Origin` response header. Absent on
+                authentication errors.
               examples:
                 - broker
             agent_directive:
@@ -1543,10 +1544,10 @@ components:
                 error_origin: broker
     ServerError:
       description: |
-        Unexpected broker-side failure — bug, panic, or unhandled
-        upstream exception bubble. Should be rare; report with the
-        `traceparent` header for triage. Body is RFC 9457
-        `application/problem+json`.
+        Unexpected broker-side failure — a bug, a panic, or an outbound
+        request the broker itself built and could not send. Should be
+        rare; report with the `traceparent` header for triage. Body is
+        RFC 9457 `application/problem+json`.
       content:
         application/problem+json:
           schema:
@@ -1626,7 +1627,15 @@ components:
                 error_origin: broker
                 instance: /api.example.com/v1/uploads
     Default:
-      description: Catch-all problem+json response for any status not enumerated on this operation.
+      description: |
+        Catch-all problem+json response for any status not enumerated on
+        this operation. Key recovery on the problem `type`, not the bare
+        status: one status can carry types with different retry safety
+        (a 502 `upstream_connect_failed` is safe to retry for any method;
+        a 502 `upstream_transport_error` may already have reached the
+        upstream), and one type can appear at more than one status
+        (`upstream_connect_failed` is 502 when the connection is refused
+        or the host does not resolve, 504 when connecting times out).
       content:
         application/problem+json:
           schema:
@@ -1650,6 +1659,40 @@ components:
                 detail: The upstream response exceeded the 10485760-byte response-size cap.
                 error_origin: broker
                 max_response_bytes: 10485760
+                instance: /api.example.com/v1/reports
+            upstream_transport_error:
+              summary: >-
+                The upstream connection failed (e.g. dropped mid-response); 502 Bad Gateway.
+                The request may have reached the upstream, so retry only an idempotent
+                or Idempotency-Key'd call.
+              value:
+                type: upstream_transport_error
+                title: Upstream transport error (RemoteProtocolError)
+                status: 502
+                detail: Upstream transport error (RemoteProtocolError)
+                error_origin: broker
+                instance: /api.example.com/v1/reports
+            upstream_connect_failed:
+              summary: >-
+                The upstream refused the connection or its host did not resolve; no request
+                bytes were sent, so a retry is safe for any method.
+              value:
+                type: upstream_connect_failed
+                title: The upstream connection could not be established.
+                status: 502
+                detail: The upstream connection could not be established.
+                error_origin: broker
+                instance: /api.example.com/v1/reports
+            upstream_connect_timeout:
+              summary: >-
+                Connecting to the upstream timed out; no request bytes were sent, so a retry
+                is safe for any method.
+              value:
+                type: upstream_connect_failed
+                title: The upstream connection could not be established in time.
+                status: 504
+                detail: The upstream connection could not be established in time.
+                error_origin: broker
                 instance: /api.example.com/v1/reports
   securitySchemes:
     BearerAuth:

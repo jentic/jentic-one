@@ -133,12 +133,26 @@ jobs:
       contents: read
     uses: ./.github/workflows/smoke-helm.yml
 
+  # The full CI matrix on the tagged commit — no path filters, no pass-marker
+  # skips — including the jobs PRs don't run (cross-OS install + smoke,
+  # goreleaser snapshot, app-image scan). Nothing publishes until it is green.
+  ci:
+    name: Full CI matrix
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read # the pass-marker lookup lists Actions caches
+      security-events: write # the scorecard job's SARIF upload (skipped on tags)
+    uses: ./.github/workflows/ci.yml
+    with:
+      full: true
+
   publish-image:
     name: Publish app image to GHCR
     # Needs smoke too: the image (and :latest) is part of the release, so it
     # must not publish while any deployment mode is red — same bar as the
     # binaries.
-    needs: [gate, smoke]
+    needs: [gate, smoke, ci]
     runs-on: ubuntu-latest
     # Serialize image publishes across concurrently pushed tags so two runs
     # can't interleave their :latest pushes (last-writer-wins is still the
@@ -418,7 +432,7 @@ jobs:
     # where the CLI shipped but the container image it documents did not (or
     # vice versa). If either publish half fails, the whole release run is red
     # and gets re-run from the tag.
-    needs: [gate, smoke, publish-image]
+    needs: [gate, smoke, ci, publish-image]
     runs-on: ubuntu-latest
     permissions:
       contents: write # attach artifacts to the GitHub Release

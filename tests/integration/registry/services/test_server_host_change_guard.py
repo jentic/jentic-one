@@ -134,7 +134,7 @@ async def clean_state(
 async def _run(handler: ImportHandler, source: dict[str, Any]) -> dict[str, Any]:
     result = await handler.execute(
         job_id=f"job_{uuid.uuid4().hex[:20]}",
-        session=None,
+        db=None,
         payload={"sources": [source]},
         created_by="usr_x",
     )

@@ -26,6 +26,7 @@ from jentic_one.control.services.oauth_app_registrations.schemas import (
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.config import EgressConfig, resolved_control_egress
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.audit import AuditReason
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
@@ -52,8 +53,9 @@ class OAuthAppRegistrationService:
         default_scopes: list[str] | None,
         identity: Identity,
     ) -> OAuthAppRegistrationView:
-        authorize_url = _validate_endpoint_url("authorize_url", authorize_url)
-        token_url = _validate_endpoint_url("token_url", token_url)
+        egress = resolved_control_egress(self._ctx.config)
+        authorize_url = _validate_endpoint_url("authorize_url", authorize_url, egress)
+        token_url = _validate_endpoint_url("token_url", token_url, egress)
         encrypted = self._ctx.encryption.encrypt(client_secret)
         async with self._ctx.control_db.transaction() as session:
             registration = await OAuthAppRegistrationRepository.create_authorization_code(
@@ -103,10 +105,11 @@ class OAuthAppRegistrationService:
         default_scopes: list[str] | None,
         identity: Identity,
     ) -> OAuthAppRegistrationView:
+        egress = resolved_control_egress(self._ctx.config)
         authorization_endpoint = _validate_endpoint_url(
-            "authorization_endpoint", authorization_endpoint
+            "authorization_endpoint", authorization_endpoint, egress
         )
-        token_endpoint = _validate_endpoint_url("token_endpoint", token_endpoint)
+        token_endpoint = _validate_endpoint_url("token_endpoint", token_endpoint, egress)
         async with self._ctx.control_db.transaction() as session:
             registration = await OAuthAppRegistrationRepository.create_device_authorization(
                 session,
@@ -198,12 +201,13 @@ class OAuthAppRegistrationService:
         is_active: bool | None = None,
         identity: Identity,
     ) -> OAuthAppRegistrationView:
-        authorize_url = _validate_optional_endpoint_url("authorize_url", authorize_url)
-        token_url = _validate_optional_endpoint_url("token_url", token_url)
+        egress = resolved_control_egress(self._ctx.config)
+        authorize_url = _validate_optional_endpoint_url("authorize_url", authorize_url, egress)
+        token_url = _validate_optional_endpoint_url("token_url", token_url, egress)
         authorization_endpoint = _validate_optional_endpoint_url(
-            "authorization_endpoint", authorization_endpoint
+            "authorization_endpoint", authorization_endpoint, egress
         )
-        token_endpoint = _validate_optional_endpoint_url("token_endpoint", token_endpoint)
+        token_endpoint = _validate_optional_endpoint_url("token_endpoint", token_endpoint, egress)
         async with self._ctx.control_db.transaction() as session:
             registration = await OAuthAppRegistrationRepository.get_by_id(session, registration_id)
             if registration is None:
@@ -348,22 +352,25 @@ class OAuthAppRegistrationService:
         )
 
 
-def _validate_endpoint_url(field: str, value: str) -> str:
+def _validate_endpoint_url(field: str, value: str, egress: EgressConfig) -> str:
     """Require an https URL that passes the upstream SSRF guard.
 
     These endpoints receive client credentials and authorization codes, so
-    plain http and private/metadata targets are refused at write time.
+    plain http and private/metadata targets the control-plane egress policy
+    does not allowlist are refused at write time.
     """
     if not value.strip().lower().startswith("https://"):
         raise InvalidOAuthAppRegistrationInputError(f"Invalid {field}: must use https")
     try:
-        return validate_upstream_url(value)
+        return validate_upstream_url(value, egress)
     except ValueError as exc:
         raise InvalidOAuthAppRegistrationInputError(f"Invalid {field}: {exc}") from exc
 
 
-def _validate_optional_endpoint_url(field: str, value: str | None) -> str | None:
-    return None if value is None else _validate_endpoint_url(field, value)
+def _validate_optional_endpoint_url(
+    field: str, value: str | None, egress: EgressConfig
+) -> str | None:
+    return None if value is None else _validate_endpoint_url(field, value, egress)
 
 
 def _project(

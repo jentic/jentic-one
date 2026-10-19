@@ -38,6 +38,7 @@ from jentic_one.admin.services.schemas.users import (
     UserUpdatePayload,
     UserView,
 )
+from jentic_one.admin.services.user_hooks import run_user_deleted_hooks
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import InviteState
@@ -403,6 +404,7 @@ class UserService:
             audit_events_counter.add(
                 1, {"action": AuditAction.DELETE, "target_type": AuditTargetType.USER}
             )
+        await run_user_deleted_hooks(self._ctx, user_id, identity=identity)
 
     async def disable(self, user_id: str, *, identity: Identity) -> bool:
         async with self._ctx.admin_db.transaction() as session:

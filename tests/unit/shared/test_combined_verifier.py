@@ -1,13 +1,13 @@
 """Unit test for the deterministic combined-app identity verifier (WI-3).
 
-When the ``auth`` surface is enabled, ``create_combined_app`` must install the
-auth surface's full-taxonomy ("superset") verifier — the one that resolves API
-keys + opaque ``at_`` access tokens + HS256 JWTs — regardless of the order the
-surfaces appear in ``apps``. Without this the active verifier depends on surface
-ordering (the admin surface ships an HS256-only, ``at_``-blind verifier).
+``create_combined_app`` must install the platform ("superset") verifier — the
+auth surface's chain that resolves API keys + opaque ``at_`` access tokens +
+HS256 JWTs — regardless of the order the surfaces appear in ``apps`` and of
+whether the auth surface rides the process at all.
 
-The verifier is a closure, so identity is asserted by monkeypatching the auth
-surface's factory to a sentinel and checking ``app.state.verify_token`` is it.
+The verifier is a closure, so identity is asserted by monkeypatching the chain's
+factory (``auth.web.verifier.make_superset_verifier``) to a sentinel and checking
+``app.state.verify_token`` is it.
 """
 
 from __future__ import annotations
@@ -17,8 +17,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-import jentic_one.auth.web.app as auth_app
-from jentic_one.auth.web.app import _make_auth_verifier
+import jentic_one.auth.web.verifier as verifier_mod
+from jentic_one.auth.web.verifier import _make_auth_verifier
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
@@ -47,7 +47,7 @@ def test_combined_app_installs_auth_superset_verifier(
     def _fake_superset(_ctx: Context) -> object:
         return sentinel
 
-    monkeypatch.setattr(auth_app, "make_superset_verifier", _fake_superset)
+    monkeypatch.setattr(verifier_mod, "make_superset_verifier", _fake_superset)
 
     app = create_combined_app(_ctx(sample_config_dict), surfaces)
 
@@ -55,17 +55,21 @@ def test_combined_app_installs_auth_superset_verifier(
     assert app.state.verify_token is sentinel
 
 
-def test_combined_app_without_auth_leaves_admin_verifier(
+def test_combined_app_without_auth_installs_platform_verifier(
     sample_config_dict: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """No auth surface → the auth superset is never installed (hardening is a no-op)."""
+    """No auth surface in-process → the same full-taxonomy chain is still installed.
+
+    The admin surface has no verifier of its own, so a combined app without the
+    auth surface resolves ``at_`` tokens exactly like one with it (#1445).
+    """
     sentinel = object()
-    monkeypatch.setattr(auth_app, "make_superset_verifier", lambda _ctx: sentinel)
+    monkeypatch.setattr(verifier_mod, "make_superset_verifier", lambda _ctx: sentinel)
 
     app = create_combined_app(_ctx(sample_config_dict), ["admin"])
 
-    assert app.state.verify_token is not sentinel
+    assert app.state.verify_token is sentinel
 
 
 # ---------------------------------------------------------------------------
@@ -88,9 +92,11 @@ async def test_oauth_token_intersects_consented_with_platform_scopes(
     )
 
     with (
-        patch.object(auth_app, "TokenService") as mock_ts_cls,
-        patch.object(auth_app, "resolve_permissions_for_actor", new_callable=AsyncMock) as mock_rp,
-        patch.object(auth_app, "ApiKeyResolver"),
+        patch.object(verifier_mod, "TokenService") as mock_ts_cls,
+        patch.object(
+            verifier_mod, "resolve_permissions_for_actor", new_callable=AsyncMock
+        ) as mock_rp,
+        patch.object(verifier_mod, "ApiKeyResolver"),
     ):
         mock_ts_cls.return_value.resolve_access_token = AsyncMock(return_value=resolved)
         mock_rp.return_value = (
@@ -121,9 +127,11 @@ async def test_oauth_token_passes_through_oidc_scopes(
     )
 
     with (
-        patch.object(auth_app, "TokenService") as mock_ts_cls,
-        patch.object(auth_app, "resolve_permissions_for_actor", new_callable=AsyncMock) as mock_rp,
-        patch.object(auth_app, "ApiKeyResolver"),
+        patch.object(verifier_mod, "TokenService") as mock_ts_cls,
+        patch.object(
+            verifier_mod, "resolve_permissions_for_actor", new_callable=AsyncMock
+        ) as mock_rp,
+        patch.object(verifier_mod, "ApiKeyResolver"),
     ):
         mock_ts_cls.return_value.resolve_access_token = AsyncMock(return_value=resolved)
         mock_rp.return_value = (["capabilities:read", "agents:write"], [])
@@ -153,9 +161,11 @@ async def test_agent_token_uses_row_scopes(
     )
 
     with (
-        patch.object(auth_app, "TokenService") as mock_ts_cls,
-        patch.object(auth_app, "resolve_permissions_for_actor", new_callable=AsyncMock) as mock_rp,
-        patch.object(auth_app, "ApiKeyResolver"),
+        patch.object(verifier_mod, "TokenService") as mock_ts_cls,
+        patch.object(
+            verifier_mod, "resolve_permissions_for_actor", new_callable=AsyncMock
+        ) as mock_rp,
+        patch.object(verifier_mod, "ApiKeyResolver"),
     ):
         mock_ts_cls.return_value.resolve_access_token = AsyncMock(return_value=resolved)
         mock_rp.return_value = ([], ["org:admin"])
@@ -182,9 +192,11 @@ async def test_first_party_token_uses_full_permissions(
     )
 
     with (
-        patch.object(auth_app, "TokenService") as mock_ts_cls,
-        patch.object(auth_app, "resolve_permissions_for_actor", new_callable=AsyncMock) as mock_rp,
-        patch.object(auth_app, "ApiKeyResolver"),
+        patch.object(verifier_mod, "TokenService") as mock_ts_cls,
+        patch.object(
+            verifier_mod, "resolve_permissions_for_actor", new_callable=AsyncMock
+        ) as mock_rp,
+        patch.object(verifier_mod, "ApiKeyResolver"),
     ):
         mock_ts_cls.return_value.resolve_access_token = AsyncMock(return_value=resolved)
         mock_rp.return_value = (
