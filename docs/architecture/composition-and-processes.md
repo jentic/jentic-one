@@ -139,8 +139,9 @@ flowchart TB
 > same way. The budgets track real memory to within about 15% (measured
 > with `tracemalloc`), so on the defaults the broker's state stays under
 > about 192 MiB on top of a ~130 MiB process baseline, which the broker
-> chart's 512Mi memory limit holds. The combined app runs up to three such
-> backends (auth, broker, control) in one process.
+> chart's 512Mi memory limit holds. The broker always runs as its own
+> process; the combined app holds one such backend each for the auth and
+> control surfaces.
 >
 > To raise it: raise `broker.resilience.backend.memory.namespaces.idem`
 > (and its `max_owner_share`) together with `max_total_bytes`, or lower
@@ -162,7 +163,10 @@ load-bearing:
    `ctx.shutdown()` → container-injected lifespans exit in reverse → the
    surface lifespan closes the shared HTTP client. Draining the worker
    *before* closing the client matters: an async execution mid-flight must
-   finish over a live connection pool.
+   finish over a live connection pool. Between the telemetry flush and
+   `ctx.shutdown()` the lifespan also runs the shutdown handlers that surface
+   installers registered on the app; they close the auth and control
+   surfaces' shared-state backends.
 
 ## Background work
 

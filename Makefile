@@ -5,7 +5,7 @@ SERVICES := app registry admin control broker
 
 BUILD_DIR := build
 
-.PHONY: perf-help help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check score openapi openapi-parity config-schema config-reference endpoints cli-reference broker-reference skills hooks clean dev start-fixtures stop-fixtures destroy-fixtures start-app start-registry start-admin start-control start-broker start-local build-wheel build-base build-all save-all images release-image $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES))
+.PHONY: perf-help help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check detect-secrets secrets-baseline score openapi openapi-parity config-schema config-reference endpoints cli-reference broker-reference skills hooks clean dev start-fixtures stop-fixtures destroy-fixtures start-app start-registry start-admin start-control start-broker start-local build-wheel build-base build-all save-all images release-image $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES))
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -136,8 +136,11 @@ score: ## Score the control + broker OpenAPI specs with the Jentic API Scorecard
 	done; \
 	exit $$status
 
-detect-secrets: ## Check for new secrets not in baseline
-	uv run detect-secrets scan --baseline .secrets.baseline --exclude-files '\.git/'
+detect-secrets: ## Fail if a fresh scan differs from .secrets.baseline (new secret, stale entry, or non-slim file)
+	uv run python -m tools.secrets_baseline check
+
+secrets-baseline: ## Re-scan into .secrets.baseline in slim form (no line numbers/timestamp)
+	uv run python -m tools.secrets_baseline update
 
 check: lint detect-secrets test-arch score ## Run lint, secrets audit, arch-tests, and score (score last: it needs npx/network and shouldn't block the offline gates)
 

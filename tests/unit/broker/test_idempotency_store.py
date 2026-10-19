@@ -14,6 +14,7 @@ Exercises the full claim/replay state machine over the in-process memory backend
 
 from __future__ import annotations
 
+import asyncio
 import gc
 import json
 import tracemalloc
@@ -125,6 +126,66 @@ async def test_pending_claim_expires_before_replay_window() -> None:
     assert (await store.begin("agent-1", "key-1", "fp-a")).state is IdempotencyState.FRESH
     clock.advance(11.0)
     assert (await store.begin("agent-1", "key-1", "fp-a")).state is IdempotencyState.FRESH
+
+
+@pytest.mark.asyncio
+async def test_a_record_never_replays_the_body_of_a_request_that_reclaimed_its_key() -> None:
+    """Record and body stay paired when an expired claim is re-claimed mid-call.
+
+    A outlives its claim and B re-claims the key with another request. Their
+    completions interleave: A stores its body, B stores its body and record,
+    then A stores its record. A retry of A must replay A's body, never B's.
+    """
+    clock = _Clock()
+    backend = MemoryStateBackend(clock=clock)
+    a_body_stored = asyncio.Event()
+    b_done = asyncio.Event()
+
+    class _Gated:
+        """Holds A's record write until B has completed."""
+
+        async def get(self, key: str) -> bytes | None:
+            return await backend.get(key)
+
+        async def set(self, key: str, value: bytes, *, ttl_s: float) -> None:
+            if key.startswith("idem:") and b'"fp":"fp-a"' in value:
+                await b_done.wait()
+            await backend.set(key, value, ttl_s=ttl_s)
+            if key.startswith("idem-body:") and value == b"body-a":
+                a_body_stored.set()
+
+        async def set_if_absent(self, key: str, value: bytes, *, ttl_s: float) -> bool:
+            return await backend.set_if_absent(key, value, ttl_s=ttl_s)
+
+        async def incr_with_ttl(self, key: str, *, ttl_s: float, amount: int = 1) -> int:
+            return await backend.incr_with_ttl(key, ttl_s=ttl_s, amount=amount)
+
+        async def aclose(self) -> None:
+            return None
+
+    store = SharedStateIdempotencyStore(
+        _Gated(), pending_ttl_s=10.0, done_ttl_s=3_600.0, max_response_bytes=1024
+    )
+    assert (await store.begin("agent-1", "key-1", "fp-a")).state is IdempotencyState.FRESH
+    clock.advance(11.0)
+    assert (await store.begin("agent-1", "key-1", "fp-b")).state is IdempotencyState.FRESH
+
+    async def complete_b() -> None:
+        await a_body_stored.wait()
+        await store.complete(
+            "agent-1", "key-1", "fp-b", status_code=200, headers={}, body=b"body-b"
+        )
+        b_done.set()
+
+    await asyncio.gather(
+        store.complete("agent-1", "key-1", "fp-a", status_code=200, headers={}, body=b"body-a"),
+        complete_b(),
+    )
+
+    replay = await store.begin("agent-1", "key-1", "fp-a")
+    assert replay.state is IdempotencyState.REPLAY
+    assert replay.stored is not None
+    assert replay.stored.body == b"body-a"
 
 
 @pytest.mark.asyncio
@@ -253,7 +314,7 @@ async def test_a_retry_after_the_claim_ttl_does_not_rerun_when_the_record_does_n
     assert retry.stored is not None
     assert retry.stored.status_code == 201
     assert retry.stored.body_omitted is True
-    assert await backend.get("idem-body:agent-1:k") is None
+    assert await backend.get(store._body_slot("agent-1", "k", "fp")) is None
     assert body_usage.entries == 0 and body_usage.bytes == 0
 
 

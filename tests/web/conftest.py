@@ -17,9 +17,12 @@ The fix is to give the test engines a :class:`~sqlalchemy.pool.NullPool` so no
 connection is ever retained between operations: each session opens a fresh
 connection on whatever loop is currently running and closes it immediately,
 and ``engine.dispose()`` has nothing pooled to close on a foreign loop. This is
-applied process-wide for the whole ``tests/web`` package via the autouse
+applied to the whole ``tests/web`` package via the autouse, package-scoped
 ``_force_nullpool`` fixture below, so any future web test is loop-safe by
-default without per-test plumbing.
+default without per-test plumbing. The patch is reverted when the package
+finishes, so tests outside ``tests/web`` that run later in the same session
+(e.g. integration tests that assert on ``pool.checkedout()``) get their normal
+pooled engines.
 """
 
 from __future__ import annotations
@@ -68,7 +71,7 @@ def _apply_migrations(web_config: AppConfig) -> Iterator[None]:
     yield
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="package", autouse=True)
 def _force_nullpool() -> Iterator[None]:
     """Make every test ``DatabaseSession`` engine use ``NullPool``.
 
@@ -76,8 +79,12 @@ def _force_nullpool() -> Iterator[None]:
     ``jentic_one.shared.db.session`` so all engines built during web tests get
     ``poolclass=NullPool``. This is what keeps the sync ``TestClient`` portal
     loop and the pytest-asyncio loop from ever sharing a pooled asyncpg
-    connection (see module docstring). Applies to the whole ``tests/web``
-    package and is reverted at session end.
+    connection (see module docstring). Package-scoped: pytest binds it to the
+    package of this conftest, ``tests/web``, sub-packages included, so it is set
+    up once per contiguous run of ``tests/web`` tests. It is reverted when that
+    run ends, not at session end, so it never leaks into tests that run after
+    it. If the command line splits ``tests/web`` around other tests, it is
+    reverted before them and applied again afterwards.
     """
     original = create_async_engine
 

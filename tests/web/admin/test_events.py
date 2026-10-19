@@ -51,7 +51,7 @@ async def stored_retired_event_id(web_context: Context) -> AsyncGenerator[str, N
     theme 7 would have — the kind is retired from ``EventType`` but rows written
     before the removal survive in the events table."""
     async with web_context.admin_db.session() as session:
-        event = await EventRepository.create(
+        event_id = await EventRepository.create(
             session,
             type="access_request.filed",
             severity="info",
@@ -63,7 +63,6 @@ async def stored_retired_event_id(web_context: Context) -> AsyncGenerator[str, N
             actor_type="agent",
         )
         await session.commit()
-        event_id = event.id
     yield event_id
 
     async with web_context.admin_db.session() as session:

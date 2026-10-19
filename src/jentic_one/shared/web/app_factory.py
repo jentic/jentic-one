@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import importlib
+import inspect
 import re
 from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
@@ -41,7 +43,8 @@ from jentic_one.shared.telemetry.sink import TelemetrySink, set_active_sink
 from jentic_one.shared.tracing import instrument_inbound_app
 from jentic_one.shared.web.agent_discovery import get_agent_discovery_router
 from jentic_one.shared.web.auth import API_KEY_HEADER
-from jentic_one.shared.web.container import AppContainer
+from jentic_one.shared.web.container import AppContainer, RouterSpec
+from jentic_one.shared.web.deps import TokenVerifier
 from jentic_one.shared.web.errors import (
     request_validation_error_handler,
     state_backend_capacity_error_handler,
@@ -96,7 +99,62 @@ SURFACE_MODULES = {
     "auth": "jentic_one.auth.web.app",
 }
 
+#: Every surface that rides the control-plane (non-broker) app. A split
+#: deployment serves these from separate processes, but together they are the
+#: one control-plane API the endpoint reference documents.
+CONTROL_PLANE_SURFACES: tuple[str, ...] = ("registry", "admin", "control", "auth")
+
+#: Module holding the control-plane identity verifier chain. Imported
+#: dynamically (one named seam) so the shared layer carries no static import of
+#: a surface — the same posture as the :data:`SURFACE_MODULES` loop.
+PLATFORM_VERIFIER_MODULE = "jentic_one.auth.web.verifier"
+
 _db_instrumented = False
+
+
+def make_platform_token_verifier(ctx: Context) -> TokenVerifier:
+    """Build the one identity verifier every control-plane app installs.
+
+    The chain (:data:`PLATFORM_VERIFIER_MODULE`) resolves agent API keys
+    (``jak_``; a retired ``sak_`` key is refused), opaque ``at_`` OAuth access
+    tokens (resolved against the admin DB's ``access_tokens`` table), and HS256
+    web-session JWTs. Combined and standalone factories both call this, so a
+    standalone surface accepts exactly the token shapes the combined app does.
+
+    The broker is the one exception: it installs its own data-plane validator
+    (JWKS trusted issuers, TTL caches) in ``broker.core.setup``.
+    """
+    verifier_mod = importlib.import_module(PLATFORM_VERIFIER_MODULE)
+    verifier: TokenVerifier = verifier_mod.make_superset_verifier(ctx)
+    return verifier
+
+
+def install_platform_token_verifier(app: FastAPI, ctx: Context, *, replace: bool = True) -> None:
+    """Install :func:`make_platform_token_verifier` as ``app.state.verify_token``.
+
+    The only writer of ``app.state.verify_token`` outside the broker.
+    ``replace=False`` keeps a verifier already on the app — the composition
+    root's safety net for a standalone factory that installed its own (the
+    broker's data-plane validator).
+    """
+    if replace or not hasattr(app.state, "verify_token"):
+        app.state.verify_token = make_platform_token_verifier(ctx)
+
+
+def _require_admin_db(ctx: Context, shape: str) -> None:
+    """Fail the app build when a control-plane process cannot verify callers.
+
+    Every control-plane route resolves its caller through the platform
+    verifier, which reads API keys, access tokens and permissions from the admin
+    DB. Without it ``app.state.verify_token`` would be missing and every
+    authenticated request would 500, so refuse to build instead.
+    """
+    if not ctx.is_db_allowed("admin"):
+        raise RuntimeError(
+            f"{shape} needs access to the 'admin' database to verify callers "
+            "(API keys, access tokens, permissions); add 'admin' to the "
+            "context's allowed_dbs"
+        )
 
 
 def mount_metrics_endpoint(app: FastAPI) -> None:
@@ -501,6 +559,31 @@ async def _null_lifespan() -> AsyncGenerator[None]:
     yield
 
 
+async def _run_shutdown_handlers(app: FastAPI) -> None:
+    """Run the handlers registered with ``app.router.add_event_handler("shutdown", …)``.
+
+    FastAPI runs an app's own shutdown handlers only from its default lifespan,
+    and every app built here has its own ``lifespan``, so the factory's
+    lifespans run them through this helper. Surface installers use them to
+    close what they built (the auth and control surfaces' shared-state
+    backends). Register on ``app.router`` itself: an included router's
+    handlers already run through that router's lifespan, which FastAPI merges
+    into the app's, and are copied onto ``app.router`` too, so they would run
+    twice. Best-effort: a failing handler is logged and the rest still run.
+    """
+    for handler in list(app.router.on_shutdown):
+        try:
+            result = handler()
+            if inspect.isawaitable(result):
+                await result
+        except Exception:
+            _logger.warning(
+                "shutdown_handler_failed",
+                handler=getattr(handler, "__qualname__", repr(handler)),
+                exc_info=True,
+            )
+
+
 def create_surface_app(
     ctx: Context,
     *,
@@ -539,6 +622,11 @@ def create_surface_app(
     control-plane identity surface.
     """
     container = container or AppContainer.default(ctx)
+    # The broker verifies callers with its own data-plane validator; every other
+    # surface needs the admin DB for the platform verifier, so a misconfigured
+    # context fails here rather than 500ing every authenticated request.
+    if "broker" not in enabled_apps:
+        _require_admin_db(ctx, f"control-plane surface {sorted(enabled_apps)}")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
@@ -588,6 +676,7 @@ def create_surface_app(
                 await _stop_expiry_scanner(scanner_task)
                 await _stop_worker(worker_task)
                 await _stop_telemetry(telemetry_handle)
+                await _run_shutdown_handlers(app)
                 await ctx.shutdown()
 
     # ``server.public_base_url`` names the control/auth surfaces' origin; a
@@ -655,13 +744,15 @@ def create_surface_app(
         # published unauthenticated). The latest release is resolved server-side
         # from GitHub (cached, best-effort), degrading to latest=null on failure.
         app.include_router(get_system_router())
-    for extra_router, extra_prefix, extra_tags in container.extra_routers:
-        app.include_router(
-            extra_router,
-            prefix=extra_prefix,
-            tags=list(extra_tags),
-            responses=COMMON_ERROR_RESPONSES,
-        )
+    # The platform identity verifier — the same chain create_combined_app
+    # installs, so a standalone surface accepts every token shape the combined
+    # app does (notably opaque ``at_`` OAuth access tokens). Installed before the
+    # container extensions, and no surface hook writes it afterwards, so an
+    # injected installer can replace it. The broker installs its own data-plane
+    # validator (broker.core.setup).
+    if "broker" not in enabled_apps:
+        install_platform_token_verifier(app, ctx)
+    _include_extra_routers(app, container.extra_routers)
     for installer in container.extra_installers:
         installer(app, ctx)
     for catch_all_router, catch_all_tags in catch_all_routers:
@@ -678,6 +769,153 @@ def create_surface_app(
     return app
 
 
+async def _root_health() -> RootHealthResponse:
+    """Liveness probe for the combined control-plane app.
+
+    Unauthenticated and dependency-free so orchestrators and load balancers
+    have a stable target. Returns ``{"status": "ok"}`` when the process is up.
+    """
+    return RootHealthResponse(status="ok", version=__version__)
+
+
+def _include_control_plane_routes(
+    app: FastAPI,
+    apps: Sequence[str],
+    *,
+    ctx: Context,
+    extra_routers: Sequence[RouterSpec] = (),
+    prebuilt_routers: Sequence[APIRouter] = (),
+) -> None:
+    """Mount the combined control-plane route table on ``app``.
+
+    Shared by :func:`create_combined_app` and
+    :func:`build_control_plane_reference_app` so the live endpoint reference a
+    standalone surface serves documents exactly the routes a combined app
+    mounts. Routes only — exception handlers, verifiers and the extension
+    routers themselves are the caller's. ``ctx`` is the serving process's
+    context, for route factories that read deployment config.
+    ``extra_routers`` are the container routers the caller mounts after this
+    table; a partial app's endpoint reference documents them too.
+
+    The reference app re-runs this helper lazily, on the first unauthenticated
+    request for the reference, with every control-plane surface as ``apps``. So
+    every route factory called here must be config-only and side-effect-free. A
+    router whose factory resolves state at build (runs contributors, logs, may
+    raise) is built once by the serving app and passed in ``prebuilt_routers``:
+    it is mounted after the instance router, and the reference app reuses the
+    same router objects instead of calling the factory again.
+    """
+    app.get(
+        "/health",
+        operation_id="getHealth",
+        summary="Health",
+        tags=["System"],
+        # Keep the wire body exactly ``{"status", "version"}`` — the
+        # lockout-only ``reason`` member is never emitted as null.
+        response_model_exclude_none=True,
+    )(_root_health)
+
+    # Public, schema-hidden agent-discovery documents: the skill set
+    # (GET /skills/{name}.md, the GET /SKILL.md alias, GET /skills/index.json)
+    # and llms.txt (GET /llms.txt, GET /.well-known/llms.txt) — see #651 / #809.
+    # Registered before the surfaces so no surface route can shadow them (same
+    # order as create_surface_app).
+    app.include_router(get_agent_discovery_router())
+
+    for surface in apps:
+        mod = importlib.import_module(SURFACE_MODULES[surface])
+        for router, prefix, tags in mod.get_routers():
+            app.include_router(router, prefix=prefix, tags=tags, responses=COMMON_ERROR_RESPONSES)
+
+    # Public, schema-hidden endpoint reference (the CLI + docs SPA read this
+    # instead of parsing the OpenAPI document). A full control-plane app
+    # introspects itself, so every route it mounts (extensions included) is
+    # listed. A process serving only part of the control plane (a split
+    # deploy's admin+auth pod) documents the whole control plane plus its own
+    # extension routers instead of just its own routes.
+    if set(CONTROL_PLANE_SURFACES) <= set(apps):
+        app.include_router(get_reference_router())
+    else:
+        app.include_router(
+            get_control_plane_reference_router(
+                ctx, extra_routers=extra_routers, prebuilt_routers=prebuilt_routers
+            )
+        )
+
+    # Public backend-identity endpoint so a client (MCP server, CLI, agent) can
+    # tell which backend it is bound to — cloud vs. a local self-hosted install.
+    # No COMMON_ERROR_RESPONSES: a parameterless public GET can't produce
+    # 400/422 (same posture as /health).
+    app.include_router(get_instance_router())
+
+    for router in prebuilt_routers:
+        app.include_router(router, responses=COMMON_ERROR_RESPONSES)
+
+    # Running/latest version so the signed-in SPA can show the current version
+    # and an update banner. Authenticated (any valid session). The latest release
+    # is resolved server-side from GitHub (cached, best-effort), degrading to
+    # latest=null on failure.
+    app.include_router(get_system_router())
+
+
+def _include_extra_routers(app: FastAPI, extra_routers: Sequence[RouterSpec]) -> None:
+    """Mount container-injected routers (append-only; never shadow a built-in)."""
+    for router, prefix, tags in extra_routers:
+        app.include_router(router, prefix=prefix, tags=list(tags), responses=COMMON_ERROR_RESPONSES)
+
+
+def build_control_plane_reference_app(
+    ctx: Context,
+    *,
+    extra_routers: Sequence[RouterSpec] = (),
+    prebuilt_routers: Sequence[APIRouter] = (),
+) -> FastAPI:
+    """A route-only app spanning every control-plane surface, for introspection.
+
+    Never served: it has no lifespan, verifier or middleware, and never touches
+    a database. A partial control-plane process's ``GET
+    /reference/endpoints.json`` introspects it instead of the serving app,
+    because a split deployment presents the whole control-plane API (behind one
+    gateway) even though each process mounts only its own surface's routes.
+    ``extra_routers`` (the serving process's container routers) are mounted
+    after the built-in table, in the same order the combined app uses.
+    ``prebuilt_routers`` are the serving app's already-built router objects
+    (see :func:`_include_control_plane_routes`); they are reused, never rebuilt.
+    """
+    app = FastAPI(**fastapi_metadata_kwargs(ctx.config.server.public_base_url))
+    _include_control_plane_routes(
+        app, CONTROL_PLANE_SURFACES, ctx=ctx, prebuilt_routers=prebuilt_routers
+    )
+    _include_extra_routers(app, extra_routers)
+    install_openapi_metadata(app)
+    return app
+
+
+def get_control_plane_reference_router(
+    ctx: Context,
+    *,
+    extra_routers: Sequence[RouterSpec] = (),
+    prebuilt_routers: Sequence[APIRouter] = (),
+) -> APIRouter:
+    """``GET /reference/endpoints.json`` for a partial control-plane process.
+
+    Documents every control-plane surface (:data:`CONTROL_PLANE_SURFACES`) —
+    the same payload the combined app and the committed
+    ``docs/reference/endpoints.json`` carry — plus the process's own
+    ``extra_routers``, not just the serving process's surface routes.
+    ``prebuilt_routers`` are the serving app's already-built router objects; the
+    cold reference build reuses them, so it never re-runs their factories.
+    """
+    return get_reference_router(
+        source_app=functools.partial(
+            build_control_plane_reference_app,
+            ctx,
+            extra_routers=tuple(extra_routers),
+            prebuilt_routers=tuple(prebuilt_routers),
+        )
+    )
+
+
 def create_combined_app(
     ctx: Context,
     apps: list[str],
@@ -692,6 +930,7 @@ def create_combined_app(
     """
     container = container or AppContainer.default(ctx)
     structlog.get_logger(__name__).info("creating combined app", apps=apps)
+    _require_admin_db(ctx, f"combined control-plane app {apps}")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
@@ -719,6 +958,7 @@ def create_combined_app(
                 await _stop_expiry_scanner(scanner_task)
                 await _stop_worker(worker_task)
                 await _stop_telemetry(telemetry_handle)
+                await _run_shutdown_handlers(app)
                 await ctx.shutdown()
 
     root = FastAPI(lifespan=lifespan, **fastapi_metadata_kwargs(ctx.config.server.public_base_url))
@@ -748,78 +988,29 @@ def create_combined_app(
     root.add_exception_handler(StateBackendCapacityError, state_backend_capacity_error_handler)  # type: ignore[arg-type]
     root.add_exception_handler(Exception, unhandled_exception_handler)
 
-    @root.get(
-        "/health",
-        operation_id="getHealth",
-        summary="Health",
-        tags=["System"],
-        # Keep the wire body exactly ``{"status", "version"}`` — the
-        # lockout-only ``reason`` member is never emitted as null.
-        response_model_exclude_none=True,
-    )
-    async def health() -> RootHealthResponse:
-        """Liveness probe for the combined control-plane app.
+    # The combined control-plane route table — the same assembly the
+    # standalone endpoint reference introspects (see
+    # build_control_plane_reference_app), so the two cannot drift.
+    _include_control_plane_routes(root, apps, ctx=ctx, extra_routers=container.extra_routers)
 
-        Unauthenticated and dependency-free so orchestrators and load balancers
-        have a stable target. Returns ``{"status": "ok"}`` when the process is up.
-        """
-        return RootHealthResponse(status="ok", version=__version__)
-
-    # Public, schema-hidden agent-discovery documents: the skill set
-    # (GET /skills/{name}.md, the GET /SKILL.md alias, GET /skills/index.json)
-    # and llms.txt (GET /llms.txt, GET /.well-known/llms.txt) — see #651 / #809.
-    # Registered before the surfaces so no surface route can shadow them (same
-    # order as create_surface_app).
-    root.include_router(get_agent_discovery_router())
-
-    auth_superset_verifier = None
     for surface in apps:
-        module_path = SURFACE_MODULES[surface]
-        mod = importlib.import_module(module_path)
-        for router, prefix, tags in mod.get_routers():
-            root.include_router(router, prefix=prefix, tags=tags, responses=COMMON_ERROR_RESPONSES)
+        mod = importlib.import_module(SURFACE_MODULES[surface])
         if hasattr(mod, "get_exception_handlers"):
             for exc_class, handler in mod.get_exception_handlers():
                 root.add_exception_handler(exc_class, handler)
         if hasattr(mod, "install_on_app"):
             mod.install_on_app(root, ctx)
-        # Capture the auth surface's full-taxonomy verifier factory (dynamic, to
-        # avoid a static shared->auth import — same posture as the surface loop).
-        if surface == "auth":
-            auth_superset_verifier = mod.make_superset_verifier
 
-    # Deterministic identity verifier: when the auth surface is enabled, install
-    # its full-taxonomy verifier (API keys + opaque `at_` + HS256) explicitly so
-    # admin/enterprise routes resolve `at_` tokens regardless of the order
-    # surfaces ran `install_on_app`. Without this the active verifier depends on
-    # surface ordering (the admin surface installs an HS256-only, `at_`-blind
-    # verifier). No-op for app sets without the auth surface.
-    if auth_superset_verifier is not None:
-        root.state.verify_token = auth_superset_verifier(ctx)
-
-    # Public, schema-hidden endpoint reference (the CLI + docs SPA read this
-    # instead of parsing the OpenAPI document). Registered after all surfaces so
-    # the reference it builds covers every included route.
-    root.include_router(get_reference_router())
-
-    # Public backend-identity endpoint so a client (MCP server, CLI, agent) can
-    # tell which backend it is bound to — cloud vs. a local self-hosted install.
-    # No COMMON_ERROR_RESPONSES: a parameterless public GET can't produce
-    # 400/422 (same posture as /health).
-    root.include_router(get_instance_router())
-
-    # Running/latest version so the signed-in SPA can show the current version
-    # and an update banner. Authenticated (any valid session). The latest release
-    # is resolved server-side from GitHub (cached, best-effort), degrading to
-    # latest=null on failure.
-    root.include_router(get_system_router())
+    # Deterministic identity verifier: the platform chain (API keys + opaque
+    # ``at_`` + HS256) is installed after every surface ran ``install_on_app``
+    # (no surface hook writes it), so the active verifier never depends on
+    # surface ordering or on whether the auth surface rides this process.
+    # Standalone surfaces install the same chain in create_surface_app.
+    install_platform_token_verifier(root, ctx)
 
     # Extension point: injected routers/installers mount after all built-in
     # surfaces (append-only; never shadows a built-in route). No-op by default.
-    for router, prefix, tags in container.extra_routers:
-        root.include_router(
-            router, prefix=prefix, tags=list(tags), responses=COMMON_ERROR_RESPONSES
-        )
+    _include_extra_routers(root, container.extra_routers)
     for installer in container.extra_installers:
         installer(root, ctx)
 

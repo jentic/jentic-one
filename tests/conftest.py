@@ -32,7 +32,10 @@ _PROXY_TRACER_FIELDS = (
     "_real_tracer",
 )
 
-pytest_plugins = ("tests.harness.logging_isolation",)
+pytest_plugins = (
+    "tests.harness.logging_isolation",
+    "tests.harness.sqlalchemy_deprecations",
+)
 
 
 @pytest.fixture(autouse=True)

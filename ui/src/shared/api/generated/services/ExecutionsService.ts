@@ -15,7 +15,6 @@ export class ExecutionsService {
      * @throws ApiError
      */
     public static listExecutions({
-        toolkitId,
         traceId,
         status,
         from,
@@ -26,10 +25,6 @@ export class ExecutionsService {
         cursor,
         limit = 25,
     }: {
-        /**
-         * Legacy: only return executions mediated by this toolkit.
-         */
-        toolkitId?: (string | null),
         /**
          * Only return executions with this trace ID.
          */
@@ -71,7 +66,6 @@ export class ExecutionsService {
             method: 'GET',
             url: '/executions',
             query: {
-                'toolkit_id': toolkitId,
                 'trace_id': traceId,
                 'status': status,
                 'from': from,
