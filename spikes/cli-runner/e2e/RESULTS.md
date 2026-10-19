@@ -69,3 +69,24 @@ Connecting a sandboxed CLI's traffic to the broker (the in-sandbox → broker
 hop) isn't part of this spike. A full `gh` → sandbox → broker → upstream run
 needs that piece first. The rest of the chain above is ready to be reused for
 that test.
+
+### CLI → forwarder → broker hop
+
+`e2e/forwarder.py` is a loopback plain-HTTP forwarder (no CA, no TLS interception).
+The CLI gets `HTTP_PROXY` and `GH_HOST`; the forwarder accepts absolute-form requests,
+allows only hosts in its map, drops the CLI's own `Authorization`, and relays to the
+broker as the agent. The spike holds the agent token in the forwarder process, which
+stands in for the runner's out-of-sandbox forwarder.
+
+| Check | Result |
+|---|---|
+| `gh pr list -R cli/cli` (host `gh`, dummy `GH_TOKEN`) | ✅ prints both PRs. GraphQL `POST` → broker → upstream, `jentic-execution-id` returned |
+| `gh api /repos/cli/cli/pulls` | ✅ 200 through the broker |
+| Upstream auth header | `Bearer ghp_SPIKE_FAKE_…` (stored credential). The CLI's own token never arrives |
+| Host outside the map (`evil.example`) | ✅ 403 at the forwarder, nothing reaches the broker |
+| `CONNECT` | ✅ refused (403) |
+| Request carrying its own `Authorization` | ✅ replaced with the agent's |
+
+Not covered: the sandboxed variant (netns + unix socket hop), `aws`/`cf`, and the
+wiring gaps from spike 3 (absolute `Link` URLs, redirects to other hosts), which still
+need every outbound host in the map.
