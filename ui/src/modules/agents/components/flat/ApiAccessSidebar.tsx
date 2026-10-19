@@ -689,10 +689,7 @@ export function ApiAccessSidebar({
 						vendorKey: shown.vendor,
 						apiReference,
 					}}
-					onClose={() => {
-						setEditAccessOpen(false);
-						invalidateBindingSurfaces(shown.credentialId, 'credential');
-					}}
+					onClose={() => setEditAccessOpen(false)}
 					onCreated={() => setEditAccessOpen(false)}
 				/>
 			)}

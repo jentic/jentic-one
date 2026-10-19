@@ -132,6 +132,34 @@ describe('VendorConnectFlow approve — edit sessions', () => {
 		});
 	});
 
+	it('refreshes the binding, the agents the scopes reach and the rule sets once applied', async () => {
+		const seeded = seedEdit(
+			editBlock({ other_bound_agents: [{ agent_id: 'agnt_2', name: 'Helper' }] }),
+		);
+		const { queryClient } = renderWithProviders(
+			<VendorConnectFlow
+				mode="approve"
+				sessionId={seeded.session_id}
+				onBack={vi.fn()}
+				onDone={vi.fn()}
+			/>,
+		);
+		const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+		const user = userEvent.setup();
+
+		await user.click(await screen.findByRole('button', { name: 'Approve' }));
+		await screen.findByText('Access to Work Gmail updated');
+		const keys = invalidate.mock.calls.map(([filters]) => filters?.queryKey);
+		expect(keys).toEqual(
+			expect.arrayContaining([
+				['agents', 'binding-permissions', 'agnt_1', 'cred_gmail'],
+				['agents', 'binding-permissions', 'agnt_2', 'cred_gmail'],
+				['agents', 'credential-bindings', 'agnt_1'],
+				['agents', 'rule-set'],
+			]),
+		);
+	});
+
 	it('pauses Approve when the request changes under the reviewer', async () => {
 		const seeded = seedEdit(editBlock());
 		renderApprove(seeded.session_id);

@@ -35,6 +35,7 @@ import { cn } from '@/shared/lib/utils';
 import {
 	connectRequestsKey,
 	invalidateBindingSurfaces,
+	invalidateEditSurfaces,
 	useAgentsForPicker,
 	useCancelConnectSession,
 	useConfirmConnectSession,
@@ -1643,6 +1644,15 @@ function EditApproveFlow({
 		setError(null);
 	};
 
+	// Everything the applied change shows on: the request lists, the
+	// credential, and the agent's binding surfaces (rules, tiles, rule sets).
+	const afterApplied = useCallback((): void => {
+		void queryClient.invalidateQueries({ queryKey: connectRequestsKey });
+		void queryClient.invalidateQueries({ queryKey: ['credentials'] });
+		void invalidateEditSurfaces(queryClient, shown);
+		toast({ title: 'Access updated', variant: 'success' });
+	}, [queryClient, shown]);
+
 	const polling = usePollConnectSessionStatus(sessionId, pollToken, {
 		enabled: phase === 'awaiting',
 		intervalMs:
@@ -1667,11 +1677,9 @@ function EditApproveFlow({
 		}
 		if (status === 'applied') {
 			goTo('terminal');
-			void queryClient.invalidateQueries({ queryKey: connectRequestsKey });
-			void queryClient.invalidateQueries({ queryKey: ['credentials'] });
-			toast({ title: 'Access updated', variant: 'success' });
+			afterApplied();
 		}
-	}, [phase, polling.data, polling.error, queryClient]);
+	}, [phase, polling.data, polling.error, queryClient, afterApplied]);
 
 	// Closing the dialog while the vendor consent runs cancels it; before
 	// approving, closing leaves the request open.
@@ -1695,9 +1703,7 @@ function EditApproveFlow({
 			const result = await confirmMutation.mutateAsync(body);
 			if (result.kind === 'connected') {
 				goTo('terminal');
-				void queryClient.invalidateQueries({ queryKey: connectRequestsKey });
-				void queryClient.invalidateQueries({ queryKey: ['credentials'] });
-				toast({ title: 'Access updated', variant: 'success' });
+				afterApplied();
 				return;
 			}
 			setChallenge(result);

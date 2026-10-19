@@ -283,6 +283,27 @@ export function invalidateBindingSurfaces(
 	]);
 }
 
+/**
+ * What an applied edit changes, refreshed: the binding (its rules, its
+ * suspension, the tiles over it), every agent the credential's new scopes
+ * reach, and the shared rule sets (an edit may change the one attached).
+ */
+export function invalidateEditSurfaces(
+	client: QueryClient,
+	edit: {
+		binding: { agent_id: string; credential_id: string };
+		other_bound_agents: { agent_id: string }[];
+	},
+): Promise<unknown> {
+	return Promise.all([
+		invalidateBindingSurfaces(client, edit.binding.credential_id, [
+			edit.binding.agent_id,
+			...edit.other_bound_agents.map((a) => a.agent_id),
+		]),
+		client.invalidateQueries({ queryKey: [...sharedQueryKeys.agentsRoot, 'rule-set'] }),
+	]);
+}
+
 /** Mirrors `agentsKeys.bindingPermissions` — the agent rules editor reads the same slice. */
 function bindingPermissionsKey(agentId: string, credentialId: string) {
 	return [...sharedQueryKeys.agentsRoot, 'binding-permissions', agentId, credentialId] as const;
