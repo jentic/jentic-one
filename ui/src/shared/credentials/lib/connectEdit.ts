@@ -7,6 +7,7 @@ import type {
 	EditRuleView,
 	PermissionRule,
 	ReviewEdit,
+	SessionRevision,
 } from '@/shared/credentials/api/vendors-types';
 
 /** How one rule fares in the change. */
@@ -36,20 +37,18 @@ export function currentRules(edit: ReviewEdit): EditRuleView[] {
 }
 
 /**
- * The change rule by rule, in the result's order (first match wins), with the
- * rules it drops listed after.
+ * ``before`` → ``after`` rule by rule, in ``after``'s order (first match
+ * wins), with the rules it drops listed after.
  */
-export function ruleChanges(edit: ReviewEdit): RuleChange[] {
-	const before = currentRules(edit);
+export function diffRules(
+	before: readonly EditRuleView[],
+	after: readonly EditRuleView[],
+): RuleChange[] {
 	const beforeKeys = new Set(before.map(ruleKey));
-	const afterKeys = new Set(edit.result.rules.map(ruleKey));
-	const changes: RuleChange[] = edit.result.rules.map((rule) => {
+	const afterKeys = new Set(after.map(ruleKey));
+	const changes: RuleChange[] = after.map((rule) => {
 		const kept = beforeKeys.has(ruleKey(rule));
-		return {
-			kind: kept ? 'kept' : 'added',
-			rule,
-			widens: !kept && GRANTING.has(rule.effect),
-		};
+		return { kind: kept ? 'kept' : 'added', rule, widens: !kept && GRANTING.has(rule.effect) };
 	});
 	for (const rule of before) {
 		if (!afterKeys.has(ruleKey(rule))) {
@@ -57,6 +56,41 @@ export function ruleChanges(edit: ReviewEdit): RuleChange[] {
 		}
 	}
 	return changes;
+}
+
+/** The whole change against the binding today (the review's combined diff). */
+export function ruleChanges(edit: ReviewEdit): RuleChange[] {
+	return diffRules(currentRules(edit), edit.result.rules);
+}
+
+/** One revision's own change against the one before it (revision 1: against today). */
+export interface RevisionChange {
+	revision: SessionRevision;
+	rules: RuleChange[];
+	addedScopes: string[];
+	removedScopes: string[];
+}
+
+/** Each revision's own diff, oldest first. */
+export function revisionChanges(
+	edit: ReviewEdit,
+	revisions: readonly SessionRevision[],
+): RevisionChange[] {
+	let previousRules: readonly EditRuleView[] = currentRules(edit);
+	let previousScopes: readonly string[] = edit.current.granted_scopes ?? [];
+	return revisions.map((revision) => {
+		const rules = revision.result.rules ?? [];
+		const scopes = revision.result.scopes ?? [];
+		const change: RevisionChange = {
+			revision,
+			rules: diffRules(previousRules, rules).filter((c) => c.kind !== 'kept'),
+			addedScopes: scopes.filter((s) => !previousScopes.includes(s)),
+			removedScopes: previousScopes.filter((s) => !scopes.includes(s)),
+		};
+		previousRules = rules;
+		previousScopes = scopes;
+		return change;
+	});
 }
 
 /** Scopes the result holds that the credential's grant does not. */

@@ -80,8 +80,10 @@ import {
 	addedScopes,
 	describeRuleMatch,
 	resumes,
+	revisionChanges,
 	ruleChanges,
 	rulesToConfirm,
+	type RuleChange,
 } from '@/shared/credentials/lib/connectEdit';
 import { isHttpsVendorUrl, openVendorUrl } from '@/shared/credentials/lib/safe-navigation';
 import { EffectBadge } from '@/shared/credentials/components/EffectBadge';
@@ -1793,7 +1795,9 @@ function EditApproveFlow({
 					{historyOpen ? 'Hide history' : 'History'}
 				</Button>
 			</div>
-			{historyOpen && <EditHistory sessionId={sessionId} pollToken={pollToken} />}
+			{historyOpen && (
+				<EditHistory sessionId={sessionId} pollToken={pollToken} edit={shown} />
+			)}
 
 			{shown.widens_access && (
 				<p className="text-warning flex items-center gap-2 text-sm">
@@ -1829,31 +1833,7 @@ function EditApproveFlow({
 						You edited the rules: your list is what gets applied.
 					</p>
 				) : null}
-				<ul className="space-y-1">
-					{changes.map((change, i) => (
-						<li
-							key={`${change.kind}-${change.rule.id ?? i}`}
-							className={cn(
-								'flex items-center gap-2 rounded px-2 py-1 text-sm',
-								change.kind === 'added' && 'bg-success/10',
-								change.kind === 'removed' && 'bg-danger/10 line-through',
-							)}
-						>
-							<EffectBadge effect={change.rule.effect}>
-								{change.rule.effect}
-							</EffectBadge>
-							<span className="font-mono text-xs">
-								{describeRuleMatch(change.rule)}
-							</span>
-							{change.kind !== 'kept' && (
-								<Badge variant={change.kind === 'added' ? 'success' : 'danger'}>
-									{change.kind === 'added' ? 'Added' : 'Removed'}
-								</Badge>
-							)}
-							{change.widens && <Badge variant="warning">Widens</Badge>}
-						</li>
-					))}
-				</ul>
+				<RuleChangeList changes={changes} />
 			</section>
 
 			{newScopes.length > 0 && (
@@ -1944,31 +1924,81 @@ function EditApproveFlow({
 	);
 }
 
-/** The session's revisions, oldest first, each with its rule and scope count. */
-function EditHistory({ sessionId, pollToken }: { sessionId: string; pollToken?: string }) {
+/** Rule-by-rule change rows: added, removed and kept, with widening flagged. */
+function RuleChangeList({ changes }: { changes: readonly RuleChange[] }) {
+	if (changes.length === 0) {
+		return <p className="text-muted-foreground text-xs">No rule changes.</p>;
+	}
+	return (
+		<ul className="space-y-1">
+			{changes.map((change, i) => (
+				<li
+					key={`${change.kind}-${change.rule.id ?? i}`}
+					className={cn(
+						'flex items-center gap-2 rounded px-2 py-1 text-sm',
+						change.kind === 'added' && 'bg-success/10',
+						change.kind === 'removed' && 'bg-danger/10 line-through',
+					)}
+				>
+					<EffectBadge effect={change.rule.effect}>{change.rule.effect}</EffectBadge>
+					<span className="font-mono text-xs">{describeRuleMatch(change.rule)}</span>
+					{change.kind !== 'kept' && (
+						<Badge variant={change.kind === 'added' ? 'success' : 'danger'}>
+							{change.kind === 'added' ? 'Added' : 'Removed'}
+						</Badge>
+					)}
+					{change.widens && <Badge variant="warning">Widens</Badge>}
+				</li>
+			))}
+		</ul>
+	);
+}
+
+/** Each revision with its own change against the one before (revision 1: against today). */
+function EditHistory({
+	sessionId,
+	pollToken,
+	edit,
+}: {
+	sessionId: string;
+	pollToken?: string;
+	edit: ReviewEdit;
+}) {
 	const revisions = useConnectSessionRevisions(sessionId, pollToken);
+	const changes = useMemo(
+		() => revisionChanges(edit, revisions.data ?? []),
+		[edit, revisions.data],
+	);
 	if (revisions.isLoading) return <Skeleton className="h-12 w-full" />;
 	if (revisions.error) return <ErrorAlert message="The history couldn't be loaded." />;
 	return (
-		<ol aria-label="Request history" className="space-y-1 text-xs">
-			{(revisions.data ?? []).map((revision) => (
-				<li key={revision.id} className="flex items-center gap-2">
-					<span className="font-medium">Revision {revision.number}</span>
-					<span className="text-muted-foreground">
-						{revision.created_by ? (
-							<ActorLabel actorId={revision.created_by} />
-						) : (
-							'Rebased'
-						)}
-						{' · '}
-						{new Date(revision.created_at).toLocaleString()}
-					</span>
-					<span className="text-muted-foreground ml-auto">
-						{(revision.result.rules ?? []).length} rules
-						{revision.result.scopes?.length
-							? ` · ${revision.result.scopes.join(', ')}`
-							: ''}
-					</span>
+		<ol aria-label="Request history" className="space-y-3">
+			{changes.map(({ revision, rules, addedScopes: added, removedScopes }) => (
+				<li key={revision.id} className="space-y-1">
+					<p className="text-xs">
+						<span className="font-medium">Revision {revision.number}</span>{' '}
+						<span className="text-muted-foreground">
+							{revision.created_by ? (
+								<ActorLabel actorId={revision.created_by} />
+							) : (
+								'Rebased'
+							)}
+							{' · '}
+							{new Date(revision.created_at).toLocaleString()}
+						</span>
+					</p>
+					<RuleChangeList changes={rules} />
+					{added.length > 0 && (
+						<p className="text-xs">
+							Scopes added: <span className="font-mono">{added.join(', ')}</span>
+						</p>
+					)}
+					{removedScopes.length > 0 && (
+						<p className="text-xs">
+							Scopes dropped:{' '}
+							<span className="font-mono">{removedScopes.join(', ')}</span>
+						</p>
+					)}
 				</li>
 			))}
 		</ol>

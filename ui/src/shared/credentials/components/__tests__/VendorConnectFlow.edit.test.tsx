@@ -200,6 +200,41 @@ describe('VendorConnectFlow approve — edit sessions', () => {
 		});
 	});
 
+	it("shows each revision's own change in the history", async () => {
+		const seeded = seedEdit(editBlock({ revision: { id: 'csr_2', number: 2 } }));
+		seeded.revisions = [
+			{
+				id: 'csr_1',
+				number: 1,
+				created_by: 'agnt_1',
+				created_at: '2026-10-19T10:00:00Z',
+				proposal: {},
+				result: { rules: [READ, DENY], scopes: ['gmail.readonly'] },
+			},
+			{
+				id: 'csr_2',
+				number: 2,
+				created_by: 'agnt_1',
+				created_at: '2026-10-19T10:05:00Z',
+				proposal: {},
+				result: { rules: [READ, SEND], scopes: ['gmail.readonly'] },
+			},
+		];
+		renderApprove(seeded.session_id);
+		const user = userEvent.setup();
+
+		await user.click(await screen.findByRole('button', { name: 'History' }));
+		const history = await screen.findByRole('list', { name: 'Request history' });
+		const entries = within(history).getAllByRole('listitem', { name: undefined });
+		const revisionTwo = entries.find((e) => e.textContent?.startsWith('Revision 2'));
+		expect(revisionTwo).toBeDefined();
+		expect(revisionTwo).toHaveTextContent(/POST \/v1\/send.*Added/);
+		expect(revisionTwo).toHaveTextContent(/DELETE \/v1\/.*Removed/);
+		expect(within(history).getByText('Revision 1').closest('li')).toHaveTextContent(
+			'No rule changes.',
+		);
+	});
+
 	it('offers to resume a suspended binding', async () => {
 		const seeded = seedEdit(
 			editBlock({
