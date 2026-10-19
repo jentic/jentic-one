@@ -24,7 +24,13 @@
 import { http, HttpResponse } from 'msw';
 import { SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR } from '@/shared/lib';
 import { CredentialType, type Credential } from '@/shared/credentials/api';
-import { findMockCredential, seedMockCredentials } from '@/shared/credentials/mocks/handlers';
+import {
+	findMockCredential,
+	getMockConnectSessions,
+	seedMockAgentConnectSession,
+	seedMockCredentials,
+} from '@/shared/credentials/mocks/handlers';
+import type { EditConnectionBody, EditRuleView } from '@/shared/credentials/api/vendors-types';
 import { DEFAULT_AGENT_PERMISSIONS } from '@/modules/agents/lib/requestedPermissions';
 
 type Status = 'pending' | 'active' | 'rejected' | 'disabled' | 'archived';
@@ -135,6 +141,8 @@ interface CredentialBindingRow {
 	bound_at: string;
 	serves: Array<{ api_vendor: string; api_name?: string | null; api_version?: string | null }>;
 	permissions: BindingRule[];
+	/** The credential's granted OAuth scopes; null (the default) for a non-OAuth one. */
+	granted_scopes?: string[] | null;
 }
 
 let credentialBindings: CredentialBindingRow[] = [];
@@ -1965,7 +1973,112 @@ export const agentsHandlers = [
 			(b) => b.agent_id === params.aid && b.credential_id === params.cid,
 		);
 		if (!row) return new HttpResponse(null, { status: 404 });
-		return HttpResponse.json({ data: row.permissions });
+		const set = row.rule_set_id
+			? ruleSets.find((r) => r.rule_set_id === row.rule_set_id)
+			: undefined;
+		return HttpResponse.json({
+			data: row.permissions,
+			rule_set: set
+				? { id: set.rule_set_id, name: set.name, curated: set.curated, rules: set.rules }
+				: null,
+			granted_scopes: row.granted_scopes ?? null,
+			suspended: row.suspended,
+		});
+	}),
+	// A person asking to change a binding (the Edit access flow). The edit
+	// session lands in the connect-session store, so the review reads it.
+	http.post('/integrations:edit-connection', async ({ request }) => {
+		const body = (await request.json()) as EditConnectionBody;
+		const agentId = body.agent_id ?? '';
+		const row = credentialBindings.find(
+			(b) => b.agent_id === agentId && b.credential_id === body.credential_id,
+		);
+		if (!row) return new HttpResponse(null, { status: 404 });
+		const open = getMockConnectSessions().find(
+			(s) =>
+				s.edit?.binding.agent_id === agentId &&
+				s.edit.binding.credential_id === body.credential_id,
+		);
+		if (open) {
+			return HttpResponse.json(
+				{
+					type: 'edit_open',
+					status: 409,
+					detail: 'An edit of this binding is already open.',
+					session_id: open.session_id,
+				},
+				{ status: 409, headers: { 'Content-Type': 'application/problem+json' } },
+			);
+		}
+		const set = row.rule_set_id
+			? ruleSets.find((r) => r.rule_set_id === row.rule_set_id)
+			: undefined;
+		const view = (r: BindingRule, i: number | null): EditRuleView => ({
+			id: i === null ? null : `apr_${row.id}_${i}`,
+			effect: r.effect,
+			methods: r.methods ?? null,
+			path: r.path ?? null,
+			match_mode: r.match_mode,
+			operations: r.operations ?? null,
+		});
+		const today = (set?.rules ?? row.permissions).filter((r) => !r._system).map(view);
+		const result = body.rules ? body.rules.set.map((r) => view(r, null)) : today;
+		const granted = row.granted_scopes ?? [];
+		const added = (body.scopes?.add ?? []).filter((s) => !granted.includes(s));
+		const resume = row.suspended && body.resume === true;
+		if (!body.rules && added.length === 0 && !resume) {
+			return HttpResponse.json(
+				{ type: 'nothing_to_change', status: 422, detail: 'The edit changes nothing.' },
+				{ status: 422, headers: { 'Content-Type': 'application/problem+json' } },
+			);
+		}
+		const session = seedMockAgentConnectSession({
+			agent_id: agentId,
+			vendor_key: row.serves[0]?.api_vendor ?? 'mock',
+			resolved_flow: 'edit',
+			requested_by_actor_id: 'usr_mock_owner',
+			reason: body.reason ?? null,
+			edit: {
+				binding: {
+					agent_id: agentId,
+					credential_id: row.credential_id,
+					credential_name: row.name,
+				},
+				revision: { id: 'csr_1', number: 1 },
+				current: {
+					rules: today,
+					rule_set: set
+						? {
+								id: set.rule_set_id,
+								name: set.name,
+								curated: set.curated,
+								rules: today,
+							}
+						: null,
+					suspended: row.suspended,
+					granted_scopes: row.granted_scopes ?? null,
+				},
+				result: {
+					target: set && !set.curated ? 'rule_set' : 'binding',
+					rules: result,
+					scopes: [...granted, ...added],
+					suspended: row.suspended && !resume,
+				},
+				widens_access: true,
+				other_bound_agents: [],
+				needs_vendor_consent: added.length > 0,
+			},
+		});
+		return HttpResponse.json(
+			{
+				session_id: session.session_id,
+				approval_url: `https://jentic.example.test/app/agents?approve=${session.session_id}`,
+				poll_token: session.poll_token,
+				resolved_flow: 'edit',
+				revision_id: 'csr_1',
+			},
+			{ status: 201 },
+		);
 	}),
 	http.put('/credentials/:cid/agents/:aid/permissions', async ({ params, request }) => {
 		const row = credentialBindings.find(

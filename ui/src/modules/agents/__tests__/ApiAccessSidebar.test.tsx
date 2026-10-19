@@ -992,6 +992,30 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		expect(screen.getByRole('dialog', { name: 'Slack' })).toBeInTheDocument();
 	});
 
+	it('Edit access composes from the saved rules and stacks over the sidebar', async () => {
+		const user = userEvent.setup();
+		renderPage();
+		await screen.findByText('1 access rule');
+
+		const dialog = await openSidebar('Slack');
+		await user.click(within(dialog).getByRole('button', { name: /Edit access/ }));
+
+		const editSheet = await screen.findByRole('dialog', { name: 'Edit access' });
+		// The rules step starts from what the broker evaluates today.
+		expect(await within(editSheet).findByText('/chat. (prefix)')).toBeInTheDocument();
+		await user.click(within(editSheet).getByRole('button', { name: 'Continue' }));
+		await user.click(await within(editSheet).findByRole('button', { name: 'Review change' }));
+		expect(
+			await within(editSheet).findByText(/That leaves the access as it is/),
+		).toBeInTheDocument();
+
+		await user.click(within(editSheet).getByRole('button', { name: 'Close' }));
+		await waitFor(() => {
+			expect(screen.queryByRole('dialog', { name: 'Edit access' })).not.toBeInTheDocument();
+		});
+		expect(screen.getByRole('dialog', { name: 'Slack' })).toBeInTheDocument();
+	});
+
 	// --- Ephemeral state: agent switch closes the sidebar -------------------------
 
 	it('selecting a different agent closes the sidebar', async () => {

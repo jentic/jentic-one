@@ -576,12 +576,13 @@ export function seedMockAgentConnectSession(
 		api: { vendor: overrides.vendor_key, name: 'default', version: '1.0.0' },
 		details: { grant_type: 'authorization_code', connected: false },
 	});
-	store.push(pending);
+	// An edit works on the live credential; only a create mints a pending one.
+	if (!overrides.edit) store.push(pending);
 	const row: MockConnectSession = {
 		session_id: `sess_agent_${agentConnectSeedSeq}`,
 		poll_token: `ptok_agent_${agentConnectSeedSeq}`,
 		state: 'created',
-		credential_id: pending.credential_id,
+		credential_id: overrides.edit?.binding.credential_id ?? pending.credential_id,
 		requested_by_actor_id: overrides.agent_id,
 		created_at: new Date().toISOString(),
 		ownerCanAct: true,

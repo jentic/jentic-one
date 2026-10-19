@@ -3,6 +3,7 @@
  * access today and what approving the current revision leaves in place.
  * Pure helpers; the edit review renders them.
  */
+import type { PermissionRuleReadSchema } from '@/shared/api';
 import type {
 	EditRuleView,
 	PermissionRule,
@@ -107,6 +108,24 @@ export function resumes(edit: ReviewEdit): boolean {
 /** The rules to send on ``:confirm`` (the result's, without ids). */
 export function rulesToConfirm(rules: readonly EditRuleView[]): PermissionRule[] {
 	return rules.map(({ id: _id, ...rule }) => rule);
+}
+
+/** A binding's saved operator rules as the editor holds them (system rules dropped). */
+export function editableRules(rules: readonly PermissionRuleReadSchema[]): PermissionRule[] {
+	return rules
+		.filter((r) => !r._system)
+		.map((r) => {
+			const mode = r.match_mode;
+			const effect = String(r.effect);
+			return {
+				effect: effect === 'deny' || effect === 'require-approval' ? effect : 'allow',
+				methods: r.methods ?? null,
+				path: r.path ?? null,
+				match_mode:
+					mode === 'prefix' || mode === 'exact' || mode === 'regex' ? mode : undefined,
+				operations: r.operations ?? null,
+			};
+		});
 }
 
 /** "GET, POST /v1/x (prefix)": one rule's match in words. */

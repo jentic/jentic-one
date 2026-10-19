@@ -15,6 +15,7 @@ import {
 	getToken,
 	problemDetailText,
 	type AgentListResponse,
+	type BindingAccessResponse,
 	type ConnectSessionSummaryResponse,
 	type PermissionRuleReadSchema,
 	type PermissionRuleSchema,
@@ -25,6 +26,7 @@ import type {
 	ConfirmSessionResponse,
 	ConnectRequest,
 	ConnectResponse,
+	EditConnectionBody,
 	ReviewSession,
 	SessionRevision,
 	StatusResponse,
@@ -112,6 +114,18 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export function startIntegrationConnect(body: ConnectRequest): Promise<ConnectResponse> {
 	return request('/integrations:connect', {
+		method: 'POST',
+		body: JSON.stringify(body),
+	});
+}
+
+/**
+ * Ask to change a binding's access (`POST /integrations:edit-connection`). The
+ * change waits on an approval, the same review an agent's request gets; an
+ * edit already open for the binding is a 409 `edit_open` naming its session.
+ */
+export function startEditConnection(body: EditConnectionBody): Promise<ConnectResponse> {
+	return request('/integrations:edit-connection', {
 		method: 'POST',
 		body: JSON.stringify(body),
 	});
@@ -436,6 +450,18 @@ export async function listBindingPermissions(
 			agentId,
 		});
 		return res.data;
+	} catch (err) {
+		throw toIntegrationsError(err, 'Failed to load the access rules.');
+	}
+}
+
+/** Everything one binding grants: its rules, rule set, scopes and suspension. */
+export async function getBindingAccess(
+	agentId: string,
+	credentialId: string,
+): Promise<BindingAccessResponse> {
+	try {
+		return await CredentialsService.listAgentCredentialPermissions({ credentialId, agentId });
 	} catch (err) {
 		throw toIntegrationsError(err, 'Failed to load the access rules.');
 	}

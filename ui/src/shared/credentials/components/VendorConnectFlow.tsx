@@ -39,9 +39,11 @@ import {
 	useCancelConnectSession,
 	useConfirmConnectSession,
 	useConnectSession,
+	useBindingAccess,
 	useConnectSessionRevisions,
 	usePollConnectSessionStatus,
 	useRejectConnectSession,
+	useStartEditConnection,
 	useStartIntegrationConnect,
 	useVendorAuthCapabilities,
 	useVendorOperations,
@@ -49,6 +51,7 @@ import {
 import {
 	cancelConnectSession,
 	cancelConnectSessionOnUnload,
+	IntegrationsApiError,
 } from '@/shared/credentials/api/vendors-client';
 import { useProviders } from '@/shared/credentials/api';
 import {
@@ -79,6 +82,7 @@ import {
 import {
 	addedScopes,
 	describeRuleMatch,
+	editableRules,
 	resumes,
 	revisionChanges,
 	ruleChanges,
@@ -164,6 +168,20 @@ export type VendorConnectFlowProps =
 			renderPostConnect?: (info: PostConnectInfo) => ReactNode;
 			onBack: () => void;
 			onDone: () => void;
+	  }
+	| {
+			/**
+			 * A person changing a binding's access: compose the change, then
+			 * review and approve it in the same dialog an agent's request gets.
+			 */
+			mode: 'edit';
+			agentId: string;
+			credentialId: string;
+			credentialName: string;
+			vendorKey: string;
+			apiReference: { vendor: string; name: string | null; version: string | null } | null;
+			onBack: () => void;
+			onDone: () => void;
 	  };
 
 /** The credential a completed self connect created (and bound, when an agent was set). */
@@ -205,6 +223,19 @@ const DEFAULT_ALLOW_GET_RULE: PermissionRule = {
 const EMPTY_PATHS: readonly string[] = [];
 
 export function VendorConnectFlow(props: VendorConnectFlowProps) {
+	if (props.mode === 'edit') {
+		return (
+			<EditAccessFlow
+				agentId={props.agentId}
+				credentialId={props.credentialId}
+				credentialName={props.credentialName}
+				vendorKey={props.vendorKey}
+				apiReference={props.apiReference}
+				onBack={props.onBack}
+				onDone={props.onDone}
+			/>
+		);
+	}
 	if (props.mode === 'approve') {
 		return (
 			<VendorApproveFlow
@@ -1601,6 +1632,9 @@ function EditApproveFlow({
 		JSON.stringify(rules) !== JSON.stringify(rulesToConfirm(shown.result.rules));
 	const credentialName = shown.binding.credential_name ?? session.vendor_display_name;
 	const display: VendorDisplay = { displayName: credentialName, iconKey: session.vendor_key };
+	// A person's own change (the human Edit access flow): no agent asked, so
+	// there is nothing to reject. Discarding it cancels the request.
+	const byAgent = session.requested_by_actor_id === shown.binding.agent_id;
 
 	const showLatest = (): void => {
 		setShown(latest);
@@ -1685,6 +1719,12 @@ function EditApproveFlow({
 		}
 	};
 
+	const handleDiscard = (): void => {
+		cancelMutation.mutate({ sessionId, pollToken });
+		phaseRef.current = 'terminal';
+		onBack();
+	};
+
 	const handleReject = async (): Promise<void> => {
 		try {
 			await rejectMutation.mutateAsync({ sessionId });
@@ -1752,7 +1792,11 @@ function EditApproveFlow({
 		<div className="space-y-5">
 			<VendorHeader
 				display={display}
-				subtitle={`An agent is asking to change what it can do with ${credentialName}.`}
+				subtitle={
+					byAgent
+						? `An agent is asking to change what it can do with ${credentialName}.`
+						: `Review your change to what the agent can do with ${credentialName}.`
+				}
 			/>
 
 			{changed && (
@@ -1772,17 +1816,19 @@ function EditApproveFlow({
 
 			{error && <ErrorAlert message={error} />}
 
-			<AgentRequestCard
-				agent={
-					session.agent?.name
-						? { id: session.agent.agent_id, name: session.agent.name }
-						: undefined
-				}
-				actorId={shown.binding.agent_id}
-				ownerId={session.agent?.owner_id ?? null}
-				reason={session.reason}
-				loading={false}
-			/>
+			{byAgent && (
+				<AgentRequestCard
+					agent={
+						session.agent?.name
+							? { id: session.agent.agent_id, name: session.agent.name }
+							: undefined
+					}
+					actorId={shown.binding.agent_id}
+					ownerId={session.agent?.owner_id ?? null}
+					reason={session.reason}
+					loading={false}
+				/>
+			)}
 
 			<div className="text-muted-foreground flex items-center justify-between text-xs">
 				<span>Revision {shown.revision.number}</span>
@@ -1876,7 +1922,7 @@ function EditApproveFlow({
 					<Button type="button" variant="ghost" size="sm" onClick={onBack}>
 						{canConfirm ? 'Not now' : 'Close'}
 					</Button>
-					{canConfirm && (
+					{canConfirm && byAgent && (
 						<Button
 							type="button"
 							variant="ghost"
@@ -1888,6 +1934,11 @@ function EditApproveFlow({
 							}}
 						>
 							Reject
+						</Button>
+					)}
+					{canConfirm && !byAgent && (
+						<Button type="button" variant="ghost" size="sm" onClick={handleDiscard}>
+							Discard
 						</Button>
 					)}
 				</div>
@@ -1920,6 +1971,233 @@ function EditApproveFlow({
 				onClose={(): void => setRejectOpen(false)}
 				pending={rejectMutation.isPending}
 			/>
+		</div>
+	);
+}
+
+type EditAccessPhase = 'rules' | 'details';
+
+/** Why a person's edit was refused, for the compose steps. */
+function describeEditError(err: unknown): string {
+	if (err instanceof IntegrationsApiError && err.code === 'nothing_to_change') {
+		return 'That leaves the access as it is. Change a rule, add a scope or switch the binding back on.';
+	}
+	return err instanceof Error ? err.message : 'The change couldn’t be started. Try again.';
+}
+
+/**
+ * A person changing a binding's access. Compose with the connect flow's rules
+ * step, add scopes / resume / a reason, then open an edit session and review
+ * it in {@link VendorApproveFlow}: the same diff, history and approve an
+ * agent's request gets. An edit already open for the binding opens instead.
+ */
+function EditAccessFlow({
+	agentId,
+	credentialId,
+	credentialName,
+	vendorKey,
+	apiReference,
+	onBack,
+	onDone,
+}: {
+	agentId: string;
+	credentialId: string;
+	credentialName: string;
+	vendorKey: string;
+	apiReference: { vendor: string; name: string | null; version: string | null } | null;
+	onBack: () => void;
+	onDone: () => void;
+}) {
+	const access = useBindingAccess(agentId, credentialId);
+	const start = useStartEditConnection();
+	const [phase, setPhase] = useState<EditAccessPhase>('rules');
+	const [rules, setRules] = useState<PermissionRule[] | null>(null);
+	const [scopes, setScopes] = useState('');
+	const [resume, setResume] = useState(true);
+	const [reason, setReason] = useState('');
+	const [error, setError] = useState<string | null>(null);
+	const [opened, setOpened] = useState<{
+		sessionId: string;
+		pollToken?: string;
+		alreadyOpen: boolean;
+	} | null>(null);
+	const scopesId = useId();
+	const reasonId = useId();
+
+	const data = access.data;
+	// What the broker evaluates today: the attached set's rules, else the binding's.
+	const saved = useMemo(
+		() => (data ? editableRules(data.rule_set?.rules ?? data.data) : []),
+		[data],
+	);
+	const current = rules ?? saved;
+	const display: VendorDisplay = { displayName: credentialName, iconKey: vendorKey };
+
+	if (opened) {
+		return (
+			<div className="space-y-4">
+				{opened.alreadyOpen && (
+					<p role="status" className="text-muted-foreground text-sm">
+						A change to this access is already waiting for approval. Review it here, or
+						discard it to start again.
+					</p>
+				)}
+				<VendorApproveFlow
+					sessionId={opened.sessionId}
+					pollToken={opened.pollToken}
+					onBack={onBack}
+					onDone={onDone}
+				/>
+			</div>
+		);
+	}
+
+	if (access.isPending) {
+		return (
+			<div role="status" aria-live="polite" aria-busy="true">
+				<span className="sr-only">Loading access…</span>
+				<Skeleton className="h-32 rounded-lg" />
+			</div>
+		);
+	}
+	if (!data) {
+		return (
+			<ErrorAlert
+				message="Failed to load this binding's access."
+				onRetry={() => void access.refetch()}
+			/>
+		);
+	}
+
+	if (phase === 'rules') {
+		return (
+			<div className="space-y-4">
+				{data.rule_set && (
+					<p className="text-muted-foreground text-sm">
+						{data.rule_set.curated
+							? `These rules come from the curated set ${data.rule_set.name}. Changing them gives this binding its own copy.`
+							: `These rules belong to the shared rule set ${data.rule_set.name}. Changing them changes the set for every binding that uses it.`}
+					</p>
+				)}
+				<RulesStep
+					display={display}
+					subtitle={`Change what this agent can do with ${credentialName}.`}
+					requestedRules={[]}
+					currentRules={current}
+					onChange={setRules}
+					onBack={onBack}
+					onContinue={(final: PermissionRule[]): void => {
+						setRules(final);
+						setError(null);
+						setPhase('details');
+					}}
+					submitting={false}
+					error={null}
+					apiReference={apiReference}
+					requireRule
+				/>
+			</div>
+		);
+	}
+
+	const granted = data.granted_scopes ?? null;
+	const submit = async (): Promise<void> => {
+		setError(null);
+		const toAdd = scopes
+			.split(/[\s,]+/)
+			.filter(Boolean)
+			.filter((scope) => !granted?.includes(scope));
+		const rulesChanged = JSON.stringify(current) !== JSON.stringify(saved);
+		try {
+			const created = await start.mutateAsync({
+				agent_id: agentId,
+				credential_id: credentialId,
+				rules: rulesChanged ? { set: current } : undefined,
+				scopes: toAdd.length > 0 ? { add: [...new Set(toAdd)] } : undefined,
+				resume: data.suspended && resume ? true : undefined,
+				reason: reason.trim() || undefined,
+			});
+			setOpened({
+				sessionId: created.session_id,
+				pollToken: created.poll_token,
+				alreadyOpen: false,
+			});
+		} catch (err) {
+			const open = err instanceof IntegrationsApiError ? err.extensions.session_id : null;
+			if (
+				err instanceof IntegrationsApiError &&
+				err.code === 'edit_open' &&
+				typeof open === 'string'
+			) {
+				setOpened({ sessionId: open, alreadyOpen: true });
+				return;
+			}
+			setError(describeEditError(err));
+		}
+	};
+
+	return (
+		<div className="space-y-5">
+			<VendorHeader
+				display={display}
+				subtitle={`Change what this agent can do with ${credentialName}.`}
+			/>
+
+			{granted && (
+				<div className="space-y-1">
+					<Label htmlFor={scopesId}>Scopes to add (optional)</Label>
+					<Input
+						id={scopesId}
+						value={scopes}
+						onChange={(e) => setScopes(e.target.value)}
+						placeholder="Separate scopes with spaces or commas"
+					/>
+					<p className="text-muted-foreground text-xs">
+						Granted today: {granted.length > 0 ? granted.join(', ') : 'none'}. New
+						scopes need you to sign in to the vendor again when you approve.
+					</p>
+				</div>
+			)}
+
+			{data.suspended && (
+				<Checkbox checked={resume} onChange={setResume} className="text-sm">
+					Switch this binding back on (it is suspended)
+				</Checkbox>
+			)}
+
+			<div className="space-y-1">
+				<Label htmlFor={reasonId}>Reason (optional)</Label>
+				<Input
+					id={reasonId}
+					value={reason}
+					maxLength={1024}
+					onChange={(e) => setReason(e.target.value)}
+					placeholder="Kept in the request's history"
+				/>
+			</div>
+
+			{error && <ErrorAlert message={error} />}
+
+			<div className="bg-surface-sheet-foot border-hairline-field sticky -bottom-4 z-10 -mx-5 mt-auto -mb-4 flex items-center justify-between border-t px-5 py-3.5">
+				<Button
+					type="button"
+					variant="ghost"
+					size="sm"
+					onClick={(): void => setPhase('rules')}
+					disabled={start.isPending}
+				>
+					<ArrowLeft className="h-4 w-4" />
+					Back
+				</Button>
+				<Button
+					type="button"
+					variant="primary"
+					loading={start.isPending}
+					onClick={(): void => void submit()}
+				>
+					Review change
+				</Button>
+			</div>
 		</div>
 	);
 }
@@ -2016,8 +2294,11 @@ function RulesStep({
 	error,
 	apiReference,
 	requireRule = false,
+	subtitle,
 }: {
 	display: VendorDisplay;
+	/** The header line; defaults to the connect flow's. */
+	subtitle?: string;
 	// Rules the initiating agent supplied on ``:connect``. Empty in the
 	// self-flow. When non-empty, rows render with a "requested by agent"
 	// pill (see below) so the human owner sees exactly what the agent
@@ -2075,7 +2356,10 @@ function RulesStep({
 		<div className="space-y-5">
 			<VendorHeader
 				display={display}
-				subtitle={`Set what this credential lets an agent do on ${display.displayName}.`}
+				subtitle={
+					subtitle ??
+					`Set what this credential lets an agent do on ${display.displayName}.`
+				}
 			/>
 
 			<div className="space-y-2">

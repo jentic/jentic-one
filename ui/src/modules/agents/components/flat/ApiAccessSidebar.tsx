@@ -41,6 +41,7 @@ import {
 	CredentialDeleteDialog,
 	SharedWithYouBadge,
 	EditCredentialSheet,
+	CreateCredentialFlow,
 } from '@/shared/credentials/components';
 import { credentialEditableBy } from '@/shared/credentials/lib/credentialAuthority';
 import {
@@ -161,10 +162,11 @@ export function ApiAccessSidebar({
 	// The edit sheet is a SECOND SheetPrimitive: its Escape must not tear down this
 	// sidebar. The confirms are native `<dialog>`s, which SheetPrimitive yields to.
 	const [editOpen, setEditOpen] = useState(false);
+	const [editAccessOpen, setEditAccessOpen] = useState(false);
 	const [deleteOpen, setDeleteOpen] = useState(false);
 	const [unbindOpen, setUnbindOpen] = useState(false);
 	const guardedClose = (): void => {
-		if (editOpen) return;
+		if (editOpen || editAccessOpen) return;
 		onClose();
 	};
 
@@ -572,6 +574,23 @@ export function ApiAccessSidebar({
 								aria-label="Permission rules"
 								className="scroll-mt-2 space-y-3"
 							>
+								{/* The reviewed path: rules, scopes and resuming in one change,
+								    shown as a diff against today before it applies. */}
+								{!credentialLocked && (
+									<div className="flex items-center justify-between gap-3">
+										<p className="text-muted-foreground text-xs">
+											Change rules, scopes and suspension together, and review
+											the result before it applies.
+										</p>
+										<Button
+											size="xs"
+											variant="tonal"
+											onClick={() => setEditAccessOpen(true)}
+										>
+											<Pencil className="h-4 w-4" /> Edit access
+										</Button>
+									</div>
+								)}
 								{effective.ruleSetId ? (
 									<BindingRuleSetPanel
 										agentId={agent.id}
@@ -660,6 +679,24 @@ export function ApiAccessSidebar({
 
 			{/* Stacked edit sheet (shared machinery: write-only secrets, OAuth
 			    read-only after creation). */}
+			{editAccessOpen && shown && (
+				<CreateCredentialFlow
+					open
+					editAccess={{
+						agentId: agent.id,
+						credentialId: shown.credentialId,
+						credentialName: shown.credentialName,
+						vendorKey: shown.vendor,
+						apiReference,
+					}}
+					onClose={() => {
+						setEditAccessOpen(false);
+						invalidateBindingSurfaces(shown.credentialId, 'credential');
+					}}
+					onCreated={() => setEditAccessOpen(false)}
+				/>
+			)}
+
 			<EditCredentialSheet
 				credentialId={credentialId}
 				open={editOpen}

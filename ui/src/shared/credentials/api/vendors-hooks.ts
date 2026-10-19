@@ -16,6 +16,7 @@ import {
 import { useCallback, useMemo } from 'react';
 import {
 	bindCredentialToAgentBlocked,
+	getBindingAccess,
 	getPermissionRuleSet,
 	listBindingPermissions,
 	replaceBindingPermissions,
@@ -30,11 +31,13 @@ import {
 	listVendors,
 	pollConnectSessionStatus,
 	rejectConnectSession,
+	startEditConnection,
 	startIntegrationConnect,
 	type VendorOperationsPage,
 } from '@/shared/credentials/api/vendors-client';
 import type {
 	AgentListResponse,
+	BindingAccessResponse,
 	ConnectSessionSummaryResponse,
 	PermissionRuleReadSchema,
 	PermissionRuleSchema,
@@ -47,6 +50,7 @@ import type {
 	ConfirmSessionResponse,
 	ConnectRequest,
 	ConnectResponse,
+	EditConnectionBody,
 	ReviewSession,
 	SessionRevision,
 	StatusResponse,
@@ -206,6 +210,29 @@ export function useVendorOperations(
 export function useStartIntegrationConnect() {
 	return useMutation<ConnectResponse, Error, ConnectRequest>({
 		mutationFn: (body) => startIntegrationConnect(body),
+	});
+}
+
+/** Open an edit of a binding's access; the open-request signals pick it up. */
+export function useStartEditConnection() {
+	const client = useQueryClient();
+	return useMutation<ConnectResponse, Error, EditConnectionBody>({
+		mutationFn: (body) => startEditConnection(body),
+		onSuccess: () => {
+			void client.invalidateQueries({ queryKey: connectRequestsKey });
+		},
+	});
+}
+
+/**
+ * One binding's full access read: its rules, the attached rule set (whose
+ * rules apply instead), its granted scopes and suspension. Nested under the
+ * binding-permissions slice, so a rules save anywhere refreshes it.
+ */
+export function useBindingAccess(agentId: string, credentialId: string) {
+	return useQuery<BindingAccessResponse>({
+		queryKey: [...bindingPermissionsKey(agentId, credentialId), 'access'] as const,
+		queryFn: () => getBindingAccess(agentId, credentialId),
 	});
 }
 

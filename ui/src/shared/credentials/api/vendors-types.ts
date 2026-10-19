@@ -363,6 +363,18 @@ export interface ConnectRequest {
 	preferred_flow?: string | null;
 }
 
+/** ``POST /integrations:edit-connection``: ask to change one binding's access. */
+export interface EditConnectionBody {
+	/** The binding's agent; a person names it, an agent caller omits it. */
+	agent_id?: string;
+	credential_id: string;
+	/** The full rule list to replace today's with (the edit's ``set``). */
+	rules?: { set: PermissionRule[] };
+	scopes?: { add: string[] };
+	resume?: boolean;
+	reason?: string;
+}
+
 export interface ConnectResponse {
 	session_id: string;
 	approval_url: string;

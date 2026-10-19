@@ -147,6 +147,18 @@ interface CreateCredentialFlowProps {
 	 */
 	approvalSession?: { sessionId: string; pollToken?: string };
 	/**
+	 * When provided, the flow opens on changing one binding's access: compose
+	 * the change, then review and approve it with the same review an agent's
+	 * request gets.
+	 */
+	editAccess?: {
+		agentId: string;
+		credentialId: string;
+		credentialName: string;
+		vendorKey: string;
+		apiReference: { vendor: string; name: string | null; version: string | null } | null;
+	};
+	/**
 	 * When set, the vendor connect opens with this agent locked in as the
 	 * binding target (``VendorConnectFlow``'s ``preselectedAgentId`` greys the
 	 * picker out). Used when the flow is opened from one agent's surface.
@@ -233,6 +245,7 @@ export function CreateCredentialFlow({
 	initialVendor,
 	surface = 'sheet',
 	approvalSession,
+	editAccess,
 	preselectedAgentId,
 	onVendorConnected,
 	renderPostConnect,
@@ -878,23 +891,27 @@ export function CreateCredentialFlow({
 		return `${selectedApi.label} only offers non-interactive OAuth grants (such as client credentials). Shared apps need an authorization code or device code flow.`;
 	})();
 	const titleSuffix = selectedApi?.label ? ` — ${selectedApi.label}` : '';
-	const title = approvalSession
-		? 'Approve integration'
-		: step === 'pick'
-			? registerSharedApp
-				? 'Register shared OAuth app'
-				: 'Add credential'
-			: step === 'vendor' && selectedVendor
-				? `Connect ${selectedVendor.display_name}`
-				: registerSharedApp
-					? `Register shared OAuth app${titleSuffix}`
-					: `Add credential${titleSuffix}`;
+	const title = editAccess
+		? 'Edit access'
+		: approvalSession
+			? 'Approve integration'
+			: step === 'pick'
+				? registerSharedApp
+					? 'Register shared OAuth app'
+					: 'Add credential'
+				: step === 'vendor' && selectedVendor
+					? `Connect ${selectedVendor.display_name}`
+					: registerSharedApp
+						? `Register shared OAuth app${titleSuffix}`
+						: `Add credential${titleSuffix}`;
 	const formStepHint = registerSharedApp
 		? 'Fill in the shared app details'
 		: 'Fill in the credential details';
 	// A pinned API removes the pick step, so the step counter would be lying. The
 	// vendor path is its own two-step flow, so it drops the counter too.
-	const subtitle = approvalSession ? (
+	const subtitle = editAccess ? (
+		<span>Nothing changes until you review and approve the change.</span>
+	) : approvalSession ? (
 		<span>An agent is asking to connect on your behalf.</span>
 	) : step === 'vendor' ? (
 		<span>Pick an agent and the access it needs.</span>
@@ -949,7 +966,7 @@ export function CreateCredentialFlow({
 	// Approve mode and the vendor step render VendorConnectFlow's own inline
 	// action bar, so the flow's footer stands down for both.
 	const footer =
-		approvalSession || step === 'vendor' ? undefined : step === 'pick' ? (
+		editAccess || approvalSession || step === 'vendor' ? undefined : step === 'pick' ? (
 			// Always reachable, not only from no-results: an operator who knows the
 			// API isn't catalogued shouldn't have to search first.
 			<Button
@@ -1018,7 +1035,9 @@ export function CreateCredentialFlow({
 			</>
 		) : undefined;
 
-	const body = approvalSession ? (
+	const body = editAccess ? (
+		<VendorConnectFlow mode="edit" {...editAccess} onBack={onClose} onDone={onClose} />
+	) : approvalSession ? (
 		<VendorConnectFlow
 			mode="approve"
 			sessionId={approvalSession.sessionId}
@@ -1426,7 +1445,7 @@ export function CreateCredentialFlow({
 	);
 
 	/** A connect session is open (created on `VendorConnectFlow` mount). */
-	const connectInPlay = !!approvalSession || step === 'vendor';
+	const connectInPlay = !!editAccess || !!approvalSession || step === 'vendor';
 
 	if (surface === 'dialog') {
 		return (
@@ -1435,7 +1454,7 @@ export function CreateCredentialFlow({
 				onClose={onClose}
 				title={title}
 				subtitle={subtitle}
-				size={approvalSession || step !== 'form' ? 'lg' : 'xl'}
+				size={editAccess || approvalSession || step !== 'form' ? 'lg' : 'xl'}
 				footer={footer}
 				dismissOnBackdrop={false}
 			>
