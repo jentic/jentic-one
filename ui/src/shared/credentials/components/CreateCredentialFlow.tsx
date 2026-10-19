@@ -33,6 +33,7 @@ import {
 	type SelectedApi,
 	type VendorSummary,
 } from '@/shared/credentials/api';
+import { useConnectSession } from '@/shared/credentials/api/vendors-hooks';
 import {
 	CredentialTypeFields,
 	EMPTY_FORM,
@@ -891,19 +892,28 @@ export function CreateCredentialFlow({
 		return `${selectedApi.label} only offers non-interactive OAuth grants (such as client credentials). Shared apps need an authorization code or device code flow.`;
 	})();
 	const titleSuffix = selectedApi?.label ? ` — ${selectedApi.label}` : '';
+	// The review the approve flow reads (same query, so no extra request): an
+	// edit session asks to change access, not to connect.
+	const approvalReview = useConnectSession(
+		approvalSession?.sessionId,
+		approvalSession?.pollToken,
+	);
+	const approvingEdit = approvalSession != null && approvalReview.data?.edit != null;
 	const title = editAccess
 		? 'Edit access'
-		: approvalSession
-			? 'Approve integration'
-			: step === 'pick'
-				? registerSharedApp
-					? 'Register shared OAuth app'
-					: 'Add credential'
-				: step === 'vendor' && selectedVendor
-					? `Connect ${selectedVendor.display_name}`
-					: registerSharedApp
-						? `Register shared OAuth app${titleSuffix}`
-						: `Add credential${titleSuffix}`;
+		: approvingEdit
+			? 'Review access change'
+			: approvalSession
+				? 'Approve integration'
+				: step === 'pick'
+					? registerSharedApp
+						? 'Register shared OAuth app'
+						: 'Add credential'
+					: step === 'vendor' && selectedVendor
+						? `Connect ${selectedVendor.display_name}`
+						: registerSharedApp
+							? `Register shared OAuth app${titleSuffix}`
+							: `Add credential${titleSuffix}`;
 	const formStepHint = registerSharedApp
 		? 'Fill in the shared app details'
 		: 'Fill in the credential details';
@@ -911,6 +921,8 @@ export function CreateCredentialFlow({
 	// vendor path is its own two-step flow, so it drops the counter too.
 	const subtitle = editAccess ? (
 		<span>Nothing changes until you review and approve the change.</span>
+	) : approvingEdit ? (
+		<span>An agent is asking to change its access.</span>
 	) : approvalSession ? (
 		<span>An agent is asking to connect on your behalf.</span>
 	) : step === 'vendor' ? (

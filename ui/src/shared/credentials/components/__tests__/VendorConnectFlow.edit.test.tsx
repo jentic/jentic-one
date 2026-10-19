@@ -3,6 +3,7 @@ import { http, HttpResponse } from 'msw';
 import { worker } from '@/mocks/browser';
 import { renderWithProviders, screen, userEvent, waitFor, within } from '@/__tests__/test-utils';
 import { VendorConnectFlow } from '@/shared/credentials/components/VendorConnectFlow';
+import { CreateCredentialFlow } from '@/shared/credentials/components/CreateCredentialFlow';
 import {
 	getEndedMockConnectSessions,
 	getMockConnectSessions,
@@ -250,5 +251,22 @@ describe('VendorConnectFlow approve — edit sessions', () => {
 		await user.click(screen.getByRole('button', { name: 'Approve' }));
 		await screen.findByText('Access to Work Gmail updated');
 		expect(getEndedMockConnectSessions()[0].confirmBodies[0]).toMatchObject({ resume: true });
+	});
+
+	it('heads the approval sheet as an access change, not a connect', async () => {
+		const seeded = seedEdit(editBlock());
+		renderWithProviders(
+			<CreateCredentialFlow
+				open
+				onClose={vi.fn()}
+				onCreated={vi.fn()}
+				approvalSession={{ sessionId: seeded.session_id }}
+			/>,
+		);
+		expect(
+			await screen.findByRole('heading', { name: 'Review access change' }),
+		).toBeInTheDocument();
+		expect(screen.getByText('An agent is asking to change its access.')).toBeInTheDocument();
+		expect(screen.queryByText('Approve integration')).not.toBeInTheDocument();
 	});
 });
