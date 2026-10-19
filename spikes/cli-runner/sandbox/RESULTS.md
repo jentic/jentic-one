@@ -51,3 +51,35 @@ read-only rootfs:
 4. **Fail-closed is easy to detect.** A profile probe at runner startup (as
    in `probe.sh`) can tell the difference between "no namespaces" and
    "sandbox OK", and mark the profile unavailable.
+
+## Addendum — `aws` startup penalty and `/proc` (2026-10-19)
+
+`aws --version` costs ~250 ms more inside the sandbox (501 vs 247 ms). Ablation
+(`ablate.sh`) isolates the cause:
+
+| Variant | ms |
+|---|---|
+| bare | 247 |
+| any bwrap variant without `/proc` (user only, user+net, user+pid, full) | ~502 |
+| user+net + `--ro-bind /proc /proc` | 248 |
+| HOME on real `/tmp` | 503 |
+
+The cause is **the missing `/proc`, not the namespaces.** It's consistent with
+the CLI's bundled launcher (`aws` is a frozen Python app) falling back slowly
+when it can't read `/proc` (e.g. `/proc/self/exe`). This is inferred, not
+traced.
+
+Options (`freshproc.sh`):
+
+- **Bind the outer `/proc` read-only.** Fast, but each sandbox can then see
+  the outer container's processes, including other concurrent invocations'
+  argv.
+- **Fresh `/proc` in the sandbox's PID namespace.** Fails under the default
+  container `/proc` masking. It **works with `--security-opt
+  systempaths=unconfined`**, where the sandbox sees only its own PIDs (1–5)
+  and `aws` runs at bare speed (274 vs 274 ms). The cost is that the outer
+  container's `/proc` is unmasked. The k8s equivalent is
+  `securityContext.procMount: Unmasked`, which requires user-namespaced pods
+  (`hostUsers: false`). Not tested on k8s.
+- **Accept ~250 ms per `aws` invocation.** `gh` and `cf` are unaffected
+  (Go/Node).
