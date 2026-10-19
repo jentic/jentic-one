@@ -148,16 +148,14 @@ interface CreateCredentialFlowProps {
 	 */
 	approvalSession?: { sessionId: string; pollToken?: string };
 	/**
-	 * When provided, the flow opens on changing one binding's access: compose
-	 * the change, then review and approve it with the same review an agent's
-	 * request gets.
+	 * When provided, the flow opens on adding scopes to one binding's
+	 * credential: the person's own change, applied via the vendor sign-in.
 	 */
 	editAccess?: {
 		agentId: string;
 		credentialId: string;
 		credentialName: string;
 		vendorKey: string;
-		apiReference: { vendor: string; name: string | null; version: string | null } | null;
 	};
 	/**
 	 * When set, the vendor connect opens with this agent locked in as the
@@ -900,7 +898,7 @@ export function CreateCredentialFlow({
 	);
 	const approvingEdit = approvalSession != null && approvalReview.data?.edit != null;
 	const title = editAccess
-		? 'Edit access'
+		? 'Add scopes'
 		: approvingEdit
 			? 'Review access change'
 			: approvalSession
@@ -920,7 +918,7 @@ export function CreateCredentialFlow({
 	// A pinned API removes the pick step, so the step counter would be lying. The
 	// vendor path is its own two-step flow, so it drops the counter too.
 	const subtitle = editAccess ? (
-		<span>Nothing changes until you review and approve the change.</span>
+		<span>Grant the agent more of what the vendor offers.</span>
 	) : approvingEdit ? (
 		<span>An agent is asking to change its access.</span>
 	) : approvalSession ? (

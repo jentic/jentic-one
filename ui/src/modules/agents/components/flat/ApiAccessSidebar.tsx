@@ -7,7 +7,7 @@
  * Suspend/resume is the reversible cut-off, so it sits in the header.
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ExternalLink, Info, LogIn, PauseCircle, Pencil, PlayCircle, X } from 'lucide-react';
+import { ExternalLink, Info, LogIn, PauseCircle, Pencil, PlayCircle, Plus, X } from 'lucide-react';
 import {
 	Button,
 	CodeSnippet,
@@ -33,7 +33,12 @@ import {
 	useCanAccess,
 	useOptionalCurrentUser,
 } from '@/shared/auth';
-import { useCredentialAgents, useDeleteCredential } from '@/shared/credentials/api';
+import {
+	useBindingAccess,
+	useCredentialAgents,
+	useDeleteCredential,
+	useOpenConnectRequests,
+} from '@/shared/credentials/api';
 import {
 	useConnectAfterCreate,
 	OperationImpactPreview,
@@ -163,10 +168,11 @@ export function ApiAccessSidebar({
 	// sidebar. The confirms are native `<dialog>`s, which SheetPrimitive yields to.
 	const [editOpen, setEditOpen] = useState(false);
 	const [editAccessOpen, setEditAccessOpen] = useState(false);
+	const [reviewingEdit, setReviewingEdit] = useState<string | null>(null);
 	const [deleteOpen, setDeleteOpen] = useState(false);
 	const [unbindOpen, setUnbindOpen] = useState(false);
 	const guardedClose = (): void => {
-		if (editOpen || editAccessOpen) return;
+		if (editOpen || editAccessOpen || reviewingEdit) return;
 		onClose();
 	};
 
@@ -188,6 +194,19 @@ export function ApiAccessSidebar({
 	const canWriteCredentials = useCanAccess(CREDENTIALS_WRITE);
 	const credentialLocked = credentialReadOnly || !canWriteCredentials;
 	const permissions = useAgentBindingPermissions(open ? agent.id : null, credentialId);
+	// Whether the credential takes more scopes (the Add scopes entry).
+	const access = useBindingAccess(agent.id, credentialId ?? '', {
+		enabled: open && credentialId != null && !credentialLocked,
+	});
+	// An agent's request to change this binding, waiting on a review. A change
+	// made here merges into it, or leaves it for the agent to amend.
+	const openRequests = useOpenConnectRequests({ enabled: open && canWriteCredentials });
+	const openEdit = openRequests.data?.find(
+		(r) =>
+			String(r.intent) === 'edit' &&
+			r.agent_id === agent.id &&
+			r.credential_id === credentialId,
+	);
 	// What the broker evaluates: an attached rule set's rules, else the inline ones.
 	const effective = useAgentBindingEffectiveRules(open ? agent.id : null, credentialId);
 
@@ -503,13 +522,24 @@ export function ApiAccessSidebar({
 									{credentialReadOnly ? (
 										<SharedWithYouBadge />
 									) : credentialLocked ? null : (
-										<Button
-											size="xs"
-											variant="tonal"
-											onClick={() => setEditOpen(true)}
-										>
-											<Pencil className="h-4 w-4" /> Edit credential
-										</Button>
+										<div className="flex shrink-0 items-center gap-1.5">
+											{access.data?.scopes_addable && (
+												<Button
+													size="xs"
+													variant="tonal"
+													onClick={() => setEditAccessOpen(true)}
+												>
+													<Plus className="h-4 w-4" /> Add scopes
+												</Button>
+											)}
+											<Button
+												size="xs"
+												variant="tonal"
+												onClick={() => setEditOpen(true)}
+											>
+												<Pencil className="h-4 w-4" /> Edit credential
+											</Button>
+										</div>
 									)}
 								</div>
 								{/* The full id, copyable: what a call names in
@@ -574,20 +604,22 @@ export function ApiAccessSidebar({
 								aria-label="Permission rules"
 								className="scroll-mt-2 space-y-3"
 							>
-								{/* The reviewed path: rules, scopes and resuming in one change,
-								    shown as a diff against today before it applies. */}
-								{!credentialLocked && (
-									<div className="flex items-center justify-between gap-3">
-										<p className="text-muted-foreground text-xs">
-											Change rules, scopes and suspension together, and review
-											the result before it applies.
-										</p>
+								{openEdit && (
+									<div
+										role="status"
+										className="bg-surface-inset flex items-center justify-between gap-3 rounded-lg px-3.5 py-2.5 text-xs"
+									>
+										<span className="text-foreground-lighter">
+											<AgentNameText name={agent.name} /> asked to change this
+											access. Changes you make here are merged into its
+											request.
+										</span>
 										<Button
 											size="xs"
 											variant="tonal"
-											onClick={() => setEditAccessOpen(true)}
+											onClick={() => setReviewingEdit(openEdit.session_id)}
 										>
-											<Pencil className="h-4 w-4" /> Edit access
+											Review
 										</Button>
 									</div>
 								)}
@@ -679,6 +711,15 @@ export function ApiAccessSidebar({
 
 			{/* Stacked edit sheet (shared machinery: write-only secrets, OAuth
 			    read-only after creation). */}
+			{reviewingEdit && (
+				<CreateCredentialFlow
+					open
+					approvalSession={{ sessionId: reviewingEdit }}
+					onClose={() => setReviewingEdit(null)}
+					onCreated={() => setReviewingEdit(null)}
+				/>
+			)}
+
 			{editAccessOpen && shown && (
 				<CreateCredentialFlow
 					open
@@ -687,7 +728,6 @@ export function ApiAccessSidebar({
 						credentialId: shown.credentialId,
 						credentialName: shown.credentialName,
 						vendorKey: shown.vendor,
-						apiReference,
 					}}
 					onClose={() => setEditAccessOpen(false)}
 					onCreated={() => setEditAccessOpen(false)}

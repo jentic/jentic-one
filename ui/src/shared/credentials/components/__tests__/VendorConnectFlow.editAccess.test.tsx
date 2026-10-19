@@ -1,10 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { worker } from '@/mocks/browser';
-import { renderWithProviders, screen, userEvent, waitFor, within } from '@/__tests__/test-utils';
+import { renderWithProviders, screen, userEvent, waitFor } from '@/__tests__/test-utils';
 import { VendorConnectFlow } from '@/shared/credentials/components/VendorConnectFlow';
 import {
-	getEndedMockConnectSessions,
 	getMockConnectSessions,
 	resetConnectSessionsStore,
 	resetCredentialsStore,
@@ -13,8 +12,9 @@ import {
 import { resetAgentsStore, seedCredentialBindings } from '@/modules/agents/mocks/handlers';
 
 /**
- * Edit mode: a person composes a change to a binding with the connect flow's
- * rules step, then reviews it in the same edit review an agent's request gets.
+ * Edit mode: a person adds scopes to a binding's credential. It's their own
+ * change, applied at once through an edit session, so it goes straight to the
+ * vendor sign-in, the same step an approved agent request runs.
  */
 
 const READ = {
@@ -23,6 +23,11 @@ const READ = {
 	path: '/v1/',
 	match_mode: 'prefix' as const,
 };
+
+const CATALOG = [
+	{ name: 'gmail.readonly', classification: 'read' as const, description: 'Read mail.' },
+	{ name: 'gmail.send', classification: 'write' as const, description: 'Send mail.' },
+];
 
 function seedBinding(over: Partial<Parameters<typeof seedCredentialBindings>[0][number]> = {}) {
 	seedCredentialBindings([
@@ -48,19 +53,11 @@ function renderEdit() {
 			credentialId="cred_gmail"
 			credentialName="Work Gmail"
 			vendorKey="gmail"
-			apiReference={null}
 			onBack={onBack}
 			onDone={onDone}
 		/>,
 	);
 	return { onBack, onDone };
-}
-
-/** Through the rules step (today's rules, unchanged) to the details step. */
-async function toDetails(user: ReturnType<typeof userEvent.setup>) {
-	await screen.findByText('Change what this agent can do with Work Gmail.');
-	await user.click(screen.getByRole('button', { name: 'Continue' }));
-	await screen.findByRole('button', { name: 'Review change' });
 }
 
 beforeEach(() => {
@@ -74,58 +71,33 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
-describe('VendorConnectFlow edit — a person changing access', () => {
-	it('opens the change and reviews it like an agent request, without a Reject', async () => {
-		seedBinding();
+describe('VendorConnectFlow edit — a person adding scopes', () => {
+	it('picks from the vendor’s catalog and goes straight to the sign-in', async () => {
+		seedBinding({ scope_catalog: CATALOG });
 		renderEdit();
 		const user = userEvent.setup();
-		await toDetails(user);
 
-		expect(screen.getByText(/Granted today: gmail.readonly/)).toBeInTheDocument();
-		await user.type(screen.getByLabelText('Scopes to add (optional)'), 'gmail.send');
-		await user.type(screen.getByLabelText('Reason (optional)'), 'Send replies');
-		await user.click(screen.getByRole('button', { name: 'Review change' }));
-
-		const scopes = await screen.findByRole('region', { name: 'Scope changes' });
-		expect(scopes).toHaveTextContent('gmail.send');
-		expect(
-			screen.getByText('Review your change to what the agent can do with Work Gmail.'),
-		).toBeInTheDocument();
-		expect(screen.queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'Discard' })).toBeInTheDocument();
-
-		await user.click(screen.getByRole('button', { name: 'Approve and sign in' }));
-		await waitFor(() =>
-			expect(getMockConnectSessions()[0].confirmBodies[0]).toMatchObject({
-				kind: 'edit',
-				revision_id: 'csr_1',
-				confirmed_scopes: ['gmail.readonly', 'gmail.send'],
-			}),
-		);
-		expect(getMockConnectSessions()[0].reason).toBe('Send replies');
-	});
-
-	it('picks scopes to add from the vendor’s catalog, leaving out the granted ones', async () => {
-		seedBinding({
-			scope_catalog: [
-				{ name: 'gmail.readonly', classification: 'read', description: 'Read mail.' },
-				{ name: 'gmail.send', classification: 'write', description: 'Send mail.' },
-			],
-		});
-		renderEdit();
-		const user = userEvent.setup();
-		await toDetails(user);
-
-		expect(screen.queryByLabelText('Scopes to add (optional)')).not.toBeInTheDocument();
+		await screen.findByText('Add OAuth scopes to Work Gmail.');
+		// Granted scopes aren't offered again.
 		expect(screen.queryByText('gmail.readonly', { selector: 'code' })).not.toBeInTheDocument();
 		await user.click(screen.getByText('gmail.send', { selector: 'code' }));
-		await user.click(screen.getByRole('button', { name: 'Review change' }));
+		await user.click(screen.getByRole('button', { name: 'Sign in and add' }));
 
-		const scopes = await screen.findByRole('region', { name: 'Scope changes' });
-		expect(scopes).toHaveTextContent('gmail.send');
-	});
+		await waitFor(() => expect(window.open).toHaveBeenCalled());
+		const [session] = getMockConnectSessions();
+		expect(window.open).toHaveBeenCalledWith(
+			`https://vendor.example.test/oauth/authorize?edit=${session.session_id}`,
+			'_blank',
+			'noopener,noreferrer',
+		);
+		// No review screen: the grant landing applies it.
+		session.status = { ...session.status, status: 'applied' };
+		expect(
+			await screen.findByText('Access to Work Gmail updated', undefined, { timeout: 10_000 }),
+		).toBeInTheDocument();
+	}, 20_000);
 
-	it('names the scopes the vendor doesn’t offer', async () => {
+	it('takes scope names as text without a catalog, and names any the vendor refuses', async () => {
 		seedBinding();
 		worker.use(
 			http.post('/integrations:edit-connection', () =>
@@ -142,40 +114,18 @@ describe('VendorConnectFlow edit — a person changing access', () => {
 		);
 		renderEdit();
 		const user = userEvent.setup();
-		await toDetails(user);
-		await user.type(screen.getByLabelText('Scopes to add (optional)'), 'gmail.sned');
-		await user.click(screen.getByRole('button', { name: 'Review change' }));
+
+		const field = await screen.findByLabelText('Scopes to add');
+		expect(screen.getByRole('button', { name: 'Sign in and add' })).toBeDisabled();
+		await user.type(field, 'gmail.sned');
+		await user.click(screen.getByRole('button', { name: 'Sign in and add' }));
 		expect(
 			await screen.findByText(/doesn’t offer these scopes: gmail.sned/),
 		).toBeInTheDocument();
 	});
 
-	it('discarding a person’s own change cancels it', async () => {
-		seedBinding({ suspended: true });
-		const { onBack } = renderEdit();
-		const user = userEvent.setup();
-		await toDetails(user);
-
-		expect(screen.getByRole('checkbox', { name: /Switch this binding back on/ })).toBeChecked();
-		await user.click(screen.getByRole('button', { name: 'Review change' }));
-		await user.click(await screen.findByRole('button', { name: 'Discard' }));
-		await waitFor(() => expect(getEndedMockConnectSessions()[0]?.outcome).toBe('cancelled'));
-		expect(onBack).toHaveBeenCalled();
-	});
-
-	it('says when the change leaves the access as it is', async () => {
-		seedBinding({ granted_scopes: null });
-		renderEdit();
-		const user = userEvent.setup();
-		await toDetails(user);
-
-		expect(screen.queryByLabelText('Scopes to add (optional)')).not.toBeInTheDocument();
-		await user.click(screen.getByRole('button', { name: 'Review change' }));
-		expect(await screen.findByText(/That leaves the access as it is/)).toBeInTheDocument();
-	});
-
-	it('opens the edit already waiting for the binding instead of a second one', async () => {
-		seedBinding({ suspended: true });
+	it('opens the agent’s waiting request instead of a second one', async () => {
+		seedBinding({ scope_catalog: CATALOG });
 		const open = seedMockAgentConnectSession({
 			agent_id: 'agnt_1',
 			vendor_key: 'gmail',
@@ -191,29 +141,37 @@ describe('VendorConnectFlow edit — a person changing access', () => {
 				current: {
 					rules: [{ id: 'apr_1', ...READ }],
 					rule_set: null,
-					suspended: true,
+					suspended: false,
 					granted_scopes: ['gmail.readonly'],
 				},
 				result: {
 					target: 'binding',
 					rules: [{ id: 'apr_1', ...READ }],
-					scopes: ['gmail.readonly'],
+					scopes: ['gmail.readonly', 'gmail.send'],
 					suspended: false,
 				},
 				widens_access: true,
 				other_bound_agents: [],
-				needs_vendor_consent: false,
+				needs_vendor_consent: true,
 			},
 		});
 		renderEdit();
 		const user = userEvent.setup();
-		await toDetails(user);
-		await user.click(screen.getByRole('button', { name: 'Review change' }));
+		await user.click(await screen.findByText('gmail.send', { selector: 'code' }));
+		await user.click(screen.getByRole('button', { name: 'Sign in and add' }));
 
-		expect(await screen.findByText(/already waiting for approval/)).toBeInTheDocument();
-		// The agent's request: its own review, Reject included.
+		expect(
+			await screen.findByText(/request to change this access is waiting/),
+		).toBeInTheDocument();
 		expect(await screen.findByRole('button', { name: 'Reject' })).toBeInTheDocument();
 		expect(getMockConnectSessions().map((s) => s.session_id)).toEqual([open.session_id]);
-		expect(within(document.body).getByText('Revision 1')).toBeInTheDocument();
+	});
+
+	it('says when the credential can’t take more scopes', async () => {
+		seedBinding({ granted_scopes: null });
+		renderEdit();
+		expect(
+			await screen.findByText('This credential can’t take more scopes here.'),
+		).toBeInTheDocument();
 	});
 });

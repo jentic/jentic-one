@@ -151,6 +151,15 @@ export interface ReviewEdit {
 	other_bound_agents: BoundAgentRef[];
 	/** Approving starts a vendor consent for the added scopes. */
 	needs_vendor_consent: boolean;
+	/** What the request can't follow since the binding changed under it. */
+	conflicts?: EditConflict[];
+}
+
+/** One part of an edit request a change to the binding since has broken. */
+export interface EditConflict {
+	kind: 'missing_rule' | 'rules_changed' | 'rule_set_changed';
+	/** The rule it names that is gone, for ``missing_rule``. */
+	rule_id?: string | null;
 }
 
 /** One version of what a session asks for (``GET /connect-sessions/{id}/revisions``). */
@@ -281,6 +290,8 @@ export interface EditConfirmRequest {
 	permission_rules: PermissionRule[];
 	resume: boolean;
 	confirmed_scopes?: string[] | null;
+	/** Approve a revision listing conflicts: the reviewer's rules settle them. */
+	resolve_conflicts?: boolean;
 }
 
 /** Every ``:confirm`` body; ``kind`` picks the variant server-side. */
@@ -373,6 +384,8 @@ export interface EditConnectionBody {
 	scopes?: { add: string[] };
 	resume?: boolean;
 	reason?: string;
+	/** A person approving their own change as they make it: written at once. */
+	apply?: boolean;
 }
 
 export interface ConnectResponse {
@@ -382,6 +395,13 @@ export interface ConnectResponse {
 	resolved_flow: string;
 	/** Revision 1; a confirm names it until the session is amended. */
 	revision_id?: string | null;
+}
+
+/** ``:edit-connection``'s answer: with ``apply``, whether it landed or waits on the vendor. */
+export interface EditConnectionResult extends ConnectResponse {
+	status: 'pending' | 'applied' | 'consenting';
+	/** With ``apply`` and added scopes: the vendor sign-in to complete. */
+	challenge: ConfirmResponse | null;
 }
 
 // ---------------------------------------------------------------------------

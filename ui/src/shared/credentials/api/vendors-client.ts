@@ -27,6 +27,7 @@ import type {
 	ConnectRequest,
 	ConnectResponse,
 	EditConnectionBody,
+	EditConnectionResult,
 	ReviewSession,
 	SessionRevision,
 	StatusResponse,
@@ -124,7 +125,7 @@ export function startIntegrationConnect(body: ConnectRequest): Promise<ConnectRe
  * change waits on an approval, the same review an agent's request gets; an
  * edit already open for the binding is a 409 `edit_open` naming its session.
  */
-export function startEditConnection(body: EditConnectionBody): Promise<ConnectResponse> {
+export function startEditConnection(body: EditConnectionBody): Promise<EditConnectionResult> {
 	return request('/integrations:edit-connection', {
 		method: 'POST',
 		body: JSON.stringify(body),

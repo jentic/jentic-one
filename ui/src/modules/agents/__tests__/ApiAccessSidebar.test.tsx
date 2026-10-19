@@ -18,7 +18,9 @@ import { agentsKeysForTest } from '@/modules/agents/api/hooks';
 import {
 	makeMockCredential,
 	resetApisStore,
+	resetConnectSessionsStore,
 	resetCredentialsStore,
+	seedMockAgentConnectSession,
 } from '@/shared/credentials/mocks/handlers';
 import { CredentialType, type ApiResponse } from '@/shared/credentials/api';
 import { AuthProvider } from '@/shared/auth';
@@ -111,6 +113,7 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		await page.viewport(1280, 900);
 		setToken('test-token');
 		resetAgentsStore();
+		resetConnectSessionsStore();
 		seedComposedStores();
 	});
 
@@ -266,11 +269,14 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		const user = userEvent.setup();
 		const bodies: unknown[] = [];
 		worker.events.on('request:start', ({ request }) => {
-			if (request.method === 'PUT' && request.url.includes('/permissions')) {
+			if (
+				request.method === 'POST' &&
+				request.url.includes('/integrations:edit-connection')
+			) {
 				void request
 					.clone()
 					.json()
-					.then((b: unknown) => bodies.push(b));
+					.then((b: { rules?: { set?: unknown } }) => bodies.push(b.rules?.set));
 			}
 		});
 		renderPage();
@@ -992,28 +998,79 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		expect(screen.getByRole('dialog', { name: 'Slack' })).toBeInTheDocument();
 	});
 
-	it('Edit access composes from the saved rules and stacks over the sidebar', async () => {
+	it('saves rules as a change applied at once through an edit session', async () => {
+		const bodies: unknown[] = [];
+		worker.use(
+			http.post('/integrations:edit-connection', async ({ request }) => {
+				bodies.push(await request.clone().json());
+				// No return: the module mock answers.
+			}),
+		);
 		const user = userEvent.setup();
 		renderPage();
 		await screen.findByText('1 access rule');
+		const inDialog = within(await openSidebar('Slack'));
+		await inDialog.findByText('Permission rules for Slack bot token');
 
+		await editFirstRulePath(user, inDialog, 'post');
+		await user.click(inDialog.getByRole('button', { name: /Save rules/ }));
+		expect(await inDialog.findByTestId('rules-saved')).toHaveTextContent('Saved');
+		expect(bodies).toEqual([
+			expect.objectContaining({
+				agent_id: 'agnt_active_1',
+				credential_id: 'cred_slack_1',
+				apply: true,
+				rules: { set: [expect.objectContaining({ path: '/chat.post' })] },
+			}),
+		]);
+		expect(inDialog.getByText('/chat.post (prefix)')).toBeInTheDocument();
+	});
+
+	it('offers Add scopes only for a credential that takes more', async () => {
+		renderPage();
+		await screen.findByText('1 access rule');
 		const dialog = await openSidebar('Slack');
-		await user.click(within(dialog).getByRole('button', { name: /Edit access/ }));
-
-		const editSheet = await screen.findByRole('dialog', { name: 'Edit access' });
-		// The rules step starts from what the broker evaluates today.
-		expect(await within(editSheet).findByText('/chat. (prefix)')).toBeInTheDocument();
-		await user.click(within(editSheet).getByRole('button', { name: 'Continue' }));
-		await user.click(await within(editSheet).findByRole('button', { name: 'Review change' }));
+		// A bearer token has no OAuth grant to widen.
+		await within(dialog).findByRole('button', { name: /Edit credential/ });
 		expect(
-			await within(editSheet).findByText(/That leaves the access as it is/),
-		).toBeInTheDocument();
+			within(dialog).queryByRole('button', { name: /Add scopes/ }),
+		).not.toBeInTheDocument();
+	});
 
-		await user.click(within(editSheet).getByRole('button', { name: 'Close' }));
-		await waitFor(() => {
-			expect(screen.queryByRole('dialog', { name: 'Edit access' })).not.toBeInTheDocument();
+	it('names an agent’s waiting request for the binding and opens its review', async () => {
+		seedMockAgentConnectSession({
+			agent_id: 'agnt_active_1',
+			vendor_key: 'slack.com',
+			resolved_flow: 'edit',
+			reason: 'Needs to post',
+			edit: {
+				binding: {
+					agent_id: 'agnt_active_1',
+					credential_id: 'cred_slack_1',
+					credential_name: 'Slack bot token',
+				},
+				revision: { id: 'csr_1', number: 1 },
+				current: { rules: [], rule_set: null, suspended: false, granted_scopes: null },
+				result: { target: 'binding', rules: [], scopes: [], suspended: false },
+				widens_access: false,
+				other_bound_agents: [],
+				needs_vendor_consent: false,
+			},
 		});
-		expect(screen.getByRole('dialog', { name: 'Slack' })).toBeInTheDocument();
+		const user = userEvent.setup();
+		renderPage();
+		await screen.findByText('1 access rule');
+		const dialog = await openSidebar('Slack');
+
+		const notice = await within(dialog).findByText(/asked to change this access/);
+		await user.click(
+			within(notice.closest('[role="status"]') as HTMLElement).getByRole('button', {
+				name: 'Review',
+			}),
+		);
+		expect(
+			await screen.findByRole('dialog', { name: 'Review access change' }),
+		).toBeInTheDocument();
 	});
 
 	// --- Ephemeral state: agent switch closes the sidebar -------------------------

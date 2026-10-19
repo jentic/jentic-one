@@ -3,8 +3,8 @@
  * access today and what approving the current revision leaves in place.
  * Pure helpers; the edit review renders them.
  */
-import type { PermissionRuleReadSchema } from '@/shared/api';
 import type {
+	EditConflict,
 	EditRuleView,
 	PermissionRule,
 	ReviewEdit,
@@ -110,24 +110,6 @@ export function rulesToConfirm(rules: readonly EditRuleView[]): PermissionRule[]
 	return rules.map(({ id: _id, ...rule }) => rule);
 }
 
-/** A binding's saved operator rules as the editor holds them (system rules dropped). */
-export function editableRules(rules: readonly PermissionRuleReadSchema[]): PermissionRule[] {
-	return rules
-		.filter((r) => !r._system)
-		.map((r) => {
-			const mode = r.match_mode;
-			const effect = String(r.effect);
-			return {
-				effect: effect === 'deny' || effect === 'require-approval' ? effect : 'allow',
-				methods: r.methods ?? null,
-				path: r.path ?? null,
-				match_mode:
-					mode === 'prefix' || mode === 'exact' || mode === 'regex' ? mode : undefined,
-				operations: r.operations ?? null,
-			};
-		});
-}
-
 /** "GET, POST /v1/x (prefix)": one rule's match in words. */
 export function describeRuleMatch(rule: PermissionRule): string {
 	const methods = rule.methods?.length ? rule.methods.join(', ') : 'Any method';
@@ -135,4 +117,16 @@ export function describeRuleMatch(rule: PermissionRule): string {
 	const mode = rule.path ? ` (${rule.match_mode ?? 'regex'})` : '';
 	const operations = rule.operations?.length ? `, operations ${rule.operations.join(', ')}` : '';
 	return `${methods} ${path}${mode}${operations}`;
+}
+
+/** One conflict in words, for the review. */
+export function describeConflict(conflict: EditConflict): string {
+	switch (conflict.kind) {
+		case 'missing_rule':
+			return `A rule it names (${conflict.rule_id ?? 'unknown'}) was removed since it asked.`;
+		case 'rules_changed':
+			return 'It replaces the rules, and they changed since it asked.';
+		case 'rule_set_changed':
+			return 'A shared rule set was attached or detached since it asked.';
+	}
 }

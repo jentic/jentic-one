@@ -129,6 +129,7 @@ describe('VendorConnectFlow approve — edit sessions', () => {
 			],
 			resume: false,
 			confirmed_scopes: null,
+			resolve_conflicts: false,
 		});
 	});
 
@@ -262,6 +263,24 @@ describe('VendorConnectFlow approve — edit sessions', () => {
 		expect(within(history).getByText('Revision 1').closest('li')).toHaveTextContent(
 			'No rule changes.',
 		);
+	});
+
+	it('lists the conflicts and approves the reviewer’s rules to resolve them', async () => {
+		const seeded = seedEdit(
+			editBlock({ conflicts: [{ kind: 'missing_rule', rule_id: 'apr_deny' }] }),
+		);
+		renderApprove(seeded.session_id);
+		const user = userEvent.setup();
+
+		const conflicts = await screen.findByRole('region', { name: 'Conflicts' });
+		expect(conflicts).toHaveTextContent(
+			'A rule it names (apr_deny) was removed since it asked.',
+		);
+		await user.click(screen.getByRole('button', { name: 'Resolve and approve' }));
+		await screen.findByText('Access to Work Gmail updated');
+		expect(getEndedMockConnectSessions()[0].confirmBodies[0]).toMatchObject({
+			resolve_conflicts: true,
+		});
 	});
 
 	it('offers to resume a suspended binding', async () => {

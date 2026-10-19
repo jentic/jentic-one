@@ -82,8 +82,8 @@ import {
 } from '@/shared/credentials/lib/connectReview';
 import {
 	addedScopes,
+	describeConflict,
 	describeRuleMatch,
-	editableRules,
 	resumes,
 	revisionChanges,
 	ruleChanges,
@@ -172,15 +172,14 @@ export type VendorConnectFlowProps =
 	  }
 	| {
 			/**
-			 * A person changing a binding's access: compose the change, then
-			 * review and approve it in the same dialog an agent's request gets.
+			 * A person adding scopes to a binding's credential: their own change,
+			 * applied at once through an edit session, via the vendor sign-in.
 			 */
 			mode: 'edit';
 			agentId: string;
 			credentialId: string;
 			credentialName: string;
 			vendorKey: string;
-			apiReference: { vendor: string; name: string | null; version: string | null } | null;
 			onBack: () => void;
 			onDone: () => void;
 	  };
@@ -231,7 +230,6 @@ export function VendorConnectFlow(props: VendorConnectFlowProps) {
 				credentialId={props.credentialId}
 				credentialName={props.credentialName}
 				vendorKey={props.vendorKey}
-				apiReference={props.apiReference}
 				onBack={props.onBack}
 				onDone={props.onDone}
 			/>
@@ -1627,6 +1625,7 @@ function EditApproveFlow({
 		setPhase(next);
 	};
 	const changed = latest.revision.id !== shown.revision.id;
+	const conflicts = shown.conflicts ?? [];
 	const changes = useMemo(() => ruleChanges(shown), [shown]);
 	const newScopes = useMemo(() => addedScopes(shown), [shown]);
 	const editedRules =
@@ -1698,6 +1697,7 @@ function EditApproveFlow({
 			permission_rules: rules,
 			resume,
 			confirmed_scopes: shown.needs_vendor_consent ? shown.result.scopes : null,
+			resolve_conflicts: conflicts.length > 0,
 		};
 		try {
 			const result = await confirmMutation.mutateAsync(body);
@@ -1821,6 +1821,26 @@ function EditApproveFlow({
 			)}
 
 			{error && <ErrorAlert message={error} />}
+
+			{conflicts.length > 0 && (
+				<section
+					aria-label="Conflicts"
+					className="border-warning/40 bg-warning/10 space-y-1 rounded-lg border p-3 text-sm"
+				>
+					<p className="font-medium">
+						This request no longer fits the access as it is now.
+					</p>
+					<ul className="list-disc space-y-0.5 pl-5 text-xs">
+						{conflicts.map((conflict, i) => (
+							<li key={i}>{describeConflict(conflict)}</li>
+						))}
+					</ul>
+					<p className="text-muted-foreground text-xs">
+						Check the rules below and edit them if needed: approving applies them as
+						shown. Or leave it for the agent to update its request.
+					</p>
+				</section>
+			)}
 
 			{byAgent && (
 				<AgentRequestCard
@@ -1956,7 +1976,11 @@ function EditApproveFlow({
 						onClick={(): void => void approve()}
 					>
 						{confirmMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-						{shown.needs_vendor_consent ? 'Approve and sign in' : 'Approve'}
+						{conflicts.length > 0
+							? 'Resolve and approve'
+							: shown.needs_vendor_consent
+								? 'Approve and sign in'
+								: 'Approve'}
 					</Button>
 				)}
 			</div>
@@ -1981,9 +2005,7 @@ function EditApproveFlow({
 	);
 }
 
-type EditAccessPhase = 'rules' | 'details';
-
-/** Why a person's edit was refused, for the compose steps. */
+/** Why a person's change was refused, for the scopes step. */
 function describeEditError(err: unknown): string {
 	if (err instanceof IntegrationsApiError && err.code === 'connect_session_unknown_scopes') {
 		const unknown = err.extensions.unknown_scopes;
@@ -1991,23 +2013,22 @@ function describeEditError(err: unknown): string {
 		return `The vendor doesn’t offer ${names ? `these scopes: ${names}` : 'those scopes'}. Check the names and try again.`;
 	}
 	if (err instanceof IntegrationsApiError && err.code === 'nothing_to_change') {
-		return 'That leaves the access as it is. Change a rule, add a scope or switch the binding back on.';
+		return 'Those scopes are already granted. Pick one the credential doesn’t hold yet.';
 	}
 	return err instanceof Error ? err.message : 'The change couldn’t be started. Try again.';
 }
 
 /**
- * A person changing a binding's access. Compose with the connect flow's rules
- * step, add scopes / resume / a reason, then open an edit session and review
- * it in {@link VendorApproveFlow}: the same diff, history and approve an
- * agent's request gets. An edit already open for the binding opens instead.
+ * A person adding scopes to a binding's credential: their own change, applied
+ * as they make it through an edit session (`apply`). It goes straight to the
+ * vendor sign-in, the same step an approved agent request runs. An agent's
+ * edit already open for the binding opens instead, to approve or discard first.
  */
 function EditAccessFlow({
 	agentId,
 	credentialId,
 	credentialName,
 	vendorKey,
-	apiReference,
 	onBack,
 	onDone,
 }: {
@@ -2015,55 +2036,97 @@ function EditAccessFlow({
 	credentialId: string;
 	credentialName: string;
 	vendorKey: string;
-	apiReference: { vendor: string; name: string | null; version: string | null } | null;
 	onBack: () => void;
 	onDone: () => void;
 }) {
+	const queryClient = useQueryClient();
 	const access = useBindingAccess(agentId, credentialId);
 	const start = useStartEditConnection();
-	const [phase, setPhase] = useState<EditAccessPhase>('rules');
-	const [rules, setRules] = useState<PermissionRule[] | null>(null);
+	const cancelMutation = useCancelConnectSession();
 	const [scopes, setScopes] = useState('');
 	const [pickedScopes, setPickedScopes] = useState<Set<string>>(() => new Set());
-	const [resume, setResume] = useState(true);
 	const [reason, setReason] = useState('');
 	const [error, setError] = useState<string | null>(null);
-	const [opened, setOpened] = useState<{
+	const [openEdit, setOpenEdit] = useState<string | null>(null);
+	const [consent, setConsent] = useState<{
 		sessionId: string;
-		pollToken?: string;
-		alreadyOpen: boolean;
+		pollToken: string;
+		challenge: ConfirmResponse;
 	} | null>(null);
+	const [outcome, setOutcome] = useState<{ failed: string | null } | null>(null);
 	const scopesId = useId();
 	const reasonId = useId();
-
-	const data = access.data;
-	// What the broker evaluates today: the attached set's rules, else the binding's.
-	const saved = useMemo(
-		() => (data ? editableRules(data.rule_set?.rules ?? data.data) : []),
-		[data],
-	);
-	const current = rules ?? saved;
 	const display: VendorDisplay = { displayName: credentialName, iconKey: vendorKey };
 
-	if (opened) {
+	const polling = usePollConnectSessionStatus(consent?.sessionId ?? '', consent?.pollToken, {
+		enabled: consent != null && outcome == null,
+		intervalMs:
+			consent?.challenge.kind === 'device_authorization'
+				? (consent.challenge.poll_interval_seconds ?? 5) * 1000
+				: undefined,
+	});
+	useEffect(() => {
+		if (!consent || outcome) return;
+		const status = polling.data?.status;
+		if (status === 'applied') {
+			setOutcome({ failed: null });
+			void queryClient.invalidateQueries({ queryKey: ['credentials'] });
+			void invalidateEditSurfaces(queryClient, {
+				binding: { agent_id: agentId, credential_id: credentialId },
+				other_bound_agents: [],
+			});
+			toast({ title: 'Access updated', variant: 'success' });
+		} else if (status === 'failed' || status === 'expired') {
+			setOutcome({
+				failed:
+					status === 'expired'
+						? 'The sign-in expired before the scopes were granted. Nothing changed.'
+						: 'The scopes weren’t granted, so nothing changed.',
+			});
+		}
+	}, [consent, outcome, polling.data, queryClient, agentId, credentialId]);
+
+	if (openEdit) {
 		return (
 			<div className="space-y-4">
-				{opened.alreadyOpen && (
-					<p role="status" className="text-muted-foreground text-sm">
-						A change to this access is already waiting for approval. Review it here, or
-						discard it to start again.
-					</p>
-				)}
-				<VendorApproveFlow
-					sessionId={opened.sessionId}
-					pollToken={opened.pollToken}
-					onBack={onBack}
-					onDone={onDone}
-				/>
+				<p role="status" className="text-muted-foreground text-sm">
+					An agent’s request to change this access is waiting. Approve or discard it
+					before adding scopes.
+				</p>
+				<VendorApproveFlow sessionId={openEdit} onBack={onBack} onDone={onDone} />
 			</div>
 		);
 	}
-
+	if (outcome) {
+		return (
+			<TerminalStep
+				display={display}
+				status={outcome.failed ? 'failed' : 'applied'}
+				connectedAs={null}
+				errorCode={null}
+				failureMessage={outcome.failed ?? undefined}
+				credentialId={null}
+				boundAgentId={agentId}
+				onDone={onDone}
+			/>
+		);
+	}
+	if (consent) {
+		return (
+			<AwaitingStep
+				display={display}
+				challenge={consent.challenge}
+				status={polling.data?.status ?? 'pending'}
+				onCancel={(): void => {
+					cancelMutation.mutate({
+						sessionId: consent.sessionId,
+						pollToken: consent.pollToken,
+					});
+					onBack();
+				}}
+			/>
+		);
+	}
 	if (access.isPending) {
 		return (
 			<div role="status" aria-live="polite" aria-busy="true">
@@ -2072,6 +2135,7 @@ function EditAccessFlow({
 			</div>
 		);
 	}
+	const data = access.data;
 	if (!data) {
 		return (
 			<ErrorAlert
@@ -2081,68 +2145,41 @@ function EditAccessFlow({
 		);
 	}
 
-	if (phase === 'rules') {
-		return (
-			<div className="space-y-4">
-				{data.rule_set && (
-					<p className="text-muted-foreground text-sm">
-						{data.rule_set.curated
-							? `These rules come from the curated set ${data.rule_set.name}. Changing them gives this binding its own copy.`
-							: `These rules belong to the shared rule set ${data.rule_set.name}. Changing them changes the set for every binding that uses it.`}
-					</p>
-				)}
-				<RulesStep
-					display={display}
-					subtitle={`Change what this agent can do with ${credentialName}.`}
-					requestedRules={[]}
-					currentRules={current}
-					onChange={setRules}
-					onBack={onBack}
-					onContinue={(final: PermissionRule[]): void => {
-						setRules(final);
-						setError(null);
-						setPhase('details');
-					}}
-					submitting={false}
-					error={null}
-					apiReference={apiReference}
-					requireRule
-				/>
-			</div>
-		);
-	}
-
 	const granted = data.granted_scopes ?? [];
-	// The vendor's scopes not granted yet: what an edit can add. Without a
-	// catalog, a scope is named as text and passed to the vendor as asked.
+	// The vendor's scopes not granted yet. Without a catalog, a scope is named
+	// as text and passed to the vendor as asked.
 	const catalog = data.scope_catalog
 		? data.scope_catalog
 				.filter((scope) => !granted.includes(scope.name))
 				.map((scope) => ({ ...scope, default: false }))
 		: null;
+	const toAdd = catalog
+		? [...pickedScopes]
+		: [...new Set(scopes.split(/[\s,]+/).filter(Boolean))].filter((s) => !granted.includes(s));
+
 	const submit = async (): Promise<void> => {
 		setError(null);
-		const toAdd = catalog
-			? [...pickedScopes]
-			: scopes
-					.split(/[\s,]+/)
-					.filter(Boolean)
-					.filter((scope) => !granted.includes(scope));
-		const rulesChanged = JSON.stringify(current) !== JSON.stringify(saved);
 		try {
-			const created = await start.mutateAsync({
+			const result = await start.mutateAsync({
 				agent_id: agentId,
 				credential_id: credentialId,
-				rules: rulesChanged ? { set: current } : undefined,
-				scopes: toAdd.length > 0 ? { add: [...new Set(toAdd)] } : undefined,
-				resume: data.suspended && resume ? true : undefined,
+				scopes: { add: toAdd },
 				reason: reason.trim() || undefined,
+				apply: true,
 			});
-			setOpened({
-				sessionId: created.session_id,
-				pollToken: created.poll_token,
-				alreadyOpen: false,
-			});
+			if (result.challenge) {
+				setConsent({
+					sessionId: result.session_id,
+					pollToken: result.poll_token,
+					challenge: result.challenge,
+				});
+				if (
+					result.challenge.kind === 'authorization_code' &&
+					isHttpsVendorUrl(result.challenge.authorize_url)
+				) {
+					openVendorUrl(result.challenge.authorize_url, '_blank', 'noopener,noreferrer');
+				}
+			}
 		} catch (err) {
 			const open = err instanceof IntegrationsApiError ? err.extensions.session_id : null;
 			if (
@@ -2150,7 +2187,7 @@ function EditAccessFlow({
 				err.code === 'edit_open' &&
 				typeof open === 'string'
 			) {
-				setOpened({ sessionId: open, alreadyOpen: true });
+				setOpenEdit(open);
 				return;
 			}
 			setError(describeEditError(err));
@@ -2159,59 +2196,49 @@ function EditAccessFlow({
 
 	return (
 		<div className="space-y-5">
-			<VendorHeader
-				display={display}
-				subtitle={`Change what this agent can do with ${credentialName}.`}
-			/>
+			<VendorHeader display={display} subtitle={`Add OAuth scopes to ${credentialName}.`} />
 
-			{data.scopes_addable && catalog && catalog.length > 0 && (
-				<div className="space-y-1">
-					<ScopeChooseField
-						label="Scopes to add (optional)"
-						loading={false}
-						error={null}
-						scopes={catalog}
-						selected={pickedScopes}
-						onToggle={(name: string): void =>
-							setPickedScopes((picked) => {
-								const next = new Set(picked);
-								if (next.has(name)) next.delete(name);
-								else next.add(name);
-								return next;
-							})
-						}
-					/>
-					<p className="text-muted-foreground text-xs">
-						Granted today: {granted.length > 0 ? granted.join(', ') : 'none'}. New
-						scopes need you to sign in to the vendor again when you approve.
-					</p>
-				</div>
-			)}
-			{data.scopes_addable && catalog && catalog.length === 0 && (
-				<p className="text-muted-foreground text-xs">
+			{!data.scopes_addable ? (
+				<p className="text-muted-foreground text-sm">
+					This credential can’t take more scopes here.
+				</p>
+			) : catalog && catalog.length === 0 ? (
+				<p className="text-muted-foreground text-sm">
 					Every scope the vendor offers is already granted.
 				</p>
-			)}
-			{data.scopes_addable && !catalog && (
+			) : catalog ? (
+				<ScopeChooseField
+					label="Scopes to add"
+					loading={false}
+					error={null}
+					scopes={catalog}
+					selected={pickedScopes}
+					onToggle={(name: string): void =>
+						setPickedScopes((picked) => {
+							const next = new Set(picked);
+							if (next.has(name)) next.delete(name);
+							else next.add(name);
+							return next;
+						})
+					}
+				/>
+			) : (
 				<div className="space-y-1">
-					<Label htmlFor={scopesId}>Scopes to add (optional)</Label>
+					<Label htmlFor={scopesId}>Scopes to add</Label>
 					<Input
 						id={scopesId}
 						value={scopes}
 						onChange={(e) => setScopes(e.target.value)}
 						placeholder="Separate scopes with spaces or commas"
 					/>
-					<p className="text-muted-foreground text-xs">
-						Granted today: {granted.length > 0 ? granted.join(', ') : 'none'}. New
-						scopes need you to sign in to the vendor again when you approve.
-					</p>
 				</div>
 			)}
-
-			{data.suspended && (
-				<Checkbox checked={resume} onChange={setResume} className="text-sm">
-					Switch this binding back on (it is suspended)
-				</Checkbox>
+			{data.scopes_addable && (
+				<p className="text-muted-foreground text-xs">
+					Granted today: {granted.length > 0 ? granted.join(', ') : 'none'}. You sign in
+					to the vendor again to grant new ones; every agent using this credential gets
+					them.
+				</p>
 			)}
 
 			<div className="space-y-1">
@@ -2221,30 +2248,24 @@ function EditAccessFlow({
 					value={reason}
 					maxLength={1024}
 					onChange={(e) => setReason(e.target.value)}
-					placeholder="Kept in the request's history"
+					placeholder="Kept in the change's history"
 				/>
 			</div>
 
 			{error && <ErrorAlert message={error} />}
 
 			<div className="bg-surface-sheet-foot border-hairline-field sticky -bottom-4 z-10 -mx-5 mt-auto -mb-4 flex items-center justify-between border-t px-5 py-3.5">
-				<Button
-					type="button"
-					variant="ghost"
-					size="sm"
-					onClick={(): void => setPhase('rules')}
-					disabled={start.isPending}
-				>
-					<ArrowLeft className="h-4 w-4" />
-					Back
+				<Button type="button" variant="ghost" size="sm" onClick={onBack}>
+					Cancel
 				</Button>
 				<Button
 					type="button"
 					variant="primary"
 					loading={start.isPending}
+					disabled={toAdd.length === 0}
 					onClick={(): void => void submit()}
 				>
-					Review change
+					Sign in and add
 				</Button>
 			</div>
 		</div>

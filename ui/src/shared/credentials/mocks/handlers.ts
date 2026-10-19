@@ -699,6 +699,7 @@ const connectSessionsHandlers = [
 				error_code: null,
 				created_at: s.created_at,
 				credential_id: s.credential_id,
+				intent: s.edit ? 'edit' : 'create',
 			})),
 			has_more: false,
 			next_cursor: null,
