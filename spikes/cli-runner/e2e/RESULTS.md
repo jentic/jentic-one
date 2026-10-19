@@ -179,3 +179,15 @@ forwards extra fields to the `events` row, which has an indexed nullable
 a small broker change outside the forwarder: pass the request's trace id and
 the operation/API into that emit. Until then, a "what did this command do"
 view can't show denied calls.
+
+### Denied calls cannot be tied to their command (broker gap)
+
+A call denied by rule with a known `traceparent` returns 403 `action_denied`, but the
+`broker.pbac_denied` event has `trace_id: null` and `data` of only `{reason, mode}` (no
+operation, path or API). Neither `/events?trace_id=` nor `/executions?trace_id=` returns it,
+so a "what did this command do" view cannot show denials even by merging both sources.
+
+Cause: `_deny` in `src/jentic_one/broker/services/execution/authorization.py` calls
+`emit_event_best_effort` without the request trace ID or the operation/API. The events table
+already has an indexed `trace_id` column and the helper passes extra fields through, so the fix
+is to thread the trace ID and operation/API into that emit. Not fixed on this branch.
