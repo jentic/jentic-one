@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { http, HttpResponse } from 'msw';
+import { worker } from '@/mocks/browser';
 import { renderWithProviders, screen, userEvent, waitFor, within } from '@/__tests__/test-utils';
 import { VendorConnectFlow } from '@/shared/credentials/components/VendorConnectFlow';
 import {
@@ -22,7 +24,7 @@ const READ = {
 	match_mode: 'prefix' as const,
 };
 
-function seedBinding(over: { suspended?: boolean; granted_scopes?: string[] | null } = {}) {
+function seedBinding(over: Partial<Parameters<typeof seedCredentialBindings>[0][number]> = {}) {
 	seedCredentialBindings([
 		{
 			agent_id: 'agnt_1',
@@ -101,6 +103,51 @@ describe('VendorConnectFlow edit — a person changing access', () => {
 			}),
 		);
 		expect(getMockConnectSessions()[0].reason).toBe('Send replies');
+	});
+
+	it('picks scopes to add from the vendor’s catalog, leaving out the granted ones', async () => {
+		seedBinding({
+			scope_catalog: [
+				{ name: 'gmail.readonly', classification: 'read', description: 'Read mail.' },
+				{ name: 'gmail.send', classification: 'write', description: 'Send mail.' },
+			],
+		});
+		renderEdit();
+		const user = userEvent.setup();
+		await toDetails(user);
+
+		expect(screen.queryByLabelText('Scopes to add (optional)')).not.toBeInTheDocument();
+		expect(screen.queryByText('gmail.readonly', { selector: 'code' })).not.toBeInTheDocument();
+		await user.click(screen.getByText('gmail.send', { selector: 'code' }));
+		await user.click(screen.getByRole('button', { name: 'Review change' }));
+
+		const scopes = await screen.findByRole('region', { name: 'Scope changes' });
+		expect(scopes).toHaveTextContent('gmail.send');
+	});
+
+	it('names the scopes the vendor doesn’t offer', async () => {
+		seedBinding();
+		worker.use(
+			http.post('/integrations:edit-connection', () =>
+				HttpResponse.json(
+					{
+						type: 'connect_session_unknown_scopes',
+						status: 400,
+						detail: 'Unknown scopes.',
+						unknown_scopes: ['gmail.sned'],
+					},
+					{ status: 400, headers: { 'Content-Type': 'application/problem+json' } },
+				),
+			),
+		);
+		renderEdit();
+		const user = userEvent.setup();
+		await toDetails(user);
+		await user.type(screen.getByLabelText('Scopes to add (optional)'), 'gmail.sned');
+		await user.click(screen.getByRole('button', { name: 'Review change' }));
+		expect(
+			await screen.findByText(/doesn’t offer these scopes: gmail.sned/),
+		).toBeInTheDocument();
 	});
 
 	it('discarding a person’s own change cancels it', async () => {

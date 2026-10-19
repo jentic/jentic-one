@@ -1985,6 +1985,11 @@ type EditAccessPhase = 'rules' | 'details';
 
 /** Why a person's edit was refused, for the compose steps. */
 function describeEditError(err: unknown): string {
+	if (err instanceof IntegrationsApiError && err.code === 'connect_session_unknown_scopes') {
+		const unknown = err.extensions.unknown_scopes;
+		const names = Array.isArray(unknown) ? unknown.join(', ') : '';
+		return `The vendor doesn’t offer ${names ? `these scopes: ${names}` : 'those scopes'}. Check the names and try again.`;
+	}
 	if (err instanceof IntegrationsApiError && err.code === 'nothing_to_change') {
 		return 'That leaves the access as it is. Change a rule, add a scope or switch the binding back on.';
 	}
@@ -2019,6 +2024,7 @@ function EditAccessFlow({
 	const [phase, setPhase] = useState<EditAccessPhase>('rules');
 	const [rules, setRules] = useState<PermissionRule[] | null>(null);
 	const [scopes, setScopes] = useState('');
+	const [pickedScopes, setPickedScopes] = useState<Set<string>>(() => new Set());
 	const [resume, setResume] = useState(true);
 	const [reason, setReason] = useState('');
 	const [error, setError] = useState<string | null>(null);
@@ -2106,13 +2112,22 @@ function EditAccessFlow({
 		);
 	}
 
-	const granted = data.granted_scopes ?? null;
+	const granted = data.granted_scopes ?? [];
+	// The vendor's scopes not granted yet: what an edit can add. Without a
+	// catalog, a scope is named as text and passed to the vendor as asked.
+	const catalog = data.scope_catalog
+		? data.scope_catalog
+				.filter((scope) => !granted.includes(scope.name))
+				.map((scope) => ({ ...scope, default: false }))
+		: null;
 	const submit = async (): Promise<void> => {
 		setError(null);
-		const toAdd = scopes
-			.split(/[\s,]+/)
-			.filter(Boolean)
-			.filter((scope) => !granted?.includes(scope));
+		const toAdd = catalog
+			? [...pickedScopes]
+			: scopes
+					.split(/[\s,]+/)
+					.filter(Boolean)
+					.filter((scope) => !granted.includes(scope));
 		const rulesChanged = JSON.stringify(current) !== JSON.stringify(saved);
 		try {
 			const created = await start.mutateAsync({
@@ -2149,7 +2164,35 @@ function EditAccessFlow({
 				subtitle={`Change what this agent can do with ${credentialName}.`}
 			/>
 
-			{granted && (
+			{data.scopes_addable && catalog && catalog.length > 0 && (
+				<div className="space-y-1">
+					<ScopeChooseField
+						label="Scopes to add (optional)"
+						loading={false}
+						error={null}
+						scopes={catalog}
+						selected={pickedScopes}
+						onToggle={(name: string): void =>
+							setPickedScopes((picked) => {
+								const next = new Set(picked);
+								if (next.has(name)) next.delete(name);
+								else next.add(name);
+								return next;
+							})
+						}
+					/>
+					<p className="text-muted-foreground text-xs">
+						Granted today: {granted.length > 0 ? granted.join(', ') : 'none'}. New
+						scopes need you to sign in to the vendor again when you approve.
+					</p>
+				</div>
+			)}
+			{data.scopes_addable && catalog && catalog.length === 0 && (
+				<p className="text-muted-foreground text-xs">
+					Every scope the vendor offers is already granted.
+				</p>
+			)}
+			{data.scopes_addable && !catalog && (
 				<div className="space-y-1">
 					<Label htmlFor={scopesId}>Scopes to add (optional)</Label>
 					<Input
@@ -2553,7 +2596,10 @@ function ScopeChooseField({
 	selected,
 	onToggle,
 	agentRequested,
+	label = 'What can this agent do?',
 }: {
+	/** The field's heading. */
+	label?: string;
 	loading: boolean;
 	error: Error | null;
 	scopes: VendorScopeCatalog[];
@@ -2567,7 +2613,7 @@ function ScopeChooseField({
 	if (loading) {
 		return (
 			<div className="space-y-2">
-				<Label>What can this agent do?</Label>
+				<Label>{label}</Label>
 				<div className="space-y-1.5">
 					<Skeleton className="h-12 w-full" />
 					<Skeleton className="h-12 w-full" />
@@ -2590,7 +2636,7 @@ function ScopeChooseField({
 	return (
 		<div className="space-y-2">
 			<div className="flex items-baseline justify-between">
-				<Label>What can this agent do?</Label>
+				<Label>{label}</Label>
 				<span className="text-muted-foreground text-xs">
 					{selected.size} of {scopes.length} selected
 				</span>

@@ -143,6 +143,12 @@ interface CredentialBindingRow {
 	permissions: BindingRule[];
 	/** The credential's granted OAuth scopes; null (the default) for a non-OAuth one. */
 	granted_scopes?: string[] | null;
+	/** The vendor's scopes an edit can pick from; null when its client has no catalog. */
+	scope_catalog?: Array<{
+		name: string;
+		classification: 'read' | 'write' | 'admin';
+		description: string;
+	}> | null;
 }
 
 let credentialBindings: CredentialBindingRow[] = [];
@@ -1983,6 +1989,9 @@ export const agentsHandlers = [
 				: null,
 			granted_scopes: row.granted_scopes ?? null,
 			suspended: row.suspended,
+			// An OAuth credential (one with a grant) takes more scopes.
+			scopes_addable: row.granted_scopes != null,
+			scope_catalog: row.scope_catalog ?? null,
 		});
 	}),
 	// A person asking to change a binding (the Edit access flow). The edit
@@ -2025,6 +2034,19 @@ export const agentsHandlers = [
 		const result = body.rules ? body.rules.set.map((r) => view(r, null)) : today;
 		const granted = row.granted_scopes ?? [];
 		const added = (body.scopes?.add ?? []).filter((s) => !granted.includes(s));
+		const offered = row.scope_catalog?.map((scope) => scope.name);
+		const unknown = offered ? added.filter((s) => !offered.includes(s)) : [];
+		if (unknown.length > 0) {
+			return HttpResponse.json(
+				{
+					type: 'connect_session_unknown_scopes',
+					status: 400,
+					detail: 'Unknown scopes for the vendor.',
+					unknown_scopes: unknown,
+				},
+				{ status: 400, headers: { 'Content-Type': 'application/problem+json' } },
+			);
+		}
 		const resume = row.suspended && body.resume === true;
 		if (!body.rules && added.length === 0 && !resume) {
 			return HttpResponse.json(
