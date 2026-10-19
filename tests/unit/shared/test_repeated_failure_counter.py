@@ -282,7 +282,7 @@ def test_memory_backend_gets_a_dedicated_bounded_store() -> None:
     store = counter._store
     assert isinstance(store, MemoryStateBackend)
     assert store is not shared
-    assert store._max_entries == 7
+    assert store._budget("repeated_failure").max_entries == 7
 
 
 def test_redis_backend_is_shared_as_is() -> None:

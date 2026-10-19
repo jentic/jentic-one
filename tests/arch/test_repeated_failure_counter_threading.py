@@ -27,7 +27,6 @@ _ALWAYS = {
 # Calls that run detection only when handed a ``security_config``.
 _WHEN_DETECTING = {
     "run_execution": "repeated_failure_counter",
-    "execute_upstream": "repeated_failure_counter",
     "persist_streaming_execution": "repeated_failure_counter",
 }
 

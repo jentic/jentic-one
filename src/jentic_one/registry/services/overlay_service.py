@@ -48,7 +48,7 @@ from jentic_one.shared.models import (
     OverlayStatus,
 )
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
-from jentic_one.shared.url_validation import validate_upstream_url
+from jentic_one.shared.url_validation import validate_upstream_url_async
 
 logger = structlog.get_logger(__name__)
 
@@ -296,7 +296,7 @@ class OverlayService:
                 )
             return dict(spec_file.content), revision.source_url, revision.spec_digest
 
-    def _apply_and_validate(
+    async def _apply_and_validate(
         self, overlay_id: str, base_content: dict[str, Any], document: dict[str, Any]
     ) -> dict[str, Any]:
         """Apply the overlay to the base spec and validate the result, or raise."""
@@ -327,7 +327,7 @@ class OverlayService:
         for url in _iter_server_urls(overlaid):
             for concrete in _concrete_server_urls(url):
                 try:
-                    validate_upstream_url(concrete, egress)
+                    await validate_upstream_url_async(concrete, egress)
                 except ValueError as exc:
                     raise OverlayApplyConflictError(
                         overlay_id, f"unsafe servers[].url rejected: {exc}"
@@ -735,7 +735,7 @@ class OverlayService:
         base_content, base_source_url, base_digest = await self._load_base_spec_for_revision(
             api.id, overlay_id, base_revision_id
         )
-        overlaid = self._apply_and_validate(overlay_id, base_content, document)
+        overlaid = await self._apply_and_validate(overlay_id, base_content, document)
 
         # Persist the edit and re-assert the preconditions inside a transaction (an edit,
         # rollback, or re-import could have landed during the apply window). If the overlay
@@ -850,7 +850,7 @@ class OverlayService:
         base_content, base_source_url, base_digest = await self._load_base_spec(
             vendor, name, version, overlay_id, target_revision_id
         )
-        overlaid = self._apply_and_validate(overlay_id, base_content, document)
+        overlaid = await self._apply_and_validate(overlay_id, base_content, document)
 
         # Atomically claim the overlay: flip PENDING→CONFIRMED with a compare-and-swap
         # so that at most one concurrent confirm proceeds to enqueue a materialize job.

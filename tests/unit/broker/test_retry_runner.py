@@ -77,8 +77,8 @@ def _get(url: str = "https://api.example.com/x") -> RunnerRequest:
     return RunnerRequest(method="GET", url=url)
 
 
-def _post(headers: dict[str, str] | None = None) -> RunnerRequest:
-    return RunnerRequest(method="POST", url="https://api.example.com/x", headers=headers or {})
+def _post(*, keyed: bool = False) -> RunnerRequest:
+    return RunnerRequest(method="POST", url="https://api.example.com/x", has_idempotency_key=keyed)
 
 
 # --- idempotency classification -------------------------------------------------
@@ -93,10 +93,18 @@ def test_post_without_key_is_not_idempotent() -> None:
     assert not _is_idempotent(_post())
 
 
-def test_post_with_idempotency_key_is_idempotent() -> None:
-    assert _is_idempotent(_post(headers={"Idempotency-Key": "abc"}))
-    # case-insensitive header match
-    assert _is_idempotent(_post(headers={"idempotency-key": "abc"}))
+def test_post_with_idempotency_key_flag_is_idempotent() -> None:
+    assert _is_idempotent(_post(keyed=True))
+    assert _is_idempotent(RunnerRequest(method="patch", url="https://x", has_idempotency_key=True))
+
+
+def test_idempotency_key_header_alone_does_not_count() -> None:
+    # Pins #1711: the gate reads the handler-set flag. ``headers`` are the
+    # upstream-bound set, which never carries the broker-consumed key.
+    request = RunnerRequest(
+        method="POST", url="https://api.example.com/x", headers={"Idempotency-Key": "abc"}
+    )
+    assert not _is_idempotent(request)
 
 
 # --- transport-error retry decisions -------------------------------------------
@@ -145,7 +153,7 @@ async def test_post_send_error_retried_with_idempotency_key() -> None:
     inner = _ScriptedRunner([err, _ok(200)])
     runner = RetryRunner(inner, max_attempts=3, base_backoff_s=0.0)
 
-    result = await runner.run(_post(headers={"Idempotency-Key": "k1"}))
+    result = await runner.run(_post(keyed=True))
 
     assert result.status_code == 200
     assert inner.calls == 2
@@ -186,6 +194,17 @@ async def test_retryable_status_not_retried_for_keyless_post() -> None:
     # Returned verbatim, not retried (would double-spend a non-idempotent POST).
     assert result.status_code == 503
     assert inner.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_retryable_status_retried_for_keyed_post() -> None:
+    inner = _ScriptedRunner([_ok(503), _ok(503), _ok(200)])
+    runner = RetryRunner(inner, max_attempts=3, base_backoff_s=0.0)
+
+    result = await runner.run(_post(keyed=True))
+
+    assert result.status_code == 200
+    assert inner.calls == 3
 
 
 @pytest.mark.asyncio

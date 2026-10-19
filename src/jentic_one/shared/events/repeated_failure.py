@@ -46,10 +46,14 @@ from jentic_one.shared.state import (
     StateBackendConfig,
     WindowCounterStore,
 )
+from jentic_one.shared.state.backend import ENTRY_OVERHEAD_BYTES
 
 logger = structlog.get_logger(__name__)
 
 _KEY_PREFIX = "repeated_failure"
+# Upper bound on a counter key plus its value: ``repeated_failure:<window>:``
+# ``seen:<severity>:<32-hex digest>`` and a short integer or marker.
+_MAX_KEY_AND_VALUE_BYTES = 128
 # Windows a failure stays countable: the bucket TTL, the estimate's span
 # (current + previous bucket) and the degraded span after a backend error all
 # use it, so they cannot drift apart.
@@ -301,9 +305,15 @@ def build_repeated_failure_counter(
         return RepeatedFailureCounter(shared_backend)
     if processes > 1:
         return None
+    max_entries = security_config.execution_repeated_failure_counter_max_entries
+    # Size the byte budgets from the entry bound so ``max_entries`` stays the
+    # binding limit: every key is a short, fixed-shape bucket or marker.
+    max_bytes = max_entries * (ENTRY_OVERHEAD_BYTES + _MAX_KEY_AND_VALUE_BYTES)
     return RepeatedFailureCounter(
         MemoryStateBackend(
-            max_entries=security_config.execution_repeated_failure_counter_max_entries
+            max_entries=max_entries,
+            max_bytes=max_bytes,
+            max_total_bytes=max_bytes,
         )
     )
 

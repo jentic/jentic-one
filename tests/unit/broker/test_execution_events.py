@@ -19,6 +19,7 @@ from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.actors import Origin
 from jentic_one.shared.models.events import ErrorSource, EventSeverity, EventType
 from jentic_one.shared.schemas import OperationInfo
+from tests.unit.fake_tx import SessionScope
 
 
 class _StatusRunner(UpstreamRunner):
@@ -72,13 +73,14 @@ def _ctx_req() -> ExecuteRequestContext:
 async def test_run_execution_emits_completed_event() -> None:
     """Successful execution emits EXECUTION_COMPLETED."""
     session = AsyncMock()
+    scope = SessionScope(session)
     broker = default_broker(_SuccessRunner())
 
     with (
         patch(
             "jentic_one.broker.services.execution.service.record_execution",
             new_callable=AsyncMock,
-        ),
+        ) as mock_record,
         patch(
             "jentic_one.broker.services.execution.service.emit_event",
             new_callable=AsyncMock,
@@ -88,7 +90,7 @@ async def test_run_execution_emits_completed_event() -> None:
             _ctx_req(),
             body=None,
             headers=None,
-            session=session,
+            admin_db=scope,
             broker=broker,
             actor_id="agt_abc",
             actor_type="agent",
@@ -100,19 +102,24 @@ async def test_run_execution_emits_completed_event() -> None:
     assert call_kwargs["severity"] == EventSeverity.INFO
     assert call_kwargs["actor_id"] == "agt_abc"
     assert call_kwargs["actor_type"] == "agent"
+    # The record and its lifecycle event share one transaction.
+    assert scope.opened == 1
+    assert mock_record.call_args.args[0] is session
+    assert all(c.args[0] is session for c in mock_emit.call_args_list)
 
 
 @pytest.mark.asyncio
 async def test_run_execution_emits_failed_event_on_broker_error() -> None:
     """BrokerError during execution emits EXECUTION_FAILED before re-raising."""
     session = AsyncMock()
+    scope = SessionScope(session)
     broker = default_broker(_FailRunner())
 
     with (
         patch(
             "jentic_one.broker.services.execution.service.record_execution",
             new_callable=AsyncMock,
-        ),
+        ) as mock_record,
         patch(
             "jentic_one.broker.services.execution.service.emit_event",
             new_callable=AsyncMock,
@@ -123,7 +130,7 @@ async def test_run_execution_emits_failed_event_on_broker_error() -> None:
             _ctx_req(),
             body=None,
             headers=None,
-            session=session,
+            admin_db=scope,
             broker=broker,
             actor_id="agt_abc",
             actor_type="agent",
@@ -136,6 +143,10 @@ async def test_run_execution_emits_failed_event_on_broker_error() -> None:
     call_kwargs = emit_calls[0].kwargs
     assert call_kwargs["severity"] == EventSeverity.ERROR
     assert call_kwargs["requires_action"] is True
+    # The FAILED record and its events share one transaction.
+    assert scope.opened == 1
+    assert mock_record.call_args.args[0] is session
+    assert all(c.args[0] is session for c in mock_emit.call_args_list)
 
 
 @pytest.mark.asyncio
@@ -271,7 +282,7 @@ async def test_run_execution_tags_failed_event_with_thirdparty_auth(
             _ctx_req(),
             body=None,
             headers=None,
-            session=session,
+            admin_db=SessionScope(session),
             broker=broker,
             actor_id="agt_abc",
             actor_type="agent",
@@ -308,7 +319,7 @@ async def test_run_execution_no_auth_tag_on_success() -> None:
             _ctx_req(),
             body=None,
             headers=None,
-            session=session,
+            admin_db=SessionScope(session),
             broker=broker,
             actor_id="agt_abc",
             actor_type="agent",
@@ -478,7 +489,7 @@ async def test_run_execution_no_auth_tag_without_vendor() -> None:
             ctx_req,
             body=None,
             headers=None,
-            session=session,
+            admin_db=SessionScope(session),
             broker=broker,
             actor_id="agt_abc",
             actor_type="agent",
@@ -514,7 +525,7 @@ async def test_run_execution_tags_completed_event_with_origin() -> None:
             _ctx_req(),
             body=None,
             headers=None,
-            session=session,
+            admin_db=SessionScope(session),
             broker=broker,
             actor_id="agt_abc",
             actor_type="agent",
@@ -547,7 +558,7 @@ async def test_run_execution_failed_carries_origin_and_error_source_tags() -> No
             _ctx_req(),
             body=None,
             headers=None,
-            session=session,
+            admin_db=SessionScope(session),
             broker=broker,
             actor_id="agt_abc",
             actor_type="agent",
@@ -584,7 +595,7 @@ async def test_run_execution_unknown_origin_is_not_tagged() -> None:
             _ctx_req(),
             body=None,
             headers=None,
-            session=session,
+            admin_db=SessionScope(session),
             broker=broker,
             actor_id="agt_abc",
             actor_type="agent",

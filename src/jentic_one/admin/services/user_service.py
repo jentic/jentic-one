@@ -38,6 +38,7 @@ from jentic_one.admin.services.schemas.users import (
     UserUpdatePayload,
     UserView,
 )
+from jentic_one.admin.services.user_hooks import run_user_deleted_hooks
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import InviteState
@@ -355,15 +356,28 @@ class UserService:
 
         return await self.get(user_id, identity=identity)
 
+    @staticmethod
+    async def _load_manageable(session: Any, user_id: str, identity: Identity) -> User:
+        """Load a user the caller may manage, or raise.
+
+        The target is resolved through the caller's ``User`` access filter, so
+        a user the caller cannot read answers not found (404); a visible user
+        then passes ``ensure_can_manage`` against the caller's stored grants.
+        """
+        user = await UserRepository.get_by_id(
+            session, user_id, filters=build_access_filters(identity, User)
+        )
+        if user is None:
+            raise UserNotFoundError(user_id)
+        permission_sets = await UserPermissionGrantRepository.get_permission_sets(
+            session, [user_id, identity.sub]
+        )
+        ensure_can_manage(user_id, identity, permission_sets)
+        return user
+
     async def delete(self, user_id: str, *, identity: Identity) -> None:
         async with self._ctx.admin_db.transaction() as session:
-            user = await UserRepository.get_by_id(session, user_id)
-            if user is None:
-                raise UserNotFoundError(user_id)
-            permission_sets = await UserPermissionGrantRepository.get_permission_sets(
-                session, [user_id, identity.sub]
-            )
-            ensure_can_manage(user_id, identity, permission_sets)
+            await self._load_manageable(session, user_id, identity)
             await ensure_not_last_active_admin(session, user_id)
             await UserRepository.update(
                 session,
@@ -390,16 +404,11 @@ class UserService:
             audit_events_counter.add(
                 1, {"action": AuditAction.DELETE, "target_type": AuditTargetType.USER}
             )
+        await run_user_deleted_hooks(self._ctx, user_id, identity=identity)
 
     async def disable(self, user_id: str, *, identity: Identity) -> bool:
         async with self._ctx.admin_db.transaction() as session:
-            user = await UserRepository.get_by_id(session, user_id)
-            if user is None:
-                raise UserNotFoundError(user_id)
-            permission_sets = await UserPermissionGrantRepository.get_permission_sets(
-                session, [user_id, identity.sub]
-            )
-            ensure_can_manage(user_id, identity, permission_sets)
+            await self._load_manageable(session, user_id, identity)
             await ensure_not_last_active_admin(session, user_id)
             await UserRepository.disable(session, user_id)
             # A queued execution job runs with its creator's authority, so
@@ -427,12 +436,7 @@ class UserService:
 
     async def enable(self, user_id: str, *, identity: Identity) -> bool:
         async with self._ctx.admin_db.transaction() as session:
-            if await UserRepository.get_by_id(session, user_id) is None:
-                raise UserNotFoundError(user_id)
-            permission_sets = await UserPermissionGrantRepository.get_permission_sets(
-                session, [user_id, identity.sub]
-            )
-            ensure_can_manage(user_id, identity, permission_sets)
+            await self._load_manageable(session, user_id, identity)
             await UserRepository.enable(session, user_id)
             await AuditRepository.record(
                 session,
@@ -449,13 +453,7 @@ class UserService:
 
     async def reissue_invite(self, user_id: str, *, identity: Identity) -> InviteIssued:
         async with self._ctx.admin_db.session() as session:
-            user = await UserRepository.get_by_id(session, user_id)
-            if user is None:
-                raise UserNotFoundError(user_id)
-            permission_sets = await UserPermissionGrantRepository.get_permission_sets(
-                session, [user_id, identity.sub]
-            )
-            ensure_can_manage(user_id, identity, permission_sets)
+            user = await self._load_manageable(session, user_id, identity)
         if user.invite_state == InviteState.REDEEMED:
             raise ConflictError("Cannot reissue invite for a user who has already redeemed")
 

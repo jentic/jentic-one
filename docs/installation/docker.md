@@ -24,6 +24,15 @@ forwards them to the host's loopback on macOS and Windows. The native Windows
 `jentic.exe` can call a broker published this way; only the *operating* of the
 containers lives in WSL2.
 
+On a laptop, macOS can page out an idle Docker Desktop VM. The first request
+after a long idle spell can then take tens of seconds while the VM swaps back
+in. The server rides this out: dead pooled database connections are replaced
+on next use, and the job worker logs one `worker_db_connection_lost` warning
+followed by `worker_db_connection_recovered` (no traceback loop). To avoid
+the stall itself, give Docker Desktop generous memory headroom; for an
+always-on local deployment on a laptop, running from a source checkout
+([local setup](../development/local-setup.md)) avoids the VM entirely.
+
 ## 1. Pull and verify the image
 
 Tags (including version tags) can be re-pushed; only a `@sha256:` digest is
@@ -199,6 +208,46 @@ auth:
         -----END EC PRIVATE KEY-----
 ```
 
+> **Warning: the default `memory` shared-state backend is bounded and fails
+> closed.**
+> `broker.resilience.backend.backend: memory` keeps `Idempotency-Key`
+> records, rate-limit buckets, circuit-breaker counters and the auth
+> surface's single-use markers in the process, with a fixed budget per key
+> namespace. It never evicts a live entry. When a namespace (or one caller's
+> share of it) is full, the request that needed the write gets a **503**
+> (`idempotency_unavailable` for an `Idempotency-Key` request) with a
+> `Retry-After` of when its earliest entry expires.
+>
+> With the defaults (`broker.idempotency.ttl_s` unset, which is a 1 h replay
+> window on memory and 24 h on redis; the `idem` budget of 128 MiB; about
+> 1.2 KiB budgeted per record with typical response headers), one broker
+> process sustains about **30 idempotent requests per second**, and about
+> **3 per second per caller**, because each caller may hold at most 10% of
+> the budget. Above that, `Idempotency-Key` requests get 503. Stored
+> response bodies have their own 32 MiB `idem-body` budget. Past about
+> 5 req/s of 1 KiB bodies, replays omit the body
+> (`Jentic-Idempotency-Body-Omitted: true`) but requests are not refused.
+> The ceiling is `min(max_entries, max_bytes / record_bytes) / ttl_s`, where
+> `record_bytes` is about 1000 bytes plus the response headers. A record keeps
+> at most 512 bytes of headers, `Content-Type`, `Location`, `ETag`,
+> `Content-Location` and `Retry-After` first, so a replay may lack the
+> others.
+>
+> Every other namespace defaults to 16 MiB, and all namespaces of one
+> backend together are capped at
+> `broker.resilience.backend.memory.max_total_bytes` (192 MiB), refused the
+> same way. The budgets track real memory to within about 15% (measured
+> with `tracemalloc`), so on the defaults the broker's state stays under
+> about 192 MiB on top of a ~130 MiB process baseline, which the broker
+> chart's 512Mi memory limit holds. The broker always runs as its own
+> process; the combined app holds one such backend each for the auth and
+> control surfaces.
+>
+> To raise it: raise `broker.resilience.backend.memory.namespaces.idem`
+> (and its `max_owner_share`) together with `max_total_bytes`, or lower
+> `broker.idempotency.ttl_s`. Raise the container memory limit by at least
+> as much as you raise the budgets.
+
 ## 3. Prepare the database
 
 Once, on your Postgres (the database itself must already exist). The migration
@@ -299,7 +348,11 @@ OAuth endpoints by the connecting socket IP — behind a proxy that is one IP,
 so **all** OAuth clients share one bucket and busy instances see spurious
 `429`s. The value must be the source IP the app actually sees; for the
 port-published containers above that is the Docker bridge gateway (commonly
-`172.17.0.1`), not `127.0.0.1`:
+`172.17.0.1`), not `127.0.0.1`. Entries are IP addresses or CIDR networks
+(`JENTIC__AUTH__OAUTH_RATE_LIMIT__TRUSTED_PROXIES` takes them comma-separated),
+and an invalid entry fails startup. List only addresses your proxy holds: any
+host inside a trusted network can set `X-Forwarded-For` and pick its own
+rate-limit identity.
 
 ```yaml
 # production.yaml

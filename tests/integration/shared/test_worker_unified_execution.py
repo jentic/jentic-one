@@ -43,7 +43,7 @@ class _RecordingExecutor:
         self._result = result
         self.last_request: UpstreamExecRequest | None = None
 
-    async def execute(self, request: UpstreamExecRequest, *, session: Any) -> UpstreamExecResult:
+    async def execute(self, request: UpstreamExecRequest, *, db: Any) -> UpstreamExecResult:
         self.last_request = request
         return self._result
 
@@ -185,9 +185,7 @@ async def test_async_job_records_failed_on_pipeline_error(
     """A pipeline error completes the job with a failed result (pre-E4.1 behaviour)."""
 
     class _Raising:
-        async def execute(
-            self, request: UpstreamExecRequest, *, session: Any
-        ) -> UpstreamExecResult:
+        async def execute(self, request: UpstreamExecRequest, *, db: Any) -> UpstreamExecResult:
             raise RuntimeError("upstream circuit open")
 
     handler = ExecutionHandler(executor=_Raising())

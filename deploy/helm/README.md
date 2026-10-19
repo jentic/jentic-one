@@ -94,7 +94,10 @@ helm install jentic deploy/helm/jentic-one \
   otherwise key every request on the controller's IP, so one caller locks the
   whole fleet out of `/authorize`. Set
   `<svc>.extraEnv.JENTIC__AUTH__OAUTH_RATE_LIMIT__TRUSTED_PROXIES` (or the same
-  key in a mounted config file), or `ingress.skipTrustedProxiesCheck=true` if
+  key in a mounted config file) to the controller's pod CIDR or IPs — addresses
+  and CIDR networks, comma-separated (`\,` under `--set`), kept as narrow as the
+  cluster allows, since any pod inside a trusted network can pick its own
+  rate-limit identity — or `ingress.skipTrustedProxiesCheck=true` if
   you rate-limit upstream of the cluster.
 - **PodDisruptionBudget** is per enabled surface at `minAvailable: 1`. Only
   enable it above `replicas: 1` — at one replica a budget has no spare pod to
@@ -278,6 +281,13 @@ helm install jentic deploy/helm/jentic-one \
   --set global.observability.otel.enabled=true \
   --set global.observability.otel.endpoint=http://otel-collector:4317
 ```
+
+`global.observability.otel.samplingRatio` sets the application's trace
+sampling ratio (`JENTIC__OBSERVABILITY__TRACING__SAMPLE_RATIO`, config field
+`observability.tracing.sample_ratio`) on every service. It is rendered only
+when set, so a `sample_ratio` in a mounted config file stays effective
+otherwise. The ratio also caps requests that arrive with a sampled
+`traceparent`; see [Monitoring](../../docs/operations/monitoring.md).
 
 ## Metrics exporter
 

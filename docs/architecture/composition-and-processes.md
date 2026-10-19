@@ -113,6 +113,48 @@ flowchart TB
   (`pip install jentic-one[redis]`), not part of the published container
   image — scaling out on that image means building your own with the extra.
 
+## The memory shared-state backend is bounded
+
+> **Warning: the default `memory` shared-state backend is bounded and fails
+> closed.**
+> `broker.resilience.backend.backend: memory` keeps `Idempotency-Key`
+> records, rate-limit buckets, circuit-breaker counters and the auth
+> surface's single-use markers in the process, with a fixed budget per key
+> namespace. It never evicts a live entry. When a namespace (or one caller's
+> share of it) is full, the request that needed the write gets a **503**
+> (`idempotency_unavailable` for an `Idempotency-Key` request) with a
+> `Retry-After` of when its earliest entry expires.
+>
+> With the defaults (`broker.idempotency.ttl_s` unset, which is a 1 h replay
+> window on memory and 24 h on redis; the `idem` budget of 128 MiB; about
+> 1.2 KiB budgeted per record with typical response headers), one broker
+> process sustains about **30 idempotent requests per second**, and about
+> **3 per second per caller**, because each caller may hold at most 10% of
+> the budget. Above that, `Idempotency-Key` requests get 503. Stored
+> response bodies have their own 32 MiB `idem-body` budget. Past about
+> 5 req/s of 1 KiB bodies, replays omit the body
+> (`Jentic-Idempotency-Body-Omitted: true`) but requests are not refused.
+> The ceiling is `min(max_entries, max_bytes / record_bytes) / ttl_s`, where
+> `record_bytes` is about 1000 bytes plus the response headers. A record keeps
+> at most 512 bytes of headers, `Content-Type`, `Location`, `ETag`,
+> `Content-Location` and `Retry-After` first, so a replay may lack the
+> others.
+>
+> Every other namespace defaults to 16 MiB, and all namespaces of one
+> backend together are capped at
+> `broker.resilience.backend.memory.max_total_bytes` (192 MiB), refused the
+> same way. The budgets track real memory to within about 15% (measured
+> with `tracemalloc`), so on the defaults the broker's state stays under
+> about 192 MiB on top of a ~130 MiB process baseline, which the broker
+> chart's 512Mi memory limit holds. The broker always runs as its own
+> process; the combined app holds one such backend each for the auth and
+> control surfaces.
+>
+> To raise it: raise `broker.resilience.backend.memory.namespaces.idem`
+> (and its `max_owner_share`) together with `max_total_bytes`, or lower
+> `broker.idempotency.ttl_s`. Raise the container memory limit by at least
+> as much as you raise the budgets.
+
 ## Lifespan ordering
 
 `create_surface_app` wires one lifespan per process, and teardown order is
@@ -128,7 +170,10 @@ load-bearing:
    `ctx.shutdown()` → container-injected lifespans exit in reverse → the
    surface lifespan closes the shared HTTP client. Draining the worker
    *before* closing the client matters: an async execution mid-flight must
-   finish over a live connection pool.
+   finish over a live connection pool. Between the telemetry flush and
+   `ctx.shutdown()` the lifespan also runs the shutdown handlers that surface
+   installers registered on the app; they close the auth and control
+   surfaces' shared-state backends.
 
 ## Background work
 

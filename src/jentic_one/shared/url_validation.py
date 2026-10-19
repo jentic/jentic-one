@@ -13,6 +13,10 @@ rules. An IPv6 address that embeds an IPv4 address (IPv4-mapped, IPv4-compatible
 NAT64 well-known prefix, 6to4) is classified by the embedded IPv4, and anything
 that is not globally routable — plus shared address space (100.64.0.0/10),
 multicast, and reserved ranges — is blocked unless an allowlist exempts it.
+
+:func:`validate_upstream_url` resolves with the blocking system resolver;
+:func:`validate_upstream_url_async` is the event-loop-safe twin and shares its
+resolver answers with the pinning transport (``shared/dns_cache``).
 """
 
 from __future__ import annotations
@@ -21,6 +25,8 @@ import ipaddress
 import socket
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
+
+from jentic_one.shared.dns_cache import resolve_host, resolve_host_blocking
 
 if TYPE_CHECKING:
     from jentic_one.shared.config import EgressConfig
@@ -92,6 +98,42 @@ def validate_upstream_url(raw_url: str, egress: EgressConfig | None = None) -> s
     private IP inside an ``allowed_private_subnets`` CIDR (and, for resolved hosts,
     matching an ``allowed_internal_domains`` suffix) is permitted — except the
     cloud-metadata IPs, which stay a hard deny. Returns the normalised URL.
+
+    The DNS step calls the blocking system resolver. Code running on an event
+    loop uses :func:`validate_upstream_url_async`, which applies the identical
+    policy with the lookup off the loop.
+    """
+    url, hostname = _check_url_without_dns(raw_url, egress)
+    if hostname is not None:
+        _resolve_and_check(hostname, egress)
+    return url
+
+
+async def validate_upstream_url_async(raw_url: str, egress: EgressConfig | None = None) -> str:
+    """Async :func:`validate_upstream_url`: same policy, DNS lookup off the event loop.
+
+    Scheme, hostname, blocked-name, and IP-literal checks run inline (pure CPU).
+    A DNS name is resolved through ``shared/dns_cache.resolve_host`` — a worker
+    thread on a miss, a briefly cached raw answer on a hit — and **every**
+    returned address is validated against *egress* here, exactly as the sync
+    path does. A name that does not resolve is let through, matching the sync
+    pre-flight; the DNS-pinning transport fails closed on it at connect time.
+    """
+    url, hostname = _check_url_without_dns(raw_url, egress)
+    if hostname is not None:
+        try:
+            addrs = await resolve_host(hostname)
+        except socket.gaierror:
+            return url
+        _check_resolved(hostname, addrs, egress)
+    return url
+
+
+def _check_url_without_dns(raw_url: str, egress: EgressConfig | None) -> tuple[str, str | None]:
+    """Run every check that needs no resolver; return ``(url, hostname_to_resolve)``.
+
+    The second element is the DNS name still to resolve and validate, or ``None``
+    when the host is an IP literal (already validated here).
     """
     if not raw_url or not raw_url.strip():
         raise ValueError("upstream URL is required")
@@ -117,14 +159,14 @@ def validate_upstream_url(raw_url: str, egress: EgressConfig | None = None) -> s
     except ValueError as exc:
         if "does not appear to be" not in str(exc):
             raise
-        # A DNS name: resolve and validate every returned address. The host-suffix
-        # exemption only applies when the name resolves into an allowed subnet.
-        _resolve_and_check(hostname, egress)
-    else:
-        # An IP literal: no domain-suffix exemption (there's no name to match).
-        _check_ip(addr, egress, hostname=None)
+        # A DNS name: the caller resolves and validates every returned address.
+        # The host-suffix exemption only applies when the name resolves into an
+        # allowed subnet.
+        return url, hostname
 
-    return url
+    # An IP literal: no domain-suffix exemption (there's no name to match).
+    _check_ip(addr, egress, hostname=None)
+    return url, None
 
 
 def _normalise_hostname(hostname: str) -> str:
@@ -247,11 +289,16 @@ def _resolve_and_check(hostname: str, egress: EgressConfig | None) -> None:
     connect time and fails closed on a name that does not resolve.
     """
     try:
-        results = socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
+        addrs = resolve_host_blocking(hostname)
     except socket.gaierror:
         return
 
-    for _family, _type, _proto, _canonname, sockaddr in results:
-        ip_str = sockaddr[0]
-        addr = ipaddress.ip_address(ip_str)
+    _check_resolved(hostname, addrs, egress)
+
+
+def _check_resolved(
+    hostname: str, addrs: tuple[_IpAddress, ...], egress: EgressConfig | None
+) -> None:
+    """Validate every resolved address of *hostname*; one blocked IP rejects the name."""
+    for addr in addrs:
         _check_ip(addr, egress, hostname=hostname)

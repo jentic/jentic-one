@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import random
+import time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -15,6 +17,12 @@ from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.repos.access_token_repo import AccessTokenRepository
 from jentic_one.admin.repos.refresh_token_repo import RefreshTokenRepository
 from jentic_one.shared.config import WorkerConfig
+from jentic_one.shared.db.connectivity import (
+    connection_loss_cause,
+    describe_connection_loss,
+    is_connection_loss,
+    redact_sql,
+)
 from jentic_one.shared.events import emit_event
 from jentic_one.shared.jobs.handlers import JobHandlerRegistry, JobResultPayload
 from jentic_one.shared.jobs.hold import (
@@ -41,12 +49,32 @@ _DEFAULT_APPROVED_RESULT_RETENTION_SECONDS = 86_400
 # refresh-token reuse forensics.
 _TOKEN_RETENTION_DAYS = 7
 _ERROR_MAX_LEN = 128
+# Persisted on the job (and its event) when an attempt is cut short by a lost
+# database connection; the details are logged server-side only.
+_DB_CONNECTION_LOST_ERROR = "interrupted: database connection lost"
 
 
 def _backoff_s(attempts: int, cfg: WorkerConfig) -> float:
     """Exponential backoff for the ``attempts``-th claim, capped at the max."""
     raw = cfg.retry_backoff_base_s * (2 ** max(0, attempts - 1))
     return float(min(raw, cfg.retry_backoff_max_s))
+
+
+# Reconnect backoff while the database is unreachable: base * 2**(n-1), capped,
+# then "equal jitter" (a uniform pick in the upper half) so workers sharing a
+# database don't retry in lockstep. Base and cap come from
+# ``worker.reconnect_backoff_base_s`` / ``worker.reconnect_backoff_max_s``.
+def _reconnect_backoff_s(attempt: int, jitter: float, cfg: WorkerConfig) -> float:
+    """Delay before reconnect ``attempt`` (1-based); ``jitter`` is in ``[0, 1)``.
+
+    The result lies in ``[capped / 2, capped]`` where
+    ``capped = min(base * 2**(attempt-1), max)``, so it never exceeds the cap.
+    """
+    capped = min(
+        cfg.reconnect_backoff_base_s * float(2 ** max(0, attempt - 1)),
+        cfg.reconnect_backoff_max_s,
+    )
+    return capped / 2 + (capped / 2) * jitter
 
 
 class WorkerLoop:
@@ -84,25 +112,76 @@ class WorkerLoop:
         is fully reachable. Such an exception escaping ``run`` would terminate
         the worker permanently, leaving every queued job stuck forever. So we
         catch and log non-cancellation errors here and keep polling.
+
+        A lost or unreachable database (see
+        :func:`~jentic_one.shared.db.connectivity.is_connection_loss`) is an
+        expected condition — e.g. after a laptop's Docker VM sleeps — so it is
+        logged as a single warning per outage (traceback at debug only), retried
+        with capped, jittered exponential backoff, and reported once at info
+        when a tick succeeds again. Any other error keeps the full traceback.
         """
         self._running = True
         logger.info("worker_loop_started")
+        outage_attempts = 0
+        outage_started = 0.0
         try:
             while self._running:
                 try:
                     processed = await self._tick()
                 except asyncio.CancelledError:
                     raise
-                except Exception:
-                    logger.exception("worker_loop_tick_error")
-                    processed = False
+                except Exception as exc:
+                    cause = connection_loss_cause(exc)
+                    if cause is None:
+                        logger.exception("worker_loop_tick_error")
+                        processed = False
+                        # The database answered (or the failure is unrelated),
+                        # so the outage is over; a later drop warns afresh.
+                        outage_attempts = 0
+                    else:
+                        outage_attempts += 1
+                        delay_s = _reconnect_backoff_s(
+                            outage_attempts, self._jitter(), self._config
+                        )
+                        if outage_attempts == 1:
+                            outage_started = time.monotonic()
+                            logger.warning(
+                                "worker_db_connection_lost",
+                                error_type=type(cause).__name__,
+                                error=describe_connection_loss(cause),
+                                retry_in_s=round(delay_s, 2),
+                            )
+                        logger.debug(
+                            "worker_db_reconnect_backoff",
+                            attempt=outage_attempts,
+                            retry_in_s=round(delay_s, 2),
+                            exc_info=True,
+                        )
+                        await self._sleep(delay_s)
+                        continue
+                else:
+                    if outage_attempts:
+                        logger.info(
+                            "worker_db_connection_recovered",
+                            failed_attempts=outage_attempts,
+                            outage_s=round(time.monotonic() - outage_started, 2),
+                        )
+                        outage_attempts = 0
                 if not processed:
-                    await asyncio.sleep(self._poll_interval)
+                    await self._sleep(self._poll_interval)
         except asyncio.CancelledError:
             logger.info("worker_loop_cancelled")
         finally:
             self._running = False
             logger.info("worker_loop_stopped")
+
+    async def _sleep(self, delay_s: float) -> None:
+        """Wait between ticks (a seam so tests can observe delays without waiting)."""
+        await asyncio.sleep(delay_s)
+
+    def _jitter(self) -> float:
+        """Uniform sample in ``[0, 1)`` used to spread reconnect attempts."""
+        return random.random()
 
     async def _tick(self) -> bool:
         """Claim one job and process it. Returns True if a job was processed."""
@@ -135,8 +214,27 @@ class WorkerLoop:
                 result = await self._execute_handler(handler, job)
                 await self._complete_job(job.id, job.kind, result)
             except Exception as exc:
-                logger.exception("job_failed", job_id=job.id, attempts=job.attempts)
-                await self._handle_failure(job, str(exc))
+                cause = connection_loss_cause(exc)
+                if cause is not None:
+                    # Infrastructure, not the job: no traceback, and only a
+                    # generic reason is persisted (the raw error carries SQL).
+                    logger.warning(
+                        "job_interrupted_db_connection_lost",
+                        job_id=job.id,
+                        attempts=job.attempts,
+                        error_type=type(cause).__name__,
+                        error=describe_connection_loss(cause),
+                    )
+                    error = _DB_CONNECTION_LOST_ERROR
+                else:
+                    logger.exception("job_failed", job_id=job.id, attempts=job.attempts)
+                    error = redact_sql(str(exc)) or type(exc).__name__
+                # Same retry contract as any failed attempt: requeue with
+                # backoff, dead-letter past the budget. If the database is
+                # still unreachable this raises a connection-loss error to
+                # run(), which owns the outage warning and backoff; the job
+                # stays RUNNING and is reclaimed after its visibility timeout.
+                await self._handle_failure(job, error)
             return True
         finally:
             self._idle.set()
@@ -194,16 +292,15 @@ class WorkerLoop:
         return await self._db.run_in_transaction(_claim)
 
     async def _execute_handler(self, handler: Any, job: Any) -> JobResultPayload:
-        """Run the handler within a transaction."""
-        async with self._db.transaction() as session:
-            result: JobResultPayload = await handler.execute(
-                job.id,
-                session,
-                payload=job.payload,
-                created_by=job.created_by,
-                actor_type=job.actor_type,
-            )
-            return result
+        """Run the handler; it opens its own transactions on the worker's database."""
+        result: JobResultPayload = await handler.execute(
+            job.id,
+            self._db,
+            payload=job.payload,
+            created_by=job.created_by,
+            actor_type=job.actor_type,
+        )
+        return result
 
     async def _is_approved_execution(self, session: Any, job_id: str) -> bool:
         """True when the job is a held execution a reviewer approved."""
@@ -414,7 +511,11 @@ class WorkerLoop:
                         access_tokens=access_removed,
                         refresh_tokens=refresh_removed,
                     )
-        except Exception:
+        except Exception as exc:
+            # A lost connection is the run loop's to report (once per outage);
+            # logging it here too would add a traceback per sweep.
+            if is_connection_loss(exc):
+                raise
             logger.exception("retention_sweep_failed")
 
     def stop(self) -> None:

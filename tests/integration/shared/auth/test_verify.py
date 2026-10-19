@@ -1,21 +1,68 @@
+"""Integration tests for ``verify_token``: DB-resolved permissions on a real admin DB."""
+
+from __future__ import annotations
+
+from collections.abc import AsyncGenerator
+
 import pytest
+from sqlalchemy import delete
 
 from jentic_one.admin.core.permissions import ORG_ADMIN
+from jentic_one.admin.core.schema.user_permission_grants import UserPermissionGrant
+from jentic_one.admin.core.schema.users import User
+from jentic_one.admin.repos import UserPermissionGrantRepository, UserRepository
 from jentic_one.admin.services.permission_service import PermissionService
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.tokens import InvalidTokenError, issue_jwt
 from jentic_one.shared.auth.verify import verify_token
 from jentic_one.shared.context import Context
 
+pytestmark = pytest.mark.integration
+
+_GRANTER_ID = "usr_verify_granter"
+_USER_ID = "usr_token_test_1"
+_PARENT_ID = "usr_parent_1"
+_SEEDED_IDS = (_GRANTER_ID, _USER_ID, _PARENT_ID)
+
+
+async def _delete_seeded(ctx: Context) -> None:
+    async with ctx.admin_db.session() as session:
+        await session.execute(
+            delete(UserPermissionGrant).where(UserPermissionGrant.user_id.in_(_SEEDED_IDS))
+        )
+        await session.execute(delete(User).where(User.id.in_(_SEEDED_IDS)))
+        await session.commit()
+
+
+@pytest.fixture()
+async def granter(ctx: Context) -> AsyncGenerator[Identity, None]:
+    """An ``org:admin`` granter plus the (permission-less) users the tests grant to."""
+    await _delete_seeded(ctx)
+    async with ctx.admin_db.session() as session:
+        for user_id in _SEEDED_IDS:
+            await UserRepository.create(
+                session,
+                id=user_id,
+                email=f"{user_id}@verify.test",
+                first_name="Verify",
+                last_name="Test",
+                active=True,
+                created_by=_GRANTER_ID,
+            )
+        await UserPermissionGrantRepository.set_permissions(
+            session, _GRANTER_ID, permissions={ORG_ADMIN}, granted_by=None, created_by=_GRANTER_ID
+        )
+        await session.commit()
+    yield Identity(sub=_GRANTER_ID, email=f"{_GRANTER_ID}@verify.test", permissions=[ORG_ADMIN])
+    await _delete_seeded(ctx)
+
 
 @pytest.mark.asyncio
-async def test_verify_token_resolves_user_permissions(ctx: Context) -> None:
+async def test_verify_token_resolves_user_permissions(ctx: Context, granter: Identity) -> None:
     # 1. Assign permissions to a user using PermissionService
     svc = PermissionService(ctx)
-    user_id = "usr_token_test_1"
-    await svc.set_assigned(
-        user_id, [ORG_ADMIN], identity=Identity(sub="usr_admin", email="test@local")
-    )
+    user_id = _USER_ID
+    await svc.set_assigned(user_id, [ORG_ADMIN], identity=granter)
 
     # 2. Mint a JWT for the user (notice we do NOT embed permissions)
     secret = "test-secret"
@@ -35,13 +82,13 @@ async def test_verify_token_resolves_user_permissions(ctx: Context) -> None:
 
 
 @pytest.mark.asyncio
-async def test_verify_token_resolves_agent_parent_permissions(ctx: Context) -> None:
+async def test_verify_token_resolves_agent_parent_permissions(
+    ctx: Context, granter: Identity
+) -> None:
     # 1. Assign permissions to the PARENT user
     svc = PermissionService(ctx)
-    parent_id = "usr_parent_1"
-    await svc.set_assigned(
-        parent_id, [ORG_ADMIN], identity=Identity(sub="usr_admin", email="test@local")
-    )
+    parent_id = _PARENT_ID
+    await svc.set_assigned(parent_id, [ORG_ADMIN], identity=granter)
 
     # 2. Mint a JWT for the AGENT
     secret = "test-secret"
