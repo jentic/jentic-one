@@ -116,7 +116,7 @@ async def _import(
     """Import a spec as a draft and return its import-job result entry."""
     result = await ImportHandler(ctx).execute(
         job_id=f"job_{uuid.uuid4().hex[:20]}",
-        session=None,
+        db=None,
         payload={"sources": [_spec_source(paths, name=name, submitted_by=submitted_by)]},
         created_by=submitted_by,
     )
