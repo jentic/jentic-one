@@ -9,18 +9,34 @@ never be closed.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
 import structlog
+from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
-from jentic_one.shared.web.app_factory import create_combined_app, create_surface_app
+from jentic_one.shared.web.app_factory import (
+    create_combined_app,
+    create_surface_app,
+    reset_db_instrumentation,
+)
 
 
 def _ctx(config: dict[str, Any]) -> Context:
-    return Context(AppConfig.model_validate(config), allowed_dbs=set())
+    return Context(AppConfig.model_validate(config), allowed_dbs={"admin"})
+
+
+@pytest.fixture(autouse=True)
+def _db_instrumentation_reset() -> Iterator[None]:
+    """The lifespan instruments the admin engine on the process-wide
+    SQLAlchemy instrumentor; undo it so later tests can instrument their own."""
+    reset_db_instrumentation()
+    yield
+    SQLAlchemyInstrumentor().uninstrument()
+    reset_db_instrumentation()
 
 
 @pytest.mark.asyncio

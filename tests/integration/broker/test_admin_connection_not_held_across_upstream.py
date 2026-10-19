@@ -29,12 +29,14 @@ import pytest
 from fastapi import FastAPI, Request, Response
 from sqlalchemy import delete, event, select
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import DeclarativeBase, Session
 
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.admin.core.schema.job_results import JobResult
 from jentic_one.admin.core.schema.jobs import Job
+from jentic_one.admin.repos import event_repo
 from jentic_one.broker.adapters.runners.http import HttpRunner
 from jentic_one.broker.adapters.runners.registry import RunnerRegistry
 from jentic_one.broker.core.schemas import ExecuteRequestContext
@@ -51,6 +53,7 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import EgressConfig, WorkerConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
+from jentic_one.shared.db.utils import insert_append_only_row
 from jentic_one.shared.jobs.execution_handler import ExecutionHandler
 from jentic_one.shared.jobs.handlers import JobHandlerRegistry
 from jentic_one.shared.jobs.protocols import QueuedExecutionRequest, QueuedExecutionVerdict
@@ -471,23 +474,29 @@ async def test_upstream_failure_persists_failed_record(
 def _fail_access_audit_commit(trace_id: str) -> Iterator[list[str]]:
     """Fail the commit of the audit transaction holding this trace's ``credential.accessed``.
 
-    The event is flushed inside the audit transaction, so the failure lands at
+    The event is written inside the audit transaction, so the failure lands at
     commit time (the transient-``OperationalError`` path of
     ``DatabaseSession.transaction``), with the admin DB still connected. Only
     the first commit fails, which is the shape of a transient error: a commit
     retried after the rollback would succeed with the event discarded.
+
+    Events are inserted without an ORM instance (``insert_append_only_row``),
+    so the session is tagged by wrapping that insert — the real row is still
+    written — rather than by inspecting ``session.new``.
     """
     failed: list[str] = []
     marker = "fail_access_audit_commit"
 
-    def _after_flush(session: Session, _flush_context: Any) -> None:
-        for obj in session.new:
-            if (
-                isinstance(obj, Event)
-                and obj.type == EventType.CREDENTIAL_ACCESSED
-                and obj.trace_id == trace_id
-            ):
-                session.info[marker] = obj.id
+    async def _tagging_insert(
+        session: AsyncSession, model: type[DeclarativeBase], values: dict[str, Any]
+    ) -> None:
+        await insert_append_only_row(session, model, values)
+        if (
+            model is Event
+            and values.get("type") == EventType.CREDENTIAL_ACCESSED
+            and values.get("trace_id") == trace_id
+        ):
+            session.sync_session.info[marker] = values["id"]
 
     def _before_commit(session: Session) -> None:
         event_id = session.info.pop(marker, None)
@@ -495,12 +504,12 @@ def _fail_access_audit_commit(trace_id: str) -> Iterator[list[str]]:
             failed.append(event_id)
             raise OperationalError("COMMIT", {}, Exception("simulated audit commit failure"))
 
-    event.listen(Session, "after_flush", _after_flush)
     event.listen(Session, "before_commit", _before_commit)
     try:
-        yield failed
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(event_repo, "insert_append_only_row", _tagging_insert)
+            yield failed
     finally:
-        event.remove(Session, "after_flush", _after_flush)
         event.remove(Session, "before_commit", _before_commit)
 
 
