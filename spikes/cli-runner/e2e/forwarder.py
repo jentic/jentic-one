@@ -19,7 +19,8 @@ from urllib.parse import urlsplit
 PORT, BROKER, LOG = int(sys.argv[1]), urlsplit(sys.argv[2]), open(sys.argv[4], "a")
 TOKEN = open(sys.argv[3]).read().strip()
 HOST_MAP = dict(a.split("=", 1) for a in sys.argv[5:])
-INVOCATION = "inv_" + secrets.token_hex(8)
+TRACE_ID = secrets.token_hex(16)
+INVOCATION = "inv_" + TRACE_ID[:16]
 
 # Only these CLI request headers reach the broker. Broker-control headers
 # (Jentic-Revision, Jentic-Credential-Name, Prefer, Idempotency-Key) are never forwarded.
@@ -73,6 +74,7 @@ class H(BaseHTTPRequestHandler):
         target = parts.path + (f"?{parts.query}" if parts.query else "")
         headers = {k: v for k, v in self.headers.items() if k.lower() in FORWARD_HEADERS}
         headers["Authorization"] = f"Bearer {TOKEN}"
+        headers["traceparent"] = f"00-{TRACE_ID}-{secrets.token_hex(8)}-01"
         try:
             conn = http.client.HTTPConnection(BROKER.hostname, BROKER.port, timeout=30)
             conn.request(self.command, f"/{upstream.rstrip('/')}{target}", body=body or None, headers=headers)
@@ -83,7 +85,7 @@ class H(BaseHTTPRequestHandler):
             return self._error(502, "broker_unreachable")
         finally:
             conn.close()
-        self._log(verdict="forwarded", host=parts.netloc, status=resp.status,
+        self._log(verdict="forwarded", trace_id=TRACE_ID, host=parts.netloc, status=resp.status,
                   execution=resp.getheader("jentic-execution-id"))
         out = [(k, v) for k, v in resp.getheaders() if k.lower() not in HOP_BY_HOP]
         self._reply(resp.status, data, out)

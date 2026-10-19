@@ -130,7 +130,7 @@ Re-tested against a fake broker that records requests, then again with the real 
 | R5 | Response headers passed through minus hop-by-hop | ✅ `Link` and `ETag` reach the client |
 | R6 | `HEAD` supported | ✅ 200, no body |
 | R7 | Broker unreachable | ✅ explicit `502 broker_unreachable` |
-| R8 | Per-process invocation ID | ✅ logged on every line; not yet sent to the broker |
+| R8 | One `traceparent` trace ID per forwarder process (fresh span ID per call); the CLI's own `traceparent` is not forwarded | ✅ `gh pr list` + `gh api` returned together from `GET /executions?trace_id=…`. The broker stores the ID as `execution_records.trace_id`, so no broker change is needed |
 
 Real chain after the fixes: `gh pr list` and `gh api` still return 200 with the stored
 credential at the upstream.
