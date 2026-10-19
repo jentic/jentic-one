@@ -134,7 +134,7 @@ var requestAccessChangeSchema = map[string]any{
 		"rules": editRulesSchema,
 		"scopes": map[string]any{
 			"type": "array", "items": map[string]any{"type": "string"},
-			"description": "OAuth scopes to add. The approver re-consents the credential; other agents bound to it gain them too.",
+			"description": "OAuth scopes to add, from show_access's scope_catalog when it has one. The approver re-consents the credential; other agents bound to it gain them too.",
 		},
 		"resume": map[string]any{
 			"type":        "boolean",

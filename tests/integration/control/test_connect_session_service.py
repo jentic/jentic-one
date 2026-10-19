@@ -87,6 +87,7 @@ from jentic_one.control.services.integrations.errors import (
     RevisionChangedError,
     RevisionRequiredError,
     ScopesNotSupportedError,
+    ScopeValidationError,
     ScopeWideningForbiddenError,
     SecuritySchemesLookupUnavailableError,
 )
@@ -2746,6 +2747,46 @@ async def test_scopes_cannot_be_added_to_a_static_credential(
             agent_id=_AGENT_ID,
             identity=_AGENT_IDENTITY,
             request=EditRequest(add_scopes=["repo"]),
+        )
+    addable = await ConnectSessionService(ctx).addable_scopes(created.credential_id)
+    assert (addable.supported, addable.catalog) == (False, None)
+
+
+async def test_an_edit_adds_only_scopes_the_vendor_offers(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    credential_id = await _connected_device_credential(ctx, svc)
+
+    addable = await svc.addable_scopes(credential_id)
+    assert addable.supported and addable.catalog is not None
+    assert "repo" in {scope.name for scope in addable.catalog}
+
+    # Checked when the edit opens and when it's amended, not only at confirm.
+    with pytest.raises(ScopeValidationError) as unknown:
+        await svc.create_edit_session(
+            credential_id=credential_id,
+            agent_id=_AGENT_ID,
+            identity=_AGENT_IDENTITY,
+            request=EditRequest(add_scopes=["repo", "not-a-scope"]),
+        )
+    assert unknown.value.unknown == ["not-a-scope"]
+    edit = await svc.create_edit_session(
+        credential_id=credential_id,
+        agent_id=_AGENT_ID,
+        identity=_AGENT_IDENTITY,
+        request=EditRequest(add_scopes=["repo"]),
+    )
+    with pytest.raises(ScopeValidationError):
+        await svc.amend_session(
+            edit.session_id,
+            identity=_AGENT_IDENTITY,
+            amend=SessionAmend(fields=frozenset({"scopes"}), add_scopes=["not-a-scope"]),
         )
 
 

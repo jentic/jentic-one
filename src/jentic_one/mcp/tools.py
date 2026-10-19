@@ -80,6 +80,7 @@ from jentic_one.control.services.integrations.errors import (
     RecentlyRejectedError,
     ReservedAuthFieldError,
     ScopesNotSupportedError,
+    ScopeValidationError,
     SecuritySchemesLookupUnavailableError,
     TooManyOpenSessionsError,
     UnknownApiError,
@@ -1978,7 +1979,8 @@ async def handle_show_access(env: CallEnv, arguments: dict[str, Any]) -> mcp_typ
             "credential ids; a suspended binding is hidden until your operator resumes it",
             next_tool="whoami",
         ) from None
-    payload = binding_access_response(access).model_dump(mode="json", by_alias=True)
+    addable = await ConnectSessionService(env.ctx).addable_scopes(credential_id)
+    payload = binding_access_response(access, addable).model_dump(mode="json", by_alias=True)
     payload["schema_version"] = SCHEMA_VERSION
     return tool_result(env.ctx, payload)
 
@@ -2077,6 +2079,14 @@ def _edit_refusal(env: CallEnv, exc: Exception, what: str) -> ToolError:
             )
         }
         next_tool = "show_access"
+    if isinstance(exc, ScopeValidationError):
+        return ToolError(
+            CODE_RESOLVE_FAILED,
+            f"{what} was refused: {exc}",
+            actionable="Ask only for scopes listed in scope_catalog (show_access), then retry.",
+            next_tool="show_access",
+            extra={"unknown_scopes": exc.unknown},
+        )
     return ToolError(
         CODE_RESOLVE_FAILED,
         f"{what} was refused: {exc}",
@@ -2095,6 +2105,7 @@ _EDIT_REFUSALS = (
     RecentlyRejectedError,
     EditBindingNotFoundError,
     ScopesNotSupportedError,
+    ScopeValidationError,
     AmendFieldsMismatchError,
     InvalidPollTokenError,
     TooManyOpenSessionsError,

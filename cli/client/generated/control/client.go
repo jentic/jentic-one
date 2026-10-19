@@ -36,6 +36,27 @@ func (e ActorType) Valid() bool {
 	}
 }
 
+// Defines values for AddableScopeSchemaClassification.
+const (
+	Admin AddableScopeSchemaClassification = "admin"
+	Read  AddableScopeSchemaClassification = "read"
+	Write AddableScopeSchemaClassification = "write"
+)
+
+// Valid indicates whether the value is a known member of the AddableScopeSchemaClassification enum.
+func (e AddableScopeSchemaClassification) Valid() bool {
+	switch e {
+	case Admin:
+		return true
+	case Read:
+		return true
+	case Write:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ApiKeyConfirmSessionRequestKind.
 const (
 	ApiKeyConfirmSessionRequestKindApiKey ApiKeyConfirmSessionRequestKind = "api_key"
@@ -1314,6 +1335,31 @@ type ActorSummaryResponse struct {
 // issued; treat unrecognised values as opaque labels.
 type ActorType string
 
+// AddableScopeSchema One scope the credential's vendor offers, which an edit can add.
+//
+// Examples: {"classification":"write","description":"Send email as the user.","name":"gmail.send"}
+type AddableScopeSchema struct {
+	// Classification What the scope lets a holder do.
+	//
+	// Examples: write
+	Classification AddableScopeSchemaClassification `json:"classification"`
+
+	// Description What the scope grants, in words.
+	//
+	// Examples: Send email as the user.
+	Description string `json:"description"`
+
+	// Name The scope as the vendor names it.
+	//
+	// Examples: gmail.send
+	Name string `json:"name"`
+}
+
+// AddableScopeSchemaClassification What the scope lets a holder do.
+//
+// Examples: write
+type AddableScopeSchemaClassification string
+
 // AgentCreateRequest Request body for creating an agent manually.
 //
 // Examples: {"description":"Reconciles Stripe invoices against the ledger every night.","name":"invoice-reconciler","permissions":["apis:read","capabilities:execute"]}
@@ -2536,7 +2582,7 @@ type BearerTokenUpdateRequestType string
 
 // BindingAccessResponse A binding's permission rules plus the rest of what it grants.
 //
-// Examples: {"data":[{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"granted_scopes":["repo","read:user"],"rule_set":{"curated":false,"id":"prs_6968b3987c22b63e87e79f05","name":"Stripe read-only","rules":[{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]},"suspended":false}
+// Examples: {"data":[{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"granted_scopes":["repo","read:user"],"rule_set":{"curated":false,"id":"prs_6968b3987c22b63e87e79f05","name":"Stripe read-only","rules":[{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]},"scope_catalog":[{"classification":"write","description":"Send email as the user.","name":"gmail.send"}],"scopes_addable":true,"suspended":false}
 type BindingAccessResponse struct {
 	// Data The binding's permission rules, in evaluation order.
 	//
@@ -2552,6 +2598,16 @@ type BindingAccessResponse struct {
 	//
 	// Examples: {"curated":false,"id":"prs_6968b3987c22b63e87e79f05","name":"Stripe read-only","rules":[{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
 	RuleSet *BindingRuleSetSchema `json:"rule_set,omitempty"`
+
+	// ScopeCatalog The scopes the credential's vendor offers; an edit can add only these. Null when its client has no catalog, in which case a scope is passed to the vendor as named.
+	//
+	// Examples: [{"classification":"write","description":"Send email as the user.","name":"gmail.send"}]
+	ScopeCatalog *[]AddableScopeSchema `json:"scope_catalog,omitempty"`
+
+	// ScopesAddable True when an edit can add OAuth scopes to the credential; the approver signs in to the vendor again to grant them.
+	//
+	// Examples: true
+	ScopesAddable *bool `json:"scopes_addable,omitempty"`
 
 	// Suspended True when the binding is suspended and the agent cannot use it.
 	//
@@ -11161,8 +11217,8 @@ type ClientInterface interface {
 	//
 	// Also returns the rest of what the binding grants: the shared rule set it
 	// points at (whose rules apply instead of `data`), the credential's granted
-	// OAuth scopes, and whether the binding is suspended. The bound agent can
-	// read its own binding.
+	// OAuth scopes and the ones an edit can add, and whether the binding is
+	// suspended. The bound agent can read its own binding.
 	//
 	// Corresponds with GET /credentials/{credential_id}/agents/{agent_id}/permissions (the `ListAgentCredentialPermissions` operationId).
 	ListAgentCredentialPermissions(ctx context.Context, credentialId string, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -15150,8 +15206,8 @@ func (c *Client) ListCredentialAgents(ctx context.Context, credentialId string, 
 //
 // Also returns the rest of what the binding grants: the shared rule set it
 // points at (whose rules apply instead of `data`), the credential's granted
-// OAuth scopes, and whether the binding is suspended. The bound agent can
-// read its own binding.
+// OAuth scopes and the ones an edit can add, and whether the binding is
+// suspended. The bound agent can read its own binding.
 //
 // Corresponds with GET /credentials/{credential_id}/agents/{agent_id}/permissions (the `ListAgentCredentialPermissions` operationId).
 func (c *Client) ListAgentCredentialPermissions(ctx context.Context, credentialId string, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -28067,8 +28123,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Also returns the rest of what the binding grants: the shared rule set it
 	// points at (whose rules apply instead of `data`), the credential's granted
-	// OAuth scopes, and whether the binding is suspended. The bound agent can
-	// read its own binding.
+	// OAuth scopes and the ones an edit can add, and whether the binding is
+	// suspended. The bound agent can read its own binding.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -46920,8 +46976,8 @@ func (c *ClientWithResponses) ListCredentialAgentsWithResponse(ctx context.Conte
 //
 // Also returns the rest of what the binding grants: the shared rule set it
 // points at (whose rules apply instead of `data`), the credential's granted
-// OAuth scopes, and whether the binding is suspended. The bound agent can
-// read its own binding.
+// OAuth scopes and the ones an edit can add, and whether the binding is
+// suspended. The bound agent can read its own binding.
 //
 // Returns a wrapper object for the known response body format(s).
 //

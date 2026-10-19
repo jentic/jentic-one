@@ -278,8 +278,8 @@ export class CredentialsService {
      *
      * Also returns the rest of what the binding grants: the shared rule set it
      * points at (whose rules apply instead of `data`), the credential's granted
-     * OAuth scopes, and whether the binding is suspended. The bound agent can
-     * read its own binding.
+     * OAuth scopes and the ones an edit can add, and whether the binding is
+     * suspended. The bound agent can read its own binding.
      * @returns BindingAccessResponse Successful Response
      * @throws ApiError
      */

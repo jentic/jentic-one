@@ -509,6 +509,8 @@ def test_agent_permissions_lifecycle(
         "rule_set": None,
         "granted_scopes": None,
         "suspended": False,
+        "scopes_addable": False,
+        "scope_catalog": None,
     }
 
     # PUT an ordered list: deny DELETE first, then allow the rest.

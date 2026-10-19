@@ -335,6 +335,54 @@
         "title": "ActorType",
         "type": "string"
       },
+      "AddableScopeSchema": {
+        "description": "One scope the credential's vendor offers, which an edit can add.",
+        "examples": [
+          {
+            "classification": "write",
+            "description": "Send email as the user.",
+            "name": "gmail.send"
+          }
+        ],
+        "properties": {
+          "classification": {
+            "description": "What the scope lets a holder do.",
+            "enum": [
+              "read",
+              "write",
+              "admin"
+            ],
+            "examples": [
+              "write"
+            ],
+            "title": "Classification",
+            "type": "string"
+          },
+          "description": {
+            "description": "What the scope grants, in words.",
+            "examples": [
+              "Send email as the user."
+            ],
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "description": "The scope as the vendor names it.",
+            "examples": [
+              "gmail.send"
+            ],
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "classification",
+          "description"
+        ],
+        "title": "AddableScopeSchema",
+        "type": "object"
+      },
       "AgentCreateRequest": {
         "additionalProperties": false,
         "description": "Request body for creating an agent manually.",
@@ -4130,6 +4178,14 @@
                 }
               ]
             },
+            "scope_catalog": [
+              {
+                "classification": "write",
+                "description": "Send email as the user.",
+                "name": "gmail.send"
+              }
+            ],
+            "scopes_addable": true,
             "suspended": false
           }
         ],
@@ -4214,6 +4270,39 @@
                 ]
               }
             ]
+          },
+          "scope_catalog": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/AddableScopeSchema"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The scopes the credential's vendor offers; an edit can add only these. Null when its client has no catalog, in which case a scope is passed to the vendor as named.",
+            "examples": [
+              [
+                {
+                  "classification": "write",
+                  "description": "Send email as the user.",
+                  "name": "gmail.send"
+                }
+              ]
+            ],
+            "title": "Scope Catalog"
+          },
+          "scopes_addable": {
+            "default": false,
+            "description": "True when an edit can add OAuth scopes to the credential; the approver signs in to the vendor again to grant them.",
+            "examples": [
+              true
+            ],
+            "title": "Scopes Addable",
+            "type": "boolean"
           },
           "suspended": {
             "description": "True when the binding is suspended and the agent cannot use it.",
@@ -38046,7 +38135,7 @@
     "/credentials/{credential_id}/agents/{agent_id}/permissions": {
       "description": "`GET`: List binding permission rules. `PUT`: Replace binding permission rules. `PATCH`: Patch binding permission rules.",
       "get": {
-        "description": "List the ordered PBAC rules for a direct `(agent, credential)` binding.\n\nAlso returns the rest of what the binding grants: the shared rule set it\npoints at (whose rules apply instead of `data`), the credential's granted\nOAuth scopes, and whether the binding is suspended. The bound agent can\nread its own binding.",
+        "description": "List the ordered PBAC rules for a direct `(agent, credential)` binding.\n\nAlso returns the rest of what the binding grants: the shared rule set it\npoints at (whose rules apply instead of `data`), the credential's granted\nOAuth scopes and the ones an edit can add, and whether the binding is\nsuspended. The bound agent can read its own binding.",
         "operationId": "listAgentCredentialPermissions",
         "parameters": [
           {
@@ -38136,6 +38225,14 @@
                       }
                     ]
                   },
+                  "scope_catalog": [
+                    {
+                      "classification": "write",
+                      "description": "Send email as the user.",
+                      "name": "gmail.send"
+                    }
+                  ],
+                  "scopes_addable": true,
                   "suspended": false
                 },
                 "schema": {

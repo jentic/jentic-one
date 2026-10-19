@@ -179,6 +179,7 @@ from jentic_one.shared.catalog import (
 )
 from jentic_one.shared.config import (
     VendorAuthConfig,
+    VendorScopeConfig,
     connect_approval_url,
     resolved_control_egress,
 )
@@ -252,6 +253,19 @@ class CreatedSession:
     resolved_flow: str
     # Revision 1, which a confirm names until the session is amended.
     revision_id: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class AddableScopes:
+    """Which scopes an edit can add to a credential.
+
+    ``supported`` is False when the credential can't take more scopes here.
+    ``catalog`` is the vendor's scope list when its client has one; ``None``
+    means any scope name is passed to the vendor as asked.
+    """
+
+    supported: bool
+    catalog: list[VendorScopeConfig] | None
 
 
 @dataclass(slots=True, frozen=True)
@@ -1729,6 +1743,12 @@ class ConnectSessionService:
             except (UnknownRuleError, NothingToChangeError) as exc:
                 exc.point_at(row.credential_id, row.agent_id)
                 raise
+            new_scopes = added_scopes(row.baseline, result)
+            if new_scopes:
+                async with self._ctx.control_db.session() as session:
+                    credential = await CredentialRepository.get_by_id(session, row.credential_id)
+                consent = await self._consent_source(credential) if credential else None
+                self._require_addable_scopes(consent, new_scopes)
             proposal = request.as_proposal()
             digest = revision_digest(baseline=row.baseline, result=result, reason=request.reason)
             fields = {"reason": request.reason}
@@ -1916,8 +1936,7 @@ class ConnectSessionService:
         # on the session like a vendor connect's; ``None`` when the
         # credential cannot be re-consented here.
         consent = await self._consent_source(credential)
-        if added_scopes(baseline, result) and consent is None:
-            raise ScopesNotSupportedError()
+        self._require_addable_scopes(consent, added_scopes(baseline, result))
 
         cap_scope = await self._check_open_session_caps(agent_id, identity.sub)
         poll_token = secrets.token_urlsafe(32)
@@ -2201,6 +2220,29 @@ class ConnectSessionService:
             return
         if credential.created_by != identity.sub:
             raise ScopeWideningForbiddenError(credential.id)
+
+    def _require_addable_scopes(self, consent: ConsentSource | None, scopes: list[str]) -> None:
+        """Refuse adding ``scopes`` the credential can't take or its vendor doesn't offer."""
+        if not scopes:
+            return
+        if consent is None:
+            raise ScopesNotSupportedError()
+        if consent.entry is not None:
+            unknown = self._vendors.validate_scopes(consent.entry, scopes)
+            if unknown:
+                raise ScopeValidationError(unknown)
+
+    async def addable_scopes(self, credential_id: str) -> AddableScopes:
+        """Which scopes an edit of a binding to ``credential_id`` can add."""
+        async with self._ctx.control_db.session() as session:
+            credential = await CredentialRepository.get_by_id(session, credential_id)
+        consent = await self._consent_source(credential) if credential is not None else None
+        if consent is None:
+            return AddableScopes(supported=False, catalog=None)
+        return AddableScopes(
+            supported=True,
+            catalog=list(consent.entry.scopes) if consent.entry is not None else None,
+        )
 
     async def _consent_source(self, credential: Credential) -> ConsentSource | None:
         """How ``credential`` is re-consented with more scopes, or ``None`` if it can't be.

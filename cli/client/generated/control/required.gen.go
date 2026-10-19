@@ -19,6 +19,9 @@ func (ActorLookupResponse) RequiredFields() []string { return []string{"data"} }
 func (ActorSummaryResponse) RequiredFields() []string {
 	return []string{"active", "actor_type", "created_at", "id", "name"}
 }
+func (AddableScopeSchema) RequiredFields() []string {
+	return []string{"classification", "description", "name"}
+}
 func (AgentCreateRequest) RequiredFields() []string       { return []string{"name"} }
 func (AgentListResponse) RequiredFields() []string        { return []string{"data", "has_more"} }
 func (AgentPermissionsRequest) RequiredFields() []string  { return []string{"permissions"} }
