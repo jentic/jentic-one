@@ -675,7 +675,7 @@ class _RecordingExecutor:
     def __init__(self) -> None:
         self.requests: list[UpstreamExecRequest] = []
 
-    async def execute(self, request: UpstreamExecRequest, *, session: Any) -> UpstreamExecResult:
+    async def execute(self, request: UpstreamExecRequest, *, db: Any) -> UpstreamExecResult:
         self.requests.append(request)
         return UpstreamExecResult(status_code=200, body=b"ok", content_type=None, duration_ms=1)
 
