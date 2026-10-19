@@ -5,10 +5,12 @@ SERVICES := app registry admin control broker
 
 BUILD_DIR := build
 
-.PHONY: help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check score openapi openapi-parity config-schema config-reference endpoints cli-reference broker-reference skills hooks clean dev start-fixtures stop-fixtures destroy-fixtures start-app start-registry start-admin start-control start-broker start-local build-wheel build-base build-all save-all images release-image $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES))
+.PHONY: perf-help help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check detect-secrets secrets-baseline score openapi openapi-parity config-schema config-reference endpoints cli-reference broker-reference skills hooks clean dev start-fixtures stop-fixtures destroy-fixtures start-app start-registry start-admin start-control start-broker start-local build-wheel build-base build-all save-all images release-image $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES))
 
 help: ## Show this help
-	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-13s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+	@printf "\n"
+	@$(MAKE) --no-print-directory -C tests/perf help
 
 install: sync ui-setup hooks ## Full dev setup: sync deps, install UI deps, install lefthook hooks
 
@@ -40,34 +42,43 @@ typecheck: ## Run mypy
 
 test: test-unit ## Run tests (unit only by default)
 
-test-unit: ## Run unit tests
-	uv run pytest tests/unit/
+# Parallel test execution (pytest-xdist). `loadfile` keeps each test module on
+# one worker, so module-scoped fixtures and in-module ordering hold; Postgres
+# suites get one database per worker (tests/harness/postgres.py). Run serially
+# with `make <target> PYTEST_XDIST=`. PYTEST_ARGS appends extra flags (CI sets
+# `--durations=25`).
+PYTEST_XDIST ?= -n auto --dist loadfile
+PYTEST_ARGS ?=
+COV_FLAGS := --cov=jentic_one --cov-report=term-missing
 
-test-fast: ## Run unit + arch tests (no external services)
-	uv run pytest tests/unit/ tests/arch/
+test-unit: ## Run unit tests (with coverage)
+	uv run pytest tests/unit/ $(PYTEST_XDIST) $(COV_FLAGS) $(PYTEST_ARGS)
+
+test-fast: ## Run unit + arch tests (no external services, no coverage)
+	uv run pytest tests/unit/ tests/arch/ $(PYTEST_XDIST) $(PYTEST_ARGS)
 
 test-integration: ## Run all integration tests against PostgreSQL (requires running fixtures)
-	uv run pytest tests/ -m integration --no-cov
+	uv run pytest tests/ -m integration $(PYTEST_XDIST) $(PYTEST_ARGS)
 
 test-integration-sqlite: ## Run backend-agnostic integration tests against SQLite (no external services)
-	JENTIC_TEST_BACKEND=sqlite uv run pytest tests/integration/ -m integration --no-cov
+	JENTIC_TEST_BACKEND=sqlite uv run pytest tests/integration/ -m integration $(PYTEST_XDIST) $(PYTEST_ARGS)
 
 test-integration-all: test-integration test-integration-sqlite ## Run integration tests on both backends
 
 test-arch: ## Run architecture enforcement tests
-	uv run pytest tests/arch/ -m arch --no-cov
+	uv run pytest tests/arch/ -m arch $(PYTEST_XDIST) $(PYTEST_ARGS)
 
 test-smoke: ## Run smoke tests (requires running services)
-	uv run pytest tests/smoke/ -m smoke --no-cov
+	uv run pytest tests/smoke/ -m smoke
 
 smoke-packaging: ## Build UI+wheel, install in a clean venv, verify the SPA is packaged & served (DB-free)
 	./scripts/spa_packaging_smoke.sh
 
 cov: ## Run unit + arch tests with coverage report
-	uv run pytest tests/unit/ tests/arch/ --cov-report=term-missing --cov-report=html
+	uv run pytest tests/unit/ tests/arch/ $(PYTEST_XDIST) $(COV_FLAGS) --cov-report=html
 
 cov-all: ## Run all tests with coverage (requires running fixtures/services)
-	uv run pytest tests/ --cov-report=term-missing --cov-report=html
+	uv run pytest tests/ $(PYTEST_XDIST) $(COV_FLAGS) --cov-report=html
 
 openapi: ## Regenerate the control-plane OpenAPI spec (+ UI client schema) from code
 	uv run python -m tools.openapi_export
@@ -134,8 +145,11 @@ score: ## Score the control + broker OpenAPI specs with the Jentic API Scorecard
 	done; \
 	exit $$status
 
-detect-secrets: ## Check for new secrets not in baseline
-	uv run detect-secrets scan --baseline .secrets.baseline --exclude-files '\.git/'
+detect-secrets: ## Fail if a fresh scan differs from .secrets.baseline (new secret, stale entry, or non-slim file)
+	uv run python -m tools.secrets_baseline check
+
+secrets-baseline: ## Re-scan into .secrets.baseline in slim form (no line numbers/timestamp)
+	uv run python -m tools.secrets_baseline update
 
 check: lint detect-secrets test-arch score ## Run lint, secrets audit, arch-tests, and score (score last: it needs npx/network and shouldn't block the offline gates)
 
@@ -296,3 +310,22 @@ release-image: ## Build + push the multi-arch app image to REGISTRY (e.g. REGIST
 		echo "Prerelease version — not moving :latest"; \
 		echo "Pushed $(RELEASE_IMAGE) ($(VERSION), $(GIT_SHA)) [$(RELEASE_PLATFORMS)]"; \
 	fi
+
+# ─── Broker perf / load suite (tests/perf/Makefile, see tests/perf/README.md) ─
+# Local-only, never run in CI. Targets live in tests/perf/Makefile; these are
+# explicit pass-throughs (no pattern rule, see SERVICE_RULES above), so
+# `make perf-<TAB>` completes and variables pass through (make perf-agent-sql CACHE=cold).
+PERF_TARGETS := build up provision overhead dbcost capacity profile ui load obs report down \
+	agent-doctor agent-sql agent-stages agent-cpu agent-resilience agent-compare
+
+# .PHONY is registered per rule here: PERF_TARGETS is defined after the .PHONY
+# list at the top of the file, which make expands at parse time.
+define PERF_RULE
+.PHONY: perf-$(1)
+perf-$(1):
+	@$$(MAKE) --no-print-directory -C tests/perf $(1)
+endef
+$(foreach t,$(PERF_TARGETS),$(eval $(call PERF_RULE,$(t))))
+
+perf-help: ## Perf: list the perf suite + agent probe targets (tests/perf/Makefile)
+	@$(MAKE) --no-print-directory -C tests/perf help

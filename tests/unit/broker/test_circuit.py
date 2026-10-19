@@ -8,6 +8,7 @@ latch TTL lapses. Failures below ``min_calls`` never trip it.
 from __future__ import annotations
 
 import pytest
+import structlog
 
 from jentic_one.shared.resilience import CircuitBreaker, CircuitState
 from jentic_one.shared.state.backend import MemoryStateBackend
@@ -84,3 +85,30 @@ async def test_per_host_isolation() -> None:
     assert not (await breaker.allow("bad.example.com")).allowed
     # A different host has its own counters/latch.
     assert (await breaker.allow("good.example.com")).allowed
+
+
+@pytest.mark.asyncio
+async def test_record_skips_when_the_store_is_full() -> None:
+    """A refused counter write after the upstream call never fails the request."""
+    backend = MemoryStateBackend(clock=_Clock(), max_entries=1)
+    breaker = _breaker(backend)
+    await breaker.record("a.example.com", ok=True)
+
+    await breaker.record("b.example.com", ok=False)
+
+    assert (await breaker.allow("b.example.com")).allowed
+
+
+@pytest.mark.asyncio
+async def test_a_refused_open_latch_is_logged_as_such() -> None:
+    """A trip the store refuses is told apart from a refused counter."""
+    backend = MemoryStateBackend(clock=_Clock(), max_entries=2)
+    breaker = _breaker(backend)
+
+    with structlog.testing.capture_logs() as logs:
+        for _ in range(4):
+            await breaker.record("api.example.com", ok=False)
+
+    skipped = [e for e in logs if e["event"] == "circuit_breaker_record_skipped"]
+    assert [e["reason"] for e in skipped] == ["open_latch_refused"]
+    assert (await breaker.allow("api.example.com")).allowed

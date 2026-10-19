@@ -1,17 +1,21 @@
-"""Unit tests for DatabaseSession.run_in_transaction body-level retry.
+"""Unit tests for DatabaseSession.transaction / run_in_transaction error handling.
 
 These use a real in-memory SQLite ``DatabaseSession`` (no DB mocking, per
 project rules) and induce transient failures by raising from the callable
 passed to ``run_in_transaction`` — exactly how a transient ``OperationalError``
-would surface from inside the transaction body in production.
+would surface from inside the transaction body in production — or from a
+``before_commit`` listener for a failure at commit.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.exc import IntegrityError, MissingGreenlet, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from jentic_one.shared.config import DatabaseConfig
 from jentic_one.shared.db.errors import (
@@ -100,3 +104,43 @@ async def test_transaction_maps_missing_greenlet_to_consistency_error(
         async with sqlite_session.transaction() as session:
             await session.execute(text("SELECT 1"))
             raise MissingGreenlet("greenlet_spawn has not been called")
+
+
+@pytest.mark.asyncio
+async def test_transaction_commit_failure_raises_and_never_commits_an_empty_retry(
+    tmp_path: Path,
+) -> None:
+    """A transient failure at commit surfaces as DatabaseUnavailableError.
+
+    The rollback discards the body's writes, so a second commit on the same
+    session would commit nothing and report success; a caller that commits
+    work it must not lose (an audit event before credential use) would then
+    proceed with that work silently dropped.
+    """
+    db = DatabaseSession(DatabaseConfig(backend="sqlite", path=str(tmp_path / "t.db")))
+    await db.connect()
+    try:
+        async with db.engine.begin() as conn:
+            await conn.execute(text("CREATE TABLE audit (id INTEGER PRIMARY KEY)"))
+        commits = 0
+
+        def _fail_first_commit(_session: Session) -> None:
+            nonlocal commits
+            commits += 1
+            if commits == 1:
+                raise _operational_error()
+
+        event.listen(Session, "before_commit", _fail_first_commit)
+        try:
+            with pytest.raises(DatabaseUnavailableError):
+                async with db.transaction() as session:
+                    await session.execute(text("INSERT INTO audit (id) VALUES (1)"))
+        finally:
+            event.remove(Session, "before_commit", _fail_first_commit)
+
+        assert commits == 1
+        async with db.session() as session:
+            rows = await session.execute(text("SELECT count(*) FROM audit"))
+            assert rows.scalar_one() == 0
+    finally:
+        await db.close()

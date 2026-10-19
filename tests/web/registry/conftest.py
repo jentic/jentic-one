@@ -9,7 +9,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from jentic_one.admin.services._support.tokens import issue_jwt
-from jentic_one.auth.web.app import install_on_app as install_auth_verifier
 from jentic_one.registry.web.app import create_app
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
@@ -20,9 +19,11 @@ pytestmark = pytest.mark.integration
 
 
 def _build_app(ctx: Context) -> FastAPI:
-    """Build the registry FastAPI app using the real factory, with lifespan disabled."""
+    """Build the registry FastAPI app using the real factory, with lifespan disabled.
+
+    The factory installs the platform verifier, so real tokens resolve as in prod.
+    """
     app = create_app(ctx)
-    install_auth_verifier(app, ctx)
     app.router.lifespan_context = noop_lifespan
     return app
 

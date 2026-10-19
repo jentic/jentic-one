@@ -171,7 +171,7 @@ async def emit_event(
     if valid_tags:
         data = {**(data or {}), "tags": [str(t) for t in valid_tags]}
 
-    event = await EventRepository.create(
+    event_id = await EventRepository.create(
         session,
         type=type,
         severity=severity,
@@ -194,7 +194,7 @@ async def emit_event(
     # telemetry is best-effort/approximate by design, and moving this to an
     # after-commit hook would add coupling for no analytic gain.
     _forward_to_telemetry(type, valid_tags, actor_type)
-    return event.id
+    return event_id
 
 
 async def emit_event_best_effort(

@@ -3,6 +3,8 @@ package client
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -59,9 +61,9 @@ func newRetryTransport(base http.RoundTripper, creds auth.Credentials) *retryTra
 }
 
 func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	// Buffer the body once so we can safely resend it on any retry. A nil GetBody
-	// (streaming body) means we cannot rewind, so such requests get exactly one
-	// attempt regardless of status.
+	// Make the body replayable once so we can safely resend it on any retry
+	// (via req.GetBody when set, else a bounded in-memory copy). A body that
+	// cannot be made replayable gets exactly one attempt regardless of status.
 	body, canRewind, err := bufferBody(req)
 	if err != nil {
 		return nil, err
@@ -73,7 +75,9 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	delay := retryBaseDelay
 
 	for attempt := 0; ; attempt++ {
-		rewind(req, body, canRewind)
+		if err := rewind(req, body, canRewind); err != nil {
+			return nil, err
+		}
 
 		resp, rtErr := t.base.RoundTrip(req)
 
@@ -133,7 +137,9 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			if !sleepCtx(req.Context(), delay) {
 				// Context cancelled mid-backoff: re-issue once to get a final
 				// response/error rather than fabricating one.
-				rewind(req, body, canRewind)
+				if err := rewind(req, body, canRewind); err != nil {
+					return nil, err
+				}
 				return t.base.RoundTrip(req)
 			}
 			delay *= 2
@@ -156,34 +162,72 @@ func isIdempotent(req *http.Request) bool {
 	return req.Header.Get("Idempotency-Key") != ""
 }
 
-// bufferBody reads req.Body into memory so retries can resend it. Returns
-// canRewind=false for a bodyless request or one whose body cannot be rewound.
-func bufferBody(req *http.Request) (buf []byte, canRewind bool, err error) {
-	if req.Body == nil || req.Body == http.NoBody {
-		return nil, true, nil
-	}
-	// Bound the buffer: a retry needs the whole body in RAM, but an unbounded
-	// ReadAll lets a huge/hostile request body OOM the process (review round-3
-	// P0 / theme 2). MaxBodyBytes covers any legitimate request.
-	data, err := ReadAllBounded(req.Body, MaxBodyBytes)
-	_ = req.Body.Close()
-	if err != nil {
-		return nil, false, err
-	}
-	return data, true, nil
+// replayBody is a request body that can be re-opened for every attempt. A
+// zero value is the bodyless request.
+type replayBody struct {
+	// open returns a fresh reader over the full body; nil for no body.
+	open   func() (io.ReadCloser, error)
+	length int64
 }
 
-// rewind resets req.Body to a fresh reader over buf before each attempt.
-func rewind(req *http.Request, buf []byte, canRewind bool) {
+// bufferBody makes req's body replayable so retries can resend it. When the
+// request already carries a known-length GetBody (net/http sets one for
+// *bytes.Buffer, *bytes.Reader and *strings.Reader bodies) it is reused
+// directly: re-reading such a body into a second []byte would double the peak
+// memory of a large upload for nothing. Any other body is read once, bounded.
+// Either way the body is capped at MaxBodyBytes so a huge/hostile request body
+// cannot OOM the process.
+func bufferBody(req *http.Request) (body replayBody, canRewind bool, err error) {
+	if req.Body == nil || req.Body == http.NoBody {
+		return replayBody{}, true, nil
+	}
+	// ContentLength > 0, not >= 0: for a client request, 0 with a non-NoBody
+	// Body means "unknown length" (a zero-length byte body is already NoBody),
+	// so such a request takes the bounded read-once path below.
+	if req.GetBody != nil && req.ContentLength > 0 {
+		_ = req.Body.Close()
+		if req.ContentLength > MaxBodyBytes {
+			return replayBody{}, false, requestTooLarge()
+		}
+		return replayBody{open: req.GetBody, length: req.ContentLength}, true, nil
+	}
+	data, err := ReadAllBounded(req.Body, MaxBodyBytes)
+	_ = req.Body.Close()
+	if errors.Is(err, ErrBodyTooLarge) {
+		return replayBody{}, false, requestTooLarge()
+	}
+	if err != nil {
+		return replayBody{}, false, err
+	}
+	return replayBody{
+		open:   func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(data)), nil },
+		length: int64(len(data)),
+	}, true, nil
+}
+
+// requestTooLarge is the request-path size refusal (ErrBodyTooLarge reads as a
+// response-side failure, which misleads on an oversize upload).
+func requestTooLarge() error {
+	return fmt.Errorf("%w (limit %d bytes)", ErrRequestBodyTooLarge, MaxBodyBytes)
+}
+
+// rewind resets req.Body to a fresh reader over the full body before each
+// attempt.
+func rewind(req *http.Request, body replayBody, canRewind bool) error {
 	if !canRewind {
-		return
+		return nil
 	}
-	if buf == nil {
+	if body.open == nil {
 		req.Body = http.NoBody
-		return
+		return nil
 	}
-	req.Body = io.NopCloser(bytes.NewReader(buf))
-	req.ContentLength = int64(len(buf))
+	rc, err := body.open()
+	if err != nil {
+		return fmt.Errorf("rewind request body: %w", err)
+	}
+	req.Body = rc
+	req.ContentLength = body.length
+	return nil
 }
 
 // retryAfter parses a Retry-After header (delta-seconds or HTTP-date).

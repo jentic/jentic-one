@@ -84,6 +84,45 @@ func (m *Manifest) RecordStackBuild(paths Paths, ref string) error {
 	return m.Save(paths)
 }
 
+// CLIUpdate describes a CLI half that just landed: the ref it tracks, the
+// version and commit the new binary reports, and where it is installed. Empty
+// fields leave the recorded value unchanged (Commit is cleared whenever
+// Version changes, so a stale SHA never sits next to the new version).
+type CLIUpdate struct {
+	Ref        string
+	Version    string
+	Commit     string
+	BinaryPath string
+}
+
+// RecordCLIUpdate persists a successful CLI swap so the next `update` compares
+// the CLI half against what is actually installed. Call it only after the swap
+// succeeded; the stack half is recorded separately by RecordStackBuild.
+//
+// A manifest written before stack_ref existed records the stack's build only
+// in Ref. Overwriting Ref with the new CLI ref would make ResolvedStackRef fall
+// back to it and report a stale stack as current (#943), so StackRef is
+// backfilled from the old Ref first when a stack was installed (Mode set) —
+// the same backfill tools/install.sh performs.
+func (m *Manifest) RecordCLIUpdate(paths Paths, u CLIUpdate) error {
+	if u.Ref != "" && u.Ref != m.Ref {
+		if m.StackRef == "" && m.Mode != "" {
+			m.StackRef = m.Ref
+		}
+		m.Ref = u.Ref
+	}
+	if u.Version != "" && u.Version != m.CLIVersion {
+		m.CLIVersion = u.Version
+		m.Commit = u.Commit
+	} else if u.Commit != "" {
+		m.Commit = u.Commit
+	}
+	if u.BinaryPath != "" {
+		m.BinaryPath = u.BinaryPath
+	}
+	return m.Save(paths)
+}
+
 // LoadManifest reads <paths>/install.json. A missing file is not an error: it
 // returns a zero-value manifest and found=false so callers can fall back to
 // build-time (ldflags) metadata.

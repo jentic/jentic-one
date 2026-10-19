@@ -48,7 +48,7 @@ func TestRenderBodyIncludesBaseURLAndSections(t *testing.T) {
 
 func TestManagedBlockRoundTrip(t *testing.T) {
 	body := "hello\nworld\n"
-	blkText := managedBlock("jentic", body, SourceBundled)
+	blkText := managedBlock("jentic", body, SourceBundled, "")
 	if !strings.Contains(blkText, beginMarkerFor("jentic")) || !strings.Contains(blkText, endMarkerFor("jentic")) {
 		t.Fatal("named markers missing")
 	}
@@ -66,13 +66,13 @@ func TestManagedBlockRoundTrip(t *testing.T) {
 }
 
 func TestSpliceCreatesPreservesAndReplaces(t *testing.T) {
-	r1 := splice(nil, "jentic", "body one\n", SourceBundled)
+	r1 := splice(nil, "jentic", "body one\n", SourceBundled, "")
 	if !r1.created || !r1.changed {
 		t.Fatalf("new file should be created+changed: %+v", r1)
 	}
 
 	existing := []byte("# user heading\n\nsome notes\n")
-	r2 := splice(existing, "jentic", "body one\n", SourceBundled)
+	r2 := splice(existing, "jentic", "body one\n", SourceBundled, "")
 	if !strings.Contains(string(r2.out), "# user heading") || !strings.Contains(string(r2.out), "some notes") {
 		t.Error("user content not preserved on splice")
 	}
@@ -80,12 +80,12 @@ func TestSpliceCreatesPreservesAndReplaces(t *testing.T) {
 		t.Error("managed block not added")
 	}
 
-	r3 := splice(r2.out, "jentic", "body one\n", SourceBundled)
+	r3 := splice(r2.out, "jentic", "body one\n", SourceBundled, "")
 	if r3.changed {
 		t.Error("identical re-splice should be a no-op")
 	}
 
-	r4 := splice(r2.out, "jentic", "body two\n", SourceBundled)
+	r4 := splice(r2.out, "jentic", "body two\n", SourceBundled, "")
 	if !r4.changed {
 		t.Error("changed content should splice")
 	}
@@ -100,8 +100,8 @@ func TestSpliceCreatesPreservesAndReplaces(t *testing.T) {
 // TestSpliceMultipleNamedBlocksCoexist proves several skills' named blocks live
 // in one file and that replacing one leaves siblings byte-identical.
 func TestSpliceMultipleNamedBlocksCoexist(t *testing.T) {
-	out := splice(nil, "jentic", "jentic body\n", SourceBundled).out
-	out = splice(out, "import-new-api", "import body\n", SourceBundled).out
+	out := splice(nil, "jentic", "jentic body\n", SourceBundled, "").out
+	out = splice(out, "import-new-api", "import body\n", SourceBundled, "").out
 
 	if !strings.Contains(string(out), beginMarkerFor("jentic")) ||
 		!strings.Contains(string(out), beginMarkerFor("import-new-api")) {
@@ -112,7 +112,7 @@ func TestSpliceMultipleNamedBlocksCoexist(t *testing.T) {
 	before := findBlock(out, "jentic")
 	jenticRegion := string(out[before.start:before.endPos])
 
-	updated := splice(out, "import-new-api", "import body v2\n", SourceBundled)
+	updated := splice(out, "import-new-api", "import body v2\n", SourceBundled, "")
 	if !updated.changed {
 		t.Fatal("import-new-api update should change the file")
 	}
@@ -126,9 +126,9 @@ func TestSpliceMultipleNamedBlocksCoexist(t *testing.T) {
 }
 
 func TestSpliceDetectsUserEdits(t *testing.T) {
-	r := splice(nil, "jentic", "original\n", SourceBundled)
+	r := splice(nil, "jentic", "original\n", SourceBundled, "")
 	tampered := strings.Replace(string(r.out), "original", "tampered", 1)
-	res := splice([]byte(tampered), "jentic", "original\n", SourceBundled)
+	res := splice([]byte(tampered), "jentic", "original\n", SourceBundled, "")
 	if !res.userEdits {
 		t.Error("expected userEdits to be detected on tampered block")
 	}
@@ -153,7 +153,7 @@ func TestLegacyBlockMigration(t *testing.T) {
 		t.Fatal("legacy block wrongly flagged as user-edited")
 	}
 
-	res := splice(existing, "jentic", body, SourceBundled)
+	res := splice(existing, "jentic", body, SourceBundled, "")
 	if !res.changed {
 		t.Fatal("migration should rewrite the file")
 	}
@@ -182,7 +182,7 @@ func TestLegacyBlockNotConsumedByFlowSkill(t *testing.T) {
 		strings.TrimRight(jbody, "\n") + "\n" + legacyEndMarker
 	existing := []byte("# user AGENTS\n\n" + legacy + "\n")
 
-	res := splice(existing, "contribute-spec-fix", "## contribute-spec-fix\n\nflow pointer\n", SourceBundled)
+	res := splice(existing, "contribute-spec-fix", "## contribute-spec-fix\n\nflow pointer\n", SourceBundled, "")
 
 	// The legacy jentic block must survive untouched…
 	if !strings.Contains(string(res.out), legacyBeginMarker) {
@@ -196,7 +196,7 @@ func TestLegacyBlockNotConsumedByFlowSkill(t *testing.T) {
 		t.Error("flow skill not appended as a named block")
 	}
 	// A subsequent jentic splice then migrates the legacy block (only jentic).
-	res2 := splice(res.out, "jentic", jbody, SourceBundled)
+	res2 := splice(res.out, "jentic", jbody, SourceBundled, "")
 	if strings.Contains(string(res2.out), legacyBeginMarker) {
 		t.Error("jentic splice should migrate the legacy block to the named form")
 	}
@@ -954,7 +954,7 @@ func TestApplyWritesAtomically(t *testing.T) {
 }
 
 func TestFindBlockIgnoresMarkerInsideContent(t *testing.T) {
-	realBlock := splice(nil, "jentic", "real body\n", SourceBundled).out
+	realBlock := splice(nil, "jentic", "real body\n", SourceBundled, "").out
 	doc := "# Notes\n\nExample marker: `" + beginMarkerFor("jentic") + "` (quoted inline, not anchored)\n\n"
 	combined := []byte(doc + string(realBlock))
 	blk := findBlock(combined, "jentic")
@@ -967,9 +967,9 @@ func TestFindBlockIgnoresMarkerInsideContent(t *testing.T) {
 }
 
 func TestSpliceHandlesCRLF(t *testing.T) {
-	lf := splice(nil, "jentic", "body one\n", SourceBundled).out
+	lf := splice(nil, "jentic", "body one\n", SourceBundled, "").out
 	crlf := []byte(strings.ReplaceAll(string(lf), "\n", "\r\n"))
-	res := splice(crlf, "jentic", "body one\n", SourceBundled)
+	res := splice(crlf, "jentic", "body one\n", SourceBundled, "")
 	if res.changed {
 		t.Errorf("CRLF re-splice should be a no-op, got changed=%v", res.changed)
 	}
@@ -979,13 +979,13 @@ func TestSpliceHandlesCRLF(t *testing.T) {
 }
 
 func TestMalformedHashIsRefreshableNotUserEdit(t *testing.T) {
-	out := string(splice(nil, "jentic", "body\n", SourceBundled).out)
+	out := string(splice(nil, "jentic", "body\n", SourceBundled, "").out)
 	corrupted := []byte(strings.Replace(out, "hash=", "hash=deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef ", 1))
 	blk := findBlock(corrupted, "jentic")
 	if blockUserEdited(corrupted, blk) {
 		t.Error("a malformed/foreign hash must be treated as refreshable")
 	}
-	res := splice(corrupted, "jentic", "body\n", SourceBundled)
+	res := splice(corrupted, "jentic", "body\n", SourceBundled, "")
 	if res.userEdits {
 		t.Error("re-splice over a malformed hash must not report userEdits")
 	}

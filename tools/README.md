@@ -14,6 +14,7 @@ by hand into a different path.
 | [`broker_reference.py`](broker_reference.py) | `make broker-reference` | `ui/public/broker-openapi.json` from the hand-curated broker spec |
 | [`openapi_parity.py`](openapi_parity.py) | `make openapi-parity` | Coverage report: reference vs generated OpenAPI specs |
 | [`skills_sync.py`](skills_sync.py) | `make skills` | Mirrors [`skills/`](../skills/) into its served `content/` copies |
+| [`secrets_baseline.py`](secrets_baseline.py) | `make secrets-baseline` / `make detect-secrets` | Slim [`.secrets.baseline`](../.secrets.baseline) (no line numbers/timestamp); the check is the CI secrets gate |
 | [`deploy/`](deploy/) | — | Click-based deploy CLI replacing the k8s/Helm make targets: `uv run python -m tools.deploy` |
 
 Each generated artifact has a byte-equality gate in

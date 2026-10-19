@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import base64
+import builtins
+import io
 import os
 import threading
 import time
@@ -26,6 +28,7 @@ from jentic_one.shared.config import (
     CatalogConfig,
     ConfigError,
     ConnectConfig,
+    ControlEgressConfig,
     CredentialsConfig,
     DirectOAuth2ProviderConfig,
     EgressConfig,
@@ -33,6 +36,8 @@ from jentic_one.shared.config import (
     EncryptionKey,
     EntitlementConfig,
     HeldExecutionsConfig,
+    IdempotencyConfig,
+    OAuthRateLimitConfig,
     RuntimeConfig,
     SigningKeyConfig,
     TelemetryConfig,
@@ -50,6 +55,14 @@ from jentic_one.shared.config import (
     has_spa_platform_client,
     load_config,
     resolved_auth_base_url,
+    resolved_control_egress,
+)
+from jentic_one.shared.state import (
+    BackendKind,
+    MemoryBackendConfig,
+    MemoryStateBackend,
+    StateBackendConfig,
+    build_state_backend,
 )
 
 
@@ -126,6 +139,27 @@ def test_http_wire_trace_defaults_off_and_env_enables(config_file: Path):
     with patch.dict(os.environ, {"JENTIC__LOGGING__HTTP_WIRE_TRACE": "true"}, clear=False):
         config = load_config(config_file)
     assert config.logging.http_wire_trace is True
+
+
+@pytest.mark.parametrize("ratio", ["-0.1", "1.5"])
+def test_tracing_sample_ratio_default_yaml_env_and_bounds(
+    config_file: Path, tmp_path: Path, sample_config_dict: dict[str, Any], ratio: str
+):
+    assert load_config(config_file).observability.tracing.sample_ratio == 1.0
+
+    from_yaml = tmp_path / "ratio.yaml"
+    from_yaml.write_text(
+        yaml.dump({**sample_config_dict, "observability": {"tracing": {"sample_ratio": 0.25}}})
+    )
+    assert load_config(from_yaml).observability.tracing.sample_ratio == 0.25
+
+    env = {"JENTIC__OBSERVABILITY__TRACING__SAMPLE_RATIO": "0.1"}
+    with patch.dict(os.environ, env, clear=False):
+        assert load_config(config_file).observability.tracing.sample_ratio == 0.1
+
+    env = {"JENTIC__OBSERVABILITY__TRACING__SAMPLE_RATIO": ratio}
+    with patch.dict(os.environ, env, clear=False), pytest.raises(ConfigError, match="sample_ratio"):
+        load_config(config_file)
 
 
 def test_control_connect_manual_flows_default_on_and_env_overrides(
@@ -783,6 +817,78 @@ def test_oauth_approval_status_rate_limit_env_overrides(config_file: Path):
     assert config.auth.oauth_rate_limit.approval_status_burst == 3
 
 
+def test_oauth_trusted_proxies_default_empty(config_file: Path):
+    config = load_config(config_file)
+    assert config.auth.oauth_rate_limit.trusted_proxies == []
+    assert config.auth.oauth_rate_limit.trusted_networks == ()
+
+
+def test_oauth_trusted_proxies_env_comma_separated(config_file: Path):
+    """The env var takes a comma-separated list of IPs and CIDRs (#1880)."""
+    env = {"JENTIC__AUTH__OAUTH_RATE_LIMIT__TRUSTED_PROXIES": "10.0.0.0/8, 172.17.0.1,fd00::/8"}
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    rl = config.auth.oauth_rate_limit
+    assert rl.trusted_proxies == ["10.0.0.0/8", "172.17.0.1", "fd00::/8"]
+    assert [str(n) for n in rl.trusted_networks] == ["10.0.0.0/8", "172.17.0.1/32", "fd00::/8"]
+
+
+def test_oauth_trusted_proxies_yaml_list(tmp_path: Path):
+    config = _load(
+        tmp_path,
+        {"auth": {"oauth_rate_limit": {"trusted_proxies": [" 10.0.0.0/8 ", "2001:db8::1"]}}},
+    )
+    rl = config.auth.oauth_rate_limit
+    assert rl.trusted_proxies == ["10.0.0.0/8", "2001:db8::1"]
+    assert [str(n) for n in rl.trusted_networks] == ["10.0.0.0/8", "2001:db8::1/128"]
+
+
+@pytest.mark.parametrize(
+    "entry", ["10.0.0.0/33", "10.0.0.256", "proxy.internal", "", "fe80::1%eth0"]
+)
+def test_oauth_trusted_proxies_invalid_entry_fails_load(tmp_path: Path, entry: str):
+    with pytest.raises(ConfigError, match=r"trusted_proxies entry"):
+        _load(tmp_path, {"auth": {"oauth_rate_limit": {"trusted_proxies": [entry]}}})
+
+
+@pytest.mark.parametrize(
+    ("entry", "warned"),
+    [
+        ("10.0.0.0/8", False),
+        ("172.17.0.1", False),
+        ("fd00::/8", False),
+        ("::ffff:192.168.0.0/112", False),
+        ("0.0.0.0/0", True),
+        ("::/0", True),
+        ("203.0.113.7", True),
+        ("8.0.0.0/7", True),
+    ],
+)
+def test_oauth_trusted_proxies_warns_on_public_network(
+    entry: str, warned: bool, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(config_module, "_warned_public_trusted_proxies", set())
+    with structlog.testing.capture_logs() as logs:
+        OAuthRateLimitConfig(trusted_proxies=[entry])
+        OAuthRateLimitConfig(trusted_proxies=[entry])
+    events = [e for e in logs if e["event"] == "trusted_proxies_network_includes_public_addresses"]
+    # Config is validated more than once per process: warn once per network.
+    assert len(events) == (1 if warned else 0)
+    if warned:
+        assert events[0]["entry"] == entry
+
+
+def test_oauth_trusted_networks_follow_later_changes():
+    """The parsed cache is keyed on the entries, so it never goes stale."""
+    cfg = OAuthRateLimitConfig(trusted_proxies=["10.0.0.0/8"])
+    assert [str(n) for n in cfg.trusted_networks] == ["10.0.0.0/8"]
+    copied = cfg.model_copy(update={"trusted_proxies": ["192.168.0.0/16"]})
+    assert [str(n) for n in copied.trusted_networks] == ["192.168.0.0/16"]
+    cfg.trusted_proxies = ["172.16.0.0/12"]
+    assert [str(n) for n in cfg.trusted_networks] == ["172.16.0.0/12"]
+    assert cfg.trusted_networks is cfg.trusted_networks
+
+
 def test_encryption_config_defaults():
     cfg = EncryptionConfig()
     assert cfg.active_id == "v1"
@@ -1128,51 +1234,228 @@ def test_oneshot_cache_entry_with_recycled_inode_is_not_served(
         _ONESHOT_CONFIG_CACHE.clear()
 
 
-def test_oneshot_cache_survives_writes_after_open(sample_config_dict: dict[str, Any]):
+def test_oneshot_cache_survives_writes_after_open(
+    sample_config_dict: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+):
     """Every pipe write bumps its ctime, so a supervisor still streaming the
     document after the loaders opened the fd must not leave any of them keyed
     on a pre-drain identity: a concurrent loader waiting on the drain, and a
     repeat load after it, must both take the cached document instead of
-    hitting EOF on the drained pipe."""
+    hitting EOF on the drained pipe.
+
+    The test couples to _read_config_text at three seams, and each failure
+    message names the seam it depends on:
+
+    - open: every open of the pipe path goes through io.open or builtins.open
+      (Path.open included); the opened file is where a loader parks.
+    - lock: _ONESHOT_CACHE_LOCK is looked up at call time, so a loader that
+      would block on it parks too.
+    - read gate: the writer holds its first write until a loader starts
+      draining the opened file through read(), readline(), readlines(), or
+      iteration. The drainer's in-lock fstat runs before that, which pins it
+      to the pre-write identity. A drain that bypasses the file object (e.g.
+      os.read on its fileno) never opens the gate, and the writer reports
+      that it is still waiting for a loader to start reading."""
+    # One deadline bounds every wait and join in the test, and all threads are
+    # daemons, so a wedged loader fails the test without holding the process.
+    timeout_s = 10.0
+    # The writer's read gate expires this long before the shared deadline.
+    gate_margin_s = 1.0
+    deadline = time.monotonic() + timeout_s
+
+    def remaining() -> float:
+        return max(0.0, deadline - time.monotonic())
+
+    # Each write lands on a later timestamp tick so it moves the ctime: a Linux
+    # tick is one jiffy (at most 10 ms), and macOS pipe timestamps are finer.
+    ctime_tick_s = 0.05
     doc = yaml.dump(sample_config_dict).encode()
     read_fd, write_fd = os.pipe()
-
-    def stream() -> None:
-        # The first delay lets both loaders open and stat the fd before any
-        # data arrives; each delay outlasts a Linux timestamp tick, so every
-        # write moves the ctime.
-        for chunk in (doc[: len(doc) // 2], doc[len(doc) // 2 :]):
-            time.sleep(0.1)
-            os.write(write_fd, chunk)
-        os.close(write_fd)
-
-    pipe_path = Path(f"/dev/fd/{read_fd}")
+    pipe_path = f"/dev/fd/{read_fd}"
     loaded: list[AppConfig] = []
     errors: list[BaseException] = []
 
+    # The writer and both loaders meet at one barrier before any byte is
+    # written. A loader parks right after it opens the pipe (it has stat'ed the
+    # pre-write identity and holds the fd), or when it would block on the cache
+    # lock, so an implementation that opens under the lock parks too. The hooks
+    # see every open of the pipe through io.open or builtins.open (Path.open
+    # included) and every acquire of _ONESHOT_CACHE_LOCK.
+    released = threading.Event()
+    rendezvous = threading.Barrier(3, action=released.set, timeout=timeout_s)
+    parked = {name: threading.Event() for name in ("loader-0", "loader-1")}
+    read_started = threading.Event()
+    # Set on teardown so the writer stops waiting on the read gate.
+    stop = threading.Event()
+
+    def park() -> None:
+        signal = parked.get(threading.current_thread().name)
+        if signal is None or signal.is_set() or released.is_set():
+            return
+        signal.set()
+        rendezvous.wait(remaining())
+
+    class _ReadGateFile:
+        """Wraps the opened pipe so any read-style call or iteration opens the gate."""
+
+        def __init__(self, f: Any) -> None:
+            self._f = f
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._f, name)
+
+        def __enter__(self) -> _ReadGateFile:
+            self._f.__enter__()
+            return self
+
+        def __exit__(self, *exc_info: Any) -> Any:
+            return self._f.__exit__(*exc_info)
+
+        def read(self, *args: Any) -> Any:
+            read_started.set()
+            return self._f.read(*args)
+
+        def readline(self, *args: Any) -> Any:
+            read_started.set()
+            return self._f.readline(*args)
+
+        def readlines(self, *args: Any) -> Any:
+            read_started.set()
+            return self._f.readlines(*args)
+
+        def __iter__(self) -> _ReadGateFile:
+            return self
+
+        def __next__(self) -> Any:
+            read_started.set()
+            return next(self._f)
+
+    real_open = io.open
+
+    def hooked_open(file: Any, *args: Any, **kwargs: Any) -> Any:
+        f: Any = real_open(file, *args, **kwargs)
+        if not isinstance(file, str | os.PathLike) or os.fspath(file) != pipe_path:
+            return f
+        try:
+            park()
+        except BaseException:
+            f.close()
+            raise
+        return _ReadGateFile(f)
+
+    class _ParkingLock:
+        """Stands in for _ONESHOT_CACHE_LOCK; a loader that would block parks first."""
+
+        def __init__(self) -> None:
+            self._lock = threading.Lock()
+
+        def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+            if self._lock.acquire(blocking=False):
+                return True
+            if not blocking:
+                return False
+            park()
+            return self._lock.acquire(timeout=timeout)
+
+        def release(self) -> None:
+            self._lock.release()
+
+        def __enter__(self) -> bool:
+            return self.acquire()
+
+        def __exit__(self, *exc_info: object) -> None:
+            self.release()
+
+    monkeypatch.setattr(config_module, "_ONESHOT_CACHE_LOCK", _ParkingLock())
+    monkeypatch.setattr(io, "open", hooked_open)
+    monkeypatch.setattr(builtins, "open", hooked_open)
+
+    def stream() -> None:
+        try:
+            rendezvous.wait(remaining())
+            # The drainer takes its in-lock fstat before it reads, so holding
+            # the first write until a read starts pins that fstat to the
+            # pre-write identity: a key taken there must never be what gets
+            # stored. The gate gives up a margin before the shared deadline so
+            # its error is recorded before the main thread's joins expire.
+            while not read_started.wait(0.05):
+                if stop.is_set():
+                    return
+                if remaining() <= gate_margin_s:
+                    errors.append(
+                        AssertionError(
+                            f"writer still waiting for a loader to start reading {pipe_path}: "
+                            "the read gate needs _read_config_text to drain the opened file "
+                            "through read(), readline(), readlines(), or iteration"
+                        )
+                    )
+                    return
+            for chunk in (doc[: len(doc) // 2], doc[len(doc) // 2 :]):
+                time.sleep(ctime_tick_s)
+                os.write(write_fd, chunk)
+        except threading.BrokenBarrierError:
+            return
+        finally:
+            # Closing even on a failed handshake lets a blocked loader see EOF.
+            os.close(write_fd)
+
     def load() -> None:
         try:
-            loaded.append(load_config(pipe_path))
+            loaded.append(load_config(Path(pipe_path)))
         except BaseException as exc:  # surfaced via the assertion below
             errors.append(exc)
+            # A loader that dies before the rendezvous breaks it, so the writer
+            # and the other loader stop waiting for a party that never arrives.
+            rendezvous.abort()
 
-    threads = [threading.Thread(target=stream)] + [threading.Thread(target=load) for _ in range(2)]
+    writer = threading.Thread(target=stream, name="writer", daemon=True)
+    loaders = [threading.Thread(target=load, name=name, daemon=True) for name in parked]
+    threads = [writer, *loaders]
     try:
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+        writer.start()
+        # Start the second loader only once the first has parked: on macOS,
+        # stat() of /dev/fd/N can fail with EBADF while another thread opens the
+        # same /dev/fd/N (#1803), a platform race and not the one under test.
+        for loader in loaders:
+            loader.start()
+            while not parked[loader.name].wait(0.05) and loader.is_alive() and remaining():
+                pass
+            assert parked[loader.name].is_set(), (
+                f"{loader.name} never parked: the rendezvous needs _read_config_text to "
+                f"open {pipe_path} through io.open or builtins.open (Path.open included), "
+                f"or to block on _ONESHOT_CACHE_LOCK; errors={errors!r}"
+            )
+        # Loaders first: a hung loader is the thread the failure names.
+        for loader in loaders:
+            loader.join(remaining())
+            if loader.is_alive():
+                stage = (
+                    "wedged in read (a read started; the loader is stuck in it or "
+                    "behind the cache lock)"
+                    if read_started.is_set()
+                    else "and the writer is still waiting for a loader to start reading"
+                )
+                raise AssertionError(
+                    f"{loader.name} still running after {timeout_s}s, {stage}; {errors=!r}"
+                )
+        writer.join(remaining())
+        assert not writer.is_alive(), f"writer still running after {timeout_s}s; {errors=!r}"
         assert errors == []
-        loaded.append(load_config(pipe_path))
+        loaded.append(load_config(Path(pipe_path)))
         assert {c.databases.registry.name for c in loaded} == {
             sample_config_dict["databases"]["registry"]["name"]
         }
         assert len(loaded) == 3
     finally:
+        rendezvous.abort()
+        stop.set()
         for t in threads:
             if t.is_alive():
-                t.join()
-        os.close(read_fd)
+                t.join(remaining())
+        # A thread still running may be reading read_fd; closing it under that
+        # thread could hand the fd number to an unrelated file, so it leaks.
+        if not any(t.is_alive() for t in threads):
+            os.close(read_fd)
         _ONESHOT_CONFIG_CACHE.clear()
 
 
@@ -1410,6 +1693,167 @@ def test_egress_allowed_internal_domains_comma_separated():
 def test_egress_empty_string_produces_empty_list():
     cfg = EgressConfig(allowed_private_subnets="")  # type: ignore[arg-type]
     assert cfg.allowed_private_subnets == []
+
+
+def _config_with(**sections: Any) -> AppConfig:
+    return AppConfig.model_validate(
+        {
+            "databases": {
+                "registry": {"name": "reg"},
+                "admin": {"name": "admin"},
+                "control": {"name": "ctrl"},
+            },
+            **sections,
+        }
+    )
+
+
+def test_control_egress_defaults_to_strict_broker_policy():
+    config = _config_with()
+    assert config.control.egress == ControlEgressConfig()
+    assert config.control.egress.allowed_private_subnets is None
+    assert config.control.egress.allowed_internal_domains is None
+    assert resolved_control_egress(config) == EgressConfig()
+
+
+def test_control_egress_inherits_broker_egress_when_unset():
+    config = _config_with(
+        broker={
+            "egress": {
+                "allowed_private_subnets": ["10.50.0.0/16"],
+                "allowed_internal_domains": [".corp.internal"],
+                "dns_pinning_enabled": False,
+            }
+        }
+    )
+    assert resolved_control_egress(config) == config.broker.egress
+
+
+def test_control_egress_override_differs_from_broker():
+    config = _config_with(
+        broker={"egress": {"allowed_private_subnets": ["10.50.0.0/16"]}},
+        control={"egress": {"allowed_private_subnets": ["10.60.0.0/16"]}},
+    )
+    assert resolved_control_egress(config).allowed_private_subnets == ["10.60.0.0/16"]
+    # The broker's own policy is untouched.
+    assert config.broker.egress.allowed_private_subnets == ["10.50.0.0/16"]
+
+
+def test_control_egress_unset_fields_fall_back_per_field():
+    config = _config_with(
+        broker={
+            "egress": {
+                "allowed_private_subnets": ["10.50.0.0/16"],
+                "allowed_internal_domains": [".corp.internal"],
+            }
+        },
+        control={"egress": {"allowed_internal_domains": [".svc.cluster.local"]}},
+    )
+    resolved = resolved_control_egress(config)
+    assert resolved.allowed_private_subnets == ["10.50.0.0/16"]
+    assert resolved.allowed_internal_domains == [".svc.cluster.local"]
+
+
+def test_control_egress_explicit_empty_list_is_stricter_than_broker():
+    config = _config_with(
+        broker={"egress": {"allowed_private_subnets": ["10.50.0.0/16"]}},
+        control={"egress": {"allowed_private_subnets": []}},
+    )
+    assert resolved_control_egress(config).allowed_private_subnets == []
+
+
+def test_control_egress_from_env_vars(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        yaml.dump(
+            {
+                "databases": {
+                    "registry": {"name": "reg"},
+                    "admin": {"name": "admin"},
+                    "control": {"name": "ctrl"},
+                },
+                "broker": {"egress": {"allowed_internal_domains": [".corp.internal"]}},
+            }
+        )
+    )
+    monkeypatch.setenv(
+        "JENTIC__CONTROL__EGRESS__ALLOWED_PRIVATE_SUBNETS", "10.50.0.0/16,10.51.0.0/16"
+    )
+    config = load_config(path)
+    assert config.control.egress.allowed_internal_domains is None
+    resolved = resolved_control_egress(config)
+    assert resolved.allowed_private_subnets == ["10.50.0.0/16", "10.51.0.0/16"]
+    # Not set for control, so inherited from broker.egress.
+    assert resolved.allowed_internal_domains == [".corp.internal"]
+    assert config.broker.egress.allowed_private_subnets == []
+
+
+def test_control_egress_empty_env_string_is_an_explicit_empty_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        yaml.dump(
+            {
+                "databases": {
+                    "registry": {"name": "reg"},
+                    "admin": {"name": "admin"},
+                    "control": {"name": "ctrl"},
+                },
+                "broker": {"egress": {"allowed_private_subnets": ["10.50.0.0/16"]}},
+            }
+        )
+    )
+    monkeypatch.setenv("JENTIC__CONTROL__EGRESS__ALLOWED_PRIVATE_SUBNETS", "")
+    config = load_config(path)
+    assert resolved_control_egress(config).allowed_private_subnets == []
+
+
+@pytest.mark.parametrize(
+    "key", ["dns_pinning_enabled", "allowed_private_subnet", "unknown"], ids=str
+)
+def test_control_egress_rejects_keys_outside_the_allowlist(key: str):
+    # Control-plane calls always pin DNS, so a pinning toggle here would be a
+    # silent no-op; it and any other unknown key fail validation instead.
+    with pytest.raises(ValidationError, match=key):
+        _config_with(control={"egress": {key: False}})
+
+
+def test_control_egress_dns_pinning_env_var_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        yaml.dump(
+            {
+                "databases": {
+                    "registry": {"name": "reg"},
+                    "admin": {"name": "admin"},
+                    "control": {"name": "ctrl"},
+                }
+            }
+        )
+    )
+    monkeypatch.setenv("JENTIC__CONTROL__EGRESS__DNS_PINNING_ENABLED", "false")
+    with pytest.raises(ConfigError, match="dns_pinning_enabled"):
+        load_config(path)
+
+
+def test_control_egress_round_trips_through_dump_and_validate():
+    # "Unset" is an explicit None in the model, so a dump/re-validate round trip
+    # keeps inheritance intact.
+    config = _config_with(
+        broker={"egress": {"allowed_private_subnets": ["10.50.0.0/16"]}},
+        control={"egress": {"allowed_internal_domains": [".corp.internal"]}},
+    )
+    again = AppConfig.model_validate(config.model_dump(mode="python"))
+    assert resolved_control_egress(again) == resolved_control_egress(config)
+    assert resolved_control_egress(again).allowed_private_subnets == ["10.50.0.0/16"]
+
+
+def test_control_egress_invalid_cidr_rejected():
+    with pytest.raises(ValidationError, match="invalid CIDR"):
+        _config_with(control={"egress": {"allowed_private_subnets": ["not-a-cidr"]}})
 
 
 def test_csv_to_list_rejects_non_string_non_list():
@@ -2021,3 +2465,66 @@ def test_http_jwks_url_env_override_rejected_in_production(config_file: Path):
         pytest.raises(ConfigError, match=r"jwks_url must be https:// in production"),
     ):
         load_config(config_file)
+
+
+# --- memory shared-state backend budgets --------------------------------------
+
+
+def test_memory_backend_namespace_budgets_are_configurable(config_file: Path):
+    env = {
+        "JENTIC__BROKER__RESILIENCE__BACKEND__MEMORY__MAX_ENTRIES_PER_NAMESPACE": "500",
+        "JENTIC__BROKER__RESILIENCE__BACKEND__MEMORY__MAX_BYTES_PER_NAMESPACE": "1000000",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        memory = load_config(config_file).broker.resilience.backend.memory
+    assert memory.max_entries_per_namespace == 500
+    assert memory.max_bytes_per_namespace == 1_000_000
+    assert memory.budgets()["idem"].max_entries == 250_000
+
+
+def test_memory_backend_total_cap_defaults_and_is_configurable(config_file: Path):
+    default = load_config(config_file).broker.resilience.backend.memory
+    assert default.max_total_bytes == 192 * 1024 * 1024
+    assert default.max_bytes_per_namespace == 16 * 1024 * 1024
+    assert default.budgets()["idem"].max_bytes == 128 * 1024 * 1024
+    assert default.budgets()["idem-body"].max_bytes == 32 * 1024 * 1024
+    env = {"JENTIC__BROKER__RESILIENCE__BACKEND__MEMORY__MAX_TOTAL_BYTES": "5000"}
+    with patch.dict(os.environ, env, clear=False):
+        memory = load_config(config_file).broker.resilience.backend.memory
+    assert memory.max_total_bytes == 5_000
+    backend = build_state_backend(StateBackendConfig(memory=memory))
+    assert isinstance(backend, MemoryStateBackend)
+    assert backend._max_total_bytes == 5_000
+    with pytest.raises(ValidationError):
+        MemoryBackendConfig(max_total_bytes=0)
+
+
+def test_an_idem_override_keeps_the_per_caller_share_unless_set():
+    memory = MemoryBackendConfig.model_validate(
+        {
+            "namespaces": {
+                "idem": {"max_entries": 10, "max_bytes": 10_000},
+                "idem-body": {"max_entries": 10, "max_bytes": 10_000, "max_owner_share": 1.0},
+                "cb": {"max_entries": 10, "max_bytes": 10_000},
+            }
+        }
+    )
+    budgets = memory.budgets()
+    assert budgets["idem"].max_owner_share == 0.1
+    assert budgets["idem-body"].max_owner_share == 1.0
+    assert budgets["cb"].max_owner_share is None
+
+
+@pytest.mark.parametrize(
+    ("backend", "configured", "expected"),
+    [
+        (BackendKind.MEMORY, None, 3_600.0),
+        (BackendKind.REDIS, None, 86_400.0),
+        (BackendKind.MEMORY, 120.0, 120.0),
+        (BackendKind.REDIS, 120.0, 120.0),
+    ],
+)
+def test_idempotency_replay_ttl_defaults_by_backend(
+    backend: BackendKind, configured: float | None, expected: float
+):
+    assert IdempotencyConfig(ttl_s=configured).replay_ttl_s(backend) == expected

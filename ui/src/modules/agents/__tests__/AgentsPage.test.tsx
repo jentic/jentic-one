@@ -1703,8 +1703,10 @@ describe('AgentsPage — flat agents surface', () => {
 	});
 
 	it('connecting from the inventory sheet clears the dashed tile and gap hint', async () => {
-		// The mocked connect flips a mutable fixture, like the backend callback. The
-		// cleared hint proves the DRAINED join was invalidated, not just the sheet's.
+		// The mocked backend flips a mutable fixture once the connect starts, like
+		// the provider callback. The cleared hint proves the DRAINED join was
+		// invalidated, not just the sheet's.
+		let connectRequested = false;
 		let connected = false;
 		const stripeCred = (): Credential =>
 			makeMockCredential({
@@ -1747,15 +1749,18 @@ describe('AgentsPage — flat agents surface', () => {
 					next_cursor: null,
 				});
 			}),
-			http.get('/credentials/:id', ({ params }) =>
-				params.id === 'cred_stripe_oauth' ? HttpResponse.json(stripeCred()) : undefined,
-			),
+			http.get('/credentials/:id', ({ params }) => {
+				if (params.id !== 'cred_stripe_oauth') return undefined;
+				const response = HttpResponse.json(stripeCred());
+				// The first read after the connect POST is the flow's baseline. The
+				// user "completes" the hosted sign-in once it is served, so the
+				// baseline sees the unconnected credential and the next poll the
+				// connected one — however late the baseline read lands.
+				if (connectRequested) connected = true;
+				return response;
+			}),
 			http.post('/credentials/:id/connect', () => {
-				// The user "completes" the hosted sign-in shortly after the
-				// popup opens (after the flow's baseline read).
-				setTimeout(() => {
-					connected = true;
-				}, 150);
+				connectRequested = true;
 				return HttpResponse.json({
 					authorize_url: 'https://provider.example.com/oauth/authorize?state=mock',
 					state: 'mock',
@@ -2666,6 +2671,8 @@ describe('AgentsPage — agents waiting on a connect request', () => {
 		renderPage();
 
 		const section = await waitingSection();
+		// The agent's name resolves through the actor directory, read alongside.
+		await waitFor(() => expect(section).toHaveTextContent('support-agent'));
 		const rows = within(section).getAllByRole('listitem');
 		expect(rows).toHaveLength(1);
 		expect(rows[0]).toHaveTextContent('support-agent');
@@ -2715,7 +2722,10 @@ describe('AgentsPage — agents waiting on a connect request', () => {
 		renderPage('/?agent=agnt_pending_2');
 
 		const section = await waitingSection();
-		await user.click(within(section).getByRole('link', { name: /Review support-agent/ }));
+		// The link's name carries the agent's name once the actor directory resolves it.
+		await user.click(
+			await within(section).findByRole('link', { name: /Review support-agent/ }),
+		);
 
 		const dialog = await screen.findByRole('dialog', { name: /^Approve integration$/ });
 		// The review read succeeded with no poll token (the mock admits only

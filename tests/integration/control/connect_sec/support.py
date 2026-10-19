@@ -127,7 +127,7 @@ async def import_spec(ctx: Context, schemes: dict[str, Any], **kwargs: Any) -> d
     """Import (or re-import) the API through the real registry ingest."""
     result = await ImportHandler(ctx).execute(
         job_id=f"job_{uuid.uuid4().hex[:20]}",
-        session=None,
+        db=None,
         payload={"sources": [spec_source(schemes, **kwargs)]},
         created_by="usr_sec_writer",
     )

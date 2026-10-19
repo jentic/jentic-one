@@ -7341,7 +7341,7 @@ type UsageStatsBlock struct {
 	// Examples: 720
 	P95Ms *float32 `json:"p95_ms"`
 
-	// Pending Number of asynchronous executions queued in the window that have not finished yet (still queued or running). They are not part of `total`, which counts finished executions only. A synchronous execution is counted once it finishes, never here. The `toolkit_id`, `api_id` and `agent_id` filters apply; a `status` filter makes this 0, since no unfinished execution has a final status.
+	// Pending Number of asynchronous executions queued in the window that have not finished yet (still queued or running). They are not part of `total`, which counts finished executions only. A synchronous execution is counted once it finishes, never here. The `api_id` and `agent_id` filters apply; a `status` filter makes this 0, since no unfinished execution has a final status.
 	//
 	// Examples: 3
 	Pending int `json:"pending"`
@@ -8011,9 +8011,6 @@ type StreamEventsParams struct {
 
 // ListExecutionsParams defines parameters for ListExecutions.
 type ListExecutionsParams struct {
-	// ToolkitId Legacy: only return executions mediated by this toolkit.
-	ToolkitId *string `form:"toolkit_id,omitempty" json:"toolkit_id,omitempty"`
-
 	// TraceId Only return executions with this trace ID.
 	TraceId *string `form:"trace_id,omitempty" json:"trace_id,omitempty"`
 
@@ -8126,9 +8123,6 @@ type GetUsageStatsParams struct {
 
 	// TopLimit Maximum number of `top` rows to return (1-50, default 10).
 	TopLimit *int `form:"top_limit,omitempty" json:"top_limit,omitempty"`
-
-	// ToolkitId Legacy: only count executions mediated by this toolkit.
-	ToolkitId *string `form:"toolkit_id,omitempty" json:"toolkit_id,omitempty"`
 
 	// ApiId Only count executions of this API, given as `vendor/name`.
 	ApiId *string `form:"api_id,omitempty" json:"api_id,omitempty"`
@@ -22589,18 +22583,6 @@ func NewListExecutionsRequest(server string, params *ListExecutionsParams) (*htt
 		// per the OpenAPI spec (e.g. "color=blue,black,brown").
 		var rawQueryFragments []string
 
-		if params.ToolkitId != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "toolkit_id", *params.ToolkitId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
 		if params.TraceId != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "trace_id", *params.TraceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
@@ -23626,18 +23608,6 @@ func NewGetUsageStatsRequest(server string, params *GetUsageStatsParams) (*http.
 		if params.TopLimit != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "top_limit", *params.TopLimit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.ToolkitId != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "toolkit_id", *params.ToolkitId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
