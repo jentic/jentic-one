@@ -29,7 +29,7 @@ from __future__ import annotations
 import base64
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlencode, urlparse, urlunparse
 
 import structlog
@@ -37,7 +37,8 @@ import structlog
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import SecurityConfig
 from jentic_one.shared.crypto.encryption import EncryptionService
-from jentic_one.shared.db.connectivity import redact_sql
+from jentic_one.shared.db.connectivity import involves_database_error, redact_sql
+from jentic_one.shared.db.protocols import TransactionalDatabase
 from jentic_one.shared.events import (
     MAX_EVENT_SUMMARY_FIELD_LEN,
     emit_event,
@@ -51,11 +52,13 @@ from jentic_one.shared.jobs.operation_payload import operation_from_job_payload
 from jentic_one.shared.jobs.protocols import (
     CredentialInjector,
     ExecutionAuthorizer,
+    ExecutionRecordNotPersistedError,
     InjectedAuth,
     QueuedExecutionRequest,
     UpstreamExecRequest,
     UpstreamExecutor,
 )
+from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ActorType as ActorTypeEnum
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.actors import origin_or_none
@@ -64,7 +67,48 @@ from jentic_one.shared.schemas import OperationInfo
 from jentic_one.shared.url import apply_server_variables
 from jentic_one.shared.url_validation import validate_upstream_url_async
 
+if TYPE_CHECKING:
+    from opentelemetry.metrics import Counter
+
 logger = structlog.get_logger(__name__)
+
+#: Suffix that marks a job result whose ``executions`` record was not written.
+_RECORD_NOT_PERSISTED = "execution record not persisted"
+
+# Created once on first increment, so the instrument identity is stable.
+_write_failures: Counter | None = None
+
+
+def _record_write_failure(write: str) -> None:
+    """Count a post-dispatch failure that left a queued execution's rows unwritten.
+
+    ``write`` is ``record`` (the ``executions`` record was not written),
+    ``lifecycle`` (the lifecycle events were not written), or ``runner`` (the
+    dispatched call itself crashed, so no record write was attempted).
+    """
+    global _write_failures
+    if _write_failures is None:
+        _write_failures = get_meter("jentic_one.jobs").create_counter(
+            "jentic_one.jobs.execution_write_failed",
+            description=(
+                "Queued-execution post-dispatch failures that left the executions "
+                "record (write=record) or lifecycle events (write=lifecycle) "
+                "unwritten, or a dispatched call that crashed before any record "
+                "write (write=runner); the job still completed with its real result."
+            ),
+        )
+    _write_failures.add(1, {"write": write})
+
+
+def _traceback_if_safe(exc: BaseException) -> BaseException | bool:
+    """``exc_info`` for a swallowed post-dispatch error: its traceback, unless unsafe.
+
+    A bug swallowed here is otherwise untraceable, so it is logged with its
+    traceback. A database error anywhere in the chain is not: its message can
+    carry the SQL statement and bound parameters.
+    """
+    return False if involves_database_error(exc) else exc
+
 
 #: Result problem of a held payload this worker has no keyset to decrypt.
 _HELD_PAYLOAD_UNDECRYPTABLE_PROBLEM: dict[str, Any] = {
@@ -114,13 +158,25 @@ class ExecutionHandler:
     async def execute(
         self,
         job_id: str,
-        session: Any,
+        db: TransactionalDatabase,
         *,
         payload: dict[str, Any] | None = None,
         created_by: str | None = None,
         actor_type: str | None = None,
     ) -> JobResultPayload:
-        """Resolve creds, dispatch through the pipeline, persist the result."""
+        """Resolve creds, dispatch through the pipeline, persist the result.
+
+        ``db`` is the worker's database. Each write opens its own short
+        transaction on it, after the upstream call, so the call is never awaited
+        while an admin connection (or, on SQLite, the write lock) is held.
+
+        Once the upstream call is dispatched nothing raises: a raise would
+        requeue the job and send the upstream request again. The executor
+        reports a lost record with the real upstream result, the lifecycle
+        write is best-effort, and either failure is logged and counted.
+        Failures before dispatch (credential resolution and its audit write)
+        propagate, so the job is retried with nothing sent.
+        """
         if not created_by or not actor_type:
             raise ValueError("created_by and actor_type are required for execution jobs")
         if payload is None:
@@ -193,7 +249,7 @@ class ExecutionHandler:
             )
             if not verdict.allowed:
                 return await self._deny(
-                    session,
+                    db,
                     job_id=job_id,
                     execution_id=execution_id,
                     trace_id=trace_id,
@@ -274,7 +330,7 @@ class ExecutionHandler:
                         "credential_name": credential_name,
                     },
                 ),
-                session=session,
+                db=db,
             )
             http_status = exec_result.status_code
             response_body = exec_result.body
@@ -283,6 +339,32 @@ class ExecutionHandler:
             if http_status >= 400:
                 status = ExecutionStatus.FAILED
                 error_msg = f"Upstream returned {http_status}"
+        except ExecutionRecordNotPersistedError as exc:
+            cause = exc.__cause__
+            _record_write_failure("runner" if exc.runner_failed else "record")
+            logger.error(
+                "queued_execution_record_not_persisted",
+                job_id=job_id,
+                execution_id=execution_id,
+                error_type=type(cause).__name__ if cause is not None else None,
+                http_status=exc.result.status_code if exc.result is not None else None,
+                exc_info=_traceback_if_safe(exc),
+            )
+            if exc.result is None:
+                status = ExecutionStatus.FAILED
+                error_msg = (
+                    f"{exc.upstream_error} ({_RECORD_NOT_PERSISTED})"
+                    if exc.upstream_error
+                    else _RECORD_NOT_PERSISTED.capitalize()
+                )[:MAX_EVENT_SUMMARY_FIELD_LEN]
+            else:
+                http_status = exc.result.status_code
+                response_body = exc.result.body
+                content_type = exc.result.content_type
+                duration_ms = exc.result.duration_ms
+                if http_status >= 400:
+                    status = ExecutionStatus.FAILED
+                    error_msg = f"Upstream returned {http_status} ({_RECORD_NOT_PERSISTED})"
         except (OSError, TimeoutError) as exc:
             status = ExecutionStatus.FAILED
             error_msg = str(exc)[:MAX_EVENT_SUMMARY_FIELD_LEN]
@@ -304,8 +386,8 @@ class ExecutionHandler:
             status = ExecutionStatus.FAILED
             error_msg = safe_error[:MAX_EVENT_SUMMARY_FIELD_LEN]
 
-        await self._emit_lifecycle(
-            session,
+        await self._write_lifecycle(
+            db,
             job_id=job_id,
             execution_id=execution_id,
             trace_id=trace_id,
@@ -332,7 +414,7 @@ class ExecutionHandler:
 
     async def _deny(
         self,
-        session: Any,
+        db: TransactionalDatabase,
         *,
         job_id: str,
         execution_id: str,
@@ -351,8 +433,8 @@ class ExecutionHandler:
         """
         problem_type = str(problem.get("type") or "about:blank")
         logger.info("queued_execution_denied", job_id=job_id, problem_type=problem_type)
-        await self._emit_lifecycle(
-            session,
+        await self._write_lifecycle(
+            db,
             job_id=job_id,
             execution_id=execution_id,
             trace_id=trace_id,
@@ -375,6 +457,57 @@ class ExecutionHandler:
                 "problem": problem,
             }
         )
+
+    async def _write_lifecycle(
+        self,
+        db: TransactionalDatabase,
+        *,
+        job_id: str,
+        execution_id: str,
+        trace_id: str,
+        status: ExecutionStatus,
+        error_msg: str | None,
+        created_by: str,
+        actor_type: str,
+        toolkit_id: str | None,
+        credential_id: str | None,
+        operation: OperationInfo | None,
+        origin: str | None,
+    ) -> None:
+        """Write the lifecycle events in their own transaction, best-effort.
+
+        They are written after the job's outcome is settled (the upstream call
+        was dispatched, or the job was denied). Whatever the write fails with
+        (a mapped database error, a pool checkout timeout, a lost connection,
+        a driver error, or a bug), the failure is logged and counted, and the
+        job still completes with its real result: a raise would requeue the
+        job and re-send the upstream request.
+        """
+        try:
+            async with db.transaction() as session:
+                await self._emit_lifecycle(
+                    session,
+                    job_id=job_id,
+                    execution_id=execution_id,
+                    trace_id=trace_id,
+                    status=status,
+                    error_msg=error_msg,
+                    created_by=created_by,
+                    actor_type=actor_type,
+                    toolkit_id=toolkit_id,
+                    credential_id=credential_id,
+                    operation=operation,
+                    origin=origin,
+                )
+        except Exception as exc:
+            _record_write_failure("lifecycle")
+            logger.warning(
+                "queued_execution_lifecycle_write_failed",
+                job_id=job_id,
+                execution_id=execution_id,
+                error_type=type(exc).__name__,
+                exc_info=_traceback_if_safe(exc),
+            )
 
     async def _emit_lifecycle(
         self,

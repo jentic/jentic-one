@@ -4,9 +4,8 @@ on:
   push:
     # Trunk CI only. Do NOT add `cli-v2-*` here: the stacked-PR chain gets full CI
     # via the pull_request trigger below, and adding the feature branches to `push`
-    # too would fire a SECOND, redundant run per commit (and, because most jobs are
-    # gated `|| github.event_name == 'push'`, that push run also skips the path
-    # filters and runs the entire matrix).
+    # too would fire a SECOND, redundant run per commit (and, because a push run
+    # ignores the per-PR path filters, that run would cover the entire matrix).
     branches: [main]
   pull_request:
     # `main` for normal PRs; `cli-v2-*` so the CLI-V2 stacked-PR chain (each phase's
@@ -25,12 +24,37 @@ on:
         'feat/credentials-and-approvals-overhaul',
         'feat/theme-8-*',
       ]
+  # Merge queue: the queued run gates the merge on the true post-merge tree.
+  # Inert until a merge queue is enabled in the main ruleset; behaves like a PR
+  # run (path-filtered, PR tier).
+  merge_group:
+  # Nightly backstop: the full matrix, no path filters and no pass-marker skips,
+  # so new CVEs (image scan), runner-image drift, and anything a path filter
+  # misses surface within a day. Includes the jobs that only run off-PR
+  # (cross-OS install, release-artifact smoke, image scan).
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+  # Release gate: release.yml calls this workflow with `full: true` on every
+  # vX.Y.Z tag, so the off-PR jobs (cross-OS install, goreleaser snapshot,
+  # image scan) have run on the exact tagged commit before anything publishes.
+  workflow_call:
+    inputs:
+      full:
+        description: Run every job with no path filters and no pass-marker skips.
+        type: boolean
+        default: true
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   # Only auto-cancel superseded runs on PRs. On main/tags every run should finish
   # (a cancelled push-to-main or tag run could skip the release gate).
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Appended to every `make test-*` pytest run (Makefile PYTEST_ARGS): lists the
+  # slowest tests in each job log so regressions in suite time are visible.
+  PYTEST_ARGS: --durations=25
 
 jobs:
   changes:
@@ -39,7 +63,27 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      actions: read # list Actions caches for the pass-marker lookup
     outputs:
+      # Run tiers:
+      # - `pr-tier`: pull_request / merge_group. Path-filtered; the expensive
+      #   release-shape jobs (cross-OS install, goreleaser snapshot, image
+      #   scan, scorecard) don't run.
+      # - push to main: every core job is eligible (no path filter), and the
+      #   pass markers below skip each one whose inputs already passed. Pass
+      #   markers compare against what actually passed, so a cancelled earlier
+      #   main run can't hide a change. The off-PR jobs use the path filter
+      #   (diffed against the previous main commit) with nightly as backstop.
+      # - `full`: nightly schedule / manual dispatch / release call. Every job,
+      #   no filters, no pass-marker skips.
+      full: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || inputs.full == true }}
+      pr-tier: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && inputs.full != true }}
+      # Pass markers (tools/ci_pass_markers.py): `skips` maps a job id to true
+      # when that job already passed on exactly these inputs; `keys` is the
+      # cache key each job saves on success. Defaults keep fromJSON valid if
+      # the lookup step never ran.
+      skips: ${{ steps.markers.outputs.skips || '{}' }}
+      keys: ${{ steps.markers.outputs.keys || '{}' }}
       unit-tests: ${{ steps.filter.outputs.unit-tests }}
       integration-tests: ${{ steps.filter.outputs.integration-tests }}
       ui: ${{ steps.filter.outputs.ui }}
@@ -49,11 +93,18 @@ jobs:
       openapi-spec: ${{ steps.filter.outputs.openapi-spec }}
       installer: ${{ steps.filter.outputs.installer }}
       e2e-install: ${{ steps.filter.outputs.e2e-install }}
+      cli-os-sensitive: ${{ steps.filter.outputs.cli-os-sensitive }}
+      security-image: ${{ steps.filter.outputs.security-image }}
     steps:
       - uses: actions/checkout@v7
 
+      # On a push to main the action diffs against the commit main was at
+      # before the push; on a PR / merge group, against its base. Not run on a
+      # `full` run: those ignore the filters, and a schedule / dispatch / tag
+      # event has no base to diff against.
       - uses: dorny/paths-filter@v4
         id: filter
+        if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch' && inputs.full != true
         with:
           filters: |
             unit-tests:
@@ -167,6 +218,24 @@ jobs:
               - 'src/jentic_one/migrations/**'
               - 'pyproject.toml'
               - 'uv.lock'
+            cli-os-sensitive:
+              # Go packages whose behaviour forks by GOOS (runtime.GOOS
+              # branches or OS build tags) plus the offline-smoke scripts and
+              # the build entry points. A PR touching these runs the macOS and
+              # Windows e2e-install legs; any other PR leaves them to main
+              # and nightly.
+              - 'cli/internal/proc/**'
+              - 'cli/internal/cli/ctlcmd/**'
+              - 'cli/internal/cli/localagentcmd/**'
+              - 'cli/internal/cli/api/**'
+              - 'cli/internal/config/**'
+              - 'cli/internal/install/**'
+              - 'cli/internal/localagent/**'
+              - 'cli/internal/mcpcfg/**'
+              - 'cli/tests/e2e/**'
+              - 'cli/Makefile'
+              - 'cli/go.mod'
+              - 'cli/go.sum'
             openapi-client:
               # Inputs that can change the generated UI client. The committed
               # spec (ui/openapi.json) is the codegen input — a spec change from
@@ -191,6 +260,31 @@ jobs:
               - 'src/jentic_one/admin/web/app.py'
               - 'src/jentic_one/shared/web/app_factory.py'
               - 'scripts/spa_packaging_smoke.*'
+            security-image:
+              # Inputs that change what the Trivy image scan sees: the base
+              # images and OS packages (Dockerfiles), the Python dependency set
+              # baked into the wheel venv, and the scan policy. A src-only edit
+              # cannot add a CVE to the image, so it doesn't rebuild it. The
+              # nightly schedule runs this unfiltered to pick up newly published
+              # CVEs against an unchanged image.
+              - 'deploy/docker/**'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - 'ui/package-lock.json'
+              - '.trivyignore'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      # Needs only PyYAML, so it runs outside the project env (no uv sync).
+      - name: Look up pass markers
+        id: markers
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          # A full run never skips (the tool also refuses on schedule/dispatch).
+          CI_FULL_RUN: ${{ inputs.full == true }}
+        run: uv run --no-project --python 3.12 --with 'pyyaml>=6' python tools/ci_pass_markers.py lookup
 
   lint:
     name: Lint & type-check
@@ -212,6 +306,12 @@ jobs:
       - name: Lint
         run: make lint
 
+      # Fails on any potential secret not allowlisted in .secrets.baseline
+      # (or inline `pragma: allowlist secret`), on stale baseline entries, on
+      # detector settings that differ from detect-secrets' defaults, and on a
+      # baseline not in slim form. Fix with `make secrets-baseline`.
+      - name: Detect secrets
+        run: make detect-secrets
   # OpenAPI Scorecard for the control and broker specs, via the official
   # jentic/jentic-api-scorecard action (SARIF to the Security tab, HTML report
   # artifact, Markdown run summary).
@@ -224,10 +324,17 @@ jobs:
   #
   # The action is pinned to a full release (CLI version == engine image tag) so
   # a new scoring engine never moves the score under an unchanged spec.
+  #
+  # Off the PR tier: runs on a push to main that changed a scored spec, or on a
+  # manual dispatch. Not nightly — an unchanged spec scores the same, and each
+  # run spends quota. Locally, `make score` gives the same result pre-merge.
   score:
     name: OpenAPI Scorecard (${{ matrix.spec }})
     needs: [changes]
-    if: needs.changes.outputs.openapi-spec == 'true' || github.event_name == 'push'
+    if: >-
+      needs.changes.outputs.pr-tier != 'true'
+      && github.event_name != 'schedule'
+      && (github.event_name == 'workflow_dispatch' || needs.changes.outputs.openapi-spec == 'true')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -268,7 +375,7 @@ jobs:
     # `client == codegen(committed spec)`; composed with the arch test, that
     # transitively pins `client == live app`. Node-only: no spec regen here (the
     # arch test owns that), so it stays fast and needs no Python/DB.
-    if: needs.changes.outputs.openapi-client == 'true' || github.event_name == 'push'
+    if: needs.changes.outputs.pr-tier != 'true' || needs.changes.outputs.openapi-client == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -303,15 +410,13 @@ jobs:
           fi
           echo "Generated UI client is in sync with ui/openapi.json."
 
+  # Source-tree security gates: fast (~30s), on every run. The BUILT-image scan
+  # lives in `security-image` below, path-gated on the image's inputs, so the
+  # image build no longer sits on every PR's critical path.
   security:
     name: Security scan
     runs-on: ubuntu-latest
     steps:
-      - name: Free disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-          sudo docker image prune -af
-
       - uses: actions/checkout@v7
 
       - name: Run Trivy vulnerability scanner
@@ -341,18 +446,48 @@ jobs:
           uv run --with pip-licenses pip-licenses \
             --fail-on="GPL-3.0-only;GPL-3.0-or-later;AGPL-3.0-only;AGPL-3.0-or-later"
 
-      # The fs scan above checks the source tree; the steps below scan the
-      # BUILT app image (base-image OS packages included) — the same class of
-      # finding AWS ECR / registry scanners reject on, so we fail here before
-      # a registry does. Same recipe as the release publish job (release.yml):
-      # base stages first, then the app image that FROMs python-base by tag.
-      # `ignore-unfixed` keeps the gate actionable: Debian-slim always carries
-      # unfixed low-priority CVEs, and a permanently red gate gets ignored.
-      # Overrides go in .trivyignore (CVE id + justification + expiry).
-      - name: Build the app image
+  # Scans the BUILT app image (base-image OS packages included) — the same class
+  # of finding AWS ECR / registry scanners reject on, so we fail here before a
+  # registry does. Builds deploy/docker/app.multiarch.Dockerfile for linux/amd64,
+  # the self-contained file release.yml builds and ships, with the BuildKit
+  # layer cache in the GitHub Actions cache so an unchanged base/deps layer set
+  # is a cache hit. `ignore-unfixed` keeps the gate actionable: Debian-slim
+  # always carries unfixed low-priority CVEs, and a permanently red gate gets
+  # ignored. Overrides go in .trivyignore (CVE id + justification + expiry).
+  security-image:
+    name: Security scan (app image)
+    needs: [changes]
+    if: needs.changes.outputs.full == 'true' || needs.changes.outputs.security-image == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      # The image build (torch wheels + two base stages) needs more disk than a
+      # stock runner has free on a cold cache; only pay for the cleanup then.
+      - name: Free disk space (only when short)
         run: |
-          make build-base
-          docker build -f deploy/docker/app.Dockerfile -t jentic-one/app:scan .
+          avail_gb=$(df --output=avail -BG / | tail -n1 | tr -dc '0-9')
+          echo "free on /: ${avail_gb}G"
+          if [ "${avail_gb}" -lt 25 ]; then
+            sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+            df -h /
+          fi
+
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build the app image (layer-cached)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/docker/app.multiarch.Dockerfile
+          platforms: linux/amd64
+          tags: jentic-one/app:scan
+          load: true
+          cache-from: type=gha,scope=app-image
+          # Only main writes the layer cache (PRs read it): per-PR writes would
+          # compete with every other cache for the repo's 10 GB budget.
+          cache-to: ${{ github.ref == 'refs/heads/main' && 'type=gha,scope=app-image,mode=max' || '' }}
 
       - name: Trivy image scan (fixable HIGH/CRITICAL)
         uses: aquasecurity/trivy-action@v0.36.0
@@ -364,10 +499,19 @@ jobs:
           exit-code: '1'
           trivyignores: .trivyignore
 
+  # No `needs: security`: nothing here consumes the security job's output, and
+  # waiting on it put the image build on every backend PR's critical path.
+  # `ci-status` still requires both.
+  #
+  # Pass markers: a job whose exact inputs already passed (on this ref or on
+  # main) is skipped via `skips`, and saves its own marker as its last step
+  # (tools/ci_pass_markers.py; .github/actions/ci-pass-marker).
   test-unit:
     name: Unit tests
-    needs: [lint, security, changes]
-    if: needs.changes.outputs.unit-tests == 'true' || github.event_name == 'push'
+    needs: [lint, changes]
+    if: >-
+      (needs.changes.outputs.pr-tier != 'true' || needs.changes.outputs.unit-tests == 'true')
+      && !fromJSON(needs.changes.outputs.skips)['test-unit']
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -386,21 +530,19 @@ jobs:
       - name: Run unit tests
         run: make test-unit
 
-      - name: Run architecture tests
-        # CI runs arch tests against the committed VENDORED rules facts
-        # (tests/arch/vendored/*). It never mounts an external rules source —
-        # the vendored-facts OSS-safety guard runs here regardless.
-        run: make test-arch
+      - uses: ./.github/actions/ci-pass-marker
+        with:
+          key: ${{ fromJSON(needs.changes.outputs.keys)['test-unit'] }}
 
-  test-integration:
-    name: Integration tests (${{ matrix.backend }})
-    needs: [lint, security, changes]
-    if: needs.changes.outputs.integration-tests == 'true' || github.event_name == 'push'
+  test-arch:
+    name: Architecture tests
+    needs: [lint, changes]
+    # Same input set as the unit suite (the unit-tests filter already lists
+    # tests/arch/** and every drift-gated artifact the arch suite reads).
+    if: >-
+      (needs.changes.outputs.pr-tier != 'true' || needs.changes.outputs.unit-tests == 'true')
+      && !fromJSON(needs.changes.outputs.skips)['test-arch']
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        backend: [postgres, sqlite]
     steps:
       - uses: actions/checkout@v7
 
@@ -415,21 +557,88 @@ jobs:
       - name: Install dependencies
         run: make sync
 
-      - name: Start database fixtures
-        if: matrix.backend == 'postgres'
+      - name: Run architecture tests
+        # CI runs arch tests against the committed VENDORED rules facts
+        # (tests/arch/vendored/*). It never mounts an external rules source —
+        # the vendored-facts OSS-safety guard runs here regardless.
+        run: make test-arch
+
+      - uses: ./.github/actions/ci-pass-marker
+        with:
+          key: ${{ fromJSON(needs.changes.outputs.keys)['test-arch'] }}
+
+  test-integration:
+    name: Integration tests (${{ matrix.backend }})
+    needs: [lint, changes]
+    if: needs.changes.outputs.pr-tier != 'true' || needs.changes.outputs.integration-tests == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [postgres, sqlite]
+    # A job-level `if` cannot see `matrix`, so each leg checks its own pass
+    # marker here and every step below is gated on it.
+    env:
+      PASSED: ${{ fromJSON(needs.changes.outputs.skips)[format('test-integration-{0}', matrix.backend)] }}
+    # Postgres as a service container: the runner pulls and boots it while the
+    # job is being set up, instead of serially in a step. An empty image skips
+    # the service on the sqlite leg. Same image/credentials as
+    # docker/local-setup/docker-compose.yaml; `make start-fixtures` with
+    # JENTIC_PG_EXTERNAL=1 then applies that compose file's init SQL + migrations.
+    services:
+      postgres:
+        image: ${{ matrix.backend == 'postgres' && 'postgres:16' || '' }}
+        env:
+          POSTGRES_DB: jentic
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres  # pragma: allowlist secret
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d jentic"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    steps:
+      - name: Already passed on these inputs
+        if: env.PASSED == 'true'
+        run: echo "::notice::Integration (${{ matrix.backend }}) already passed on identical inputs; skipping."
+
+      - uses: actions/checkout@v7
+        if: env.PASSED != 'true'
+
+      - name: Install uv
+        if: env.PASSED != 'true'
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        if: env.PASSED != 'true'
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        if: env.PASSED != 'true'
+        run: make sync
+
+      - name: Bootstrap the database (roles, schemas, migrations)
+        if: env.PASSED != 'true' && matrix.backend == 'postgres'
+        env:
+          JENTIC_PG_EXTERNAL: "1"
         run: make start-fixtures
 
       - name: Run integration tests (postgres)
-        if: matrix.backend == 'postgres'
+        if: env.PASSED != 'true' && matrix.backend == 'postgres'
         run: make test-integration
 
       - name: Run integration tests (sqlite)
-        if: matrix.backend == 'sqlite'
+        if: env.PASSED != 'true' && matrix.backend == 'sqlite'
         run: make test-integration-sqlite
 
-      - name: Stop fixtures
-        if: always() && matrix.backend == 'postgres'
-        run: make destroy-fixtures
+      - uses: ./.github/actions/ci-pass-marker
+        if: env.PASSED != 'true'
+        with:
+          key: ${{ fromJSON(needs.changes.outputs.keys)[format('test-integration-{0}', matrix.backend)] }}
 
   # Container images are built + published on release, not on branch CI. The
   # `publish-image` job in .github/workflows/release.yml builds the `app` image
@@ -437,9 +646,11 @@ jobs:
   # (or `make release-image REGISTRY=…` to push). See deploy/README.md.
 
   ui:
-    name: UI build, lint & test
+    name: UI build & lint
     needs: [changes]
-    if: needs.changes.outputs.ui == 'true' || github.event_name == 'push'
+    if: >-
+      (needs.changes.outputs.pr-tier != 'true' || needs.changes.outputs.ui == 'true')
+      && !fromJSON(needs.changes.outputs.skips)['ui']
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -456,29 +667,81 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-
-      - name: Install Playwright browser (Chromium)
-        # Vitest runs in browser mode via the Playwright provider, so component
-        # tests need a real Chromium. --with-deps installs the OS libs on the
-        # ubuntu runner.
-        run: npx playwright install --with-deps chromium
 
       - name: Lint
         run: npm run lint
 
       - name: Lint-rule enforcement tests (#510/#511 guardrails)
+        # Node-environment Vitest project (vitest.lint.config.ts): no browser.
         run: npm run test:lint
 
       - name: Build
         run: npm run build
 
+      - uses: ./.github/actions/ci-pass-marker
+        with:
+          key: ${{ fromJSON(needs.changes.outputs.keys)['ui'] }}
+
+  # The browser-mode component suite, split by file across shards so no single
+  # job carries the whole suite. Changing the shard count means changing the
+  # matrix, the `--shard` denominator, and the ui-test-<n> ids in
+  # tools/ci_pass_markers.py (tests/arch/test_ci_pass_markers.py pins them).
+  ui-test:
+    name: UI tests (shard ${{ matrix.shard }}/3)
+    needs: [changes]
+    if: needs.changes.outputs.pr-tier != 'true' || needs.changes.outputs.ui == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    env:
+      PASSED: ${{ fromJSON(needs.changes.outputs.skips)[format('ui-test-{0}', matrix.shard)] }}
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - name: Already passed on these inputs
+        if: env.PASSED == 'true'
+        working-directory: .
+        run: echo "::notice::UI shard ${{ matrix.shard }} already passed on identical inputs; skipping."
+
+      - uses: actions/checkout@v7
+        if: env.PASSED != 'true'
+
+      - name: Set up Node.js
+        if: env.PASSED != 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install dependencies
+        if: env.PASSED != 'true'
+        run: npm ci
+
+      - name: Install Playwright browser (Chromium)
+        # Vitest runs in browser mode via the Playwright provider, so component
+        # tests need a real Chromium (cached; OS libs installed every run).
+        if: env.PASSED != 'true'
+        uses: ./.github/actions/playwright-chromium
+
       - name: Test
-        run: npm run test:run
+        if: env.PASSED != 'true'
+        run: npm run test:run -- --shard=${{ matrix.shard }}/3
+
+      - uses: ./.github/actions/ci-pass-marker
+        if: env.PASSED != 'true'
+        with:
+          key: ${{ fromJSON(needs.changes.outputs.keys)[format('ui-test-{0}', matrix.shard)] }}
 
   ui-e2e:
     name: UI e2e (mocked)
     needs: [changes]
-    if: needs.changes.outputs.ui == 'true' || github.event_name == 'push'
+    if: >-
+      (needs.changes.outputs.pr-tier != 'true' || needs.changes.outputs.ui == 'true')
+      && !fromJSON(needs.changes.outputs.skips)['ui-e2e']
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -497,7 +760,7 @@ jobs:
         run: npm ci
 
       - name: Install Playwright browser (Chromium)
-        run: npx playwright install --with-deps chromium
+        uses: ./.github/actions/playwright-chromium
 
       - name: Run mocked e2e (boots dev server with MSW)
         run: npm run e2e
@@ -509,6 +772,10 @@ jobs:
           name: playwright-report
           path: ui/playwright-report/
           retention-days: 7
+
+      - uses: ./.github/actions/ci-pass-marker
+        with:
+          key: ${{ fromJSON(needs.changes.outputs.keys)['ui-e2e'] }}
 
   smoke-packaging:
     name: Packaging smoke (SPA served from wheel)
@@ -525,7 +792,7 @@ jobs:
     # NOTE (pipeline review F2/A1): this wheel is a PACKAGING TEST ONLY — it is
     # never published. The container image (release.yml `publish-image`) is the
     # sole supported backend distribution; there is no `pip install jentic-one`.
-    if: needs.changes.outputs.packaging == 'true' || github.event_name == 'push'
+    if: needs.changes.outputs.pr-tier != 'true' || needs.changes.outputs.packaging == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -564,8 +831,24 @@ jobs:
     # assuming this one covers the packaging seam.
     #
     # Triggers on UI, migration, or packaging-seam changes.
-    if: needs.changes.outputs.integration-tests == 'true' || needs.changes.outputs.ui == 'true' || needs.changes.outputs.packaging == 'true' || github.event_name == 'push'
+    if: needs.changes.outputs.pr-tier != 'true' || needs.changes.outputs.integration-tests == 'true' || needs.changes.outputs.ui == 'true' || needs.changes.outputs.packaging == 'true'
     runs-on: ubuntu-latest
+    # Fresh Postgres per job (no volume), booted during job setup. See the
+    # test-integration job for the JENTIC_PG_EXTERNAL bootstrap.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: jentic
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres  # pragma: allowlist secret
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d jentic"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
     steps:
       - uses: actions/checkout@v7
 
@@ -592,8 +875,7 @@ jobs:
         run: npm ci
 
       - name: Install Playwright browser (Chromium)
-        working-directory: ui
-        run: npx playwright install --with-deps chromium
+        uses: ./.github/actions/playwright-chromium
 
       - name: Build UI bundle
         working-directory: ui
@@ -613,6 +895,8 @@ jobs:
             || { echo "::error::SPA bundle missing: src/jentic_one/static/index.html not found after staging"; exit 1; }
 
       - name: Start database fixtures (clean DB -> first-run gate present)
+        env:
+          JENTIC_PG_EXTERNAL: "1"
         run: make start-fixtures
 
       - name: Start the Flow-3 fixture upstream
@@ -739,14 +1023,12 @@ jobs:
             kill -TERM "-${FLOW3_UPSTREAM_PGID}" 2>/dev/null || true
           fi
 
-      - name: Stop fixtures
-        if: always()
-        run: make destroy-fixtures
-
   cli:
     name: Go CLI lint & test
     needs: [changes]
-    if: needs.changes.outputs.cli == 'true' || github.event_name == 'push'
+    if: >-
+      (needs.changes.outputs.pr-tier != 'true' || needs.changes.outputs.cli == 'true')
+      && !fromJSON(needs.changes.outputs.skips)['cli']
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -765,8 +1047,13 @@ jobs:
           # updated build cache on every run instead.
           cache: false
 
-      - name: Go module + build cache (sha-keyed, incremental)
-        uses: actions/cache@v6
+      # Restore-only on PRs: each sha-keyed save is ~0.5 GB, and per-PR saves
+      # pushed the repo past the 10 GB Actions cache limit, so LRU eviction
+      # kept discarding every other cache (uv, npm, pass markers). PRs restore
+      # main's latest entry via restore-keys; main saves (step at the end).
+      - name: Go module + build cache (restore)
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ~/go/pkg/mod
@@ -778,6 +1065,26 @@ jobs:
 
       - name: Build
         run: go build ./...
+
+      # The CLI must build for every OS we ship binaries for. Windows regressed
+      # once on a Unix-only syscall (config.lockConfig), so gate it on the PR.
+      # `go build ./...` covers ALL packages, including ones not yet reachable
+      # from a shipped binary. Reuses this job's warm build cache (~30s).
+      - name: Cross-compile (windows/amd64, darwin/arm64)
+        run: |
+          GOOS=windows GOARCH=amd64 go build ./...
+          GOOS=darwin  GOARCH=arm64 go build ./...
+
+      # Pipeline review F3/C1: lint the GoReleaser config on the PR, not at tag
+      # time. A malformed archive/ldflag/cask stanza otherwise stays invisible
+      # until a real release. Pure config check, no build. The full snapshot
+      # build is the off-PR `cli-artifact-smoke` job.
+      - name: GoReleaser config valid
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: check
+          workdir: cli
 
       - name: Lint
         uses: golangci/golangci-lint-action@v9
@@ -842,16 +1149,32 @@ jobs:
             exit 1
           fi
 
-  # Release-artifact guards, split out of the `cli` job so they run in
-  # PARALLEL with lint/test/gen-checks instead of serializing ~7 minutes onto
-  # the run's critical path: `goreleaser release --snapshot` has no target
-  # filter (Pro feature), so the smoke below compiles the full 10-target
-  # release matrix (jenticctl×4 + jentic×6) with -trimpath — by far the most
-  # expensive CLI step. Same path gating as the `cli` job.
+      - name: Go module + build cache (save, main only)
+        if: github.ref == 'refs/heads/main' && steps.go-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-cli-${{ runner.os }}-${{ hashFiles('cli/go.sum') }}-${{ github.sha }}
+
+      - uses: ./.github/actions/ci-pass-marker
+        with:
+          key: ${{ fromJSON(needs.changes.outputs.keys)['cli'] }}
+
+  # Release-artifact guard: `goreleaser release --snapshot` has no target
+  # filter (Pro feature), so it compiles the full 10-target release matrix
+  # (jenticctl×4 + jentic×6) with -trimpath — by far the most expensive CLI
+  # step. Off the PR tier: it runs on a push to main that changed cli/**, and
+  # nightly; release.yml runs the real goreleaser build on every tag. The cheap
+  # guards a PR does need (cross-compile, `goreleaser check`) live in the `cli`
+  # job.
   cli-artifact-smoke:
     name: Go CLI release artifact smoke
     needs: [changes]
-    if: needs.changes.outputs.cli == 'true' || github.event_name == 'push'
+    if: >-
+      needs.changes.outputs.pr-tier != 'true'
+      && (needs.changes.outputs.full == 'true' || needs.changes.outputs.cli == 'true')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -867,8 +1190,9 @@ jobs:
           # go.sum-keyed one, so warm runs reuse the -trimpath build cache.
           cache: false
 
-      - name: Go module + build cache (sha-keyed, incremental)
-        uses: actions/cache@v6
+      - name: Go module + build cache (restore; saved from main only, see `cli`)
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ~/go/pkg/mod
@@ -881,36 +1205,13 @@ jobs:
             go-cli-smoke-${{ runner.os }}-${{ hashFiles('cli/go.sum') }}-
             go-cli-smoke-${{ runner.os }}-
 
-      # The CLI must build for every OS we ship
-      # binaries for. macOS + Linux already cross-compile; Windows regressed once
-      # on a Unix-only syscall (config.lockConfig), so gate it here — a future
-      # unguarded syscall can never silently break the Windows/macOS binary again.
-      # Kept alongside the goreleaser smoke (which only builds the two cmd/
-      # binaries' dependency graphs) because `go build ./...` covers ALL
-      # packages, including ones not yet reachable from a shipped binary.
-      - name: Cross-compile (windows/amd64, darwin/arm64)
-        run: |
-          GOOS=windows GOARCH=amd64 go build ./...
-          GOOS=darwin  GOARCH=arm64 go build ./...
-
-      # Pipeline review F3/C1: lint the GoReleaser config on the PR, not at tag
-      # time. A malformed archive/ldflag/cask stanza otherwise stays invisible
-      # until a real release. Pure config check, no build.
-      - name: GoReleaser config valid
-        uses: goreleaser/goreleaser-action@v7
-        with:
-          version: "~> v2"
-          args: check
-          workdir: cli
-
       # WIN-4 (cli-review2 windows-build): guard the *published artifact shape*,
       # not just `go build` — and doubles as pipeline review F3/C2 (a full
-      # GoReleaser snapshot build dry-run on the PR). A broken archive stanza (e.g. dropping `windows`
+      # GoReleaser snapshot build dry-run). A broken archive stanza (e.g. dropping `windows`
       # from goos, or mis-formatting the zip override) compiles fine but only
       # surfaces at tag time. Run a snapshot goreleaser build (no sign/sbom/
       # publish) and assert the windows `.zip` exists and contains `jentic.exe`
-      # (and only jentic — jenticctl is not shipped for Windows, WIN-6). Scoped
-      # to the same cli/** path filter as this job, so docs-only PRs skip it.
+      # (and only jentic — jenticctl is not shipped for Windows, WIN-6).
       - name: GoReleaser artifact smoke (windows .zip shape)
         uses: goreleaser/goreleaser-action@v7
         with:
@@ -972,10 +1273,19 @@ jobs:
           grep -q '"jentic.exe"' "${dist}/scoop/jentic.json" \
             || { echo "::error::scoop manifest does not install jentic.exe"; exit 1; }
 
+      - name: Go module + build cache (save, main only)
+        if: github.ref == 'refs/heads/main' && steps.go-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-cli-smoke-${{ runner.os }}-${{ hashFiles('cli/go.sum') }}-${{ github.sha }}
+
   installer:
     name: Installer script tests
     needs: [changes]
-    if: needs.changes.outputs.installer == 'true' || github.event_name == 'push'
+    if: needs.changes.outputs.pr-tier != 'true' || needs.changes.outputs.installer == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -997,11 +1307,16 @@ jobs:
   e2e-install:
     name: E2E install & smoke (${{ matrix.os }})
     needs: [changes]
-    if: needs.changes.outputs.e2e-install == 'true' || github.event_name == 'push'
+    # Linux leg: on any PR/push that changes the install inputs. macOS/Windows
+    # legs: on the PR tier only when OS-sensitive CLI code changed
+    # (`cli-os-sensitive`); otherwise on push to main (install inputs changed)
+    # and nightly. Expressions can't read `matrix` in a job-level `if`, so the
+    # matrix itself is narrowed instead.
+    if: needs.changes.outputs.full == 'true' || needs.changes.outputs.e2e-install == 'true'
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-latest, windows-latest]
+        os: ${{ fromJSON(needs.changes.outputs.pr-tier == 'true' && needs.changes.outputs.cli-os-sensitive != 'true' && '["ubuntu-24.04"]' || '["ubuntu-24.04","macos-latest","windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -1120,26 +1435,14 @@ jobs:
   ci-status:
     name: CI status
     if: always()
-    needs: [lint, openapi-client-drift, score, security, test-unit, test-integration, ui, ui-e2e, ui-e2e-realbackend, smoke-packaging, cli, cli-artifact-smoke, installer, e2e-install]
+    needs: [lint, openapi-client-drift, score, security, security-image, test-unit, test-arch, test-integration, ui, ui-test, ui-e2e, ui-e2e-realbackend, smoke-packaging, cli, cli-artifact-smoke, installer, e2e-install]
     runs-on: ubuntu-latest
     steps:
       - name: Check job results
+        # `needs.*.result` covers every job in `needs` above, so a new job only
+        # has to be added to that one list.
         env:
-          RESULTS: >-
-            ${{ needs.lint.result }}
-            ${{ needs.openapi-client-drift.result }}
-            ${{ needs.score.result }}
-            ${{ needs.security.result }}
-            ${{ needs.test-unit.result }}
-            ${{ needs.test-integration.result }}
-            ${{ needs.ui.result }}
-            ${{ needs.ui-e2e.result }}
-            ${{ needs.ui-e2e-realbackend.result }}
-            ${{ needs.smoke-packaging.result }}
-            ${{ needs.cli.result }}
-            ${{ needs.cli-artifact-smoke.result }}
-            ${{ needs.installer.result }}
-            ${{ needs.e2e-install.result }}
+          RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
           for r in $RESULTS; do
             if [[ "$r" == "failure" || "$r" == "cancelled" ]]; then

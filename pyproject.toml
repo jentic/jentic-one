@@ -96,6 +96,8 @@ dev = [
     "redis>=8.0.0",
     "jsonschema>=4.26.0",
     "types-jsonschema>=4.26.0.20261006",
+    "pytest-xdist>=3.8.0",
+    "filelock>=3.16",
 ]
 
 # Conventional-commit enforcement (pure Python — no Node needed). Fires for
@@ -204,8 +206,6 @@ addopts = [
     "-ra",
     "--strict-markers",
     "--strict-config",
-    "--cov=jentic_one",
-    "--cov-report=term-missing",
 ]
 markers = [
     "integration: marks tests requiring running database fixtures",

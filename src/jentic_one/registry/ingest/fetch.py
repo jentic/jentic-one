@@ -352,6 +352,7 @@ async def load_specification(
         sha = hashlib.sha256(source.content.encode()).hexdigest()
         source_type = ApiRevisionSourceType.INLINE
         source_url = source.source_url
+        retrieval_url: str | None = None
         source_filename: str | None = source.filename
     else:
         try:
@@ -404,6 +405,7 @@ async def load_specification(
         sha = hashlib.sha256(resp.content).hexdigest()
         source_type = ApiRevisionSourceType.URL
         source_url = source.url
+        retrieval_url = validated_url
         source_filename = None
 
     api_identifier = resolve_api_identifier(
@@ -421,6 +423,7 @@ async def load_specification(
         content=content,
         source_type=source_type,
         source_url=source_url,
+        retrieval_url=retrieval_url,
         source_filename=source_filename,
         submitted_by=source.submitted_by,
         origin=source.origin,

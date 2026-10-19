@@ -158,14 +158,13 @@ async def test_async_post_reaches_upstream_with_content_and_version_headers(
             # The test upstream listens on loopback, which the default policy blocks.
             egress=EgressConfig(allowed_private_subnets=["127.0.0.0/8"]),
         )
-        async with ctx.admin_db.transaction() as session:
-            result = await handler.execute(
-                job_id,
-                session,
-                payload=payload,
-                created_by=_AGENT.sub,
-                actor_type=_AGENT.actor_type.value,
-            )
+        result = await handler.execute(
+            job_id,
+            ctx.admin_db,
+            payload=payload,
+            created_by=_AGENT.sub,
+            actor_type=_AGENT.actor_type.value,
+        )
 
     assert result.body["status"] == "completed"
     assert result.body["http_status"] == 200

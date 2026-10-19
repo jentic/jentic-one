@@ -11,6 +11,7 @@ from jentic.problem_details import ValidationError as ProblemValidationError
 from jentic_one.admin.services.execution_service import ExecutionService
 from jentic_one.admin.services.schemas.executions import ExecutionFilter, ExecutionView
 from jentic_one.admin.web.deps import get_execution_service
+from jentic_one.admin.web.removed_params import log_ignored_query_params
 from jentic_one.admin.web.schemas.executions import (
     ApiInfoResponse,
     ExecutionListResponse,
@@ -78,11 +79,6 @@ async def list_executions(
     request: Request,
     identity: Identity = get_current_identity(required_permissions=["executions:read"]),
     exec_svc: ExecutionService = Depends(get_execution_service),
-    toolkit_id: str | None = Query(
-        default=None,
-        description="Legacy: only return executions mediated by this toolkit.",
-        openapi_examples=ex.example(ex.TOOLKIT_ID),
-    ),
     trace_id: str | None = Query(
         default=None,
         description="Only return executions with this trace ID.",
@@ -136,6 +132,7 @@ async def list_executions(
     ),
 ) -> ExecutionListResponse:
     """List execution records with optional filters."""
+    log_ignored_query_params(request, identity)
     if status is not None:
         invalid = [s for s in status if s not in _TERMINAL_STATUSES]
         if invalid:
@@ -153,7 +150,6 @@ async def list_executions(
 
     page = await exec_svc.list_all(
         filter=ExecutionFilter(
-            toolkit_id=toolkit_id,
             trace_id=trace_id,
             status=status,
             from_=from_,

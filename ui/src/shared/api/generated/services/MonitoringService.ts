@@ -50,7 +50,6 @@ export class MonitoringService {
         until,
         groupBy,
         topLimit = 10,
-        toolkitId,
         apiId,
         agentId,
         status,
@@ -72,10 +71,6 @@ export class MonitoringService {
          */
         topLimit?: number,
         /**
-         * Legacy: only count executions mediated by this toolkit.
-         */
-        toolkitId?: (string | null),
-        /**
          * Only count executions of this API, given as `vendor/name`.
          */
         apiId?: (string | null),
@@ -96,7 +91,6 @@ export class MonitoringService {
                 'until': until,
                 'group_by': groupBy,
                 'top_limit': topLimit,
-                'toolkit_id': toolkitId,
                 'api_id': apiId,
                 'agent_id': agentId,
                 'status': status,

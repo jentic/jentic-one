@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
-from jentic_one.admin.services.schemas.executions import ExecutionView
-from jentic_one.admin.web.routers.executions import _execution_response
+import structlog
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from jentic_one.admin.services.execution_service import ExecutionService
+from jentic_one.admin.services.schemas.executions import ExecutionFilter, ExecutionView
+from jentic_one.admin.web.deps import get_execution_service
+from jentic_one.admin.web.routers.executions import _execution_response, router
+from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.pagination import Page
+from jentic_one.shared.web.deps import resolve_identity
 
 
 def _make_request() -> MagicMock:
@@ -87,3 +96,38 @@ def test_response_operation_identity_fields_null_on_legacy_rows() -> None:
     assert data["operation_id"] == "getThing"
     assert data["operation_path"] is None
     assert data["operation_method"] is None
+
+
+async def _fake_identity() -> Identity:
+    return Identity(sub="usr_test", permissions=["executions:read"])
+
+
+def test_list_ignores_toolkit_id_param_and_logs_it() -> None:
+    """Pins #1745: ``toolkit_id`` is not a filter on ``GET /executions``.
+
+    No filter reaches the service, and one ``removed_query_param_ignored`` INFO
+    names the param and the caller but never the value.
+    """
+    svc = AsyncMock(spec=ExecutionService)
+    svc.list_all.return_value = Page[ExecutionView](data=[], has_more=False)
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[resolve_identity] = _fake_identity
+    app.dependency_overrides[get_execution_service] = lambda: svc
+    client = TestClient(app)
+
+    with structlog.testing.capture_logs() as logs:
+        resp = client.get("/executions", params={"toolkit_id": "tk_secretvalue"})
+
+    assert resp.status_code == 200
+    assert svc.list_all.call_args.kwargs["filter"] == ExecutionFilter()
+    ignored = [log for log in logs if log["event"] == "removed_query_param_ignored"]
+    assert ignored == [
+        {
+            "event": "removed_query_param_ignored",
+            "log_level": "info",
+            "param": "toolkit_id",
+            "route": "/executions",
+            "actor_id": "usr_test",
+        }
+    ]

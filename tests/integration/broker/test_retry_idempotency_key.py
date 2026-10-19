@@ -113,17 +113,16 @@ async def test_status_retry_gate_honours_idempotency_key(
 
     async with httpx.AsyncClient() as client:
         runner = build_runner(HttpRunner(client), deadline_s=10.0, retry=retry)
-        async with integration_context.admin_db.transaction() as session:
-            outcome = await run_execution(
-                ctx_req,
-                body=body,
-                headers=forward_headers(inbound, {}),
-                session=session,
-                broker=default_broker(runner),
-                actor_id=_ACTOR,
-                actor_type="agent",
-                has_idempotency_key=keyed,
-            )
+        outcome = await run_execution(
+            ctx_req,
+            body=body,
+            headers=forward_headers(inbound, {}),
+            admin_db=integration_context.admin_db,
+            broker=default_broker(runner),
+            actor_id=_ACTOR,
+            actor_type="agent",
+            has_idempotency_key=keyed,
+        )
 
     assert outcome.result.status_code == expected_status
     assert len(upstream.heads) == expected_attempts

@@ -261,6 +261,21 @@ class UpstreamTimeoutError(BrokerError):
     default_type = "upstream_timeout"
 
 
+class UpstreamTransportError(BrokerError):
+    """The broker could not talk to the upstream at the transport level (502).
+
+    The upstream dropped the connection (including partway through the response
+    body), refused it, or broke the HTTP protocol, so no usable upstream answer
+    exists. ``broker`` origin: the broker generated this response. Typed
+    ``upstream_transport_error`` (the request may have reached the upstream) or
+    ``upstream_connect_failed`` (connect phase, ``pre_send``: no request bytes
+    were sent). A connect or read *timeout* is :class:`UpstreamTimeoutError`
+    (504) instead.
+    """
+
+    default_type = "upstream_transport_error"
+
+
 class DeadlineExceededError(BrokerError):
     """The overall request deadline elapsed before the call completed (504).
 

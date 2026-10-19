@@ -17,7 +17,12 @@ import (
 func newTestApp(t *testing.T) (*app, *bytes.Buffer) {
 	t.Helper()
 	out := &bytes.Buffer{}
-	app := &app{App: &cmdcore.App{Paths: config.Paths{Root: t.TempDir()}, Out: out, Err: out}}
+	app := &app{App: &cmdcore.App{
+		Paths:     config.Paths{Root: t.TempDir()},
+		Out:       out,
+		Err:       out,
+		DetectEnv: sandboxSkillEnv(t.TempDir(), t.TempDir()),
+	}}
 	return app, out
 }
 

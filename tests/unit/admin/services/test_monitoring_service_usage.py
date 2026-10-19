@@ -267,13 +267,13 @@ async def test_filters_are_included_in_cache_key() -> None:
     )
 
     key1 = (1000, 87400, GroupBy.API, 10, UsageFilters())
-    key2 = (1000, 87400, GroupBy.API, 10, UsageFilters(toolkit_id="tk_abc"))
+    key2 = (1000, 87400, GroupBy.API, 10, UsageFilters(agent_id="agt_abc"))
     svc._usage_cache[key1] = _UsageCacheEntry(result=cached1, cached_at=time.monotonic())
     svc._usage_cache[key2] = _UsageCacheEntry(result=cached2, cached_at=time.monotonic())
 
     result1 = await svc.get_usage_stats(since=1000, until=87400)
     result2 = await svc.get_usage_stats(
-        since=1000, until=87400, filters=UsageFilters(toolkit_id="tk_abc")
+        since=1000, until=87400, filters=UsageFilters(agent_id="agt_abc")
     )
     assert result1.total == 100
     assert result2.total == 50
@@ -327,7 +327,7 @@ async def test_query_usage_assembles_response_correctly() -> None:
 async def test_filters_are_passed_to_repository() -> None:
     ctx = _make_ctx()
     svc = MonitoringService(ctx)
-    filters = UsageFilters(toolkit_id="tk_abc", api_id="stripe/payments", agent_id=None)
+    filters = UsageFilters(api_id="stripe/payments", agent_id="agt_abc", status="failed")
 
     with (
         patch(
@@ -354,7 +354,7 @@ async def test_filters_are_passed_to_repository() -> None:
         await svc.get_usage_stats(since=1719792000, until=1719878400, filters=filters)
 
     expected_filters = UsageQueryFilters(
-        toolkit_id="tk_abc", api_vendor="stripe", api_name="payments"
+        api_vendor="stripe", api_name="payments", actor_id="agt_abc", status="failed"
     )
     assert mock_stats.call_args[1]["filters"] == expected_filters
     assert mock_buckets.call_args[1]["filters"] == expected_filters
