@@ -1,57 +1,46 @@
 /**
  * ApiSetupQueue — step 2 of the Add-APIs flow: finish the batch the tray handed
- * over, one API at a time, each in two steps — its credential, then its access.
+ * over, one API at a time from the list: ① its credential, then ② its access.
  *
- * Credential: pick an existing credential or create one. Nothing is bound yet —
- * even a lone covering credential is only bound once the operator confirms the
- * whole item. Access: the same presets as the workspace bind (Allow all
- * operations · Read-only (GET only) · Custom rules, Custom preselected), with an
- * inline "Try a request" that dry-runs the rules as they stand — unsaved —
- * locally, with the broker's semantics. Confirming binds the credential, then
- * saves its rules, and only advances once both landed AND the binding surfaces
- * refetched — the agent's rows are never left reading a stale "Blocked". A rules
- * save that fails leaves the binding (blocked) and offers Retry in place, with
- * the operator's rules kept.
- *
- * "Set up later" adds the API with no rules: bound, but every call denied — the
- * row reads Blocked, truthfully. Dropping is the alternative to adding at all;
- * closing hands the remainder back to the host. `Back to APIs` returns to the
- * tray to edit the batch; the host keeps this component mounted meanwhile, and
- * the edited batch is folded back in ({@link reconcileQueue}) so progress — the
- * step each item is on, its credential and its access draft — survives the round
- * trip.
+ * Nothing is bound until the operator adds the API; that binds the credential,
+ * then saves its rules, and only moves on once the binding surfaces refetched, so
+ * rows never read a stale "Blocked". A failed rules save keeps the binding and
+ * offers Retry. Back keeps this mounted; {@link reconcileQueue} folds the edited
+ * batch back in so per-item progress survives.
  *
  * An API the agent already reaches is set up the same way: the pane names the
- * credentials it has and offers only credentials not bound to it yet, so the item
- * adds another credential (with its own rules — rules are per binding) rather
- * than a 409.
+ * credentials it has and offers only unbound ones (rules are per binding).
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useReducedMotionConfig } from 'framer-motion';
 import {
 	AlertTriangle,
 	ArrowLeft,
 	Check,
+	ChevronDown,
+	ChevronRight,
 	KeyRound,
-	Loader2,
-	LockOpen,
 	Minus,
 	ShieldCheck,
+	ShieldOff,
 	X,
 } from 'lucide-react';
 import {
-	Badge,
 	Button,
+	ConfirmDialog,
+	DetailsLine,
 	ErrorAlert,
-	SheetBody,
+	ExpandReveal,
+	REVEAL_MOTION,
 	SheetFooter,
 	SheetHeader,
 	SheetPrimitive,
-	ConfirmDialog,
+	Tooltip,
+	VendorIcon,
 	type PermissionRuleInput,
 } from '@/shared/ui';
-import { apiIdentityTuple } from '@/shared/lib';
 import { cn } from '@/shared/lib/utils';
-import { useCredential, useImportCatalogEntry, type Credential } from '@/shared/credentials/api';
+import { useCredential, useImportCatalogEntry } from '@/shared/credentials/api';
 import {
 	useApplyBindingRules,
 	useBindCredentialToAgents,
@@ -82,22 +71,20 @@ import {
 	type PreflightItem,
 } from '@/modules/agents/lib/apiPreflight';
 import {
+	AGENT_SETUP_FLOW,
 	QUEUE_ACCESS_LABELS,
-	QUEUE_RULES_NOTICE,
 	QUEUE_STATUS_LABELS,
 	activeEntry,
-	backToCredential,
 	blockedCount,
 	buildQueue,
 	chooseCredential,
-	dropWarning,
-	markActive,
+	isTerminal,
 	patchEntry,
 	queueBackSeed,
 	queueSummary,
 	queueSummaryLine,
 	reconcileQueue,
-	retryEntry,
+	reopenEntry,
 	settleBoundOnClose,
 	unfinishedItems,
 	type ChosenCredential,
@@ -108,6 +95,7 @@ import {
 } from '@/modules/agents/lib/setupQueue';
 import { AgentNameText } from '@/modules/agents/components/AgentNameText';
 import { usePrimeBindingPermissions } from '@/modules/agents/api';
+import { useQueueApiReference } from '@/modules/agents/lib/useQueueApiReference';
 
 export interface ApiSetupQueueProps {
 	open: boolean;
@@ -129,16 +117,50 @@ function errorText(e: unknown): string {
 	return e instanceof Error && e.message ? e.message : 'Something went wrong.';
 }
 
-/** One item's access draft — the preset and the custom rules being written. */
+/** One item's access draft: the preset and its custom rules. */
 interface AccessDraft {
 	preset: RulesPreset | null;
 	customRules: PermissionRule[];
 }
 
-/** Custom rules, preselected: the operator says what the agent may call. */
-const DEFAULT_DRAFT: AccessDraft = { preset: 'custom', customRules: [] };
+/** Read only by default: the least access that still lets it work. */
+const DEFAULT_DRAFT: AccessDraft = { preset: 'read', customRules: [] };
 
 const RULES_SAVE_FAILED = "The access rules weren't saved.";
+
+/** The sr-only reason the footer's primary references via `aria-describedby`. */
+const ADD_REASON_ID = 'queue-add-reason';
+
+/** Used only once reach is known: as a stand-in it would under-state Full access. */
+const DEFAULT_SCOPE_REACH: ScopeReach = 'pinned';
+
+/** The credential an existing-credential choice stands for, ready to bind. */
+function chosenFromExisting(
+	entry: QueueEntry,
+	choice: CredentialChoice | null,
+	/** Reach of the credentials this queue created (absent from the preflight). */
+	createdReach: Record<string, ScopeReach>,
+): ChosenCredential | null {
+	if (choice?.kind !== 'existing') return null;
+	const created = entry.created;
+	if (created?.credential_id === choice.credentialId) {
+		return {
+			credential_id: created.credential_id,
+			name: created.name,
+			connect: created.needsConnect,
+			reach: createdReach[created.credential_id],
+		};
+	}
+	const credential = entry.covering.find((c) => c.credential_id === choice.credentialId);
+	if (!credential) return null;
+	return {
+		credential_id: credential.credential_id,
+		name: credential.name,
+		// A first sign-in that never completed still needs its click.
+		connect: credentialAwaitsConsent(credential),
+		reach: apiScopeReach(credential.api),
+	};
+}
 
 export function ApiSetupQueue({
 	open,
@@ -150,25 +172,55 @@ export function ApiSetupQueue({
 }: ApiSetupQueueProps) {
 	const headingId = 'api-setup-queue-title';
 	const [entries, setEntries] = useState<QueueEntry[]>(() => buildQueue(items));
-	/** The entry whose drop is awaiting confirmation. */
-	const [dropKey, setDropKey] = useState<string | null>(null);
-	/** The entry whose credential wizard is open. */
-	const [formKey, setFormKey] = useState<string | null>(null);
-	/** Entry key → the credential choice the operator made in its pane. Absent =
-	 * the pane's starting selection ({@link defaultChoice}). */
+	/** The API the operator picked in the list; absent = the first still owed. */
+	const [openKey, setOpenKey] = useState<string | null>(null);
+	/** The entry whose inline credential form is unfolded, and whether it was typed in. */
+	const [creatingKey, setCreatingKey] = useState<string | null>(null);
+	const [creatingDirty, setCreatingDirty] = useState(false);
+	/** Entry key → the picked credential radio. Absent = {@link defaultChoice}. */
 	const [choices, setChoices] = useState<Record<string, CredentialChoice>>({});
 	/** Entry key → its access draft. Absent = {@link DEFAULT_DRAFT}. Kept across
-	 * Back (to the credential step, or to the tray) until the queue is replaced. */
+	 * Back (to the tray) until the queue is replaced. */
 	const [drafts, setDrafts] = useState<Record<string, AccessDraft>>({});
-
-	/** Asking before Back throws away a typed-in credential. */
-	const [discardOpen, setDiscardOpen] = useState(false);
+	/** Credential id → scope reach from the create response (not in the preflight). */
+	const [createdReach, setCreatedReach] = useState<Record<string, ScopeReach>>({});
+	/** Per item: the catalog import its new credential queued, for ②'s operations. */
+	const [importJobs, setImportJobs] = useState<Record<string, string>>({});
+	/** A typed-in credential is confirmed away before anything discards it. */
+	const [discard, setDiscard] = useState<{ then: () => void } | null>(null);
 	/** Set by Back: the next batch is the same one, edited in the tray, so it is
 	 * folded into the progress rather than replacing it. */
 	const returningRef = useRef(false);
 	/** After a round trip, the pane — not the header's first button — takes focus. */
 	const [focusPane, setFocusPane] = useState(false);
-	const paneRef = useRef<HTMLElement>(null);
+	const paneRef = useRef<HTMLDivElement>(null);
+	/** ② Access, which a saved credential scrolls into view and focuses. */
+	const accessRef = useRef<HTMLDivElement>(null);
+	const reduceMotion = useReducedMotionConfig() ?? false;
+	/** `revealAccess`'s pending scroll, cleared on unmount. */
+	const revealTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+	useEffect(
+		() => () => {
+			if (revealTimer.current) clearTimeout(revealTimer.current);
+		},
+		[],
+	);
+	const revealAccess = (): void => {
+		if (revealTimer.current) clearTimeout(revealTimer.current);
+		// After ① folds and ② opens, so the scroll lands where ② settles.
+		revealTimer.current = setTimeout(
+			() => {
+				revealTimer.current = null;
+				const el = accessRef.current;
+				if (!el) return;
+				el.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
+				el.querySelector<HTMLElement>('[role="radio"][tabindex="0"]')?.focus({
+					preventScroll: true,
+				});
+			},
+			reduceMotion ? 0 : REVEAL_MOTION.openMs + 60,
+		);
+	};
 
 	// A new batch replaces the queue outright. Compared by reference: a content
 	// compare would fight the in-progress statuses.
@@ -176,8 +228,8 @@ export function ApiSetupQueue({
 	useEffect(() => {
 		if (lastItemsRef.current === items) return;
 		lastItemsRef.current = items;
-		setDropKey(null);
-		setFormKey(null);
+		setCreatingKey(null);
+		setCreatingDirty(false);
 		if (returningRef.current) {
 			returningRef.current = false;
 			// Pane choices are kept: the entries they belong to may well still be here.
@@ -185,8 +237,12 @@ export function ApiSetupQueue({
 			return;
 		}
 		setEntries(buildQueue(items));
+		setOpenKey(null);
 		setChoices({});
 		setDrafts({});
+		setCreatedReach({});
+		setImportJobs({});
+		setChangingKey(null);
 	}, [items]);
 
 	// Bind, then save the rules, then await the binding surfaces' refetch — the
@@ -201,46 +257,72 @@ export function ApiSetupQueue({
 	const importMutation = useImportCatalogEntry();
 	const { connect: runConnect, deviceDialog } = useDeviceAwareConnect();
 
-	// A credential this queue has bound can't be bound to the agent again (a 409),
-	// even when it also covers a later API — so it leaves every later pane.
-	const active = useMemo(() => {
-		const entry = activeEntry(entries);
+	// The API on screen: the one picked, else the first still owed. A credential bound
+	// here leaves every other pane (binding it again would 409).
+	const current = useMemo(() => {
+		const entry = entries.find((e) => e.key === openKey) ?? activeEntry(entries);
 		if (!entry) return null;
 		const bound = new Set(
 			entries.flatMap((e) =>
-				e.status === 'added' && e.credentialId
-					? [e.credentialId]
-					: e.bound && e.chosen
-						? [e.chosen.credential_id]
-						: [],
+				e.key === entry.key
+					? []
+					: e.status === 'added' && e.credentialId
+						? [e.credentialId]
+						: e.bound && e.chosen
+							? [e.chosen.credential_id]
+							: [],
 			),
 		);
 		const covering = entry.covering.filter((c) => !bound.has(c.credential_id));
 		return covering.length === entry.covering.length ? entry : { ...entry, covering };
-	}, [entries]);
+	}, [entries, openKey]);
 	const summary = useMemo(() => queueSummary(entries), [entries]);
 	const blocked = useMemo(() => blockedCount(entries), [entries]);
-	const formEntry = useMemo(
-		() => entries.find((e) => e.key === formKey) ?? null,
-		[entries, formKey],
-	);
+	const nextOwed = (after: string | null): QueueEntry | undefined =>
+		entries.find((e) => e.key !== after && !isTerminal(e.status));
 
-	// Keep the live row marked so the pane and the progress list never disagree
-	// about which API is being worked on.
-	useEffect(() => {
-		setEntries((current) => markActive(current));
-	}, [entries]);
+	// An API with nothing to choose from opens on the new-credential form.
+	const currentKey = current?.key ?? null;
 
-	// Focus follows the work: a step change, or the next API, lands on its pane
-	// (the sheet's own initial focus covers the first one).
-	const activeStepKey = active ? `${active.key}:${active.step ?? 'credential'}` : null;
-	const lastStepKey = useRef(activeStepKey);
+	// Bring the on-screen API's row into view only when it changes, so browsing the
+	// list by scroll is never pulled back.
+	const railListRef = useRef<HTMLOListElement>(null);
 	useEffect(() => {
-		if (lastStepKey.current === activeStepKey) return;
-		const hadOne = lastStepKey.current != null;
-		lastStepKey.current = activeStepKey;
-		if (hadOne && activeStepKey) paneRef.current?.focus({ preventScroll: true });
-	}, [activeStepKey]);
+		const list = railListRef.current;
+		const row = list?.querySelector<HTMLElement>('[data-selected="true"]');
+		if (!list || !row || list.scrollHeight <= list.clientHeight) return;
+		const top =
+			row.getBoundingClientRect().top - list.getBoundingClientRect().top + list.scrollTop;
+		const bottom = top + row.offsetHeight;
+		const margin = 8;
+		let next: number | null = null;
+		if (top < list.scrollTop + margin) next = top - margin;
+		else if (bottom > list.scrollTop + list.clientHeight - margin)
+			next = bottom - list.clientHeight + margin;
+		if (next == null) return;
+		list.scrollTo({ top: Math.max(0, next), behavior: reduceMotion ? 'auto' : 'smooth' });
+	}, [currentKey, reduceMotion]);
+	const needsForm =
+		current != null &&
+		!isTerminal(current.status) &&
+		current.covering.length === 0 &&
+		!current.created &&
+		!current.chosen;
+	useEffect(() => {
+		if (needsForm && currentKey) {
+			setCreatingKey(currentKey);
+			setCreatingDirty(false);
+		}
+	}, [needsForm, currentKey]);
+
+	// Focus follows the work onto the next API's pane.
+	const lastKey = useRef(currentKey);
+	useEffect(() => {
+		if (lastKey.current === currentKey) return;
+		const hadOne = lastKey.current != null;
+		lastKey.current = currentKey;
+		if (hadOne) paneRef.current?.focus({ preventScroll: true });
+	}, [currentKey]);
 
 	const draftFor = (key: string): AccessDraft => drafts[key] ?? DEFAULT_DRAFT;
 	const setDraft = (key: string, patch: Partial<AccessDraft>): void =>
@@ -249,10 +331,52 @@ export function ApiSetupQueue({
 			[key]: { ...(current[key] ?? DEFAULT_DRAFT), ...patch },
 		}));
 
-	/** The credential step's answer: on to the access step, nothing bound yet. */
-	const pick = (entry: QueueEntry, chosen: ChosenCredential): void =>
-		setEntries((current) => chooseCredential(current, entry.key, chosen));
+	const choiceFor = (entry: QueueEntry): CredentialChoice | null =>
+		choices[entry.key] ?? defaultChoice(entry);
+	/** The credential Access works with: the confirmed one, else the selected radio. */
+	const chosenFor = (entry: QueueEntry): ChosenCredential | null =>
+		(entry.step === 'access' && entry.chosen) ||
+		(creatingKey === entry.key
+			? null
+			: chosenFromExisting(entry, choiceFor(entry), createdReach));
 
+	/** Leave a typed-in draft only once it is confirmed away. */
+	const guardDraft = (then: () => void): void => {
+		if (creatingDirty) setDiscard({ then });
+		else then();
+	};
+	const closeForm = (): void => {
+		setCreatingKey(null);
+		setCreatingDirty(false);
+	};
+	/** The entry whose ① chooser was reopened by "Change" (its choice still stands). */
+	const [changingKey, setChangingKey] = useState<string | null>(null);
+	/** Pick an API from the list — a skipped or failed one comes back to the work. */
+	const openApi = (key: string): void => {
+		if (key === currentKey) return;
+		guardDraft(() => {
+			closeForm();
+			setChangingKey(null);
+			setEntries((current) => reopenEntry(current, key));
+			setOpenKey(key);
+		});
+	};
+
+	/** An existing credential is chosen at once; "Add a new credential" unfolds the form. */
+	const choose = (entry: QueueEntry, choice: CredentialChoice): void => {
+		setChoices((current) => ({ ...current, [entry.key]: choice }));
+		if (choice.kind === 'new') {
+			// Reopening a folded form keeps its draft — and its dirty flag.
+			if (creatingKey !== entry.key) setCreatingDirty(false);
+			setCreatingKey(entry.key);
+			return;
+		}
+		// The form folds; its typed values are kept (and still guarded).
+		setCreatingKey(null);
+		setChangingKey(null);
+		const chosen = chosenFromExisting(entry, choice, createdReach);
+		if (chosen) setEntries((current) => chooseCredential(current, entry.key, chosen));
+	};
 	/** Record the item as added — after its sign-in, when one is outstanding. An
 	 * unfinished sign-in does NOT undo the bind: the row says it can't serve yet. */
 	const finish = async (
@@ -283,6 +407,8 @@ export function ApiSetupQueue({
 				note,
 			}),
 		);
+		// On to the next API still owed (or Done).
+		setOpenKey((open) => (open === entry.key ? null : open));
 	};
 
 	/** Take one item to its terminal state: import the API if needed, bind the
@@ -291,28 +417,42 @@ export function ApiSetupQueue({
 	const inFlight = useRef<Set<string>>(new Set());
 	const commit = async (
 		entry: QueueEntry,
+		chosen: ChosenCredential | null,
 		rules: PermissionRuleInput[] | null,
 		access: QueueAccess,
 	): Promise<void> => {
-		const chosen = entry.chosen;
 		if (!chosen || inFlight.current.has(entry.key)) return;
 		inFlight.current.add(entry.key);
 		setEntries((current) =>
 			patchEntry(current, entry.key, {
 				status: 'working',
+				step: 'access',
+				chosen,
 				error: undefined,
 				rulesError: undefined,
 			}),
 		);
 		try {
 			if (entry.bound) {
-				// The binding landed on an earlier try; only its rules are owed.
+				// The binding landed on an earlier try; only its rules are owed. A throw keeps it
+				// bound-and-blocked, not `failed`, whose "Try again" would re-bind (409).
 				if (rules) {
-					const { rulesFailed } = await applyRules.mutateAsync({
-						credentialId: chosen.credential_id,
-						agentIds: [agentId],
-						rules,
-					});
+					let rulesFailed: string[];
+					try {
+						({ rulesFailed } = await applyRules.mutateAsync({
+							credentialId: chosen.credential_id,
+							agentIds: [agentId],
+							rules,
+						}));
+					} catch (e) {
+						setEntries((current) =>
+							patchEntry(current, entry.key, {
+								status: 'active',
+								rulesError: errorText(e),
+							}),
+						);
+						return;
+					}
 					if (rulesFailed.length > 0) {
 						setEntries((current) =>
 							patchEntry(current, entry.key, {
@@ -368,15 +508,25 @@ export function ApiSetupQueue({
 	 * `commit` skips straight to `finish` — still through the in-flight guard
 	 * and the working status, so a second click can't start a second sign-in
 	 * and Close waits for the one under way. */
-	const later = (entry: QueueEntry): void => void commit(entry, null, 'later');
+	const later = (entry: QueueEntry): void => void commit(entry, chosenFor(entry), null, 'later');
 
 	const drop = (entry: QueueEntry): void => {
 		setEntries((current) => patchEntry(current, entry.key, { status: 'dropped' }));
-		setDropKey(null);
+		setOpenKey(nextOwed(entry.key)?.key ?? null);
 	};
 
 	const handleCreated = (entry: QueueEntry, info: CreatedCredentialInfo): void => {
-		setFormKey(null);
+		closeForm();
+		setChangingKey(null);
+		setChoices((current) => ({
+			...current,
+			[entry.key]: { kind: 'existing', credentialId: info.credentialId },
+		}));
+		// Recorded so ② never captions Full access with a reach it has yet to read.
+		setCreatedReach((current) => ({ ...current, [info.credentialId]: info.reach }));
+		const { importJobId } = info;
+		if (importJobId) setImportJobs((current) => ({ ...current, [entry.key]: importJobId }));
+		revealAccess();
 		const created = {
 			credential_id: info.credentialId,
 			name: info.name,
@@ -387,6 +537,7 @@ export function ApiSetupQueue({
 				credential_id: created.credential_id,
 				name: created.name,
 				connect: created.needsConnect,
+				reach: info.reach,
 			}),
 		);
 	};
@@ -396,6 +547,7 @@ export function ApiSetupQueue({
 	 * imported the catalog API at connect, so the row is simply added — no
 	 * access step, which would bind it a second time. */
 	const handleVendorConnected = (entry: QueueEntry, info: ConnectedCredentialInfo): void => {
+		closeForm();
 		setEntries((current) =>
 			patchEntry(current, entry.key, {
 				status: 'added',
@@ -406,7 +558,6 @@ export function ApiSetupQueue({
 		);
 	};
 
-	const retry = (key: string): void => setEntries((current) => retryEntry(current, key));
 	// A bind in flight has to land before the queue can hand its item back —
 	// reopening on it would bind the same credential again.
 	const busy = entries.some((e) => e.status === 'working');
@@ -418,65 +569,145 @@ export function ApiSetupQueue({
 	};
 	const goBack = (): void => {
 		if (!onBack) return;
-		setDiscardOpen(false);
-		setFormKey(null);
-		setDropKey(null);
-		returningRef.current = true;
-		setFocusPane(true);
-		onBack(queueBackSeed(entries), unfinishedItems(entries));
+		guardDraft(() => {
+			closeForm();
+			returningRef.current = true;
+			setFocusPane(true);
+			onBack(queueBackSeed(entries), unfinishedItems(entries));
+		});
 	};
-	/** Back from the credential form: a typed-in draft is confirmed away first; an
-	 * untouched one is nothing to lose. */
-	const backFromForm = (dirty: boolean): void => {
-		if (dirty) setDiscardOpen(true);
-		else goBack();
-	};
-	// The wizard stacks as a second SheetPrimitive and both see the same Escape —
-	// dismissing it must leave the operator in the queue.
+	// The form's own dialogs sit above the sheet; a typed draft is confirmed first.
 	const guardedClose = (): void => {
-		if (formKey != null || busy) return;
-		close();
+		if (busy || discard) return;
+		guardDraft(close);
 	};
+
+	const added = summary.added;
+	const total = summary.total;
+	const settledCurrent =
+		current != null && isTerminal(current.status) && current.status !== 'failed';
+	const creating = current != null && creatingKey === current.key;
+	const chosen = current ? chosenFor(current) : null;
+	const draft = current ? draftFor(current.key) : DEFAULT_DRAFT;
+	const rules = rulesForPreset(draft.preset, draft.customRules);
+	// A chosen credential's reach is read before Access is usable, never assumed `pinned`.
+	const reachFetch = useCredential(chosen && !chosen.reach ? chosen.credential_id : undefined);
+	const reachUnknown = chosen != null && !chosen.reach && !reachFetch.data;
+	const reach: ScopeReach =
+		chosen?.reach ??
+		(reachFetch.data ? apiScopeReach(reachFetch.data.api) : DEFAULT_SCOPE_REACH);
+
+	let primary: ReactNode;
+	if (!current) {
+		primary = (
+			<Button onClick={close} data-testid="queue-done">
+				Done
+			</Button>
+		);
+	} else if (current.status === 'failed') {
+		primary = (
+			<Button onClick={(): void => setEntries((c) => reopenEntry(c, current.key))}>
+				Try again
+			</Button>
+		);
+	} else if (settledCurrent) {
+		const next = nextOwed(current.key);
+		primary = next ? (
+			<Button onClick={(): void => openApi(next.key)}>
+				Next: {next.api.label}
+				<ChevronRight className="h-4 w-4" />
+			</Button>
+		) : (
+			<Button onClick={close} data-testid="queue-done">
+				Done
+			</Button>
+		);
+	} else {
+		const working = current.status === 'working';
+		// Why "Add" can't run; `reachUnknown` blocks committing before the reach is read.
+		const reason = !chosen
+			? creating
+				? 'Save the credential first'
+				: 'Choose a credential first'
+			: reachUnknown
+				? 'Reading what this credential covers — the access wording depends on it'
+				: rules == null
+					? 'Add at least one rule'
+					: null;
+		const blocked = reason != null;
+		// `aria-disabled`, not `disabled`: it stays in the tab order, described by the
+		// reason, and the click no-ops.
+		const button = (
+			<Button
+				aria-disabled={blocked || working || undefined}
+				aria-describedby={reason ? ADD_REASON_ID : undefined}
+				loading={working}
+				className={cn(
+					blocked &&
+						'bg-surface-quiet-cta text-foreground-sub hover:bg-surface-quiet-cta cursor-not-allowed active:scale-100',
+				)}
+				onClick={(): void => {
+					if (blocked || working) return;
+					if (chosen && rules && draft.preset)
+						void commit(current, chosen, rules, draft.preset);
+				}}
+				data-testid="queue-add"
+			>
+				<ShieldCheck className="h-4 w-4 shrink-0" />
+				{current.bound ? (
+					'Save rules'
+				) : (
+					<>
+						<span className="sm:hidden">
+							{chosen?.connect ? 'Add and sign in' : 'Add'}
+						</span>
+						<span className="hidden max-w-[22rem] truncate sm:inline">
+							{chosen?.connect
+								? `Add ${current.api.label} and sign in`
+								: `Add ${current.api.label}`}
+						</span>
+					</>
+				)}
+			</Button>
+		);
+		primary = reason ? (
+			<>
+				<span id={ADD_REASON_ID} className="sr-only">
+					{reason}
+				</span>
+				<Tooltip content={reason} interactiveChild>
+					{button}
+				</Tooltip>
+			</>
+		) : (
+			button
+		);
+	}
+	const canSkip = current != null && !isTerminal(current.status) && !current.bound && !busy;
 
 	return (
 		<SheetPrimitive
 			open={open}
 			onClose={guardedClose}
 			ariaLabelledBy={headingId}
-			initialFocus={focusPane && active ? paneRef : undefined}
-			className="sm:w-[560px] xl:w-[640px]"
+			initialFocus={focusPane ? paneRef : undefined}
+			size="flow"
+			handoffKey={AGENT_SETUP_FLOW}
 		>
-			<div className="flex h-full flex-col">
-				<SheetHeader className="justify-between">
-					<div className="min-w-0">
-						{onBack && (
-							<Button
-								variant="ghost"
-								size="sm"
-								onClick={goBack}
-								disabled={busy}
-								className="mb-1 -ml-2 h-7 px-2 text-xs"
-							>
-								<ArrowLeft className="h-3.5 w-3.5" />
-								Back to APIs
-							</Button>
-						)}
-						<h2
-							id={headingId}
-							className="font-heading text-foreground-name text-base font-semibold"
-						>
-							Set up {summary.total} {summary.total === 1 ? 'API' : 'APIs'}
-						</h2>
-						<p className="text-muted-foreground text-xs">
-							Each one gets a credential and access rules before{' '}
-							<AgentNameText name={agentName} /> can call it.
-						</p>
-					</div>
+			<div className="flex h-full min-h-0 flex-col">
+				<SheetHeader className="items-center justify-between pb-3">
+					<h2
+						id={headingId}
+						className="font-heading text-foreground-name min-w-0 text-lg font-semibold"
+					>
+						Set up {total} {total === 1 ? 'API' : 'APIs'} for{' '}
+						<AgentNameText name={agentName} />
+					</h2>
 					<Button
 						variant="ghost"
 						size="icon-xs"
 						aria-label="Close"
-						onClick={close}
+						onClick={guardedClose}
 						disabled={busy}
 						className="shrink-0"
 					>
@@ -484,609 +715,749 @@ export function ApiSetupQueue({
 					</Button>
 				</SheetHeader>
 
-				<SheetBody className="space-y-4">
-					{active ? (
-						<ActivePane
-							paneRef={paneRef}
-							entry={active}
-							agentName={agentName}
-							position={{
-								index: entries.findIndex((e) => e.key === active.key) + 1,
-								total: entries.length,
-							}}
-							dropPending={dropKey === active.key}
-							selected={choices[active.key] ?? defaultChoice(active)}
-							onSelect={(next): void =>
-								setChoices((current) => ({ ...current, [active.key]: next }))
-							}
-							onUseCredential={(credential): void =>
-								pick(active, {
-									credential_id: credential.credential_id,
-									name: credential.name,
-									// A credential whose first sign-in never completed
-									// still needs that click before it can serve.
-									connect: credentialAwaitsConsent(credential),
-									reach: apiScopeReach(credential.api),
-								})
-							}
-							onUseCreated={(created): void =>
-								pick(active, {
-									credential_id: created.credential_id,
-									name: created.name,
-									connect: created.needsConnect,
-								})
-							}
-							onOpenForm={(): void => setFormKey(active.key)}
-							onAskDrop={(): void => setDropKey(active.key)}
-							onCancelDrop={(): void => setDropKey(null)}
-							onConfirmDrop={(): void => drop(active)}
-							access={
-								active.step === 'access' && active.chosen ? (
-									<AccessStep
-										key={active.key}
-										entry={active}
-										chosen={active.chosen}
-										agentName={agentName}
-										draft={draftFor(active.key)}
-										onDraftChange={(patch): void => setDraft(active.key, patch)}
-										onBack={(): void =>
-											setEntries((current) =>
-												backToCredential(current, active.key),
-											)
-										}
-										onCommit={(rules, preset): void =>
-											void commit(active, rules, preset)
-										}
-										onLater={(): void => later(active)}
-									/>
-								) : null
-							}
-						/>
-					) : (
-						<DonePane summary={summary} blocked={blocked} />
-					)}
-
-					<ProgressList
-						entries={entries}
-						activeKey={active?.key ?? null}
-						onRetry={retry}
-					/>
-				</SheetBody>
-
-				<SheetFooter className="block p-0">
-					<div className="bg-surface-tonal h-0.5 w-full" aria-hidden="true">
-						<div
-							className="bg-primary h-full transition-[width] duration-300 ease-out motion-reduce:transition-none"
-							style={{
-								width: `${summary.total === 0 ? 0 : ((summary.total - summary.remaining) / summary.total) * 100}%`,
-							}}
-						/>
-					</div>
-					<div className="space-y-1.5 px-5 py-3">
-						<div className="flex items-center justify-between gap-3">
-							{/* Progress, not the outcome — the outcome is the done pane's
-							    job, and saying it twice makes neither authoritative. */}
+				<div className="flex min-h-0 flex-1 flex-col md:flex-row">
+					<nav
+						aria-label="APIs to set up"
+						data-testid="queue-rail"
+						// Desktop: the list scrolls in its column, so a long batch never pushes the footer.
+						className="bg-surface-sheet-foot shrink-0 px-3 py-3 md:flex md:min-h-0 md:w-[248px] md:flex-col md:px-2.5"
+					>
+						<div className="shrink-0 px-1.5 pb-3" data-testid="queue-progress">
 							<p
 								className="text-foreground text-xs font-medium tabular-nums"
 								role="status"
 							>
-								{summary.total - summary.remaining} of {summary.total} done
+								{added} of {total} added
 							</p>
-							<Button
-								size="sm"
-								variant={summary.done ? 'primary' : 'outline'}
-								onClick={close}
-								disabled={busy}
-								className="shrink-0"
+							<div
+								className="bg-surface-tonal mt-1.5 h-1 overflow-hidden rounded-full"
+								aria-hidden
 							>
-								{summary.done ? 'Done' : 'Close for now'}
-							</Button>
+								<div
+									className="bg-primary h-full rounded-full transition-[width] duration-500 ease-out motion-reduce:transition-none"
+									style={{
+										width: `${total ? ((total - summary.remaining) / total) * 100 : 0}%`,
+									}}
+								/>
+							</div>
 						</div>
-						{/* One note, not a stack: what an added API can do yet, and — while anything
-						    is outstanding, failures included — what closing costs. */}
-						<p className="text-muted-foreground text-xs leading-snug">
-							{QUEUE_RULES_NOTICE}
-							{!summary.done && (
-								<>
-									{' '}
-									Closing keeps the APIs already added; the remaining{' '}
-									{summary.remaining} wait here for next time.
-								</>
-							)}
-						</p>
+						<ol
+							ref={railListRef}
+							aria-label="Setup progress"
+							data-testid="queue-rail-list"
+							// The inline padding keeps a focus ring clear of the scroll clip.
+							className="-mx-1 flex gap-1 overflow-x-auto px-1 md:-mx-1 md:min-h-0 md:flex-1 md:[scrollbar-gutter:stable] md:flex-col md:gap-0.5 md:overflow-x-hidden md:overflow-y-auto md:px-1 md:py-0.5"
+						>
+							{entries.map((entry) => (
+								<QueueRow
+									key={entry.key}
+									entry={entry}
+									selected={entry.key === currentKey}
+									disabled={busy}
+									onOpen={(): void => openApi(entry.key)}
+								/>
+							))}
+						</ol>
+					</nav>
+
+					<div
+						ref={paneRef}
+						tabIndex={-1}
+						data-testid="queue-pane-scroll"
+						className="min-h-0 flex-1 [scrollbar-gutter:stable] overflow-y-auto px-5 pt-4 pb-6 outline-none md:px-6"
+					>
+						{!current ? (
+							<DonePane summary={summary} blocked={blocked} />
+						) : (
+							<section
+								// Keyed, so a switch fades the next API in.
+								key={current.key}
+								aria-label={`Set up ${current.api.label}`}
+								data-testid="queue-active-pane"
+								data-status={current.status}
+								className="animate-rise space-y-6"
+							>
+								<PaneHeader entry={current} />
+								{current.status === 'failed' ? (
+									<ErrorAlert
+										title={`${current.api.label} wasn't added`}
+										message={current.error ?? 'Something went wrong.'}
+									/>
+								) : settledCurrent ? (
+									<AddedSummary entry={current} />
+								) : (
+									<>
+										<CredentialSection
+											entry={current}
+											agentId={agentId}
+											agentName={agentName}
+											choice={creating ? { kind: 'new' } : choiceFor(current)}
+											chosen={chosen}
+											creating={creating}
+											onChoose={(c): void => choose(current, c)}
+											onStartCreate={(): void => {
+												setCreatingKey(current.key);
+												setCreatingDirty(false);
+											}}
+											onTouched={(): void => setCreatingDirty(true)}
+											onCancelCreate={(): void => guardDraft(closeForm)}
+											onCreated={(info): void => handleCreated(current, info)}
+											onVendorConnected={(info): void =>
+												handleVendorConnected(current, info)
+											}
+											onChange={(): void => setChangingKey(current.key)}
+											changing={changingKey === current.key}
+											onKeep={(): void => setChangingKey(null)}
+										/>
+										<AccessSection
+											entry={current}
+											chosen={chosen}
+											agentName={agentName}
+											draft={draft}
+											onDraftChange={(patch): void =>
+												setDraft(current.key, patch)
+											}
+											rulesIncomplete={rules == null}
+											reach={reach}
+											reachUnknown={reachUnknown}
+											sectionRef={accessRef}
+											onLater={(): void => later(current)}
+											importJobId={importJobs[current.key]}
+										/>
+									</>
+								)}
+							</section>
+						)}
+					</div>
+				</div>
+
+				<SheetFooter className="flex-nowrap justify-between gap-2 sm:gap-3">
+					<div className="flex min-w-0 items-center">
+						{onBack && (
+							<Button variant="ghost" size="sm" onClick={goBack} disabled={busy}>
+								<ArrowLeft className="h-3.5 w-3.5" />
+								<span className="hidden sm:inline">Back to APIs</span>
+								<span className="sm:hidden">Back</span>
+							</Button>
+						)}
+					</div>
+					<div className="flex min-w-0 items-center gap-2 sm:gap-3">
+						{canSkip && (
+							<Button
+								variant="ghost"
+								size="sm"
+								onClick={(): void =>
+									guardDraft(() => {
+										closeForm();
+										drop(current);
+									})
+								}
+								data-testid="queue-skip"
+							>
+								<span className="sm:hidden">Skip</span>
+								<span className="hidden sm:inline">Skip for now</span>
+							</Button>
+						)}
+						{primary}
 					</div>
 				</SheetFooter>
 			</div>
 
-			{formEntry && (
-				<CreateCredentialFlow
-					key={formEntry.key}
-					open
-					pinnedApi={formEntry.api}
-					preselectedAgentId={agentId}
-					onVendorConnected={(info): void => handleVendorConnected(formEntry, info)}
-					onClose={(): void => setFormKey(null)}
-					onCreated={(info): void => handleCreated(formEntry, info)}
-					back={onBack ? { label: 'Back to APIs', onBack: backFromForm } : undefined}
-				/>
-			)}
 			<ConfirmDialog
-				open={discardOpen}
+				open={discard != null}
 				title="Discard this credential?"
 				body={
 					<>
-						What you typed for {formEntry?.api.label ?? 'this API'} won&apos;t be saved.
+						What you typed for {current?.api.label ?? 'this API'} won&apos;t be saved.
 						APIs already added stay added.
 					</>
 				}
-				confirmLabel="Discard and go back"
-				onConfirm={goBack}
-				onClose={(): void => setDiscardOpen(false)}
+				confirmLabel="Discard"
+				onConfirm={(): void => {
+					const then = discard?.then;
+					setDiscard(null);
+					closeForm();
+					then?.();
+				}}
+				onClose={(): void => setDiscard(null)}
 			/>
 			{deviceDialog}
 		</SheetPrimitive>
 	);
 }
 
-/** The pane for the item at the front of the queue.
- *
- * An API that existing credentials cover shows them all as cards, with "Add a new
- * credential" last and a lone covering credential preselected — never bound
- * until confirmed: reuse matches API identity, not account, so a wrong-tenant
- * match must be rejectable without dropping the API. The primary action follows
- * the selected card. */
-function ActivePane({
-	paneRef,
+/** What an added row's binding was given — custom rules counted. */
+function accessLabel(entry: QueueEntry): string {
+	if (entry.access === 'custom') {
+		const n = entry.ruleCount ?? 0;
+		return `${n} custom ${n === 1 ? 'rule' : 'rules'}`;
+	}
+	return entry.access ? QUEUE_ACCESS_LABELS[entry.access] : '';
+}
+
+/** One API in the list: its mark, its name, its status. Any row opens. */
+function QueueRow({
 	entry,
-	agentName,
-	position,
-	dropPending,
 	selected,
-	onSelect,
-	onUseCredential,
-	onUseCreated,
-	onOpenForm,
-	onAskDrop,
-	onCancelDrop,
-	onConfirmDrop,
-	access,
+	disabled,
+	onOpen,
 }: {
-	paneRef: React.RefObject<HTMLElement | null>;
 	entry: QueueEntry;
-	agentName: string;
-	/** "API 2 of 3" — where this item sits in the batch. */
-	position: { index: number; total: number };
-	dropPending: boolean;
-	selected: CredentialChoice | null;
-	onSelect: (choice: CredentialChoice) => void;
-	onUseCredential: (credential: Credential) => void;
-	/** Carry on with the credential this queue created for the item. */
-	onUseCreated: (created: NonNullable<QueueEntry['created']>) => void;
-	onOpenForm: () => void;
-	onAskDrop: () => void;
-	onCancelDrop: () => void;
-	onConfirmDrop: () => void;
-	/** The access step, when the item is on it. */
-	access: React.ReactNode;
+	selected: boolean;
+	disabled: boolean;
+	onOpen: () => void;
 }) {
 	const working = entry.status === 'working';
-	const onAccess = access != null;
-	const created = entry.created ?? null;
-	const count = entry.covering.length;
-	const existing =
-		selected?.kind === 'existing'
-			? (entry.covering.find((c) => c.credential_id === selected.credentialId) ?? null)
-			: null;
-	const wantsNew = count === 0 || selected?.kind === 'new';
-	/** A new credential for this API is one sign-in click — the tray established it. */
-	const newIsSignIn = entry.outcome === 'oauth';
-	/** Its spec declares no authentication, so the new credential carries no secret. */
-	const newIsNoAuth = entry.outcome === 'no-auth';
-	const other = entry.existing.length > 0 ? ' other' : '';
-
+	const status =
+		selected && !isTerminal(entry.status) && !working
+			? 'In progress'
+			: entry.status === 'added' && entry.access === 'later'
+				? 'Added · no rules'
+				: QUEUE_STATUS_LABELS[entry.status];
+	const tone =
+		entry.status === 'added'
+			? entry.access === 'later'
+				? 'text-caution'
+				: 'text-success'
+			: entry.status === 'failed'
+				? 'text-danger'
+				: entry.status === 'dropped'
+					? 'text-caution'
+					: selected
+						? 'text-primary'
+						: 'text-foreground-faint';
 	return (
-		<section
-			ref={paneRef}
-			// Programmatic focus only — the landing spot after a Back round trip.
-			tabIndex={-1}
-			aria-label={`Set up ${entry.api.label}`}
-			data-testid="queue-active-pane"
-			className="bg-surface-inset focus-visible:ring-ring space-y-3 rounded-lg p-4 outline-none focus-visible:ring-2"
+		<li
+			data-testid="queue-progress-row"
+			data-status={entry.status}
+			data-selected={selected || undefined}
+			className="shrink-0"
 		>
-			<div className="flex items-start gap-3">
-				<span
-					aria-hidden
-					className="bg-surface-field flex h-9 w-9 shrink-0 items-center justify-center rounded-md"
-				>
-					<KeyRound className="text-muted-foreground h-4 w-4" />
-				</span>
-				<div className="min-w-0 flex-1">
-					<p className="text-foreground-name truncate text-sm font-semibold">
-						{entry.api.label}
-					</p>
-					<p
-						data-testid="queue-active-identity"
-						className="text-muted-foreground font-mono text-xs"
-					>
-						{/* A catalog pick's name is its whole `api_id`, which already
-						    leads with the vendor (or is just the vendor). */}
-						{entry.api.name === entry.api.vendor
-							? entry.api.name
-							: apiIdentityTuple({ vendor: entry.api.vendor, name: entry.api.name })}
-					</p>
-				</div>
-				{working ? (
-					<span className="text-muted-foreground inline-flex shrink-0 items-center gap-1.5 text-xs">
-						<Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
-						Adding…
-					</span>
-				) : (
-					position.total > 1 && (
-						<span
-							data-testid="queue-position"
-							className="text-muted-foreground shrink-0 text-xs tabular-nums"
-						>
-							{position.index} of {position.total}
-						</span>
-					)
+			<Button
+				variant="ghost"
+				onClick={onOpen}
+				disabled={disabled && !selected}
+				aria-current={selected ? 'step' : undefined}
+				className={cn(
+					'h-auto w-full justify-start gap-2.5 rounded-lg px-2 py-2 text-left font-normal',
+					selected ? 'bg-surface-selected hover:bg-surface-selected' : 'hover:bg-tint-2',
 				)}
-			</div>
-
-			<StepIndicator step={onAccess ? 'access' : 'credential'} />
-
-			{onAccess ? (
-				access
-			) : (
-				<>
-					{entry.existing.length > 0 && (
-						<div className="space-y-1.5">
-							<p
-								data-testid="queue-existing-accounts"
-								className="text-muted-foreground text-xs"
-							>
-								{addedViaLabel(entry.existing)}. Pick another credential to add it
-								to <AgentNameText name={agentName} />.
-							</p>
-							<p
-								data-testid="queue-ambiguity-warning"
-								className="text-foreground flex items-start gap-2 text-xs"
-							>
-								<AlertTriangle className="text-warning mt-0.5 h-3.5 w-3.5 shrink-0" />
-								<span>{anotherCredentialWarning(entry.api.label)}</span>
-							</p>
-						</div>
-					)}
-
-					{created ? (
-						<p
-							data-testid="queue-created-credential"
-							className="text-muted-foreground text-xs"
-						>
-							Uses the credential you created for {entry.api.label},{' '}
-							<span className="text-foreground font-medium">{created.name}</span>.
-						</p>
-					) : (
-						count > 0 && (
-							<CredentialOptions
-								id={`queue-credential-${entry.key}`}
-								legend={
-									count === 1
-										? `You have 1${other} credential for ${entry.api.label}. Should ${agentName} use it, or a new one?`
-										: `You have ${count}${other} credentials for ${entry.api.label}. Which should ${agentName} use?`
-								}
-								credentials={entry.covering}
-								selected={selected}
-								onSelect={onSelect}
-								newCredentialDetail="Another key or account for this API — nothing is stored until you save it"
-								disabled={working || dropPending}
-							/>
-						)
-					)}
-
-					{existing && credentialAwaitsConsent(existing) && (
-						<p className="text-muted-foreground text-xs">
-							<span className="text-foreground font-medium">{existing.name}</span> is
-							ready to use — it just needs you to finish signing in, once its access
-							is set.
-						</p>
-					)}
-
-					{count === 0 && !created && (
-						<p className="text-muted-foreground text-xs">
-							{newIsSignIn
-								? 'Sign in once and this API is set up — there is nothing to type in.'
-								: newIsNoAuth
-									? "This API's spec declares no authentication, so its credential has no secret to enter."
-									: 'This API needs a new credential. Nothing is stored until you save it.'}
-						</p>
-					)}
-
-					{dropPending ? (
-						<div
-							className="bg-surface-inset space-y-2 rounded-md p-3"
-							data-testid="queue-drop-confirm"
-						>
-							<p className="text-foreground flex items-start gap-2 text-xs">
-								<AlertTriangle className="text-caution mt-0.5 h-3.5 w-3.5 shrink-0" />
-								{/* There is no "later" state to drop into. */}
-								<span>
-									{dropWarning(entry.api.label)}{' '}
-									<AgentNameText name={agentName} /> will not be able to call it,
-									and you can add it again whenever you like.
-								</span>
-							</p>
-							<div className="flex items-center gap-2">
-								<Button size="sm" variant="secondary" onClick={onConfirmDrop}>
-									Drop {entry.api.label}
-								</Button>
-								<Button size="sm" variant="ghost" onClick={onCancelDrop}>
-									Keep it
-								</Button>
-							</div>
-						</div>
-					) : (
-						<div className="flex flex-wrap items-center gap-2">
-							{created ? (
-								<Button
-									size="sm"
-									disabled={working}
-									onClick={(): void => onUseCreated(created)}
-								>
-									<Check className="h-4 w-4" />
-									Use this credential
-								</Button>
-							) : existing ? (
-								<Button
-									size="sm"
-									disabled={working}
-									onClick={(): void => onUseCredential(existing)}
-								>
-									<Check className="h-4 w-4" />
-									Use this credential
-								</Button>
-							) : wantsNew ? (
-								<Button size="sm" disabled={working} onClick={onOpenForm}>
-									{newIsNoAuth ? (
-										<LockOpen className="h-4 w-4" />
-									) : (
-										<KeyRound className="h-4 w-4" />
-									)}
-									{newIsNoAuth ? 'Add without a secret' : 'Add credential'}
-								</Button>
-							) : (
-								// Nothing selected yet, which only happens among several: the
-								// button waits for a card rather than guessing one.
-								<Button size="sm" disabled>
-									<Check className="h-4 w-4" />
-									Use this credential
-								</Button>
-							)}
-							<Button
-								size="sm"
-								variant="ghost"
-								disabled={working}
-								onClick={onAskDrop}
-							>
-								Not this one
-							</Button>
-						</div>
-					)}
-				</>
-			)}
-		</section>
-	);
-}
-
-/** Credential → Access: where this item's setup stands. */
-function StepIndicator({ step }: { step: 'credential' | 'access' }) {
-	const steps = [
-		{ key: 'credential', label: 'Credential' },
-		{ key: 'access', label: 'Access' },
-	] as const;
-	const at = steps.findIndex((s) => s.key === step);
-	return (
-		<ol
-			aria-label="Setup steps"
-			className="flex items-center gap-2 text-xs"
-			data-testid="queue-steps"
-		>
-			{steps.map((s, i) => (
-				<li
-					key={s.key}
-					aria-current={i === at ? 'step' : undefined}
-					className={cn(
-						'inline-flex items-center gap-1.5',
-						i === at ? 'text-foreground font-medium' : 'text-muted-foreground',
-					)}
-				>
-					{i > 0 && (
-						<span aria-hidden className="text-muted-foreground">
-							→
-						</span>
-					)}
+			>
+				<VendorIcon name={entry.api.label} vendor={entry.api.vendor} size="xs" />
+				<span className="min-w-0 flex-1">
 					<span
-						aria-hidden
 						className={cn(
-							'flex h-4 w-4 items-center justify-center rounded-full text-[10px] tabular-nums',
-							i < at
-								? 'bg-success/15 text-success'
-								: i === at
-									? 'bg-primary text-primary-foreground'
-									: 'bg-surface-field',
+							'block text-sm leading-5 [overflow-wrap:anywhere]',
+							selected ? 'text-foreground-name font-semibold' : 'text-foreground',
 						)}
 					>
-						{i < at ? <Check className="h-2.5 w-2.5" /> : i + 1}
+						{entry.api.label}
 					</span>
-					{s.label}
-					{i < at && <span className="sr-only"> (done)</span>}
-				</li>
-			))}
-		</ol>
+					<span className={cn('flex items-center gap-1.5 text-xs', tone)}>
+						{entry.status === 'added' ? (
+							<Check className="h-3 w-3 shrink-0" aria-hidden />
+						) : entry.status === 'dropped' ? (
+							<Minus className="h-3 w-3 shrink-0" aria-hidden />
+						) : (
+							<span
+								aria-hidden
+								className="h-1.5 w-1.5 shrink-0 rounded-full bg-current"
+							/>
+						)}
+						{status}
+					</span>
+				</span>
+			</Button>
+		</li>
 	);
 }
 
-/** The access step: what the agent may call through the chosen credential — the
- * workspace bind's presets, with an inline dry run of the rules as edited. */
-function AccessStep({
+function PaneHeader({ entry }: { entry: QueueEntry }) {
+	const version =
+		entry.api.source === 'local' && entry.api.version ? ` · v${entry.api.version}` : '';
+	return (
+		<div className="flex items-center gap-3">
+			<VendorIcon name={entry.api.label} vendor={entry.api.vendor} size="sm" />
+			<div className="min-w-0 flex-1">
+				<h3 className="font-heading text-foreground-name text-sm font-semibold [overflow-wrap:anywhere]">
+					{entry.api.label}
+				</h3>
+				<p
+					data-testid="queue-active-identity"
+					className="text-foreground-faint truncate font-mono text-xs"
+				>
+					{entry.api.vendor}
+					{version}
+				</p>
+			</div>
+		</div>
+	);
+}
+
+function StepHeading({
+	n,
+	done,
+	muted,
+	children,
+}: {
+	n: number;
+	done?: boolean;
+	muted?: boolean;
+	children: ReactNode;
+}) {
+	return (
+		<h4
+			className={cn(
+				'mb-2.5 flex items-center gap-2 text-sm font-semibold transition-colors duration-200 ease-out motion-reduce:transition-none',
+				muted ? 'text-foreground-faint' : 'text-foreground-name',
+			)}
+		>
+			<span
+				aria-hidden
+				className={cn(
+					'grid h-[18px] w-[18px] place-items-center rounded-full text-[10px] tabular-nums transition-colors',
+					done
+						? 'bg-success/15 text-success'
+						: muted
+							? 'bg-surface-tonal text-foreground-faint'
+							: 'bg-primary/12 text-primary',
+				)}
+			>
+				{done ? <Check className="h-3 w-3" /> : n}
+			</span>
+			{children}
+		</h4>
+	);
+}
+
+/** The chosen credential, folded to one line; "Change" reopens the choice. */
+function ChosenLine({
+	name,
+	detail,
+	onChange,
+}: {
+	name: string;
+	detail?: string;
+	onChange?: () => void;
+}) {
+	return (
+		<p
+			className="flex min-w-0 items-center gap-2 text-sm"
+			data-testid="queue-chosen-credential"
+		>
+			<span className="text-foreground-name min-w-0 truncate font-medium">{name}</span>
+			{detail && <span className="text-foreground-sub shrink-0 text-xs">· {detail}</span>}
+			{onChange && (
+				<Button variant="ghost" size="xs" className="ml-auto shrink-0" onClick={onChange}>
+					Change
+				</Button>
+			)}
+		</p>
+	);
+}
+
+/** ① Credential: covering credentials as radios, or the create form inline. */
+function CredentialSection({
+	entry,
+	agentId,
+	agentName,
+	choice,
+	chosen,
+	creating,
+	onChoose,
+	onStartCreate,
+	onTouched,
+	onCancelCreate,
+	onCreated,
+	onVendorConnected,
+	onChange,
+	changing,
+	onKeep,
+}: {
+	entry: QueueEntry;
+	agentId: string;
+	agentName: string;
+	choice: CredentialChoice | null;
+	chosen: ChosenCredential | null;
+	creating: boolean;
+	onChoose: (choice: CredentialChoice) => void;
+	onStartCreate: () => void;
+	onTouched: () => void;
+	onCancelCreate: () => void;
+	onCreated: (info: CreatedCredentialInfo) => void;
+	onVendorConnected: (info: ConnectedCredentialInfo) => void;
+	onChange: () => void;
+	/** "Change" reopened the chooser; the confirmed credential still stands. */
+	changing: boolean;
+	onKeep: () => void;
+}) {
+	const confirmed = entry.step === 'access' && entry.chosen ? entry.chosen : null;
+	// Held through the fold, so the line doesn't blank out while it closes.
+	const [lastConfirmed, setLastConfirmed] = useState(confirmed);
+	if (confirmed && confirmed !== lastConfirmed) setLastConfirmed(confirmed);
+	const createdCredential = useCredential(entry.created?.credential_id).data;
+	const options =
+		createdCredential &&
+		!entry.covering.some((c) => c.credential_id === createdCredential.credential_id)
+			? [createdCredential, ...entry.covering]
+			: entry.covering;
+	const count = options.length;
+	const chooserOpen = confirmed == null || changing;
+	/** While the form is open the cards fold to one line; "Show" brings them back. */
+	const [listShown, setListShown] = useState(false);
+	/** The form stays mounted (hidden) once opened, until it is cancelled. */
+	const [formMounted, setFormMounted] = useState(creating);
+	const cancelRef = useRef(false);
+	if (creating && !formMounted) setFormMounted(true);
+	useEffect(() => {
+		if (creating) setListShown(false);
+		else if (cancelRef.current) {
+			cancelRef.current = false;
+			setFormMounted(false);
+		}
+	}, [creating]);
+	const formOpen = creating && !listShown;
+	// No credential to pick: prebuild the form while idle; otherwise mount it on click.
+	const canAddNew = count === 0 && chooserOpen && !entry.bound && entry.status !== 'working';
+	useEffect(() => {
+		if (formMounted || !canAddNew) return;
+		const idle = window.requestIdleCallback ?? ((cb: () => void) => window.setTimeout(cb, 200));
+		const cancel = window.cancelIdleCallback ?? window.clearTimeout;
+		const handle = idle(() => setFormMounted(true));
+		return () => cancel(handle);
+	}, [formMounted, canAddNew]);
+	// Heaviest subtree: built once per API, callbacks via a ref so folds skip re-rendering.
+	const handlers = useRef({ onTouched, onCancelCreate, onCreated, onVendorConnected });
+	useLayoutEffect(() => {
+		handlers.current = { onTouched, onCancelCreate, onCreated, onVendorConnected };
+	});
+	const { api } = entry;
+	const form = useMemo(
+		() => (
+			<CreateCredentialFlow
+				open
+				surface="inline"
+				pinnedApi={api}
+				preselectedAgentId={agentId}
+				onTouched={(): void => {
+					cancelRef.current = false;
+					handlers.current.onTouched();
+				}}
+				onClose={(): void => {
+					cancelRef.current = true;
+					handlers.current.onCancelCreate();
+				}}
+				onCreated={(info): void => handlers.current.onCreated(info)}
+				onVendorConnected={(info): void => handlers.current.onVendorConnected(info)}
+			/>
+		),
+		[api, agentId],
+	);
+	const select = (next: CredentialChoice): void => {
+		if (next.kind === 'new') setListShown(false);
+		onChoose(next);
+	};
+	const existing =
+		choice?.kind === 'existing'
+			? (entry.covering.find((c) => c.credential_id === choice.credentialId) ?? null)
+			: null;
+	const other = entry.existing.length > 0 ? ' other' : '';
+	return (
+		<div data-testid="queue-credential-section">
+			<StepHeading n={1} done={chosen != null}>
+				Credential
+			</StepHeading>
+			<div className="space-y-3">
+				{entry.existing.length > 0 && (
+					<DetailsLine
+						data-testid="queue-existing-accounts"
+						icon={<KeyRound className="text-caution h-3.5 w-3.5" />}
+						summary={`${count === 0 ? 'Needs a new key · ' : ''}${addedViaLabel(entry.existing)} already`}
+					>
+						<p data-testid="queue-ambiguity-warning">
+							This adds a second credential; <AgentNameText name={agentName} /> keeps
+							its current one. {anotherCredentialWarning(entry.api.label)} Nothing is
+							stored until you save it.
+						</p>
+					</DetailsLine>
+				)}
+
+				{entry.bound && entry.chosen ? (
+					<ChosenLine name={entry.chosen.name} detail="bound · rules not saved yet" />
+				) : (
+					<>
+						{confirmed != null && !changing && lastConfirmed && (
+							<ChosenLine
+								name={lastConfirmed.name}
+								detail={
+									entry.created?.credential_id === lastConfirmed.credential_id
+										? 'created just now'
+										: undefined
+								}
+								onChange={entry.status === 'working' ? undefined : onChange}
+							/>
+						)}
+						<ExpandReveal open={chooserOpen}>
+							<div className="space-y-3" data-testid="queue-credential-chooser">
+								{count > 0 && (
+									<CredentialOptions
+										id={`queue-credential-${entry.key}`}
+										legend={
+											count === 1
+												? `Use your${other} credential for ${entry.api.label}, or add a new one`
+												: `Pick one of your ${count}${other} credentials for ${entry.api.label}`
+										}
+										credentials={options}
+										selected={creating && listShown ? null : choice}
+										onSelect={select}
+										newCredentialDetail="Another key or account for this API — nothing is stored until you save it"
+										disabled={entry.status === 'working'}
+										collapseExisting={{
+											collapsed: creating && !listShown,
+											summary: (
+												<Button
+													variant="ghost"
+													size="xs"
+													data-testid="queue-existing-collapsed"
+													aria-expanded={false}
+													onClick={(): void => setListShown(true)}
+													className="w-full justify-start px-1 text-xs font-normal"
+												>
+													{options.length} existing credential
+													{options.length === 1 ? '' : 's'}
+													<span aria-hidden="true">·</span>
+													<span className="text-foreground font-medium">
+														Show
+													</span>
+													<ChevronDown
+														className="h-3 w-3"
+														aria-hidden="true"
+													/>
+												</Button>
+											),
+										}}
+									/>
+								)}
+								{formMounted && (
+									<ExpandReveal open={formOpen} keepMounted>
+										<div
+											data-testid="queue-credential-form"
+											className={cn(
+												count > 0 && 'bg-surface-inset rounded-lg p-4',
+											)}
+										>
+											{form}
+										</div>
+									</ExpandReveal>
+								)}
+								{existing && credentialAwaitsConsent(existing) && (
+									<p className="text-muted-foreground text-xs">
+										<span className="text-foreground font-medium">
+											{existing.name}
+										</span>{' '}
+										just needs you to finish signing in, once its access is set.
+									</p>
+								)}
+								{count === 0 && !creating && !entry.created && (
+									<Button variant="secondary" size="sm" onClick={onStartCreate}>
+										Add a credential
+									</Button>
+								)}
+								{changing && confirmed && (
+									<Button
+										variant="ghost"
+										size="xs"
+										data-testid="queue-keep-credential"
+										onClick={onKeep}
+									>
+										Keep {confirmed.name}
+									</Button>
+								)}
+							</div>
+						</ExpandReveal>
+					</>
+				)}
+			</div>
+		</div>
+	);
+}
+
+/** ② Access: muted until a credential is chosen, then the presets and their rows. */
+function AccessSection({
 	entry,
 	chosen,
 	agentName,
 	draft,
 	onDraftChange,
-	onBack,
-	onCommit,
+	rulesIncomplete,
 	onLater,
+	reach,
+	reachUnknown,
+	sectionRef,
+	importJobId,
 }: {
+	sectionRef: React.RefObject<HTMLDivElement | null>;
+	/** The catalog import the new credential queued on save, if any. */
+	importJobId?: string;
 	entry: QueueEntry;
-	chosen: ChosenCredential;
+	chosen: ChosenCredential | null;
 	agentName: string;
 	draft: AccessDraft;
 	onDraftChange: (patch: Partial<AccessDraft>) => void;
-	onBack: () => void;
-	onCommit: (rules: PermissionRuleInput[], preset: RulesPreset) => void;
+	rulesIncomplete: boolean;
 	onLater: () => void;
+	/** How far the chosen credential's scope reaches — what Full access spans. */
+	reach: ScopeReach;
+	/** Reach still loading: the body stays inert so no preset commits under a wrong caption. */
+	reachUnknown: boolean;
 }) {
 	const working = entry.status === 'working';
 	const [laterPending, setLaterPending] = useState(false);
-	// Focus follows the confirm in and back out, so the keyboard never drops
-	// to the page when the button that opened it unmounts.
+	// Focus returns to the opening row once the confirm closes.
 	const laterRef = useRef<HTMLButtonElement>(null);
-	const keepRef = useRef<HTMLButtonElement>(null);
-	const laterOpened = useRef(false);
-	useEffect(() => {
-		if (laterPending) keepRef.current?.focus();
-		else if (laterOpened.current) laterRef.current?.focus();
-		laterOpened.current = laterPending;
-	}, [laterPending]);
-	// A credential this queue created carries no scope in hand — read it.
-	const fetched = useCredential(chosen.reach ? undefined : chosen.credential_id);
-	const reach: ScopeReach =
-		chosen.reach ?? (fetched.data ? apiScopeReach(fetched.data.api) : 'pinned');
-	// Only a workspace API has operations to read before it is imported.
-	const apiReference =
-		entry.api.source === 'local' && entry.api.version
-			? { vendor: entry.api.vendor, name: entry.api.name, version: entry.api.version }
-			: null;
-	const rules = useMemo(
-		() => rulesForPreset(draft.preset, draft.customRules),
-		[draft.preset, draft.customRules],
+	// The API whose operations ② reads: the workspace API, or the one the save's
+	// import registers once it lands (pending until then).
+	const { reference: apiReference, pending: operationsPending } = useQueueApiReference(
+		entry.api,
+		{ importJobId, active: chosen != null },
 	);
 
 	return (
-		<div className="space-y-3" data-testid="queue-access-step">
-			<p className="text-muted-foreground text-xs">
-				Through <span className="text-foreground font-medium">{chosen.name}</span>. A new
-				binding denies every call until it has rules — say what{' '}
-				<AgentNameText name={agentName} /> may call.
-			</p>
-
-			<AccessRulesStep
-				reach={reach}
-				preset={draft.preset}
-				onPresetChange={(preset): void => onDraftChange({ preset })}
-				customRules={draft.customRules}
-				onCustomRulesChange={(customRules): void => onDraftChange({ customRules })}
-				apiReference={apiReference}
-				disabled={working}
-				heading={
-					<>
-						What can <AgentNameText name={agentName} /> call?
-					</>
-				}
-				tester
-				testIdPrefix="queue-access"
-			/>
-
-			{entry.rulesError && (
-				<div data-testid="queue-rules-failed">
-					<ErrorAlert
-						title={entry.rulesError}
-						message={`${entry.api.label} is added but blocked — every call is denied until its rules are saved. Your rules are kept.`}
-						onRetry={
-							rules
-								? (): void => onCommit(rules, draft.preset as RulesPreset)
-								: undefined
-						}
-						retrying={working}
-					/>
-				</div>
-			)}
-
-			{laterPending ? (
-				<div
-					className="bg-surface-sheet space-y-2 rounded-md p-3"
-					data-testid="queue-later-confirm"
-					role="group"
-					aria-label="Set up later"
-				>
-					<p className="text-foreground flex items-start gap-2 text-xs">
-						<AlertTriangle className="text-caution mt-0.5 h-3.5 w-3.5 shrink-0" />
-						<span>
-							<AgentNameText name={agentName} /> won&apos;t be able to call{' '}
-							{entry.api.label} until you add rules — every call is denied, and it
-							shows as Blocked until then.
-						</span>
-					</p>
-					<div className="flex items-center gap-2">
-						<Button size="sm" variant="secondary" loading={working} onClick={onLater}>
-							Add without rules
-						</Button>
-						<Button
-							ref={keepRef}
-							size="sm"
-							variant="ghost"
-							disabled={working}
-							onClick={(): void => setLaterPending(false)}
-						>
-							Keep setting up
-						</Button>
-					</div>
-				</div>
-			) : (
-				<div className="flex flex-wrap items-center gap-2">
-					<Button
-						size="sm"
-						disabled={working || rules == null}
-						loading={working}
-						onClick={(): void => {
-							if (rules && draft.preset) onCommit(rules, draft.preset);
-						}}
-					>
-						<ShieldCheck className="h-4 w-4" />
-						{entry.bound
-							? 'Save rules'
-							: chosen.connect
-								? `Add ${entry.api.label} and sign in`
-								: `Add ${entry.api.label}`}
-					</Button>
-					<Button
-						ref={laterRef}
-						size="sm"
-						variant="ghost"
-						disabled={working}
-						onClick={(): void => setLaterPending(true)}
-					>
-						Set up later
-					</Button>
-					{!entry.bound && (
-						<Button
-							size="sm"
-							variant="ghost"
-							disabled={working}
-							onClick={onBack}
-							className="ml-auto"
-						>
-							<ArrowLeft className="h-3.5 w-3.5" />
-							Credential
-						</Button>
-					)}
-				</div>
-			)}
-			{rules == null && draft.preset === 'custom' && !laterPending && (
-				<p className="text-muted-foreground text-xs" data-testid="queue-access-hint">
-					Add at least one rule, or pick a preset.
+		<div
+			ref={sectionRef}
+			data-testid="queue-access-step"
+			data-ready={chosen != null || undefined}
+			className="scroll-mt-4"
+		>
+			<StepHeading n={2} muted={!chosen}>
+				Access
+			</StepHeading>
+			{!chosen && (
+				<p className="text-foreground-faint text-xs">
+					Available once a credential is chosen.
 				</p>
 			)}
+			<ExpandReveal open={chosen != null}>
+				<div className="space-y-3">
+					{reachUnknown && (
+						<p
+							className="text-foreground-faint text-xs"
+							role="status"
+							data-testid="queue-access-reach-pending"
+						>
+							Reading what this credential covers…
+						</p>
+					)}
+					<AccessRulesStep
+						reach={reach}
+						preset={draft.preset}
+						onPresetChange={(preset): void => onDraftChange({ preset })}
+						customRules={draft.customRules}
+						onCustomRulesChange={(customRules): void => onDraftChange({ customRules })}
+						apiReference={apiReference}
+						operationsPending={operationsPending}
+						disabled={working || reachUnknown}
+						heading={
+							<span className="sr-only">
+								What can <AgentNameText name={agentName} /> call?
+							</span>
+						}
+						tester
+						testIdPrefix="queue-access"
+						extraTools={
+							!entry.bound ? (
+								// Risky, so last with an ochre fill and glyph; the label stays neutral since ochre
+								// text on the ochre fill fails axe contrast (3.68:1).
+								<Button
+									ref={laterRef}
+									variant="ghost"
+									size="xs"
+									disabled={working || reachUnknown}
+									onClick={(): void => setLaterPending(true)}
+									data-testid="queue-add-without-rules"
+									className="text-foreground-sub hover:text-foreground hover:bg-warning/10 gap-1.5 px-2 text-xs font-medium"
+								>
+									<ShieldOff className="text-warning h-3.5 w-3.5" aria-hidden />
+									Add without rules…
+								</Button>
+							) : undefined
+						}
+					/>
+					{entry.rulesError && (
+						<div data-testid="queue-rules-failed">
+							<ErrorAlert
+								title={entry.rulesError}
+								message={`${entry.api.label} is added but blocked — every call is denied until its rules are saved. Your rules are kept; Save rules retries.`}
+							/>
+						</div>
+					)}
+					{rulesIncomplete && draft.preset === 'custom' && (
+						<p
+							className="text-muted-foreground text-xs"
+							data-testid="queue-access-hint"
+						>
+							Add at least one rule, or pick a preset.
+						</p>
+					)}
+					{/* Inside ② so it is found with its row; risky, not destructive. */}
+					<ConfirmDialog
+						open={laterPending}
+						title={`Add ${entry.api.label} without rules?`}
+						body={
+							<>
+								<AgentNameText name={agentName} /> won&apos;t be able to call{' '}
+								{entry.api.label} until you add rules — every call is denied, and it
+								shows as Blocked until then.
+							</>
+						}
+						confirmLabel="Add without rules"
+						destructive={false}
+						pending={working}
+						confirmTestId="queue-later-confirm"
+						cancelLabel="Keep setting up"
+						onConfirm={(): void => {
+							setLaterPending(false);
+							onLater();
+						}}
+						onClose={(): void => {
+							setLaterPending(false);
+							laterRef.current?.focus();
+						}}
+					/>
+				</div>
+			</ExpandReveal>
+		</div>
+	);
+}
+
+/** A settled API picked again from the list: what it was given. */
+function AddedSummary({ entry }: { entry: QueueEntry }) {
+	const blocked = entry.access === 'later';
+	return (
+		<div
+			data-testid="queue-added-summary"
+			className={cn(
+				'flex items-start gap-3 rounded-lg p-4',
+				blocked ? 'bg-caution/8' : 'bg-success/8',
+			)}
+		>
+			{blocked ? (
+				<AlertTriangle className="text-caution mt-0.5 h-4 w-4 shrink-0" />
+			) : (
+				<Check className="text-success mt-0.5 h-4 w-4 shrink-0" />
+			)}
+			<div className="min-w-0 text-sm">
+				<p className="text-foreground">
+					{blocked ? 'Added without rules — every call is denied' : 'Added'}
+					{entry.credentialName && (
+						<span className="text-foreground-sub"> · via {entry.credentialName}</span>
+					)}
+					{!blocked && entry.access && (
+						<span className="text-foreground-sub"> · {accessLabel(entry)}</span>
+					)}
+				</p>
+				{entry.note && <p className="text-muted-foreground mt-1 text-xs">{entry.note}</p>}
+			</div>
 		</div>
 	);
 }
@@ -1128,104 +1499,5 @@ function DonePane({ summary, blocked }: { summary: QueueSummary; blocked: number
 				</p>
 			</div>
 		</section>
-	);
-}
-
-const STATUS_STYLE: Record<QueueEntry['status'], string> = {
-	waiting: 'text-muted-foreground',
-	active: 'text-foreground',
-	working: 'text-muted-foreground',
-	added: 'text-success',
-	dropped: 'text-muted-foreground',
-	failed: 'text-destructive',
-};
-
-/** What an added row's binding was given — custom rules counted. */
-function accessLabel(entry: QueueEntry): string {
-	if (entry.access === 'custom') {
-		const n = entry.ruleCount ?? 0;
-		return `${n} custom ${n === 1 ? 'rule' : 'rules'}`;
-	}
-	return entry.access ? QUEUE_ACCESS_LABELS[entry.access] : '';
-}
-
-/** Every item and where it got to — the record a partial failure is read from. */
-function ProgressList({
-	entries,
-	activeKey,
-	onRetry,
-}: {
-	entries: QueueEntry[];
-	activeKey: string | null;
-	onRetry: (key: string) => void;
-}) {
-	return (
-		<ol aria-label="Setup progress" className="space-y-1">
-			{entries.map((entry) => (
-				<li
-					key={entry.key}
-					data-testid="queue-progress-row"
-					data-status={entry.status}
-					className={cn(
-						'flex flex-wrap items-center gap-2 rounded-lg px-2 py-1.5 text-sm',
-						entry.key === activeKey && 'bg-tint-2',
-					)}
-				>
-					<span
-						className={cn(
-							'min-w-0 flex-1 truncate',
-							entry.status === 'dropped' && 'text-muted-foreground line-through',
-						)}
-					>
-						{entry.api.label}
-					</span>
-					{entry.status === 'added' && (
-						<Check className="text-success h-3.5 w-3.5 shrink-0" aria-hidden />
-					)}
-					{entry.status === 'dropped' && (
-						<Minus className="text-muted-foreground h-3.5 w-3.5 shrink-0" aria-hidden />
-					)}
-					<span className={cn('shrink-0 text-xs', STATUS_STYLE[entry.status])}>
-						{QUEUE_STATUS_LABELS[entry.status]}
-					</span>
-					{/* Which credential it went through — the batch's record once the
-					    pane has moved on. */}
-					{entry.status === 'added' && entry.credentialName && (
-						<span className="text-muted-foreground shrink-0 text-xs">
-							via {entry.credentialName}
-						</span>
-					)}
-					{entry.status === 'added' && entry.access && (
-						<span
-							data-testid="queue-row-access"
-							className={cn(
-								'shrink-0 text-xs',
-								entry.access === 'later' ? 'text-caution' : 'text-muted-foreground',
-							)}
-						>
-							· {accessLabel(entry)}
-						</span>
-					)}
-					{entry.status === 'failed' && (
-						<>
-							<Badge variant="danger" className="shrink-0">
-								{entry.error}
-							</Badge>
-							<Button
-								size="xs"
-								variant="tonal"
-								onClick={(): void => onRetry(entry.key)}
-								className="shrink-0"
-							>
-								Try again
-							</Button>
-						</>
-					)}
-					{entry.note && (
-						<p className="text-muted-foreground w-full text-xs">{entry.note}</p>
-					)}
-				</li>
-			))}
-		</ol>
 	);
 }

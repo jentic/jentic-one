@@ -45,6 +45,7 @@ import {
 	type Credential,
 } from '@/shared/credentials/api';
 import AgentsPage from '@/modules/agents/pages/AgentsPage';
+import type { NewAgentPlacement } from '@/modules/agents/lib/newAgentPlacement';
 import { resetOrphanPurgeAttemptsForTest } from '@/modules/agents/api/hooks';
 
 /** Surfaces the router's current search string so specs can assert `?agent=`. */
@@ -83,10 +84,16 @@ function seedViewer(permissions: string[], id = 'usr_viewer_1') {
  * is unknown — the default for specs that don't care who is looking. With it,
  * seed the viewer first ({@link seedViewer}).
  */
-function renderPage(route = '/', { withAuth = false }: { withAuth?: boolean } = {}) {
+function renderPage(
+	route = '/',
+	{
+		withAuth = false,
+		newAgentPlacement,
+	}: { withAuth?: boolean; newAgentPlacement?: NewAgentPlacement } = {},
+) {
 	const ui = (
 		<>
-			<AgentsPage />
+			<AgentsPage newAgentPlacement={newAgentPlacement} />
 			<LocationProbe />
 			<Toaster />
 		</>
@@ -94,15 +101,33 @@ function renderPage(route = '/', { withAuth = false }: { withAuth?: boolean } = 
 	return renderWithProviders(withAuth ? <AuthProvider>{ui}</AuthProvider> : ui, { route });
 }
 
-/** Open the New agent panel over the fleet, on its "Create here" tab. */
+/** Open the New agent panel (it opens on "Register from the CLI"), then "Create it here". */
 async function openCreateHere(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
 	await user.click(screen.getByRole('button', { name: 'New agent' }));
 	const sheet = await screen.findByRole('dialog', { name: 'New agent' });
-	expect(within(sheet).getByRole('tab', { name: 'Create here' })).toHaveAttribute(
-		'aria-selected',
-		'true',
-	);
+	const create = within(sheet).getByRole('tab', { name: 'Create it here' });
+	await user.click(create);
+	expect(create).toHaveAttribute('aria-selected', 'true');
+	await waitFor(() => expect(within(sheet).getByLabelText('Name')).toBeVisible());
 	return sheet;
+}
+
+async function findResume(note: string): Promise<HTMLElement> {
+	return waitFor(() => {
+		const line = screen.getByTestId('resume-setup');
+		const resume = within(line).getByRole('button', { name: 'Resume setup' });
+		expect(resume).toHaveAccessibleDescription(note);
+		return resume;
+	});
+}
+
+/** Enabled filled primaries in the header, strip and card (banners carry their own). */
+function filledPrimaries(): HTMLElement[] {
+	const header = document.querySelector<HTMLElement>('.page-header-actions')!;
+	const scopes = [header, screen.getByTestId('agent-strip'), screen.getByTestId('agent-card')];
+	return scopes.flatMap((scope) =>
+		Array.from(scope.querySelectorAll<HTMLElement>('button[data-variant="primary"]:enabled')),
+	);
 }
 
 /** The strip pill (a real tab) for the given agent name. */
@@ -1141,20 +1166,23 @@ describe('AgentsPage — flat agents surface', () => {
 		const add = screen.getByRole('button', { name: 'Add APIs' });
 		expect(add).toBeEnabled();
 		await user.click(add);
-		// Step 1 of the flow: pick the APIs. The credential comes after, in the
-		// queue, which is why the tray says so up front.
-		expect(await screen.findByRole('dialog', { name: 'Add APIs' })).toBeInTheDocument();
-		expect(
-			screen.getByText(/Each API gets a credential and its access rules in this flow/),
-		).toBeInTheDocument();
+		const tray = await screen.findByRole('dialog', { name: 'Add APIs' });
+		expect(within(tray).getByText(/Pick what/)).toHaveTextContent(
+			'Pick what legacy-scraper should be able to call.',
+		);
 	});
 
-	it("the card's Add API opens the same flow, and is the card's only action", async () => {
+	it("the card's Add APIs is the agent's one add entry point: primary, and the card's only action", async () => {
 		const user = userEvent.setup();
 		renderPage('/?agent=agnt_active_1');
 		const card = await screen.findByTestId('agent-card');
-		const addApi = await within(card).findByRole('button', { name: 'Add API' });
+		const addApi = await within(card).findByRole('button', { name: 'Add APIs' });
 		expect(addApi).toBeEnabled();
+		expect(addApi).toHaveAttribute('data-variant', 'primary');
+		await screen.findAllByTestId('api-tile');
+		expect(screen.getAllByRole('button', { name: /^Add APIs?$/ })).toEqual([addApi]);
+		expect(screen.queryByTestId('resume-setup')).toBeNull();
+		expect(filledPrimaries()).toEqual([addApi]);
 		// No "Add access rules" lead: blocked rows open their own rules editor.
 		expect(within(card).queryByRole('button', { name: /access rules/i })).toBeNull();
 		await user.click(addApi);
@@ -1180,16 +1208,15 @@ describe('AgentsPage — flat agents surface', () => {
 		await waitFor(() => expect(toggle).toHaveTextContent('Serving'));
 	});
 
-	it('crosses out the tabs whose verdict is settled and leaves pending upright', async () => {
+	it('crosses out only archived tabs; rejected, disabled and pending stay upright', async () => {
 		renderPage();
 		await screen.findAllByText('inbox-triage-bot');
 
-		// `disabled` has no banner, so its tab is the only place the strip states it:
-		// struck through, with a glyph — a coloured dot alone can't be read.
+		// Only archived is struck through: `disabled`/`rejected` carry state in the glyph.
 		const struck = (name: string) =>
 			getComputedStyle(within(stripTab(name)).getByText(name)).textDecorationLine;
-		expect(struck('legacy-scraper')).toContain('line-through');
-		expect(struck('spammy-bot')).toContain('line-through');
+		expect(struck('legacy-scraper')).toBe('none');
+		expect(struck('spammy-bot')).toBe('none');
 		// Pending is the one non-active state still in motion — crossing it out
 		// would state the opposite of what is true — and active still serves.
 		expect(struck('inbox-triage-bot')).toBe('none');
@@ -1268,11 +1295,10 @@ describe('AgentsPage — flat agents surface', () => {
 			await screen.findByText(/Not serving traffic\. Approve it to let it authenticate\./),
 		).toBeInTheDocument();
 		expect(await screen.findByRole('button', { name: 'Add APIs' })).toBeDisabled();
-		// Named beside the tree's button, and as the card button's Tooltip.
-		expect(screen.getAllByText('Approve this agent before giving it APIs.')).toHaveLength(2);
 		expect(screen.getByTestId('card-add-api').parentElement).toHaveAccessibleDescription(
 			'Approve this agent before giving it APIs.',
 		);
+		expect(filledPrimaries()).toEqual([screen.getByRole('button', { name: 'Approve' })]);
 		// The empty grid names the state's own blocker: telling a pending agent's
 		// operator that the bind is what's missing points them at the wrong fix.
 		expect(
@@ -1319,16 +1345,12 @@ describe('AgentsPage — flat agents surface', () => {
 		renderPage('/?agent=agnt_archived_1');
 		await screen.findByRole('tab', { name: /retired-bot/ });
 
-		expect(
-			await screen.findByText(
-				/This agent is retired\. Its bindings, grants and consents were swept\./,
-			),
-		).toBeInTheDocument();
-		expect(
-			await screen.findByText(
-				'Archiving swept its credential bindings; an archived agent keeps no access.',
-			),
-		).toBeInTheDocument();
+		const notice = await screen.findByTestId('can-call-empty');
+		expect(notice).toHaveTextContent(
+			"Read-only. It can't authenticate, and its credential bindings, grants and consents were removed.",
+		);
+		expect(within(notice).getByRole('button', { name: 'See its activity' })).toBeEnabled();
+		expect(screen.queryByText(/This agent is retired/)).not.toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: 'Add APIs' })).not.toBeInTheDocument();
 	});
 
@@ -1468,12 +1490,12 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(screen.queryByTestId('agent-dock')).not.toBeInTheDocument();
 
 		// The header's create button steps back for a fresh org; it opens the panel
-		// on "Create here", as it always does.
+		// on "Register from the CLI", as it always does.
 		const create = screen.getByRole('button', { name: 'New agent' });
 		expect(create).toHaveAttribute('data-emphasis', 'secondary');
 		await user.click(create);
 		const panel = await screen.findByRole('dialog', { name: 'New agent' });
-		expect(within(panel).getByRole('tab', { name: 'Create here' })).toHaveAttribute(
+		expect(within(panel).getByRole('tab', { name: 'Register from the CLI' })).toHaveAttribute(
 			'aria-selected',
 			'true',
 		);
@@ -1995,7 +2017,7 @@ describe('AgentsPage — flat agents surface', () => {
 		);
 		await user.click(within(sheet).getByRole('checkbox', { name: 'capabilities:execute' }));
 
-		await user.click(within(sheet).getByRole('button', { name: 'Create empty' }));
+		await user.click(within(sheet).getByRole('button', { name: 'Create' }));
 		expect(await screen.findByText('Agent created')).toBeInTheDocument();
 		expect(postBody).toMatchObject({
 			name: 'granted-agent',
@@ -2025,57 +2047,66 @@ describe('AgentsPage — flat agents surface', () => {
 
 		const sheet = await openCreateHere(user);
 		await user.type(within(sheet).getByLabelText('Name'), 'plain-agent');
-		await user.click(within(sheet).getByRole('button', { name: 'Create empty' }));
+		await user.click(within(sheet).getByRole('button', { name: 'Create' }));
 
 		expect(await screen.findByText('Agent created')).toBeInTheDocument();
 		// The client normalises an empty selection to `permissions: null`.
 		expect(postBody).toMatchObject({ name: 'plain-agent', permissions: null });
 	});
 
-	it('creating an agent flows straight into picking its APIs', async () => {
+	it('creating an agent over a fleet flows straight into picking its APIs', async () => {
 		const user = userEvent.setup();
 		renderPage();
 		await screen.findAllByText('inbox-triage-bot');
 
 		const sheet = await openCreateHere(user);
 		await user.type(within(sheet).getByLabelText('Name'), 'chained-agent');
-		await user.click(within(sheet).getByRole('button', { name: 'Create and add APIs' }));
+		await user.click(within(sheet).getByRole('button', { name: 'Create' }));
 
 		// A created agent can authenticate and still fail every call it makes, so the
 		// tray opens on it rather than leaving the operator to find it in the strip.
+		// Over a fleet there is no first-API (GitHub) step: that is the first agent's.
 		expect(await screen.findByText('Agent created')).toBeInTheDocument();
+		expect(within(sheet).queryByTestId('first-api-panel')).toBeNull();
 		await waitFor(() =>
 			expect(stripTab('chained-agent')).toHaveAttribute('aria-selected', 'true'),
 		);
 		const tray = await screen.findByRole('dialog', { name: 'Add APIs' });
-		expect(
-			within(tray).getByText(
-				(_, el) =>
-					el?.tagName === 'P' &&
-					/^Pick what chained-agent should be able to call/.test(el.textContent ?? ''),
-			),
-		).toBeVisible();
+		await waitFor(() =>
+			expect(
+				within(tray).getByText(
+					(_, el) =>
+						el?.tagName === 'P' &&
+						/^Pick what chained-agent should be able to call/.test(
+							el.textContent ?? '',
+						),
+				),
+			).toBeVisible(),
+		);
 	});
 
-	it('Create empty selects the new agent and leaves the tray shut', async () => {
+	it('the tray\'s "Skip for now" after Create selects the agent with the tray shut', async () => {
 		const user = userEvent.setup();
 		renderPage();
 		await screen.findAllByText('inbox-triage-bot');
 
 		const sheet = await openCreateHere(user);
 		await user.type(within(sheet).getByLabelText('Name'), 'identity-only');
-		await user.click(within(sheet).getByRole('button', { name: 'Create empty' }));
+		await user.click(within(sheet).getByRole('button', { name: 'Create' }));
 
-		// The de-emphasised exit still lands on the new agent's screen — the same
-		// Add-APIs step is one click away there, so nothing is lost by taking it.
+		// "Skip for now" (Cancel's place on this path) lands on the new agent's screen.
 		expect(await screen.findByText('Agent created')).toBeInTheDocument();
+		const tray = await screen.findByRole('dialog', { name: 'Add APIs' });
+		await user.click(within(tray).getByRole('button', { name: 'Skip for now' }));
 		await waitFor(() =>
 			expect(stripTab('identity-only')).toHaveAttribute('aria-selected', 'true'),
 		);
 		// The card swaps to the new agent a beat after its tab lands
 		// (`CARD_HANDOFF_MS`); until then the previous agent's button is shown.
 		await waitFor(() => expect(screen.getByRole('button', { name: 'Add APIs' })).toBeEnabled());
-		expect(screen.queryByRole('dialog', { name: 'Add APIs' })).not.toBeInTheDocument();
+		await waitFor(() =>
+			expect(screen.queryByRole('dialog', { name: 'Add APIs' })).not.toBeInTheDocument(),
+		);
 	});
 });
 
@@ -2108,15 +2139,19 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 		return within(tray).findByRole('checkbox', { name: new RegExp(name) });
 	}
 
-	/** On the queue's access step: pick a preset and add the API. */
+	/** Pick a preset in ② Access and add the API from the footer. */
 	async function addWithAccess(
 		user: ReturnType<typeof userEvent.setup>,
 		label: string,
-		preset: RegExp = /Read-only/,
+		preset: RegExp = /Read only/,
 	): Promise<void> {
 		const step = await screen.findByTestId('queue-access-step');
+		await waitFor(() => expect(step).toHaveAttribute('data-ready', 'true'));
 		await user.click(within(step).getByRole('radio', { name: preset }));
-		await user.click(within(step).getByRole('button', { name: `Add ${label}` }));
+		const add = screen.getByTestId('queue-add');
+		await waitFor(() => expect(add).toBeEnabled());
+		expect(add).toHaveTextContent(`Add ${label}`);
+		await user.click(add);
 	}
 
 	function queueRows(): string[] {
@@ -2124,7 +2159,11 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 			.queryAllByTestId('queue-progress-row')
 			.map(
 				(r) =>
-					`${r.textContent?.split(/Now|Waiting|Added|Not added|Failed/)[0]}:${r.dataset.status}`,
+					`${r.textContent?.split(/In progress|To do|Adding…|Added|Skipped|Failed/)[0]}:${
+						r.dataset.selected && r.dataset.status !== 'added'
+							? 'open'
+							: r.dataset.status
+					}`,
 			);
 	}
 
@@ -2140,9 +2179,9 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 		);
 		await user.click(within(tray).getByRole('button', { name: 'Continue' }));
 
-		// Stripe: its one existing credential is confirmed and bound.
-		expect(await screen.findByText('Set up 3 APIs')).toBeInTheDocument();
-		await user.click(await screen.findByRole('button', { name: 'Use this credential' }));
+		expect(
+			await screen.findByRole('heading', { name: 'Set up 3 APIs for legacy-scraper' }),
+		).toBeInTheDocument();
 		await addWithAccess(user, 'Stripe');
 		await waitFor(() => expect(queueRows()[0]).toBe('Stripe:added'));
 
@@ -2166,12 +2205,13 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 		await user.click(within(back).getByRole('button', { name: 'Continue' }));
 
 		// Progress survives the round trip: Stripe stays added, Linear is gone, Acme
-		// joins the end, and the pane (not the header) has focus again.
+		// joins the end.
 		await waitFor(() =>
-			expect(queueRows()).toEqual(['Stripe:added', 'Notion:active', 'Acme:waiting']),
+			expect(queueRows()).toEqual(['Stripe:added', 'Notion:open', 'Acme:waiting']),
 		);
-		expect(screen.getByText('1 of 3 done')).toBeInTheDocument();
-		await waitFor(() => expect(screen.getByTestId('queue-active-pane')).toHaveFocus());
+		expect(screen.getByText('1 of 3 added')).toBeInTheDocument();
+		// Focus moves to the pane's scroll region, so the keyboard carries on in the next API.
+		await waitFor(() => expect(screen.getByTestId('queue-pane-scroll')).toHaveFocus());
 	});
 
 	it('Done lands on rows that already read their access — none stale Blocked', async () => {
@@ -2186,7 +2226,6 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 			expect(within(tray).getByRole('button', { name: 'Continue' })).toBeEnabled(),
 		);
 		await user.click(within(tray).getByRole('button', { name: 'Continue' }));
-		await user.click(await screen.findByRole('button', { name: 'Use this credential' }));
 		await addWithAccess(user, 'Stripe');
 		await waitFor(() => expect(queueRows()).toEqual(['Stripe:added']));
 		await user.click(screen.getByRole('button', { name: 'Done' }));
@@ -2212,9 +2251,9 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 			expect(within(tray).getByRole('button', { name: 'Continue' })).toBeEnabled(),
 		);
 		await user.click(within(tray).getByRole('button', { name: 'Continue' }));
-		await user.click(await screen.findByRole('button', { name: 'Use this credential' }));
 		const step = await screen.findByTestId('queue-access-step');
-		await user.click(within(step).getByRole('button', { name: 'Set up later' }));
+		await waitFor(() => expect(step).toHaveAttribute('data-ready', 'true'));
+		await user.click(within(step).getByTestId('queue-add-without-rules'));
 		await user.click(within(step).getByRole('button', { name: 'Add without rules' }));
 		await waitFor(() => expect(queueRows()).toEqual(['Stripe:added']));
 		await user.click(screen.getByRole('button', { name: 'Done' }));
@@ -2243,9 +2282,7 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 		await user.click(within(back).getByRole('button', { name: 'Cancel' }));
 
 		// The untick was never committed, so both still wait for next time.
-		expect(
-			await screen.findByRole('button', { name: 'Finish adding 2 APIs' }),
-		).toBeInTheDocument();
+		await findResume('Notion and Linear are picked, not set up yet.');
 	});
 
 	it('after closing midway and reloading, only the API actually bound reads Added via', async () => {
@@ -2258,13 +2295,10 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 			expect(within(tray).getByRole('button', { name: 'Continue' })).toBeEnabled(),
 		);
 		await user.click(within(tray).getByRole('button', { name: 'Continue' }));
-		await user.click(await screen.findByRole('button', { name: 'Use this credential' }));
 		await addWithAccess(user, 'Stripe');
 		await waitFor(() => expect(queueRows()[0]).toBe('Stripe:added'));
-		await user.click(screen.getByRole('button', { name: 'Close for now' }));
-		expect(
-			await screen.findByRole('button', { name: 'Finish adding 1 API' }),
-		).toBeInTheDocument();
+		await user.click(screen.getByRole('button', { name: 'Close' }));
+		await findResume('Notion is picked, not set up yet.');
 
 		// A reload drops the unfinished batch; nothing about it is remembered.
 		first.unmount();
@@ -2335,7 +2369,6 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 			expect(within(pane).queryByRole('radio', { name: /Stripe key/ })).toBeNull();
 			expect(within(pane).getByRole('radio', { name: /Stripe sandbox/ })).toBeChecked();
 
-			await user.click(within(pane).getByRole('button', { name: 'Use this credential' }));
 			await addWithAccess(user, 'Stripe');
 			await waitFor(() => expect(queueRows()).toEqual(['Stripe:added']));
 			await user.click(screen.getByRole('button', { name: 'Done' }));
@@ -2427,8 +2460,13 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 			renderPage('/?agent=agnt_disabled_1');
 			await queueStripe(user);
 			const pane = await screen.findByTestId('queue-active-pane');
-			expect(within(pane).queryByRole('radio')).toBeNull();
-			expect(within(pane).getByRole('button', { name: 'Add credential' })).toBeEnabled();
+			const form = await within(pane).findByTestId('queue-credential-form');
+			await waitFor(() => expect(form).toBeVisible());
+			expect(
+				within(within(pane).getByTestId('queue-credential-section')).queryByRole('radio', {
+					name: /Add a new credential|Stripe key/,
+				}),
+			).toBeNull();
 		});
 
 		it('is still owed until a NEW binding serves the API', async () => {
@@ -2445,11 +2483,9 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 			const user = userEvent.setup();
 			const { queryClient } = renderPage('/?agent=agnt_disabled_1');
 			await queueStripe(user);
-			await user.click(await screen.findByRole('button', { name: 'Close for now' }));
+			await user.click(await screen.findByRole('button', { name: 'Close' }));
 			// The account the agent already had does not settle the item.
-			expect(
-				await screen.findByRole('button', { name: 'Finish adding 1 API' }),
-			).toBeInTheDocument();
+			await findResume('Stripe is picked, not set up yet.');
 
 			seedCredentialBindings([
 				{
@@ -2460,11 +2496,12 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 				},
 			]);
 			await queryClient.invalidateQueries();
-			expect(await screen.findByRole('button', { name: 'Add APIs' })).toBeInTheDocument();
+			await waitFor(() => expect(screen.queryByTestId('resume-setup')).toBeNull());
+			expect(screen.getByRole('button', { name: 'Add APIs' })).toBeEnabled();
 		});
 	});
 
-	it('drops an owed API from "Finish adding" once the agent reaches it', async () => {
+	it('drops an owed API from Resume setup once the agent reaches it', async () => {
 		const user = userEvent.setup();
 		const { queryClient } = renderPage('/?agent=agnt_disabled_1');
 		await user.click(await screen.findByRole('button', { name: 'Add APIs' }));
@@ -2474,10 +2511,8 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 			expect(within(tray).getByRole('button', { name: 'Continue' })).toBeEnabled(),
 		);
 		await user.click(within(tray).getByRole('button', { name: 'Continue' }));
-		await user.click(await screen.findByRole('button', { name: 'Close for now' }));
-		expect(
-			await screen.findByRole('button', { name: 'Finish adding 2 APIs' }),
-		).toBeInTheDocument();
+		await user.click(await screen.findByRole('button', { name: 'Close' }));
+		await findResume('Stripe and Notion are picked, not set up yet.');
 
 		// Stripe gets bound some other way while the batch waits.
 		seedCredentialBindings([
@@ -2490,13 +2525,74 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 		]);
 		await queryClient.invalidateQueries();
 
+		await findResume('Notion is picked, not set up yet.');
+		await user.click(screen.getByRole('button', { name: 'Resume setup' }));
 		expect(
-			await screen.findByRole('button', { name: 'Finish adding 1 API' }),
+			await screen.findByRole('heading', { name: 'Set up 1 API for legacy-scraper' }),
 		).toBeInTheDocument();
-		// Re-entry lands on the queue with only what is still owed.
-		await user.click(screen.getByRole('button', { name: 'Finish adding 1 API' }));
-		expect(await screen.findByText('Set up 1 API')).toBeInTheDocument();
-		expect(queueRows()).toEqual(['Notion:active']);
+		expect(queueRows()).toEqual(['Notion:open']);
+	});
+
+	it('with picks waiting, Add APIs still adds: the picker opens on them, and more join the batch', async () => {
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_disabled_1');
+		await user.click(await screen.findByRole('button', { name: 'Add APIs' }));
+		for (const name of ['Stripe', 'Notion', 'Linear']) await user.click(await trayRow(name));
+		const tray = screen.getByRole('dialog', { name: 'Add APIs' });
+		await waitFor(() =>
+			expect(within(tray).getByRole('button', { name: 'Continue' })).toBeEnabled(),
+		);
+		await user.click(within(tray).getByRole('button', { name: 'Continue' }));
+		await user.click(await screen.findByRole('button', { name: 'Close' }));
+
+		await findResume('Stripe, Notion and 1 more are picked, not set up yet.');
+		const add = screen.getByTestId('card-add-api');
+		expect(add).toHaveTextContent('Add APIs');
+		expect(add).toHaveAttribute('data-variant', 'primary');
+		expect(screen.getAllByRole('button', { name: /^Add APIs?$/ })).toEqual([add]);
+		expect(screen.getByRole('button', { name: 'Resume setup' })).toHaveAttribute(
+			'data-variant',
+			'tonal',
+		);
+
+		await user.click(add);
+		const again = await screen.findByRole('dialog', { name: 'Add APIs' });
+		for (const name of ['Stripe', 'Notion', 'Linear']) {
+			await waitFor(async () =>
+				expect(await trayRow(name)).toHaveAttribute('aria-checked', 'true'),
+			);
+		}
+		await user.click(await trayRow('Acme'));
+		await waitFor(() =>
+			expect(within(again).getByRole('button', { name: 'Continue' })).toBeEnabled(),
+		);
+		await user.click(within(again).getByRole('button', { name: 'Continue' }));
+		expect(
+			await screen.findByRole('heading', { name: 'Set up 4 APIs for legacy-scraper' }),
+		).toBeInTheDocument();
+	});
+
+	it('dismissing Add APIs over waiting picks leaves the batch as it was', async () => {
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_disabled_1');
+		await user.click(await screen.findByRole('button', { name: 'Add APIs' }));
+		for (const name of ['Stripe', 'Notion']) await user.click(await trayRow(name));
+		const tray = screen.getByRole('dialog', { name: 'Add APIs' });
+		await waitFor(() =>
+			expect(within(tray).getByRole('button', { name: 'Continue' })).toBeEnabled(),
+		);
+		await user.click(within(tray).getByRole('button', { name: 'Continue' }));
+		await user.click(await screen.findByRole('button', { name: 'Close' }));
+		await findResume('Stripe and Notion are picked, not set up yet.');
+
+		await user.click(screen.getByTestId('card-add-api'));
+		const again = await screen.findByRole('dialog', { name: 'Add APIs' });
+		await user.click(await trayRow('Notion'));
+		await user.click(within(again).getByRole('button', { name: 'Cancel' }));
+		await waitFor(() =>
+			expect(screen.queryByRole('dialog', { name: 'Add APIs' })).not.toBeInTheDocument(),
+		);
+		await findResume('Stripe and Notion are picked, not set up yet.');
 	});
 });
 
@@ -2511,13 +2607,29 @@ describe('AgentsPage — the header follows the zero-agents landing', () => {
 
 	const newAgent = () => screen.getByRole('button', { name: 'New agent' });
 
-	it('is secondary while an arrival shows, and primary once the fleet takes over', async () => {
+	const headerNewAgent = () =>
+		within(document.querySelector<HTMLElement>('.page-header-actions')!).queryByRole('button', {
+			name: 'New agent',
+		});
+	const expectStripNewAgent = () => {
+		expect(headerNewAgent()).toBeNull();
+		const strip = screen.getByTestId('strip-new-agent');
+		expect(strip).toHaveAccessibleName('New agent');
+		expect(strip).not.toHaveAttribute('data-variant', 'primary');
+		expect(
+			within(screen.getByTestId('agent-strip')).getByTestId('strip-stack'),
+		).toContainElement(strip);
+		return strip;
+	};
+
+	it("is the header's secondary while an arrival shows, and the strip's once the fleet takes over", async () => {
 		const user = userEvent.setup();
 		selfRegisterAgent('my-first-agent');
 		renderPage();
 
 		await screen.findByTestId('arrival-card');
 		expect(newAgent()).toHaveAttribute('data-emphasis', 'secondary');
+		expect(screen.queryByTestId('strip-new-agent')).toBeNull();
 		expect(screen.queryByRole('button', { name: 'Create your first agent' })).toBeNull();
 
 		const approve = screen.getByRole('button', { name: 'Approve my-first-agent' });
@@ -2525,24 +2637,68 @@ describe('AgentsPage — the header follows the zero-agents landing', () => {
 		await user.click(approve);
 		await user.click(await screen.findByRole('button', { name: 'Skip for now' }));
 		await screen.findByTestId('agent-dock');
-		expect(newAgent()).toHaveAttribute('data-emphasis', 'primary');
+		expectStripNewAgent();
+		expect(filledPrimaries()).toEqual([screen.getByTestId('card-add-api')]);
 	});
 
-	it('is primary for an org whose only agents were denied or archived: it shows the fleet', async () => {
+	it('sits in the strip for an org whose only agents were denied or archived: it shows the fleet', async () => {
 		seedExtraAgents([{ id: 'agnt_old', name: 'stray', status: 'rejected' }]);
 		renderPage();
 
 		await screen.findByTestId('agent-strip');
 		expect(screen.queryByTestId('agents-empty-landing')).toBeNull();
-		expect(newAgent()).toHaveAttribute('data-emphasis', 'primary');
+		expectStripNewAgent();
 	});
 
-	it('is never secondary over the fleet, even while it loads', async () => {
+	it("is the header's filled button only until the strip is up, then the strip's", async () => {
 		resetAgentsStore();
 		renderPage();
-		expect(newAgent()).toHaveAttribute('data-emphasis', 'primary');
+		// Still loading: no strip yet, so the header keeps a way in.
+		expect(headerNewAgent()).toHaveAttribute('data-emphasis', 'primary');
 		await screen.findByTestId('agent-dock');
-		expect(newAgent()).toHaveAttribute('data-emphasis', 'primary');
+		expectStripNewAgent();
+	});
+
+	it("the strip's New agent and `n` both open the New agent panel on the CLI route", async () => {
+		resetAgentsStore();
+		const user = userEvent.setup();
+		renderPage();
+		await screen.findByTestId('agent-dock');
+
+		await user.click(expectStripNewAgent());
+		const sheet = await screen.findByRole('dialog', { name: 'New agent' });
+		expect(within(sheet).getByRole('tab', { name: /Register from the CLI/ })).toHaveAttribute(
+			'aria-selected',
+			'true',
+		);
+		await user.keyboard('{Escape}');
+		await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New agent' })).toBeNull());
+
+		await user.keyboard('n');
+		expect(await screen.findByRole('dialog', { name: 'New agent' })).toBeInTheDocument();
+	});
+
+	// `NEW_AGENT_PLACEMENT = 'header'`: the header's original button, none in the strip.
+	it('placed in the header: filled primary over the fleet, outline on the landing, none in the strip', async () => {
+		const user = userEvent.setup();
+		selfRegisterAgent('my-first-agent');
+		renderPage('/', { newAgentPlacement: 'header' });
+
+		await screen.findByTestId('arrival-card');
+		expect(headerNewAgent()).toHaveAttribute('data-emphasis', 'secondary');
+		expect(headerNewAgent()).toHaveAttribute('data-variant', 'outline');
+
+		const approve = screen.getByRole('button', { name: 'Approve my-first-agent' });
+		await waitFor(() => expect(approve).toBeEnabled());
+		await user.click(approve);
+		await user.click(await screen.findByRole('button', { name: 'Skip for now' }));
+		await screen.findByTestId('agent-dock');
+		expect(headerNewAgent()).toHaveAttribute('data-emphasis', 'primary');
+		expect(headerNewAgent()).toHaveAttribute('data-variant', 'primary');
+		expect(screen.queryByTestId('strip-new-agent')).toBeNull();
+
+		await user.click(headerNewAgent()!);
+		expect(await screen.findByRole('dialog', { name: 'New agent' })).toBeInTheDocument();
 	});
 
 	it('390px: the landing header keeps New agent and Credentials on screen', async () => {

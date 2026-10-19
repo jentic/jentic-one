@@ -6,6 +6,7 @@
  */
 
 import {
+	skipToken,
 	useMutation,
 	useQueries,
 	useQuery,
@@ -30,7 +31,9 @@ import {
 	pollConnectSessionStatus,
 	rejectConnectSession,
 	startIntegrationConnect,
+	type VendorOperation,
 	type VendorOperationsPage,
+	type VendorOperationsProgress,
 } from '@/shared/credentials/api/vendors-client';
 import type {
 	AgentListResponse,
@@ -163,6 +166,32 @@ export function useRejectConnectSession() {
 	});
 }
 
+function vendorOperationsKey(
+	api: { vendor: string; name: string | null; version: string | null } | null | undefined,
+) {
+	return [
+		'integrations',
+		'operations',
+		api?.vendor ?? '',
+		api?.name ?? '',
+		api?.version ?? '',
+		'all',
+	] as const;
+}
+
+/** The first read's pages so far; `null` when nothing is in flight. */
+function vendorOperationsProgressKey(
+	api: { vendor: string; name: string | null; version: string | null } | null | undefined,
+) {
+	return [
+		'integrations',
+		'operations-progress',
+		api?.vendor ?? '',
+		api?.name ?? '',
+		api?.version ?? '',
+	] as const;
+}
+
 /**
  * Fetch every operation for a vendor's imported OpenAPI. Follows
  * ``next_cursor`` server-side pagination until the full list is loaded
@@ -173,29 +202,75 @@ export function useRejectConnectSession() {
  * still queued — the client returns null on 404). ``enabled`` gates
  * the whole thing to when the caller actually needs it (e.g. only on
  * the rules phase).
+ * ``data`` is only ever the whole list; a refetch publishes no partial pages, so
+ * readers never see it shrink back to one page.
  */
 export function useVendorOperations(
 	api: { vendor: string; name: string | null; version: string | null } | null | undefined,
 	opts: { enabled?: boolean } = {},
 ) {
 	const ready = !!api && !!api.name && !!api.version;
+	const queryClient = useQueryClient();
+	const key = vendorOperationsKey(api);
 	return useQuery<VendorOperationsPage | null>({
-		queryKey: [
-			'integrations',
-			'operations',
-			api?.vendor ?? '',
-			api?.name ?? '',
-			api?.version ?? '',
-			'all',
-		] as const,
-		queryFn: () =>
-			listAllVendorOperations(api!.vendor, api!.name as string, api!.version as string),
+		queryKey: key,
+		queryFn: async () => {
+			const progressKey = vendorOperationsProgressKey(api);
+			const held = queryClient.getQueryData<VendorOperationsPage | null>(key) != null;
+			const publish = (progress: VendorOperationsProgress | null): void => {
+				if (!held) queryClient.setQueryData(progressKey, progress);
+			};
+			try {
+				const page = await listAllVendorOperations(
+					api!.vendor,
+					api!.name as string,
+					api!.version as string,
+					publish,
+				);
+				if (page == null) publish(null);
+				return page;
+			} catch (err) {
+				publish(null);
+				throw err;
+			}
+		},
 		enabled: (opts.enabled ?? true) && ready,
 		// Poll while ``data`` is null (import still queued). Once ops land,
 		// stop polling.
 		refetchInterval: (query) => (query.state.data == null ? 2_000 : false),
 		staleTime: 30_000,
 	});
+}
+
+export interface VendorOperationsLoad {
+	query: ReturnType<typeof useVendorOperations>;
+	/** Every operation read so far (the whole list once `complete`). */
+	operations: VendorOperation[];
+	complete: boolean;
+}
+
+const NO_OPERATIONS: VendorOperation[] = [];
+
+/**
+ * {@link useVendorOperations} plus the pages read so far. Anything that counts or
+ * judges against the list must wait for `complete`.
+ */
+export function useVendorOperationsProgress(
+	api: { vendor: string; name: string | null; version: string | null } | null | undefined,
+	opts: { enabled?: boolean } = {},
+): VendorOperationsLoad {
+	const query = useVendorOperations(api, opts);
+	const progress = useQuery<VendorOperationsProgress | null>({
+		queryKey: vendorOperationsProgressKey(api),
+		queryFn: skipToken,
+	});
+	const whole = query.data?.data;
+	const partial = progress.data?.data;
+	return {
+		query,
+		operations: whole ?? partial ?? NO_OPERATIONS,
+		complete: whole != null,
+	};
 }
 
 export function useStartIntegrationConnect() {

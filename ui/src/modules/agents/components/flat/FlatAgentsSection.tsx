@@ -15,6 +15,7 @@
  * the roster is empty.
  */
 import {
+	Fragment,
 	useCallback,
 	useEffect,
 	useId,
@@ -116,7 +117,8 @@ import { ExpandAllToggle } from '@/modules/agents/components/flat/ExpandAllToggl
 import { ApiCard } from '@/modules/agents/components/flat/ApiCard';
 import { ApiViewToggle } from '@/modules/agents/components/flat/ApiViewToggle';
 import { ApiViewSwitch } from '@/modules/agents/components/flat/ApiViewSwitch';
-import { API_CARD_GRID, API_CARD_HEIGHT } from '@/modules/agents/components/flat/apiCardGrid';
+import { API_CARD_GRID } from '@/modules/agents/components/flat/apiCardGrid';
+import type { NewAgentPlacement } from '@/modules/agents/lib/newAgentPlacement';
 import { LENS_CARD_VARIANTS, type LensItem } from '@/modules/agents/lib/apiViewMotion';
 import { TreeBranch } from '@/modules/agents/components/flat/TreeBranch';
 import { API_VIEWS, API_VIEW_STORAGE_KEY, DEFAULT_API_VIEW } from '@/modules/agents/lib/apiView';
@@ -134,7 +136,7 @@ import {
 	LifecycleDialogs,
 	type PendingConfirm,
 } from '@/modules/agents/components/LifecycleDialogs';
-import { NewAgentPanel } from '@/modules/agents/components/flat/NewAgentPanel';
+import { NewAgentPanel, type NewAgentTab } from '@/modules/agents/components/flat/NewAgentPanel';
 import { FirstAgentLanding } from '@/modules/agents/components/flat/FirstAgentLanding';
 import {
 	AgentNotFound,
@@ -176,6 +178,19 @@ interface FlatAgentsSectionProps {
 	filter: string;
 	/** Whether the zero-agents landing is on screen — the header labels itself by it. */
 	onLandingChange: (showing: boolean) => void;
+	/** Whether the strip (with its `+ New agent`) is on screen; else the header draws one. */
+	onStripChange?: (showing: boolean) => void;
+	/** Where `New agent` lives (`lib/newAgentPlacement`): the strip, or the page header. */
+	newAgentPlacement: NewAgentPlacement;
+}
+
+/** Before paint, so the header's and the strip's New agent never both show or both hide. */
+function StripShown({ onChange }: { onChange?: (showing: boolean) => void }) {
+	useLayoutEffect(() => {
+		onChange?.(true);
+		return () => onChange?.(false);
+	}, [onChange]);
+	return null;
 }
 
 export function FlatAgentsSection({
@@ -183,6 +198,8 @@ export function FlatAgentsSection({
 	setCreateOpen,
 	filter,
 	onLandingChange,
+	onStripChange,
+	newAgentPlacement,
 }: FlatAgentsSectionProps) {
 	// An ABSENT `?agent=` is written back; an UNKNOWN one is left alone — just
 	// after a create it names an agent the roster hasn't refetched yet.
@@ -220,11 +237,15 @@ export function FlatAgentsSection({
 	// The signal names the agent, not a boolean: a boolean would open the tray
 	// over whichever agent was on screen before. `queue` holds APIs the operator
 	// already chose (the landing's GitHub), which skip the tray for the queue.
+	// `fromNewAgent`: just finished in the New agent panel; the tray's way out reads "Skip for now".
 	const [addApisFor, setAddApisFor] = useState<{
 		agentId: string;
 		queue: SelectedApi[];
+		fromNewAgent?: boolean;
 	} | null>(null);
 	const clearAddApisFor = useCallback(() => setAddApisFor(null), []);
+	// The landing's choice; reset on close, so the header's button opens the default tab.
+	const [createTab, setCreateTab] = useState<NewAgentTab>('register');
 
 	const agentParam = searchParams.get('agent');
 	const approve = useApproveAgent();
@@ -315,14 +336,6 @@ export function FlatAgentsSection({
 			return { ...prev, [agentId]: items };
 		});
 	}, []);
-
-	function handleAgentCreated(agent: AgentEntity, opts: { addApis: boolean }) {
-		// Selected either way: the operator just named this agent. The fleet view
-		// shows once the roster has it.
-		selectAgent(agent.id);
-		setAddApisFor(opts.addApis ? { agentId: agent.id, queue: [] } : null);
-		landing.finishedElsewhere(agent.id);
-	}
 
 	// Same cache slice the nav badge polls; `atLeast` hedges an incomplete drain.
 	const { agents: pendingAgents, atLeast: pendingAtLeast } = usePendingAgents();
@@ -466,16 +479,37 @@ export function FlatAgentsSection({
 	// Before paint, so the header's label never disagrees with the body.
 	useLayoutEffect(() => onLandingChange(landingShown), [landingShown, onLandingChange]);
 
-	// Rendered by every branch below: the header's "New agent" flips `createOpen`
+	// The org's first agent (panel over the zero-agents landing) gets the GitHub step in
+	// the panel; over a fleet it goes to the tray. Read as the panel opens.
+	const [firstApiAtOpen, setFirstApiAtOpen] = useState(false);
+	const [createWasOpen, setCreateWasOpen] = useState(false);
+	if (createOpen !== createWasOpen) {
+		setCreateWasOpen(createOpen);
+		if (createOpen) setFirstApiAtOpen(landingShown);
+	}
+	/** An agent finished over a fleet: the panel has handed its sheet to the tray. */
+	function handToAddApis(agent: AgentEntity) {
+		selectAgent(agent.id);
+		setAddApisFor({ agentId: agent.id, queue: [], fromNewAgent: true });
+		landing.finishedElsewhere(agent.id);
+	}
+
+	// Rendered by every branch below: the strip's (or header's) "New agent" flips `createOpen`
 	// from outside, and a loading roster would otherwise swallow the click. The
 	// lifecycle confirms serve the landing, the panel and the fleet.
+	// Keyed, so every branch renders the same mounted panel: the first agent swaps the
+	// landing for the fleet behind it, and the panel must keep the agent it made.
 	const overlays = (
-		<>
+		<Fragment key="agent-overlays">
 			<NewAgentPanel
 				open={createOpen}
-				onClose={() => setCreateOpen(false)}
-				onCreated={handleAgentCreated}
-				initialName={landingShown ? landing.commandName : undefined}
+				onClose={() => {
+					setCreateOpen(false);
+					setCreateTab('register');
+				}}
+				offerFirstApi={firstApiAtOpen}
+				onToAddApis={handToAddApis}
+				initialTab={createTab}
 				approve={approve}
 				deny={deny}
 				onDeny={({ id, name }) => setConfirm({ kind: 'deny', id, name })}
@@ -496,7 +530,7 @@ export function FlatAgentsSection({
 				disableBody="Disabling immediately revokes this agent's ability to authenticate. You can re-enable it later."
 				mutations={{ deny, disable, archive }}
 			/>
-		</>
+		</Fragment>
 	);
 
 	if (rosterWithheld) {
@@ -570,7 +604,10 @@ export function FlatAgentsSection({
 			<>
 				{/* Agents is the app's home, so an empty fleet is a fresh workspace. */}
 				<FirstAgentLanding
-					onCreateAgent={() => setCreateOpen(true)}
+					onCreateAgent={(tab) => {
+						setCreateTab(tab);
+						setCreateOpen(true);
+					}}
 					agent={landingAgent}
 					onApprove={() => {
 						if (landingAgent) approve.mutate(landingAgent.id);
@@ -640,7 +677,11 @@ export function FlatAgentsSection({
 						blockedCounts={blockedCounts}
 						filter={filter}
 						incomplete={isError || Boolean(hasNextPage)}
+						onNewAgent={
+							newAgentPlacement === 'rail-end' ? () => setCreateOpen(true) : undefined
+						}
 					/>
+					{newAgentPlacement === 'rail-end' && <StripShown onChange={onStripChange} />}
 					{panelAgent && (
 						<SelectedAgentPanel
 							key={panelKey}
@@ -667,6 +708,10 @@ export function FlatAgentsSection({
 									? addApisFor.queue
 									: EMPTY_PICKS
 							}
+							autoOpenFromNewAgent={
+								addApisFor?.agentId === panelAgent.id &&
+								addApisFor.fromNewAgent === true
+							}
 							onAutoOpenAddApisConsumed={clearAddApisFor}
 							queueBatch={queueBatches[panelAgent.id] ?? EMPTY_BATCH}
 							onQueueBatchChange={setQueueBatchFor}
@@ -676,6 +721,7 @@ export function FlatAgentsSection({
 							onPinnedHeight={setPinnedCardHeight}
 							onStuckChange={setCardStuck}
 							onSwitchAgent={openPicker}
+							onOpenActivity={() => setDockSurface('activity')}
 						/>
 					)}
 				</div>
@@ -860,8 +906,19 @@ const NO_APIS_COPY: Record<ActorStatus, string> = {
 	pending:
 		'Nothing is bound yet, and a pending agent cannot authenticate either. Approve it first, then add the APIs it needs.',
 	rejected: 'A rejected agent holds no credentials and cannot authenticate.',
-	archived: 'Archiving swept its credential bindings; an archived agent keeps no access.',
+	archived:
+		"Read-only. It can't authenticate, and its credential bindings, grants and consents were removed.",
 };
+
+/** Names the picks a batch still owes: "Stripe and Notion are picked, not set up yet." */
+function waitingPicksNote(items: readonly PreflightItem[]): string {
+	const names = items.map((item) => item.api.label);
+	const shown =
+		names.length <= 2
+			? names.join(' and ')
+			: `${names.slice(0, 2).join(', ')} and ${names.length - 2} more`;
+	return `${shown} ${names.length === 1 ? 'is' : 'are'} picked, not set up yet.`;
+}
 
 interface SelectedAgentPanelProps {
 	agent: AgentEntity;
@@ -879,6 +936,8 @@ interface SelectedAgentPanelProps {
 	onDeny: () => void;
 	/** This agent was just created and its APIs are the next step. */
 	autoOpenAddApis: boolean;
+	/** Auto-opened from the New agent panel: the tray's way out reads "Skip for now". */
+	autoOpenFromNewAgent: boolean;
 	/** Spend the signal, so re-selecting this agent later does not reopen the tray. */
 	onAutoOpenAddApisConsumed: () => void;
 	/** APIs already chosen: the auto-open skips the tray and queues these. */
@@ -900,6 +959,7 @@ interface SelectedAgentPanelProps {
 	onStuckChange: (stuck: boolean) => void;
 	/** Opens the agent picker (the card's name is its button). */
 	onSwitchAgent: () => void;
+	onOpenActivity: () => void;
 }
 
 /** Stable empty batch, so an agent with nothing pending doesn't re-render. */
@@ -932,6 +992,7 @@ function SelectedAgentPanel({
 	approvePending,
 	onDeny,
 	autoOpenAddApis,
+	autoOpenFromNewAgent,
 	onAutoOpenAddApisConsumed,
 	autoQueueApis,
 	queueBatch,
@@ -942,6 +1003,7 @@ function SelectedAgentPanel({
 	onPinnedHeight,
 	onStuckChange,
 	onSwitchAgent,
+	onOpenActivity,
 }: SelectedAgentPanelProps) {
 	const reducedMotion = useReducedMotionConfig();
 	// The list⇄cards lens for this agent's "Can call" area, persisted so a
@@ -953,6 +1015,9 @@ function SelectedAgentPanel({
 	);
 	/** Which step of the Add-APIs flow is on screen. */
 	const [addStep, setAddStep] = useState<'closed' | 'tray' | 'queue'>('closed');
+	// Only this opening came from the New agent panel; later ones are ordinary.
+	const [trayFromNewAgent, setTrayFromNewAgent] = useState(false);
+	if (trayFromNewAgent && addStep !== 'tray') setTrayFromNewAgent(false);
 	/** Set while the tray is editing the queue's batch (the queue's Back). The queue
 	 * stays mounted meanwhile so its progress survives; `remaining` is what the
 	 * queue would have handed back, kept for a tray that is closed, not continued. */
@@ -1097,10 +1162,12 @@ function SelectedAgentPanel({
 				? null
 				: { at: executionsQuery.data.items[0]?.startedAt ?? null };
 
-	// `disabled` says it in the tile family rather than a banner.
+	// `disabled` says it in the tile family rather than a banner, `archived` in its read-only notice.
 	const serving = agent.status === 'active';
 	const bannerStatus: BanneredStatus | null =
-		agent.status === 'active' || agent.status === 'disabled' ? null : agent.status;
+		agent.status === 'active' || agent.status === 'disabled' || agent.status === 'archived'
+			? null
+			: agent.status;
 
 	const isArchived = agent.status === 'archived';
 	// Only pending (cannot authenticate yet), rejected and archived block binding,
@@ -1138,7 +1205,19 @@ function SelectedAgentPanel({
 	useEffect(() => {
 		if (owedBatch !== queueBatch) onQueueBatchChange(agent.id, owedBatch);
 	}, [owedBatch, queueBatch, onQueueBatchChange, agent.id]);
-	const openAddApis = (): void => setAddStep(owedBatch.length > 0 ? 'queue' : 'tray');
+	// One basket of picks per agent; Resume setup goes straight to the queue.
+	const openAddApis = (): void => {
+		setBatchEdit(
+			owedBatch.length > 0
+				? {
+						seed: { picks: owedBatch.map((item) => item.api), added: [] },
+						remaining: owedBatch,
+					}
+				: null,
+		);
+		setAddStep('tray');
+	};
+	const resumeSetup = (): void => setAddStep('queue');
 
 	// Bound only while the verb is available, so it never fires a no-op.
 	useHotkey('a', openAddApis, canBind && addStep === 'closed');
@@ -1160,6 +1239,7 @@ function SelectedAgentPanel({
 			bindingsFailedToLoad
 		) {
 			onAutoOpenAddApisConsumed();
+			setTrayFromNewAgent(autoOpenFromNewAgent);
 			setAddStep('tray');
 			return;
 		}
@@ -1169,6 +1249,7 @@ function SelectedAgentPanel({
 		setAddStep('queue');
 	}, [
 		autoOpenAddApis,
+		autoOpenFromNewAgent,
 		canBind,
 		onAutoOpenAddApisConsumed,
 		autoQueueApis,
@@ -1201,18 +1282,17 @@ function SelectedAgentPanel({
 		setRulesFocusKey(key);
 		openSheetFor(key);
 	};
-	// The tree's "Add APIs", also on the card where it is easy to find: the
-	// same flow, tonal (the page keeps no solid primary of its own).
+	// The page's one filled primary; disabled, it takes the quiet unavailable fill.
 	const addApiButton = (
 		<Button
-			variant="tonal"
+			variant="primary"
 			className="w-full"
 			disabled={!canBind}
 			onClick={openAddApis}
 			data-testid="card-add-api"
 		>
 			<Plus className="h-4 w-4" />
-			Add API
+			Add APIs
 		</Button>
 	);
 	// A disabled button can't take focus, so the reason rides on the focusable
@@ -1230,22 +1310,22 @@ function SelectedAgentPanel({
 
 	// The "Can call" tree's branches (`TreeBranch`) draw the Library ledger's
 	// trunk + elbows as real elements, so the list entrance can grow them.
-	// The last child is "+ Add APIs": its elbow lands on the 32px button's
-	// centre, which lines up with the rows' avatars.
-	const showAddApis = !isArchived;
-	const renderAddApisItem = (item: LensItem) => (
-		<TreeBranch key="add-apis" lands="button" item={item}>
-			<span className="flex flex-wrap items-center gap-2">
-				<Button variant="tonal" size="sm" disabled={!canBind} onClick={openAddApis}>
-					<Plus className="h-4 w-4" />
-					{owedBatch.length > 0
-						? `Finish adding ${owedBatch.length} ${owedBatch.length === 1 ? 'API' : 'APIs'}`
-						: 'Add APIs'}
-				</Button>
-				{bindBlockedReason && (
-					<span className="text-muted-foreground text-xs">{bindBlockedReason}</span>
-				)}
+	// Unset picks hang off the tree as its last child; the elbow meets the 32px button's centre.
+	const showResume = canBind && owedBatch.length > 0;
+	const resumeNoteId = useId();
+	const resumeSetupLine = showResume ? (
+		<span className="flex flex-wrap items-center gap-x-3 gap-y-1" data-testid="resume-setup">
+			<Button variant="tonal" size="sm" onClick={resumeSetup} aria-describedby={resumeNoteId}>
+				Resume setup
+			</Button>
+			<span id={resumeNoteId} className="text-muted-foreground text-xs">
+				{waitingPicksNote(owedBatch)}
 			</span>
+		</span>
+	) : null;
+	const renderResumeItem = (item: LensItem) => (
+		<TreeBranch key="resume-setup" lands="button" item={item}>
+			{resumeSetupLine}
 		</TreeBranch>
 	);
 
@@ -1344,42 +1424,7 @@ function SelectedAgentPanel({
 		return made;
 	}, []);
 
-	// The grid's dashed "+ Add API" affordance — the SAME flow as the tree's
-	// Add APIs, with the Tooltip-on-a-focusable-wrapper reason pattern the card
-	// button already uses when binding is blocked.
-	const addApiTileButton = (
-		<Button
-			variant="ghost"
-			size="sm"
-			data-testid="card-add-api-tile"
-			disabled={!canBind}
-			onClick={openAddApis}
-			className={cn(
-				API_CARD_HEIGHT,
-				'border-hairline-field text-foreground-sub flex w-full gap-2 rounded-[14px] border border-dashed px-0 py-0 text-[12.5px] font-bold active:scale-100',
-				'transition-[color,background-color,border-color] duration-150 motion-reduce:transition-none',
-				'focus-visible:shadow-[0_0_0_1.5px_hsl(var(--primary)/0.65)] focus-visible:ring-0 focus-visible:ring-offset-0',
-				canBind
-					? 'hover:bg-surface-1/50 hover:text-foreground hover:border-control-edge/40'
-					: 'hover:text-foreground-sub hover:bg-transparent disabled:opacity-60',
-			)}
-		>
-			<Plus className="h-4 w-4" />
-			Add API
-		</Button>
-	);
-	const addApiTile =
-		!isArchived &&
-		(bindBlockedReason ? (
-			<Tooltip content={bindBlockedReason} placement="bottom" className="w-full">
-				{addApiTileButton}
-			</Tooltip>
-		) : (
-			addApiTileButton
-		));
-
-	// Items in either lens: one per tile, plus the trailing Add API(s) item.
-	const lensItems = tiles.length + (showAddApis ? 1 : 0);
+	const lensItems = tiles.length + (showResume ? 1 : 0);
 
 	const cardsGrid = (
 		<ul
@@ -1413,13 +1458,13 @@ function SelectedAgentPanel({
 					/>
 				</motion.li>
 			))}
-			{addApiTile && (
+			{resumeSetupLine && (
 				<motion.li
 					custom={{ i: tiles.length, n: lensItems }}
 					variants={LENS_CARD_VARIANTS}
-					className="flex min-w-0"
+					className="col-span-full flex min-w-0"
 				>
-					{addApiTile}
+					{resumeSetupLine}
 				</motion.li>
 			)}
 		</ul>
@@ -1462,7 +1507,7 @@ function SelectedAgentPanel({
 					</TreeBranch>
 				);
 			})}
-			{showAddApis && renderAddApisItem({ i: tiles.length, n: lensItems })}
+			{showResume && renderResumeItem({ i: tiles.length, n: lensItems })}
 		</ul>
 	);
 
@@ -1546,10 +1591,10 @@ function SelectedAgentPanel({
 						<div className="pt-[13px] pl-[65px]">
 							<ErrorAlert message={bindingsQuery.error as Error} />
 						</div>
-						{/* Still reachable: the tray holds on the failed read and retries it. */}
-						{showAddApis && (
+						{/* The card's Add APIs stays live: the tray holds on the failed read and retries it. */}
+						{showResume && (
 							<ul className="pt-[3px] pl-[31px]">
-								{renderAddApisItem({ i: 0, n: 1 })}
+								{renderResumeItem({ i: 0, n: 1 })}
 							</ul>
 						)}
 					</>
@@ -1564,17 +1609,25 @@ function SelectedAgentPanel({
 					<div className="pt-[13px] pl-[65px]">
 						<p
 							data-testid="can-call-empty"
-							className="bg-surface-1/55 text-foreground-sub rounded-[14px] px-4 py-3.5 text-[12.5px]"
+							className="bg-surface-1/55 text-foreground-sub rounded-[14px] px-4 py-3.5 text-xs"
 						>
-							{NO_APIS_COPY[agent.status]}
+							{NO_APIS_COPY.archived}{' '}
+							<Button
+								variant="ghost"
+								size="xs"
+								onClick={onOpenActivity}
+								className="text-primary hover:text-primary h-auto px-0 py-0 text-xs font-semibold hover:bg-transparent hover:underline"
+							>
+								See its activity
+							</Button>
 						</p>
 					</div>
 				) : tiles.length === 0 ? (
 					<ul className={cn('pt-[3px] pl-[31px]', !serving && 'saturate-[.35]')}>
-						<TreeBranch lands="row" item={{ i: 0, n: 2 }}>
+						<TreeBranch lands="row" item={{ i: 0, n: showResume ? 2 : 1 }}>
 							<div
 								data-testid="can-call-empty"
-								className="bg-surface-1/55 max-w-prose rounded-[14px] px-4 py-3.5 text-[12.5px]"
+								className="bg-surface-1/55 max-w-prose rounded-[14px] px-4 py-3.5 text-xs"
 							>
 								{/* The card above names the agent; here it appears once, cut
 								    to its budget, so a long name can't swallow the line. */}
@@ -1586,7 +1639,7 @@ function SelectedAgentPanel({
 								</p>
 							</div>
 						</TreeBranch>
-						{showAddApis && renderAddApisItem({ i: 1, n: 2 })}
+						{showResume && renderResumeItem({ i: 1, n: 2 })}
 					</ul>
 				) : (
 					<>
@@ -1649,6 +1702,7 @@ function SelectedAgentPanel({
 						onRetryBindings={() => void bindingsQuery.refetch()}
 						bindingsRetrying={bindingsQuery.isFetching}
 						seed={batchEdit?.seed ?? null}
+						fromNewAgent={trayFromNewAgent}
 						onContinue={(items) => {
 							onQueueBatchChange(agent.id, items);
 							setBatchEdit(null);

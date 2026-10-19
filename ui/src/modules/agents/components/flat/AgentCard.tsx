@@ -67,7 +67,7 @@ interface AgentCardProps {
 	/** The newest call's time: `{ at: null }` = none yet; `null` = not visible to
 	 * this viewer (the fact is left out); `undefined` = still loading. */
 	lastActivity: { at: string | null } | null | undefined;
-	/** The one contextual action (the tonal "Add API"), if any. */
+	/** The one contextual action (the primary "Add APIs"), if any. */
 	action?: ReactNode;
 	/**
 	 * The "Can call" list ⇄ cards lens toggle, at the header's right end after
@@ -438,7 +438,15 @@ export function AgentCard({
 							ref={headerRef}
 							className="flex flex-wrap items-center gap-x-4 gap-y-3.5 px-4 pt-4 pb-4 sm:px-5 sm:pt-5 sm:pb-[18px]"
 						>
-							<AgentBadge id={agent.id} name={agent.name} size="lg" shape="circle" />
+							<AgentBadge
+								id={agent.id}
+								name={agent.name}
+								size="lg"
+								shape="circle"
+								className={
+									agent.status === 'archived' ? 'opacity-70 grayscale' : undefined
+								}
+							/>
 							<div className="min-w-0 flex-1">
 								<div className="flex min-w-0 items-center gap-2.5">
 									{/* One line at the card's full width; the full name in a tooltip

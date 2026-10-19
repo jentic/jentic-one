@@ -14,9 +14,9 @@ import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
 import type { apiScopeReach } from '@/shared/credentials/lib/apiIdentity';
 
 /** The access choice; `null` until one is made. */
-export type RulesPreset = 'all' | 'read' | 'custom';
+export type RulesPreset = 'read' | 'all' | 'custom';
 
-/** How far a credential's scope reaches — what "Allow all" spans. */
+/** How far a credential's scope reaches — what "Full access" spans. */
 export type ScopeReach = ReturnType<typeof apiScopeReach>;
 
 export interface PresetOption {
@@ -26,37 +26,28 @@ export interface PresetOption {
 }
 
 /**
- * What "Allow all operations" reaches: the rule is `path ".*"` on the whole
+ * What "Full access" reaches: the rule is `path ".*"` on the whole
  * credential, so it spans everything the credential's scope covers — an
  * unpinned credential's future versions and, vendor-wide, every API of the
  * vendor (the broker resolves a binding through `credential_covers`).
  */
 export const ALLOW_ALL_DESCRIPTION: Record<ScopeReach, string> = {
-	pinned: 'Every operation of this API, any method.',
-	'any-version':
-		'Every operation of every version this credential covers — including versions added later — any method.',
-	'vendor-wide':
-		'Every operation of every API and version this credential covers — including ones added later — any method.',
+	pinned: 'Any method, any path',
+	'any-version': 'Any method, every version — incl. later ones',
+	'vendor-wide': 'Every API this credential covers, incl. later ones',
 };
 
-/** The presets after Allow all — the same whatever the credential covers. */
-const PRESET_REST: PresetOption[] = [
-	{
-		value: 'read',
-		label: 'Read-only (GET only)',
-		description: 'GET requests only — nothing that changes data.',
-	},
-	{
-		value: 'custom',
-		label: 'Custom rules',
-		description: 'Write your own allow / deny rules, evaluated in order.',
-	},
-];
-
+/** The presets, least access first. */
 export function presetOptions(reach: ScopeReach): PresetOption[] {
 	return [
-		{ value: 'all', label: 'Allow all operations', description: ALLOW_ALL_DESCRIPTION[reach] },
-		...PRESET_REST,
+		// Read only stays GET only (no HEAD), so saved rules keep their meaning.
+		{ value: 'read', label: 'Read only', description: 'GET requests only' },
+		{ value: 'all', label: 'Full access', description: ALLOW_ALL_DESCRIPTION[reach] },
+		{
+			value: 'custom',
+			label: 'Custom rules',
+			description: 'By action or by path, in order',
+		},
 	];
 }
 
@@ -69,6 +60,42 @@ export function coverageNote(reach: ScopeReach): string | null {
 		return 'This credential covers every version of this API — these rules apply to future versions too.';
 	}
 	return null;
+}
+
+/** A "By action" rule: an allow constrained only by `operations` (no method, no path). */
+export function isActionRule(rule: PermissionRule): boolean {
+	return (
+		rule.effect === 'allow' &&
+		(rule.operations?.length ?? 0) > 0 &&
+		!rule.methods?.length &&
+		!rule.path
+	);
+}
+
+export function actionRule(operations: string[]): PermissionRule {
+	return { effect: 'allow', methods: null, path: null, operations };
+}
+
+/** Custom rules split by which editor authors them (path rules vs action rules). */
+export function splitCustomRules(rules: readonly PermissionRule[]): {
+	pathRules: PermissionRule[];
+	actionRules: PermissionRule[];
+} {
+	return {
+		pathRules: rules.filter((r) => !isActionRule(r)),
+		actionRules: rules.filter(isActionRule),
+	};
+}
+
+/**
+ * Rejoin the halves, action rules last so path rules keep the leading indices the
+ * dry run cites. Broker is first-match-wins: a path deny ahead blocks those actions.
+ */
+export function joinCustomRules(
+	pathRules: readonly PermissionRule[],
+	actionRules: readonly PermissionRule[],
+): PermissionRule[] {
+	return [...pathRules, ...actionRules];
 }
 
 /** The read-only preset: any path, GET only. */
@@ -94,6 +121,7 @@ function toEditorShape(rule: PermissionRuleInput): PermissionRule {
 /**
  * The rules a preset writes, in the wire shape — or null while the choice is
  * incomplete (no preset yet, or Custom with no rules / an empty allow row).
+ * An action rule carries `operations`, so it is never an empty allow row.
  */
 export function rulesForPreset(
 	preset: RulesPreset | null,

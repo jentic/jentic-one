@@ -21,13 +21,16 @@ import type {
 /** Where one API is in the queue: `active` = the pane is on it, `working` = a
  * request is in flight, `added`/`dropped` are terminal, `failed` is retryable but
  * not walked past. */
-export type QueueStatus = 'waiting' | 'active' | 'working' | 'added' | 'dropped' | 'failed';
+type QueueStatus = 'waiting' | 'active' | 'working' | 'added' | 'dropped' | 'failed';
 
 /** Which of an item's two steps its pane shows. */
-export type QueueStep = 'credential' | 'access';
+type QueueStep = 'credential' | 'access';
 
 /** What an added item's binding was given: a preset, or nothing yet (`later`). */
 export type QueueAccess = RulesPreset | 'later';
+
+/** Shared `handoffKey` for the New agent panel, Add-APIs tray and setup queue. */
+export const AGENT_SETUP_FLOW = 'agent-setup';
 
 /** The credential picked on the credential step — not bound until the access
  * step is confirmed. */
@@ -184,18 +187,17 @@ export function patchEntry(
 	return entries.map((e) => (e.key === key ? { ...e, ...patch } : e));
 }
 
-/** Put the active item into `active` so the pane and the progress list agree.
- * Pure and idempotent, so it is safe to run on every render. */
-export function markActive(entries: QueueEntry[]): QueueEntry[] {
-	const active = activeEntry(entries);
-	if (!active || active.status !== 'waiting') return entries;
-	return patchEntry(entries, active.key, { status: 'active' });
-}
-
-/** Retry a failed item by sending it back to the front of the unfinished work,
- * on its credential step with that choice still made. */
-export function retryEntry(entries: QueueEntry[], key: string): QueueEntry[] {
-	return patchEntry(entries, key, { status: 'waiting', error: undefined, step: 'credential' });
+/** Reopen a settled item picked again: a skipped one resumes, a failed one is retried. */
+export function reopenEntry(entries: QueueEntry[], key: string): QueueEntry[] {
+	const entry = entries.find((e) => e.key === key);
+	if (entry?.status === 'dropped') return patchEntry(entries, key, { status: 'waiting' });
+	if (entry?.status === 'failed')
+		return patchEntry(entries, key, {
+			status: 'waiting',
+			error: undefined,
+			step: 'credential',
+		});
+	return entries;
 }
 
 /** Move an item to its access step with the credential it will bind. */
@@ -205,12 +207,6 @@ export function chooseCredential(
 	chosen: ChosenCredential,
 ): QueueEntry[] {
 	return patchEntry(entries, key, { step: 'access', chosen });
-}
-
-/** Back from the access step to the credential step. The access draft lives
- * with the host and is kept; a bound item has no credential left to change. */
-export function backToCredential(entries: QueueEntry[], key: string): QueueEntry[] {
-	return entries.map((e) => (e.key === key && !e.bound ? { ...e, step: 'credential' } : e));
 }
 
 /** Closing with an item bound but its rules unsaved: it IS attached, with no
@@ -285,12 +281,6 @@ export function queueSummaryLine(summary: QueueSummary): string {
 	return parts.join(' · ');
 }
 
-/** What dropping an item means, in the operator's words. Without a skip path a
- * drop is not "later": the API is simply not attached. */
-export function dropWarning(label: string): string {
-	return `${label} won't be added.`;
-}
-
 /** The items still owed to the operator, back in `PreflightItem` shape so the
  * host can reopen the queue on the remainder. Filtered on {@link isResolved},
  * not {@link isTerminal}: a failed item dropped here is lost silently. */
@@ -307,25 +297,20 @@ export function unfinishedItems(entries: QueueEntry[]): PreflightItem[] {
 		}));
 }
 
-/** Row copy for a terminal or in-flight status. */
+/** The list row's status line; the row on screen reads "In progress" instead. */
 export const QUEUE_STATUS_LABELS: Record<QueueStatus, string> = {
-	waiting: 'Waiting',
-	active: 'Now',
+	waiting: 'To do',
+	active: 'To do',
 	working: 'Adding…',
 	added: 'Added',
-	dropped: 'Not added',
+	dropped: 'Skipped',
 	failed: 'Failed',
 };
 
-/** What a freshly added API can do: it gets its access rules as it is added; one
- * set up later has none — the broker's default deny — until rules are added. */
-export const QUEUE_RULES_NOTICE =
-	'Each API gets its access rules as it is added. One you set up later stays blocked — every call is denied — until you add rules on the API.';
-
 /** Row copy for what an added item's binding was given. */
 export const QUEUE_ACCESS_LABELS: Record<QueueAccess, string> = {
-	all: 'Allow all',
-	read: 'Read-only',
+	read: 'Read only',
+	all: 'Full access',
 	custom: 'Custom rules',
 	later: 'Blocked · no rules',
 };

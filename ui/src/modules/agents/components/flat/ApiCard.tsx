@@ -95,7 +95,7 @@ export function ApiCard({
 			aria-label={`${visibleText}${statusTail}${accountsPhrase}. Open access details.`}
 			onClick={onOpen}
 			className={cn(
-				// ONE fixed height for every card (and the add tile — `API_CARD_HEIGHT`),
+				// ONE fixed height for every card (`API_CARD_HEIGHT`),
 				// with three fixed-height rows spread by `justify-between`, so each
 				// row — and so every status dot — sits at the same y across the grid.
 				API_CARD_HEIGHT,

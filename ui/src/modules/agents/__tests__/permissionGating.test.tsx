@@ -342,13 +342,12 @@ describe('"Create here" follows agents:write', () => {
 		await user.click(screen.getByRole('button', { name: 'New agent' }));
 		const sheet = await screen.findByRole('dialog', { name: 'New agent' });
 		const register = within(sheet).getByRole('tab', { name: 'Register from the CLI' });
+		// "Create it here" is offered only with agents:write.
+		expect(register).toHaveAttribute('aria-selected', 'true');
 		if (canCreate) {
-			expect(within(sheet).getByRole('tab', { name: 'Create here' })).toHaveAttribute(
-				'aria-selected',
-				'true',
-			);
+			expect(within(sheet).getByRole('tab', { name: 'Create it here' })).toBeInTheDocument();
 		} else {
-			expect(within(sheet).queryByRole('tab', { name: 'Create here' })).toBeNull();
+			expect(within(sheet).queryByRole('tab', { name: 'Create it here' })).toBeNull();
 			expect(register).toHaveAttribute('aria-selected', 'true');
 			expect(within(sheet).getByTestId('new-agent-panel-register')).toHaveAttribute(
 				'data-state',
@@ -610,23 +609,17 @@ describe('the first-agent landing offers manual creation only with agents:write'
 		seedViewer(permissions);
 		await renderReady('/');
 		const landing = within(await screen.findByTestId('agents-empty-landing'));
-		const stepper = within(landing.getByTestId('register-stepper'));
+		const create = landing.queryByRole('radio', { name: /Create it here/ });
 
 		if (canManageAgents(permissions)) {
-			expect(
-				landing.getByRole('button', { name: 'Create an agent manually' }),
-			).toBeInTheDocument();
-			expect(stepper.getByText('You approve it')).toBeInTheDocument();
-			expect(landing.getByText(/shows up here for you to approve/)).toBeInTheDocument();
+			expect(create).toBeInTheDocument();
 		} else {
-			expect(landing.queryByRole('button', { name: 'Create an agent manually' })).toBeNull();
-			expect(landing.queryByTestId('manual-card')).toBeNull();
-			expect(stepper.queryByText('You approve it')).toBeNull();
-			expect(stepper.getByText('It gets approved')).toBeInTheDocument();
-			expect(stepper.getByText('By someone who can manage agents')).toBeInTheDocument();
+			// Only the routes that register: the agent lands pending.
+			expect(create).toBeNull();
 			expect(
-				landing.getByText(/pending until someone who can manage agents approves it/),
+				landing.getByRole('radio', { name: /Register from the CLI/ }),
 			).toBeInTheDocument();
+			expect(landing.getByRole('radio', { name: /Connect over MCP/ })).toBeInTheDocument();
 		}
 	});
 });

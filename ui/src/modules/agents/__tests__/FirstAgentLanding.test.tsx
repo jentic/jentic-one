@@ -20,7 +20,12 @@ import {
 } from '@/__tests__/test-utils';
 import { setToken } from '@/shared/api';
 import { CredentialType } from '@/shared/credentials/api';
-import { makeMockCredential, resetCredentialsStore } from '@/shared/credentials/mocks/handlers';
+import {
+	makeMockApi,
+	makeMockCredential,
+	resetApisStore,
+	resetCredentialsStore,
+} from '@/shared/credentials/mocks/handlers';
 import { formatTimestamp } from '@/shared/lib/utils';
 import { Toaster } from '@/shared/ui';
 import {
@@ -45,7 +50,12 @@ import {
 
 function LocationProbe() {
 	const location = useLocation();
-	return <div data-testid="location-search">{location.search}</div>;
+	return (
+		<>
+			<div data-testid="location-search">{location.search}</div>
+			<div data-testid="location-path">{location.pathname}</div>
+		</>
+	);
 }
 
 function renderPage(opts: { reduced?: boolean; route?: string } = {}) {
@@ -73,19 +83,32 @@ describe('Agents page — zero agents', () => {
 		clearAgentsStore();
 	});
 
-	it('shows both routes in and the fleet preview', async () => {
+	it('shows the ways in, the preview of the selected one, and the fleet preview', async () => {
 		const { container } = renderPage();
 		await landing();
 
 		expect(
-			screen.getByRole('heading', { name: 'Let your agent register itself' }),
+			screen.getByRole('heading', { name: 'Connect your first agent' }),
 		).toBeInTheDocument();
+		expect(screen.getByText('0 agents')).toBeVisible();
+		const ways = screen.getByRole('radiogroup', { name: 'How to connect your first agent' });
 		expect(
-			screen.getByRole('heading', { name: 'Prefer to set it up yourself?' }),
-		).toBeInTheDocument();
-		expect(
-			screen.getByRole('button', { name: /Create an agent manually/ }),
-		).toBeInTheDocument();
+			within(ways)
+				.getAllByRole('radio')
+				.map((r) => r.textContent),
+		).toEqual([
+			expect.stringContaining('Register from the CLI'),
+			expect.stringContaining('Connect over MCP'),
+			expect.stringContaining('Create it here'),
+		]);
+		expect(within(ways).getByRole('radio', { name: /Register from the CLI/ })).toBeChecked();
+		const shortcuts = screen.getByTestId('landing-shortcuts');
+		for (const line of [
+			'See what your agent could call',
+			'Store a key now, bind it later',
+			'Import your own OpenAPI spec',
+		])
+			expect(within(shortcuts).getByText(line)).toBeVisible();
 		// Pin the real CLI flag: `jentic register` takes --url, not --base-url (#1204).
 		// The URL is the instance's canonical base URL, as the MCP sheet uses.
 		await waitFor(() =>
@@ -101,7 +124,32 @@ describe('Agents page — zero agents', () => {
 
 		const ghost = screen.getByTestId('ghost-fleet');
 		expect(ghost).toHaveAttribute('aria-hidden', 'true');
-		expect(within(ghost).getByTestId('ghost-tab')).toHaveTextContent('Waiting for your agent…');
+		expect(within(ghost).getByTestId('ghost-tab')).toHaveAttribute('data-arrived', 'false');
+
+		// The illustration is decorative: every invented name lives under the `aria-hidden` root.
+		const caption = within(ghost).getByTestId('ghost-caption');
+		expect(caption).toHaveTextContent('Nothing here yet');
+		expect(caption).toHaveTextContent('you have no agents — this is where they will appear');
+		expect(ghost).toContainElement(within(ghost).getByTestId('ghost-frame'));
+		// The caption sits outside the dimmed layer, so it keeps full token contrast.
+		const drawing = within(ghost).getByTestId('ghost-drawing');
+		expect(drawing).toHaveClass('opacity-50');
+		expect(drawing).not.toContainElement(caption);
+		expect(caption).not.toContainElement(drawing);
+		for (const invented of [
+			'Nothing here yet',
+			'APIs it can call',
+			'Nothing connected yet',
+			'None bound',
+			'Set on approval',
+			'No calls yet',
+		]) {
+			const found = screen.queryAllByText(invented);
+			expect(found.length).toBeGreaterThan(0);
+			for (const node of found) expect(ghost).toContainElement(node);
+		}
+		// No shimmer: this state is not loading.
+		expect(ghost.className).not.toMatch(/animate-(pulse|shimmer)/);
 
 		expect(screen.queryByTestId('agent-dock')).toBeNull();
 		// The header's button keeps its label and steps back to secondary.
@@ -114,33 +162,37 @@ describe('Agents page — zero agents', () => {
 		await waitFor(() => checkA11y(container), { timeout: 3000 });
 	});
 
-	it('the agent name updates the command, and a blank name is flagged', async () => {
+	it('every way in keeps the preview one height, and shows its command', async () => {
 		const user = userEvent.setup();
 		renderPage();
 		await landing();
-		const input = screen.getByLabelText('Agent name');
+		const preview = screen.getByTestId('landing-preview');
+		const height = () => preview.getBoundingClientRect().height;
+		const first = height();
 
-		await user.clear(input);
-		await user.type(input, 'research-bot');
-		expect(screen.getByTestId('register-command')).toHaveTextContent(/--name research-bot$/);
-
-		// A name with a space is quoted, so the pasted command still parses.
-		await user.type(input, ' two');
-		expect(screen.getByTestId('register-command')).toHaveTextContent(
-			/--name 'research-bot two'$/,
+		await user.click(screen.getByRole('radio', { name: /Connect over MCP/ }));
+		expect(preview).toHaveAttribute('data-method', 'mcp');
+		expect(height()).toBe(first);
+		// What follows the command is the New agent panel's own copy, so it is not said twice.
+		const mcp = screen.getByTestId('landing-pane-mcp');
+		await waitFor(() =>
+			expect(mcp).toHaveTextContent(
+				`$ jentic setup --url ${INSTANCE_URL} --name my-first-agent`,
+			),
 		);
-		// Nothing in a name runs when pasted: it is single-quoted, `'` escaped.
-		await user.clear(input);
-		await user.type(input, "$(id)'s bot");
-		expect(screen.getByTestId('register-command')).toHaveTextContent(
-			/--name '\$\(id\)'\\''s bot'$/,
-		);
+		expect(mcp).toHaveTextContent(/run setup where your agent runs/);
+		expect(mcp).not.toHaveTextContent(/shows up here as pending/);
+		expect(mcp).not.toHaveTextContent(/jentic mcp --context/);
+		expect(screen.getByRole('button', { name: /Continue with MCP/ })).toBeInTheDocument();
 
-		// The create form's name rule: blank is an error; the command keeps the default.
-		await user.clear(input);
-		expect(await screen.findByText('A name is required.')).toBeInTheDocument();
-		expect(input).toHaveAttribute('aria-invalid', 'true');
-		expect(screen.getByTestId('register-command')).toHaveTextContent(/--name my-first-agent$/);
+		await user.keyboard('{ArrowDown}');
+		expect(screen.getByRole('radio', { name: /Create it here/ })).toHaveFocus();
+		expect(preview).toHaveAttribute('data-method', 'create');
+		expect(height()).toBe(first);
+		const create = screen.getByTestId('landing-pane-create');
+		expect(create).toHaveTextContent(/Set it up in Jentic, with nothing to install/);
+		expect(create).not.toHaveTextContent(/created active/);
+		expect(screen.getByTestId('landing-pane-cli')).toHaveAttribute('aria-hidden', 'true');
 	});
 
 	it('copies the command with feedback', async () => {
@@ -150,71 +202,29 @@ describe('Agents page — zero agents', () => {
 		await waitFor(() =>
 			expect(screen.getByTestId('register-command')).toHaveTextContent(INSTANCE_URL),
 		);
-		const copy = screen.getByRole('button', { name: 'Copy the register command' });
+		const copy = screen.getByRole('button', { name: /^Copy the register command:/ });
 		await user.click(copy);
 		expect(await screen.findByText('Command copied')).toBeInTheDocument();
 		expect(await navigator.clipboard.readText()).toBe(
 			`jentic register --url ${INSTANCE_URL} --name my-first-agent`,
 		);
-		expect(copy).toHaveTextContent('Copied!');
+		expect(copy).toHaveAccessibleName(/^Copied the register command:/);
+		expect(screen.getByTestId('register-command-copy')).toHaveTextContent('Copied');
 	});
 
-	it('labels the register command as a POSIX shell command, keeping the terminal title', async () => {
-		const { container } = renderPage();
-		await landing();
-		expect(screen.getByText('where your agent runs')).toBeInTheDocument();
-		const hint = screen.getByTestId('register-command-shell');
-		expect(hint).toHaveTextContent('POSIX shell');
-		// The shared Tooltip describes the focusable wrapper (no native title box).
-		expect(hint.parentElement).toHaveAccessibleDescription(
-			expect.stringContaining('sh, bash, zsh'),
-		);
-		await waitFor(() => checkA11y(container), { timeout: 3000 });
-	});
-
-	it('tucks how to get the CLI into a collapsed section at the foot of the card', async () => {
+	it('the MCP pane copies `jentic setup`, built by the command builder', async () => {
 		const user = userEvent.setup();
-		const { container } = renderPage();
+		renderPage();
 		await landing();
-		const hint = screen.getByTestId('cli-install-hint');
-		// Below the stepper and the status line, not under the command.
-		expect(
-			screen.getByTestId('register-status').compareDocumentPosition(hint) &
-				Node.DOCUMENT_POSITION_FOLLOWING,
-		).toBeTruthy();
-
-		const toggle = within(hint).getByRole('button', { name: "Don't have the jentic CLI?" });
-		expect(toggle).toHaveAttribute('aria-expanded', 'false');
-		expect(toggle).not.toHaveAttribute('aria-controls');
-		expect(within(hint).queryByText(/brew install/)).not.toBeInTheDocument();
-		expect(within(hint).queryByRole('link')).not.toBeInTheDocument();
-
-		await user.click(toggle);
-		expect(toggle).toHaveAttribute('aria-expanded', 'true');
-		const body = document.getElementById(toggle.getAttribute('aria-controls') ?? '');
-		expect(body).not.toBeNull();
-		expect(within(body!).getByText('brew install --cask jentic/tap/jentic').tagName).toBe(
-			'PRE',
+		await user.click(screen.getByRole('radio', { name: /Connect over MCP/ }));
+		const setup = await screen.findByTestId('setup-command');
+		// Same flags as `register`, in the same order — only the verb differs.
+		expect(setup).toHaveTextContent(
+			`$ jentic setup --url ${INSTANCE_URL} --name my-first-agent`,
 		);
-		expect(
-			within(body!).getByText(
-				'curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh',
-			).tagName,
-		).toBe('PRE');
-		expect(within(body!).getAllByRole('button', { name: 'Copy to clipboard' })).toHaveLength(2);
-		expect(body).toHaveTextContent(/Run jentic setup instead/);
-		expect(within(body!).getByRole('link', { name: 'Installation docs' })).toHaveAttribute(
-			'href',
-			expect.stringContaining('/docs#installation'),
-		);
-		await waitFor(() => checkA11y(container), { timeout: 3000 });
-
-		// The keyboard closes it again.
-		toggle.focus();
-		await user.keyboard('{Enter}');
-		expect(toggle).toHaveAttribute('aria-expanded', 'false');
-		await waitFor(() =>
-			expect(within(hint).queryByText(/brew install/)).not.toBeInTheDocument(),
+		await user.click(screen.getByRole('button', { name: /^Copy the setup command:/ }));
+		expect(await navigator.clipboard.readText()).toBe(
+			`jentic setup --url ${INSTANCE_URL} --name my-first-agent`,
 		);
 	});
 
@@ -239,9 +249,7 @@ describe('Agents page — zero agents', () => {
 				'$ jentic register --url https://jentic.example.test --broker-url https://broker.jentic.example.test --name my-first-agent',
 			),
 		);
-		expect(screen.getByTestId('register-broker-note')).toHaveTextContent(
-			"The command carries this instance's broker (data plane) URL.",
-		);
+		expect(screen.queryByTestId('register-broker-note')).toBeNull();
 	});
 
 	it('on a remote install with no reported broker, the command keeps a placeholder and says who to ask', async () => {
@@ -255,27 +263,75 @@ describe('Agents page — zero agents', () => {
 			),
 		);
 		expect(screen.getByTestId('register-broker-note')).toHaveTextContent(
-			/without it jentic execute fail-closes\. Ask whoever deployed this instance.*put it in place of <broker-url>, inside the quotes\./,
+			'Ask whoever deployed this instance for the broker URL, and put it in place of <broker-url>.',
 		);
 	});
 
-	it('"Create an agent manually" and the header button open the New agent panel on "Create here"', async () => {
+	it('hides the header filter, and an upload goes to the API it registered', async () => {
+		const acme = makeMockApi({ vendor: 'acme.io', name: 'main', displayName: 'Acme' });
+		worker.use(
+			http.post('/apis', () =>
+				HttpResponse.json(
+					{ job_id: 'job_up', status: 'completed', _links: { self: '/jobs/job_up' } },
+					{ status: 202 },
+				),
+			),
+			http.get('/jobs/job_up/result', () =>
+				HttpResponse.json({
+					revisions: [{ api: { vendor: 'acme.io', name: 'main', version: '1.0.0' } }],
+				}),
+			),
+			http.get('/apis/acme.io/main/1.0.0', () => HttpResponse.json(acme.row)),
+		);
 		const user = userEvent.setup();
 		renderPage();
 		await landing();
+		expect(screen.queryByRole('searchbox', { name: 'Filter agents' })).toBeNull();
 
-		await user.click(screen.getByRole('button', { name: /Create an agent manually/ }));
-		expect(await screen.findByRole('dialog', { name: 'New agent' })).toBeInTheDocument();
-		await user.keyboard('{Escape}');
-		await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New agent' })).toBeNull());
-
-		await user.click(screen.getByRole('button', { name: 'New agent' }));
-		const panel = await screen.findByRole('dialog', { name: 'New agent' });
-		expect(within(panel).getByRole('tab', { name: 'Create here' })).toHaveAttribute(
-			'aria-selected',
-			'true',
+		await user.click(screen.getByRole('button', { name: /Upload an API/ }));
+		await waitFor(() => expect(screen.getByTestId('import-spec-dialog')).toBeVisible());
+		await user.type(screen.getByTestId('import-spec-url'), 'https://acme.io/openapi.json');
+		await user.click(screen.getByTestId('import-spec-submit'));
+		await waitFor(() =>
+			expect(screen.getByTestId('location-path')).toHaveTextContent(
+				'/library/workspace/acme.io/main/1.0.0',
+			),
 		);
-		expect(within(panel).getByLabelText('Name')).toBeInTheDocument();
+		resetApisStore();
+	});
+
+	it('Continue opens the New agent panel on the chosen way in; the header button on the CLI', async () => {
+		const user = userEvent.setup();
+		renderPage();
+		await landing();
+		const tab = (name: string) =>
+			within(screen.getByRole('dialog', { name: 'New agent' })).getByRole('tab', { name });
+		const close = async () => {
+			await user.keyboard('{Escape}');
+			await waitFor(() =>
+				expect(screen.queryByRole('dialog', { name: 'New agent' })).toBeNull(),
+			);
+		};
+
+		await user.click(screen.getByRole('button', { name: /Continue with CLI/ }));
+		await screen.findByRole('dialog', { name: 'New agent' });
+		expect(tab('Register from the CLI')).toHaveAttribute('aria-selected', 'true');
+		await close();
+
+		await user.click(screen.getByRole('radio', { name: /Create it here/ }));
+		await user.click(screen.getByRole('button', { name: /^Continue/ }));
+		await screen.findByRole('dialog', { name: 'New agent' });
+		expect(tab('Create it here')).toHaveAttribute('aria-selected', 'true');
+		// The draft starts empty: the command's name is the register routes' own.
+		expect(
+			within(screen.getByRole('dialog', { name: 'New agent' })).getByLabelText('Name'),
+		).toHaveValue('');
+		await close();
+
+		await user.click(screen.getByRole('radio', { name: /Create it here/ }));
+		await user.click(screen.getByRole('button', { name: 'New agent' }));
+		await screen.findByRole('dialog', { name: 'New agent' });
+		expect(tab('Register from the CLI')).toHaveAttribute('aria-selected', 'true');
 	});
 
 	/** Registers `name` the way `jentic register` does and waits for the arrival
@@ -298,10 +354,6 @@ describe('Agents page — zero agents', () => {
 		return id;
 	}
 
-	const stepStates = () =>
-		within(screen.getByTestId('register-stepper'))
-			.getAllByRole('listitem')
-			.map((li) => li.getAttribute('data-state'));
 	const progress = () => screen.getByTestId('register-progress');
 
 	/** The permission ids the review lists under `label`, opening it if folded. */
@@ -315,19 +367,10 @@ describe('Agents page — zero agents', () => {
 		);
 	}
 
-	it('while listening, the stepper is on its first step', async () => {
-		renderPage();
-		await landing();
-		expect(stepStates()).toEqual(['current', 'upcoming', 'upcoming', 'upcoming']);
-		const steps = within(screen.getByTestId('register-stepper')).getAllByRole('listitem');
-		expect(steps[0]).toHaveAttribute('aria-current', 'step');
-		expect(screen.getByTestId('register-stepper').tagName).toBe('OL');
-	});
-
-	it('an arrival swaps the command for the agent, decision first, and sends the manual card off', async () => {
+	it('an arrival swaps the ways in for the agent, decision first', async () => {
 		const { container, queryClient } = renderPage();
 		await landing();
-		expect(screen.getByTestId('manual-card')).toBeInTheDocument();
+		expect(screen.getByRole('radio', { name: /Create it here/ })).toBeInTheDocument();
 		const id = await arrive('my-first-agent', queryClient);
 
 		const card = screen.getByTestId('first-agent-card');
@@ -339,12 +382,11 @@ describe('Agents page — zero agents', () => {
 		);
 		expect(within(card).getByRole('button', { name: 'Approve my-first-agent' })).toBeEnabled();
 		expect(within(card).getByRole('button', { name: 'Deny my-first-agent' })).toBeEnabled();
-		// The command view and the four-step stepper are gone: one quiet
-		// progress line says where the flow is, and the header says it is
-		// pending, so the status line is announced, not drawn again.
+		// The header announces pending, so the progress line is not drawn twice.
 		await waitFor(() => expect(screen.queryByTestId('register-command')).toBeNull());
+		expect(screen.queryByRole('radio', { name: /Create it here/ })).toBeNull();
 		expect(screen.queryByTestId('register-stepper')).toBeNull();
-		expect(progress()).toHaveTextContent('Step 3 of 4 · Approve it');
+		expect(progress()).toHaveTextContent('Step 2 of 3 · Approve it');
 		expect(status()).toHaveTextContent(
 			'my-first-agent just registered · awaiting your approval',
 		);
@@ -380,29 +422,11 @@ describe('Agents page — zero agents', () => {
 			'Approving grants the default agent permissions.',
 		);
 
-		// The page stays the landing; the manual card has left.
 		expect(screen.getByTestId('agents-empty-landing')).toHaveAttribute('data-phase', 'arrived');
 		expect(screen.queryByRole('region', { name: 'Awaiting approval' })).toBeNull();
 		expect(screen.queryByTestId('agent-dock')).toBeNull();
-		await waitFor(() => expect(screen.queryByTestId('manual-card')).toBeNull());
-		expect(screen.queryByRole('button', { name: /Create an agent manually/ })).toBeNull();
 		expect(screen.getByTestId('ghost-tab')).toHaveAttribute('data-status', 'pending');
 		await waitFor(() => checkA11y(container), { timeout: 3000 });
-	});
-
-	it("an arrival under another name than the command's is flagged before approval", async () => {
-		const user = userEvent.setup();
-		const { queryClient } = renderPage();
-		await landing();
-		const input = screen.getByLabelText('Agent name');
-		await user.clear(input);
-		await user.type(input, 'research-bot');
-		await arrive('research-bot-2', queryClient);
-
-		expect(screen.getByTestId('arrival-name-warning')).toHaveTextContent(
-			'It registered as research-bot-2, not research-bot — the name in your command. Make sure it is yours before approving.',
-		);
-		expect(screen.queryByTestId('arrival-others-warning')).toBeNull();
 	});
 
 	it('at 390px the agent ID wraps in full on its own row, and copies', async () => {
@@ -446,19 +470,6 @@ describe('Agents page — zero agents', () => {
 		expect(screen.getByTestId('more-pending')).toHaveTextContent(
 			'+1 more waiting for approval',
 		);
-	});
-
-	it('the manual create form starts from the name typed in the register card', async () => {
-		const user = userEvent.setup();
-		renderPage();
-		await landing();
-		const input = screen.getByLabelText('Agent name');
-		await user.clear(input);
-		await user.type(input, 'research-bot');
-
-		await user.click(screen.getByRole('button', { name: /Create an agent manually/ }));
-		const sheet = await screen.findByRole('dialog', { name: 'New agent' });
-		expect(within(sheet).getByLabelText('Name')).toHaveValue('research-bot');
 	});
 
 	it('shows the provenance facts the API has for the agent', async () => {
@@ -769,7 +780,7 @@ describe('Agents page — zero agents', () => {
 		expect(screen.queryByRole('button', { name: 'Approve my-first-agent' })).toBeNull();
 
 		// Approved: the step now asked for is its first API.
-		expect(progress()).toHaveTextContent('Step 4 of 4 · Give it an API');
+		expect(progress()).toHaveTextContent('Step 3 of 3 · Give it an API');
 		expect(
 			within(screen.getByTestId('arrival-card')).getByText('Active', { selector: 'span' }),
 		).toBeInTheDocument();
@@ -874,19 +885,18 @@ describe('Agents page — zero agents', () => {
 			);
 		expect(steps().map((li) => li.getAttribute('data-state'))).toEqual([
 			'done',
-			'done',
 			'current',
 			'upcoming',
 		]);
-		expect(steps()[2]).toHaveAttribute('aria-current', 'step');
-		expect(steps()[2]).toHaveTextContent('You approve it');
+		expect(steps()[1]).toHaveAttribute('aria-current', 'step');
+		expect(steps()[1]).toHaveTextContent('You approve it');
 		expect(steps()[0]).toHaveTextContent('Run the command (done)');
 
 		await user.click(screen.getByRole('button', { name: 'Approve my-first-agent' }));
 		await screen.findByTestId('first-api-panel');
-		await waitFor(() => expect(steps()[3]).toHaveAttribute('aria-current', 'step'));
+		await waitFor(() => expect(steps()[2]).toHaveAttribute('aria-current', 'step'));
 		expect(steps().filter((li) => li.hasAttribute('aria-current'))).toHaveLength(1);
-		expect(progress()).toHaveAttribute('data-step', '4');
+		expect(progress()).toHaveAttribute('data-step', '3');
 	});
 
 	it('an approval made elsewhere reaches the card through the roster', async () => {
@@ -899,7 +909,7 @@ describe('Agents page — zero agents', () => {
 		expect(res.ok).toBe(true);
 		await queryClient.invalidateQueries();
 		expect(await screen.findByTestId('first-api-panel')).toBeInTheDocument();
-		expect(progress()).toHaveTextContent('Step 4 of 4');
+		expect(progress()).toHaveTextContent('Step 3 of 3');
 	});
 
 	async function approved(user: ReturnType<typeof userEvent.setup>) {
@@ -920,7 +930,9 @@ describe('Agents page — zero agents', () => {
 		await user.click(github);
 
 		// The setup queue, on GitHub — never the picker.
-		const queue = await screen.findByRole('dialog', { name: 'Set up 1 API' });
+		const queue = await screen.findByRole('dialog', {
+			name: 'Set up 1 API for my-first-agent',
+		});
 		expect(within(queue).getByTestId('queue-active-pane')).toHaveAccessibleName(/GitHub/);
 		expect(screen.queryByRole('dialog', { name: 'Add APIs' })).toBeNull();
 
@@ -982,7 +994,9 @@ describe('Agents page — zero agents', () => {
 		const github = screen.getByRole('button', { name: 'Continue with GitHub' });
 		await waitFor(() => expect(github).toBeEnabled());
 		await user.click(github);
-		const queue = await screen.findByRole('dialog', { name: 'Set up 1 API' });
+		const queue = await screen.findByRole('dialog', {
+			name: 'Set up 1 API for my-first-agent',
+		});
 		expect(within(queue).getByTestId('queue-active-pane')).toHaveAccessibleName(/GitHub/);
 		await expectHandedOffTo(id);
 	});
@@ -1044,7 +1058,9 @@ describe('Agents page — zero agents', () => {
 		await waitFor(() => expect(github).toBeEnabled());
 		await user.click(github);
 
-		const queue = await screen.findByRole('dialog', { name: 'Set up 1 API' });
+		const queue = await screen.findByRole('dialog', {
+			name: 'Set up 1 API for my-first-agent',
+		});
 		expect(within(queue).getByTestId('queue-active-pane')).toHaveAccessibleName(/GitHub/);
 		expect(screen.queryByRole('dialog', { name: 'Add APIs' })).toBeNull();
 	});
@@ -1159,11 +1175,8 @@ describe('Agents page — zero agents', () => {
 			'listening',
 		);
 		expect(await screen.findByTestId('register-command')).toBeInTheDocument();
-		expect(stepStates()).toEqual(['current', 'upcoming', 'upcoming', 'upcoming']);
-		expect(screen.getByTestId('ghost-tab')).toHaveTextContent('Waiting for your agent…');
-		expect(
-			await screen.findByRole('button', { name: /Create an agent manually/ }),
-		).toBeInTheDocument();
+		expect(screen.getByTestId('ghost-tab')).toHaveAttribute('data-arrived', 'false');
+		expect(screen.getByRole('radio', { name: /Create it here/ })).toBeInTheDocument();
 		expect(screen.queryByTestId('agent-dock')).toBeNull();
 	});
 
@@ -1172,7 +1185,7 @@ describe('Agents page — zero agents', () => {
 		const { queryClient } = renderPage({ reduced: true });
 		await landing();
 		const id = await arrive('quiet-bot', queryClient);
-		expect(screen.queryByTestId('manual-card')).toBeNull();
+		expect(screen.queryByRole('radio', { name: /Create it here/ })).toBeNull();
 		expect(screen.queryByTestId('register-command')).toBeNull();
 
 		await user.click(screen.getByRole('button', { name: 'Approve quiet-bot' }));
@@ -1217,9 +1230,7 @@ describe('Agents page — zero agents', () => {
 		await user.click(within(dialog).getByRole('button', { name: 'Deny' }));
 
 		await waitFor(() =>
-			expect(
-				screen.getByRole('heading', { name: 'Let your agent register itself' }),
-			).toHaveFocus(),
+			expect(screen.getByRole('heading', { name: 'Connect your first agent' })).toHaveFocus(),
 		);
 	});
 
@@ -1368,7 +1379,9 @@ describe('Agents page — zero agents', () => {
 		const github = await screen.findByRole('button', { name: 'Continue with GitHub' });
 		await user.click(github);
 
-		const queue = await screen.findByRole('dialog', { name: 'Set up 1 API' });
+		const queue = await screen.findByRole('dialog', {
+			name: 'Set up 1 API for my-first-agent',
+		});
 		expect(within(queue).getByTestId('queue-existing-accounts')).toHaveTextContent(
 			'Added via GitHub PAT',
 		);
@@ -1407,16 +1420,21 @@ describe('Agents page — zero agents', () => {
 		await waitFor(() => expect(github).toBeEnabled());
 		await user.click(github);
 
-		const queue = await screen.findByRole('dialog', { name: 'Set up 1 API' });
-		await user.click(await within(queue).findByRole('button', { name: 'Use this credential' }));
-		// The landing's queue is the Add-APIs queue: the same Access step follows.
-		const step = await within(queue).findByTestId('queue-access-step');
-		expect(within(step).getByRole('radio', { name: /Custom rules/ })).toBeChecked();
-		await user.click(within(step).getByRole('radio', { name: /Read-only/ }));
-		await user.click(within(step).getByRole('button', { name: /^Add GitHub/ }));
+		const queue = await screen.findByRole('dialog', {
+			name: 'Set up 1 API for my-first-agent',
+		});
+		// The landing's queue is the Add-APIs queue.
+		expect(await within(queue).findByRole('radio', { name: /GitHub PAT/ })).toBeChecked();
+		const step = within(queue).getByTestId('queue-access-step');
+		await waitFor(() => expect(step).toHaveAttribute('data-ready', 'true'));
+		expect(within(step).getByRole('radio', { name: /Read only/ })).toBeChecked();
+		await user.click(within(queue).getByTestId('queue-add'));
 		const row = await within(queue).findByTestId('queue-progress-row');
 		await waitFor(() => expect(row).toHaveAttribute('data-status', 'added'));
-		expect(row).toHaveTextContent('Read-only');
+		await user.click(within(row).getByRole('button'));
+		expect(await within(queue).findByTestId('queue-added-summary')).toHaveTextContent(
+			'Read only',
+		);
 	});
 
 	it('"Continue with GitHub" falls back to the tray when the agent\'s bindings fail to load', async () => {
@@ -1465,9 +1483,9 @@ describe('Agents page — resuming the first run on load', () => {
 		);
 		expect(within(card).getByRole('button', { name: 'Deny my-first-agent' })).toBeEnabled();
 		expect(within(screen.getByTestId('agent-id-fact')).getByText(id)).toBeInTheDocument();
-		expect(progressStep()).toBe('3');
+		expect(progressStep()).toBe('2');
 		// Rendered resolved: the manual card never mounts, so nothing slides off.
-		expect(screen.queryByTestId('manual-card')).toBeNull();
+		expect(screen.queryByRole('radio', { name: /Create it here/ })).toBeNull();
 		expect(screen.queryByTestId('register-command')).toBeNull();
 		expect(screen.queryByTestId('more-pending')).toBeNull();
 		expect(screen.queryByTestId('arrival-warnings')).toBeNull();
@@ -1518,8 +1536,8 @@ describe('Agents page — resuming the first run on load', () => {
 		).toBeInTheDocument();
 		expect(within(panel).getByRole('button', { name: 'Add another API' })).toBeInTheDocument();
 		expect(within(panel).getByRole('button', { name: 'Skip for now' })).toBeInTheDocument();
-		expect(progressStep()).toBe('4');
-		expect(screen.queryByTestId('manual-card')).toBeNull();
+		expect(progressStep()).toBe('3');
+		expect(screen.queryByRole('radio', { name: /Create it here/ })).toBeNull();
 	});
 
 	for (const exit of ['Skip for now', 'Continue with GitHub', 'Add another API'] as const) {
@@ -1582,14 +1600,14 @@ describe('Agents page — resuming the first run on load', () => {
 		const { container } = renderPage();
 
 		const strip = await screen.findByTestId('agent-strip');
+		// The selected archived agent opens the archived section, so all three show.
 		for (const name of ['alpha-boom', 'gamma-bot', 'my-first-agent']) {
 			expect(within(strip).getByRole('tab', { name: new RegExp(name) })).toBeInTheDocument();
 		}
 		expect(screen.queryByTestId('agents-empty-landing')).toBeNull();
-		expect(screen.queryByText(/archived agents/)).toBeNull();
-		// Retried: the state banner fades in.
-		const retired = await screen.findByText('This agent is retired.', { exact: false });
-		await waitFor(() => expect(retired).toBeVisible());
+		expect(screen.getByRole('searchbox', { name: 'Filter agents' })).toBeVisible();
+		const readOnly = await screen.findByText(/^Read-only\./);
+		await waitFor(() => expect(readOnly).toBeVisible());
 		expect(screen.getByRole('button', { name: 'New agent' })).toBeInTheDocument();
 		await waitFor(() => checkA11y(container), { timeout: 3000 });
 	});
@@ -1602,7 +1620,10 @@ describe('Agents page — resuming the first run on load', () => {
 		renderPage();
 
 		const strip = await screen.findByTestId('agent-strip');
-		expect(within(strip).getAllByRole('tab')).toHaveLength(2);
+		expect(within(strip).getAllByRole('tab')).toHaveLength(1);
+		expect(within(strip).getByTestId('strip-archived-toggle')).toHaveAccessibleName(
+			'Show 1 archived agent',
+		);
 		expect(screen.queryByTestId('agents-empty-landing')).toBeNull();
 	});
 

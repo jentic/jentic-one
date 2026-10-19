@@ -5,10 +5,14 @@
 import { describe, it, expect } from 'vitest';
 import {
 	ALLOW_ALL_DESCRIPTION,
+	actionRule,
 	coverageNote,
 	draftRulesForPreset,
+	isActionRule,
+	joinCustomRules,
 	presetOptions,
 	rulesForPreset,
+	splitCustomRules,
 } from '@/shared/credentials/lib/accessPresets';
 import { explainRules } from '@/shared/credentials/lib/rule-matcher';
 import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
@@ -22,6 +26,20 @@ describe('rulesForPreset', () => {
 
 	it('Read-only is GET on any path', () => {
 		expect(rulesForPreset('read', [])).toEqual([{ effect: 'allow', methods: ['GET'] }]);
+	});
+
+	it('a By action rule (operation ids, no method or path) is a valid Custom rule', () => {
+		// The backend's "constrain at least one" check accepts an allow with only operation ids.
+		expect(
+			rulesForPreset('custom', [
+				{ effect: 'allow', methods: null, path: null, operations: ['repos/get'] },
+			]),
+		).toEqual([{ effect: 'allow', operations: ['repos/get'] }]);
+		expect(
+			rulesForPreset('custom', [
+				{ effect: 'allow', methods: null, path: null, operations: [] },
+			]),
+		).toBeNull();
 	});
 
 	it('Custom saves the rules as written, in order, cleaned of empty conditions', () => {
@@ -51,12 +69,18 @@ describe('rulesForPreset', () => {
 });
 
 describe('presetOptions / coverageNote', () => {
-	it('Allow all says how far the credential reaches; the others do not change', () => {
+	it('three presets, least access first; Full access says how far the credential reaches', () => {
 		for (const reach of ['pinned', 'any-version', 'vendor-wide'] as const) {
-			const [all, read, custom] = presetOptions(reach);
-			expect(all).toMatchObject({ value: 'all', description: ALLOW_ALL_DESCRIPTION[reach] });
-			expect(read).toMatchObject({ value: 'read', label: 'Read-only (GET only)' });
-			expect(custom).toMatchObject({ value: 'custom', label: 'Custom rules' });
+			const options = presetOptions(reach);
+			expect(options.map((o) => o.value)).toEqual(['read', 'all', 'custom']);
+			expect(options[1]).toMatchObject({
+				label: 'Full access',
+				description: ALLOW_ALL_DESCRIPTION[reach],
+			});
+			expect(options[2]).toMatchObject({
+				label: 'Custom rules',
+				description: 'By action or by path, in order',
+			});
 		}
 	});
 
@@ -64,6 +88,60 @@ describe('presetOptions / coverageNote', () => {
 		expect(coverageNote('pinned')).toBeNull();
 		expect(coverageNote('any-version')).toMatch(/future versions too/);
 		expect(coverageNote('vendor-wide')).toMatch(/every API of its vendor/);
+	});
+});
+
+describe('splitCustomRules / joinCustomRules — the two editors, one saved list', () => {
+	const ACTION: PermissionRule = {
+		effect: 'allow',
+		methods: null,
+		path: null,
+		operations: ['repos/get'],
+	};
+
+	it('an operations-only allow is the action half; everything else is the path half', () => {
+		expect(isActionRule(ACTION)).toBe(true);
+		// A rule that also names a path belongs to the path editor, which preserves its operations.
+		expect(isActionRule({ ...ACTION, path: '/repos' })).toBe(false);
+		expect(isActionRule({ ...ACTION, methods: ['GET'] })).toBe(false);
+		expect(isActionRule({ ...ACTION, effect: 'deny' })).toBe(false);
+		expect(isActionRule({ ...ACTION, operations: [] })).toBe(false);
+		expect(isActionRule(GET_REPOS)).toBe(false);
+
+		expect(splitCustomRules([GET_REPOS, ACTION])).toEqual({
+			pathRules: [GET_REPOS],
+			actionRules: [ACTION],
+		});
+	});
+
+	it('actionRule writes the shape the broker matches on `operations`', () => {
+		expect(actionRule(['a', 'b'])).toEqual({
+			effect: 'allow',
+			methods: null,
+			path: null,
+			operations: ['a', 'b'],
+		});
+	});
+
+	it('re-joins with the action rules last, so the path rows keep their numbers', () => {
+		expect(joinCustomRules([GET_REPOS], [ACTION])).toEqual([GET_REPOS, ACTION]);
+		const rules = [GET_REPOS, ACTION, { effect: 'deny' as const, path: '/admin' }];
+		const { pathRules, actionRules } = splitCustomRules(rules);
+		expect(joinCustomRules(pathRules, actionRules)).toEqual([
+			GET_REPOS,
+			{ effect: 'deny', path: '/admin' },
+			ACTION,
+		]);
+	});
+
+	it('an action rule is never the "empty allow" that holds Custom incomplete', () => {
+		expect(rulesForPreset('custom', joinCustomRules([GET_REPOS], [ACTION]))).toEqual([
+			{ effect: 'allow', methods: ['GET'], path: '/repos' },
+			{ effect: 'allow', operations: ['repos/get'] },
+		]);
+		expect(
+			rulesForPreset('custom', joinCustomRules([{ effect: 'allow' }], [ACTION])),
+		).toBeNull();
 	});
 });
 

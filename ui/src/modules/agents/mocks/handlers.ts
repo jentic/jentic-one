@@ -1681,6 +1681,9 @@ export const agentsHandlers = [
 			name: body.name ?? 'unnamed',
 			description: body.description ?? null,
 			status: 'active',
+			// `AgentService.create` stores the caller as owner and registrar — never "self".
+			owner_id: ADMIN,
+			registered_by: ADMIN,
 			created_at: now(),
 		});
 		agents.unshift(row);

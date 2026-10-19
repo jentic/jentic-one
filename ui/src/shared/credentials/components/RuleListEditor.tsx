@@ -86,6 +86,8 @@ export function RuleListEditor({
 	requestedRules,
 	emptyStateContent,
 	addActions,
+	openWhenEmpty = false,
+	hideAdd = false,
 	className,
 }: {
 	rules: readonly PermissionRule[];
@@ -110,10 +112,15 @@ export function RuleListEditor({
 	 * same row as "Add rule" — inside the empty panel while there are no rules.
 	 */
 	addActions?: ReactNode;
+	/** With no rules yet, open straight onto the new-rule form. */
+	openWhenEmpty?: boolean;
+	/** Hide "Add rule" (another control authors new rules); rows stay editable. */
+	hideAdd?: boolean;
 	className?: string;
 }) {
 	const [editingIndex, setEditingIndex] = useState<number | null>(null);
-	const [adding, setAdding] = useState(false);
+	const [adding, setAdding] = useState(() => !!openWhenEmpty && rules.length === 0);
+	if (hideAdd && adding) setAdding(false);
 	// While a form is open, every other row's verbs are disabled: the open edit
 	// is addressed by position, so a delete/move underneath it would land its
 	// Save on a different rule.
@@ -149,7 +156,7 @@ export function RuleListEditor({
 	// The list verbs: "Add rule" plus whatever the host contributes. While the
 	// list is empty (and the host has no custom empty state) they sit INSIDE
 	// the empty panel, so the next step is where the eye already is.
-	const actionRow = (
+	const actionRow = hideAdd ? null : (
 		<div className="flex flex-wrap items-center gap-2">
 			<Button
 				type="button"
@@ -656,6 +663,10 @@ function RuleFormBody({
 	}, [paths, draft.path]);
 
 	const [suggestOpen, setSuggestOpen] = useState(false);
+	// Open only on focus/keystroke, so suggestions arriving late never pop it open unasked.
+	const askForSuggestions = (): void => {
+		if (paths.length > 0) setSuggestOpen(true);
+	};
 	const [highlightedIndex, setHighlightedIndex] = useState(0);
 	useEffect(() => {
 		setHighlightedIndex(0);
@@ -795,10 +806,10 @@ function RuleFormBody({
 						value={draft.path}
 						onChange={(e): void => {
 							onChange({ ...draft, path: e.target.value });
-							setSuggestOpen(true);
+							askForSuggestions();
 						}}
 						onKeyDown={handlePathKeyDown}
-						onFocus={(): void => setSuggestOpen(true)}
+						onFocus={askForSuggestions}
 						onBlur={(): void => {
 							setTimeout(() => setSuggestOpen(false), 100);
 						}}

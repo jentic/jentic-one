@@ -311,12 +311,14 @@ for (const theme of THEMES) {
 				.getByRole('checkbox', { name: new RegExp(`/${seed.apiName}@1\\.0\\.0`) })
 				.click();
 			await tray.getByRole('button', { name: 'Continue' }).click();
-			await expect(page.getByRole('heading', { name: /^Set up 1 API$/ })).toBeVisible();
+			await expect(page.getByRole('heading', { name: /^Set up 1 API for / })).toBeVisible();
 			await capture(page, theme, 'agents-setup-queue');
 			const pick = page.getByRole('radio', { name: /e2e-theme-key-/ });
 			if (await pick.count()) await pick.first().check();
-			await page.getByRole('button', { name: 'Use this credential' }).click();
-			await expect(page.getByTestId('queue-access-step')).toBeVisible();
+			await expect(page.getByTestId('queue-access-step')).toHaveAttribute(
+				'data-ready',
+				'true',
+			);
 			await capture(page, theme, 'agents-setup-queue-access');
 		});
 
