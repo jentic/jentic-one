@@ -175,9 +175,6 @@ async def update_agent(
     archived agent cannot be updated (409). Returns the updated agent.
     """
     update_data = body.model_dump(exclude_unset=True)
-    if not update_data:
-        view = await agent_svc.get_agent(agent_id, identity=identity)
-        return _agent_response(view)
     view = await agent_svc.update_agent(agent_id, update_data=update_data, identity=identity)
     return _agent_response(view)
 
