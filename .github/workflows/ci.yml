@@ -32,6 +32,11 @@ concurrency:
   # (a cancelled push-to-main or tag run could skip the release gate).
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  # Appended to every `make test-*` pytest run (Makefile PYTEST_ARGS): lists the
+  # slowest tests in each job log so regressions in suite time are visible.
+  PYTEST_ARGS: --durations=25
+
 jobs:
   changes:
     name: Detect changes
@@ -40,6 +45,10 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
+      # 'true' on every non-PR event (push to main, nightly schedule, manual
+      # dispatch): those runs ignore the per-group path filters below and run
+      # every job that is not explicitly PR-tier only.
+      full: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
       unit-tests: ${{ steps.filter.outputs.unit-tests }}
       integration-tests: ${{ steps.filter.outputs.integration-tests }}
       ui: ${{ steps.filter.outputs.ui }}
@@ -49,6 +58,7 @@ jobs:
       openapi-spec: ${{ steps.filter.outputs.openapi-spec }}
       installer: ${{ steps.filter.outputs.installer }}
       e2e-install: ${{ steps.filter.outputs.e2e-install }}
+      security-image: ${{ steps.filter.outputs.security-image }}
     steps:
       - uses: actions/checkout@v7
 
@@ -191,6 +201,18 @@ jobs:
               - 'src/jentic_one/admin/web/app.py'
               - 'src/jentic_one/shared/web/app_factory.py'
               - 'scripts/spa_packaging_smoke.*'
+            security-image:
+              # Inputs that change what the Trivy image scan sees: the base
+              # images and OS packages (Dockerfiles), the Python dependency set
+              # baked into the wheel venv, and the scan policy. A src-only edit
+              # cannot add a CVE to the image, so it doesn't rebuild it. The
+              # nightly schedule runs this unfiltered to pick up newly published
+              # CVEs against an unchanged image.
+              - 'deploy/docker/**'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - 'ui/package-lock.json'
+              - '.trivyignore'
 
   lint:
     name: Lint & type-check
@@ -303,15 +325,13 @@ jobs:
           fi
           echo "Generated UI client is in sync with ui/openapi.json."
 
+  # Source-tree security gates: fast (~30s), on every run. The BUILT-image scan
+  # lives in `security-image` below, path-gated on the image's inputs, so the
+  # image build no longer sits on every PR's critical path.
   security:
     name: Security scan
     runs-on: ubuntu-latest
     steps:
-      - name: Free disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-          sudo docker image prune -af
-
       - uses: actions/checkout@v7
 
       - name: Run Trivy vulnerability scanner
@@ -341,18 +361,46 @@ jobs:
           uv run --with pip-licenses pip-licenses \
             --fail-on="GPL-3.0-only;GPL-3.0-or-later;AGPL-3.0-only;AGPL-3.0-or-later"
 
-      # The fs scan above checks the source tree; the steps below scan the
-      # BUILT app image (base-image OS packages included) — the same class of
-      # finding AWS ECR / registry scanners reject on, so we fail here before
-      # a registry does. Same recipe as the release publish job (release.yml):
-      # base stages first, then the app image that FROMs python-base by tag.
-      # `ignore-unfixed` keeps the gate actionable: Debian-slim always carries
-      # unfixed low-priority CVEs, and a permanently red gate gets ignored.
-      # Overrides go in .trivyignore (CVE id + justification + expiry).
-      - name: Build the app image
+  # Scans the BUILT app image (base-image OS packages included) — the same class
+  # of finding AWS ECR / registry scanners reject on, so we fail here before a
+  # registry does. Builds deploy/docker/app.multiarch.Dockerfile for linux/amd64,
+  # the self-contained file release.yml builds and ships, with the BuildKit
+  # layer cache in the GitHub Actions cache so an unchanged base/deps layer set
+  # is a cache hit. `ignore-unfixed` keeps the gate actionable: Debian-slim
+  # always carries unfixed low-priority CVEs, and a permanently red gate gets
+  # ignored. Overrides go in .trivyignore (CVE id + justification + expiry).
+  security-image:
+    name: Security scan (app image)
+    needs: [changes]
+    if: needs.changes.outputs.full == 'true' || needs.changes.outputs.security-image == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      # The image build (torch wheels + two base stages) needs more disk than a
+      # stock runner has free on a cold cache; only pay for the cleanup then.
+      - name: Free disk space (only when short)
         run: |
-          make build-base
-          docker build -f deploy/docker/app.Dockerfile -t jentic-one/app:scan .
+          avail_gb=$(df --output=avail -BG / | tail -n1 | tr -dc '0-9')
+          echo "free on /: ${avail_gb}G"
+          if [ "${avail_gb}" -lt 25 ]; then
+            sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+            df -h /
+          fi
+
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build the app image (layer-cached)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/docker/app.multiarch.Dockerfile
+          platforms: linux/amd64
+          tags: jentic-one/app:scan
+          load: true
+          cache-from: type=gha,scope=app-image
+          cache-to: type=gha,scope=app-image,mode=max
 
       - name: Trivy image scan (fixable HIGH/CRITICAL)
         uses: aquasecurity/trivy-action@v0.36.0
@@ -364,10 +412,13 @@ jobs:
           exit-code: '1'
           trivyignores: .trivyignore
 
+  # No `needs: security`: nothing here consumes the security job's output, and
+  # waiting on it put the image build on every backend PR's critical path.
+  # `ci-status` still requires both.
   test-unit:
     name: Unit tests
-    needs: [lint, security, changes]
-    if: needs.changes.outputs.unit-tests == 'true' || github.event_name == 'push'
+    needs: [lint, changes]
+    if: needs.changes.outputs.full == 'true' || needs.changes.outputs.unit-tests == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -386,21 +437,13 @@ jobs:
       - name: Run unit tests
         run: make test-unit
 
-      - name: Run architecture tests
-        # CI runs arch tests against the committed VENDORED rules facts
-        # (tests/arch/vendored/*). It never mounts an external rules source —
-        # the vendored-facts OSS-safety guard runs here regardless.
-        run: make test-arch
-
-  test-integration:
-    name: Integration tests (${{ matrix.backend }})
-    needs: [lint, security, changes]
-    if: needs.changes.outputs.integration-tests == 'true' || github.event_name == 'push'
+  test-arch:
+    name: Architecture tests
+    needs: [lint, changes]
+    # Same input set as the unit suite (the unit-tests filter already lists
+    # tests/arch/** and every drift-gated artifact the arch suite reads).
+    if: needs.changes.outputs.full == 'true' || needs.changes.outputs.unit-tests == 'true'
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        backend: [postgres, sqlite]
     steps:
       - uses: actions/checkout@v7
 
@@ -415,8 +458,58 @@ jobs:
       - name: Install dependencies
         run: make sync
 
-      - name: Start database fixtures
+      - name: Run architecture tests
+        # CI runs arch tests against the committed VENDORED rules facts
+        # (tests/arch/vendored/*). It never mounts an external rules source —
+        # the vendored-facts OSS-safety guard runs here regardless.
+        run: make test-arch
+
+  test-integration:
+    name: Integration tests (${{ matrix.backend }})
+    needs: [lint, changes]
+    if: needs.changes.outputs.full == 'true' || needs.changes.outputs.integration-tests == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [postgres, sqlite]
+    # Postgres as a service container: the runner pulls and boots it while the
+    # job is being set up, instead of serially in a step. An empty image skips
+    # the service on the sqlite leg. Same image/credentials as
+    # docker/local-setup/docker-compose.yaml; `make start-fixtures` with
+    # JENTIC_PG_EXTERNAL=1 then applies that compose file's init SQL + migrations.
+    services:
+      postgres:
+        image: ${{ matrix.backend == 'postgres' && 'postgres:16' || '' }}
+        env:
+          POSTGRES_DB: jentic
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres  # pragma: allowlist secret
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d jentic"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: make sync
+
+      - name: Bootstrap the database (roles, schemas, migrations)
         if: matrix.backend == 'postgres'
+        env:
+          JENTIC_PG_EXTERNAL: "1"
         run: make start-fixtures
 
       - name: Run integration tests (postgres)
@@ -426,10 +519,6 @@ jobs:
       - name: Run integration tests (sqlite)
         if: matrix.backend == 'sqlite'
         run: make test-integration-sqlite
-
-      - name: Stop fixtures
-        if: always() && matrix.backend == 'postgres'
-        run: make destroy-fixtures
 
   # Container images are built + published on release, not on branch CI. The
   # `publish-image` job in .github/workflows/release.yml builds the `app` image
@@ -459,9 +548,8 @@ jobs:
 
       - name: Install Playwright browser (Chromium)
         # Vitest runs in browser mode via the Playwright provider, so component
-        # tests need a real Chromium. --with-deps installs the OS libs on the
-        # ubuntu runner.
-        run: npx playwright install --with-deps chromium
+        # tests need a real Chromium (cached; OS libs installed every run).
+        uses: ./.github/actions/playwright-chromium
 
       - name: Lint
         run: npm run lint
@@ -497,7 +585,7 @@ jobs:
         run: npm ci
 
       - name: Install Playwright browser (Chromium)
-        run: npx playwright install --with-deps chromium
+        uses: ./.github/actions/playwright-chromium
 
       - name: Run mocked e2e (boots dev server with MSW)
         run: npm run e2e
@@ -564,8 +652,24 @@ jobs:
     # assuming this one covers the packaging seam.
     #
     # Triggers on UI, migration, or packaging-seam changes.
-    if: needs.changes.outputs.integration-tests == 'true' || needs.changes.outputs.ui == 'true' || needs.changes.outputs.packaging == 'true' || github.event_name == 'push'
+    if: needs.changes.outputs.full == 'true' || needs.changes.outputs.integration-tests == 'true' || needs.changes.outputs.ui == 'true' || needs.changes.outputs.packaging == 'true'
     runs-on: ubuntu-latest
+    # Fresh Postgres per job (no volume), booted during job setup. See the
+    # test-integration job for the JENTIC_PG_EXTERNAL bootstrap.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: jentic
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres  # pragma: allowlist secret
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d jentic"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
     steps:
       - uses: actions/checkout@v7
 
@@ -592,8 +696,7 @@ jobs:
         run: npm ci
 
       - name: Install Playwright browser (Chromium)
-        working-directory: ui
-        run: npx playwright install --with-deps chromium
+        uses: ./.github/actions/playwright-chromium
 
       - name: Build UI bundle
         working-directory: ui
@@ -613,6 +716,8 @@ jobs:
             || { echo "::error::SPA bundle missing: src/jentic_one/static/index.html not found after staging"; exit 1; }
 
       - name: Start database fixtures (clean DB -> first-run gate present)
+        env:
+          JENTIC_PG_EXTERNAL: "1"
         run: make start-fixtures
 
       - name: Start the Flow-3 fixture upstream
@@ -738,10 +843,6 @@ jobs:
           if [ -n "${FLOW3_UPSTREAM_PGID:-}" ]; then
             kill -TERM "-${FLOW3_UPSTREAM_PGID}" 2>/dev/null || true
           fi
-
-      - name: Stop fixtures
-        if: always()
-        run: make destroy-fixtures
 
   cli:
     name: Go CLI lint & test
@@ -1120,26 +1221,14 @@ jobs:
   ci-status:
     name: CI status
     if: always()
-    needs: [lint, openapi-client-drift, score, security, test-unit, test-integration, ui, ui-e2e, ui-e2e-realbackend, smoke-packaging, cli, cli-artifact-smoke, installer, e2e-install]
+    needs: [lint, openapi-client-drift, score, security, security-image, test-unit, test-arch, test-integration, ui, ui-e2e, ui-e2e-realbackend, smoke-packaging, cli, cli-artifact-smoke, installer, e2e-install]
     runs-on: ubuntu-latest
     steps:
       - name: Check job results
+        # `needs.*.result` covers every job in `needs` above, so a new job only
+        # has to be added to that one list.
         env:
-          RESULTS: >-
-            ${{ needs.lint.result }}
-            ${{ needs.openapi-client-drift.result }}
-            ${{ needs.score.result }}
-            ${{ needs.security.result }}
-            ${{ needs.test-unit.result }}
-            ${{ needs.test-integration.result }}
-            ${{ needs.ui.result }}
-            ${{ needs.ui-e2e.result }}
-            ${{ needs.ui-e2e-realbackend.result }}
-            ${{ needs.smoke-packaging.result }}
-            ${{ needs.cli.result }}
-            ${{ needs.cli-artifact-smoke.result }}
-            ${{ needs.installer.result }}
-            ${{ needs.e2e-install.result }}
+          RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
           for r in $RESULTS; do
             if [[ "$r" == "failure" || "$r" == "cancelled" ]]; then

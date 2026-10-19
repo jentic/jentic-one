@@ -27,12 +27,10 @@ pooled engines.
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncGenerator, Iterator
 from contextlib import asynccontextmanager
 
 import pytest
-from alembic import command
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -40,7 +38,7 @@ from sqlalchemy.pool import NullPool
 import jentic_one.shared.db.session as _session_module
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
-from tests.harness.postgres import DB_NAMES, alembic_config_for, ensure_schema, postgres_config
+from tests.harness.postgres import migrate_to_head, postgres_config, prepare_xdist_database
 
 
 @asynccontextmanager
@@ -56,18 +54,12 @@ def web_config() -> AppConfig:
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _apply_migrations(web_config: AppConfig) -> Iterator[None]:
-    """Bring every database up to head once per session."""
-
-    async def _ensure_all_schemas() -> None:
-        for name in DB_NAMES:
-            await ensure_schema(getattr(web_config.databases, name))
-
-    asyncio.run(_ensure_all_schemas())
-
-    for name in DB_NAMES:
-        cfg = alembic_config_for(name, getattr(web_config.databases, name))
-        command.upgrade(cfg, "head")
+def _apply_migrations(
+    web_config: AppConfig, tmp_path_factory: pytest.TempPathFactory
+) -> Iterator[None]:
+    """Bring every database up to head once per session (per-worker DB under xdist)."""
+    prepare_xdist_database(tmp_path_factory.getbasetemp().parent)
+    migrate_to_head(web_config)
     yield
 
 
