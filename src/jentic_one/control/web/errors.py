@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import re
 
 from fastapi import Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from jentic_one.control.services.credentials.errors import (
@@ -18,6 +20,9 @@ from jentic_one.control.services.credentials.errors import (
     RuleSetNameConflictError,
     RuleSetNotFoundError,
     UnsupportedProviderForTypeError,
+)
+from jentic_one.control.services.integrations.connect_session_service import (
+    ConnectSessionService,
 )
 from jentic_one.control.services.integrations.device_authorization import (
     DeviceAuthorizationError,
@@ -85,7 +90,11 @@ from jentic_one.shared.db.errors import (
     DatabaseUnavailableError,
 )
 from jentic_one.shared.pagination import InvalidCursorError
-from jentic_one.shared.web.errors import DB_UNAVAILABLE_SAFE_DETAILS, make_service_error_handler
+from jentic_one.shared.web.errors import (
+    DB_UNAVAILABLE_SAFE_DETAILS,
+    make_service_error_handler,
+    register_validation_enricher,
+)
 
 _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     CredentialNotFoundError: (404, "credential_not_found"),
@@ -204,6 +213,52 @@ def check_access_directive(
         "parameters": parameters,
         "human_readable_instruction": _CHECK_ACCESS_INSTRUCTION,
     }
+
+
+#: Request fields carrying permission rules on the edit and amend routes.
+_RULE_FIELDS = frozenset({"rules", "requested_permission_rules"})
+_AMEND_PATH = re.compile(r"/connect-sessions/(?P<session_id>[^/]+):amend$")
+
+
+async def _edit_rules_validation_enricher(
+    request: Request, exc: RequestValidationError
+) -> dict[str, object] | None:
+    """A malformed rule on an edit or amend points the agent at its current access.
+
+    Only the rule fields count: a rule the binding's schema refuses usually
+    means the caller is working from a wrong picture of its access. The
+    credential comes from the edit request's body, or from the session an
+    amend names.
+    """
+    if not any(_RULE_FIELDS.intersection(map(str, err.get("loc", ()))) for err in exc.errors()):
+        return None
+    path = request.url.path
+    credential_id: str | None = None
+    agent_id: str | None = None
+    if path.endswith("/integrations:edit-connection"):
+        body = exc.body if isinstance(exc.body, dict) else {}
+        raw = body.get("credential_id")
+        credential_id = raw if isinstance(raw, str) and raw else None
+        raw_agent = body.get("agent_id")
+        agent_id = raw_agent if isinstance(raw_agent, str) and raw_agent else None
+    elif (match := _AMEND_PATH.search(path)) is not None:
+        ctx = getattr(request.app.state, "ctx", None)
+        if ctx is None:
+            return None
+        target = await ConnectSessionService(ctx).edit_binding_of(match["session_id"])
+        if target is None:
+            return None
+        credential_id, agent_id = target
+    if credential_id is None:
+        return None
+    return {
+        "agent_directive": check_access_directive(
+            credential_id=credential_id, agent_id=agent_id, base_url=str(request.base_url)
+        )
+    }
+
+
+register_validation_enricher(_edit_rules_validation_enricher)
 
 
 def _connect_session_response_hook(

@@ -1525,6 +1525,18 @@ def test_edit_connection_round_trip(
     assert directive["parameters"]["suggested_command"] == f"jentic access show {credential_id}"
     assert directive["parameters"]["access_url"].endswith(base)
 
+    # A rule the schema refuses (a condition-less allow) points at the access too.
+    resp = cred_writer_client.post(
+        "/integrations:edit-connection",
+        json={
+            "credential_id": credential_id,
+            "agent_id": agent_id,
+            "rules": {"add": [{"rule": {"effect": "allow"}}]},
+        },
+    )
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["agent_directive"]["parameters"]["credential_id"] == credential_id
+
     send = {"effect": "allow", "methods": ["POST"], "path": "/v1/send"}
     resp = cred_writer_client.post(
         "/integrations:edit-connection",
@@ -1550,6 +1562,14 @@ def test_edit_connection_round_trip(
 
     listed = cred_writer_client.get("/connect-sessions").json()["data"]
     assert {r["session_id"]: r["intent"] for r in listed}[created["session_id"]] == "edit"
+
+    resp = cred_writer_client.post(
+        f"/connect-sessions/{created['session_id']}:amend",
+        json={"rules": {"set": [{"effect": "allow"}]}},
+    )
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["agent_directive"]["strategy"] == "check_access"
+    assert resp.json()["agent_directive"]["parameters"]["access_url"].endswith(base)
 
     history = cred_writer_client.get(f"/connect-sessions/{created['session_id']}/revisions")
     assert history.status_code == 200, history.text

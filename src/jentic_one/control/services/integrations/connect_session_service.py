@@ -2746,6 +2746,14 @@ class ConnectSessionService:
                 session, row.current_revision_id
             )
 
+    async def edit_binding_of(self, session_id: str) -> tuple[str, str | None] | None:
+        """The ``(credential_id, agent_id)`` an edit session changes; ``None`` otherwise."""
+        async with self._ctx.control_db.session() as session:
+            row = await ConnectSessionRepository.get_by_id(session, session_id)
+        if row is None or row.intent != INTENT_EDIT:
+            return None
+        return row.credential_id, row.agent_id
+
     async def list_revisions(
         self, session_id: str, *, poll_token: str | None, identity: Identity
     ) -> list[ConnectSessionRevision]:
