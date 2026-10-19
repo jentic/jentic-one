@@ -49,6 +49,7 @@ from tests.integration.control.connect_sec.support import (
     digest,
     import_spec,
     key_variant,
+    revision,
     session_row,
     svc,
 )
@@ -84,7 +85,7 @@ async def test_agents_never_confirm_or_reject_even_as_org_admin(
             await service.confirm_variant(
                 created.session_id,
                 poll_token=token,
-                variant=key_variant(_CANARY, reviewed),
+                variant=key_variant(_CANARY, reviewed, await revision(env, created.session_id)),
                 identity=agent,
             )
         with pytest.raises((ConfirmationForbiddenError, InvalidPollTokenError)):
@@ -96,6 +97,7 @@ async def test_agents_never_confirm_or_reject_even_as_org_admin(
                 identity=agent,
                 expected_agent_id=AGENT_ID,
                 digest=reviewed,
+                revision_id=await revision(env, created.session_id),
             )
     with pytest.raises(InvalidPollTokenError):
         await service.reject_session(created.session_id, identity=agent)
@@ -117,6 +119,7 @@ async def test_agent_confirm_over_http_is_403(env: Context) -> None:
         "permission_rules": RULES,
         "expected_agent_id": AGENT_ID,
         "digest": await digest(env, created.session_id),
+        "revision_id": await revision(env, created.session_id),
     }
     async with client(env, _ADMIN_AGENT) as agent:
         with_token = await agent.post(

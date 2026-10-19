@@ -30,7 +30,9 @@ from jentic_one.control.core.schema.connect_session_outcomes import (
     OUTCOME_REJECTED,
     ConnectSessionOutcome,
 )
+from jentic_one.control.core.schema.connect_session_revisions import ConnectSessionRevision
 from jentic_one.control.core.schema.connect_sessions import (
+    INTENT_CREATE,
     INTENT_EDIT,
     TARGET_KIND_API,
     TARGET_KIND_VENDOR,
@@ -95,9 +97,11 @@ from jentic_one.control.services.integrations.edits import (
 from jentic_one.control.services.integrations.errors import (
     AgentInactiveError,
     AgentNotFoundError,
+    AmendFieldsMismatchError,
     BaselineChangedError,
     ConfirmationForbiddenError,
     ConfirmKindMismatchError,
+    ConnectOpenError,
     CredentialMissingCreatorError,
     EditBindingNotFoundError,
     EditOpenError,
@@ -114,12 +118,14 @@ from jentic_one.control.services.integrations.errors import (
     RecentlyRejectedError,
     ReviewStaleError,
     RevisionChangedError,
+    RevisionRequiredError,
     RuleSetConfirmForbiddenError,
     RulesRequiredError,
     SchemeChangedError,
     ScopeValidationError,
     SecuritySchemesLookupUnavailableError,
     ServersChangedError,
+    SessionClosedError,
     SessionNotFoundError,
     TooManyOpenSessionsError,
     UnknownApiError,
@@ -173,6 +179,7 @@ from jentic_one.shared.config import connect_approval_url, resolved_control_egre
 from jentic_one.shared.context import Context
 from jentic_one.shared.crypto import hash_secret
 from jentic_one.shared.db.errors import DatabaseIntegrityError
+from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.events import emit_event_best_effort, summary_label
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ActorStatus, ActorType
@@ -237,6 +244,8 @@ class CreatedSession:
     approval_url: str
     poll_token: str
     resolved_flow: str
+    # Revision 1, which a confirm names until the session is amended.
+    revision_id: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -248,6 +257,30 @@ class CreatedEditSession:
     poll_token: str
     revision_id: str
     resolved_flow: str = "edit"
+
+
+@dataclass(slots=True, frozen=True)
+class SessionAmend:
+    """What an amend changes; ``fields`` names the parts it carries.
+
+    ``rules`` and ``resume`` apply to edit sessions;
+    ``requested_permission_rules`` and ``requested_scopes`` to create
+    sessions; ``reason`` to both.
+    """
+
+    fields: frozenset[str]
+    rules: EditRequest | None = None
+    resume: bool = False
+    reason: str | None = None
+    requested_permission_rules: list[dict[str, object]] | None = None
+    requested_scopes: list[str] | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class AmendedSession:
+    session_id: str
+    revision_id: str
+    revision_number: int
 
 
 @dataclass(slots=True, frozen=True)
@@ -312,6 +345,9 @@ class ReviewData:
     # Credentials the viewer already holds for the target, with the
     # granted-scope comparison.
     existing_credentials: list[ExistingCredentialView] = field(default_factory=list)
+    # The session's current revision; ``:confirm`` names it.
+    revision_id: str | None = None
+    revision_number: int | None = None
     # Edit sessions only: the binding change under review.
     edit: EditReview | None = None
 
@@ -455,6 +491,7 @@ class ConfirmChecks:
     expected_agent_id: str | None
     digest: str | None
     agent_id: str | None = None
+    revision_id: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -529,6 +566,10 @@ _OUTCOME_RETENTION = timedelta(days=30)
 
 #: ``resolved_flow`` / ``state`` of an OAuth API target with no OAuth app yet.
 AWAITING_APP = "awaiting_app"
+
+#: Amend fields that apply only to one intent.
+_CREATE_AMEND_FIELDS = frozenset({"requested_permission_rules", "requested_scopes"})
+_EDIT_AMEND_FIELDS = frozenset({"rules", "resume"})
 
 #: ``resolved_flow`` of an edit session: no vendor conversation.
 EDIT_FLOW = "edit"
@@ -817,6 +858,14 @@ def _require_state(row: ConnectSession, *, expected: str, action: str) -> None:
         raise InvalidStateTransitionError(row.id, row.state, action)
 
 
+def _require_revision(row: ConnectSession, revision_id: str | None) -> None:
+    """A confirm must name the session's current revision, the one its reviewer saw."""
+    if revision_id is None:
+        raise RevisionRequiredError()
+    if revision_id != row.current_revision_id:
+        raise RevisionChangedError(row.id, row.current_revision_id)
+
+
 def _forbid_agent_confirm(caller_actor_type: ActorType) -> None:
     """Every session is confirmed by a human on the review page, never by an agent.
 
@@ -954,12 +1003,9 @@ class ConnectSessionService:
         connecting a credential without granting any agent access to it,
         and can bind an agent later through the credentials API.
 
-        A repeat ask from an agent that already has an open session it
-        started for the same request returns that session (same id and
-        ``approval_url``) with a fresh ``poll_token``; the old token stops
-        working. A session started by someone else — a user naming the
-        agent, or the agent when a user asks — is never reused: each
-        initiator keeps its own session, poll token and request. An agent
+        A repeat ask from an agent that already has an open session for the
+        same target is :class:`ConnectOpenError` naming that session: the
+        agent amends it (``amend_session``) instead. An agent
         whose ask for the same target a human rejected within the cooldown
         gets :class:`RecentlyRejectedError`.
         """
@@ -1021,9 +1067,15 @@ class ConnectSessionService:
             )
 
         if dedupe_key is not None:
-            reused = await self._reuse_open_session(_find_open)
-            if reused is not None:
-                return reused
+            assert agent_id is not None
+
+            async def _find_open_for_vendor(db: Any) -> ConnectSession | None:
+                assert agent_id is not None
+                return await ConnectSessionRepository.get_open_vendor_create(
+                    db, agent_id=agent_id, vendor=vendor_key
+                )
+
+            await self._refuse_open_session(_find_open_for_vendor)
         cap_scope = await self._check_open_session_caps(agent_id, identity, agent)
 
         session_app = self._session_app_for(resolved)
@@ -1075,13 +1127,11 @@ class ConnectSessionService:
                 )
                 await self._record_first_revision(session, row)
         except DatabaseIntegrityError:
-            # A concurrent identical ask won the dedupe index: hand out its session.
+            # A concurrent identical ask won the dedupe index: point at its session.
             if dedupe_key is None:
                 raise
-            reused = await self._reuse_open_session(_find_open)
-            if reused is None:
-                raise
-            return reused
+            await self._refuse_open_session(_find_open)
+            raise
 
         approval_url = self._approval_url_for(row.id)
         _logger.info(
@@ -1127,6 +1177,7 @@ class ConnectSessionService:
             approval_url=approval_url,
             poll_token=poll_token,
             resolved_flow=flow.kind,
+            revision_id=row.current_revision_id,
         )
 
     async def _create_api_session(
@@ -1187,9 +1238,7 @@ class ConnectSessionService:
             )
 
         if agent_started:
-            reused = await self._reuse_open_session(_find_open)
-            if reused is not None:
-                return reused
+            await self._refuse_open_session(_find_open)
         cap_scope = await self._check_open_session_caps(agent_id, identity, agent)
 
         manual = manual_handler_for_scheme(scheme.kind)
@@ -1295,10 +1344,8 @@ class ConnectSessionService:
             # A concurrent identical agent ask won the dedupe index.
             if not agent_started:
                 raise
-            reused = await self._reuse_open_session(_find_open)
-            if reused is None:
-                raise
-            return reused
+            await self._refuse_open_session(_find_open)
+            raise
 
         _logger.info(
             "connect_session.created",
@@ -1338,6 +1385,7 @@ class ConnectSessionService:
             approval_url=self._approval_url_for(row.id),
             poll_token=poll_token,
             resolved_flow=resolved_flow,
+            revision_id=row.current_revision_id,
         )
 
     @staticmethod
@@ -1366,38 +1414,27 @@ class ConnectSessionService:
             vendor=slugify_api_field(vendor), name=slugify_api_field(name), version=version.strip()
         )
 
-    async def _reuse_open_session(
+    async def _refuse_open_session(
         self, find_open: Callable[[Any], Awaitable[ConnectSession | None]]
-    ) -> CreatedSession | None:
-        """Hand a repeat ask the open session ``find_open`` finds, with a fresh poll token.
+    ) -> None:
+        """Refuse a repeat ask while the session ``find_open`` finds is still open.
 
-        The rotation is a compare-and-swap on the session still being open,
-        so a session that ends between the read and the write is not reused.
-        Reason, rules and scheme are not replaced — the review digest would
-        change under the approver. The previous token stops working.
+        The ask is not reused or frozen: the initiator amends the open session
+        (``:amend``) instead, so the reviewer sees one request with its
+        history. :class:`ConnectOpenError` names that session and its
+        approval URL.
         """
-        poll_token = secrets.token_urlsafe(32)
-        async with self._ctx.control_db.transaction() as session:
+        async with self._ctx.control_db.session() as session:
             row = await find_open(session)
-            if row is None:
-                return None
-            rotated = await ConnectSessionRepository.rotate_poll_token(
-                session, row.id, poll_token_hash=hash_secret(poll_token)
-            )
-        if not rotated:
-            return None
+        if row is None:
+            return
         _logger.info(
-            "connect_session.reused",
+            "connect_session.repeat_refused",
             session_id=row.id,
             vendor=row.vendor,
             agent_id=row.agent_id,
         )
-        return CreatedSession(
-            session_id=row.id,
-            approval_url=self._approval_url_for(row.id),
-            poll_token=poll_token,
-            resolved_flow=row.resolved_flow,
-        )
+        raise ConnectOpenError(row.id, self._approval_url_for(row.id))
 
     async def _check_rejection_cooldown(
         self,
@@ -1571,6 +1608,198 @@ class ConnectSessionService:
         broker's denial ``provisioning_url`` uses the same builder.
         """
         return connect_approval_url(self._ctx.config, session_id)
+
+    # ---- amend ------------------------------------------------------------
+
+    async def amend_session(
+        self, session_id: str, *, identity: Identity, amend: SessionAmend
+    ) -> AmendedSession:
+        """Change what an open session asks for, as a new revision.
+
+        Only the session's initiator, and only while it is open: a create
+        session before it is confirmed (``created`` or ``awaiting_app``), an
+        edit session in ``created``. A confirmed or ended session is
+        :class:`SessionClosedError`. Anyone else gets the uniform 403.
+
+        The fields ``amend`` carries replace those parts of the ask; the rest
+        stay as the current revision has them. An edit's rule change and
+        ``resume`` resolve against the session's baseline like the ask it
+        opened with; a create session's ``requested_permission_rules``,
+        ``requested_scopes`` and ``reason`` replace its ask outright. The
+        target, flow and agent never change.
+        """
+        async with self._ctx.control_db.session() as read_session:
+            row = await ConnectSessionRepository.get_by_id(read_session, session_id)
+            outcome = (
+                await ConnectSessionOutcomeRepository.get_by_session_id(read_session, session_id)
+                if row is None
+                else None
+            )
+        if row is None:
+            if outcome is not None and outcome.created_by == identity.sub:
+                raise SessionClosedError(session_id)
+            raise InvalidPollTokenError("invalid poll_token")
+        if row.initiator_actor_id != identity.sub:
+            raise InvalidPollTokenError("invalid poll_token")
+        open_states: tuple[str, ...] = (
+            ("created",) if row.intent == INTENT_EDIT else ("created", AWAITING_APP)
+        )
+        if row.state not in open_states:
+            raise SessionClosedError(row.id)
+        current = await self._current_revision(row)
+        if current is None:
+            raise SessionClosedError(row.id)
+
+        fields: dict[str, Any]
+        if row.intent == INTENT_EDIT:
+            foreign = sorted(amend.fields & _CREATE_AMEND_FIELDS)
+            if foreign:
+                raise AmendFieldsMismatchError(INTENT_EDIT, foreign)
+            assert row.baseline is not None
+            previous = EditRequest.from_proposal(current.proposal)
+            rules = amend.rules if "rules" in amend.fields else previous
+            assert rules is not None
+            request = EditRequest(
+                add=rules.add,
+                remove=rules.remove,
+                set_rules=rules.set_rules,
+                resume=amend.resume if "resume" in amend.fields else previous.resume,
+                reason=amend.reason if "reason" in amend.fields else previous.reason,
+            )
+            result, _ = resolve_edit(row.baseline, request)
+            require_change(row.baseline, result)
+            proposal = request.as_proposal()
+            digest = revision_digest(baseline=row.baseline, result=result, reason=request.reason)
+            fields = {"reason": request.reason}
+        else:
+            foreign = sorted(amend.fields & _EDIT_AMEND_FIELDS)
+            if foreign:
+                raise AmendFieldsMismatchError(INTENT_CREATE, foreign)
+            permission_rules = (
+                amend.requested_permission_rules
+                if "requested_permission_rules" in amend.fields
+                else row.requested_permission_rules
+            ) or []
+            scopes = (
+                amend.requested_scopes
+                if "requested_scopes" in amend.fields
+                else row.requested_scopes
+            ) or []
+            reason = amend.reason if "reason" in amend.fields else row.reason
+            payload = create_revision(
+                permission_rules=permission_rules, scopes=scopes, reason=reason
+            )
+            proposal, result, digest = payload.proposal, payload.result, payload.digest
+            fields = {
+                "requested_permission_rules": list(permission_rules),
+                "requested_scopes": list(scopes),
+                "reason": reason,
+            }
+            if row.dedupe_key is not None:
+                fields["dedupe_key"] = await self._amended_dedupe_key(row, scopes)
+
+        revision = ConnectSessionRevision(
+            id=generate_ksuid("csr"),
+            session_id=row.id,
+            number=current.number + 1,
+            proposal=proposal,
+            result=result,
+            digest=digest,
+            created_by=identity.sub,
+        )
+        try:
+            async with self._ctx.control_db.transaction() as session:
+                won = await ConnectSessionRepository.advance_revision(
+                    session,
+                    row.id,
+                    open_states=open_states,
+                    from_revision_id=current.id,
+                    to_revision_id=revision.id,
+                    **fields,
+                )
+                if not won:
+                    latest = await ConnectSessionRepository.get_by_id(session, row.id)
+                    if latest is None or latest.state not in open_states:
+                        raise SessionClosedError(row.id)
+                    raise RevisionChangedError(row.id, latest.current_revision_id)
+                await ConnectSessionRevisionRepository.insert(session, revision)
+        except DatabaseIntegrityError:
+            # The amended scopes now match another open session of the agent's.
+            assert row.agent_id is not None and "dedupe_key" in fields
+            agent_id, dedupe_key = row.agent_id, fields["dedupe_key"]
+
+            async def _find_open(db: Any) -> ConnectSession | None:
+                return await ConnectSessionRepository.get_open_vendor_target(
+                    db, agent_id=agent_id, vendor=row.vendor, dedupe_key=dedupe_key
+                )
+
+            await self._refuse_open_session(_find_open)
+            raise
+
+        _logger.info(
+            "connect_session.amended",
+            session_id=row.id,
+            revision_id=revision.id,
+            number=revision.number,
+        )
+        await record_audit_best_effort(
+            self._ctx,
+            action=AuditAction.UPDATE,
+            target_type=AuditTargetType.SESSION,
+            target_id=row.id,
+            actor_type=identity.actor_type.value,
+            actor_id=identity.sub,
+            origin=identity.origin.value,
+            before={"revision_id": current.id},
+            after={"revision_id": revision.id, "number": revision.number},
+        )
+        await self._emit_amended(row, revision)
+        return AmendedSession(
+            session_id=row.id, revision_id=revision.id, revision_number=revision.number
+        )
+
+    async def _amended_dedupe_key(self, row: ConnectSession, scopes: list[str]) -> str:
+        """The dedupe key of an agent-started vendor session once its scopes change."""
+        async with self._ctx.control_db.session() as session:
+            credential = await CredentialRepository.get_by_id(session, row.credential_id)
+        return oauth_dedupe_key(
+            resolved_flow=row.resolved_flow,
+            registration_id=credential.oauth_app_registration_id if credential else None,
+            requested_scopes=scopes,
+        )
+
+    async def _emit_amended(self, row: ConnectSession, revision: ConnectSessionRevision) -> None:
+        """Emit ``connect_session.amended`` so the reviewer knows the ask changed."""
+        if row.agent_id is None:
+            return
+        try:
+            async with self._ctx.admin_db.transaction() as session:
+                await emit_event_best_effort(
+                    session,
+                    type=EventType.CONNECT_SESSION_AMENDED,
+                    severity=EventSeverity.INFO,
+                    summary=(
+                        f"A connect request for agent {row.agent_id} changed "
+                        f"(revision {revision.number})"
+                    ),
+                    requires_action=False,
+                    data={
+                        "session_id": row.id,
+                        "agent_id": row.agent_id,
+                        "revision_id": revision.id,
+                        "number": revision.number,
+                    },
+                    created_by=row.agent_id,
+                    actor_id=row.initiator_actor_id,
+                    actor_type=actor_type_label_from_id(row.initiator_actor_id),
+                )
+        except Exception:
+            _logger.warning(
+                "telemetry_emit_failed",
+                event_type=EventType.CONNECT_SESSION_AMENDED,
+                session_id=row.id,
+                exc_info=True,
+            )
 
     # ---- edit sessions ----------------------------------------------------
 
@@ -1993,6 +2222,8 @@ class ConnectSessionService:
             agent=agent,
             digest=revision.digest,
             can_confirm=await self._can_confirm(row, identity, agent),
+            revision_id=revision.id,
+            revision_number=revision.number,
             edit=edit,
         )
 
@@ -2137,6 +2368,7 @@ class ConnectSessionService:
 
         agent = await self._agent_view(row.agent_id)
         endpoints = catalog_oauth_endpoints(view) if row.scheme_type == SCHEME_OAUTH2 else None
+        revision = await self._current_revision(row)
         return ReviewData(
             session_id=row.id,
             state=row.state,
@@ -2169,7 +2401,17 @@ class ConnectSessionService:
             digest=_review_digest(row, agent, view),
             can_confirm=await self._can_confirm(row, identity, agent),
             existing_credentials=await self._existing_candidates(row, identity, credential),
+            revision_id=revision.id if revision is not None else None,
+            revision_number=revision.number if revision is not None else None,
         )
+
+    async def _current_revision(self, row: ConnectSession) -> ConnectSessionRevision | None:
+        if row.current_revision_id is None:
+            return None
+        async with self._ctx.control_db.session() as session:
+            return await ConnectSessionRevisionRepository.get_by_id(
+                session, row.current_revision_id
+            )
 
     async def _agent_view(self, agent_id: str | None) -> AgentView | None:
         if agent_id is None:
@@ -2489,6 +2731,8 @@ class ConnectSessionService:
         # whenever given; required for an ``api`` target.
         expected_agent_id: str | None = None,
         digest: str | None = None,
+        # The revision the approver reviewed; required, and it must be current.
+        revision_id: str | None = None,
     ) -> ConfirmResult:
         """Confirm scopes + permissions and kick off the vendor-side flow.
 
@@ -2525,6 +2769,7 @@ class ConnectSessionService:
         # Friendly pre-check for the common stale-page case; the CAS below
         # is the authoritative guard against a concurrent confirm.
         _require_state(row, expected="created", action="confirm")
+        _require_revision(row, revision_id)
 
         # Re-open the session's own source at confirm time: the pinned
         # registration, or the config entry when the FK is NULL. If that
@@ -2577,13 +2822,14 @@ class ConnectSessionService:
         # it, two concurrent confirms both pass the stale read above and
         # both fire the vendor's ``begin`` (TOCTOU). The loser sees
         # rowcount 0 and gets the same 409 as the stale-page case.
-        cas_fields: dict[str, object] = {"agent_id": effective_agent_id} if late_bound else {}
+        cas_fields: dict[str, Any] = {"agent_id": effective_agent_id} if late_bound else {}
         async with self._ctx.control_db.transaction() as cas_session:
             won = await ConnectSessionRepository.transition_state(
                 cas_session,
                 row.id,
                 to_state="polling",
                 from_states=("created",),
+                revision_id=revision_id,
                 **cas_fields,
             )
         if not won:
@@ -2603,7 +2849,7 @@ class ConnectSessionService:
             # A vendor-side ``begin`` failure must leave the session
             # retryable — roll the CAS back to ``created`` (undoing a
             # late-bound agent too, so a retry can pick a different one).
-            revert_fields: dict[str, object] = {"agent_id": None} if late_bound else {}
+            revert_fields: dict[str, Any] = {"agent_id": None} if late_bound else {}
             async with self._ctx.control_db.transaction() as revert_session:
                 await ConnectSessionRepository.transition_state(
                     revert_session,
@@ -2741,6 +2987,7 @@ class ConnectSessionService:
         kind = _variant_kind(variant)
         _require_confirm_kind(row, kind)
         checks = variant.checks
+        _require_revision(row, checks.revision_id)
         late_bound = row.agent_id is None and checks.agent_id is not None
         effective_agent_id = row.agent_id if row.agent_id is not None else checks.agent_id
         if isinstance(variant, ExistingCredentialConfirm) and effective_agent_id is None:
@@ -2941,11 +3188,16 @@ class ConnectSessionService:
             newly_bound = await self._bind_for_confirm(
                 agent_id, row.credential_id, created_by=identity.sub
             )
-        cas_fields: dict[str, object] = {"agent_id": agent_id} if late_bound else {}
+        cas_fields: dict[str, Any] = {"agent_id": agent_id} if late_bound else {}
         try:
             async with self._ctx.control_db.transaction() as session:
                 won = await ConnectSessionRepository.transition_state(
-                    session, row.id, to_state="connected", from_states=("created",), **cas_fields
+                    session,
+                    row.id,
+                    to_state="connected",
+                    from_states=("created",),
+                    revision_id=variant.checks.revision_id,
+                    **cas_fields,
                 )
                 if won:
                     await handler.write_secret(
@@ -3040,7 +3292,7 @@ class ConnectSessionService:
         newly_bound = await self._bind_for_confirm(
             agent_id, chosen.credential_id, created_by=identity.sub
         )
-        cas_fields: dict[str, object] = {"agent_id": agent_id} if late_bound else {}
+        cas_fields: dict[str, Any] = {"agent_id": agent_id} if late_bound else {}
         try:
             async with self._ctx.control_db.transaction() as session:
                 won = await ConnectSessionRepository.transition_state(
@@ -3048,6 +3300,7 @@ class ConnectSessionService:
                     row.id,
                     to_state="connected",
                     from_states=(row.state,),
+                    revision_id=variant.checks.revision_id,
                     **cas_fields,
                 )
                 if won:
@@ -3115,13 +3368,14 @@ class ConnectSessionService:
             raise OwnClientInvalidError(str(exc)) from exc
 
         handler = AuthCodeFlowHandler(self._ctx)
-        cas_fields: dict[str, object] = {"agent_id": agent_id} if late_bound else {}
+        cas_fields: dict[str, Any] = {"agent_id": agent_id} if late_bound else {}
         async with self._ctx.control_db.transaction() as session:
             won = await ConnectSessionRepository.transition_state(
                 session,
                 row.id,
                 to_state="polling",
                 from_states=(AWAITING_APP,),
+                revision_id=variant.checks.revision_id,
                 resolved_flow=AuthCodeFlowHandler.kind,
                 **cas_fields,
             )
@@ -3164,7 +3418,7 @@ class ConnectSessionService:
             )
         except Exception:
             # Leave the session as it was so the approver can retry.
-            revert_fields: dict[str, object] = {"agent_id": None} if late_bound else {}
+            revert_fields: dict[str, Any] = {"agent_id": None} if late_bound else {}
             async with self._ctx.control_db.transaction() as revert_session:
                 reverted = await ConnectSessionRepository.transition_state(
                     revert_session,

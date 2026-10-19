@@ -245,7 +245,11 @@ function VendorSelfConnectFlow({
 	const [scopesTouched, setScopesTouched] = useState(false);
 	const [phase, setPhase] = useState<Phase>('configure');
 	const [rules, setRules] = useState<PermissionRule[] | null>(null);
-	const [session, setSession] = useState<{ id: string; pollToken: string } | null>(null);
+	const [session, setSession] = useState<{
+		id: string;
+		pollToken: string;
+		revisionId: string | null;
+	} | null>(null);
 	const [challenge, setChallenge] = useState<ConfirmResponse | null>(null);
 	// User-editable credential label. Pre-filled with the vendor display
 	// name so the input shows a sensible default the user can edit. Sent
@@ -276,7 +280,9 @@ function VendorSelfConnectFlow({
 	// request when the component unmounts and the backend never sees
 	// it. Hold the effective (id, token) in a ref so the cleanup can
 	// hit the raw client without depending on the mutation lifecycle.
-	const sessionRef = useRef<{ id: string; pollToken: string } | null>(null);
+	const sessionRef = useRef<{ id: string; pollToken: string; revisionId: string | null } | null>(
+		null,
+	);
 	const phaseRef = useRef<Phase>('configure');
 
 	// Fire ``:connect`` — invoked from Continue-click on the configure
@@ -303,7 +309,11 @@ function VendorSelfConnectFlow({
 					? { oauth_app_registration_id: vendor.registration_id }
 					: {}),
 			});
-			const next = { id: result.session_id, pollToken: result.poll_token };
+			const next = {
+				id: result.session_id,
+				pollToken: result.poll_token,
+				revisionId: result.revision_id ?? null,
+			};
 			sessionRef.current = next;
 			setSession(next);
 			return next;
@@ -473,6 +483,7 @@ function VendorSelfConnectFlow({
 				confirmed_scopes: Array.from(selectedScopes),
 				permission_rules: finalRules,
 				agent_id: agentId,
+				revision_id: session.revisionId,
 			});
 			// A vendor session's OAuth confirm always answers with a vendor
 			// challenge; the other result kinds belong to approve mode.
@@ -1050,6 +1061,7 @@ function VendorApproveFlow({
 		permission_rules: finalRules,
 		expected_agent_id: session?.agent?.agent_id ?? null,
 		digest: session?.digest ?? '',
+		revision_id: session?.revision?.id ?? null,
 	});
 
 	const afterFailedConfirm = (err: unknown, from: ApprovePhase): void => {

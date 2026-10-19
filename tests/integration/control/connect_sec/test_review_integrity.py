@@ -35,6 +35,7 @@ from tests.integration.control.connect_sec.support import (
     import_spec,
     is_bound,
     key_variant,
+    revision,
     session_row,
     svc,
 )
@@ -47,7 +48,7 @@ _WIDE_RULES: list[dict[str, object]] = [
 ]
 
 
-async def test_repeat_connect_never_rewrites_what_the_approver_reviews(env: Context) -> None:
+async def test_a_repeat_connect_is_refused_and_never_rewrites_the_review(env: Context) -> None:
     await import_spec(env, {**KEY_SCHEME, "bearer": {"type": "http", "scheme": "bearer"}})
     first = await connect(env, auth_type="key")
     review = await svc(env).get_review_data(first.session_id, poll_token=None, identity=OWNER)
@@ -64,7 +65,9 @@ async def test_repeat_connect_never_rewrites_what_the_approver_reviews(env: Cont
                 "name": "Renamed by the agent",
             },
         )
-    assert again.status_code == 201, again.text
+    # Refused, naming the open session: only an amend changes the ask, as a new
+    # revision the approver must review.
+    assert (again.status_code, again.json()["type"]) == (409, "connect_open"), again.text
     assert again.json()["session_id"] == first.session_id
 
     after = await svc(env).get_review_data(first.session_id, poll_token=None, identity=OWNER)
@@ -91,7 +94,7 @@ async def test_digest_moves_when_the_agents_owner_changes(env: Context) -> None:
         await svc(env).confirm_variant(
             created.session_id,
             poll_token=None,
-            variant=key_variant(_CANARY, reviewed),
+            variant=key_variant(_CANARY, reviewed, await revision(env, created.session_id)),
             identity=ADMIN,
         )
     assert await digest(env, created.session_id, ADMIN) != reviewed
@@ -108,15 +111,20 @@ async def test_digest_moves_when_the_live_revision_changes_provenance(env: Conte
         await svc(env).confirm_variant(
             created.session_id,
             poll_token=None,
-            variant=key_variant(_CANARY, reviewed),
+            variant=key_variant(_CANARY, reviewed, await revision(env, created.session_id)),
             identity=OWNER,
         )
     row = await session_row(env, created.session_id)
     assert row is not None and row.state == "created"
 
 
-def _bodies(review_digest: str, credential_id: str) -> dict[str, dict[str, Any]]:
-    base = {"permission_rules": RULES, "expected_agent_id": AGENT_ID, "digest": review_digest}
+def _bodies(review_digest: str, revision_id: str, credential_id: str) -> dict[str, dict[str, Any]]:
+    base = {
+        "permission_rules": RULES,
+        "expected_agent_id": AGENT_ID,
+        "digest": review_digest,
+        "revision_id": revision_id,
+    }
     return {
         "api_key": {**base, "kind": "api_key", "key": _CANARY},
         "existing_credential": {
@@ -144,7 +152,10 @@ async def test_every_confirm_variant_refuses_a_stale_review(
     await import_spec(env, KEY_SCHEME)
     created = await connect(env)
     existing = await existing_credential(env)
-    body = {**_bodies(await digest(env, created.session_id), existing)[variant], **tamper}
+    reviewed = _bodies(
+        await digest(env, created.session_id), await revision(env, created.session_id), existing
+    )
+    body = {**reviewed[variant], **tamper}
     async with client(env, OWNER) as owner:
         refused = await owner.post(f"/connect-sessions/{created.session_id}:confirm", json=body)
     assert (refused.status_code, refused.json()["type"]) == (409, "review_stale"), refused.text
@@ -183,6 +194,7 @@ async def test_oauth_and_own_client_confirms_need_the_review_too(env: Context) -
                 "permission_rules": RULES,
                 "expected_agent_id": AGENT_ID,
                 "digest": "0" * 64,
+                "revision_id": await revision(env, created.session_id),
             },
         )
     assert missing.status_code == 422 and _CANARY not in missing.text

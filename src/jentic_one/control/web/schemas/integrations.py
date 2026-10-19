@@ -266,6 +266,13 @@ class IntegrationsConnectResponse(BaseModel):
     approval_url: str
     poll_token: str
     resolved_flow: str
+    revision_id: str | None = Field(
+        default=None,
+        description=(
+            "The session's first revision; a confirm names it until the session is amended."
+        ),
+        examples=[ex.CONNECT_SESSION_REVISION_ID],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -354,6 +361,50 @@ class EditConnectionRequest(BaseModel):
         examples=["Needs to send replies, not just read"],
         description="Why the change is needed, shown to the reviewer.",
     )
+
+
+class AmendSessionRequest(BaseModel):
+    """Change an open session's ask; fields sent replace those parts, the rest stay."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    rules: EditRulesRequest | None = Field(
+        default=None, description="Edit sessions: the rule change, relative to the baseline."
+    )
+    resume: bool | None = Field(
+        default=None, examples=[True], description="Edit sessions: resume a suspended binding."
+    )
+    requested_permission_rules: list[PermissionRuleSchema] | None = Field(
+        default=None,
+        max_length=100,
+        description="Create sessions: the rules to ask for, replacing the current ask.",
+    )
+    requested_scopes: list[str] | None = Field(
+        default=None,
+        max_length=100,
+        examples=[["repo"]],
+        description="Create sessions: the scopes to ask for, replacing the current ask.",
+    )
+    reason: str | None = Field(
+        default=None,
+        max_length=1024,
+        examples=["Also needs to label issues"],
+        description="Why, shown to the reviewer.",
+    )
+
+    @model_validator(mode="after")
+    def _changes_something(self) -> AmendSessionRequest:
+        if not self.model_fields_set:
+            raise ValueError("an amend must carry at least one field")
+        return self
+
+
+class AmendSessionResponse(BaseModel):
+    """The session's new current revision."""
+
+    session_id: str = Field(examples=[ex.CONNECT_SESSION_ID])
+    revision_id: str = Field(examples=[ex.CONNECT_SESSION_REVISION_ID])
+    revision_number: int = Field(description="2 for the first amend, and so on.", examples=[2])
 
 
 class EditConnectionResponse(BaseModel):
@@ -582,7 +633,7 @@ class EditBindingRef(BaseModel):
     credential_name: str | None = None
 
 
-class EditRevisionRef(BaseModel):
+class SessionRevisionRef(BaseModel):
     id: str = Field(
         description="ID of the current revision; confirm names it.",
         examples=[ex.CONNECT_SESSION_REVISION_ID],
@@ -599,7 +650,7 @@ class ReviewEditResponse(BaseModel):
     """The binding change an edit session asks a human to approve."""
 
     binding: EditBindingRef
-    revision: EditRevisionRef
+    revision: SessionRevisionRef
     current: EditCurrentAccess
     result: EditResultAccess
     widens_access: bool = Field(
@@ -638,6 +689,8 @@ class ReviewSessionResponse(BaseModel):
     digest: str
     can_confirm: bool
     existing_credentials: list[ExistingCredentialResponse] = Field(default_factory=list)
+    # The current revision; every ``:confirm`` names it as ``revision_id``.
+    revision: SessionRevisionRef | None = None
     # Edit sessions only.
     edit: ReviewEditResponse | None = None
 
@@ -705,6 +758,15 @@ class OAuthConfirmSessionRequest(BaseModel):
             "Required for an API target."
         ),
     )
+    revision_id: str | None = Field(
+        default=None,
+        max_length=30,
+        examples=[ex.CONNECT_SESSION_REVISION_ID],
+        description=(
+            "The revision the approver reviewed (`revision.id`); required. Missing is 422 "
+            "revision_required, a newer one 409 revision_changed."
+        ),
+    )
 
 
 class _ReviewedConfirm(BaseModel):
@@ -733,6 +795,15 @@ class _ReviewedConfirm(BaseModel):
         max_length=64,
         examples=[ex.REVIEW_DIGEST],
         description="Review digest echoed from the review data; a mismatch is 409 review_stale.",
+    )
+    revision_id: str | None = Field(
+        default=None,
+        max_length=30,
+        examples=[ex.CONNECT_SESSION_REVISION_ID],
+        description=(
+            "The revision the approver reviewed (`revision.id`); required. Missing is 422 "
+            "revision_required, a newer one 409 revision_changed."
+        ),
     )
 
 

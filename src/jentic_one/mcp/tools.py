@@ -65,6 +65,7 @@ from jentic_one.control.services.integrations.connect_session_service import (
 from jentic_one.control.services.integrations.errors import (
     AuthTypeNotDeclaredError,
     AuthTypeRequiredError,
+    ConnectOpenError,
     InvalidOAuthAppRegistrationError,
     ManualFlowsDisabledError,
     NoDeclaredSchemeError,
@@ -1451,6 +1452,14 @@ _REQUEST_CONNECTION_PARAMS = [
     ParamSpec("requested_permission_rules", "json", ("permission_rules",)),
 ]
 
+#: Guidance when the agent already has an open request for the target (Go:
+#: ``requestConnectionOpenInstruction``).
+_REQUEST_CONNECTION_OPEN_INSTRUCTION = (
+    "You already asked for this connection and the request is still open: relay its "
+    "approval_url to your human operator instead of asking again. Once they confirm, call "
+    "whoami to see the new credential binding, then retry the call that was blocked."
+)
+
 #: The operator-relay guidance stamped on every successful result (Go:
 #: ``requestConnectionInstruction`` in ``mcp_request_connection.go``).
 #: Lane-invariant by construction: it names only whoami and the human
@@ -1885,6 +1894,21 @@ async def handle_request_connection(
             "human operator to connect a credential for it in the dashboard instead.",
             next_tool="search_catalog",
         ) from None
+    except ConnectOpenError as exc:
+        # The agent already asked: point it at that open session, which its
+        # human reviews once (the Go mount maps the route's 409 connect_open
+        # the same way).
+        logger.info("mcp_request_connection_open", target=target, session_id=exc.session_id)
+        return tool_result(
+            env.ctx,
+            {
+                "schema_version": SCHEMA_VERSION,
+                "session_id": exc.session_id,
+                "approval_url": exc.approval_url,
+                "already_open": True,
+                "instruction": _REQUEST_CONNECTION_OPEN_INSTRUCTION,
+            },
+        )
     except VendorNotConfiguredError as exc:
         raise ToolError(
             CODE_BROKER_DENIED,

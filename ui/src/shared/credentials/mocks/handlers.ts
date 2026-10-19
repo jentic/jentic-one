@@ -665,6 +665,7 @@ const connectSessionsHandlers = [
 				approval_url: `https://jentic.example.test/app/agents?approve=${sessionId}`,
 				poll_token: pollToken,
 				resolved_flow: confirmChallengeKind,
+				revision_id: `csr_${sessionId}_1`,
 			},
 			{ status: 201 },
 		);
@@ -713,6 +714,7 @@ const connectSessionsHandlers = [
 			scheme: gated.scheme ?? null,
 			pinned_hosts: gated.pinned_hosts ?? null,
 			digest: reviewDigest(gated),
+			revision: { id: `csr_${gated.session_id}_1`, number: 1 },
 			can_confirm: gated.can_confirm ?? true,
 			existing_credentials: gated.existing_credentials ?? [],
 			requested_by_actor_id: gated.requested_by_actor_id,

@@ -1735,6 +1735,33 @@
         ]
       },
       "method": "POST",
+      "operation_id": "amendConnectSession",
+      "path": "/connect-sessions/{session_id}:amend",
+      "public": false,
+      "required_permissions": [
+        "credentials:connect",
+        "credentials:write"
+      ],
+      "summary": "Amend an open connect session's request",
+      "surface": "connect-sessions",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_permissions": {
+        "credentials:connect": [],
+        "credentials:write": [
+          "credentials:connect",
+          "credentials:read"
+        ]
+      },
+      "method": "POST",
       "operation_id": "cancelConnectSession",
       "path": "/connect-sessions/{session_id}:cancel",
       "public": false,
@@ -4778,5 +4805,5 @@
     "total": 27
   },
   "schema": "jentic.endpoint-permission-tree/v1",
-  "total": 171
+  "total": 172
 }

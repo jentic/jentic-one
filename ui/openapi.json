@@ -811,6 +811,200 @@
         "title": "AgentResponse",
         "type": "object"
       },
+      "AmendSessionRequest": {
+        "additionalProperties": false,
+        "description": "Change an open session's ask; fields sent replace those parts, the rest stay.",
+        "examples": [
+          {
+            "reason": "Also needs to label issues",
+            "requested_permission_rules": [
+              {
+                "effect": "allow",
+                "match_mode": "prefix",
+                "methods": [
+                  "GET"
+                ],
+                "operations": [
+                  "listCharges"
+                ],
+                "path": "/v1/charges"
+              }
+            ],
+            "requested_scopes": [
+              "repo"
+            ],
+            "resume": true,
+            "rules": {
+              "add": [
+                {
+                  "before": "apr_6968b3987c22b63e87e79f06",
+                  "rule": {
+                    "effect": "allow",
+                    "match_mode": "prefix",
+                    "methods": [
+                      "GET"
+                    ],
+                    "operations": [
+                      "listCharges"
+                    ],
+                    "path": "/v1/charges"
+                  }
+                }
+              ],
+              "remove": [
+                "apr_6968b3987c22b63e87e79f06"
+              ],
+              "set": [
+                {
+                  "effect": "allow",
+                  "match_mode": "prefix",
+                  "methods": [
+                    "GET"
+                  ],
+                  "operations": [
+                    "listCharges"
+                  ],
+                  "path": "/v1/charges"
+                }
+              ]
+            }
+          }
+        ],
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why, shown to the reviewer.",
+            "examples": [
+              "Also needs to label issues"
+            ],
+            "title": "Reason"
+          },
+          "requested_permission_rules": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/PermissionRuleSchema"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Create sessions: the rules to ask for, replacing the current ask.",
+            "examples": [
+              [
+                {
+                  "effect": "allow",
+                  "match_mode": "prefix",
+                  "methods": [
+                    "GET"
+                  ],
+                  "operations": [
+                    "listCharges"
+                  ],
+                  "path": "/v1/charges"
+                }
+              ]
+            ],
+            "title": "Requested Permission Rules"
+          },
+          "requested_scopes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Create sessions: the scopes to ask for, replacing the current ask.",
+            "examples": [
+              [
+                "repo"
+              ]
+            ],
+            "title": "Requested Scopes"
+          },
+          "resume": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Edit sessions: resume a suspended binding.",
+            "examples": [
+              true
+            ],
+            "title": "Resume"
+          },
+          "rules": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EditRulesRequest"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Edit sessions: the rule change, relative to the baseline.",
+            "examples": [
+              {
+                "add": [
+                  {
+                    "before": "apr_6968b3987c22b63e87e79f06",
+                    "rule": {
+                      "effect": "allow",
+                      "match_mode": "prefix",
+                      "methods": [
+                        "GET"
+                      ],
+                      "operations": [
+                        "listCharges"
+                      ],
+                      "path": "/v1/charges"
+                    }
+                  }
+                ],
+                "remove": [
+                  "apr_6968b3987c22b63e87e79f06"
+                ],
+                "set": [
+                  {
+                    "effect": "allow",
+                    "match_mode": "prefix",
+                    "methods": [
+                      "GET"
+                    ],
+                    "operations": [
+                      "listCharges"
+                    ],
+                    "path": "/v1/charges"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "title": "AmendSessionRequest",
+        "type": "object"
+      },
       "ApiImportLinksResponse": {
         "description": "Hypermedia links for an import response.",
         "examples": [
@@ -1020,7 +1214,8 @@
                 ],
                 "path": "/v1/charges"
               }
-            ]
+            ],
+            "revision_id": "csr_6968b3983b8b91c75627bee6"
           }
         ],
         "properties": {
@@ -1109,6 +1304,22 @@
             "maxItems": 100,
             "title": "Permission Rules",
             "type": "array"
+          },
+          "revision_id": {
+            "anyOf": [
+              {
+                "maxLength": 30,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.",
+            "examples": [
+              "csr_6968b3983b8b91c75627bee6"
+            ],
+            "title": "Revision Id"
           }
         },
         "required": [
@@ -3334,6 +3545,7 @@
                 "path": "/v1/charges"
               }
             ],
+            "revision_id": "csr_6968b3983b8b91c75627bee6",
             "username": "svc-reporting"
           }
         ],
@@ -3424,6 +3636,22 @@
             "title": "Permission Rules",
             "type": "array"
           },
+          "revision_id": {
+            "anyOf": [
+              {
+                "maxLength": 30,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.",
+            "examples": [
+              "csr_6968b3983b8b91c75627bee6"
+            ],
+            "title": "Revision Id"
+          },
           "username": {
             "description": "Username to store.",
             "examples": [
@@ -3467,6 +3695,7 @@
                 "path": "/v1/charges"
               }
             ],
+            "revision_id": "csr_6968b3983b8b91c75627bee6",
             "token": "example-secret"
           }
         ],
@@ -3543,6 +3772,22 @@
             "maxItems": 100,
             "title": "Permission Rules",
             "type": "array"
+          },
+          "revision_id": {
+            "anyOf": [
+              {
+                "maxLength": 30,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.",
+            "examples": [
+              "csr_6968b3983b8b91c75627bee6"
+            ],
+            "title": "Revision Id"
           },
           "token": {
             "description": "Bearer token to store; write-only.",
@@ -7654,7 +7899,8 @@
                 ],
                 "path": "/v1/charges"
               }
-            ]
+            ],
+            "revision_id": "csr_6968b3983b8b91c75627bee6"
           }
         ],
         "properties": {
@@ -7740,6 +7986,22 @@
             "maxItems": 100,
             "title": "Permission Rules",
             "type": "array"
+          },
+          "revision_id": {
+            "anyOf": [
+              {
+                "maxLength": 30,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.",
+            "examples": [
+              "csr_6968b3983b8b91c75627bee6"
+            ],
+            "title": "Revision Id"
           }
         },
         "required": [
@@ -12679,7 +12941,8 @@
                 ],
                 "path": "/v1/charges"
               }
-            ]
+            ],
+            "revision_id": "csr_6968b3983b8b91c75627bee6"
           }
         ],
         "properties": {
@@ -12777,6 +13040,22 @@
             "maxItems": 100,
             "title": "Permission Rules",
             "type": "array"
+          },
+          "revision_id": {
+            "anyOf": [
+              {
+                "maxLength": 30,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.",
+            "examples": [
+              "csr_6968b3983b8b91c75627bee6"
+            ],
+            "title": "Revision Id"
           }
         },
         "required": [
@@ -14593,6 +14872,7 @@
                 "path": "/v1/charges"
               }
             ],
+            "revision_id": "csr_6968b3983b8b91c75627bee6",
             "token_url": "https://github.com/login/oauth/access_token"
           }
         ],
@@ -14717,6 +14997,22 @@
             "maxItems": 100,
             "title": "Permission Rules",
             "type": "array"
+          },
+          "revision_id": {
+            "anyOf": [
+              {
+                "maxLength": 30,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.",
+            "examples": [
+              "csr_6968b3983b8b91c75627bee6"
+            ],
+            "title": "Revision Id"
           },
           "token_url": {
             "description": "Token endpoint URL of the OAuth app.",
@@ -16130,7 +16426,8 @@
                 ],
                 "path": "/v1/charges"
               }
-            ]
+            ],
+            "revision_id": "csr_6968b3983b8b91c75627bee6"
           }
         ],
         "properties": {
@@ -16216,6 +16513,22 @@
             "maxItems": 100,
             "title": "Permission Rules",
             "type": "array"
+          },
+          "revision_id": {
+            "anyOf": [
+              {
+                "maxLength": 30,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.",
+            "examples": [
+              "csr_6968b3983b8b91c75627bee6"
+            ],
+            "title": "Revision Id"
           }
         },
         "required": [
@@ -35256,6 +35569,248 @@
         ]
       },
       "summary": "Poll a connect session's status"
+    },
+    "/connect-sessions/{session_id}:amend": {
+      "description": "`POST`: Amend an open connect session's request.",
+      "post": {
+        "description": "Change what an open session asks for; the reviewer sees the new revision.\n\nOnly the session's initiator, while it is open (not yet confirmed or\nended); a closed session is 409 `session_closed`. The fields sent replace\nthose parts of the ask and the rest stay. Edit sessions take `rules` and\n`resume`, relative to the binding as it was when the edit opened; create\nsessions take `requested_permission_rules` and `requested_scopes`, which\nreplace the ask outright; both take `reason`. The session id, approval\nURL and poll token stay the same, and any confirm must name the new\n`revision_id`.",
+        "operationId": "amendConnectSession",
+        "parameters": [
+          {
+            "description": "ID of the connect session.",
+            "examples": {
+              "example": {
+                "summary": "Connect session ID",
+                "value": "cs_6968b3983b8b91c75627bee5"
+              }
+            },
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "description": "ID of the connect session.",
+              "examples": [
+                "cs_6968b3983b8b91c75627bee5"
+              ],
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "reason": "Also needs to label issues",
+                "requested_permission_rules": [
+                  {
+                    "effect": "allow",
+                    "match_mode": "prefix",
+                    "methods": [
+                      "GET"
+                    ],
+                    "operations": [
+                      "listCharges"
+                    ],
+                    "path": "/v1/charges"
+                  }
+                ],
+                "requested_scopes": [
+                  "repo"
+                ],
+                "resume": true,
+                "rules": {
+                  "add": [
+                    {
+                      "before": "apr_6968b3987c22b63e87e79f06",
+                      "rule": {
+                        "effect": "allow",
+                        "match_mode": "prefix",
+                        "methods": [
+                          "GET"
+                        ],
+                        "operations": [
+                          "listCharges"
+                        ],
+                        "path": "/v1/charges"
+                      }
+                    }
+                  ],
+                  "remove": [
+                    "apr_6968b3987c22b63e87e79f06"
+                  ],
+                  "set": [
+                    {
+                      "effect": "allow",
+                      "match_mode": "prefix",
+                      "methods": [
+                        "GET"
+                      ],
+                      "operations": [
+                        "listCharges"
+                      ],
+                      "path": "/v1/charges"
+                    }
+                  ]
+                }
+              },
+              "schema": {
+                "$ref": "#/components/schemas/AmendSessionRequest"
+              }
+            }
+          },
+          "description": "Change an open session's ask; fields sent replace those parts, the rest stay.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request conflicts with the current state of the resource.",
+                  "instance": "/example/path",
+                  "status": 409,
+                  "title": "Conflict",
+                  "type": "conflict"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "The session is closed: confirmed or ended"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "OAuth2": []
+          }
+        ],
+        "summary": "Amend an open connect session's request",
+        "tags": [
+          "Integrations"
+        ]
+      },
+      "summary": "Amend an open connect session's request"
     },
     "/connect-sessions/{session_id}:cancel": {
       "description": "`POST`: Cancel an in-flight connect session.",

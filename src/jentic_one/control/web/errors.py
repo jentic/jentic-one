@@ -25,11 +25,13 @@ from jentic_one.control.services.integrations.device_authorization import (
 from jentic_one.control.services.integrations.errors import (
     AgentInactiveError,
     AgentNotFoundError,
+    AmendFieldsMismatchError,
     AuthTypeNotDeclaredError,
     AuthTypeRequiredError,
     BaselineChangedError,
     ConfirmationForbiddenError,
     ConfirmKindMismatchError,
+    ConnectOpenError,
     ConnectSessionServiceError,
     EditBindingNotFoundError,
     EditOpenError,
@@ -49,12 +51,14 @@ from jentic_one.control.services.integrations.errors import (
     ReservedAuthFieldError,
     ReviewStaleError,
     RevisionChangedError,
+    RevisionRequiredError,
     RuleSetConfirmForbiddenError,
     RulesRequiredError,
     SchemeChangedError,
     ScopeValidationError,
     SecuritySchemesLookupUnavailableError,
     ServersChangedError,
+    SessionClosedError,
     SessionNotFoundError,
     TooManyOpenSessionsError,
     UnknownApiError,
@@ -156,6 +160,10 @@ _CONNECT_SESSION_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     RevisionChangedError: (409, "revision_changed"),
     BaselineChangedError: (409, "baseline_changed"),
     RuleSetConfirmForbiddenError: (403, "rule_set_confirm_forbidden"),
+    RevisionRequiredError: (422, "revision_required"),
+    SessionClosedError: (409, "session_closed"),
+    ConnectOpenError: (409, "connect_open"),
+    AmendFieldsMismatchError: (422, "amend_fields_mismatch"),
     ConnectSessionServiceError: (500, "connect_session_error"),
 }
 
@@ -186,8 +194,12 @@ def _connect_session_response_hook(
         extra["allowed_kinds"] = exc.allowed
     elif isinstance(exc, RecentlyRejectedError):
         headers["Retry-After"] = str(exc.retry_after_seconds)
-    elif isinstance(exc, EditOpenError):
+    elif isinstance(exc, EditOpenError | SessionClosedError):
         extra["session_id"] = exc.session_id
+    elif isinstance(exc, ConnectOpenError):
+        extra.update(session_id=exc.session_id, approval_url=exc.approval_url)
+    elif isinstance(exc, AmendFieldsMismatchError):
+        extra["fields"] = exc.fields
     elif isinstance(exc, RevisionChangedError | BaselineChangedError):
         extra["current_revision_id"] = exc.current_revision_id
     if not extra and not headers:

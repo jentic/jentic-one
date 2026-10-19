@@ -156,6 +156,7 @@ class ConnectSessionRepository:
         *,
         to_state: str,
         from_states: tuple[str, ...],
+        revision_id: str | None = None,
         **fields: Any,
     ) -> bool:
         """Compare-and-swap the session state; extra ``fields`` ride the same UPDATE.
@@ -165,16 +166,18 @@ class ConnectSessionRepository:
         row is missing or already moved on — the caller must then treat the
         operation as lost to a concurrent winner and leave the row alone.
         This is the single line of defence against terminal races (callback
-        replay, multi-pod scanner overlap, concurrent confirms).
+        replay, multi-pod scanner overlap, concurrent confirms). ``revision_id``,
+        when given, must also still be the session's current revision.
         """
-        stmt = (
-            update(ConnectSession)
-            .where(
-                ConnectSession.id == session_id,
-                ConnectSession.state.in_(from_states),
-            )
-            .values(state=to_state, **fields)
+        stmt = update(ConnectSession).where(
+            ConnectSession.id == session_id,
+            ConnectSession.state.in_(from_states),
         )
+        if revision_id is not None:
+            # A confirm also checks the revision its reviewer saw is still
+            # current, in the same UPDATE an amend would race.
+            stmt = stmt.where(ConnectSession.current_revision_id == revision_id)
+        stmt = stmt.values(state=to_state, **fields)
         result = await session.execute(stmt)
         await session.flush()
         return bool(getattr(result, "rowcount", 0))
@@ -295,6 +298,55 @@ class ConnectSessionRepository:
         return result.scalars().first()
 
     @staticmethod
+    async def advance_revision(
+        session: AsyncSession,
+        session_id: str,
+        *,
+        open_states: tuple[str, ...],
+        from_revision_id: str | None,
+        to_revision_id: str,
+        **fields: Any,
+    ) -> bool:
+        """Point an open session at a new revision, if nothing moved it first.
+
+        Compare-and-swap on the session still being in ``open_states`` and on
+        ``from_revision_id`` still being current, so an amend never lands on
+        a session a confirm has just closed. ``fields`` ride the same UPDATE.
+        """
+        stmt = (
+            update(ConnectSession)
+            .where(
+                ConnectSession.id == session_id,
+                ConnectSession.state.in_(open_states),
+                ConnectSession.current_revision_id == from_revision_id,
+            )
+            .values(current_revision_id=to_revision_id, **fields)
+        )
+        result = await session.execute(stmt)
+        await session.flush()
+        return bool(getattr(result, "rowcount", 0))
+
+    @staticmethod
+    async def get_open_vendor_create(
+        session: AsyncSession, *, agent_id: str, vendor: str
+    ) -> ConnectSession | None:
+        """The agent's open create session for a vendor key, whatever it asks for."""
+        stmt = (
+            select(ConnectSession)
+            .where(
+                ConnectSession.intent == INTENT_CREATE,
+                ConnectSession.target_kind == TARGET_KIND_VENDOR,
+                ConnectSession.state.in_(LIVE_STATES),
+                ConnectSession.agent_id == agent_id,
+                ConnectSession.initiator_actor_id == agent_id,
+                ConnectSession.vendor == vendor,
+            )
+            .order_by(ConnectSession.created_at.desc())
+        )
+        result = await session.execute(stmt)
+        return result.scalars().first()
+
+    @staticmethod
     async def get_open_edit(
         session: AsyncSession, *, agent_id: str, credential_id: str
     ) -> ConnectSession | None:
@@ -313,20 +365,6 @@ class ConnectSessionRepository:
         """Delete one session row; its revisions cascade with it."""
         await session.execute(delete(ConnectSession).where(ConnectSession.id == session_id))
         await session.flush()
-
-    @staticmethod
-    async def rotate_poll_token(
-        session: AsyncSession, session_id: str, *, poll_token_hash: str
-    ) -> bool:
-        """Replace an open session's poll-token digest; False when it is no longer open."""
-        stmt = (
-            update(ConnectSession)
-            .where(ConnectSession.id == session_id, ConnectSession.state.in_(LIVE_STATES))
-            .values(poll_token_hash=poll_token_hash)
-        )
-        result = await session.execute(stmt)
-        await session.flush()
-        return bool(getattr(result, "rowcount", 0))
 
     @staticmethod
     async def acquire_open_session_cap_lock(session: AsyncSession, owner_key: str) -> None:

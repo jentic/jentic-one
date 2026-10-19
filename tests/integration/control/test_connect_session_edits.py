@@ -34,16 +34,20 @@ from jentic_one.control.services.credentials.schemas.provision import APIReferen
 from jentic_one.control.services.credentials.service import CredentialService
 from jentic_one.control.services.integrations.connect_session_service import (
     ConnectSessionService,
+    SessionAmend,
 )
 from jentic_one.control.services.integrations.edits import EditRequest, RuleAdd
 from jentic_one.control.services.integrations.errors import (
+    AmendFieldsMismatchError,
     BaselineChangedError,
     ConfirmationForbiddenError,
     EditBindingNotFoundError,
     EditOpenError,
+    InvalidPollTokenError,
     NothingToChangeError,
     RevisionChangedError,
     RuleSetConfirmForbiddenError,
+    SessionClosedError,
     UnknownRuleError,
 )
 from jentic_one.shared.auth.identity import Identity
@@ -449,3 +453,80 @@ async def test_a_curated_rule_set_is_copied_never_changed(
     assert [r.path for r in set_rules] == ["/v1/"]
     assert await _rules(ctx, binding) == [("allow", "/v1/"), ("allow", "/v1/send")]
     assert (await _binding_row(ctx, binding)).rule_set_id is None
+
+
+# --- amend ---
+
+
+async def test_amending_an_edit_makes_a_new_revision_the_confirm_must_name(
+    integration_context: Context, binding: str
+) -> None:
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    created = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)], reason="first"))
+    amended = await svc.amend_session(
+        created.session_id,
+        identity=_AGENT_IDENTITY,
+        amend=SessionAmend(
+            fields=frozenset({"rules"}),
+            rules=EditRequest(add=[RuleAdd(_SEND), RuleAdd(_SEND | {"path": "/v1/label"})]),
+        ),
+    )
+    assert (amended.session_id, amended.revision_number) == (created.session_id, 2)
+    review = await svc.get_review_data(created.session_id, poll_token=None, identity=_OWNER)
+    assert review.revision_id == amended.revision_id
+    assert review.reason == "first"  # an omitted field keeps the current value
+    assert review.edit is not None
+    assert [r["path"] for r in review.edit.result["rules"]] == ["/v1/", "/v1/send", "/v1/label"]
+
+    # Approving what the reviewer saw before the amend is refused.
+    with pytest.raises(RevisionChangedError):
+        await svc.confirm_edit(
+            created.session_id,
+            poll_token=None,
+            identity=_OWNER,
+            revision_id=created.revision_id,
+            permission_rules=[_READ, _SEND],
+            resume=False,
+        )
+    await svc.confirm_edit(
+        created.session_id,
+        poll_token=None,
+        identity=_OWNER,
+        revision_id=amended.revision_id,
+        permission_rules=[_READ, _SEND],
+        resume=False,
+    )
+    # A closed session can never be amended.
+    with pytest.raises(SessionClosedError):
+        await svc.amend_session(
+            created.session_id,
+            identity=_AGENT_IDENTITY,
+            amend=SessionAmend(fields=frozenset({"reason"}), reason="later"),
+        )
+
+
+async def test_only_the_initiator_amends_and_only_with_the_sessions_fields(
+    integration_context: Context, binding: str
+) -> None:
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    created = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+    with pytest.raises(InvalidPollTokenError):
+        await svc.amend_session(
+            created.session_id,
+            identity=_OWNER,
+            amend=SessionAmend(fields=frozenset({"reason"}), reason="not mine"),
+        )
+    with pytest.raises(AmendFieldsMismatchError):
+        await svc.amend_session(
+            created.session_id,
+            identity=_AGENT_IDENTITY,
+            amend=SessionAmend(fields=frozenset({"requested_scopes"}), requested_scopes=["x"]),
+        )
+    with pytest.raises(NothingToChangeError):
+        await svc.amend_session(
+            created.session_id,
+            identity=_AGENT_IDENTITY,
+            amend=SessionAmend(fields=frozenset({"rules"}), rules=EditRequest()),
+        )

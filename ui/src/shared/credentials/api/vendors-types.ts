@@ -67,6 +67,8 @@ export interface ReviewSession {
 	 * ``expected_agent_id``; a mismatch is 409 ``review_stale``.
 	 */
 	digest: string;
+	/** The session's current revision; ``:confirm`` names it as ``revision_id``. */
+	revision?: { id: string; number: number } | null;
 	/** Whether this viewer may confirm the session as it stands. */
 	can_confirm: boolean;
 	/** Credentials the viewer already holds for the target. */
@@ -157,6 +159,8 @@ export interface ConfirmRequest {
 	/** The review the approver saw; checked when given, required for an API target. */
 	expected_agent_id?: string | null;
 	digest?: string | null;
+	/** The revision the approver saw; a newer one is 409 ``revision_changed``. */
+	revision_id?: string | null;
 }
 
 /** Fields every non-OAuth confirm carries: the rules and the review it answers. */
@@ -165,6 +169,7 @@ interface ReviewedConfirm {
 	agent_id?: string | null;
 	expected_agent_id: string | null;
 	digest: string;
+	revision_id: string | null;
 }
 
 export interface ApiKeyConfirmRequest extends ReviewedConfirm {
@@ -291,6 +296,8 @@ export interface ConnectResponse {
 	approval_url: string;
 	poll_token: string;
 	resolved_flow: string;
+	/** Revision 1; a confirm names it until the session is amended. */
+	revision_id?: string | null;
 }
 
 // ---------------------------------------------------------------------------

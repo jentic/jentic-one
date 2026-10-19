@@ -39,6 +39,7 @@ from tests.integration.control.connect_sec.support import (
     connect,
     digest,
     import_spec,
+    revision,
     session_row,
     svc,
 )
@@ -61,7 +62,7 @@ _HOSTILE_OAUTH = {
 }
 
 
-def _body(review_digest: str, **endpoints: Any) -> dict[str, Any]:
+def _body(review_digest: str, revision_id: str, **endpoints: Any) -> dict[str, Any]:
     return {
         "kind": "own_oauth_client",
         "client_id": "approver-client",
@@ -69,6 +70,7 @@ def _body(review_digest: str, **endpoints: Any) -> dict[str, Any]:
         "permission_rules": RULES,
         "expected_agent_id": AGENT_ID,
         "digest": review_digest,
+        "revision_id": revision_id,
         "confirmed_scopes": ["read"],
         **endpoints,
     }
@@ -93,7 +95,11 @@ async def test_spec_endpoints_are_never_a_fallback_for_the_approvers_client(
     async with client(env, OWNER) as owner:
         refused = await owner.post(
             f"/connect-sessions/{created.session_id}:confirm",
-            json=_body(await digest(env, created.session_id), **endpoints),
+            json=_body(
+                await digest(env, created.session_id),
+                await revision(env, created.session_id),
+                **endpoints,
+            ),
         )
     assert refused.status_code in (400, 422), refused.text
     assert _CLIENT_SECRET not in refused.text
@@ -120,7 +126,10 @@ async def test_service_refuses_missing_endpoints_too(env: Context) -> None:
                 authorize_url="",
                 token_url="",
                 confirmed_scopes=["read"],
-                checks=checks(await digest(env, created.session_id)),
+                checks=checks(
+                    await digest(env, created.session_id),
+                    revision_id=await revision(env, created.session_id),
+                ),
             ),
             identity=OWNER,
         )
@@ -148,6 +157,7 @@ async def test_approver_endpoints_must_pass_the_upstream_url_policy(env: Context
             f"/connect-sessions/{created.session_id}:confirm",
             json=_body(
                 await digest(env, created.session_id),
+                await revision(env, created.session_id),
                 authorize_url="https://idp.approver.example/authorize",
                 token_url=url,
             ),
@@ -168,7 +178,10 @@ async def test_approver_endpoints_are_the_ones_used(env: Context) -> None:
             authorize_url="https://idp.approver.example/authorize",
             token_url="https://idp.approver.example/token",
             confirmed_scopes=["read"],
-            checks=checks(await digest(env, created.session_id)),
+            checks=checks(
+                await digest(env, created.session_id),
+                revision_id=await revision(env, created.session_id),
+            ),
         ),
         identity=OWNER,
     )
@@ -215,6 +228,7 @@ async def test_approvers_endpoints_follow_the_control_egress_policy_when_refused
             f"/connect-sessions/{created.session_id}:confirm",
             json=_body(
                 await digest(env, created.session_id),
+                await revision(env, created.session_id),
                 authorize_url="https://10.1.2.3/authorize",
                 token_url="https://10.1.2.3/token",
             ),

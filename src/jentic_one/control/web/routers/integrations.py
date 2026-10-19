@@ -29,6 +29,7 @@ from jentic_one.control.services.integrations.connect_session_service import (
     OwnClientConfirm,
     ReviewData,
     SecretConfirm,
+    SessionAmend,
 )
 from jentic_one.control.services.integrations.edits import EditRequest, RuleAdd
 from jentic_one.control.services.integrations.flow_handlers.manual import (
@@ -39,6 +40,8 @@ from jentic_one.control.services.integrations.flow_handlers.manual import (
 from jentic_one.control.web.connect_limits import ROUTE_LIMITER_ATTR, connect_limiter
 from jentic_one.control.web.deps import get_connect_session_service
 from jentic_one.control.web.schemas.integrations import (
+    AmendSessionRequest,
+    AmendSessionResponse,
     ApiKeyConfirmSessionRequest,
     ApiReferenceResponse,
     AuthCodeConfirmSessionResponse,
@@ -58,7 +61,6 @@ from jentic_one.control.web.schemas.integrations import (
     EditConnectionResponse,
     EditCurrentAccess,
     EditResultAccess,
-    EditRevisionRef,
     EditRuleSetView,
     EditRulesRequest,
     EditRuleView,
@@ -76,6 +78,7 @@ from jentic_one.control.web.schemas.integrations import (
     ReviewSchemeResponse,
     ReviewScopeResponse,
     ReviewSessionResponse,
+    SessionRevisionRef,
     StatusResponse,
 )
 from jentic_one.control.web.schemas.permission_rules import PermissionRuleSchema
@@ -217,6 +220,7 @@ async def integrations_connect(
         approval_url=created.approval_url,
         poll_token=created.poll_token,
         resolved_flow=created.resolved_flow,
+        revision_id=created.revision_id,
     )
 
 
@@ -439,6 +443,11 @@ def _review_response(data: ReviewData) -> ReviewSessionResponse:
         requested_permission_rules=[
             PermissionRuleSchema.model_validate(r) for r in data.requested_permission_rules
         ],
+        revision=(
+            SessionRevisionRef(id=data.revision_id, number=data.revision_number)
+            if data.revision_id is not None and data.revision_number is not None
+            else None
+        ),
         api_reference=ApiReferenceResponse(
             vendor=data.api_vendor,
             name=data.api_name,
@@ -507,7 +516,7 @@ def _edit_response(edit: EditReview) -> ReviewEditResponse:
             credential_id=edit.credential_id,
             credential_name=edit.credential_name,
         ),
-        revision=EditRevisionRef(id=edit.revision_id, number=edit.revision_number),
+        revision=SessionRevisionRef(id=edit.revision_id, number=edit.revision_number),
         current=EditCurrentAccess(
             rules=[EditRuleView.model_validate(r) for r in current["rules"]],
             rule_set=EditRuleSetView.model_validate(rule_set) if rule_set is not None else None,
@@ -603,6 +612,7 @@ async def confirm_connect_session(
             identity=identity,
             expected_agent_id=body.expected_agent_id,
             digest=body.digest,
+            revision_id=body.revision_id,
         )
     else:
         result = await svc.confirm_variant(
@@ -638,6 +648,7 @@ def _to_variant(
         expected_agent_id=body.expected_agent_id,
         digest=body.digest,
         agent_id=body.agent_id,
+        revision_id=body.revision_id,
     )
     if isinstance(body, ApiKeyConfirmSessionRequest):
         return SecretConfirm(kind=body.kind, secret=ApiKeySecret(key=body.key), checks=checks)
@@ -662,6 +673,82 @@ def _to_variant(
         credential_id=body.credential_id,
         reauthorize=isinstance(body, ReauthorizeConfirmSessionRequest),
         checks=checks,
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /connect-sessions/{id}:amend
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/connect-sessions/{session_id}:amend",
+    summary="Amend an open connect session's request",
+    response_model=None,
+    responses=with_responses(conflict("The session is closed: confirmed or ended")),
+)
+async def amend_connect_session(
+    session_id: Annotated[
+        str,
+        Path(
+            description="ID of the connect session.",
+            openapi_examples=ex.example(ex.CONNECT_SESSION_ID),
+        ),
+    ],
+    body: AmendSessionRequest,
+    identity: Identity = get_current_identity(
+        required_permissions=["credentials:connect", "credentials:write"]
+    ),
+    svc: ConnectSessionService = Depends(get_connect_session_service),
+) -> AmendSessionResponse:
+    """Change what an open session asks for; the reviewer sees the new revision.
+
+    Only the session's initiator, while it is open (not yet confirmed or
+    ended); a closed session is 409 `session_closed`. The fields sent replace
+    those parts of the ask and the rest stay. Edit sessions take `rules` and
+    `resume`, relative to the binding as it was when the edit opened; create
+    sessions take `requested_permission_rules` and `requested_scopes`, which
+    replace the ask outright; both take `reason`. The session id, approval
+    URL and poll token stay the same, and any confirm must name the new
+    `revision_id`.
+    """
+    fields = frozenset(body.model_fields_set)
+    rules = body.rules
+    amended = await svc.amend_session(
+        session_id,
+        identity=identity,
+        amend=SessionAmend(
+            fields=fields,
+            rules=(
+                EditRequest(
+                    add=[
+                        RuleAdd(rule=a.rule.model_dump(exclude_none=True), before=a.before)
+                        for a in rules.add
+                    ],
+                    remove=list(rules.remove),
+                    set_rules=(
+                        [r.model_dump(exclude_none=True) for r in rules.set_rules]
+                        if rules.set_rules is not None
+                        else None
+                    ),
+                )
+                if rules is not None
+                else None
+            ),
+            resume=bool(body.resume),
+            reason=body.reason,
+            requested_permission_rules=(
+                [r.model_dump(exclude_none=True) for r in body.requested_permission_rules]
+                if body.requested_permission_rules is not None
+                else None
+            ),
+            requested_scopes=body.requested_scopes,
+        ),
+    )
+    return AmendSessionResponse(
+        session_id=amended.session_id,
+        revision_id=amended.revision_id,
+        revision_number=amended.revision_number,
     )
 
 

@@ -55,6 +55,12 @@ class ConnectSessionRevisionRepository:
         return row
 
     @staticmethod
+    async def insert(session: AsyncSession, revision: ConnectSessionRevision) -> None:
+        """Write a revision the caller has already numbered and pointed the session at."""
+        session.add(revision)
+        await session.flush()
+
+    @staticmethod
     async def get_by_id(session: AsyncSession, revision_id: str) -> ConnectSessionRevision | None:
         stmt = select(ConnectSessionRevision).where(ConnectSessionRevision.id == revision_id)
         result = await session.execute(stmt)

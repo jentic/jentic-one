@@ -45,6 +45,7 @@ from tests.integration.control.connect_sec.support import (
     existing_credential,
     import_spec,
     is_bound,
+    revision,
     svc,
 )
 
@@ -58,7 +59,9 @@ async def _reauthorize(ctx: Context, session_id: str, credential_id: str) -> Any
         variant=ExistingCredentialConfirm(
             credential_id=credential_id,
             reauthorize=True,
-            checks=checks(await digest(ctx, session_id)),
+            checks=checks(
+                await digest(ctx, session_id), revision_id=await revision(ctx, session_id)
+            ),
         ),
         identity=OWNER,
     )
@@ -104,6 +107,7 @@ async def test_reauthorize_over_http_is_refused_while_another_agent_is_bound(
                 "permission_rules": RULES,
                 "expected_agent_id": AGENT_ID,
                 "digest": await digest(env, created.session_id),
+                "revision_id": await revision(env, created.session_id),
             },
         )
     assert (refused.status_code, refused.json()["type"]) == (409, "reauthorize_unavailable")
@@ -130,7 +134,9 @@ async def test_consent_completion_refuses_when_another_agent_was_bound_meanwhile
             credential_id=narrow,
             reauthorize=False,
             checks=checks(
-                await digest(env, sibling.session_id), expected_agent_id=SIBLING_AGENT_ID
+                await digest(env, sibling.session_id),
+                revision_id=await revision(env, sibling.session_id),
+                expected_agent_id=SIBLING_AGENT_ID,
             ),
         ),
         identity=OWNER,

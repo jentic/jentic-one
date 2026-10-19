@@ -375,3 +375,40 @@ class RuleSetConfirmForbiddenError(ConnectSessionServiceError):
             "org admin may confirm it"
         )
         self.rule_set_id = rule_set_id
+
+
+class RevisionRequiredError(ConnectSessionServiceError):
+    """A confirm named no ``revision_id``: it must approve the revision its reviewer saw."""
+
+    def __init__(self) -> None:
+        super().__init__("revision_id is required: confirm the revision the review shows")
+
+
+class SessionClosedError(ConnectSessionServiceError):
+    """The session was confirmed or has ended, so its ask can no longer change."""
+
+    def __init__(self, session_id: str) -> None:
+        super().__init__(
+            f"session {session_id!r} is closed and cannot be amended; start a new request"
+        )
+        self.session_id = session_id
+
+
+class ConnectOpenError(ConnectSessionServiceError):
+    """The agent already has an open connect session for this target; amend that one."""
+
+    def __init__(self, session_id: str, approval_url: str) -> None:
+        super().__init__(
+            f"a connect session for this target is already open ({session_id}); amend it"
+        )
+        self.session_id = session_id
+        self.approval_url = approval_url
+
+
+class AmendFieldsMismatchError(ConnectSessionServiceError):
+    """The amend carries fields that do not apply to the session's intent."""
+
+    def __init__(self, intent: str, fields: list[str]) -> None:
+        super().__init__(f"fields {fields!r} do not apply to a {intent} session")
+        self.intent = intent
+        self.fields = fields

@@ -218,6 +218,7 @@ describe('VendorConnectFlow approve — manual_* sessions', () => {
 			permission_rules: [SUGGESTED_RULE],
 			expected_agent_id: 'agnt_1',
 			digest: 'dig_manual',
+			revision_id: expect.stringMatching(/^csr_/),
 		});
 		// Not persisted client-side anywhere the browser keeps across loads.
 		const persisted =
@@ -505,6 +506,7 @@ describe('VendorConnectFlow approve — awaiting_app', () => {
 			permission_rules: [SUGGESTED_RULE],
 			expected_agent_id: 'agnt_1',
 			digest: 'dig_awaiting',
+			revision_id: expect.stringMatching(/^csr_/),
 		});
 	});
 
@@ -589,6 +591,7 @@ describe('VendorConnectFlow approve — awaiting_app', () => {
 			permission_rules: [SUGGESTED_RULE],
 			expected_agent_id: 'agnt_1',
 			digest: 'dig_awaiting',
+			revision_id: expect.stringMatching(/^csr_/),
 		});
 	});
 

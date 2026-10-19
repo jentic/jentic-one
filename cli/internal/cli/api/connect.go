@@ -212,6 +212,19 @@ func newConnectCmd(a *app) *cobra.Command {
 			// control plane injects the identity and refuses an override);
 			// a user token connecting FOR an agent uses the dashboard.
 			resp, callErr := client.IntegrationsConnectWithResponse(cmd.Context(), body)
+			if open := connectOpenSession(resp, callErr); open != nil {
+				// An earlier ask for the target is still open: point at it. There
+				// is no poll token for it here, so --wait does not apply.
+				aud.Render(map[string]any{
+					"session_id":   open.SessionID,
+					"approval_url": open.ApprovalURL,
+					"already_open": true,
+					"next_step": "You already asked for this connection and the request is still open: " +
+						"relay its approval_url to your human operator instead of asking again. Then " +
+						"confirm the new binding with `jentic whoami` and retry the call that was blocked.",
+				})
+				return nil
+			}
 			if err := apiErrorFor(resp, callErr); err != nil {
 				return reportCoded(aud, connectCoded(cmd.Context(), client, target, api != nil, err))
 			}

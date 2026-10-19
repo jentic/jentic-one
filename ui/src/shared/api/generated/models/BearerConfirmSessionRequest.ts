@@ -28,6 +28,10 @@ export type BearerConfirmSessionRequest = {
      */
     permission_rules: Array<PermissionRuleSchema>;
     /**
+     * The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.
+     */
+    revision_id?: (string | null);
+    /**
      * Bearer token to store; write-only.
      */
     token: string;

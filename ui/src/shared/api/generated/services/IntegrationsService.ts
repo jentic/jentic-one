@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AmendSessionRequest } from '../models/AmendSessionRequest';
 import type { ApiKeyConfirmSessionRequest } from '../models/ApiKeyConfirmSessionRequest';
 import type { BasicConfirmSessionRequest } from '../models/BasicConfirmSessionRequest';
 import type { BearerConfirmSessionRequest } from '../models/BearerConfirmSessionRequest';
@@ -162,6 +163,53 @@ export class IntegrationsService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Amend an open connect session's request
+     * Change what an open session asks for; the reviewer sees the new revision.
+     *
+     * Only the session's initiator, while it is open (not yet confirmed or
+     * ended); a closed session is 409 `session_closed`. The fields sent replace
+     * those parts of the ask and the rest stay. Edit sessions take `rules` and
+     * `resume`, relative to the binding as it was when the edit opened; create
+     * sessions take `requested_permission_rules` and `requested_scopes`, which
+     * replace the ask outright; both take `reason`. The session id, approval
+     * URL and poll token stay the same, and any confirm must name the new
+     * `revision_id`.
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static amendConnectSession({
+        sessionId,
+        requestBody,
+    }: {
+        /**
+         * ID of the connect session.
+         */
+        sessionId: string,
+        /**
+         * Change an open session's ask; fields sent replace those parts, the rest stay.
+         */
+        requestBody: AmendSessionRequest,
+    }): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/connect-sessions/{session_id}:amend',
+            path: {
+                'session_id': sessionId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                409: `The session is closed: confirmed or ended`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

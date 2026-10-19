@@ -61,16 +61,21 @@ from jentic_one.control.services.integrations.connect_session_service import (
     AuthCodeConfirmResult,
     ConnectSessionService,
     DeviceAuthorizationConfirmResult,
+    SessionAmend,
 )
 from jentic_one.control.services.integrations.errors import (
     AgentInactiveError,
     AgentNotFoundError,
+    AmendFieldsMismatchError,
     ConfirmationForbiddenError,
     ConfirmKindMismatchError,
+    ConnectOpenError,
     InvalidPollTokenError,
     InvalidStateTransitionError,
     ManualFlowsDisabledError,
     OAuthAppChangedError,
+    RevisionChangedError,
+    RevisionRequiredError,
     SecuritySchemesLookupUnavailableError,
 )
 from jentic_one.control.services.integrations.flow_handlers.base import StatusReport
@@ -110,6 +115,14 @@ from jentic_one.shared.web.deps import resolve_identity
 from jentic_one.wiring import InProcessCatalogAutoImporter
 
 pytestmark = pytest.mark.integration
+
+
+async def _revision(ctx: Context, session_id: str) -> str:
+    """The session's current revision, which every confirm names."""
+    async with ctx.control_db.session() as session:
+        row = await ConnectSessionRepository.get_by_id(session, session_id)
+    assert row is not None and row.current_revision_id is not None
+    return row.current_revision_id
 
 
 _USER_ID = "usr_alice"
@@ -628,6 +641,7 @@ async def test_confirm_device_authorization_transitions_to_polling_and_seeds_aux
     with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=begin_result)):
         result = await svc.confirm(
             created.session_id,
+            revision_id=await _revision(ctx, created.session_id),
             poll_token=created.poll_token,
             confirmed_scopes=["repo"],
             # Canonical ``AgentPermissionRule`` dict shape — the router
@@ -671,6 +685,7 @@ async def test_confirm_auth_code_returns_authorize_url(
 
     result = await svc.confirm(
         created.session_id,
+        revision_id=await _revision(ctx, created.session_id),
         poll_token=created.poll_token,
         confirmed_scopes=["scope-a"],
         permission_rules=[],
@@ -703,6 +718,7 @@ async def test_confirm_rejects_self_confirm_by_initiating_agent(
     with pytest.raises(ConfirmationForbiddenError):
         await svc.confirm(
             created.session_id,
+            revision_id=await _revision(ctx, created.session_id),
             poll_token=created.poll_token,
             confirmed_scopes=[],
             permission_rules=[],
@@ -779,6 +795,7 @@ async def test_mark_terminal_from_callback_deletes_credential_and_cascades_sessi
     )
     confirmed = await svc.confirm(
         created.session_id,
+        revision_id=await _revision(ctx, created.session_id),
         poll_token=created.poll_token,
         confirmed_scopes=["scope-a"],
         permission_rules=[],
@@ -845,6 +862,7 @@ async def test_advance_polling_target_dispatches_to_session_when_live_session_ex
     with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=begin_result)):
         await svc.confirm(
             created.session_id,
+            revision_id=await _revision(ctx, created.session_id),
             poll_token=created.poll_token,
             confirmed_scopes=["read:user"],
             permission_rules=[],
@@ -986,6 +1004,7 @@ async def test_complete_from_callback_vaults_token_and_marks_connected(
     )
     confirmed = await svc.confirm(
         created.session_id,
+        revision_id=await _revision(ctx, created.session_id),
         poll_token=created.poll_token,
         confirmed_scopes=["scope-a"],
         permission_rules=[],
@@ -1071,6 +1090,7 @@ async def test_complete_from_callback_refuses_state_replay(
     )
     confirmed = await svc.confirm(
         created.session_id,
+        revision_id=await _revision(ctx, created.session_id),
         poll_token=created.poll_token,
         confirmed_scopes=["scope-a"],
         permission_rules=[],
@@ -1160,6 +1180,7 @@ async def test_confirm_rejects_wrong_poll_token(
     with pytest.raises(InvalidPollTokenError):
         await svc.confirm(
             created.session_id,
+            revision_id=await _revision(ctx, created.session_id),
             poll_token="not-the-token",
             confirmed_scopes=["scope-a"],
             permission_rules=[],
@@ -1182,6 +1203,7 @@ async def test_confirm_rejects_unknown_agent(
     with pytest.raises(AgentNotFoundError):
         await svc.confirm(
             created.session_id,
+            revision_id=await _revision(ctx, created.session_id),
             poll_token=created.poll_token,
             confirmed_scopes=["scope-a"],
             permission_rules=[],
@@ -1213,6 +1235,7 @@ async def test_confirm_rejects_agent_not_owned_by_caller(
     with pytest.raises(AgentNotFoundError):
         await svc.confirm(
             created.session_id,
+            revision_id=await _revision(ctx, created.session_id),
             poll_token=created.poll_token,
             confirmed_scopes=["scope-a"],
             permission_rules=[],
@@ -1237,6 +1260,7 @@ async def test_second_confirm_loses_the_cas_and_conflicts(
     )
     first = await svc.confirm(
         created.session_id,
+        revision_id=await _revision(ctx, created.session_id),
         poll_token=created.poll_token,
         confirmed_scopes=["scope-a"],
         permission_rules=[],
@@ -1246,6 +1270,7 @@ async def test_second_confirm_loses_the_cas_and_conflicts(
     with pytest.raises(InvalidStateTransitionError):
         await svc.confirm(
             created.session_id,
+            revision_id=await _revision(ctx, created.session_id),
             poll_token=created.poll_token,
             confirmed_scopes=["scope-a"],
             permission_rules=[],
@@ -1280,6 +1305,7 @@ async def test_confirm_vendor_begin_failure_leaves_session_retryable(
     ):
         await svc.confirm(
             created.session_id,
+            revision_id=await _revision(ctx, created.session_id),
             poll_token=created.poll_token,
             confirmed_scopes=["repo"],
             permission_rules=[],
@@ -1302,6 +1328,7 @@ async def test_confirm_vendor_begin_failure_leaves_session_retryable(
     with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=begin_result)):
         retry = await svc.confirm(
             created.session_id,
+            revision_id=await _revision(ctx, created.session_id),
             poll_token=created.poll_token,
             confirmed_scopes=["repo"],
             permission_rules=[],
@@ -1335,6 +1362,7 @@ async def test_error_callback_replay_after_connect_cannot_delete_live_credential
     )
     confirmed = await svc.confirm(
         created.session_id,
+        revision_id=await _revision(ctx, created.session_id),
         poll_token=created.poll_token,
         confirmed_scopes=["scope-a"],
         permission_rules=[],
@@ -1607,10 +1635,17 @@ async def _call_route(
             return await client.get(f"/connect-sessions/{session_id}/status", params=params)
         if route == "cancel":
             return await client.post(f"/connect-sessions/{session_id}:cancel", params=params)
+        async with ctx.control_db.session() as session:
+            row = await ConnectSessionRepository.get_by_id(session, session_id)
+        revision_id = row.current_revision_id if row is not None else "csr_unknown"
         return await client.post(
             f"/connect-sessions/{session_id}:confirm",
             params=params,
-            json={"confirmed_scopes": ["scope-a"], "permission_rules": []},
+            json={
+                "confirmed_scopes": ["scope-a"],
+                "permission_rules": [],
+                "revision_id": revision_id,
+            },
         )
 
 
@@ -1780,6 +1815,7 @@ async def test_confirm_attributes_agent_started_credential_to_the_approver(
 
     await svc.confirm(
         created.session_id,
+        revision_id=await _revision(ctx, created.session_id),
         poll_token=None,
         confirmed_scopes=["scope-a"],
         permission_rules=[],
@@ -1801,6 +1837,7 @@ async def test_confirm_attributes_user_started_credential_to_the_approver(
     )
     await svc.confirm(
         created.session_id,
+        revision_id=await _revision(ctx, created.session_id),
         poll_token=None,
         confirmed_scopes=["scope-a"],
         permission_rules=[],
@@ -1833,6 +1870,7 @@ async def test_confirm_refuses_an_unusable_agent(
         with pytest.raises(AgentInactiveError):
             await svc.confirm(
                 created.session_id,
+                revision_id=await _revision(ctx, created.session_id),
                 poll_token=created.poll_token,
                 confirmed_scopes=["scope-a"],
                 permission_rules=[],
@@ -1862,6 +1900,7 @@ async def test_confirm_with_token_requires_agents_write_for_the_owner(
     with pytest.raises(ConfirmationForbiddenError):
         await svc.confirm(
             created.session_id,
+            revision_id=await _revision(ctx, created.session_id),
             poll_token=created.poll_token,
             confirmed_scopes=["scope-a"],
             permission_rules=[],
@@ -2311,15 +2350,15 @@ async def test_open_api_target_dedupe_index(
     await _seed_api_session(ctx, initiator_actor_id=_USER_ID, poll_token="seventh")
 
 
-async def test_repeat_agent_vendor_ask_reuses_the_open_session(
+async def test_repeat_agent_vendor_ask_is_refused_naming_the_open_session(
     integration_context: Context,
     seed_test_vendors: None,
     clean_session_tables: None,
     seed_agent: None,
 ) -> None:
-    # An agent asking again for the same vendor, app and scopes gets its open
-    # session back with a fresh poll token; the old token stops working.
-    # Asks with different scopes, and sessions a user starts, are separate.
+    # An agent asking again for a vendor it has an open session for, whatever
+    # the scopes, is refused with that session: it amends it instead. The open
+    # session and its token are untouched. Sessions a user starts are separate.
     svc = ConnectSessionService(integration_context)
     first = await svc.create_session(
         vendor_key="testauth",
@@ -2327,28 +2366,23 @@ async def test_repeat_agent_vendor_ask_reuses_the_open_session(
         identity=_AGENT_IDENTITY,
         requested_scopes=["repo", "read:user"],
     )
-    second = await svc.create_session(
-        vendor_key="testauth",
-        agent_id=_AGENT_ID,
-        identity=_AGENT_IDENTITY,
-        requested_scopes=["read:user", "repo", "repo"],
-    )
-    assert second.session_id == first.session_id
-    assert second.approval_url == first.approval_url
-    assert second.poll_token != first.poll_token
-    with pytest.raises(InvalidPollTokenError):
-        await svc.get_status(
-            first.session_id, poll_token=first.poll_token, identity=_AGENT_IDENTITY
+    for scopes in (["read:user", "repo", "repo"], []):
+        with pytest.raises(ConnectOpenError) as refused:
+            await svc.create_session(
+                vendor_key="testauth",
+                agent_id=_AGENT_ID,
+                identity=_AGENT_IDENTITY,
+                requested_scopes=scopes,
+            )
+        assert (refused.value.session_id, refused.value.approval_url) == (
+            first.session_id,
+            first.approval_url,
         )
     status = await svc.get_status(
-        first.session_id, poll_token=second.poll_token, identity=_AGENT_IDENTITY
+        first.session_id, poll_token=first.poll_token, identity=_AGENT_IDENTITY
     )
     assert status.status == "pending"
 
-    other_scopes = await svc.create_session(
-        vendor_key="testauth", agent_id=_AGENT_ID, identity=_AGENT_IDENTITY
-    )
-    assert other_scopes.session_id != first.session_id
     user_started = await svc.create_session(
         vendor_key="testauth", agent_id=_AGENT_ID, identity=_USER_IDENTITY
     )
@@ -2356,3 +2390,72 @@ async def test_repeat_agent_vendor_ask_reuses_the_open_session(
         vendor_key="testauth", agent_id=_AGENT_ID, identity=_USER_IDENTITY
     )
     assert user_started.session_id != user_again.session_id
+
+
+async def test_amending_a_create_session_replaces_its_ask(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+) -> None:
+    # The fields an amend carries replace the ask outright; the rest stay.
+    # A confirm must then name the new revision.
+    svc = ConnectSessionService(integration_context)
+    created = await svc.create_session(
+        vendor_key="testauth",
+        agent_id=_AGENT_ID,
+        initiator_actor_id=_AGENT_ID,
+        requested_scopes=["repo"],
+        reason="read issues",
+    )
+    first = await _revision(integration_context, created.session_id)
+    rules: list[dict[str, object]] = [
+        {"effect": "allow", "methods": ["GET"], "path": "/issues", "match_mode": "prefix"}
+    ]
+    amended = await svc.amend_session(
+        created.session_id,
+        identity=_AGENT_IDENTITY,
+        amend=SessionAmend(
+            fields=frozenset({"requested_scopes", "requested_permission_rules"}),
+            requested_scopes=["repo", "read:user"],
+            requested_permission_rules=rules,
+        ),
+    )
+    assert amended.revision_number == 2
+    review = await svc.get_review_data(created.session_id, poll_token=None, identity=_USER_IDENTITY)
+    assert review.revision_id == amended.revision_id
+    assert review.requested_scopes == ["repo", "read:user"]
+    assert review.requested_permission_rules == rules
+    assert review.reason == "read issues"
+
+    # The amended scopes keep the open session the agent's one ask for the vendor.
+    with pytest.raises(ConnectOpenError):
+        await svc.create_session(
+            vendor_key="testauth",
+            agent_id=_AGENT_ID,
+            initiator_actor_id=_AGENT_ID,
+            requested_scopes=["repo", "read:user"],
+        )
+    with pytest.raises(RevisionChangedError):
+        await svc.confirm(
+            created.session_id,
+            poll_token=None,
+            confirmed_scopes=["repo"],
+            permission_rules=rules,
+            identity=_USER_IDENTITY,
+            revision_id=first,
+        )
+    with pytest.raises(RevisionRequiredError):
+        await svc.confirm(
+            created.session_id,
+            poll_token=None,
+            confirmed_scopes=["repo"],
+            permission_rules=rules,
+            identity=_USER_IDENTITY,
+        )
+    with pytest.raises(AmendFieldsMismatchError):
+        await svc.amend_session(
+            created.session_id,
+            identity=_AGENT_IDENTITY,
+            amend=SessionAmend(fields=frozenset({"resume"}), resume=True),
+        )

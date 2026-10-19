@@ -1461,6 +1461,36 @@ type AgentResponse struct {
 	Status string `json:"status"`
 }
 
+// AmendSessionRequest Change an open session's ask; fields sent replace those parts, the rest stay.
+//
+// Examples: {"reason":"Also needs to label issues","requested_permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"requested_scopes":["repo"],"resume":true,"rules":{"add":[{"before":"apr_6968b3987c22b63e87e79f06","rule":{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}}],"remove":["apr_6968b3987c22b63e87e79f06"],"set":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}}
+type AmendSessionRequest struct {
+	// Reason Why, shown to the reviewer.
+	//
+	// Examples: Also needs to label issues
+	Reason *string `json:"reason,omitempty"`
+
+	// RequestedPermissionRules Create sessions: the rules to ask for, replacing the current ask.
+	//
+	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	RequestedPermissionRules *[]PermissionRuleSchema `json:"requested_permission_rules,omitempty"`
+
+	// RequestedScopes Create sessions: the scopes to ask for, replacing the current ask.
+	//
+	// Examples: ["repo"]
+	RequestedScopes *[]string `json:"requested_scopes,omitempty"`
+
+	// Resume Edit sessions: resume a suspended binding.
+	//
+	// Examples: true
+	Resume *bool `json:"resume,omitempty"`
+
+	// Rules Edit sessions: the rule change, relative to the baseline.
+	//
+	// Examples: {"add":[{"before":"apr_6968b3987c22b63e87e79f06","rule":{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}}],"remove":["apr_6968b3987c22b63e87e79f06"],"set":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+	Rules *EditRulesRequest `json:"rules,omitempty"`
+}
+
 // ApiImportLinksResponse Hypermedia links for an import response.
 //
 // Examples: {"self":"https://jentic.example.com/jobs/job_6968b3985e8c9902207afaeb"}
@@ -1533,7 +1563,7 @@ type ApiInfoResponse struct {
 
 // ApiKeyConfirmSessionRequest Confirm a “manual_api_key“ session with the API key to store.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","key":"example-secret","kind":"api_key","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","key":"example-secret","kind":"api_key","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"revision_id":"csr_6968b3983b8b91c75627bee6"}
 type ApiKeyConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
 	//
@@ -1564,6 +1594,11 @@ type ApiKeyConfirmSessionRequest struct {
 	//
 	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
+
+	// RevisionId The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.
+	//
+	// Examples: csr_6968b3983b8b91c75627bee6
+	RevisionId *string `json:"revision_id,omitempty"`
 }
 
 // ApiKeyConfirmSessionRequestKind Confirm variant; always `api_key`.
@@ -2313,7 +2348,7 @@ type BasicAuthUpdateRequestType string
 
 // BasicConfirmSessionRequest Confirm a “manual_basic“ session with the username and password to store.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"basic","password":"example-secret","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"username":"svc-reporting"}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"basic","password":"example-secret","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"revision_id":"csr_6968b3983b8b91c75627bee6","username":"svc-reporting"}
 type BasicConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
 	//
@@ -2345,6 +2380,11 @@ type BasicConfirmSessionRequest struct {
 	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
 
+	// RevisionId The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.
+	//
+	// Examples: csr_6968b3983b8b91c75627bee6
+	RevisionId *string `json:"revision_id,omitempty"`
+
 	// Username Username to store.
 	//
 	// Examples: svc-reporting
@@ -2358,7 +2398,7 @@ type BasicConfirmSessionRequestKind string
 
 // BearerConfirmSessionRequest Confirm a “manual_bearer“ session with the bearer token to store.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"bearer","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"token":"example-secret"}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"bearer","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"revision_id":"csr_6968b3983b8b91c75627bee6","token":"example-secret"}
 type BearerConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
 	//
@@ -2384,6 +2424,11 @@ type BearerConfirmSessionRequest struct {
 	//
 	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
+
+	// RevisionId The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.
+	//
+	// Examples: csr_6968b3983b8b91c75627bee6
+	RevisionId *string `json:"revision_id,omitempty"`
 
 	// Token Bearer token to store; write-only.
 	//
@@ -3722,7 +3767,7 @@ type ExecutionStatsResponse struct {
 
 // ExistingCredentialConfirmSessionRequest Bind a credential the approver already holds (OAuth only if its grant covers the ask).
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"existing_credential","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"existing_credential","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"revision_id":"csr_6968b3983b8b91c75627bee6"}
 type ExistingCredentialConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
 	//
@@ -3753,6 +3798,11 @@ type ExistingCredentialConfirmSessionRequest struct {
 	//
 	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
+
+	// RevisionId The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.
+	//
+	// Examples: csr_6968b3983b8b91c75627bee6
+	RevisionId *string `json:"revision_id,omitempty"`
 }
 
 // ExistingCredentialConfirmSessionRequestKind Confirm variant; always `existing_credential`.
@@ -5513,7 +5563,7 @@ type OAuthClientUpdateRequest struct {
 //
 // The default variant — a body without “kind“ is this one.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","confirmed_scopes":["repo","read:user"],"digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"oauth","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","confirmed_scopes":["repo","read:user"],"digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"oauth","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"revision_id":"csr_6968b3983b8b91c75627bee6"}
 type OAuthConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
 	//
@@ -5544,6 +5594,11 @@ type OAuthConfirmSessionRequest struct {
 	//
 	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules *[]PermissionRuleSchema `json:"permission_rules,omitempty"`
+
+	// RevisionId The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.
+	//
+	// Examples: csr_6968b3983b8b91c75627bee6
+	RevisionId *string `json:"revision_id,omitempty"`
 }
 
 // OAuthConfirmSessionRequestKind Confirm variant; `oauth` (the default when omitted).
@@ -6134,7 +6189,7 @@ type OverlayUpdateRequest struct {
 // the spec may be agent-submitted and the token endpoint receives the
 // client secret.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","authorize_url":"https://github.com/login/oauth/authorize","client_id":"Iv1.a1b2c3d4","client_secret":"example-secret","confirmed_scopes":["repo","read:user"],"digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"own_oauth_client","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"token_url":"https://github.com/login/oauth/access_token"}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","authorize_url":"https://github.com/login/oauth/authorize","client_id":"Iv1.a1b2c3d4","client_secret":"example-secret","confirmed_scopes":["repo","read:user"],"digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"own_oauth_client","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"revision_id":"csr_6968b3983b8b91c75627bee6","token_url":"https://github.com/login/oauth/access_token"}
 type OwnOAuthClientConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
 	//
@@ -6180,6 +6235,11 @@ type OwnOAuthClientConfirmSessionRequest struct {
 	//
 	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
+
+	// RevisionId The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.
+	//
+	// Examples: csr_6968b3983b8b91c75627bee6
+	RevisionId *string `json:"revision_id,omitempty"`
 
 	// TokenUrl Token endpoint URL of the OAuth app.
 	//
@@ -6653,7 +6713,7 @@ type ProviderDiscoveryResponse struct {
 //
 // Refused when another agent is bound to the credential.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"reauthorize","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"reauthorize","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"revision_id":"csr_6968b3983b8b91c75627bee6"}
 type ReauthorizeConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
 	//
@@ -6684,6 +6744,11 @@ type ReauthorizeConfirmSessionRequest struct {
 	//
 	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
+
+	// RevisionId The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.
+	//
+	// Examples: csr_6968b3983b8b91c75627bee6
+	RevisionId *string `json:"revision_id,omitempty"`
 }
 
 // ReauthorizeConfirmSessionRequestKind Confirm variant; always `reauthorize`.
@@ -8490,6 +8555,9 @@ type LoginJSONRequestBody = LoginRequest
 
 // SnoozeCatalogEntryJSONRequestBody defines body for SnoozeCatalogEntry for application/json ContentType.
 type SnoozeCatalogEntryJSONRequestBody = SnoozeCatalogEntryJSONBody
+
+// AmendConnectSessionJSONRequestBody defines body for AmendConnectSession for application/json ContentType.
+type AmendConnectSessionJSONRequestBody = AmendSessionRequest
 
 // ConfirmConnectSessionJSONRequestBody defines body for ConfirmConnectSession for application/json ContentType.
 type ConfirmConnectSessionJSONRequestBody ConfirmConnectSessionJSONBody
@@ -10918,6 +10986,42 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /connect-sessions/{session_id}/status (the `PollConnectSessionStatus` operationId).
 	PollConnectSessionStatus(ctx context.Context, sessionId string, params *PollConnectSessionStatusParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AmendConnectSessionWithBody Amend an open connect session's request
+	//
+	// Change what an open session asks for; the reviewer sees the new revision.
+	//
+	// Only the session's initiator, while it is open (not yet confirmed or
+	// ended); a closed session is 409 `session_closed`. The fields sent replace
+	// those parts of the ask and the rest stay. Edit sessions take `rules` and
+	// `resume`, relative to the binding as it was when the edit opened; create
+	// sessions take `requested_permission_rules` and `requested_scopes`, which
+	// replace the ask outright; both take `reason`. The session id, approval
+	// URL and poll token stay the same, and any confirm must name the new
+	// `revision_id`.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /connect-sessions/{session_id}:amend (the `AmendConnectSession` operationId).
+	AmendConnectSessionWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AmendConnectSession Amend an open connect session's request
+	//
+	// Change what an open session asks for; the reviewer sees the new revision.
+	//
+	// Only the session's initiator, while it is open (not yet confirmed or
+	// ended); a closed session is 409 `session_closed`. The fields sent replace
+	// those parts of the ask and the rest stay. Edit sessions take `rules` and
+	// `resume`, relative to the binding as it was when the edit opened; create
+	// sessions take `requested_permission_rules` and `requested_scopes`, which
+	// replace the ask outright; both take `reason`. The session id, approval
+	// URL and poll token stay the same, and any confirm must name the new
+	// `revision_id`.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /connect-sessions/{session_id}:amend (the `AmendConnectSession` operationId).
+	AmendConnectSession(ctx context.Context, sessionId string, body AmendConnectSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CancelConnectSession Cancel an in-flight connect session
 	//
@@ -14691,6 +14795,62 @@ func (c *Client) GetConnectSession(ctx context.Context, sessionId string, params
 // Corresponds with GET /connect-sessions/{session_id}/status (the `PollConnectSessionStatus` operationId).
 func (c *Client) PollConnectSessionStatus(ctx context.Context, sessionId string, params *PollConnectSessionStatusParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPollConnectSessionStatusRequest(c.Server, sessionId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AmendConnectSessionWithBody Amend an open connect session's request
+//
+// Change what an open session asks for; the reviewer sees the new revision.
+//
+// Only the session's initiator, while it is open (not yet confirmed or
+// ended); a closed session is 409 `session_closed`. The fields sent replace
+// those parts of the ask and the rest stay. Edit sessions take `rules` and
+// `resume`, relative to the binding as it was when the edit opened; create
+// sessions take `requested_permission_rules` and `requested_scopes`, which
+// replace the ask outright; both take `reason`. The session id, approval
+// URL and poll token stay the same, and any confirm must name the new
+// `revision_id`.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /connect-sessions/{session_id}:amend (the `AmendConnectSession` operationId).
+func (c *Client) AmendConnectSessionWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAmendConnectSessionRequestWithBody(c.Server, sessionId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AmendConnectSession Amend an open connect session's request
+//
+// Change what an open session asks for; the reviewer sees the new revision.
+//
+// Only the session's initiator, while it is open (not yet confirmed or
+// ended); a closed session is 409 `session_closed`. The fields sent replace
+// those parts of the ask and the rest stay. Edit sessions take `rules` and
+// `resume`, relative to the binding as it was when the edit opened; create
+// sessions take `requested_permission_rules` and `requested_scopes`, which
+// replace the ask outright; both take `reason`. The session id, approval
+// URL and poll token stay the same, and any confirm must name the new
+// `revision_id`.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /connect-sessions/{session_id}:amend (the `AmendConnectSession` operationId).
+func (c *Client) AmendConnectSession(ctx context.Context, sessionId string, body AmendConnectSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAmendConnectSessionRequest(c.Server, sessionId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -21705,6 +21865,53 @@ func NewPollConnectSessionStatusRequest(server string, sessionId string, params 
 	return req, nil
 }
 
+// NewAmendConnectSessionRequest calls the generic AmendConnectSession builder with application/json body
+func NewAmendConnectSessionRequest(server string, sessionId string, body AmendConnectSessionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAmendConnectSessionRequestWithBody(server, sessionId, "application/json", bodyReader)
+}
+
+// NewAmendConnectSessionRequestWithBody constructs an http.Request for the AmendConnectSession method, with any body, and a specified content type
+func NewAmendConnectSessionRequestWithBody(server string, sessionId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "session_id", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/connect-sessions/%s:amend", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewCancelConnectSessionRequest constructs an http.Request for the CancelConnectSession method
 func NewCancelConnectSessionRequest(server string, sessionId string, params *CancelConnectSessionParams) (*http.Request, error) {
 	var err error
@@ -27576,6 +27783,42 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /connect-sessions/{session_id}/status (the `PollConnectSessionStatus` operationId).
 	PollConnectSessionStatusWithResponse(ctx context.Context, sessionId string, params *PollConnectSessionStatusParams, reqEditors ...RequestEditorFn) (*PollConnectSessionStatusHTTPResp, error)
+
+	// AmendConnectSessionWithBodyWithResponse Amend an open connect session's request
+	//
+	// Change what an open session asks for; the reviewer sees the new revision.
+	//
+	// Only the session's initiator, while it is open (not yet confirmed or
+	// ended); a closed session is 409 `session_closed`. The fields sent replace
+	// those parts of the ask and the rest stay. Edit sessions take `rules` and
+	// `resume`, relative to the binding as it was when the edit opened; create
+	// sessions take `requested_permission_rules` and `requested_scopes`, which
+	// replace the ask outright; both take `reason`. The session id, approval
+	// URL and poll token stay the same, and any confirm must name the new
+	// `revision_id`.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /connect-sessions/{session_id}:amend (the `AmendConnectSession` operationId).
+	AmendConnectSessionWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AmendConnectSessionHTTPResp, error)
+
+	// AmendConnectSessionWithResponse Amend an open connect session's request
+	//
+	// Change what an open session asks for; the reviewer sees the new revision.
+	//
+	// Only the session's initiator, while it is open (not yet confirmed or
+	// ended); a closed session is 409 `session_closed`. The fields sent replace
+	// those parts of the ask and the rest stay. Edit sessions take `rules` and
+	// `resume`, relative to the binding as it was when the edit opened; create
+	// sessions take `requested_permission_rules` and `requested_scopes`, which
+	// replace the ask outright; both take `reason`. The session id, approval
+	// URL and poll token stay the same, and any confirm must name the new
+	// `revision_id`.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /connect-sessions/{session_id}:amend (the `AmendConnectSession` operationId).
+	AmendConnectSessionWithResponse(ctx context.Context, sessionId string, body AmendConnectSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*AmendConnectSessionHTTPResp, error)
 
 	// CancelConnectSessionWithResponse Cancel an in-flight connect session
 	//
@@ -36081,6 +36324,103 @@ func (r PollConnectSessionStatusHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r PollConnectSessionStatusHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AmendConnectSessionHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *interface{}
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AmendConnectSessionHTTPResp) GetJSON200() *interface{} {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r AmendConnectSessionHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r AmendConnectSessionHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r AmendConnectSessionHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r AmendConnectSessionHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r AmendConnectSessionHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r AmendConnectSessionHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r AmendConnectSessionHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AmendConnectSessionHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r AmendConnectSessionHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AmendConnectSessionHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AmendConnectSessionHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AmendConnectSessionHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -46098,6 +46438,54 @@ func (c *ClientWithResponses) PollConnectSessionStatusWithResponse(ctx context.C
 	return ParsePollConnectSessionStatusHTTPResp(rsp)
 }
 
+// AmendConnectSessionWithBodyWithResponse Amend an open connect session's request
+//
+// Change what an open session asks for; the reviewer sees the new revision.
+//
+// Only the session's initiator, while it is open (not yet confirmed or
+// ended); a closed session is 409 `session_closed`. The fields sent replace
+// those parts of the ask and the rest stay. Edit sessions take `rules` and
+// `resume`, relative to the binding as it was when the edit opened; create
+// sessions take `requested_permission_rules` and `requested_scopes`, which
+// replace the ask outright; both take `reason`. The session id, approval
+// URL and poll token stay the same, and any confirm must name the new
+// `revision_id`.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /connect-sessions/{session_id}:amend (the `AmendConnectSession` operationId).
+func (c *ClientWithResponses) AmendConnectSessionWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AmendConnectSessionHTTPResp, error) {
+	rsp, err := c.AmendConnectSessionWithBody(ctx, sessionId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAmendConnectSessionHTTPResp(rsp)
+}
+
+// AmendConnectSessionWithResponse Amend an open connect session's request
+//
+// Change what an open session asks for; the reviewer sees the new revision.
+//
+// Only the session's initiator, while it is open (not yet confirmed or
+// ended); a closed session is 409 `session_closed`. The fields sent replace
+// those parts of the ask and the rest stay. Edit sessions take `rules` and
+// `resume`, relative to the binding as it was when the edit opened; create
+// sessions take `requested_permission_rules` and `requested_scopes`, which
+// replace the ask outright; both take `reason`. The session id, approval
+// URL and poll token stay the same, and any confirm must name the new
+// `revision_id`.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /connect-sessions/{session_id}:amend (the `AmendConnectSession` operationId).
+func (c *ClientWithResponses) AmendConnectSessionWithResponse(ctx context.Context, sessionId string, body AmendConnectSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*AmendConnectSessionHTTPResp, error) {
+	rsp, err := c.AmendConnectSession(ctx, sessionId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAmendConnectSessionHTTPResp(rsp)
+}
+
 // CancelConnectSessionWithResponse Cancel an in-flight connect session
 //
 // Terminate a still-active session at the user's request.
@@ -54249,6 +54637,88 @@ func ParsePollConnectSessionStatusHTTPResp(rsp *http.Response) (*PollConnectSess
 			return nil, err
 		}
 		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAmendConnectSessionHTTPResp parses an HTTP response from a AmendConnectSessionWithResponse call
+func ParseAmendConnectSessionHTTPResp(rsp *http.Response) (*AmendConnectSessionHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AmendConnectSessionHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail

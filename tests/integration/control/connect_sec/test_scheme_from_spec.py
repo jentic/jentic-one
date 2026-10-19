@@ -27,6 +27,7 @@ from tests.integration.control.connect_sec.support import (
     connect,
     digest,
     import_spec,
+    revision,
     session_row,
 )
 
@@ -80,6 +81,7 @@ async def test_secret_confirm_refuses_any_field_that_would_steer_the_scheme_or_h
         "permission_rules": RULES,
         "expected_agent_id": AGENT_ID,
         "digest": await digest(env, created.session_id),
+        "revision_id": await revision(env, created.session_id),
         **extra,
     }
     async with client(env, OWNER) as owner:
@@ -181,6 +183,7 @@ async def test_the_stored_injection_point_is_the_spec_one(env: Context) -> None:
                 "permission_rules": RULES,
                 "expected_agent_id": AGENT_ID,
                 "digest": review["digest"],
+                "revision_id": review["revision"]["id"],
             },
         )
     assert ok.status_code == 200, ok.text

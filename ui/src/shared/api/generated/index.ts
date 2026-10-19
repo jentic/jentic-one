@@ -18,6 +18,7 @@ export type { AgentPatchRequest } from './models/AgentPatchRequest';
 export type { AgentPermissionsRequest } from './models/AgentPermissionsRequest';
 export type { AgentPermissionsResponse } from './models/AgentPermissionsResponse';
 export type { AgentResponse } from './models/AgentResponse';
+export type { AmendSessionRequest } from './models/AmendSessionRequest';
 export type { ApiImportLinksResponse } from './models/ApiImportLinksResponse';
 export type { ApiImportRequest } from './models/ApiImportRequest';
 export type { ApiImportResponse } from './models/ApiImportResponse';

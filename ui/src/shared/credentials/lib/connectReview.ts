@@ -111,6 +111,8 @@ export function describeConfirmError(error: unknown): ConfirmErrorCopy {
 	const problem = (error ?? {}) as ProblemLike;
 	switch (problem.code) {
 		case 'review_stale':
+		case 'revision_changed':
+		case 'revision_required':
 		case 'confirm_kind_mismatch':
 			return {
 				action: 'reload',
