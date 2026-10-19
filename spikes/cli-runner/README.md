@@ -8,3 +8,4 @@ and `aws` in a broker-managed sandbox). Each folder has a `RESULTS.md`.
 | 1 | Can the sandbox run under the chart's pod posture? | `sandbox/` |
 | 2 | Can the registry route the calls a CLI makes (GitHub GraphQL, AWS hosts)? | `discovery/` + `tests/integration/registry/ingest/test_spike_cli_runner_discovery.py` |
 | 3 | Which real commands escape endpoint-override wiring? | `wiring/` |
+| 4 | Does Cloudflare `cf` work via its base-URL override, is `--dry-run` exact, and do `cf`/`aws` run in the sandbox? | `cf/` (+ `sandbox/probe3.sh`, `sandbox/time3.sh`) |
