@@ -42,34 +42,43 @@ typecheck: ## Run mypy
 
 test: test-unit ## Run tests (unit only by default)
 
-test-unit: ## Run unit tests
-	uv run pytest tests/unit/
+# Parallel test execution (pytest-xdist). `loadfile` keeps each test module on
+# one worker, so module-scoped fixtures and in-module ordering hold; Postgres
+# suites get one database per worker (tests/harness/postgres.py). Run serially
+# with `make <target> PYTEST_XDIST=`. PYTEST_ARGS appends extra flags (CI sets
+# `--durations=25`).
+PYTEST_XDIST ?= -n auto --dist loadfile
+PYTEST_ARGS ?=
+COV_FLAGS := --cov=jentic_one --cov-report=term-missing
 
-test-fast: ## Run unit + arch tests (no external services)
-	uv run pytest tests/unit/ tests/arch/
+test-unit: ## Run unit tests (with coverage)
+	uv run pytest tests/unit/ $(PYTEST_XDIST) $(COV_FLAGS) $(PYTEST_ARGS)
+
+test-fast: ## Run unit + arch tests (no external services, no coverage)
+	uv run pytest tests/unit/ tests/arch/ $(PYTEST_XDIST) $(PYTEST_ARGS)
 
 test-integration: ## Run all integration tests against PostgreSQL (requires running fixtures)
-	uv run pytest tests/ -m integration --no-cov
+	uv run pytest tests/ -m integration $(PYTEST_XDIST) $(PYTEST_ARGS)
 
 test-integration-sqlite: ## Run backend-agnostic integration tests against SQLite (no external services)
-	JENTIC_TEST_BACKEND=sqlite uv run pytest tests/integration/ -m integration --no-cov
+	JENTIC_TEST_BACKEND=sqlite uv run pytest tests/integration/ -m integration $(PYTEST_XDIST) $(PYTEST_ARGS)
 
 test-integration-all: test-integration test-integration-sqlite ## Run integration tests on both backends
 
 test-arch: ## Run architecture enforcement tests
-	uv run pytest tests/arch/ -m arch --no-cov
+	uv run pytest tests/arch/ -m arch $(PYTEST_XDIST) $(PYTEST_ARGS)
 
 test-smoke: ## Run smoke tests (requires running services)
-	uv run pytest tests/smoke/ -m smoke --no-cov
+	uv run pytest tests/smoke/ -m smoke
 
 smoke-packaging: ## Build UI+wheel, install in a clean venv, verify the SPA is packaged & served (DB-free)
 	./scripts/spa_packaging_smoke.sh
 
 cov: ## Run unit + arch tests with coverage report
-	uv run pytest tests/unit/ tests/arch/ --cov-report=term-missing --cov-report=html
+	uv run pytest tests/unit/ tests/arch/ $(PYTEST_XDIST) $(COV_FLAGS) --cov-report=html
 
 cov-all: ## Run all tests with coverage (requires running fixtures/services)
-	uv run pytest tests/ --cov-report=term-missing --cov-report=html
+	uv run pytest tests/ $(PYTEST_XDIST) $(COV_FLAGS) --cov-report=html
 
 openapi: ## Regenerate the control-plane OpenAPI spec (+ UI client schema) from code
 	uv run python -m tools.openapi_export
