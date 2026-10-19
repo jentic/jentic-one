@@ -44,7 +44,7 @@ const TONE_STYLES: Record<
 	surface: {
 		root: 'bg-surface-1 rounded-field gap-[2px] border-0 p-[3px]',
 		pill: 'bg-surface-tonal-hover top-[3px] bottom-[3px] rounded-[6px]',
-		segment: 'rounded-[6px] px-3 py-[5px] text-[12.5px] font-semibold',
+		segment: 'rounded-[6px] px-3 py-[5px] text-xs font-semibold',
 		active: 'text-foreground',
 		idle: 'text-foreground-sub',
 	},

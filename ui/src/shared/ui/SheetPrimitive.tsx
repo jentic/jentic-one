@@ -22,6 +22,8 @@
 
 import {
 	useEffect,
+	useId,
+	useLayoutEffect,
 	useRef,
 	useCallback,
 	useState,
@@ -47,10 +49,13 @@ export interface SheetPrimitiveProps {
 	/** Which side the sheet slides from. */
 	side?: 'right' | 'bottom' | 'left';
 	/**
-	 * Panel width for a side sheet: `sm` (480px, the default — forms) or `md`
-	 * (36rem — previews). A width in `className` still wins over either.
+	 * Panel width for a side sheet: `sm` (480px, the default — forms), `md`
+	 * (36rem — previews) or `flow` (880px — a multi-step flow). A width in
+	 * `className` still wins over any.
 	 */
-	size?: 'sm' | 'md';
+	size?: 'sm' | 'md' | 'flow';
+	/** Sheets sharing a key are steps of one flow and swap in place on hand-off. */
+	handoffKey?: string;
 	/** Extra classes for the sheet panel. */
 	className?: string;
 	/** Extra classes for the backdrop overlay. */
@@ -85,6 +90,20 @@ const FOCUSABLE_SELECTOR = [
 	'textarea:not([disabled])',
 	'[tabindex]:not([tabindex="-1"])',
 ].join(', ');
+
+/** `offsetParent` is also null for `position: fixed`, so those are judged by their boxes. */
+function isRendered(el: HTMLElement): boolean {
+	if (el.offsetParent != null) return true;
+	return getComputedStyle(el).position === 'fixed' && el.getClientRects().length > 0;
+}
+
+/** Focusable controls in DOM order, skipping inert/unrendered panes so Tab can't escape the dialog. */
+function focusableIn(root: HTMLElement | null): HTMLElement[] {
+	if (!root) return [];
+	return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+		(el) => el.closest('[inert]') == null && isRendered(el),
+	);
+}
 
 /**
  * How long the sheet stays mounted after `open` goes false — long enough for
@@ -123,7 +142,68 @@ const SIZE_WIDTHS = {
 	sm: 'sm:w-[480px] sm:max-w-[90vw]',
 	// Read-only previews (e.g. the catalog API sheet) get a little more room.
 	md: 'sm:w-[min(36rem,100vw)]',
+	flow: 'sm:w-[880px] sm:max-w-[calc(100vw-2rem)]',
 } as const;
+
+/**
+ * Hand-offs between sheets of one flow (`handoffKey`): the leaving sheet holds its
+ * place and the arriving one appears in it with no slide or scrim fade.
+ */
+interface HandoffEntry {
+	heldAt: number;
+	closedAt: number;
+	openedAt: number;
+	/** A sheet closing right after its OWN open is the flow ending, not a hand-off. */
+	openedBy: string | null;
+	returnFocus: HTMLElement | null;
+	release: Set<() => void>;
+}
+const handoffs = new Map<string, HandoffEntry>();
+
+/** Prune idle flows: `returnFocus` would otherwise pin a detached opener's tree for the module's life. */
+function pruneHandoffs(): void {
+	const now = performance.now();
+	for (const [key, entry] of handoffs) {
+		if (entry.release.size > 0) continue;
+		const last = Math.max(entry.heldAt, entry.closedAt, entry.openedAt);
+		if (now - last >= HANDOFF_HOLD_MS) handoffs.delete(key);
+	}
+}
+
+const handoffFor = (key: string): HandoffEntry => {
+	pruneHandoffs();
+	let entry = handoffs.get(key);
+	if (!entry) {
+		entry = {
+			heldAt: -Infinity,
+			closedAt: -Infinity,
+			openedAt: -Infinity,
+			openedBy: null,
+			returnFocus: null,
+			release: new Set(),
+		};
+		handoffs.set(key, entry);
+	}
+	return entry;
+};
+/** A close this soon after a hold, or an open this soon after a close, is a hand-off. */
+const HANDOFF_WINDOW_MS = 120;
+const HANDOFF_HOLD_MS = 2000;
+
+/** Call right before closing a flow sheet whose next step opens another of the same `handoffKey`. */
+export function holdSheetForHandoff(key: string): void {
+	handoffFor(key).heldAt = performance.now();
+}
+
+/** Tear a flow down: holding sheets and snapshots step aside at once, and the flow is forgotten. */
+export function endSheetHandoff(key: string): void {
+	const entry = handoffs.get(key);
+	if (!entry) return;
+	for (const release of [...entry.release]) release();
+	entry.release.clear();
+	entry.returnFocus = null;
+	handoffs.delete(key);
+}
 
 export function SheetPrimitive({
 	open,
@@ -136,17 +216,21 @@ export function SheetPrimitive({
 	preventClose = false,
 	dismissOnBackdrop = true,
 	keepMounted = false,
+	handoffKey,
 	initialFocus,
 	onAfterClose,
 	ariaLabel,
 	ariaLabelledBy,
 }: SheetPrimitiveProps): JSX.Element | null {
 	const sheetRef = useRef<HTMLDivElement>(null);
+	const instanceId = useId();
 	const previousFocusRef = useRef<HTMLElement | null>(null);
 	const [animationState, setAnimationState] = useState<
 		'closed' | 'entering' | 'open' | 'exiting'
 	>('closed');
 	const [mounted, setMounted] = useState(false);
+	const [holding, setHolding] = useState(false);
+	const [instant, setInstant] = useState(false);
 
 	const styles = SIDE_STYLES[side];
 
@@ -161,8 +245,34 @@ export function SheetPrimitive({
 
 	// `open` is the only dependency — animationState is the internal state we drive.
 	// Including it would create races between user toggles and animation timers.
-	useEffect(() => {
+	// Before paint, so a hand-off swaps the sheets within one frame.
+	useLayoutEffect(() => {
+		const key = handoffKey;
+		const now = performance.now();
 		if (open) {
+			// Reopened while holding for a next step that never came: stay open.
+			if (holding) {
+				setHolding(false);
+				return;
+			}
+			if (key) {
+				const entry = handoffFor(key);
+				entry.openedAt = now;
+				entry.openedBy = instanceId;
+				// Another sheet of the flow is on screen or just left: take its place in place.
+				const taking =
+					entry.release.size > 0 ||
+					now - entry.closedAt < HANDOFF_WINDOW_MS ||
+					document.querySelector(`[data-handoff-key="${CSS.escape(key)}"]`) != null;
+				if (taking && animationState === 'closed') {
+					previousFocusRef.current = entry.returnFocus;
+					entry.returnFocus = null;
+					for (const release of [...entry.release]) release();
+					setInstant(true);
+					setAnimationState('open');
+					return;
+				}
+			}
 			// Re-opened mid-exit (e.g. the setup queue's Back straight after the tray
 			// handed over): enter again rather than finishing the exit and staying shut.
 			if (animationState === 'closed' || animationState === 'exiting') {
@@ -170,11 +280,108 @@ export function SheetPrimitive({
 			}
 		} else {
 			if (animationState === 'open' || animationState === 'entering') {
+				if (key) {
+					const entry = handoffFor(key);
+					entry.closedAt = now;
+					entry.returnFocus = previousFocusRef.current ?? entry.returnFocus;
+					// The next sheet already took over in this commit: step aside at once.
+					if (entry.openedBy !== instanceId && now - entry.openedAt < HANDOFF_WINDOW_MS) {
+						previousFocusRef.current = null;
+						setAnimationState('closed');
+						onAfterCloseRef.current?.();
+						return;
+					}
+					if (now - entry.heldAt < HANDOFF_HOLD_MS) {
+						entry.heldAt = -Infinity;
+						setHolding(true);
+						return;
+					}
+				}
 				setAnimationState('exiting');
 			}
 		}
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [open]);
+
+	useLayoutEffect(() => {
+		if (!handoffKey || !(holding || animationState === 'exiting')) return;
+		const entry = handoffFor(handoffKey);
+		const release = (): void => {
+			previousFocusRef.current = null;
+			setHolding(false);
+			setAnimationState('closed');
+			onAfterCloseRef.current?.();
+		};
+		// The next sheet opened in this same commit, before this one registered.
+		if (
+			entry.openedBy !== instanceId &&
+			entry.openedAt >= entry.closedAt &&
+			performance.now() - entry.openedAt < HANDOFF_WINDOW_MS
+		) {
+			release();
+			return;
+		}
+		entry.release.add(release);
+		const timer = holding
+			? setTimeout(() => {
+					setHolding(false);
+					setAnimationState('exiting');
+				}, HANDOFF_HOLD_MS)
+			: undefined;
+		return (): void => {
+			entry.release.delete(release);
+			if (timer) clearTimeout(timer);
+		};
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- identity is stable
+	}, [handoffKey, holding, animationState]);
+
+	// Unmounted while holding: leave an inert snapshot so the next sheet has a place to take.
+	const rootRef = useRef<HTMLDivElement>(null);
+	const holdingRef = useRef(holding);
+	holdingRef.current = holding || animationState === 'open';
+	useLayoutEffect(() => {
+		const root = rootRef;
+		const held = holdingRef;
+		return (): void => {
+			if (!handoffKey || !held.current || !root.current) return;
+			const entry = handoffFor(handoffKey);
+			const asked = performance.now() - entry.heldAt < HANDOFF_HOLD_MS;
+			if (!asked && !root.current.querySelector('[data-handoff="holding"]')) return;
+			entry.heldAt = -Infinity;
+			const ghost = root.current.cloneNode(true) as HTMLElement;
+			ghost.setAttribute('inert', '');
+			ghost.setAttribute('aria-hidden', 'true');
+			ghost.querySelectorAll('[role="dialog"]').forEach((d) => d.removeAttribute('role'));
+			// Strip every `id` and `data-*`: duplicates make ARIA targets and test-id
+			// queries ambiguous.
+			for (const el of [ghost, ...ghost.querySelectorAll<HTMLElement>('*')]) {
+				el.removeAttribute('id');
+				for (const name of el.getAttributeNames()) {
+					if (name.startsWith('data-')) el.removeAttribute(name);
+				}
+			}
+			document.body.appendChild(ghost);
+			// Registered on the flow so the next sheet (or `endSheetHandoff`) removes it
+			// and the timer never touches `document.body` after this tree is gone.
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			const remove = (): void => {
+				if (timer != null) clearTimeout(timer);
+				timer = undefined;
+				ghost.remove();
+				entry.release.delete(remove);
+			};
+			entry.release.add(remove);
+			timer = setTimeout(remove, HANDOFF_HOLD_MS);
+		};
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- on unmount only
+	}, []);
+
+	// Drop the no-transition flag after paint so this sheet's own close still slides.
+	useEffect(() => {
+		if (!instant) return;
+		const timer = setTimeout(() => setInstant(false), 320);
+		return (): void => clearTimeout(timer);
+	}, [instant]);
 
 	// `onAfterClose` lives in a ref so callers can pass an inline closure
 	// without resetting the exit timer on every parent render.
@@ -237,9 +444,7 @@ export function SheetPrimitive({
 				if (initialFocus?.current) {
 					initialFocus.current.focus();
 				} else {
-					const firstFocusable =
-						sheetRef.current?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
-					firstFocusable?.focus();
+					focusableIn(sheetRef.current)[0]?.focus();
 				}
 			}, 50);
 			return (): void => clearTimeout(timer);
@@ -250,7 +455,10 @@ export function SheetPrimitive({
 		if (animationState === 'closed' && previousFocusRef.current) {
 			const elementToFocus = previousFocusRef.current;
 			previousFocusRef.current = null;
-			setTimeout(() => {
+			// The flow ended here: release the module-scope reference to the element.
+			const entry = handoffKey ? handoffs.get(handoffKey) : undefined;
+			if (entry?.returnFocus === elementToFocus) entry.returnFocus = null;
+			const timer = setTimeout(() => {
 				// A hand-off between overlays (the Add-APIs tray ↔ setup queue) has
 				// already put focus in the next one; restoring here would yank it
 				// back out to a trigger behind that overlay.
@@ -264,7 +472,9 @@ export function SheetPrimitive({
 				}
 				if (elementToFocus?.isConnected) elementToFocus.focus();
 			}, 10);
+			return (): void => clearTimeout(timer);
 		}
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- the key is stable per flow
 	}, [animationState]);
 
 	// `overscroll-behavior: contain` is the modern scroll-lock.
@@ -305,9 +515,8 @@ export function SheetPrimitive({
 			}
 
 			if (e.key === 'Tab') {
-				const focusable =
-					sheetRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR);
-				if (!focusable?.length) return;
+				const focusable = focusableIn(sheetRef.current);
+				if (!focusable.length) return;
 
 				const first = focusable[0];
 				const last = focusable[focusable.length - 1];
@@ -344,6 +553,7 @@ export function SheetPrimitive({
 
 	return createPortal(
 		<div
+			ref={rootRef}
 			hidden={isClosed}
 			className={cn('fixed inset-0 z-50', isClosed && 'hidden')}
 			style={{ overscrollBehavior: 'contain' }}
@@ -354,6 +564,7 @@ export function SheetPrimitive({
 					'bg-scrim absolute inset-0 overflow-hidden backdrop-blur-[3px]',
 					'ease-out-soft transition-opacity duration-[220ms]',
 					'motion-reduce:duration-[10ms]',
+					instant && 'transition-none',
 					isVisible ? 'opacity-100' : 'opacity-0',
 					overlayClassName,
 				)}
@@ -385,6 +596,9 @@ export function SheetPrimitive({
 						styles.panel,
 						side !== 'bottom' && SIZE_WIDTHS[size],
 						isVisible ? styles.enter : styles.exit,
+						// A hand-off: in place at once; only the content fades in.
+						instant &&
+							'transition-none [&>*]:animate-[j1-page-out_200ms_var(--ease-out-soft)_reverse_both]',
 						className,
 					)}
 					style={{
@@ -393,6 +607,8 @@ export function SheetPrimitive({
 					}}
 					// Tagged only while on screen — a closed `keepMounted` sheet is not open.
 					data-testid={isClosed ? undefined : 'sheet-primitive'}
+					data-handoff-key={isClosed || !handoffKey ? undefined : handoffKey}
+					data-handoff={instant ? 'in' : holding ? 'holding' : undefined}
 				>
 					{children}
 				</div>
