@@ -109,9 +109,12 @@ flowchart TB
   late, or not at all when failures spread thinly across processes. If the
   Redis instance has a `maxmemory-policy` other than `noeviction`, it can
   evict live counter keys (they all carry a TTL) and the gate undercounts
-  without an error. The redis client is an optional extra
-  (`pip install jentic-one[redis]`), not part of the published container
-  image — scaling out on that image means building your own with the extra.
+  without an error. The redis client is the optional `redis` extra
+  (`pip install jentic-one[redis]` for a pip install), not part of the
+  published container image — scaling out on that image means building
+  your own with `--build-arg EXTRAS=redis` (`make build-app EXTRAS=redis`
+  single-arch). The image installs the wheel `--no-deps`, so extras reach
+  it only through that build arg.
 
 ## The memory shared-state backend is bounded
 
