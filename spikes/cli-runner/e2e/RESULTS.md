@@ -90,3 +90,29 @@ stands in for the runner's out-of-sandbox forwarder.
 Not covered: the sandboxed variant (netns + unix socket hop), `aws`/`cf`, and the
 wiring gaps from spike 3 (absolute `Link` URLs, redirects to other hosts), which still
 need every outbound host in the map.
+
+### Review of `forwarder.py` (2026-10-19)
+
+Tested against a separate instance of the unmodified forwarder (fake token,
+capture server in place of the broker):
+
+| # | Finding | Evidence | Severity |
+|---|---|---|---|
+| R1 | **The agent token follows redirects to other hosts.** `urllib` follows a 3xx itself and keeps `Authorization`, so the token is sent to the `Location` host. The broker deliberately never follows redirects, and the forwarder undoes that | 302 → `127.0.0.1:58303/landing` received `Bearer <agent token>`; the client saw 200 | blocker |
+| R2 | **Broker-control headers are forwarded** from the CLI side: `Jentic-Revision`, `Jentic-Credential-Name`, `Prefer`, `Idempotency-Key`. The sandboxed process could pin revisions, choose a credential, or force async | all four arrived at the capture server | major |
+| R3 | **The agent token is in argv**, so it's visible to every local process via `ps` | `ps` shows the token argument for the running instances | major |
+| R4 | **Chunked request bodies are dropped silently.** Only `Content-Length` is read | chunked upload → broker saw `content-length=0`, client got 200 | major |
+| R5 | **Response headers are reduced to `Content-Type` + `jentic-execution-id`.** `Link`, `ETag`, `X-RateLimit-*` and `Location` are lost, so `gh api --paginate` silently stops after page 1 and conditional requests can't work | `Link`/`ETag` absent in the client response | major |
+| R6 | `HEAD` isn't handled | 501 | minor |
+| R7 | **Broker unreachable** → unhandled exception, connection closed with no response | curl exit 52 | minor |
+| R8 | No per-invocation correlation (session/trace id), so child calls can't be grouped into one invocation record | no such header sent | minor |
+
+Required behaviour for the production version:
+- never follow redirects; hand 3xx back to the CLI, and only through the
+  profile's host allowlist;
+- forward headers from an allowlist, never `Jentic-*`, `Prefer` or
+  `Idempotency-Key`;
+- hold the token outside argv and env, and outside the sandbox;
+- support chunked bodies or reject them explicitly;
+- pass response headers through, minus hop-by-hop;
+- return explicit errors.
