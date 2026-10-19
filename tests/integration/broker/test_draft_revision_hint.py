@@ -123,7 +123,7 @@ def _spec_source(
 async def _import(ctx: Context, *, host: str = HOST, origin: str | None = None) -> dict[str, Any]:
     result = await ImportHandler(ctx).execute(
         job_id=f"job_{uuid.uuid4().hex[:20]}",
-        session=None,
+        db=None,
         payload={"sources": [_spec_source(host=host, origin=origin)]},
         created_by=SUBMITTER,
     )

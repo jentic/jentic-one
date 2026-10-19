@@ -69,7 +69,7 @@ def _source(name: str, server_url: str) -> dict[str, Any]:
 async def _import_draft(ctx: Context, source: dict[str, Any]) -> uuid.UUID:
     result = await ImportHandler(ctx).execute(
         job_id=f"job_{uuid.uuid4().hex[:20]}",
-        session=None,
+        db=None,
         payload={"sources": [source]},
         created_by="agnt_draft_candidates",
     )
