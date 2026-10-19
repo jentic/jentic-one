@@ -98,18 +98,17 @@ def _app(ctx: Context, upstream_client: httpx.AsyncClient, upstream_url: str) ->
             trace_id="0af7651916cd43dd8448eb211c80319c",
             operation=OperationInfo(id="postThing", path="/thing", method="POST"),
         )
-        async with ctx.admin_db.transaction() as session:
-            outcome = await run_execution(
-                ctx_req,
-                body=b"{}",
-                headers={"content-type": "application/json"},
-                session=session,
-                timeout=5.0,
-                broker=default_broker(HttpRunner(upstream_client)),
-                execution_id=execution_id,
-                actor_id="agnt_transport_test",
-                actor_type="agent",
-            )
+        outcome = await run_execution(
+            ctx_req,
+            body=b"{}",
+            headers={"content-type": "application/json"},
+            admin_db=ctx.admin_db,
+            timeout=5.0,
+            broker=default_broker(HttpRunner(upstream_client)),
+            execution_id=execution_id,
+            actor_id="agnt_transport_test",
+            actor_type="agent",
+        )
         return Response(content=outcome.result.body, status_code=outcome.result.status_code)
 
     return app
