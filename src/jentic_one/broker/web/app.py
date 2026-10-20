@@ -213,11 +213,13 @@ def create_app(ctx: Context, container: AppContainer | None = None) -> FastAPI:
         container=container,
         include_instance_router=False,
     )
-    # Opt-in Server-Timing (#1717): absent unless enabled, so the default path
-    # pays nothing beyond the stage hooks' context-variable reads. Added before
+    # One per-request recorder feeds both the opt-in Server-Timing header and
+    # broker.execution.overhead_ms, so it is mounted whenever either is on;
+    # with the header off it records without emitting anything. Added before
     # admission control so it sits inside it: a shed 503 carries no timing.
-    if ctx.config.broker.server_timing:
-        app.add_middleware(ServerTimingMiddleware)
+    server_timing = ctx.config.broker.server_timing
+    if server_timing or ctx.config.observability.metrics.exporter != "none":
+        app.add_middleware(ServerTimingMiddleware, emit_header=server_timing)
     # One admission gate shared by the shedding middleware and the readiness
     # probe, so both observe the same in-flight counter.
     gate = _AdmissionGate(max_in_flight=resilience.max_in_flight)

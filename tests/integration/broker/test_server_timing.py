@@ -1,10 +1,12 @@
-"""Integration test: ``Server-Timing`` on the real execute route (#1717).
+"""Integration test: the per-request timing recorder on the real execute route.
 
-Drives the broker's catch-all ``proxy`` route end-to-end — the real auth
-dependency, discovery, authorization (credential selection against the control
-DB), credential injection (real decryption), the execution pipeline, and the
-admin-DB execution record — behind :class:`ServerTimingMiddleware`, against a
-real local HTTP upstream over a socket that sends its own ``Server-Timing``.
+It feeds both the opt-in ``Server-Timing`` header (#1717) and the
+``broker.execution.overhead_ms`` histogram (#1716). Drives the broker's
+catch-all ``proxy`` route end-to-end — the real auth dependency, discovery,
+authorization (credential selection against the control DB), credential
+injection (real decryption), the execution pipeline, and the admin-DB
+execution record — behind :class:`ServerTimingMiddleware`, against a real
+local HTTP upstream over a socket that sends its own ``Server-Timing``.
 
 Only the out-of-process / injected seams are stand-ins: the opaque-token
 resolver, the registry resolver, the binding deriver, and the rule evaluator
@@ -16,24 +18,36 @@ from __future__ import annotations
 import asyncio
 import re
 import socket
-from collections.abc import AsyncGenerator
+import time
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 import httpx
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from jentic.problem_details import ProblemDetailException, problem_detail_exception_handler
+from opentelemetry.sdk.metrics.export import HistogramDataPoint, InMemoryMetricReader
 from sqlalchemy import delete, select
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.broker.adapters.runners.circuit import CircuitBreakerRunner
 from jentic_one.broker.adapters.runners.http import HttpRunner
+from jentic_one.broker.adapters.runners.retry import RetryRunner
+from jentic_one.broker.core import server_timing as core_server_timing
+from jentic_one.broker.core.exceptions import UpstreamTimeoutError
 from jentic_one.broker.core.headers import JenticHeader
+from jentic_one.broker.core.server_timing import (
+    ServerTimingRecorder,
+    ServerTimingStage,
+    current_recorder,
+)
 from jentic_one.broker.core.token_validation import CachedTokenValidator
 from jentic_one.broker.services.auth import DualTokenValidator, JwtTokenValidator, JwtVerifier
+from jentic_one.broker.services.execution import overhead, service
 from jentic_one.broker.web.deps import get_http_runner
 from jentic_one.broker.web.errors import install_broker_error_handlers
 from jentic_one.broker.web.routers import execute
@@ -42,7 +56,16 @@ from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.customer_api_keys import CustomerAPIKey
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION
-from jentic_one.shared.broker.execution import RunnerRequest, RunnerResult, UpstreamRunner
+from jentic_one.shared.broker.broker import Broker
+from jentic_one.shared.broker.execution import (
+    ExecutionContext,
+    ExecutionOutcome,
+    RunnerRequest,
+    RunnerResult,
+    StreamingOutcome,
+    StreamingUpstreamRunner,
+    UpstreamRunner,
+)
 from jentic_one.shared.broker.protocols import (
     BoundCredential,
     CredentialDerivation,
@@ -50,12 +73,14 @@ from jentic_one.shared.broker.protocols import (
     RuleEvaluation,
     RuleVerdict,
 )
+from jentic_one.shared.broker.schemas import ExecuteRequestContext
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType, ExecutionStatus, StoredCredentialType
 from jentic_one.shared.resilience import CircuitBreaker
 from jentic_one.shared.schemas import APIReference, OperationInfo
 from jentic_one.shared.state.backend import MemoryStateBackend
+from tests.harness.metrics import capture_histogram, histogram_points
 
 pytestmark = pytest.mark.integration
 
@@ -96,6 +121,12 @@ def _assert_persist_is_sane(stages: dict[str, float]) -> None:
 class _Upstream:
     port: int = 0
     request_heads: list[dict[str, str]] = field(default_factory=list)
+    #: Per-request ``(status, delay before the response head)``, consumed in
+    #: order; once empty every request gets an immediate ``200``.
+    script: list[tuple[int, float]] = field(default_factory=list)
+    #: Send the head and part of the body, then close mid-body (the declared
+    #: ``Content-Length`` is never reached).
+    reset_mid_body: bool = False
 
 
 @pytest.fixture()
@@ -109,13 +140,19 @@ async def upstream() -> AsyncGenerator[_Upstream, None]:
         state.request_heads.append(
             {k.strip().lower(): v.strip() for k, _, v in (ln.partition(":") for ln in lines if ln)}
         )
+        status, delay_s = state.script.pop(0) if state.script else (200, 0.0)
+        if delay_s:
+            await asyncio.sleep(delay_s)
+        body = _UPSTREAM_BODY
+        if state.reset_mid_body:
+            body = body[: len(body) // 2]
         writer.write(
-            b"HTTP/1.1 200 OK\r\n"
-            b"Content-Type: application/json\r\n"
+            f"HTTP/1.1 {status} X\r\n".encode("latin-1")
+            + b"Content-Type: application/json\r\n"
             + f"Server-Timing: {_UPSTREAM_TIMING}\r\n".encode("latin-1")
             + f"Content-Length: {len(_UPSTREAM_BODY)}\r\n".encode("latin-1")
             + b"Connection: close\r\n\r\n"
-            + _UPSTREAM_BODY
+            + body
         )
         await writer.drain()
         writer.close()
@@ -217,24 +254,109 @@ class _DenyAll:
 
 
 class _BufferedOnly(UpstreamRunner):
-    """Hides the HTTP runner's ``stream`` so the route takes the buffered path."""
+    """Hides the runner's ``stream`` so the route takes the buffered path."""
 
-    def __init__(self, inner: HttpRunner) -> None:
+    def __init__(self, inner: UpstreamRunner) -> None:
         self._inner = inner
 
     async def run(self, request: RunnerRequest) -> RunnerResult:
         return await self._inner.run(request)
 
 
+class _CaptureRecorder:
+    """Inner ASGI middleware keeping each request's recorder for later assertions,
+    and the recorder's elapsed time when the response headers left."""
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        sink: list[ServerTimingRecorder],
+        headers_at_ms: list[float],
+        on_headers: Callable[[], None] | None = None,
+    ) -> None:
+        self._app = app
+        self._sink = sink
+        self._headers_at_ms = headers_at_ms
+        self._on_headers = on_headers
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        recorder = current_recorder()
+        if recorder is None:
+            await self._app(scope, receive, send)
+            return
+        self._sink.append(recorder)
+
+        async def stamp_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                self._headers_at_ms.append(recorder.elapsed_ms())
+                if self._on_headers is not None:
+                    self._on_headers()
+            await send(message)
+
+        await self._app(scope, receive, stamp_headers)
+
+
+class _HoldableClock:
+    """``perf_counter`` for the recorder that can be held still.
+
+    While held it returns the reading taken at :meth:`hold`; :meth:`release`
+    resumes from that reading (the held span counts as zero), so it stays
+    monotonic. Holding it from the overhead sample to the response headers
+    makes the dispatch gap between the two exactly zero on any machine.
+    """
+
+    def __init__(self) -> None:
+        self._offset = 0.0
+        self._held: float | None = None
+
+    def perf_counter(self) -> float:
+        if self._held is not None:
+            return self._held
+        return time.perf_counter() - self._offset
+
+    def hold(self) -> None:
+        if self._held is None:
+            self._held = self.perf_counter()
+
+    def release(self) -> None:
+        if self._held is not None:
+            self._offset = time.perf_counter() - self._held
+            self._held = None
+
+
 def _app(
-    ctx: Context, runner: UpstreamRunner, *, server_timing: bool, deny: bool = False
+    ctx: Context,
+    runner: UpstreamRunner,
+    *,
+    server_timing: bool,
+    deny: bool = False,
+    recorder_only: bool = False,
+    recorders: list[ServerTimingRecorder] | None = None,
+    headers_at_ms: list[float] | None = None,
+    on_headers: Callable[[], None] | None = None,
+    broker: Broker | None = None,
 ) -> FastAPI:
+    """The execute router behind the recorder middleware.
+
+    ``server_timing`` mounts it emitting the header; ``recorder_only`` mounts
+    it with ``emit_header=False`` (how the broker runs it for metrics alone).
+    """
     app = FastAPI()
     app.add_exception_handler(ProblemDetailException, problem_detail_exception_handler)  # type: ignore[arg-type]
     install_broker_error_handlers(app)
     app.include_router(execute.router)
-    if server_timing:
-        app.add_middleware(ServerTimingMiddleware)
+    if recorders is not None:
+        app.add_middleware(
+            _CaptureRecorder,
+            sink=recorders,
+            headers_at_ms=headers_at_ms if headers_at_ms is not None else [],
+            on_headers=on_headers,
+        )
+    if server_timing or recorder_only:
+        app.add_middleware(ServerTimingMiddleware, emit_header=server_timing)
+    if broker is not None:
+        app.state.broker = broker
     app.state.ctx = ctx
     resolver = AsyncMock()
     resolver.resolve_access_token = AsyncMock(
@@ -418,3 +540,253 @@ async def test_rule_deny_lists_stage_names_without_durations(
         "jentic-auth, jentic-egress, jentic-discover, jentic-rules, jentic-total"
     ]
     assert upstream.request_heads == []
+
+
+# ---------------------------------------------------------------------------
+# broker.execution.overhead_ms — derived from the same recorder
+# ---------------------------------------------------------------------------
+
+_OVERHEAD = "broker.execution.overhead_ms"
+_DURATION = "broker.execution.duration_ms"
+_UPSTREAM_DELAY_S = 0.2
+_BACKOFF_S = 0.25
+#: Broker-side stages recorded before the upstream call on both paths.
+_PRE_UPSTREAM_STAGES = (
+    ServerTimingStage.AUTH,
+    ServerTimingStage.EGRESS,
+    ServerTimingStage.DISCOVER,
+    ServerTimingStage.RULES,
+    ServerTimingStage.BODY,
+    ServerTimingStage.CRED,
+)
+
+
+@pytest.fixture()
+def overhead_reader() -> Iterator[InMemoryMetricReader]:
+    with capture_histogram(overhead, "_execution_overhead", _OVERHEAD) as reader:
+        yield reader
+
+
+@pytest.fixture()
+def duration_reader() -> Iterator[InMemoryMetricReader]:
+    with capture_histogram(service, "_execution_duration", _DURATION) as reader:
+        yield reader
+
+
+def _single_point(reader: InMemoryMetricReader, name: str) -> HistogramDataPoint:
+    (point,) = histogram_points(reader, name)
+    assert point.count == 1
+    return point
+
+
+async def _statuses(ctx: Context) -> list[str]:
+    async with ctx.admin_db.session() as session:
+        rows = await session.execute(
+            select(ExecutionRecord.status).where(ExecutionRecord.actor_id == _AGENT)
+        )
+        return list(rows.scalars().all())
+
+
+class _FixedBackoff(RetryRunner):
+    """The real retry loop with a deterministic backoff (no jitter)."""
+
+    def _backoff(self, attempt: int, *, hint: int | None, deadline: float | None) -> float:
+        return _BACKOFF_S
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["buffered", "streaming"])
+async def test_overhead_excludes_upstream_and_covers_persistence(
+    ctx: Context,
+    seeded_credential: None,
+    upstream: _Upstream,
+    overhead_reader: InMemoryMetricReader,
+    monkeypatch: pytest.MonkeyPatch,
+    streaming: bool,
+) -> None:
+    """One sample per execution, read from the request's recorder with the header
+    off. The sample is exactly the broker time outside ``jentic-upstream``: what
+    precedes the upstream headers, plus (buffered) everything after the upstream
+    call up to the headers, or (streaming) the persistence after the body.
+
+    The recorder's clock is held from the sample to the response headers, so
+    the comparison with the elapsed time at the headers is exact rather than
+    allowing for response dispatch on a loaded runner."""
+    clock = _HoldableClock()
+    monkeypatch.setattr(core_server_timing, "time", clock)
+    sample_elapsed = overhead.upstream_exclusive_elapsed_ms
+
+    def _held_after_sample(recorder: ServerTimingRecorder) -> float:
+        clock.hold()
+        return sample_elapsed(recorder)
+
+    monkeypatch.setattr(execute, "upstream_exclusive_elapsed_ms", _held_after_sample)
+    upstream.script.append((200, _UPSTREAM_DELAY_S))
+    recorders: list[ServerTimingRecorder] = []
+    headers_at_ms: list[float] = []
+    async with httpx.AsyncClient() as upstream_client:
+        http_runner = HttpRunner(upstream_client)
+        runner: UpstreamRunner = http_runner if streaming else _BufferedOnly(http_runner)
+        app = _app(
+            ctx,
+            runner,
+            server_timing=False,
+            recorder_only=True,
+            recorders=recorders,
+            headers_at_ms=headers_at_ms,
+            on_headers=clock.release,
+        )
+        resp = await _execute(app, upstream.port)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.headers.get_list("server-timing") == [_UPSTREAM_TIMING]
+    (recorder,) = recorders
+    (headers_at,) = headers_at_ms
+    point = _single_point(overhead_reader, _OVERHEAD)
+    assert dict(point.attributes or {}) == {
+        "operation": "getThings",
+        "mode": "streaming" if streaming else "buffered",
+    }
+    upstream_ms = recorder.duration_ms(ServerTimingStage.UPSTREAM)
+    persist_ms = recorder.duration_ms(ServerTimingStage.PERSIST)
+    assert upstream_ms >= _UPSTREAM_DELAY_S * 1000
+    assert persist_ms > 0.0  # the streaming write runs after the body, still recorded
+    # Broker time up to the response headers. The clock stood still from the
+    # sample to the headers, so the pre-header part equals it exactly.
+    to_headers_ms = headers_at - upstream_ms
+    post_ms = persist_ms if streaming else 0.0
+    assert point.sum - post_ms == pytest.approx(to_headers_ms, abs=1e-6)
+    assert point.sum < _UPSTREAM_DELAY_S * 1000
+    if streaming:
+        # The pre-header part is >= 0, so the persistence term is in the sample.
+        assert point.sum >= persist_ms
+    else:
+        # The buffered record commits before the sample, so it is inside it.
+        assert point.sum >= persist_ms + sum(recorder.duration_ms(s) for s in _PRE_UPSTREAM_STAGES)
+    assert await _statuses(ctx) == [ExecutionStatus.COMPLETED]
+
+
+async def test_retry_and_backoff_are_upstream_window_not_overhead_or_duration(
+    ctx: Context,
+    seeded_credential: None,
+    upstream: _Upstream,
+    overhead_reader: InMemoryMetricReader,
+    duration_reader: InMemoryMetricReader,
+) -> None:
+    """A 503 → backoff → 200 retry: ``duration_ms`` is the final attempt only,
+    ``overhead_ms`` excludes the whole ``jentic-upstream`` window, so the retry
+    attempt and the backoff sleep are in neither histogram."""
+    upstream.script.append((503, 0.0))
+    recorders: list[ServerTimingRecorder] = []
+    async with httpx.AsyncClient() as upstream_client:
+        runner = _BufferedOnly(_FixedBackoff(HttpRunner(upstream_client), max_attempts=2))
+        app = _app(ctx, runner, server_timing=False, recorder_only=True, recorders=recorders)
+        resp = await _execute(app, upstream.port)
+
+    assert resp.status_code == 200, resp.text
+    assert len(upstream.request_heads) == 2
+    (recorder,) = recorders
+    upstream_window_ms = recorder.duration_ms(ServerTimingStage.UPSTREAM)
+    duration = _single_point(duration_reader, _DURATION)
+    overhead_point = _single_point(overhead_reader, _OVERHEAD)
+    assert upstream_window_ms >= _BACKOFF_S * 1000
+    assert duration.sum < _BACKOFF_S * 1000
+    assert overhead_point.sum < _BACKOFF_S * 1000
+    assert upstream_window_ms - duration.sum >= _BACKOFF_S * 1000 - 1  # in neither (int ms)
+
+
+class _OpenFailureBroker:
+    """A broker whose stream fails to open after delivering a FAILED outcome to the
+    persistence callback first — the delivery shape of a stream-open failure."""
+
+    async def execute(self, request: RunnerRequest, context: ExecutionContext) -> ExecutionOutcome:
+        raise AssertionError("buffered path not expected")
+
+    async def execute_streaming(
+        self,
+        runner: StreamingUpstreamRunner,
+        request: RunnerRequest,
+        ctx_req: ExecuteRequestContext,
+        execution_id: str,
+        *,
+        transfer_deadline_s: float,
+        background_callback: Callable[[StreamingOutcome], Awaitable[None]] | None = None,
+    ) -> Response:
+        assert background_callback is not None
+        await background_callback(
+            StreamingOutcome(
+                execution_id=execution_id, http_status=502, error="upstream_connect_failed"
+            )
+        )
+        raise UpstreamTimeoutError(
+            detail="The upstream connection could not be established in time.",
+            type="upstream_connect_failed",
+        )
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["buffered", "streaming-open"])
+async def test_failed_upstream_records_no_overhead(
+    ctx: Context,
+    seeded_credential: None,
+    refused_port: int,
+    overhead_reader: InMemoryMetricReader,
+    streaming: bool,
+) -> None:
+    """A call that never got an upstream response persists its FAILED record but
+    emits no overhead sample, on both paths. On streaming, that write is
+    delivered from inside ``jentic-upstream``, so it is not also timed as
+    ``jentic-persist`` (it would be counted twice)."""
+    recorders: list[ServerTimingRecorder] = []
+    async with httpx.AsyncClient() as upstream_client:
+        http_runner = HttpRunner(upstream_client)
+        runner: UpstreamRunner = http_runner if streaming else _BufferedOnly(http_runner)
+        app = _app(
+            ctx,
+            runner,
+            server_timing=False,
+            recorder_only=True,
+            recorders=recorders,
+            broker=_OpenFailureBroker() if streaming else None,
+        )
+        resp = await _execute(app, refused_port)
+
+    # A refused connect is a 502 on the buffered path and a 504 on stream open.
+    assert resp.status_code == (504 if streaming else 502), resp.text
+    assert resp.json()["type"] == "upstream_connect_failed"
+    assert await _statuses(ctx) == [ExecutionStatus.FAILED]
+    assert histogram_points(overhead_reader, _OVERHEAD) == []
+    (recorder,) = recorders
+    assert recorder.has(ServerTimingStage.UPSTREAM)
+    # Buffered times its FAILED write after the upstream stage; streaming's
+    # open-failure write sits inside it.
+    assert recorder.has(ServerTimingStage.PERSIST) is not streaming
+
+
+async def test_streaming_failure_after_headers_records_no_overhead_without_its_record(
+    ctx: Context,
+    seeded_credential: None,
+    upstream: _Upstream,
+    overhead_reader: InMemoryMetricReader,
+) -> None:
+    """A stream that got the upstream headers and then reset mid-body records an
+    overhead sample only with its persisted record. The record is written only
+    after a body that completes (#1712), so this one persists nothing, times no
+    ``jentic-persist`` and records no sample, though its pre-header time is known."""
+    upstream.reset_mid_body = True
+    recorders: list[ServerTimingRecorder] = []
+    async with httpx.AsyncClient() as upstream_client:
+        app = _app(
+            ctx,
+            HttpRunner(upstream_client),
+            server_timing=False,
+            recorder_only=True,
+            recorders=recorders,
+        )
+        resp = await _execute(app, upstream.port)
+
+    assert resp.status_code == 200
+    assert resp.content != _UPSTREAM_BODY  # the body was cut off after the headers
+    assert await _statuses(ctx) == []
+    (recorder,) = recorders
+    assert recorder.has(ServerTimingStage.UPSTREAM)
+    assert not recorder.has(ServerTimingStage.PERSIST)
+    assert histogram_points(overhead_reader, _OVERHEAD) == []
