@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.registry.core.schema.notes import Note
 from jentic_one.registry.scoping.filters import build_access_filters
@@ -54,3 +55,50 @@ def test_non_admin_always_scoped() -> None:
     compiled = filters[0].compile(compile_kwargs={"literal_binds": True})
     sql = str(compiled)
     assert "agent_1" in sql
+
+
+def _sql(filters: list[ColumnElement[bool]]) -> str:
+    assert len(filters) == 1
+    return str(filters[0].compile(compile_kwargs={"literal_binds": True}))
+
+
+def test_owned_agent_ids_widen_the_read_filter() -> None:
+    identity = _identity(sub="user_42")
+    sql = _sql(build_access_filters(identity, Note, owned_agent_ids=["agt_a", "agt_b"]))
+    assert "notes.created_by = 'user_42'" in sql
+    assert " OR " in sql
+    assert "notes.created_by IN ('agt_a', 'agt_b')" in sql
+
+
+@pytest.mark.parametrize("owned", [None, []])
+def test_no_owned_agents_stays_author_only(owned: list[str] | None) -> None:
+    sql = _sql(build_access_filters(_identity(sub="user_42"), Note, owned_agent_ids=owned))
+    assert sql == "notes.created_by = 'user_42'"
+
+
+def test_write_filter_is_author_only() -> None:
+    sql = _sql(build_access_filters(_identity(sub="user_42"), Note, for_write=True))
+    assert sql == "notes.created_by = 'user_42'"
+
+
+def test_write_filter_rejects_owned_agent_widening() -> None:
+    with pytest.raises(ValueError, match="read-only visibility widening"):
+        build_access_filters(
+            _identity(sub="user_42"), Note, owned_agent_ids=["agt_a"], for_write=True
+        )
+
+
+def test_admin_unrestricted_even_with_owned_agents() -> None:
+    identity = _identity(permissions=["org:admin"])
+    assert build_access_filters(identity, Note, owned_agent_ids=["agt_a"]) == []
+    assert build_access_filters(identity, Note, for_write=True) == []
+
+
+def test_owner_delegation_does_not_widen_notes() -> None:
+    identity = _identity(
+        sub="agt_a",
+        actor_type=ActorType.AGENT,
+        permissions=["owner:resources:read", "owner:agents:read", "owner:credentials:read"],
+        parent_actor_id="user_42",
+    )
+    assert _sql(build_access_filters(identity, Note)) == "notes.created_by = 'agt_a'"
