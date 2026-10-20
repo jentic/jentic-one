@@ -1621,6 +1621,11 @@
     "ServerConfig": {
       "description": "HTTP server settings.",
       "properties": {
+        "advertised_broker_url": {
+          "default": "",
+          "title": "Advertised Broker Url",
+          "type": "string"
+        },
         "backend": {
           "default": "local",
           "enum": [

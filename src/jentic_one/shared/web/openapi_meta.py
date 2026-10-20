@@ -856,6 +856,9 @@ PUBLIC_OPERATION_IDS: frozenset[str] = frozenset(
         "getHealth",
         # Backend-identity probe: unauthenticated, self-describing, no secrets.
         "getInstance",
+        # Deployment capability document: public by design (the login-picker /
+        # one-URL onboarding contract); minimal, no version string (CWE-200).
+        "getCapabilities",
         # Admin-surface health probe (``/admin/health`` combined, ``/health``
         # standalone): liveness plus the setup_required first-run flag the SPA
         # and CLI read before any user exists. No tenant data.
@@ -1007,6 +1010,7 @@ _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/health$"), "System"),
     (re.compile(r"^/[^/]+/health$"), "System"),
     (re.compile(r"^/instance$"), "System"),
+    (re.compile(r"^/capabilities$"), "Discovery"),
     (re.compile(r"^/system/version$"), "System"),
     (re.compile(r"^/admin/config"), "Configuration"),
     (re.compile(r"^/credentials"), "Credentials"),

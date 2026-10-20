@@ -43,6 +43,7 @@ from jentic_one.shared.telemetry.sink import TelemetrySink, set_active_sink
 from jentic_one.shared.tracing import instrument_inbound_app
 from jentic_one.shared.web.agent_discovery import get_agent_discovery_router
 from jentic_one.shared.web.auth import API_KEY_HEADER
+from jentic_one.shared.web.capabilities import get_capabilities_router
 from jentic_one.shared.web.container import AppContainer, RouterSpec
 from jentic_one.shared.web.deps import TokenVerifier
 from jentic_one.shared.web.errors import (
@@ -739,6 +740,16 @@ def create_surface_app(
         # No COMMON_ERROR_RESPONSES: a parameterless public GET can't produce
         # 400/422 (same posture as /health).
         app.include_router(get_instance_router())
+        # Public deployment self-description (auth methods, broker URL, surface
+        # composition, feature flags) so a client can onboard from one URL.
+        # Same opt-out as /instance: the broker data plane never mounts it.
+        # COMMON_ERROR_RESPONSES because it is Discovery-tagged (not System):
+        # business operations must document the standard error envelope.
+        # Kept on app.state so a surface that serves the control-plane endpoint
+        # reference can reuse this router object instead of rebuilding it.
+        capabilities_router = get_capabilities_router(ctx, enabled_apps)
+        app.state.capabilities_router = capabilities_router
+        app.include_router(capabilities_router, responses=COMMON_ERROR_RESPONSES)
         # Running/latest version so the signed-in SPA can show the current
         # version and an update banner. Authenticated (any valid session; not
         # published unauthenticated). The latest release is resolved server-side
@@ -991,7 +1002,19 @@ def create_combined_app(
     # The combined control-plane route table — the same assembly the
     # standalone endpoint reference introspects (see
     # build_control_plane_reference_app), so the two cannot drift.
-    _include_control_plane_routes(root, apps, ctx=ctx, extra_routers=container.extra_routers)
+    #
+    # Public deployment self-description (auth methods, broker URL, surface
+    # composition, feature flags) so a client can onboard from one URL. Its
+    # factory resolves state at build (runs contributors, logs), so it is built
+    # once here and handed over as a prebuilt router (mounted after /instance).
+    capabilities_router = get_capabilities_router(ctx, set(apps))
+    _include_control_plane_routes(
+        root,
+        apps,
+        ctx=ctx,
+        extra_routers=container.extra_routers,
+        prebuilt_routers=(capabilities_router,),
+    )
 
     for surface in apps:
         mod = importlib.import_module(SURFACE_MODULES[surface])

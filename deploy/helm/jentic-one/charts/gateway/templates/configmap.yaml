@@ -298,6 +298,17 @@ data:
             proxy_set_header X-Forwarded-Proto $scheme;
         }
 
+        # The capability document describes the process answering it; the
+        # admin backend hosts the auth surface, whose sign-in methods are the
+        # document's primary (login-picker) contract.
+        location = /capabilities {
+            proxy_pass http://admin_backend;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
         location = /instance {
             proxy_pass http://admin_backend;
             proxy_set_header Host $host;
