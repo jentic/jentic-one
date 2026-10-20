@@ -159,7 +159,7 @@ async def _check_secret_confined(ctx: Context, upstream: list[httpx.Request]) ->
         assert job is not None and job.payload is not None
         await ImportHandler(ctx).execute(
             job_id=str(uuid.uuid4()),
-            session=None,
+            db=None,
             payload=dict(job.payload),
             created_by="usr_admin",
         )
