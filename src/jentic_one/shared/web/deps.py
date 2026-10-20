@@ -123,13 +123,13 @@ def get_credential_recheck(request: Request) -> CredentialRecheck:
     applies :func:`enforce_identity_requirements` to the identity the verifier
     returns, so a revoked permission is seen as well as a dead credential
     (#1836). The identity carries whatever permissions the verifier resolves:
-    live grants for API keys and agent access tokens, the issued set for
-    other tokens (a login JWT until it is re-minted).
+    live grants for API keys and user access tokens, the issued set for a
+    login JWT or an agent access token (the presented token is the one
+    re-verified, so a refresh elsewhere does not update it).
 
     A database that cannot answer reads as ``UNAVAILABLE``, a requirement the
     identity no longer meets as ``FORBIDDEN``, and any other failure as
-    ``REFUSED``. The caller treats all three as not valid (fail closed); a
-    reconnect gets the precise 401/403/503.
+    ``REFUSED``. The caller treats all three as not valid (fail closed).
     """
 
     async def _recheck(

@@ -22491,15 +22491,17 @@ paths:
         `admin.events.stream_recheck_seconds` interval (default 5 s) elapses. Each
         page is scoped by the caller's current permissions, so a narrower
         permission set narrows the stream. Permissions are those the credential
-        carries: API keys and agent `at_` access tokens resolve them live, while
-        other tokens (a login session token, for one) carry the set they were
-        issued with and reflect a change only once refreshed. The stream ends
+        carries: API keys and user `at_` access tokens resolve them live, while a
+        login session JWT and an agent `at_` access token carry the set they were
+        issued with. The stream keeps re-verifying the token it was opened with,
+        so for those a permission change applies once that token expires and the
+        client reconnects. The stream ends
         with a `stream_closed` frame (`{"type": "stream_closed", "reason": ...}`)
         once the credential stops verifying (`refused`: expired, revoked, or its
         user or agent disabled or deleted), the caller no longer holds
         `events:read` or `org:admin` or must rotate their password (`forbidden`),
         or the check or the event store cannot be answered (`unavailable`).
-        Reconnecting then returns the matching 401, 403 or 503.
+        A reconnect is authenticated afresh.
       operationId: streamEvents
       parameters:
       - description: Stream events created after this time (RFC 3339); defaults to now, and a future time is treated as now.

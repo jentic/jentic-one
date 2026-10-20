@@ -651,9 +651,11 @@ class AdminEventsConfig(BaseModel):
             "as that interval. A disabled caller, a revoked or expired token, or "
             "a revoked permission ends the stream at that check; a narrower "
             "permission set narrows it. Permissions are those the credential "
-            "carries: API keys and agent ``at_`` access tokens resolve them live, "
-            "while other tokens (a login session token, for one) carry the set "
-            "they were issued with and reflect a change only once refreshed."
+            "carries: API keys and user ``at_`` access tokens resolve them live, "
+            "while a login session JWT and an agent ``at_`` access token carry "
+            "the set they were issued with; the stream re-verifies the token it "
+            "was opened with, so for those a change applies once that token "
+            "expires and the client reconnects."
         ),
     )
 
