@@ -62,6 +62,10 @@ type Options struct {
 	Command []string
 	// Egress is the session's route beyond Jentic; nil means NoEgress.
 	Egress Egress
+	// ProviderMounts are the read-only bind mounts of the operator's
+	// LLM-provider credentials (ProviderShare.Mounts), when the operator
+	// shares their provider login; optional.
+	ProviderMounts []Mount
 }
 
 // Plan is a validated session: its object names and container specs.
@@ -105,6 +109,9 @@ func NewPlan(o Options) (*Plan, error) {
 	}
 	if o.Egress == nil {
 		o.Egress = NoEgress{}
+	}
+	if err := ValidateProviderMounts(o.ProviderMounts); err != nil {
+		return nil, err
 	}
 
 	base := "jentic-run-" + o.SessionID
@@ -161,6 +168,7 @@ func NewPlan(o Options) (*Plan, error) {
 		}
 		mounts = append(mounts, m)
 	}
+	mounts = append(mounts, o.ProviderMounts...)
 	p.Agent = Spec{
 		Name:         base + "-agent",
 		Image:        o.AgentImage,

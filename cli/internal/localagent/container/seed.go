@@ -19,6 +19,10 @@ type HomeFile struct {
 	Data []byte
 	// Mode is the file's permission bits; zero means 0600.
 	Mode fs.FileMode
+	// Dir makes the entry a directory (0700) instead of a file; Data and
+	// Mode are ignored. It creates a directory a mount below it needs, so
+	// the agent, not Docker, owns it.
+	Dir bool
 }
 
 // HomeArchive builds the tar that Session.Seed copies into the home volume:
@@ -34,6 +38,12 @@ func HomeArchive(uid, gid int, files []HomeFile) ([]byte, error) {
 		if f.Rel == "" || path.IsAbs(f.Rel) || path.Clean(f.Rel) != f.Rel || f.Rel == "." ||
 			f.Rel == ".." || strings.HasPrefix(f.Rel, "../") {
 			return nil, fmt.Errorf("refusing home file path %q", f.Rel)
+		}
+		if f.Dir {
+			for d := f.Rel; d != "."; d = path.Dir(d) {
+				dirs[d] = true
+			}
+			continue
 		}
 		if _, dup := byPath[f.Rel]; dup {
 			return nil, fmt.Errorf("home file %q given twice", f.Rel)
@@ -116,6 +126,10 @@ type ClaudeSeed struct {
 	Settings []byte
 	// Memory is the operator's ~/.claude/CLAUDE.md.
 	Memory []byte
+	// ProviderEnv is the operator's LLM-provider environment, already
+	// filtered (ProviderEnv), written as the settings' env block when the
+	// operator shares their provider login; nil otherwise.
+	ProviderEnv map[string]string
 }
 
 // ClaudeHomeFiles builds the Claude Code files of a container session's home:
@@ -123,11 +137,17 @@ type ClaudeSeed struct {
 // mounted work folder), plus the allowlisted keys of the operator's state and
 // settings and their CLAUDE.md. No other file from the operator's ~/.claude
 // is copied, so hooks, plugins, binaries and credential files never reach the
-// container.
+// container. A shared provider environment (seed.ProviderEnv) becomes the
+// settings' env block, the only env the settings carry; with an
+// ANTHROPIC_API_KEY in it, the key is also marked approved so Claude Code
+// does not stop to ask about it.
 func ClaudeHomeFiles(workDir string, seed ClaudeSeed) ([]HomeFile, error) {
 	state := map[string]any{}
 	if err := pickKeys(seed.State, claudeStateKeys, state); err != nil {
 		return nil, fmt.Errorf("read the operator's ~/.claude.json: %w", err)
+	}
+	if key := seed.ProviderEnv[envAnthropicAPIKey]; key != "" {
+		state["customApiKeyResponses"] = apiKeyApproval(key)
 	}
 	state["hasCompletedOnboarding"] = true
 	state["autoUpdates"] = false
@@ -146,6 +166,13 @@ func ClaudeHomeFiles(workDir string, seed ClaudeSeed) ([]HomeFile, error) {
 	settings := map[string]any{}
 	if err := pickKeys(seed.Settings, claudeSettingsKeys, settings); err != nil {
 		return nil, fmt.Errorf("read the operator's ~/.claude/settings.json: %w", err)
+	}
+	if len(seed.ProviderEnv) > 0 {
+		env := make(map[string]any, len(seed.ProviderEnv))
+		for k, v := range seed.ProviderEnv {
+			env[k] = v
+		}
+		settings["env"] = env
 	}
 	if len(settings) > 0 {
 		settingsJSON, err := json.MarshalIndent(settings, "", "  ")

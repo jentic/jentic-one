@@ -14,6 +14,7 @@ package localagent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -1346,6 +1347,66 @@ func SafeSeedSources(operatorHome string, srcs []string) (safe, skipped []string
 	return safe, skipped
 }
 
+// ResolveShareablePath checks a provider credential path the operator chose to
+// share with a container session (`jentic run --container
+// --container-share-provider-credentials`: ~/.aws, ~/.config/gcloud, a
+// GOOGLE_APPLICATION_CREDENTIALS file) and returns its fully resolved path,
+// the one to bind-mount. It applies SafeSeedSources (the resolved path must
+// stay under the operator's home) and then refuses a path that resolves to
+// the home itself, to an ancestor of any sensitive dir (so a ~/.aws symlinked
+// to ~ or ~/.config cannot widen the share), or into a sensitive dir other
+// than the allowed ones (so a ~/.aws symlinked to ~/.ssh cannot pass as AWS
+// config). allowed are home-relative sensitive dirs the path may resolve into
+// (".aws", ".config/gcloud"). wantDir says whether the path must be a
+// directory or a regular file.
+//
+// Symlinks nested inside a shared directory are not followed here: a bind
+// mount presents them as links, which resolve inside the container's own
+// filesystem, never the host's.
+func ResolveShareablePath(operatorHome, src string, wantDir bool, allowed ...string) (string, error) {
+	if !filepath.IsAbs(src) {
+		return "", fmt.Errorf("%s is not an absolute path", src)
+	}
+	if safe, _ := SafeSeedSources(operatorHome, []string{src}); len(safe) != 1 {
+		return "", fmt.Errorf("%s resolves outside your home directory", src)
+	}
+	resolved, err := filepath.EvalSymlinks(src)
+	if err != nil {
+		return "", err
+	}
+	home := Canonicalize(operatorHome)
+	if pathEqual(resolved, home) {
+		return "", fmt.Errorf("%s resolves to your home directory itself", src)
+	}
+	for _, d := range sensitiveDotDirs {
+		root := Canonicalize(filepath.Join(home, d))
+		if pathHasPrefix(root, resolved) {
+			return "", fmt.Errorf("%s resolves to %s, which contains the sensitive dir %s", src, resolved, d)
+		}
+		if !pathEqual(resolved, root) && !pathHasPrefix(resolved, root) {
+			continue
+		}
+		ok := false
+		for _, a := range allowed {
+			ok = ok || a == d
+		}
+		if !ok {
+			return "", fmt.Errorf("%s resolves into the sensitive dir %s, which is not shared", src, d)
+		}
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", err
+	}
+	switch {
+	case wantDir && !info.IsDir():
+		return "", fmt.Errorf("%s is not a directory", src)
+	case !wantDir && !info.Mode().IsRegular():
+		return "", fmt.Errorf("%s is not a regular file", src)
+	}
+	return resolved, nil
+}
+
 // CopyConfigCmd copies the operator's agent config paths (already expanded to
 // absolute paths under the operator's home) into the agent user's home at the
 // same tilde-relative location. Only the READ is privileged (it reaches into
@@ -1559,6 +1620,39 @@ func readClaudeEnv(operatorHome string) map[string]string {
 		return nil
 	}
 	return s.Env
+}
+
+// ClaudeSettingsEnv returns the env block of the operator's
+// ~/.claude/settings.json with every string, number or boolean value as a
+// string (other values are dropped). A missing file is an empty block; a
+// file that is not a JSON object is an error.
+func ClaudeSettingsEnv(operatorHome string) (map[string]string, error) {
+	if operatorHome == "" {
+		return nil, errors.New("no home directory")
+	}
+	data, err := os.ReadFile(filepath.Join(operatorHome, ".claude", "settings.json")) //nolint:gosec // operatorHome is the current user's resolved home dir, not user input.
+	if errors.Is(err, os.ErrNotExist) {
+		return map[string]string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var s struct {
+		Env map[string]any `json:"env"`
+	}
+	if err := json.Unmarshal(data, &s); err != nil {
+		return nil, fmt.Errorf("parse ~/.claude/settings.json: %w", err)
+	}
+	env := make(map[string]string, len(s.Env))
+	for k, v := range s.Env {
+		switch t := v.(type) {
+		case string:
+			env[k] = t
+		case float64, bool:
+			env[k] = fmt.Sprint(t)
+		}
+	}
+	return env, nil
 }
 
 // isTruthy reports whether a settings env value enables a boolean flag. Claude

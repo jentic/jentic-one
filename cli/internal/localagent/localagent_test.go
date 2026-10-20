@@ -1066,3 +1066,100 @@ func workspaceTestRoot(t *testing.T) string {
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	return root
 }
+
+func TestResolveShareablePath(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mk := func(rel string) string {
+		p := filepath.Join(home, rel)
+		if err := os.MkdirAll(p, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	aws := mk(".aws")
+	if got, err := ResolveShareablePath(home, aws, true, ".aws"); err != nil || got != aws {
+		t.Errorf("a real ~/.aws: %q, %v", got, err)
+	}
+	if _, err := ResolveShareablePath(home, aws, false, ".aws"); err == nil {
+		t.Error("a directory where a file is wanted is refused")
+	}
+	if _, err := ResolveShareablePath(home, aws, true); err == nil {
+		t.Error("a sensitive dir that is not allowed is refused")
+	}
+
+	// A ~/.aws kept in a dotfiles repo is shared at its real path.
+	other := t.TempDir()
+	dotfiles := mk("dotfiles/aws")
+	viaDotfiles := filepath.Join(home, "aws-link")
+	if err := os.Symlink(dotfiles, viaDotfiles); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ResolveShareablePath(home, viaDotfiles, true, ".aws"); err != nil || got != dotfiles {
+		t.Errorf("an in-home symlink resolves to its target: %q, %v", got, err)
+	}
+
+	ssh := mk(".ssh")
+	escapes := map[string]string{
+		"outside-home":       other,
+		"into-ssh":           ssh,
+		"to-home":            home,
+		"to-config":          mk(".config"), // holds gcloud, gh, jentic
+		"into-config-jentic": mk(".config/jentic"),
+	}
+	for name, target := range escapes {
+		inHome := filepath.Join(home, "share-"+name)
+		if err := os.Symlink(target, inHome); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := ResolveShareablePath(home, inHome, true, ".aws"); err == nil {
+			t.Errorf("a symlink %s is refused, got %q", name, got)
+		}
+	}
+	if _, err := ResolveShareablePath(home, "relative/.aws", true, ".aws"); err == nil {
+		t.Error("a relative path is refused")
+	}
+	if _, err := ResolveShareablePath(home, filepath.Join(home, "missing"), true, ".aws"); err == nil {
+		t.Error("a missing path is refused")
+	}
+
+	key := filepath.Join(mk("keys"), "sa.json")
+	if err := os.WriteFile(key, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ResolveShareablePath(home, key, false, ".config/gcloud"); err != nil || got != key {
+		t.Errorf("a key file under the home: %q, %v", got, err)
+	}
+}
+
+func TestClaudeSettingsEnv(t *testing.T) {
+	home := t.TempDir()
+	if env, err := ClaudeSettingsEnv(home); err != nil || len(env) != 0 {
+		t.Errorf("a missing settings file is an empty env: %v %v", env, err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	write := func(s string) {
+		if err := os.WriteFile(filepath.Join(home, ".claude", "settings.json"), []byte(s), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(`{"env":{"AWS_REGION":"eu-west-1","MAX_THINKING_TOKENS":31999,"CLAUDE_CODE_USE_BEDROCK":true,"X":{"a":1}}}`)
+	env, err := ClaudeSettingsEnv(home)
+	want := map[string]string{"AWS_REGION": "eu-west-1", "MAX_THINKING_TOKENS": "31999", "CLAUDE_CODE_USE_BEDROCK": "true"}
+	if err != nil || len(env) != len(want) {
+		t.Fatalf("env = %v, %v", env, err)
+	}
+	for k, v := range want {
+		if env[k] != v {
+			t.Errorf("%s = %q, want %q", k, env[k], v)
+		}
+	}
+	write(`not json`)
+	if _, err := ClaudeSettingsEnv(home); err == nil {
+		t.Error("a malformed settings file is an error")
+	}
+}
