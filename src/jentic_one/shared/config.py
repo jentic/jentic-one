@@ -2790,6 +2790,90 @@ class CliFacadeVendorsConfig(BaseModel):
         return settings
 
 
+class CliFacadeGitConfig(BaseModel):
+    """The broker's governed git pipeline: git smart-HTTP to github.com through Jentic.
+
+    Clones, fetches and pushes relayed with a GitHub invocation token run
+    through their own streaming pipeline, not the execute pipeline: request
+    and response bodies are streamed (the execute body caps and upstream
+    timeout do not apply), a push is checked against the binding's git rules
+    ref by ref, and the upstream is always ``https://github.com``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(
+        default=True,
+        description=(
+            "Whether git requests are served. Requires the GitHub facade "
+            "(``cli_facades.enabled`` and ``cli_facades.vendors.github.enabled``); "
+            "while off, a git URL at the CLI proxy route answers 404."
+        ),
+    )
+    max_push_bytes: int = Field(
+        default=2 * 1024 * 1024 * 1024,
+        gt=0,
+        description=(
+            "Largest request body accepted for a push or fetch, in bytes. A push over "
+            "it is refused for every ref it updates. Defaults to 2 GiB, GitHub's own "
+            "push limit."
+        ),
+    )
+    max_inspected_commit_bytes: int = Field(
+        default=64 * 1024 * 1024,
+        gt=0,
+        description=(
+            "Largest total size of the commit objects of one push the force-push "
+            "check keeps in memory while reading the pack, in bytes. A push carrying "
+            "more is refused. Defaults to 64 MiB."
+        ),
+    )
+    max_ref_updates: int = Field(
+        default=1000,
+        gt=0,
+        description="Most ref updates one push may carry.",
+    )
+    max_compare_requests: int = Field(
+        default=32,
+        gt=0,
+        description=(
+            "Most GitHub compare calls the force-push check makes for one push. A "
+            "push whose ancestry needs more is refused for the refs left unchecked."
+        ),
+    )
+    spool_memory_bytes: int = Field(
+        default=8 * 1024 * 1024,
+        ge=0,
+        description=(
+            "Bytes of a push body kept in memory before it is spooled to a temporary "
+            "file while it is checked. Defaults to 8 MiB."
+        ),
+    )
+    connect_timeout_s: float = Field(
+        default=10.0,
+        gt=0,
+        description="Seconds to connect to github.com.",
+    )
+    idle_timeout_s: float = Field(
+        default=120.0,
+        gt=0,
+        description=(
+            "Seconds a git transfer may go without a byte in either direction, "
+            "client or upstream, before it is cut off."
+        ),
+    )
+    transfer_timeout_s: float = Field(
+        default=3600.0,
+        gt=0,
+        description="Seconds one git request may take from start to finish.",
+    )
+    compare_timeout_s: float = Field(
+        default=15.0,
+        gt=0,
+        description="Seconds one GitHub compare call of the force-push check may take.",
+    )
+
+
 class CliFacadesConfig(BaseModel):
     """Vendor CLIs run through Jentic (``jentic gh``/``cf``/``aws``) in local mode.
 
@@ -2812,6 +2896,10 @@ class CliFacadesConfig(BaseModel):
     vendors: CliFacadeVendorsConfig = Field(
         default_factory=CliFacadeVendorsConfig,
         description="Per-vendor facade settings.",
+    )
+    git: CliFacadeGitConfig = Field(
+        default_factory=CliFacadeGitConfig,
+        description="The governed git pipeline (git to github.com with a GitHub invocation token).",
     )
     invocation_ttl_seconds: int = Field(
         default=600,
@@ -2853,6 +2941,10 @@ class CliFacadesConfig(BaseModel):
         """Whether ``vendor`` has a facade and both switches for it are on."""
         settings = self.vendors.get(vendor)
         return self.enabled and settings is not None and settings.enabled
+
+    def git_enabled(self) -> bool:
+        """Whether the governed git pipeline is served: the GitHub facade and ``git`` are on."""
+        return self.vendor_enabled("github") and self.git.enabled
 
 
 class AppConfig(BaseModel):

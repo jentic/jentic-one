@@ -527,6 +527,31 @@ def test_cli_facades_invalid_rejected(doc: dict[str, Any], match: str):
         CliFacadesConfig.model_validate(doc)
 
 
+def test_cli_facades_git_defaults_and_overrides(tmp_path: Path):
+    """Governed git rides the GitHub facade's switch; its limits default to GitHub's push cap."""
+    cfg = CliFacadesConfig()
+    assert cfg.git.enabled is True
+    assert cfg.git.max_push_bytes == 2 * 1024 * 1024 * 1024
+    assert not cfg.git_enabled()
+    on = CliFacadesConfig.model_validate(
+        {"enabled": True, "vendors": {"github": {"enabled": True, "host": "gh.example.com"}}}
+    )
+    assert on.git_enabled()
+    on.git.enabled = False
+    assert not on.git_enabled()
+
+    path = tmp_path / "git.yaml"
+    path.write_text(
+        yaml.dump({"databases": _MINIMAL_DATABASES, "cli_facades": {"git": {"idle_timeout_s": 30}}})
+    )
+    with patch.dict(os.environ, {"JENTIC__CLI_FACADES__GIT__MAX_PUSH_BYTES": "1024"}, clear=False):
+        loaded = load_config(path).cli_facades.git
+    assert loaded.idle_timeout_s == 30
+    assert loaded.max_push_bytes == 1024
+    with pytest.raises(ValidationError, match="max_push_bytes"):
+        CliFacadesConfig.model_validate({"git": {"max_push_bytes": 0}})
+
+
 def test_catalog_jitter_ratio_default():
     """The sweep jitter ratio defaults to a bounded 15%."""
     assert CatalogConfig().update_sweep_jitter_ratio == 0.15

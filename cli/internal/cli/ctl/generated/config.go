@@ -578,6 +578,125 @@ func (j *CircuitBreakerConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
+// The broker's governed git pipeline: git smart-HTTP to github.com through Jentic.
+//
+// Clones, fetches and pushes relayed with a GitHub invocation token run
+// through their own streaming pipeline, not the execute pipeline: request
+// and response bodies are streamed (the execute body caps and upstream
+// timeout do not apply), a push is checked against the binding's git rules
+// ref by ref, and the upstream is always “https://github.com“.
+type CliFacadeGitConfig struct {
+	// Seconds one GitHub compare call of the force-push check may take.
+	CompareTimeoutS float64 `json:"compare_timeout_s,omitempty,omitzero" yaml:"compare_timeout_s,omitempty" mapstructure:"compare_timeout_s,omitempty"`
+
+	// Seconds to connect to github.com.
+	ConnectTimeoutS float64 `json:"connect_timeout_s,omitempty,omitzero" yaml:"connect_timeout_s,omitempty" mapstructure:"connect_timeout_s,omitempty"`
+
+	// Whether git requests are served. Requires the GitHub facade
+	// (``cli_facades.enabled`` and ``cli_facades.vendors.github.enabled``); while
+	// off, a git URL at the CLI proxy route answers 404.
+	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`
+
+	// Seconds a git transfer may go without a byte in either direction, client or
+	// upstream, before it is cut off.
+	IdleTimeoutS float64 `json:"idle_timeout_s,omitempty,omitzero" yaml:"idle_timeout_s,omitempty" mapstructure:"idle_timeout_s,omitempty"`
+
+	// Most GitHub compare calls the force-push check makes for one push. A push whose
+	// ancestry needs more is refused for the refs left unchecked.
+	MaxCompareRequests int `json:"max_compare_requests,omitempty,omitzero" yaml:"max_compare_requests,omitempty" mapstructure:"max_compare_requests,omitempty"`
+
+	// Largest total size of the commit objects of one push the force-push check keeps
+	// in memory while reading the pack, in bytes. A push carrying more is refused.
+	// Defaults to 64 MiB.
+	MaxInspectedCommitBytes int `json:"max_inspected_commit_bytes,omitempty,omitzero" yaml:"max_inspected_commit_bytes,omitempty" mapstructure:"max_inspected_commit_bytes,omitempty"`
+
+	// Largest request body accepted for a push or fetch, in bytes. A push over it is
+	// refused for every ref it updates. Defaults to 2 GiB, GitHub's own push limit.
+	MaxPushBytes int `json:"max_push_bytes,omitempty,omitzero" yaml:"max_push_bytes,omitempty" mapstructure:"max_push_bytes,omitempty"`
+
+	// Most ref updates one push may carry.
+	MaxRefUpdates int `json:"max_ref_updates,omitempty,omitzero" yaml:"max_ref_updates,omitempty" mapstructure:"max_ref_updates,omitempty"`
+
+	// Bytes of a push body kept in memory before it is spooled to a temporary file
+	// while it is checked. Defaults to 8 MiB.
+	SpoolMemoryBytes int `json:"spool_memory_bytes,omitempty,omitzero" yaml:"spool_memory_bytes,omitempty" mapstructure:"spool_memory_bytes,omitempty"`
+
+	// Seconds one git request may take from start to finish.
+	TransferTimeoutS float64 `json:"transfer_timeout_s,omitempty,omitzero" yaml:"transfer_timeout_s,omitempty" mapstructure:"transfer_timeout_s,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *CliFacadeGitConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain CliFacadeGitConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["compare_timeout_s"]; !ok || v == nil {
+		plain.CompareTimeoutS = 15.0
+	}
+	if 0 >= plain.CompareTimeoutS {
+		return fmt.Errorf("field %s: must be > %v", "compare_timeout_s", 0)
+	}
+	if v, ok := raw["connect_timeout_s"]; !ok || v == nil {
+		plain.ConnectTimeoutS = 10.0
+	}
+	if 0 >= plain.ConnectTimeoutS {
+		return fmt.Errorf("field %s: must be > %v", "connect_timeout_s", 0)
+	}
+	if v, ok := raw["enabled"]; !ok || v == nil {
+		plain.Enabled = true
+	}
+	if v, ok := raw["idle_timeout_s"]; !ok || v == nil {
+		plain.IdleTimeoutS = 120.0
+	}
+	if 0 >= plain.IdleTimeoutS {
+		return fmt.Errorf("field %s: must be > %v", "idle_timeout_s", 0)
+	}
+	if v, ok := raw["max_compare_requests"]; !ok || v == nil {
+		plain.MaxCompareRequests = 32
+	}
+	if 0 >= plain.MaxCompareRequests {
+		return fmt.Errorf("field %s: must be > %v", "max_compare_requests", 0)
+	}
+	if v, ok := raw["max_inspected_commit_bytes"]; !ok || v == nil {
+		plain.MaxInspectedCommitBytes = 67108864
+	}
+	if 0 >= plain.MaxInspectedCommitBytes {
+		return fmt.Errorf("field %s: must be > %v", "max_inspected_commit_bytes", 0)
+	}
+	if v, ok := raw["max_push_bytes"]; !ok || v == nil {
+		plain.MaxPushBytes = 2147483648
+	}
+	if 0 >= plain.MaxPushBytes {
+		return fmt.Errorf("field %s: must be > %v", "max_push_bytes", 0)
+	}
+	if v, ok := raw["max_ref_updates"]; !ok || v == nil {
+		plain.MaxRefUpdates = 1000
+	}
+	if 0 >= plain.MaxRefUpdates {
+		return fmt.Errorf("field %s: must be > %v", "max_ref_updates", 0)
+	}
+	if v, ok := raw["spool_memory_bytes"]; !ok || v == nil {
+		plain.SpoolMemoryBytes = 8388608
+	}
+	if 0 > plain.SpoolMemoryBytes {
+		return fmt.Errorf("field %s: must be >= %v", "spool_memory_bytes", 0)
+	}
+	if v, ok := raw["transfer_timeout_s"]; !ok || v == nil {
+		plain.TransferTimeoutS = 3600.0
+	}
+	if 0 >= plain.TransferTimeoutS {
+		return fmt.Errorf("field %s: must be > %v", "transfer_timeout_s", 0)
+	}
+	*j = CliFacadeGitConfig(plain)
+	return nil
+}
+
 // Per-vendor facade settings, one explicit field per supported vendor.
 //
 // Vendors are explicit fields rather than a free mapping so each vendor's
@@ -604,6 +723,9 @@ type CliFacadesConfig struct {
 	// Master switch for every CLI facade. While off, minting an invocation token
 	// answers 404 and no facade is served.
 	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`
+
+	// The governed git pipeline (git to github.com with a GitHub invocation token).
+	Git *CliFacadeGitConfig `json:"git,omitempty,omitzero" yaml:"git,omitempty" mapstructure:"git,omitempty"`
 
 	// Seconds after minting past which an invocation token cannot be renewed, however
 	// often it is renewed. Must be at least ``invocation_ttl_seconds``. Defaults to 1

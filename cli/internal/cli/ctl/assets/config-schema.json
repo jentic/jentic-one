@@ -378,6 +378,83 @@
       "title": "CircuitBreakerConfig",
       "type": "object"
     },
+    "CliFacadeGitConfig": {
+      "additionalProperties": false,
+      "description": "The broker's governed git pipeline: git smart-HTTP to github.com through Jentic.\n\nClones, fetches and pushes relayed with a GitHub invocation token run\nthrough their own streaming pipeline, not the execute pipeline: request\nand response bodies are streamed (the execute body caps and upstream\ntimeout do not apply), a push is checked against the binding's git rules\nref by ref, and the upstream is always ``https://github.com``.",
+      "properties": {
+        "compare_timeout_s": {
+          "default": 15.0,
+          "description": "Seconds one GitHub compare call of the force-push check may take.",
+          "exclusiveMinimum": 0,
+          "title": "Compare Timeout S",
+          "type": "number"
+        },
+        "connect_timeout_s": {
+          "default": 10.0,
+          "description": "Seconds to connect to github.com.",
+          "exclusiveMinimum": 0,
+          "title": "Connect Timeout S",
+          "type": "number"
+        },
+        "enabled": {
+          "default": true,
+          "description": "Whether git requests are served. Requires the GitHub facade (``cli_facades.enabled`` and ``cli_facades.vendors.github.enabled``); while off, a git URL at the CLI proxy route answers 404.",
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "idle_timeout_s": {
+          "default": 120.0,
+          "description": "Seconds a git transfer may go without a byte in either direction, client or upstream, before it is cut off.",
+          "exclusiveMinimum": 0,
+          "title": "Idle Timeout S",
+          "type": "number"
+        },
+        "max_compare_requests": {
+          "default": 32,
+          "description": "Most GitHub compare calls the force-push check makes for one push. A push whose ancestry needs more is refused for the refs left unchecked.",
+          "exclusiveMinimum": 0,
+          "title": "Max Compare Requests",
+          "type": "integer"
+        },
+        "max_inspected_commit_bytes": {
+          "default": 67108864,
+          "description": "Largest total size of the commit objects of one push the force-push check keeps in memory while reading the pack, in bytes. A push carrying more is refused. Defaults to 64 MiB.",
+          "exclusiveMinimum": 0,
+          "title": "Max Inspected Commit Bytes",
+          "type": "integer"
+        },
+        "max_push_bytes": {
+          "default": 2147483648,
+          "description": "Largest request body accepted for a push or fetch, in bytes. A push over it is refused for every ref it updates. Defaults to 2 GiB, GitHub's own push limit.",
+          "exclusiveMinimum": 0,
+          "title": "Max Push Bytes",
+          "type": "integer"
+        },
+        "max_ref_updates": {
+          "default": 1000,
+          "description": "Most ref updates one push may carry.",
+          "exclusiveMinimum": 0,
+          "title": "Max Ref Updates",
+          "type": "integer"
+        },
+        "spool_memory_bytes": {
+          "default": 8388608,
+          "description": "Bytes of a push body kept in memory before it is spooled to a temporary file while it is checked. Defaults to 8 MiB.",
+          "minimum": 0,
+          "title": "Spool Memory Bytes",
+          "type": "integer"
+        },
+        "transfer_timeout_s": {
+          "default": 3600.0,
+          "description": "Seconds one git request may take from start to finish.",
+          "exclusiveMinimum": 0,
+          "title": "Transfer Timeout S",
+          "type": "number"
+        }
+      },
+      "title": "CliFacadeGitConfig",
+      "type": "object"
+    },
     "CliFacadeVendorsConfig": {
       "additionalProperties": false,
       "description": "Per-vendor facade settings, one explicit field per supported vendor.\n\nVendors are explicit fields rather than a free mapping so each vendor's\nallowed modes are validated by its type.",
@@ -407,6 +484,10 @@
           "description": "Master switch for every CLI facade. While off, minting an invocation token answers 404 and no facade is served.",
           "title": "Enabled",
           "type": "boolean"
+        },
+        "git": {
+          "$ref": "#/$defs/CliFacadeGitConfig",
+          "description": "The governed git pipeline (git to github.com with a GitHub invocation token)."
         },
         "invocation_hard_cap_seconds": {
           "default": 3600,
