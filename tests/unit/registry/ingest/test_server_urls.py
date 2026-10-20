@@ -30,7 +30,7 @@ from jentic_one.registry.services.import_service import (
     ALL_SOURCES_FAILED_PREFIX_TEMPLATE,
     SOURCE_FAILURE_PREFIX_TEMPLATE,
 )
-from jentic_one.shared.config import AppConfig, CatalogConfig
+from jentic_one.shared.config import AppConfig, CatalogConfig, CatalogSourceConfig
 from jentic_one.shared.models import ApiRevisionSourceType
 
 PETSTORE_URL = "https://petstore3.swagger.io/api/v3/openapi.json"
@@ -615,7 +615,15 @@ async def test_stage_refuses_a_manual_url_import_from_a_content_host(source_url:
 @pytest.mark.anyio
 async def test_stage_treats_a_configured_catalog_mirror_as_a_content_host() -> None:
     config = AppConfig.model_construct(
-        catalog=CatalogConfig(manifest_url="https://specs.mirror.example/apis.json")
+        catalog=CatalogConfig(
+            sources=[
+                CatalogSourceConfig(
+                    slug="mirror",
+                    kind="git-manifest",
+                    settings={"url": "https://specs.mirror.example/apis.json"},
+                )
+            ]
+        )
     )
     ctx = _ctx(
         _spec([{"url": "/v1"}]),

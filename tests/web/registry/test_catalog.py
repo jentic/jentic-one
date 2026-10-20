@@ -1834,7 +1834,7 @@ async def _import_and_ingest(ctx: Context, entry_id: str) -> Api:
     with patch("jentic_one.registry.ingest.fetch.httpx.AsyncClient", httpx.AsyncClient):
         await ImportHandler(ctx).execute(
             job_id=generate_ksuid("job"),
-            session=None,
+            db=None,
             payload={"sources": [source]},
             created_by="t",
         )

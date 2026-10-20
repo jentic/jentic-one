@@ -28,10 +28,15 @@ logger = structlog.get_logger(__name__)
 
 
 def _manifest_host(config: AppConfig | None) -> list[str]:
-    """The host the configured catalog manifest is served from."""
-    manifest_url = (config.catalog if config is not None else CatalogConfig()).manifest_url
-    host = url_host(manifest_url)
-    return [host] if host else []
+    """The hosts the configured catalog source manifests are served from."""
+    catalog = config.catalog if config is not None else CatalogConfig()
+    hosts: list[str] = []
+    for source in catalog.sources:
+        url = source.settings.get("url")
+        host = url_host(url) if isinstance(url, str) else None
+        if host and host not in hosts:
+            hosts.append(host)
+    return hosts
 
 
 async def _catalog_spec_hosts(session: Any) -> set[str]:
