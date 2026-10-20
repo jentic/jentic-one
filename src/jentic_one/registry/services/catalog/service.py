@@ -32,6 +32,7 @@ from jentic_one.registry.repos.catalog_update_check_repo import CatalogUpdateChe
 from jentic_one.registry.repos.overlay_repo import OverlayRepository
 from jentic_one.registry.repos.revision_repo import ApiRevisionRepository, RegisteredSpec
 from jentic_one.registry.services.catalog import manifest_builder as mb
+from jentic_one.registry.services.catalog.entries import make_entry_id
 from jentic_one.registry.services.catalog.fetch import (
     CatalogFetchError,
     fetch_bytes_conditional,
@@ -42,6 +43,8 @@ from jentic_one.registry.services.catalog.flow3_metrics import (
     record_update_notified,
     record_update_snoozed,
 )
+from jentic_one.registry.services.catalog.sources.git_manifest import manifest_stream
+from jentic_one.registry.services.catalog.sources.sync import CatalogSourceSync
 from jentic_one.registry.services.errors import (
     CatalogEntryNotFoundError,
     CatalogUnavailableError,
@@ -156,31 +159,68 @@ class CatalogService:
 
     # ── refresh / staleness ──────────────────────────────────────────────────
 
-    async def refresh(self) -> CatalogRefreshResult:
-        """Fetch the upstream manifest and atomically replace the catalog snapshot."""
+    async def refresh(
+        self, *, sync_sources: bool = False, force: bool = False
+    ) -> CatalogRefreshResult:
+        """Fetch the upstream manifest and atomically replace the catalog snapshot.
+
+        The same manifest document is also applied to the legacy catalog source
+        (a shadow write: reads keep serving the snapshot). ``sync_sources`` syncs
+        every other enabled source too; ``force`` overrides the mass-removal guard.
+        Source sync failures are logged and never fail the refresh. With no legacy
+        source configured there is no manifest to fetch: the snapshot is left as
+        it is and only the other sources sync.
+        """
+        manifest_url = self._cfg.legacy_manifest_url()
+        if manifest_url is None:
+            # Reads keep serving the snapshot from the last legacy fetch, so say
+            # why it did not change (``count`` is 0, not the snapshot's size).
+            logger.info("catalog_snapshot_refresh_skipped", reason="no_legacy_source")
+            if sync_sources:
+                await self._sync_sources(None, others=True, force=force)
+            return CatalogRefreshResult(count=0)
         try:
-            doc = await fetch_json(self._cfg.manifest_url, config=self._ingest_cfg)
+            doc = await fetch_json(manifest_url, config=self._ingest_cfg)
         except CatalogFetchError as exc:
             raise CatalogUnavailableError(f"catalog manifest unavailable: {exc}") from exc
 
         entries = [e.to_dict() for e in mb.parse_apis_json(doc)]
         async with self._ctx.registry_db.transaction() as session:
             count = await CatalogRepository.replace(
-                session, source_url=self._cfg.manifest_url, entries=entries
+                session, source_url=manifest_url, entries=entries
             )
+        await self._sync_sources(doc, others=sync_sources, force=force)
         return CatalogRefreshResult(count=count)
+
+    async def _sync_sources(self, doc: dict[str, Any] | None, *, others: bool, force: bool) -> None:
+        sync = CatalogSourceSync(self._ctx)
+        legacy = self._cfg.legacy_source_slug
+        try:
+            await sync.register_sources()
+            if doc is not None and legacy in sync.sources:
+                outcome = await sync.sync_source(legacy, forced=force, stream=manifest_stream(doc))
+                logger.info("catalog_legacy_source_synced", status=outcome.status)
+            if others:
+                for slug in sync.sources:
+                    if slug != legacy:
+                        await sync.sync_source(slug, forced=force)
+            else:
+                await sync.mark_stale_wanted()
+        except Exception:
+            logger.warning("catalog_source_sync_failed", exc_info=True)
 
     def _is_stale(self, fetched_at: datetime | None) -> bool:
         """Whether the cache should be lazily refreshed (D-005a option (a)).
 
-        Stale when empty or older than ``manifest_max_age_seconds``. A max-age of
-        0 disables auto-refresh (manual ``:refresh`` only).
+        Stale when empty or older than the legacy source's ``max_age_seconds``. A
+        max-age of 0 disables auto-refresh (manual ``:refresh`` only).
         """
-        if self._cfg.manifest_max_age_seconds <= 0:
+        max_age = self._cfg.legacy_max_age_seconds()
+        if max_age <= 0:
             return False
         if fetched_at is None:
             return True
-        return (utcnow() - fetched_at).total_seconds() > self._cfg.manifest_max_age_seconds
+        return (utcnow() - fetched_at).total_seconds() > max_age
 
     async def _safe_refresh(self) -> None:
         """Refresh with advisory-lock single-flight, swallowing upstream failures.
@@ -834,6 +874,9 @@ class CatalogService:
             # structure is destroyed by slugification), while this copy is
             # persisted as-is on the Api row for friendly-title derivation.
             source["catalog_api_id"] = entry.api_id
+            # The entry this import came from. Reads still key on the snapshot's
+            # api_id, which is the legacy git-manifest source's external_id.
+            source["catalog_entry_id"] = make_entry_id(self._cfg.legacy_source_slug, entry.api_id)
         return source
 
     async def _registered_identity(self, entry: CatalogEntryView) -> tuple[str, str] | None:

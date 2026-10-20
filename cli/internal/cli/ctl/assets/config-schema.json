@@ -271,19 +271,67 @@
       "title": "BrokerResilienceConfig",
       "type": "object"
     },
-    "CatalogConfig": {
-      "description": "Public API catalog settings (manifest source + staleness).",
+    "CatalogApiIdMappingConfig": {
+      "additionalProperties": false,
+      "description": "Lets one non-curated entry claim a curated source's ``catalog_api_id``.",
       "properties": {
+        "catalog_api_id": {
+          "title": "Catalog Api Id",
+          "type": "string"
+        },
+        "external_id": {
+          "title": "External Id",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "external_id",
+        "catalog_api_id"
+      ],
+      "title": "CatalogApiIdMappingConfig",
+      "type": "object"
+    },
+    "CatalogConfig": {
+      "description": "Public API catalog settings (sources, staleness, update notify).",
+      "properties": {
+        "catalog_api_id_mappings": {
+          "description": "Rows letting a non-curated entry claim a curated catalog_api_id; matched case-insensitively and applied in the curated casing.",
+          "items": {
+            "$ref": "#/$defs/CatalogApiIdMappingConfig"
+          },
+          "title": "Catalog Api Id Mappings",
+          "type": "array"
+        },
+        "legacy_source_slug": {
+          "default": "public",
+          "description": "The git-manifest source the deprecated manifest_* keys map onto and that pre-existing catalog imports are reconciled against.",
+          "title": "Legacy Source Slug",
+          "type": "string"
+        },
         "manifest_max_age_seconds": {
           "default": 86400,
+          "description": "Deprecated alias for the legacy source's max_age_seconds.",
           "title": "Manifest Max Age Seconds",
           "type": "integer"
         },
         "manifest_url": {
           "default": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json",
-          "description": "Manifest source for the public API catalog. Full default: https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json",
+          "description": "Deprecated alias for the legacy source's settings.url (catalog.sources[slug=legacy_source_slug]). Full default: https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json",
           "title": "Manifest Url",
           "type": "string"
+        },
+        "sources": {
+          "description": "Catalog sources. The default is the curated public-apis manifest.",
+          "items": {
+            "$ref": "#/$defs/CatalogSourceConfig"
+          },
+          "title": "Sources",
+          "type": "array"
         },
         "update_check_interval_seconds": {
           "default": 86400,
@@ -309,6 +357,111 @@
         }
       },
       "title": "CatalogConfig",
+      "type": "object"
+    },
+    "CatalogSourceConfig": {
+      "additionalProperties": false,
+      "description": "One catalog source: where entries come from and how they are synced.\n\n``settings`` is kind-specific and validated against the kind's own model at\nregistry startup. This block is configuration only; sync state lives in the\nregistry database.",
+      "properties": {
+        "auth": {
+          "$ref": "#/$defs/SourceAuthConfig"
+        },
+        "enabled": {
+          "default": true,
+          "description": "Disabled sources are never synced (kill switch for this source).",
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "kind": {
+          "description": "Registered source kind, e.g. git-manifest.",
+          "title": "Kind",
+          "type": "string"
+        },
+        "max_age_seconds": {
+          "default": 86400,
+          "description": "Background sync interval. 0 disables automatic sync and background egress for this source; a manual refresh still syncs it.",
+          "minimum": 0,
+          "title": "Max Age Seconds",
+          "type": "integer"
+        },
+        "max_removal_ratio": {
+          "default": 0.2,
+          "description": "Mass-removal guard: a sync removing more than this share is held.",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Max Removal Ratio",
+          "type": "number"
+        },
+        "min_removal_count": {
+          "default": 5,
+          "description": "The removal ratio only trips above this many removals.",
+          "minimum": 0,
+          "title": "Min Removal Count",
+          "type": "integer"
+        },
+        "precedence": {
+          "default": 0,
+          "description": "Rank when two sources list the same catalog_api_id (higher wins). An untrusted source may not rank above any enabled curated source (startup fails).",
+          "title": "Precedence",
+          "type": "integer"
+        },
+        "readers": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SourceReadersConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Reader ACL; required for restricted sources only."
+        },
+        "settings": {
+          "additionalProperties": true,
+          "description": "Kind-specific settings.",
+          "title": "Settings",
+          "type": "object"
+        },
+        "slug": {
+          "description": "Source identifier and entry_id prefix; matches ^[a-z][a-z0-9-]{0,31}$.",
+          "title": "Slug",
+          "type": "string"
+        },
+        "sync_lease_seconds": {
+          "default": 60,
+          "description": "Cross-process sync lease, renewed every third of it.",
+          "minimum": 3,
+          "title": "Sync Lease Seconds",
+          "type": "integer"
+        },
+        "trust": {
+          "default": "untrusted",
+          "description": "curated sources own the catalog_api_ids they list.",
+          "enum": [
+            "curated",
+            "internal",
+            "untrusted"
+          ],
+          "title": "Trust",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "public",
+          "enum": [
+            "public",
+            "org",
+            "restricted"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "slug",
+        "kind"
+      ],
+      "title": "CatalogSourceConfig",
       "type": "object"
     },
     "CircuitBreakerConfig": {
@@ -1698,6 +1851,68 @@
         "private_key_pem"
       ],
       "title": "SigningKeyConfig",
+      "type": "object"
+    },
+    "SourceAuthConfig": {
+      "additionalProperties": false,
+      "description": "How a catalog source authenticates its requests.\n\nOnly ``none`` is built in; other resolver types are registered by extensions.\nThe secret itself never appears here: ``env`` names the variable holding it.",
+      "properties": {
+        "env": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Reserved for credentialed source auth; not used yet.",
+          "title": "Env"
+        },
+        "header": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Reserved for credentialed source auth; not used yet.",
+          "title": "Header"
+        },
+        "type": {
+          "default": "none",
+          "description": "Only none is accepted (startup fails on any other type); credentialed source auth is not supported yet.",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "title": "SourceAuthConfig",
+      "type": "object"
+    },
+    "SourceReadersConfig": {
+      "additionalProperties": false,
+      "description": "Reader ACL of a ``restricted`` catalog source (any one match admits).",
+      "properties": {
+        "actor_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Actor Ids",
+          "type": "array"
+        },
+        "permissions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Permissions",
+          "type": "array"
+        }
+      },
+      "title": "SourceReadersConfig",
       "type": "object"
     },
     "StateBackendConfig": {

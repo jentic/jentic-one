@@ -280,9 +280,21 @@ async def get_catalog_entry(
 async def refresh_catalog(
     identity: Identity = get_current_identity(required_permissions=["org:admin"]),
     svc: CatalogService = Depends(get_catalog_service),
+    force: bool = Query(
+        default=False,
+        description=(
+            "Apply each source's sync even when it would remove more entries than "
+            "the source's mass-removal guard allows."
+        ),
+        openapi_examples=ex.example(False),
+    ),
 ) -> JSONResponse:
-    """Force a refresh of the catalog cache from the upstream manifest (org:admin)."""
-    result = await svc.refresh()
+    """Force a refresh of the catalog cache from the upstream manifest (org:admin).
+
+    Also syncs every enabled catalog source; ``force=true`` overrides the
+    mass-removal guard for this run.
+    """
+    result = await svc.refresh(sync_sources=True, force=force)
     # An explicit operator "refresh now" is the strongest "check upstream" signal,
     # so trigger the update-notify sweep too (the lazy read path already does this
     # via _safe_refresh). Fire-and-forget: never block the refresh response on it.

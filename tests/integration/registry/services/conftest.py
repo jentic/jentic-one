@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import asynccontextmanager
+from typing import Any
 
 import pytest
 from sqlalchemy import delete
 
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.notes import Note
+from jentic_one.shared.config import AppConfig, CatalogConfig
+from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
+from tests.integration.registry.services.catalog_sources_support import (
+    CtxFactory,
+    wipe_catalog_sources,
+)
 
 _NOTE_API_VENDOR = "note-test.com"
 
@@ -37,3 +45,25 @@ async def note_api(registry_db: DatabaseSession, clean_notes: None) -> Api:
         session.add(api)
         await session.commit()
     return api
+
+
+@pytest.fixture()
+async def clean_sources(registry_db: DatabaseSession) -> AsyncGenerator[None, None]:
+    await wipe_catalog_sources(registry_db)
+    yield
+    await wipe_catalog_sources(registry_db)
+
+
+@pytest.fixture()
+def catalog_ctx(integration_config: AppConfig, clean_sources: None) -> CtxFactory:
+    """``catalog_ctx(**catalog)``: a ``Context`` whose ``catalog`` block is ``catalog``."""
+
+    @asynccontextmanager
+    async def _make(**catalog: Any) -> AsyncIterator[Context]:
+        cfg = integration_config.model_copy(
+            update={"catalog": CatalogConfig.model_validate(catalog)}
+        )
+        async with Context(cfg) as ctx:
+            yield ctx
+
+    return _make

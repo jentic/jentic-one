@@ -50,6 +50,7 @@ class ResolveApiStage(BasePipelineStage):
                 version=identifier.version,
                 created_by=ctx.created_by,
                 catalog_api_id=incoming_catalog_api_id,
+                catalog_entry_id=ctx.specification.catalog_entry_id,
             )
         except CatalogApiIdConflictError as exc:
             assert incoming_catalog_api_id is not None

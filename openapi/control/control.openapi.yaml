@@ -19789,8 +19789,28 @@ paths:
   /catalog:refresh:
     description: '`POST`: Refresh Catalog.'
     post:
-      description: Force a refresh of the catalog cache from the upstream manifest (org:admin).
+      description: |-
+        Force a refresh of the catalog cache from the upstream manifest (org:admin).
+
+        Also syncs every enabled catalog source; ``force=true`` overrides the
+        mass-removal guard for this run.
       operationId: refreshCatalog
+      parameters:
+      - description: Apply each source's sync even when it would remove more entries than the source's mass-removal guard allows.
+        examples:
+          example:
+            summary: Example query value for `force`
+            value: false
+        in: query
+        name: force
+        required: false
+        schema:
+          default: false
+          description: Apply each source's sync even when it would remove more entries than the source's mass-removal guard allows.
+          examples:
+          - false
+          title: Force
+          type: boolean
       responses:
         '200':
           content:

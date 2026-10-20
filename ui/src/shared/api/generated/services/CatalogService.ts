@@ -280,13 +280,26 @@ export class CatalogService {
     /**
      * Refresh Catalog
      * Force a refresh of the catalog cache from the upstream manifest (org:admin).
+     *
+     * Also syncs every enabled catalog source; ``force=true`` overrides the
+     * mass-removal guard for this run.
      * @returns CatalogRefreshResponse Successful Response
      * @throws ApiError
      */
-    public static refreshCatalog(): CancelablePromise<CatalogRefreshResponse> {
+    public static refreshCatalog({
+        force = false,
+    }: {
+        /**
+         * Apply each source's sync even when it would remove more entries than the source's mass-removal guard allows.
+         */
+        force?: boolean,
+    }): CancelablePromise<CatalogRefreshResponse> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/catalog:refresh',
+            query: {
+                'force': force,
+            },
             errors: {
                 400: `Bad Request`,
                 401: `Unauthorized`,

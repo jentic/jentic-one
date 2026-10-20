@@ -12,8 +12,13 @@ pin the gate on ``enabled_apps`` (from ``config.apps``), independent of
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
+from jentic_one.shared.config import AppConfig, ConfigError
+from jentic_one.shared.context import Context
 from jentic_one.shared.models.jobs import JobKind
 from jentic_one.shared.web import app_factory
 
@@ -116,6 +121,78 @@ def test_catalog_scanner_gated_on_registry_app() -> None:
         registry_ctx = _ctx(dbs={"admin", "registry"})
         assert app_factory._start_catalog_update_scanner(registry_ctx, {"registry"}) is not None
         scanner.assert_called_once_with(registry_ctx)
+
+
+def test_catalog_source_scanner_needs_the_registry_app_and_db_only() -> None:
+    """The source sync scanner runs with the registry surface + registry DB, no admin DB."""
+    with (
+        patch(f"{_AF}.CatalogSourceSyncScanner") as scanner,
+        patch(f"{_AF}.asyncio.create_task"),
+    ):
+        broker_ctx = _ctx(dbs={"admin", "control", "registry"})
+        assert app_factory._start_catalog_source_scanner(broker_ctx, {"broker"}) is None
+        no_db = _ctx(dbs={"admin"})
+        assert app_factory._start_catalog_source_scanner(no_db, {"registry"}) is None
+        scanner.assert_not_called()
+
+        standalone = _ctx(dbs={"registry"})
+        assert app_factory._start_catalog_source_scanner(standalone, {"registry"}) is not None
+        scanner.assert_called_once_with(standalone)
+
+
+def test_catalog_sources_are_validated_for_the_registry_app_and_db_only() -> None:
+    with patch(f"{_AF}.validate_catalog_sources") as validate:
+        app_factory._validate_catalog_sources(_ctx(dbs={"registry"}), {"broker"})
+        app_factory._validate_catalog_sources(_ctx(dbs={"admin"}), {"registry"})
+        validate.assert_not_called()
+        standalone = _ctx(dbs={"registry"})
+        app_factory._validate_catalog_sources(standalone, {"registry"})
+        validate.assert_called_once_with(standalone)
+
+
+@pytest.mark.parametrize("combined", [False, True])
+async def test_invalid_catalog_sources_fail_startup_before_any_background_task(
+    combined: bool, sample_config_dict: dict[str, Any]
+) -> None:
+    """A ``ConfigError`` from ``catalog.sources`` is raised before telemetry, the
+    worker or any scanner starts, and the context is still shut down, so a failed
+    boot leaves nothing running."""
+    ctx = Context(AppConfig.model_validate(sample_config_dict))
+    started: list[str] = []
+
+    def _record(name: str) -> Any:
+        return lambda *a, **k: started.append(name)
+
+    real_start_telemetry = app_factory._start_telemetry
+
+    async def _telemetry(*a: Any, **k: Any) -> Any:
+        # A spy, not a stub: the real flush-loop wiring runs if startup reaches it.
+        started.append("telemetry")
+        return await real_start_telemetry(*a, **k)
+
+    shutdown = AsyncMock()
+    with (
+        patch.object(Context, "startup", AsyncMock()),
+        patch.object(Context, "shutdown", shutdown),
+        patch(f"{_AF}._validate_catalog_sources", side_effect=ConfigError("bad sources")),
+        patch(f"{_AF}._start_telemetry", _telemetry),
+        patch(f"{_AF}.instrument_databases", side_effect=_record("instrument")),
+        patch(f"{_AF}._start_worker", side_effect=_record("worker")),
+        patch(f"{_AF}._start_expiry_scanner", side_effect=_record("expiry")),
+        patch(f"{_AF}._start_catalog_update_scanner", side_effect=_record("update")),
+        patch(f"{_AF}._start_catalog_source_scanner", side_effect=_record("sources")),
+    ):
+        if combined:
+            app = app_factory.create_combined_app(ctx, ["registry"])
+        else:
+            app = app_factory.create_surface_app(
+                ctx, title="registry", routers=[], enabled_apps={"registry"}
+            )
+        with pytest.raises(ConfigError):
+            async with app.router.lifespan_context(app):
+                pass
+    assert started == []
+    shutdown.assert_awaited_once()
 
 
 def test_expiry_scanner_gated_on_control_app() -> None:
