@@ -3,6 +3,7 @@ package localagent
 import (
 	"context"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"runtime"
@@ -873,12 +874,76 @@ func TestCopyConfigCmdWritesAsTheAgent(t *testing.T) {
 	// Root only archives the source (tar never dereferences symlinks without
 	// -h); the extraction runs as the agent, so no root write or recursive
 	// root chown touches the agent-writable home.
-	if !strings.Contains(joined, "tar -C '/Users/alice' -cf - './.aws' | sudo -u 'agent' -H ") {
+	if !strings.Contains(joined, "tar -C '/Users/alice' -cf - --exclude='./.aws/sso/cache' --exclude='./.aws/cli/cache' './.aws' | sudo -u 'agent' -H ") {
 		t.Errorf("copy must stream a root-side tar into an agent-side extract: %s", joined)
 	}
 	for _, forbidden := range []string{"cp ", "chown"} {
 		if strings.Contains(joined, forbidden) {
 			t.Errorf("copy must not run a root %q into the agent home: %s", forbidden, joined)
+		}
+	}
+}
+
+// TestOperatorArchiveExcludesTokenCaches runs the real root-side archive
+// command against a fake operator home and lists what it would hand the agent:
+// provider configuration travels, the operator's login and session token
+// caches never do.
+func TestOperatorArchiveExcludesTokenCaches(t *testing.T) {
+	home := t.TempDir()
+	write := func(rel string) {
+		t.Helper()
+		p := filepath.Join(home, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, rel := range []string{
+		".aws/config", ".aws/sso/cache/session.json", ".aws/cli/cache/role.json",
+		".config/gcloud/properties", ".config/gcloud/configurations/config_default",
+		".config/gcloud/credentials.db", ".config/gcloud/access_tokens.db",
+		".config/gcloud/legacy_credentials/me/adc.json",
+		".config/gcloud/application_default_credentials.json",
+	} {
+		write(rel)
+	}
+	cases := []struct {
+		src            string
+		want, mustSkip []string
+	}{
+		{
+			src:      filepath.Join(home, ".aws"),
+			want:     []string{"./.aws/config"},
+			mustSkip: []string{"sso/cache/", "cli/cache/"},
+		},
+		{
+			src:  filepath.Join(home, ".config", "gcloud"),
+			want: []string{"./gcloud/properties", "./gcloud/configurations/config_default"},
+			mustSkip: []string{
+				"credentials.db", "access_tokens.db", "legacy_credentials",
+				"application_default_credentials.json",
+			},
+		},
+	}
+	for _, tc := range cases {
+		out, err := exec.Command("bash", "-o", "pipefail", "-c", operatorArchiveCmdline(tc.src)+" | tar -tf -").CombinedOutput()
+		if err != nil {
+			t.Fatalf("archive %s: %v\n%s", tc.src, err, out)
+		}
+		listing := string(out)
+		for _, w := range tc.want {
+			if !strings.Contains(listing, w) {
+				t.Errorf("archive of %s is missing config %q:\n%s", tc.src, w, listing)
+			}
+		}
+		for _, skip := range tc.mustSkip {
+			for _, line := range strings.Split(listing, "\n") {
+				if strings.Contains(line, skip) && !strings.HasSuffix(line, "sso/") && !strings.HasSuffix(line, "cli/") {
+					t.Errorf("archive of %s carries a token cache %q: %s", tc.src, skip, line)
+				}
+			}
 		}
 	}
 }
