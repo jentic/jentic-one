@@ -310,6 +310,36 @@ jentic execute <METHOD:url> --broker-scheme http --broker-host 127.0.0.1:8100
   mirrored from the vendor (`Jentic-Error-Origin: upstream`) stays exit 0
   — that is the API's own answer.
 
+## Vendor CLIs — `jentic cf …`
+
+When the deployment serves a vendor's CLI facade (`jentic cli list` shows
+which, with the address), run the vendor CLI installed on this machine
+through Jentic by prefixing it with `jentic`:
+
+```
+jentic cli list                          # served vendor CLIs and their facade addresses
+jentic cf zones list                     # = cf zones list, through the broker
+JENTIC_CREDENTIAL=<name> jentic cf …     # pick one of several Cloudflare credentials
+```
+
+- Every argument after `cf` goes to `cf` untouched (Jentic parses no flags
+  there; use `JENTIC_CONTEXT` / `JENTIC_MODE` instead of `--context` /
+  `--mode`). `cf`'s stdout, stderr and **exit code pass through unchanged**.
+- The real Cloudflare token stays in Jentic: `cf` gets a short-lived
+  invocation token and the facade address, and any Cloudflare credential in
+  your environment is removed for the run. Each call is checked against your
+  rules and recorded; all calls of one command share one trace id.
+- When `cf` fails, or Jentic cannot run it, stderr ends with **one** line
+  `jentic: {"directive": {…}, "trace_id": "…"}` (the same
+  `strategy`/`parameters`/`human_readable_instruction` shape as a broker
+  `agent_directive`). Follow it: a held call (show the user `review_url`,
+  never re-run; `jentic executions poll <held_execution_id>`), a denied call
+  (change the ask or report it), a call Cloudflare rejected, or no call
+  recorded (not connected, or an endpoint Jentic does not know). Read the
+  command's calls with `jentic history export --trace <trace_id> --include-failures`.
+- When Jentic cannot run `cf` (no facade served, `cf` not installed, not
+  signed in) it exits **1** without running it; the directive says why.
+
 ## Correlation, retries, and dry runs
 
 - Export `JENTIC_SESSION_ID=<your session id>` and every request carries it

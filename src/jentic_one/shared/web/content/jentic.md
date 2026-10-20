@@ -1,7 +1,7 @@
 ---
 name: jentic
 description: Calls third-party APIs through a Jentic One instance — governed, credential-managed access where the agent searches for an operation, inspects it, and executes it through an audited broker that holds the credentials (identity → discover → check access → execute). Applies when the user asks to call an external API or use a connected service — e.g. "find the vessel-tracking API and add it", "get rows from this Google Sheet", connect Slack, import/search/discover an API, integrate or automate a SaaS, pull data from a service, or call an external endpoint. Works over whichever Jentic surface the session has, the `jentic` MCP tools or the `jentic` CLI. Not for local-only work (editing code, finding files, adding a package/dependency, or questions with no external API call).
-version: 7
+version: 8
 ---
 
 # Using Jentic
@@ -236,6 +236,12 @@ directive/envelope rather than assuming which recovery applies — the denial
 taxonomy and its per-code recoveries are in your lane's reference. Diagnose
 a failure by its symptom, not by assuming access: transport failures
 (DNS/TLS/refused) and denials recover differently.
+
+In a CLI session, a vendor's own CLI that the deployment serves through a
+broker facade (today Cloudflare's `cf`) runs through the same broker:
+`jentic cf …` instead of `cf …`. The vendor credential stays in Jentic and
+every call is checked against your rules and recorded; `references/cli.md`
+has the details.
 
 ## Quick Reference
 

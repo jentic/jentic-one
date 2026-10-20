@@ -2313,6 +2313,107 @@
           ]
         },
         {
+          "name": "cf",
+          "path": "jentic cf",
+          "use": "cf [args…]",
+          "short": "Run your local `cf` through Jentic (Cloudflare, via the Broker)",
+          "long": "Runs the cf CLI installed on this machine in the current directory, with every\nargument passed through untouched, pointed at the Jentic Broker's Cloudflare facade.\nJentic injects the real Cloudflare credential per call under your rules and records\nevery call under one trace; the credential never reaches this machine.\n\ncf's stdout, stderr and exit code pass through unchanged. When the command\nfails, or cannot run, one `jentic: {\"directive\": …}` line on stderr says what\nJentic saw and what to do next.\n\nSet JENTIC_CREDENTIAL=\u003cname\u003e to pick a credential when you hold several for Cloudflare.",
+          "example": "  jentic cf zones list\n  JENTIC_CREDENTIAL=prod jentic cf zones list",
+          "group_title": "Find and run operations",
+          "flags": [
+            {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            }
+          ]
+        },
+        {
+          "name": "cli",
+          "path": "jentic cli",
+          "use": "cli",
+          "short": "Vendor CLIs (cf, …) you can run through Jentic",
+          "long": "Vendor CLIs installed on this machine can run through the Jentic Broker: the\nvendor credential stays in Jentic, and every call is checked against your rules\nand recorded. `jentic cli list` shows which ones this deployment serves;\n`jentic cf …` (or `jentic cli run cf -- …`) runs one.",
+          "group_title": "Find and run operations",
+          "flags": [
+            {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            }
+          ],
+          "subcommands": [
+            {
+              "name": "list",
+              "path": "jentic cli list",
+              "use": "list",
+              "short": "List the vendor CLIs this deployment serves, and their facade addresses",
+              "long": "list answers with the vendor CLI facades the Broker serves (GET /cli-facades):\nfor each vendor, the CLI, its addressing mode and the address the wrapper points\nthe CLI at. A vendor missing here cannot be run through Jentic on this\ndeployment. Whether you hold a credential for it is checked per call.",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                }
+              ]
+            },
+            {
+              "name": "run",
+              "path": "jentic cli run",
+              "use": "run \u003ccli\u003e [--] [args…]",
+              "short": "Run a vendor CLI through Jentic (`jentic cli run cf -- zones list`)",
+              "long": "run is the generic form of `jentic \u003ccli\u003e`: `jentic cli run cf -- zones list` is\n`jentic cf zones list`. Everything after \u003ccli\u003e (and an optional `--`) is passed\nto the vendor CLI untouched. Supported: cf.",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                }
+              ]
+            }
+          ]
+        },
+        {
           "name": "skill",
           "path": "jentic skill",
           "use": "skill",

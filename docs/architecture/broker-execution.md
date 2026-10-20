@@ -283,6 +283,17 @@ these ways:
   link, instead of the 202 held envelope, which a CLI would misread as the
   operation's response. A facade call always runs synchronously.
 
+Agents never hard-code a facade's address. The control plane lists the facades
+that are switched on and served, with the address to point each CLI at, on
+`GET /cli-facades`
+([`control/services/cli_facades/service.py`](../../src/jentic_one/control/services/cli_facades/service.py)):
+the vendor's `public_address` when set, otherwise the broker URL
+`GET /instance` advertises (`server.mcp.broker_url`) plus the facade prefix.
+`jentic cf …` reads it, mints an invocation token, runs the local `cf` with
+`CLOUDFLARE_API_BASE_URL` and `CLOUDFLARE_API_TOKEN` set (and any other
+Cloudflare credential variables removed), renews the token while `cf` runs,
+revokes it on exit and passes `cf`'s exit code through.
+
 ## What gets recorded
 
 Executions land as append-only `ExecutionRecord` rows in the admin DB
