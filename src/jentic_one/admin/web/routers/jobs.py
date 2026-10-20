@@ -25,7 +25,7 @@ from jentic_one.shared.models import JobKind, JobStatus
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.links import build_link
-from jentic_one.shared.web.openapi_responses import conflict, not_found, with_responses
+from jentic_one.shared.web.openapi_responses import conflict, gone, not_found, with_responses
 
 router = APIRouter()
 
@@ -113,7 +113,7 @@ async def list_jobs(
     )
 
 
-@router.get("/jobs/{job_id}")
+@router.get("/jobs/{job_id}", responses=with_responses(not_found()))
 async def get_job(
     request: Request,
     job_id: Annotated[
@@ -127,7 +127,10 @@ async def get_job(
     return _job_response(view, request)
 
 
-@router.get("/jobs/{job_id}/result")
+@router.get(
+    "/jobs/{job_id}/result",
+    responses=with_responses(not_found(), conflict(), gone()),
+)
 async def get_job_result(
     job_id: Annotated[
         str, Path(description="ID of the job.", openapi_examples=ex.example(ex.JOB_ID))
@@ -135,7 +138,13 @@ async def get_job_result(
     identity: Identity = get_current_identity(required_permissions=["jobs:read"]),
     result_svc: JobResultService = Depends(get_job_result_service),
 ) -> Response:
-    """Get the result of a completed job — polymorphic by kind."""
+    """Get the result of a completed job — polymorphic by kind.
+
+    Answers ``409`` unless the job's ``status`` is ``completed`` (pending,
+    running, failed or cancelled), and ``410`` once an
+    approved execution's result is past
+    ``held_executions.result_retention_seconds``.
+    """
     view = await result_svc.get(job_id, identity=identity)
     if view.kind == JobKind.EXECUTION and view.content_type:
         return Response(content=view.raw_body, media_type=view.content_type)
