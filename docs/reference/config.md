@@ -452,6 +452,29 @@ Require-approval holds: held execution jobs awaiting a human reviewer. An execut
 | `held_executions.max_pending_per_agent` | integer (>= 1) | `10` | `JENTIC__HELD_EXECUTIONS__MAX_PENDING_PER_AGENT` | Maximum pending approvals per agent. An execute call that would file another hold beyond this is denied with the `approval_pending_limit_reached` problem type. |
 | `held_executions.result_retention_seconds` | integer (> 0) | `86400` | `JENTIC__HELD_EXECUTIONS__RESULT_RETENTION_SECONDS` | Seconds the result of an approved execution stays readable via `GET /jobs/{id}/result` before the result sweep removes it. Defaults to 24 hours. |
 
+## `cli_facades`
+
+Vendor CLIs run through Jentic (`jentic gh`/`cf`/`aws`) in local mode. The agent's own CLI runs on its machine, pointed at a broker vendor facade and authenticated with a short-lived invocation token (`cit_`) minted on the auth surface. The real vendor credential never leaves the broker. A top-level section because the auth surface (minting), the broker (facades) and control (the CLI list) all read it.
+
+| Key | Type | Default | Env var | Description |
+| --- | ---- | ------- | ------- | ----------- |
+| `cli_facades.enabled` | boolean | `false` | `JENTIC__CLI_FACADES__ENABLED` | Master switch for every CLI facade. While off, minting an invocation token answers 404 and no facade is served. |
+| `cli_facades.vendors.github.enabled` | boolean | `false` | `JENTIC__CLI_FACADES__VENDORS__GITHUB__ENABLED` | Whether this vendor's facade is served. Requires `cli_facades.enabled`; while either is off, minting an invocation token for the vendor answers 404. |
+| `cli_facades.vendors.github.mode` | "host" | `"host"` | `JENTIC__CLI_FACADES__VENDORS__GITHUB__MODE` | Facade addressing. Only `host` is supported: `gh` cannot match a git remote against a `host:port` or path-prefixed host. |
+| `cli_facades.vendors.github.host` | string \| null | `null` | `JENTIC__CLI_FACADES__VENDORS__GITHUB__HOST` | The facade hostname in `host` mode, e.g. `github.jentic.example.com` (a bare hostname: no scheme, port or path). Required when the vendor is enabled in `host` mode; must be unset in `path` mode. |
+| `cli_facades.vendors.github.public_address` | string \| null | `null` | `JENTIC__CLI_FACADES__VENDORS__GITHUB__PUBLIC_ADDRESS` | The address agents are told to use, when it differs from what the broker serves (e.g. behind an ingress that rewrites the host). Unset means agents use `host` (`host` mode) or the broker's own address (`path` mode). |
+| `cli_facades.vendors.cloudflare.enabled` | boolean | `false` | `JENTIC__CLI_FACADES__VENDORS__CLOUDFLARE__ENABLED` | Whether this vendor's facade is served. Requires `cli_facades.enabled`; while either is off, minting an invocation token for the vendor answers 404. |
+| `cli_facades.vendors.cloudflare.mode` | "path" | `"path"` | `JENTIC__CLI_FACADES__VENDORS__CLOUDFLARE__MODE` | Facade addressing. Only `path` is supported: the CLI takes a base URL. |
+| `cli_facades.vendors.cloudflare.host` | string \| null | `null` | `JENTIC__CLI_FACADES__VENDORS__CLOUDFLARE__HOST` | The facade hostname in `host` mode, e.g. `github.jentic.example.com` (a bare hostname: no scheme, port or path). Required when the vendor is enabled in `host` mode; must be unset in `path` mode. |
+| `cli_facades.vendors.cloudflare.public_address` | string \| null | `null` | `JENTIC__CLI_FACADES__VENDORS__CLOUDFLARE__PUBLIC_ADDRESS` | The address agents are told to use, when it differs from what the broker serves (e.g. behind an ingress that rewrites the host). Unset means agents use `host` (`host` mode) or the broker's own address (`path` mode). |
+| `cli_facades.vendors.aws.enabled` | boolean | `false` | `JENTIC__CLI_FACADES__VENDORS__AWS__ENABLED` | Whether this vendor's facade is served. Requires `cli_facades.enabled`; while either is off, minting an invocation token for the vendor answers 404. |
+| `cli_facades.vendors.aws.mode` | "path" | `"path"` | `JENTIC__CLI_FACADES__VENDORS__AWS__MODE` | Facade addressing. Only `path` is supported: the CLI takes a base URL. |
+| `cli_facades.vendors.aws.host` | string \| null | `null` | `JENTIC__CLI_FACADES__VENDORS__AWS__HOST` | The facade hostname in `host` mode, e.g. `github.jentic.example.com` (a bare hostname: no scheme, port or path). Required when the vendor is enabled in `host` mode; must be unset in `path` mode. |
+| `cli_facades.vendors.aws.public_address` | string \| null | `null` | `JENTIC__CLI_FACADES__VENDORS__AWS__PUBLIC_ADDRESS` | The address agents are told to use, when it differs from what the broker serves (e.g. behind an ingress that rewrites the host). Unset means agents use `host` (`host` mode) or the broker's own address (`path` mode). |
+| `cli_facades.invocation_ttl_seconds` | integer (> 0) | `600` | `JENTIC__CLI_FACADES__INVOCATION_TTL_SECONDS` | Seconds an invocation token lives after minting or its last renewal. The CLI wrapper renews it while the command runs and revokes it on exit, so this bounds only a wrapper that dies without revoking. Defaults to 10 minutes. |
+| `cli_facades.invocation_hard_cap_seconds` | integer (> 0) | `3600` | `JENTIC__CLI_FACADES__INVOCATION_HARD_CAP_SECONDS` | Seconds after minting past which an invocation token cannot be renewed, however often it is renewed. Must be at least `invocation_ttl_seconds`. Defaults to 1 hour. |
+| `cli_facades.mint_rate_limit_per_minute` | integer (>= 1) | `60` | `JENTIC__CLI_FACADES__MINT_RATE_LIMIT_PER_MINUTE` | Invocation tokens one agent may mint per minute (token bucket; the burst equals this value). Renewals and revocations are not counted. |
+
 ## `apps`
 
 | Key | Type | Default | Env var | Description |

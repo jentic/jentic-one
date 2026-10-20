@@ -578,6 +578,87 @@ func (j *CircuitBreakerConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
+// Per-vendor facade settings, one explicit field per supported vendor.
+//
+// Vendors are explicit fields rather than a free mapping so each vendor's
+// allowed modes are validated by its type.
+type CliFacadeVendorsConfig struct {
+	// The AWS facade (``aws``). ``path`` mode only.
+	Aws *PathCliFacadeConfig `json:"aws,omitempty,omitzero" yaml:"aws,omitempty" mapstructure:"aws,omitempty"`
+
+	// The Cloudflare facade (``cf``). ``path`` mode only.
+	Cloudflare *PathCliFacadeConfig `json:"cloudflare,omitempty,omitzero" yaml:"cloudflare,omitempty" mapstructure:"cloudflare,omitempty"`
+
+	// The GitHub facade (``gh``). ``host`` mode only.
+	Github *HostCliFacadeConfig `json:"github,omitempty,omitzero" yaml:"github,omitempty" mapstructure:"github,omitempty"`
+}
+
+// Vendor CLIs run through Jentic (“jentic gh“/“cf“/“aws“) in local mode.
+//
+// The agent's own CLI runs on its machine, pointed at a broker vendor facade
+// and authenticated with a short-lived invocation token (“cit_“) minted on
+// the auth surface. The real vendor credential never leaves the broker. A
+// top-level section because the auth surface (minting), the broker (facades)
+// and control (the CLI list) all read it.
+type CliFacadesConfig struct {
+	// Master switch for every CLI facade. While off, minting an invocation token
+	// answers 404 and no facade is served.
+	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`
+
+	// Seconds after minting past which an invocation token cannot be renewed, however
+	// often it is renewed. Must be at least ``invocation_ttl_seconds``. Defaults to 1
+	// hour.
+	InvocationHardCapSeconds int `json:"invocation_hard_cap_seconds,omitempty,omitzero" yaml:"invocation_hard_cap_seconds,omitempty" mapstructure:"invocation_hard_cap_seconds,omitempty"`
+
+	// Seconds an invocation token lives after minting or its last renewal. The CLI
+	// wrapper renews it while the command runs and revokes it on exit, so this bounds
+	// only a wrapper that dies without revoking. Defaults to 10 minutes.
+	InvocationTtlSeconds int `json:"invocation_ttl_seconds,omitempty,omitzero" yaml:"invocation_ttl_seconds,omitempty" mapstructure:"invocation_ttl_seconds,omitempty"`
+
+	// Invocation tokens one agent may mint per minute (token bucket; the burst equals
+	// this value). Renewals and revocations are not counted.
+	MintRateLimitPerMinute int `json:"mint_rate_limit_per_minute,omitempty,omitzero" yaml:"mint_rate_limit_per_minute,omitempty" mapstructure:"mint_rate_limit_per_minute,omitempty"`
+
+	// Per-vendor facade settings.
+	Vendors *CliFacadeVendorsConfig `json:"vendors,omitempty,omitzero" yaml:"vendors,omitempty" mapstructure:"vendors,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *CliFacadesConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain CliFacadesConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["enabled"]; !ok || v == nil {
+		plain.Enabled = false
+	}
+	if v, ok := raw["invocation_hard_cap_seconds"]; !ok || v == nil {
+		plain.InvocationHardCapSeconds = 3600
+	}
+	if 0 >= plain.InvocationHardCapSeconds {
+		return fmt.Errorf("field %s: must be > %v", "invocation_hard_cap_seconds", 0)
+	}
+	if v, ok := raw["invocation_ttl_seconds"]; !ok || v == nil {
+		plain.InvocationTtlSeconds = 600
+	}
+	if 0 >= plain.InvocationTtlSeconds {
+		return fmt.Errorf("field %s: must be > %v", "invocation_ttl_seconds", 0)
+	}
+	if v, ok := raw["mint_rate_limit_per_minute"]; !ok || v == nil {
+		plain.MintRateLimitPerMinute = 60
+	}
+	if 1 > plain.MintRateLimitPerMinute {
+		return fmt.Errorf("field %s: must be >= %v", "mint_rate_limit_per_minute", 1)
+	}
+	*j = CliFacadesConfig(plain)
+	return nil
+}
+
 // Top-level application configuration.
 type ConfigSchemaJson struct {
 	// Admin corresponds to the JSON schema field "admin".
@@ -594,6 +675,9 @@ type ConfigSchemaJson struct {
 
 	// Catalog corresponds to the JSON schema field "catalog".
 	Catalog *CatalogConfig `json:"catalog,omitempty,omitzero" yaml:"catalog,omitempty" mapstructure:"catalog,omitempty"`
+
+	// CliFacades corresponds to the JSON schema field "cli_facades".
+	CliFacades *CliFacadesConfig `json:"cli_facades,omitempty,omitzero" yaml:"cli_facades,omitempty" mapstructure:"cli_facades,omitempty"`
 
 	// Control corresponds to the JSON schema field "control".
 	Control *ControlSurfaceConfig `json:"control,omitempty,omitzero" yaml:"control,omitempty" mapstructure:"control,omitempty"`
@@ -1433,6 +1517,55 @@ func (j *HeldExecutionsConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
+// A facade served on a hostname of its own (“host“ mode only).
+type HostCliFacadeConfig struct {
+	// Whether this vendor's facade is served. Requires ``cli_facades.enabled``; while
+	// either is off, minting an invocation token for the vendor answers 404.
+	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`
+
+	// The facade hostname in ``host`` mode, e.g. ``github.jentic.example.com`` (a
+	// bare hostname: no scheme, port or path). Required when the vendor is enabled in
+	// ``host`` mode; must be unset in ``path`` mode.
+	Host interface{} `json:"host,omitempty,omitzero" yaml:"host,omitempty" mapstructure:"host,omitempty"`
+
+	// Facade addressing. Only ``host`` is supported: ``gh`` cannot match a git remote
+	// against a ``host:port`` or path-prefixed host.
+	Mode string `json:"mode,omitempty,omitzero" yaml:"mode,omitempty" mapstructure:"mode,omitempty"`
+
+	// The address agents are told to use, when it differs from what the broker serves
+	// (e.g. behind an ingress that rewrites the host). Unset means agents use
+	// ``host`` (``host`` mode) or the broker's own address (``path`` mode).
+	PublicAddress interface{} `json:"public_address,omitempty,omitzero" yaml:"public_address,omitempty" mapstructure:"public_address,omitempty"`
+}
+
+type HostCliFacadeConfigHost_0 *string
+
+type HostCliFacadeConfigPublicAddress_0 *string
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *HostCliFacadeConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain HostCliFacadeConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["enabled"]; !ok || v == nil {
+		plain.Enabled = false
+	}
+	if v, ok := raw["mode"]; !ok || v == nil {
+		plain.Mode = "host"
+	}
+	if plain.Mode != "host" {
+		return fmt.Errorf("field %s: must be equal to %s", "mode", "host")
+	}
+	*j = HostCliFacadeConfig(plain)
+	return nil
+}
+
 // “Idempotency-Key“ replay store.
 //
 // Sync “FULL“-mode replay over the shared-state “AtomicStore“ (the
@@ -2120,6 +2253,54 @@ type ObservabilityConfig struct {
 
 	// Tracing corresponds to the JSON schema field "tracing".
 	Tracing *TracingConfig `json:"tracing,omitempty,omitzero" yaml:"tracing,omitempty" mapstructure:"tracing,omitempty"`
+}
+
+// A facade served under a path prefix on the broker's host (“path“ mode only).
+type PathCliFacadeConfig struct {
+	// Whether this vendor's facade is served. Requires ``cli_facades.enabled``; while
+	// either is off, minting an invocation token for the vendor answers 404.
+	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`
+
+	// The facade hostname in ``host`` mode, e.g. ``github.jentic.example.com`` (a
+	// bare hostname: no scheme, port or path). Required when the vendor is enabled in
+	// ``host`` mode; must be unset in ``path`` mode.
+	Host interface{} `json:"host,omitempty,omitzero" yaml:"host,omitempty" mapstructure:"host,omitempty"`
+
+	// Facade addressing. Only ``path`` is supported: the CLI takes a base URL.
+	Mode string `json:"mode,omitempty,omitzero" yaml:"mode,omitempty" mapstructure:"mode,omitempty"`
+
+	// The address agents are told to use, when it differs from what the broker serves
+	// (e.g. behind an ingress that rewrites the host). Unset means agents use
+	// ``host`` (``host`` mode) or the broker's own address (``path`` mode).
+	PublicAddress interface{} `json:"public_address,omitempty,omitzero" yaml:"public_address,omitempty" mapstructure:"public_address,omitempty"`
+}
+
+type PathCliFacadeConfigHost_0 *string
+
+type PathCliFacadeConfigPublicAddress_0 *string
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *PathCliFacadeConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain PathCliFacadeConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["enabled"]; !ok || v == nil {
+		plain.Enabled = false
+	}
+	if v, ok := raw["mode"]; !ok || v == nil {
+		plain.Mode = "path"
+	}
+	if plain.Mode != "path" {
+		return fmt.Errorf("field %s: must be equal to %s", "mode", "path")
+	}
+	*j = PathCliFacadeConfig(plain)
+	return nil
 }
 
 // Configuration for a Pipedream-hosted OAuth provider (full settings land in M6).

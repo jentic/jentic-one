@@ -378,6 +378,65 @@
       "title": "CircuitBreakerConfig",
       "type": "object"
     },
+    "CliFacadeVendorsConfig": {
+      "additionalProperties": false,
+      "description": "Per-vendor facade settings, one explicit field per supported vendor.\n\nVendors are explicit fields rather than a free mapping so each vendor's\nallowed modes are validated by its type.",
+      "properties": {
+        "aws": {
+          "$ref": "#/$defs/PathCliFacadeConfig",
+          "description": "The AWS facade (``aws``). ``path`` mode only."
+        },
+        "cloudflare": {
+          "$ref": "#/$defs/PathCliFacadeConfig",
+          "description": "The Cloudflare facade (``cf``). ``path`` mode only."
+        },
+        "github": {
+          "$ref": "#/$defs/HostCliFacadeConfig",
+          "description": "The GitHub facade (``gh``). ``host`` mode only."
+        }
+      },
+      "title": "CliFacadeVendorsConfig",
+      "type": "object"
+    },
+    "CliFacadesConfig": {
+      "additionalProperties": false,
+      "description": "Vendor CLIs run through Jentic (``jentic gh``/``cf``/``aws``) in local mode.\n\nThe agent's own CLI runs on its machine, pointed at a broker vendor facade\nand authenticated with a short-lived invocation token (``cit_``) minted on\nthe auth surface. The real vendor credential never leaves the broker. A\ntop-level section because the auth surface (minting), the broker (facades)\nand control (the CLI list) all read it.",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "description": "Master switch for every CLI facade. While off, minting an invocation token answers 404 and no facade is served.",
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "invocation_hard_cap_seconds": {
+          "default": 3600,
+          "description": "Seconds after minting past which an invocation token cannot be renewed, however often it is renewed. Must be at least ``invocation_ttl_seconds``. Defaults to 1 hour.",
+          "exclusiveMinimum": 0,
+          "title": "Invocation Hard Cap Seconds",
+          "type": "integer"
+        },
+        "invocation_ttl_seconds": {
+          "default": 600,
+          "description": "Seconds an invocation token lives after minting or its last renewal. The CLI wrapper renews it while the command runs and revokes it on exit, so this bounds only a wrapper that dies without revoking. Defaults to 10 minutes.",
+          "exclusiveMinimum": 0,
+          "title": "Invocation Ttl Seconds",
+          "type": "integer"
+        },
+        "mint_rate_limit_per_minute": {
+          "default": 60,
+          "description": "Invocation tokens one agent may mint per minute (token bucket; the burst equals this value). Renewals and revocations are not counted.",
+          "minimum": 1,
+          "title": "Mint Rate Limit Per Minute",
+          "type": "integer"
+        },
+        "vendors": {
+          "$ref": "#/$defs/CliFacadeVendorsConfig",
+          "description": "Per-vendor facade settings."
+        }
+      },
+      "title": "CliFacadesConfig",
+      "type": "object"
+    },
     "ConnectConfig": {
       "description": "Configuration for the OAuth connect flow.",
       "properties": {
@@ -949,6 +1008,53 @@
       "title": "HeldExecutionsConfig",
       "type": "object"
     },
+    "HostCliFacadeConfig": {
+      "additionalProperties": false,
+      "description": "A facade served on a hostname of its own (``host`` mode only).",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "description": "Whether this vendor's facade is served. Requires ``cli_facades.enabled``; while either is off, minting an invocation token for the vendor answers 404.",
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "host": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The facade hostname in ``host`` mode, e.g. ``github.jentic.example.com`` (a bare hostname: no scheme, port or path). Required when the vendor is enabled in ``host`` mode; must be unset in ``path`` mode.",
+          "title": "Host"
+        },
+        "mode": {
+          "const": "host",
+          "default": "host",
+          "description": "Facade addressing. Only ``host`` is supported: ``gh`` cannot match a git remote against a ``host:port`` or path-prefixed host.",
+          "title": "Mode",
+          "type": "string"
+        },
+        "public_address": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The address agents are told to use, when it differs from what the broker serves (e.g. behind an ingress that rewrites the host). Unset means agents use ``host`` (``host`` mode) or the broker's own address (``path`` mode).",
+          "title": "Public Address"
+        }
+      },
+      "title": "HostCliFacadeConfig",
+      "type": "object"
+    },
     "IdempotencyConfig": {
       "description": "``Idempotency-Key`` replay store.\n\nSync ``FULL``-mode replay over the shared-state ``AtomicStore`` (the\n``state:`` backend). Two TTLs: a *short* ``pending_ttl_s`` claim\n(sized to the request deadline + buffer, so a crash mid-flight frees the key\nin seconds rather than the full replay window) promoted to the *long*\n``ttl_s`` only once the response is stored. Responses over\n``max_response_bytes`` are recorded without their body (replay still prevents\na duplicate side-effect; only byte-for-byte body replay is dropped).\n\nCompliance modes (``metadata_only`` / kill-switch), ``require_for_mutations``,\nasync same-``job_id`` replay, and at-rest encryption are future work.",
       "properties": {
@@ -1403,6 +1509,53 @@
         }
       },
       "title": "ObservabilityConfig",
+      "type": "object"
+    },
+    "PathCliFacadeConfig": {
+      "additionalProperties": false,
+      "description": "A facade served under a path prefix on the broker's host (``path`` mode only).",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "description": "Whether this vendor's facade is served. Requires ``cli_facades.enabled``; while either is off, minting an invocation token for the vendor answers 404.",
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "host": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The facade hostname in ``host`` mode, e.g. ``github.jentic.example.com`` (a bare hostname: no scheme, port or path). Required when the vendor is enabled in ``host`` mode; must be unset in ``path`` mode.",
+          "title": "Host"
+        },
+        "mode": {
+          "const": "path",
+          "default": "path",
+          "description": "Facade addressing. Only ``path`` is supported: the CLI takes a base URL.",
+          "title": "Mode",
+          "type": "string"
+        },
+        "public_address": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The address agents are told to use, when it differs from what the broker serves (e.g. behind an ingress that rewrites the host). Unset means agents use ``host`` (``host`` mode) or the broker's own address (``path`` mode).",
+          "title": "Public Address"
+        }
+      },
+      "title": "PathCliFacadeConfig",
       "type": "object"
     },
     "PipedreamProviderConfig": {
@@ -2266,6 +2419,9 @@
     },
     "catalog": {
       "$ref": "#/$defs/CatalogConfig"
+    },
+    "cli_facades": {
+      "$ref": "#/$defs/CliFacadesConfig"
     },
     "control": {
       "$ref": "#/$defs/ControlSurfaceConfig"

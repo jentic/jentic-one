@@ -2669,6 +2669,192 @@ class HeldExecutionsConfig(BaseModel):
     )
 
 
+#: A bare DNS hostname: dot-separated labels, no scheme, port, path or
+#: trailing dot. Facade hosts are matched against the request ``Host`` header,
+#: so anything else could never match.
+_FACADE_HOSTNAME_RE = re.compile(
+    r"^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$"
+)
+
+
+def _normalize_facade_hostname(value: str | None) -> str | None:
+    if value is None:
+        return None
+    host = value.strip().lower()
+    if not _FACADE_HOSTNAME_RE.match(host):
+        raise ValueError(
+            f"{value!r} is not a bare hostname (no scheme, port, path or trailing dot)"
+        )
+    return host
+
+
+class CliFacadeVendorConfig(BaseModel):
+    """How agents' vendor CLIs reach one vendor's broker facade.
+
+    ``mode`` selects the addressing: ``host`` serves the facade on a hostname
+    of its own, ``path`` under a reserved path prefix on the broker's existing
+    host. Each vendor's subclass narrows ``mode`` to the modes its CLI
+    supports, so a wrong mode fails validation.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "Whether this vendor's facade is served. Requires ``cli_facades.enabled``; "
+            "while either is off, minting an invocation token for the vendor answers 404."
+        ),
+    )
+    mode: Literal["host", "path"]
+    host: str | None = Field(
+        default=None,
+        description=(
+            "The facade hostname in ``host`` mode, e.g. ``github.jentic.example.com`` "
+            "(a bare hostname: no scheme, port or path). Required when the vendor is "
+            "enabled in ``host`` mode; must be unset in ``path`` mode."
+        ),
+    )
+    public_address: str | None = Field(
+        default=None,
+        description=(
+            "The address agents are told to use, when it differs from what the broker "
+            "serves (e.g. behind an ingress that rewrites the host). Unset means agents "
+            "use ``host`` (``host`` mode) or the broker's own address (``path`` mode)."
+        ),
+    )
+
+    _normalize_host = field_validator("host")(_normalize_facade_hostname)
+
+    @model_validator(mode="after")
+    def _check_mode_fields(self) -> CliFacadeVendorConfig:
+        if self.mode == "path" and self.host is not None:
+            raise ValueError("host is only used in 'host' mode; unset it for 'path' mode")
+        if self.mode == "host" and self.enabled and self.host is None:
+            raise ValueError("an enabled facade in 'host' mode requires host")
+        return self
+
+
+class HostCliFacadeConfig(CliFacadeVendorConfig):
+    """A facade served on a hostname of its own (``host`` mode only)."""
+
+    mode: Literal["host"] = Field(
+        default="host",
+        description=(
+            "Facade addressing. Only ``host`` is supported: ``gh`` cannot match a git "
+            "remote against a ``host:port`` or path-prefixed host."
+        ),
+    )
+
+
+class PathCliFacadeConfig(CliFacadeVendorConfig):
+    """A facade served under a path prefix on the broker's host (``path`` mode only)."""
+
+    mode: Literal["path"] = Field(
+        default="path",
+        description="Facade addressing. Only ``path`` is supported: the CLI takes a base URL.",
+    )
+
+
+#: Vendors with a CLI facade, matching the fields of :class:`CliFacadeVendorsConfig`.
+CLI_FACADE_VENDORS: tuple[str, ...] = ("github", "cloudflare", "aws")
+
+
+class CliFacadeVendorsConfig(BaseModel):
+    """Per-vendor facade settings, one explicit field per supported vendor.
+
+    Vendors are explicit fields rather than a free mapping so each vendor's
+    allowed modes are validated by its type.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    github: HostCliFacadeConfig = Field(
+        default_factory=HostCliFacadeConfig,
+        description="The GitHub facade (``gh``). ``host`` mode only.",
+    )
+    cloudflare: PathCliFacadeConfig = Field(
+        default_factory=PathCliFacadeConfig,
+        description="The Cloudflare facade (``cf``). ``path`` mode only.",
+    )
+    aws: PathCliFacadeConfig = Field(
+        default_factory=PathCliFacadeConfig,
+        description="The AWS facade (``aws``). ``path`` mode only.",
+    )
+
+    def get(self, vendor: str) -> CliFacadeVendorConfig | None:
+        """The settings for ``vendor``, or ``None`` for a vendor with no facade."""
+        if vendor not in CLI_FACADE_VENDORS:
+            return None
+        settings: CliFacadeVendorConfig = getattr(self, vendor)
+        return settings
+
+
+class CliFacadesConfig(BaseModel):
+    """Vendor CLIs run through Jentic (``jentic gh``/``cf``/``aws``) in local mode.
+
+    The agent's own CLI runs on its machine, pointed at a broker vendor facade
+    and authenticated with a short-lived invocation token (``cit_``) minted on
+    the auth surface. The real vendor credential never leaves the broker. A
+    top-level section because the auth surface (minting), the broker (facades)
+    and control (the CLI list) all read it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "Master switch for every CLI facade. While off, minting an invocation "
+            "token answers 404 and no facade is served."
+        ),
+    )
+    vendors: CliFacadeVendorsConfig = Field(
+        default_factory=CliFacadeVendorsConfig,
+        description="Per-vendor facade settings.",
+    )
+    invocation_ttl_seconds: int = Field(
+        default=600,
+        gt=0,
+        description=(
+            "Seconds an invocation token lives after minting or its last renewal. The "
+            "CLI wrapper renews it while the command runs and revokes it on exit, so "
+            "this bounds only a wrapper that dies without revoking. Defaults to 10 minutes."
+        ),
+    )
+    invocation_hard_cap_seconds: int = Field(
+        default=3600,
+        gt=0,
+        description=(
+            "Seconds after minting past which an invocation token cannot be renewed, "
+            "however often it is renewed. Must be at least ``invocation_ttl_seconds``. "
+            "Defaults to 1 hour."
+        ),
+    )
+    mint_rate_limit_per_minute: int = Field(
+        default=60,
+        ge=1,
+        description=(
+            "Invocation tokens one agent may mint per minute (token bucket; the burst "
+            "equals this value). Renewals and revocations are not counted."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _check_token_lifetimes(self) -> CliFacadesConfig:
+        if self.invocation_hard_cap_seconds < self.invocation_ttl_seconds:
+            raise ValueError(
+                "cli_facades.invocation_hard_cap_seconds must be >= "
+                "cli_facades.invocation_ttl_seconds"
+            )
+        return self
+
+    def vendor_enabled(self, vendor: str) -> bool:
+        """Whether ``vendor`` has a facade and both switches for it are on."""
+        settings = self.vendors.get(vendor)
+        return self.enabled and settings is not None and settings.enabled
+
+
 class AppConfig(BaseModel):
     """Top-level application configuration."""
 
@@ -2699,6 +2885,7 @@ class AppConfig(BaseModel):
     release_check: ReleaseCheckConfig = Field(default_factory=ReleaseCheckConfig)
     entitlement: EntitlementConfig = Field(default_factory=EntitlementConfig)
     held_executions: HeldExecutionsConfig = Field(default_factory=HeldExecutionsConfig)
+    cli_facades: CliFacadesConfig = Field(default_factory=CliFacadesConfig)
     apps: list[str] = Field(default_factory=lambda: ["registry", "admin", "control", "auth"])
     state: StateBackendConfig = Field(
         default_factory=StateBackendConfig,
