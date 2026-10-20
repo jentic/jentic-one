@@ -277,8 +277,15 @@ async def test_lazy_read_flags_other_sources_and_starts_no_sync_task(
         "precedence": 10,
         "settings": {"url": _MANIFEST_URL},
     }
+    # The update-notify sweep is a deliberate fire-and-forget task whose own
+    # session teardown spawns further tasks; switch it off so every task left
+    # behind by the read would be a sync task.
     cfg = web_config.model_copy(
-        update={"catalog": CatalogConfig.model_validate({"sources": [public, corp]})}
+        update={
+            "catalog": CatalogConfig.model_validate(
+                {"sources": [public, corp], "update_check_interval_seconds": 0}
+            )
+        }
     )
     synced: list[str] = []
     real_sync = CatalogSourceSync.sync_source
@@ -293,11 +300,7 @@ async def test_lazy_read_flags_other_sources_and_starts_no_sync_task(
         before = set(asyncio.all_tasks())
         view = await CatalogService(ctx).list_all()
         assert view.catalog_total == 2
-        leftover = [
-            t
-            for t in asyncio.all_tasks() - before
-            if not t.done() and "update_notify" not in repr(t.get_coro())
-        ]
+        leftover = [t for t in asyncio.all_tasks() - before if not t.done()]
         assert leftover == []
         # The legacy source synced inline with the snapshot refresh; "corp" was
         # only flagged for the scanner.
