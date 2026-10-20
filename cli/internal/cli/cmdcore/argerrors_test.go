@@ -1,7 +1,9 @@
 package cmdcore
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -88,5 +90,31 @@ func TestFlagErrorFunc_CodesMissingArgument(t *testing.T) {
 	}
 	if !ce.IsReported() {
 		t.Error("flagErrorFunc must render + mark reported so core.Run does not double-print")
+	}
+}
+
+// TestInvocationErrorMapper_PassesChildExitCodeThrough pins that a wrapped
+// child's exit code (`jentic run`, `jentic cf`) reaches core.RunTree verbatim:
+// an ExitCodeError is not an invocation error, so the mapper neither renders
+// an envelope for it nor turns it into MISSING_ARGUMENT's exit 1.
+func TestInvocationErrorMapper_PassesChildExitCodeThrough(t *testing.T) {
+	t.Setenv("JENTIC_MODE", "agent")
+	root := &cobra.Command{Use: "jentic"}
+	root.PersistentFlags().String("mode", "", "")
+	var stderr bytes.Buffer
+	root.SetErr(&stderr)
+
+	got := InvocationErrorMapper(root, fmt.Errorf("run: %w", NewExitCodeError(7)))
+
+	var ec *ExitCodeError
+	if !errors.As(got, &ec) || ec.ExitCode() != 7 {
+		t.Fatalf("mapper returned %v (%T), want the ExitCodeError with code 7", got, got)
+	}
+	var ce *ux.CodedError
+	if errors.As(got, &ce) {
+		t.Fatalf("mapper coded a child exit as %q", ce.Code)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("mapper rendered %q for a child exit; it must stay silent", stderr.String())
 	}
 }
