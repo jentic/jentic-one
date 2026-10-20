@@ -11,8 +11,13 @@
 /** Permission-rule effect enforced by the broker. */
 export type PermissionRuleEffect = 'allow' | 'deny' | 'require-approval';
 
-/** How a rule's `path` is interpreted by the broker. Absent = `regex`. */
-export type PermissionRuleMatchMode = 'regex' | 'prefix' | 'exact';
+/**
+ * How a rule's `path` is interpreted by the broker. Absent = `regex`.
+ * `graphql` makes `path` a GraphQL top-level-field selector (`query`,
+ * `mutation`, `mutation:createPullRequest,addComment`) that matches the
+ * fields of a GraphQL request, never a path.
+ */
+export type PermissionRuleMatchMode = 'regex' | 'prefix' | 'exact' | 'graphql';
 
 /**
  * A single permission rule on an `(agent, credential)` binding — enforced by
@@ -104,6 +109,8 @@ function pathClause(path: string, mode: PermissionRuleMatchMode | null | undefin
 			return `scoped to paths starting with ${path}`;
 		case 'exact':
 			return `scoped to exactly path ${path}`;
+		case 'graphql':
+			return `scoped to GraphQL ${path}`;
 		default:
 			return `scoped to path ${path}`;
 	}

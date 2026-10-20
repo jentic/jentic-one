@@ -106,12 +106,7 @@ from jentic_one.shared.models.api_identity import (
 from jentic_one.shared.models.credentials import CredentialType, StoredCredentialType
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
-from jentic_one.shared.permissions.evaluation import (
-    PermissionRule,
-    first_matching_rule,
-    normalize_methods,
-)
-from jentic_one.shared.permissions.matching import compile_matcher
+from jentic_one.shared.permissions.evaluation import compile_rule, first_matching_rule
 from jentic_one.shared.url_path import has_ambiguous_traversal, normalize_path
 from jentic_one.shared.url_validation import validate_upstream_url_async
 
@@ -898,12 +893,15 @@ class CredentialService:
                 credential_id=None,
                 is_system=None,
             )
+        # A GraphQL top-level-field rule matches only a GraphQL request's field,
+        # which a method/path dry-run never is.
         compiled = [
-            PermissionRule(
+            compile_rule(
                 effect=rule.effect,
-                methods=normalize_methods(rule.methods),
-                path=compile_matcher(rule.path, str(rule.match_mode or "regex")),
-                operations=tuple(rule.operations) if rule.operations is not None else None,
+                methods=rule.methods,
+                path=rule.path,
+                match_mode=str(rule.match_mode or "regex"),
+                operations=rule.operations,
             )
             for rule in rules
         ]

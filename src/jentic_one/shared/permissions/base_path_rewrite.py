@@ -38,6 +38,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Protocol
 
+from jentic_one.shared.permissions.graphql_rules import GRAPHQL_MATCH_MODE
+
 _PLACEHOLDER_SEGMENT_RE = re.compile(r"^\{[^}]+\}$")
 _TEMPLATE_TOKEN_RE = re.compile(r"(\{[^}]+\})")
 
@@ -226,7 +228,8 @@ def decide_rewrite(
     inline binding rule, one per attached binding for a shared rule set. A
     ``None`` entry is an API with no live revision.
     """
-    if path is None:
+    if path is None or mode == GRAPHQL_MATCH_MODE:
+        # A GraphQL rule's ``path`` is a field selector, not a URL path.
         return RewriteDecision.unchanged()
     if mode not in ("prefix", "exact"):
         return RewriteDecision.skipped(SkipReason.REGEX_NOT_REWRITABLE)

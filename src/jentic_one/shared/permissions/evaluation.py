@@ -11,6 +11,10 @@ concrete path relative to the API's server URL, normalized by
 for a server ``https://host/{region}``). Rules are authored against the spec's
 paths, so that is the only basis on which preview and enforcement agree
 (#1424).
+
+A GraphQL request is evaluated once per top-level field: callers pass the
+field as ``graphql_field``, and only then can a ``match_mode="graphql"`` rule
+match (see ``shared.permissions.graphql_rules``).
 """
 
 from __future__ import annotations
@@ -22,7 +26,13 @@ from urllib.parse import urlparse
 
 import structlog
 
-from jentic_one.shared.permissions.matching import PathMatcher
+from jentic_one.shared.permissions.graphql_rules import (
+    GRAPHQL_MATCH_MODE,
+    GraphQLField,
+    GraphQLSelector,
+    parse_selector,
+)
+from jentic_one.shared.permissions.matching import PathMatcher, compile_matcher
 from jentic_one.shared.url_path import normalize_path
 
 _logger = structlog.get_logger(__name__)
@@ -70,6 +80,49 @@ class PermissionRule:
     # The rule row's primary key, so a ``require-approval`` hold can record
     # which rule held the call.
     rule_id: str | None = None
+    # A ``match_mode="graphql"`` rule's selector: the rule then matches only a
+    # GraphQL request's top-level field it covers (``path`` is ``None``).
+    graphql: GraphQLSelector | None = None
+
+
+#: A path matcher that matches nothing: the fail-closed stand-in for a stored
+#: pattern or selector that does not compile.
+_NEVER = PathMatcher(mode="regex", literal=None, pattern=None, never=True)
+
+
+def compile_rule(
+    *,
+    effect: str,
+    methods: Sequence[str] | None,
+    path: str | None,
+    match_mode: str | None,
+    operations: Sequence[str] | None,
+    rule_id: str | None = None,
+) -> PermissionRule:
+    """Compile one stored rule row (the broker enforcer and the control dry-run share it).
+
+    A ``graphql`` rule's ``path`` is its selector; one that does not parse
+    compiles to a rule that never matches (fail closed), like an invalid
+    stored path pattern.
+    """
+    mode = match_mode or "regex"
+    if mode == GRAPHQL_MATCH_MODE:
+        selector = parse_selector(path)
+        return PermissionRule(
+            effect=effect,
+            methods=normalize_methods(methods),
+            path=_NEVER if selector is None else None,
+            operations=tuple(operations) if operations is not None else None,
+            rule_id=rule_id,
+            graphql=selector,
+        )
+    return PermissionRule(
+        effect=effect,
+        methods=normalize_methods(methods),
+        path=compile_matcher(path, mode),
+        operations=tuple(operations) if operations is not None else None,
+        rule_id=rule_id,
+    )
 
 
 #: Effects a rule may only carry when it constrains methods, path, or operations.
@@ -85,11 +138,31 @@ def normalize_methods(raw: Sequence[str] | None) -> frozenset[str] | None:
 
 def is_condition_less(rule: PermissionRule) -> bool:
     """True if a rule constrains nothing — matches every request when evaluated."""
-    return rule.methods is None and rule.path is None and rule.operations is None
+    return (
+        rule.methods is None
+        and rule.path is None
+        and rule.operations is None
+        and rule.graphql is None
+    )
 
 
-def rule_matches(rule: PermissionRule, *, method: str, path: str, operation_id: str | None) -> bool:
-    """Return True if ALL defined criteria in the rule match the request."""
+def rule_matches(
+    rule: PermissionRule,
+    *,
+    method: str,
+    path: str,
+    operation_id: str | None,
+    graphql_field: GraphQLField | None = None,
+) -> bool:
+    """Return True if ALL defined criteria in the rule match the request.
+
+    A GraphQL rule matches only when ``graphql_field`` (one top-level field of
+    a GraphQL request) is given and its selector covers it.
+    """
+    if rule.graphql is not None and (
+        graphql_field is None or not rule.graphql.matches(graphql_field)
+    ):
+        return False
     if rule.methods is not None and method.upper() not in rule.methods:
         return False
     if rule.path is not None and not rule.path.matches(path):
@@ -107,8 +180,12 @@ def first_matching_rule(
     operation_id: str | None,
     binding: str | None = None,
     warn: bool = True,
+    graphql_field: GraphQLField | None = None,
 ) -> int | None:
     """Index of the rule that decides the request, or ``None`` (default-deny).
+
+    ``graphql_field`` is the top-level field being evaluated for a GraphQL
+    request (one call per field); ``None`` for any other request.
 
     ``binding`` labels the rule source (``agent:credential`` ids or
     ``rule_set:<id>`` — identifiers only, never secret material) so a
@@ -131,7 +208,9 @@ def first_matching_rule(
                     binding=binding,
                 )
             continue
-        if rule_matches(rule, method=method, path=path, operation_id=operation_id):
+        if rule_matches(
+            rule, method=method, path=path, operation_id=operation_id, graphql_field=graphql_field
+        ):
             return idx
     return None
 

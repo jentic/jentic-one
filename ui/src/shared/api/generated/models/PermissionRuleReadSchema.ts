@@ -19,7 +19,7 @@ export type PermissionRuleReadSchema = {
      */
     effect: PermissionRuleReadSchema.effect;
     /**
-     * How `path` is interpreted: `regex` (full-match), `prefix` or `exact`.
+     * How `path` is interpreted: `regex` (full-match), `prefix`, `exact`, or `graphql` (a GraphQL top-level-field selector).
      */
     match_mode?: PermissionRuleReadSchema.match_mode;
     /**
@@ -31,7 +31,7 @@ export type PermissionRuleReadSchema = {
      */
     operations?: (Array<string> | null);
     /**
-     * Path pattern relative to the API's server URL, interpreted per `match_mode`; null matches all paths.
+     * Path pattern relative to the API's server URL, interpreted per `match_mode`; null matches all paths. A GraphQL selector when `match_mode` is `graphql`.
      */
     path?: (string | null);
 };
@@ -45,12 +45,13 @@ export namespace PermissionRuleReadSchema {
         REQUIRE_APPROVAL = 'require-approval',
     }
     /**
-     * How `path` is interpreted: `regex` (full-match), `prefix` or `exact`.
+     * How `path` is interpreted: `regex` (full-match), `prefix`, `exact`, or `graphql` (a GraphQL top-level-field selector).
      */
     export enum match_mode {
         REGEX = 'regex',
         PREFIX = 'prefix',
         EXACT = 'exact',
+        GRAPHQL = 'graphql',
     }
 }
 

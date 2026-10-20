@@ -17,7 +17,8 @@
 // * Match modes: ``regex`` (JS full-match — see ``fullMatch`` below),
 //   ``prefix`` (``startsWith`` for pure-literal, prefix-regex for
 //   placeholder-bearing paths), ``exact`` (equality for pure-literal,
-//   fullmatch-regex for placeholder-bearing paths).
+//   fullmatch-regex for placeholder-bearing paths); ``graphql`` (a GraphQL
+//   top-level-field selector) never matches a path.
 // * A regex that fails to compile → fail-closed matcher (never matches).
 // * A condition-less ``allow`` rule is skipped by the evaluator (should
 //   have been rejected client-side; belt & braces).
@@ -29,7 +30,7 @@
 
 import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
 
-export type MatchMode = 'regex' | 'prefix' | 'exact';
+export type MatchMode = 'regex' | 'prefix' | 'exact' | 'graphql';
 
 interface PathMatcher {
 	mode: MatchMode;
@@ -95,6 +96,9 @@ function templatePathToRegex(path: string): RegExp {
 }
 
 function compileMatcher(path: string | null | undefined, mode: MatchMode): PathMatcher | null {
+	// A GraphQL rule's ``path`` is a top-level-field selector: it matches the
+	// fields of a GraphQL request, never a request path (``graphql_rules.py``).
+	if (mode === 'graphql') return { mode, literal: null, pattern: null, never: true };
 	if (path == null) return null;
 	if (path === '') {
 		// Empty path is rejected by the Python side (``_check``) too. Mirror

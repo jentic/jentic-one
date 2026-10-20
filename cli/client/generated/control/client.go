@@ -986,15 +986,18 @@ func (e PermissionRuleReadSchemaEffect) Valid() bool {
 
 // Defines values for PermissionRuleReadSchemaMatchMode.
 const (
-	PermissionRuleReadSchemaMatchModeExact  PermissionRuleReadSchemaMatchMode = "exact"
-	PermissionRuleReadSchemaMatchModePrefix PermissionRuleReadSchemaMatchMode = "prefix"
-	PermissionRuleReadSchemaMatchModeRegex  PermissionRuleReadSchemaMatchMode = "regex"
+	PermissionRuleReadSchemaMatchModeExact   PermissionRuleReadSchemaMatchMode = "exact"
+	PermissionRuleReadSchemaMatchModeGraphql PermissionRuleReadSchemaMatchMode = "graphql"
+	PermissionRuleReadSchemaMatchModePrefix  PermissionRuleReadSchemaMatchMode = "prefix"
+	PermissionRuleReadSchemaMatchModeRegex   PermissionRuleReadSchemaMatchMode = "regex"
 )
 
 // Valid indicates whether the value is a known member of the PermissionRuleReadSchemaMatchMode enum.
 func (e PermissionRuleReadSchemaMatchMode) Valid() bool {
 	switch e {
 	case PermissionRuleReadSchemaMatchModeExact:
+		return true
+	case PermissionRuleReadSchemaMatchModeGraphql:
 		return true
 	case PermissionRuleReadSchemaMatchModePrefix:
 		return true
@@ -1028,15 +1031,18 @@ func (e PermissionRuleSchemaEffect) Valid() bool {
 
 // Defines values for PermissionRuleSchemaMatchMode.
 const (
-	PermissionRuleSchemaMatchModeExact  PermissionRuleSchemaMatchMode = "exact"
-	PermissionRuleSchemaMatchModePrefix PermissionRuleSchemaMatchMode = "prefix"
-	PermissionRuleSchemaMatchModeRegex  PermissionRuleSchemaMatchMode = "regex"
+	PermissionRuleSchemaMatchModeExact   PermissionRuleSchemaMatchMode = "exact"
+	PermissionRuleSchemaMatchModeGraphql PermissionRuleSchemaMatchMode = "graphql"
+	PermissionRuleSchemaMatchModePrefix  PermissionRuleSchemaMatchMode = "prefix"
+	PermissionRuleSchemaMatchModeRegex   PermissionRuleSchemaMatchMode = "regex"
 )
 
 // Valid indicates whether the value is a known member of the PermissionRuleSchemaMatchMode enum.
 func (e PermissionRuleSchemaMatchMode) Valid() bool {
 	switch e {
 	case PermissionRuleSchemaMatchModeExact:
+		return true
+	case PermissionRuleSchemaMatchModeGraphql:
 		return true
 	case PermissionRuleSchemaMatchModePrefix:
 		return true
@@ -6321,7 +6327,7 @@ type PermissionRuleReadSchema struct {
 	// Examples: allow
 	Effect PermissionRuleReadSchemaEffect `json:"effect"`
 
-	// MatchMode How `path` is interpreted: `regex` (full-match), `prefix` or `exact`.
+	// MatchMode How `path` is interpreted: `regex` (full-match), `prefix`, `exact`, or `graphql` (a GraphQL top-level-field selector).
 	//
 	// Examples: prefix
 	MatchMode *PermissionRuleReadSchemaMatchMode `json:"match_mode,omitempty"`
@@ -6336,7 +6342,7 @@ type PermissionRuleReadSchema struct {
 	// Examples: ["listCharges"]
 	Operations *[]string `json:"operations,omitempty"`
 
-	// Path Path pattern relative to the API's server URL, interpreted per `match_mode`; null matches all paths.
+	// Path Path pattern relative to the API's server URL, interpreted per `match_mode`; null matches all paths. A GraphQL selector when `match_mode` is `graphql`.
 	//
 	// Examples: /v1/charges
 	Path *string `json:"path,omitempty"`
@@ -6347,7 +6353,7 @@ type PermissionRuleReadSchema struct {
 // Examples: allow
 type PermissionRuleReadSchemaEffect string
 
-// PermissionRuleReadSchemaMatchMode How `path` is interpreted: `regex` (full-match), `prefix` or `exact`.
+// PermissionRuleReadSchemaMatchMode How `path` is interpreted: `regex` (full-match), `prefix`, `exact`, or `graphql` (a GraphQL top-level-field selector).
 //
 // Examples: prefix
 type PermissionRuleReadSchemaMatchMode string
@@ -6365,7 +6371,7 @@ type PermissionRuleSchema struct {
 	// Examples: allow
 	Effect PermissionRuleSchemaEffect `json:"effect"`
 
-	// MatchMode How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility.
+	// MatchMode How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility. `graphql` makes the rule match the top-level fields of a GraphQL request (the GitHub GraphQL endpoint) by operation type and field name, one field at a time; it matches no other request.
 	//
 	// Examples: prefix
 	MatchMode *PermissionRuleSchemaMatchMode `json:"match_mode,omitempty"`
@@ -6380,7 +6386,7 @@ type PermissionRuleSchema struct {
 	// Examples: ["listCharges"]
 	Operations *[]string `json:"operations,omitempty"`
 
-	// Path Path pattern to match, relative to the API's server URL — the spec's path (`/widgets`), never the full upstream path with the server's base path (`/eu/widgets` for a server `https://host/{region}`). Interpreted per `match_mode`: `regex` uses full-match semantics (the pattern must describe the whole path); `prefix` and `exact` are literal. None matches all paths.
+	// Path Path pattern to match, relative to the API's server URL — the spec's path (`/widgets`), never the full upstream path with the server's base path (`/eu/widgets` for a server `https://host/{region}`). Interpreted per `match_mode`: `regex` uses full-match semantics (the pattern must describe the whole path); `prefix` and `exact` are literal. None matches all paths. With `match_mode` `graphql`, `path` is required and is a GraphQL selector instead: `query`, `mutation`, or `mutation:createPullRequest,addComment` (top-level field names, never aliases).
 	//
 	// Examples: /v1/charges
 	Path *string `json:"path,omitempty"`
@@ -6391,7 +6397,7 @@ type PermissionRuleSchema struct {
 // Examples: allow
 type PermissionRuleSchemaEffect string
 
-// PermissionRuleSchemaMatchMode How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility.
+// PermissionRuleSchemaMatchMode How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility. `graphql` makes the rule match the top-level fields of a GraphQL request (the GitHub GraphQL endpoint) by operation type and field name, one field at a time; it matches no other request.
 //
 // Examples: prefix
 type PermissionRuleSchemaMatchMode string

@@ -14841,11 +14841,12 @@
           },
           "match_mode": {
             "default": "regex",
-            "description": "How `path` is interpreted: `regex` (full-match), `prefix` or `exact`.",
+            "description": "How `path` is interpreted: `regex` (full-match), `prefix`, `exact`, or `graphql` (a GraphQL top-level-field selector).",
             "enum": [
               "regex",
               "prefix",
-              "exact"
+              "exact",
+              "graphql"
             ],
             "examples": [
               "prefix"
@@ -14902,7 +14903,7 @@
                 "type": "null"
               }
             ],
-            "description": "Path pattern relative to the API's server URL, interpreted per `match_mode`; null matches all paths.",
+            "description": "Path pattern relative to the API's server URL, interpreted per `match_mode`; null matches all paths. A GraphQL selector when `match_mode` is `graphql`.",
             "examples": [
               "/v1/charges"
             ],
@@ -14947,11 +14948,12 @@
           },
           "match_mode": {
             "default": "regex",
-            "description": "How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility.",
+            "description": "How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility. `graphql` makes the rule match the top-level fields of a GraphQL request (the GitHub GraphQL endpoint) by operation type and field name, one field at a time; it matches no other request.",
             "enum": [
               "regex",
               "prefix",
-              "exact"
+              "exact",
+              "graphql"
             ],
             "examples": [
               "prefix"
@@ -15008,7 +15010,7 @@
                 "type": "null"
               }
             ],
-            "description": "Path pattern to match, relative to the API's server URL — the spec's path (`/widgets`), never the full upstream path with the server's base path (`/eu/widgets` for a server `https://host/{region}`). Interpreted per `match_mode`: `regex` uses full-match semantics (the pattern must describe the whole path); `prefix` and `exact` are literal. None matches all paths.",
+            "description": "Path pattern to match, relative to the API's server URL — the spec's path (`/widgets`), never the full upstream path with the server's base path (`/eu/widgets` for a server `https://host/{region}`). Interpreted per `match_mode`: `regex` uses full-match semantics (the pattern must describe the whole path); `prefix` and `exact` are literal. None matches all paths. With `match_mode` `graphql`, `path` is required and is a GraphQL selector instead: `query`, `mutation`, or `mutation:createPullRequest,addComment` (top-level field names, never aliases).",
             "examples": [
               "/v1/charges"
             ],

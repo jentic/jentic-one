@@ -43,7 +43,10 @@ class BasePermissionRuleSchema(BaseModel):
             "server's base path (`/eu/widgets` for a server `https://host/{region}`). "
             "Interpreted per `match_mode`: `regex` uses "
             "full-match semantics (the pattern must describe the whole path); "
-            "`prefix` and `exact` are literal. None matches all paths."
+            "`prefix` and `exact` are literal. None matches all paths. With "
+            "`match_mode` `graphql`, `path` is required and is a GraphQL selector "
+            "instead: `query`, `mutation`, or `mutation:createPullRequest,addComment` "
+            "(top-level field names, never aliases)."
         ),
     )
     match_mode: MatchMode = Field(
@@ -52,7 +55,9 @@ class BasePermissionRuleSchema(BaseModel):
         description=(
             "How `path` is interpreted: `regex` (full-match), `prefix` "
             "(string prefix), or `exact` (equality). Defaults to `regex` for "
-            "backwards compatibility."
+            "backwards compatibility. `graphql` makes the rule match the top-level "
+            "fields of a GraphQL request (the GitHub GraphQL endpoint) by operation "
+            "type and field name, one field at a time; it matches no other request."
         ),
     )
     operations: list[str] | None = Field(
@@ -125,13 +130,16 @@ class PermissionRuleReadSchema(BaseModel):
         examples=["/v1/charges"],
         description=(
             "Path pattern relative to the API's server URL, interpreted per `match_mode`; "
-            "null matches all paths."
+            "null matches all paths. A GraphQL selector when `match_mode` is `graphql`."
         ),
     )
     match_mode: MatchMode = Field(
         default="regex",
         examples=["prefix"],
-        description="How `path` is interpreted: `regex` (full-match), `prefix` or `exact`.",
+        description=(
+            "How `path` is interpreted: `regex` (full-match), `prefix`, `exact`, or "
+            "`graphql` (a GraphQL top-level-field selector)."
+        ),
     )
     operations: list[str] | None = Field(
         default=None,

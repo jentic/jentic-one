@@ -35,11 +35,21 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-MatchMode = Literal["regex", "prefix", "exact"]
-"""How a rule's ``path`` string is interpreted against an inbound request path."""
+from jentic_one.shared.permissions.graphql_rules import GRAPHQL_MATCH_MODE, selector_error
 
-MATCH_MODES: tuple[MatchMode, ...] = ("regex", "prefix", "exact")
+MatchMode = Literal["regex", "prefix", "exact", "graphql"]
+"""How a rule's ``path`` string is interpreted.
+
+``regex``, ``prefix`` and ``exact`` match the inbound request path;
+``graphql`` makes ``path`` a GraphQL top-level-field selector instead (see
+``shared.permissions.graphql_rules``), which never matches a path.
+"""
+
+MATCH_MODES: tuple[MatchMode, ...] = ("regex", "prefix", "exact", "graphql")
 """All valid match modes, in the same order as the Literal for OpenAPI stability."""
+
+PATH_MATCH_MODES: tuple[MatchMode, ...] = ("regex", "prefix", "exact")
+"""The match modes whose ``path`` is matched against the request path."""
 
 MAX_PATTERN_LENGTH: int = 1000
 """Save- and enforce-time cap; matches the ``VARCHAR(1000)`` on ``path``."""
@@ -50,6 +60,7 @@ PathValidationCode = Literal[
     "empty_path",
     "unknown_mode",
     "unsafe_regex",
+    "invalid_graphql_selector",
 ]
 
 # ReDoS guard — nested unbounded quantifiers are the classic catastrophic-
@@ -121,7 +132,8 @@ class PathMatcher:
 def _check(path: str | None, mode: str) -> PathValidationError | None:
     """Shared save-and-load validation; returns ``None`` when valid.
 
-    ``path is None`` is always valid (no constraint). Otherwise the pair
+    In ``graphql`` mode ``path`` is a required GraphQL selector. In the path
+    modes ``path is None`` is always valid (no constraint); otherwise the pair
     ``(path, mode)`` must pass the mode-specific checks. Empty strings
     are rejected in every mode because:
 
@@ -131,6 +143,13 @@ def _check(path: str | None, mode: str) -> PathValidationError | None:
     * ``regex``: ``""`` full-matches only the empty path — never useful,
       always a mistake — and would similarly slip past the guard.
     """
+    if mode == GRAPHQL_MATCH_MODE:
+        reason = selector_error(path)
+        return (
+            PathValidationError(code="invalid_graphql_selector", reason=reason)
+            if reason is not None
+            else None
+        )
     if path is None:
         return None
     if mode not in MATCH_MODES:
@@ -230,6 +249,10 @@ def compile_matcher(path: str | None, mode: str) -> PathMatcher | None:
     literal comparison, preserving existing behaviour for the common
     case.
     """
+    if mode == GRAPHQL_MATCH_MODE:
+        # A GraphQL selector is not a path: as a path matcher it matches
+        # nothing, whatever the selector (see ``graphql_rules``).
+        return PathMatcher(mode="regex", literal=None, pattern=None, never=True)
     if path is None:
         return None
     error = _check(path, mode)
