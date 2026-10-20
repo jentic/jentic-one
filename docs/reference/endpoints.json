@@ -1493,6 +1493,72 @@
         "capabilities:read": []
       },
       "method": "GET",
+      "operation_id": "listCatalogSources",
+      "path": "/catalog/sources",
+      "public": false,
+      "required_permissions": [
+        "capabilities:read"
+      ],
+      "summary": "List Catalog Sources",
+      "surface": "catalog",
+      "typical_caller": "agent"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_permissions": {
+        "catalog:sync": []
+      },
+      "method": "POST",
+      "operation_id": "notifyCatalogSource",
+      "path": "/catalog/sources/{slug}:notify",
+      "public": false,
+      "required_permissions": [
+        "catalog:sync"
+      ],
+      "summary": "Notify Catalog Source",
+      "surface": "catalog",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_permissions": {
+        "catalog:sync": []
+      },
+      "method": "POST",
+      "operation_id": "syncCatalogSource",
+      "path": "/catalog/sources/{slug}:sync",
+      "public": false,
+      "required_permissions": [
+        "catalog:sync"
+      ],
+      "summary": "Sync Catalog Source",
+      "surface": "catalog",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Agent-facing (typically an agent)",
+      "implied_permissions": {
+        "capabilities:read": []
+      },
+      "method": "GET",
       "operation_id": "getCatalogEntry",
       "path": "/catalog/{entry_id}",
       "public": false,
@@ -1596,28 +1662,6 @@
       "summary": "Unsnooze Catalog Entry",
       "surface": "catalog",
       "typical_caller": "operator"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_permissions": {
-        "catalog:sync": []
-      },
-      "method": "POST",
-      "operation_id": "refreshCatalog",
-      "path": "/catalog:refresh",
-      "public": false,
-      "required_permissions": [
-        "catalog:sync"
-      ],
-      "summary": "Refresh Catalog",
-      "surface": "catalog:refresh",
-      "typical_caller": "any"
     },
     {
       "actor_types": [
@@ -4817,5 +4861,5 @@
     "total": 30
   },
   "schema": "jentic.endpoint-permission-tree/v1",
-  "total": 170
+  "total": 172
 }

@@ -12,11 +12,12 @@ import re
 import secrets
 import stat
 import threading
+import traceback
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 import structlog
 import yaml
@@ -46,6 +47,12 @@ from jentic_one.shared.url import (
     normalize_base_url,
     origins_equivalent,
     validate_redirect_uri,
+)
+from jentic_one.shared.url_validation import (
+    METADATA_HOSTNAMES,
+    is_metadata_host,
+    network_covers_metadata,
+    unwrap_ipv4_mapped_network,
 )
 
 _logger = structlog.get_logger(__name__)
@@ -156,6 +163,21 @@ def _require_or_generate_secret(value: SecretStr, *, field_path: str) -> SecretS
 
 class ConfigError(Exception):
     """Raised when configuration is invalid or incomplete."""
+
+
+def _describe_validation_error(exc: ValidationError) -> str:
+    """``exc`` as text built from each error's location and message only.
+
+    Pydantic's own rendering repeats every offending input (``input_value=``),
+    which can be a secret (a password in a URL, say); a boot error must not
+    print it.
+    """
+    errors = exc.errors(include_input=False, include_url=False, include_context=False)
+    lines = [f"{len(errors)} validation error{'s' if len(errors) != 1 else ''} for {exc.title}"]
+    for error in errors:
+        lines.append(".".join(str(part) for part in error["loc"]) or "(root)")
+        lines.append(f"  {error['msg']} [type={error['type']}]")
+    return "\n".join(lines)
 
 
 def _normalize_optional_base_url(value: str | None) -> str | None:
@@ -2137,8 +2159,10 @@ _CATALOG_SOURCE_SLUG_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 class SourceAuthConfig(BaseModel):
     """How a catalog source authenticates its requests.
 
-    Only ``none`` is built in; other resolver types are registered by extensions.
-    The secret itself never appears here: ``env`` names the variable holding it.
+    Built in: ``none``, ``bearer_from_env`` (``Authorization: Bearer <value of env>``)
+    and ``header_from_env`` (``<header>: <value of env>``); extensions register
+    more. The secret itself never appears here: ``env`` names the variable
+    holding it, read on every request.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -2146,23 +2170,138 @@ class SourceAuthConfig(BaseModel):
     type: str = Field(
         default="none",
         description=(
-            "Auth resolver type; it must be registered. Only none is built in; "
-            "startup fails on an unknown type."
+            "Auth resolver type; it must be registered. Built in: none, bearer_from_env "
+            "and header_from_env; startup fails on an unknown type."
         ),
     )
     env: str | None = Field(
         default=None,
         description=(
-            "Name of the environment variable holding the secret, for a credentialed "
-            "resolver to read; ignored by none."
+            "Name of the environment variable holding the secret (never the secret "
+            "itself); none takes no env."
         ),
     )
     header: str | None = Field(
         default=None,
+        description="Request header the secret is sent in (header_from_env only).",
+    )
+    origins: list[str] = Field(
+        default_factory=list,
         description=(
-            "Request header a credentialed resolver sends the secret in; ignored by none."
+            "Extra origins (scheme://host[:port]) that may receive the credential. By "
+            "default it goes only to the origins the source's settings name (a "
+            "git-manifest's url, an http-index index_url or static spec_urls), never to "
+            "a host a listing points at."
         ),
     )
+
+    @field_validator("origins")
+    @classmethod
+    def _http_origins(cls, value: list[str]) -> list[str]:
+        # Never echo an entry: its userinfo or query string can carry a secret.
+        for index, origin in enumerate(value):
+            parts = urlsplit(origin)
+            if parts.username is not None or parts.password is not None:
+                raise ValueError(
+                    f"auth.origins entry for host {parts.hostname!r} must not carry "
+                    "credentials (user:pass@); the source's auth supplies them"
+                )
+            if parts.scheme not in ("http", "https") or not parts.hostname:
+                raise ValueError(f"auth.origins[{index}] is not an http(s) origin")
+            if parts.path not in ("", "/") or parts.query or parts.fragment:
+                raise ValueError(
+                    f"auth.origins entry for host {parts.hostname!r} must be an origin "
+                    "(scheme://host[:port]), not a URL"
+                )
+        return value
+
+
+class SourceEgressConfig(BaseModel):
+    """Extra egress one catalog source's own client may use.
+
+    Added to ``ingest.egress`` for this source's requests only; no other source
+    and no other outbound client gets it. A range or domain that would reach a
+    cloud-metadata endpoint is refused at load.
+
+    The widening covers every URL the source fetches, including spec URLs its
+    upstream index lists (an internal index usually lists specs on sibling
+    internal hosts). Whoever controls the index can therefore point it anywhere
+    in these ranges, so keep the CIDRs narrow and name the hosts with
+    ``allowed_internal_domains``: an IP-literal URL needs only the CIDR. The
+    source's credentials stay on its configured origins regardless.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    allowed_private_subnets: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = Field(
+        default_factory=list,
+        description=(
+            "Private CIDRs this source may reach (a resolved name must also match "
+            "allowed_internal_domains; an IP-literal URL needs only the CIDR). It "
+            "applies to every URL the source fetches, spec URLs its index lists "
+            "included, so keep it narrow. A range containing a cloud-metadata "
+            "address (e.g. 169.254.169.254, or ::ffff:169.254.169.254) is refused; "
+            "an IPv4-mapped IPv6 range (::ffff:10.0.0.0/104) is read as its IPv4 range."
+        ),
+    )
+    allowed_internal_domains: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Domain suffixes whose private addresses this source may reach "
+            "(recommended alongside allowed_private_subnets, to name the hosts an "
+            "index may list). A cloud-metadata host, or a suffix covering one, is "
+            "refused."
+        ),
+    )
+
+    @field_validator("allowed_private_subnets", mode="before")
+    @classmethod
+    def _parse_subnets(cls, value: Any) -> Any:
+        if isinstance(value, list):
+            return [
+                unwrap_ipv4_mapped_network(ipaddress.ip_network(str(v), strict=False))
+                for v in value
+            ]
+        return value
+
+    @field_validator("allowed_private_subnets")
+    @classmethod
+    def _no_metadata_subnets(
+        cls, value: list[ipaddress.IPv4Network | ipaddress.IPv6Network]
+    ) -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
+        for network in value:
+            if network_covers_metadata(network):
+                raise ValueError(
+                    f"allowed_private_subnets: {network} contains a cloud-metadata address"
+                )
+        return value
+
+    @field_validator("allowed_internal_domains")
+    @classmethod
+    def _no_metadata_domains(cls, value: list[str]) -> list[str]:
+        for domain in value:
+            bare = domain.strip().lower().rstrip(".").lstrip(".")
+            if not bare:
+                raise ValueError("allowed_internal_domains: an entry is empty")
+            if is_metadata_host(bare) or any(
+                host == bare or host.endswith("." + bare) for host in METADATA_HOSTNAMES
+            ):
+                raise ValueError(
+                    f"allowed_internal_domains: {domain!r} would reach a cloud-metadata host"
+                )
+        return value
+
+    def widen(self, base: EgressConfig) -> EgressConfig:
+        """``base`` plus this source's subnets and domains."""
+        if not self.allowed_private_subnets and not self.allowed_internal_domains:
+            return base
+        subnets = [*base.allowed_private_subnets]
+        subnets.extend(str(n) for n in self.allowed_private_subnets if str(n) not in subnets)
+        domains = [*base.allowed_internal_domains]
+        domains.extend(d for d in self.allowed_internal_domains if d not in domains)
+        return base.model_copy(
+            update={"allowed_private_subnets": subnets, "allowed_internal_domains": domains}
+        )
 
 
 class SourceReadersConfig(BaseModel):
@@ -2217,7 +2356,8 @@ class CatalogSourceConfig(BaseModel):
         ge=0,
         description=(
             "Background sync interval. 0 disables automatic sync and background "
-            "egress for this source; a manual refresh still syncs it."
+            "egress for this source; a requested sync (POST /catalog/sources/{slug}:sync) "
+            "still syncs it."
         ),
     )
     max_removal_ratio: float = Field(
@@ -2269,10 +2409,42 @@ class CatalogSourceConfig(BaseModel):
         ),
     )
     auth: SourceAuthConfig = Field(default_factory=SourceAuthConfig)
+    egress: SourceEgressConfig = Field(
+        default_factory=SourceEgressConfig,
+        description="Extra egress for this source's requests only (added to ingest.egress).",
+    )
+    min_sync_interval_seconds: int = Field(
+        default=10,
+        ge=0,
+        description=(
+            "A :sync within this many seconds of the source's last started sync is "
+            "due when the interval ends (a forced :sync is not held back)."
+        ),
+    )
+    min_notify_interval_seconds: int = Field(
+        default=60,
+        ge=0,
+        description=(
+            "A :notify within this many seconds of the source's last started sync "
+            "joins it instead of asking for another."
+        ),
+    )
     readers: SourceReadersConfig | None = Field(
         default=None, description="Reader ACL; required for restricted sources only."
     )
-    settings: dict[str, Any] = Field(default_factory=dict, description="Kind-specific settings.")
+    settings: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Kind-specific settings. git-manifest: url (its apis.json). http-index: "
+            "exactly one of index_url (an APIs.json-style index) or specs (a static "
+            "list of {external_id, spec_url, catalog_api_id?, title?, tags?}, at most "
+            "100000 items). With index_url, max_entries (default 10000, at most 100000) "
+            "caps the listing: an index listing more fails the sync run with "
+            "listing_too_large (GET /catalog/sources shows it as last_error_code) and "
+            "the stored entries stay; it does not apply to specs. index_url and spec_url "
+            "must not carry user:pass@; index-listed spec URLs that do are ignored."
+        ),
+    )
 
     @field_validator("slug")
     @classmethod
@@ -2334,24 +2506,15 @@ class CatalogConfig(BaseModel):
             "The git-manifest source that pre-existing catalog imports are reconciled against."
         ),
     )
-    refresh_deadline_seconds: float = Field(
-        default=45.0,
-        gt=0,
-        le=600,
-        description=(
-            "Bound on the source listings of one POST /catalog:refresh, taken "
-            "together (each one is also capped by ingest.fetch_timeout_s). A source "
-            "reached after it is skipped (status partial) and left to the scanner."
-        ),
-    )
     # Update-notify (Flow 3): the standalone ``CatalogUpdateScanner`` (started in
     # app_factory when both the registry + admin DBs are present) runs one sweep per
     # this interval, conditionally re-fetching the spec URLs of upstream-tracked APIs
     # (If-None-Match) and emitting a ``catalog.update_available`` event when the
-    # upstream spec changed. The manual ``POST /catalog:refresh`` also triggers a
-    # sweep. A given API is re-probed at most once per this interval (a persistent
-    # per-API gate, so scanner + manual refresh don't double-probe). Zero disables the
-    # sweep + scanner entirely (kill switch for air-gapped installs — no event spam,
+    # upstream spec changed. A requested sync (``POST /catalog/sources/{slug}:sync``)
+    # also triggers a sweep once it runs. A given API is re-probed at most once per
+    # this interval (a persistent per-API gate, so scanner + requested syncs don't
+    # double-probe). Zero disables the sweep + scanner entirely (kill switch for
+    # air-gapped installs — no event spam,
     # no egress). Standalone-registry deployments (no admin DB) get no scanner.
     update_check_interval_seconds: int = 86400
     # Aggregate guardrails for one update-notify sweep. The sweep is offloaded off
@@ -2646,8 +2809,9 @@ class AppConfig(BaseModel):
     # Reject unknown top-level keys that are neither a known field nor a
     # registered extension — surfaces misconfig loudly instead of dropping it.
     # Registered extension sections are extracted by load_config() before
-    # validation, so they never reach this model as unknown keys.
-    model_config = ConfigDict(extra="forbid")
+    # validation, so they never reach this model as unknown keys. A validation
+    # error never repeats its input: a config value can be a secret.
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     databases: DatabasesConfig
     services: ServicesConfig = Field(default_factory=ServicesConfig)
@@ -3075,7 +3239,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     if config_path is not None:
         if not config_path.exists():
             raise ConfigError(f"Config file not found: {config_path}")
-        loaded = yaml.safe_load(_read_config_text(config_path))
+        loaded = _parse_config_yaml(_read_config_text(config_path), config_path)
         if isinstance(loaded, dict):
             file_data = loaded
 
@@ -3087,14 +3251,20 @@ def load_config(path: Path | None = None) -> AppConfig:
 
     # Extract registered extension sections before validating the core model, so
     # extra="forbid" accepts them and each is validated by its own model.
+    # Every ConfigError below is raised outside its ``except`` block and carries
+    # no cause or context: the pydantic error repeats the input, which can be a
+    # secret, and a chained exception would print it in the boot traceback.
     extensions: dict[str, BaseModel] = {}
     for name, model in _CONFIG_EXTENSIONS.items():
         if name in merged:
             raw = merged.pop(name)
+            failure: str | None = None
             try:
                 extensions[name] = model.model_validate(raw)
             except ValidationError as e:
-                raise ConfigError(f"Invalid config for extension {name!r}: {e}") from e
+                failure = _describe_validation_error(e)
+            if failure is not None:
+                raise ConfigError(f"Invalid config for extension {name!r}: {failure}")
     if extensions:
         merged["extensions"] = extensions
 
@@ -3105,10 +3275,44 @@ def load_config(path: Path | None = None) -> AppConfig:
     token = _ENABLED_APPS.set(_apps_for_secret_guard(merged.get("apps")))
     try:
         return AppConfig.model_validate(merged)
+    except ValidationError as e:
+        detail = _describe_validation_error(e)
+    except ConfigError as e:
+        # Raised on purpose by a validator (e.g. the production secret guard),
+        # with a message that names the setting, never its value.
+        detail = str(e)
     except Exception as e:
-        raise ConfigError(f"Configuration validation failed: {e}") from e
+        detail = _describe_unexpected_error(e)
     finally:
         _ENABLED_APPS.reset(token)
+    raise ConfigError(f"Configuration validation failed: {detail}")
+
+
+def _describe_unexpected_error(e: BaseException) -> str:
+    """A non-pydantic error raised while validating config (a validator bug), by
+    type and the ``file:line`` it was raised at.
+
+    Its message is left out: it can repeat config input, which can be a secret.
+    """
+    frames = traceback.extract_tb(e.__traceback__)
+    where = f" at {frames[-1].filename}:{frames[-1].lineno}" if frames else ""
+    return f"unexpected {type(e).__name__}{where} (message withheld: it may repeat config input)"
+
+
+def _parse_config_yaml(text: str, path: Path) -> Any:
+    """``text`` parsed as YAML; a syntax error names its position, never the line.
+
+    PyYAML's own message quotes the offending line, which can hold a secret.
+    """
+    failure: str | None = None
+    try:
+        return yaml.safe_load(text)
+    except yaml.YAMLError as e:
+        mark = getattr(e, "problem_mark", None)
+        where = f" at line {mark.line + 1}, column {mark.column + 1}" if mark is not None else ""
+        problem = getattr(e, "problem", None) or type(e).__name__
+        failure = f"Config file {path} is not valid YAML{where}: {problem}"
+    raise ConfigError(failure)
 
 
 def _apps_for_secret_guard(raw: Any) -> frozenset[str] | None:

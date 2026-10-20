@@ -1,4 +1,4 @@
-"""Repository for ``catalog_sources``: per-source sync state and the sync lease.
+"""Repository for ``catalog_sources``: per-source sync state, the sync lease and sync requests.
 
 Flush-only, never commits. The lease (``sync_lease_owner`` / ``sync_lease_until``)
 is a conditional ``UPDATE`` so exactly one process wins a claim; on Postgres the
@@ -11,7 +11,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import ColumnElement, func, or_, select, text, update
+from sqlalchemy import ColumnElement, case, func, literal, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,10 +28,21 @@ def _now(session: AsyncSession) -> Any:
     return func.now() if _is_postgres(session) else utcnow()
 
 
+def _typed_time(value: Any) -> Any:
+    """``value`` as a SQL expression of the timestamp column type (a Python time is bound)."""
+    if isinstance(value, datetime):
+        return literal(value, type_=CatalogSourceRow.__table__.c.sync_due_at.type)
+    return value
+
+
 def _now_plus(session: AsyncSession, seconds: int) -> Any:
     if _is_postgres(session):
         return func.now() + func.make_interval(0, 0, 0, 0, 0, 0, seconds)
     return utcnow() + timedelta(seconds=seconds)
+
+
+def _aware(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 class CatalogSourceRepository:
@@ -188,31 +199,128 @@ class CatalogSourceRepository:
             )
 
     @staticmethod
-    async def mark_sync_wanted(
-        session: AsyncSession, slugs: Iterable[str], *, healthy_only: bool = False
-    ) -> int:
-        """Set ``sync_wanted_at`` where it is not already set.
-
-        With ``healthy_only``, a source with ``consecutive_failures > 0`` is left
-        unflagged: the scanner syncs every wanted row at once, so flagging a
-        source in backoff would bypass it. ``is_due`` retries it when it is due.
-        """
+    async def mark_sync_wanted(session: AsyncSession, slugs: Iterable[str]) -> int:
+        """Set ``sync_wanted_at`` where it is not already set."""
         wanted = list(slugs)
         if not wanted:
             return 0
-        conditions: list[ColumnElement[bool]] = [
-            CatalogSourceRow.slug.in_(wanted),
-            CatalogSourceRow.sync_wanted_at.is_(None),
-        ]
-        if healthy_only:
-            conditions.append(CatalogSourceRow.consecutive_failures == 0)
         result = await session.execute(
             update(CatalogSourceRow)
-            .where(*conditions)
+            .where(CatalogSourceRow.slug.in_(wanted), CatalogSourceRow.sync_wanted_at.is_(None))
             .values(sync_wanted_at=utcnow())
             .execution_options(synchronize_session=False)
         )
         return int(getattr(result, "rowcount", 0) or 0)
+
+    @staticmethod
+    async def request_sync(
+        session: AsyncSession, *, slug: str, due_at: datetime | None, forced: bool
+    ) -> None:
+        """Record a requested sync of ``slug``, startable once ``due_at`` passes.
+
+        ``due_at=None`` means now. An earlier pending due time is kept, so a
+        request never postpones one already queued. ``forced`` marks the next
+        run as skipping the mass-removal guard.
+        """
+        now = _now(session)
+        due = _typed_time(now if due_at is None else due_at)
+        values: dict[str, Any] = {
+            "sync_due_at": case(
+                (CatalogSourceRow.sync_due_at.is_(None), due),
+                (CatalogSourceRow.sync_due_at > due, due),
+                else_=CatalogSourceRow.sync_due_at,
+            )
+        }
+        if forced:
+            values["sync_forced_at"] = now
+        await session.execute(
+            update(CatalogSourceRow)
+            .where(CatalogSourceRow.slug == slug)
+            .values(**values)
+            .execution_options(synchronize_session=False)
+        )
+
+    @staticmethod
+    async def sync_due_at(session: AsyncSession, slug: str) -> datetime | None:
+        """The source's pending requested-sync time, read from the database."""
+        result = await session.execute(
+            select(CatalogSourceRow.sync_due_at).where(CatalogSourceRow.slug == slug)
+        )
+        value: datetime | None = result.scalar_one_or_none()
+        if value is not None and value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value
+
+    @staticmethod
+    async def next_sync_due_at(session: AsyncSession) -> datetime | None:
+        """The earliest time a pending requested sync can start across sources.
+
+        A request on a source whose lease a run still holds cannot start before
+        the lease ends, so it counts from the lease's expiry, not its own due
+        time (the scanner then sleeps instead of re-polling a held lease).
+        """
+        result = await session.execute(
+            select(CatalogSourceRow.sync_due_at, CatalogSourceRow.sync_lease_until).where(
+                CatalogSourceRow.sync_due_at.is_not(None)
+            )
+        )
+        earliest: datetime | None = None
+        for due, lease_until in result.all():
+            start = _aware(due)
+            if lease_until is not None:
+                start = max(start, _aware(lease_until))
+            earliest = start if earliest is None else min(earliest, start)
+        return earliest
+
+    @staticmethod
+    async def promote_due_syncs(session: AsyncSession) -> list[str]:
+        """Turn every requested sync that is due, on a source no run holds, into a wanted sync.
+
+        A request made while a run is in progress waits for that run to end, so
+        it is answered by a run that starts after it.
+        """
+        now = _now(session)
+        due = (
+            select(CatalogSourceRow.slug)
+            .where(
+                CatalogSourceRow.sync_due_at.is_not(None),
+                CatalogSourceRow.sync_due_at <= now,
+                CatalogSourceRepository._lease_free(session),
+            )
+            .order_by(CatalogSourceRow.slug)
+        )
+        slugs = list((await session.execute(due)).scalars().all())
+        if not slugs:
+            return []
+        await session.execute(
+            update(CatalogSourceRow)
+            .where(
+                CatalogSourceRow.slug.in_(slugs),
+                CatalogSourceRow.sync_due_at <= now,
+                CatalogSourceRepository._lease_free(session),
+            )
+            .values(
+                sync_wanted_at=func.coalesce(CatalogSourceRow.sync_wanted_at, _typed_time(now)),
+                sync_due_at=None,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        return slugs
+
+    @staticmethod
+    async def take_forced(session: AsyncSession, slug: str) -> bool:
+        """Consume a pending forced-sync request; ``True`` when there was one.
+
+        Called by the run that has just claimed the lease, in the claim's
+        transaction, so exactly one run is forced per request.
+        """
+        result = await session.execute(
+            update(CatalogSourceRow)
+            .where(CatalogSourceRow.slug == slug, CatalogSourceRow.sync_forced_at.is_not(None))
+            .values(sync_forced_at=None)
+            .execution_options(synchronize_session=False)
+        )
+        return bool(getattr(result, "rowcount", 0))
 
     @staticmethod
     async def mark_reresolve_wanted(session: AsyncSession, slugs: Iterable[str]) -> int:

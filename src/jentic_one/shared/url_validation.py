@@ -73,6 +73,9 @@ _BLOCKED_HOSTNAMES = frozenset(
     }
 )
 
+#: Cloud-metadata hostnames, refused whatever the egress policy says.
+METADATA_HOSTNAMES = _BLOCKED_HOSTNAMES
+
 # Cloud instance-metadata and platform-credential endpoints. Never exemptable by
 # an allowlist — a covering CIDR (e.g. 169.254.0.0/16 or fd00::/8) must NOT open
 # these, so instance or workload credentials can't be allowlisted by accident.
@@ -88,6 +91,68 @@ _METADATA_IPS = frozenset(
         ipaddress.ip_address("168.63.129.16"),  # Azure WireServer / host agent
     }
 )
+
+
+_IPV4_MAPPED = ipaddress.IPv6Network("::ffff:0:0/96")
+
+
+def unwrap_ipv4_mapped_network(
+    network: ipaddress.IPv4Network | ipaddress.IPv6Network,
+) -> ipaddress.IPv4Network | ipaddress.IPv6Network:
+    """``::ffff:a.b.c.d/N`` (N >= 96) as the IPv4 network it maps; anything else as is.
+
+    Connections are matched on the unwrapped IPv4, so a mapped subnet only means
+    what the operator wrote once it is unwrapped.
+    """
+    if isinstance(network, ipaddress.IPv6Network) and network.subnet_of(_IPV4_MAPPED):
+        base = ipaddress.IPv4Address(int(network.network_address) & 0xFFFFFFFF)
+        return ipaddress.IPv4Network(f"{base}/{network.prefixlen - 96}")
+    return network
+
+
+def _embedded_forms(ip: ipaddress.IPv4Address) -> list[ipaddress.IPv6Network]:
+    """The IPv6 networks whose addresses land on ``ip`` (see :func:`embedded_ipv4`)."""
+    low = int(ip)
+    return [
+        ipaddress.IPv6Network((int(_IPV4_MAPPED.network_address) | low, 128)),
+        *(
+            ipaddress.IPv6Network((int(n.network_address) | low, 128))
+            for n in _LOW32_EMBEDDING_NETWORKS
+        ),
+        ipaddress.IPv6Network(((0x2002 << 112) | (low << 80), 48)),  # 6to4
+    ]
+
+
+def network_covers_metadata(network: ipaddress.IPv4Network | ipaddress.IPv6Network) -> bool:
+    """Whether ``network`` contains a cloud-metadata or platform-credential address.
+
+    Also true for an IPv6 network holding an IPv4-mapped (or other embedded)
+    form of one, e.g. ``::ffff:169.254.169.254/128`` or ``::ffff:0:0/96``.
+    """
+    network = unwrap_ipv4_mapped_network(network)
+    for ip in _METADATA_IPS:
+        if ip.version == network.version and ip in network:
+            return True
+        if (
+            isinstance(ip, ipaddress.IPv4Address)
+            and isinstance(network, ipaddress.IPv6Network)
+            and any(network.overlaps(form) for form in _embedded_forms(ip))
+        ):
+            return True
+    return False
+
+
+def is_metadata_host(host: str) -> bool:
+    """Whether ``host`` (a name or an IP literal) is a cloud-metadata endpoint."""
+    name = _normalise_hostname(host).strip("[]")
+    if name in _BLOCKED_HOSTNAMES:
+        return True
+    try:
+        addr = ipaddress.ip_address(name)
+    except ValueError:
+        return False
+    embedded = embedded_ipv4(addr)
+    return addr in _METADATA_IPS or (embedded is not None and embedded in _METADATA_IPS)
 
 
 def validate_upstream_url(raw_url: str, egress: EgressConfig | None = None) -> str:
@@ -129,6 +194,21 @@ async def validate_upstream_url_async(raw_url: str, egress: EgressConfig | None 
     return url
 
 
+def with_default_scheme(raw_url: str) -> str:
+    """``raw_url`` stripped, with a lower-case ``http``/``https`` scheme.
+
+    Schemes are case-insensitive (RFC 3986 §3.1), so ``HTTPS://host/x`` becomes
+    ``https://host/x``: a URL for ``host``, never a scheme-less one for a host
+    named ``https``. Anything without an ``http(s)://`` prefix gets ``https://``.
+    This is the URL :func:`validate_upstream_url` checks and returns.
+    """
+    url = raw_url.strip()
+    scheme, sep, rest = url.partition("://")
+    if sep and scheme.lower() in ("http", "https"):
+        return f"{scheme.lower()}://{rest}"
+    return f"https://{url}"
+
+
 def _check_url_without_dns(raw_url: str, egress: EgressConfig | None) -> tuple[str, str | None]:
     """Run every check that needs no resolver; return ``(url, hostname_to_resolve)``.
 
@@ -138,10 +218,7 @@ def _check_url_without_dns(raw_url: str, egress: EgressConfig | None) -> tuple[s
     if not raw_url or not raw_url.strip():
         raise ValueError("upstream URL is required")
 
-    url = raw_url.strip()
-    if not url.startswith(("http://", "https://")):
-        url = f"https://{url}"
-
+    url = with_default_scheme(raw_url)
     parsed = urlparse(url)
 
     if parsed.scheme not in ("http", "https"):

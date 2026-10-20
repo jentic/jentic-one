@@ -413,11 +413,6 @@ type CatalogConfig struct {
 	// against.
 	LegacySourceSlug string `json:"legacy_source_slug,omitempty,omitzero" yaml:"legacy_source_slug,omitempty" mapstructure:"legacy_source_slug,omitempty"`
 
-	// Bound on the source listings of one POST /catalog:refresh, taken together (each
-	// one is also capped by ingest.fetch_timeout_s). A source reached after it is
-	// skipped (status partial) and left to the scanner.
-	RefreshDeadlineSeconds float64 `json:"refresh_deadline_seconds,omitempty,omitzero" yaml:"refresh_deadline_seconds,omitempty" mapstructure:"refresh_deadline_seconds,omitempty"`
-
 	// Catalog sources. The default is the curated public-apis manifest.
 	Sources []CatalogSourceConfig `json:"sources,omitempty,omitzero" yaml:"sources,omitempty" mapstructure:"sources,omitempty"`
 
@@ -451,15 +446,6 @@ func (j *CatalogConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["legacy_source_slug"]; !ok || v == nil {
 		plain.LegacySourceSlug = "public"
-	}
-	if v, ok := raw["refresh_deadline_seconds"]; !ok || v == nil {
-		plain.RefreshDeadlineSeconds = 45.0
-	}
-	if 600 < plain.RefreshDeadlineSeconds {
-		return fmt.Errorf("field %s: must be <= %v", "refresh_deadline_seconds", 600)
-	}
-	if 0 >= plain.RefreshDeadlineSeconds {
-		return fmt.Errorf("field %s: must be > %v", "refresh_deadline_seconds", 0)
 	}
 	if v, ok := raw["update_check_interval_seconds"]; !ok || v == nil {
 		plain.UpdateCheckIntervalSeconds = 86400
@@ -495,6 +481,9 @@ type CatalogSourceConfig struct {
 	// Token bucket capacity; only used with requests_per_second.
 	Burst int `json:"burst,omitempty,omitzero" yaml:"burst,omitempty" mapstructure:"burst,omitempty"`
 
+	// Extra egress for this source's requests only (added to ingest.egress).
+	Egress *SourceEgressConfig `json:"egress,omitempty,omitzero" yaml:"egress,omitempty" mapstructure:"egress,omitempty"`
+
 	// Disabled sources are never synced (kill switch for this source).
 	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`
 
@@ -511,14 +500,23 @@ type CatalogSourceConfig struct {
 	Kind string `json:"kind" yaml:"kind" mapstructure:"kind"`
 
 	// Background sync interval. 0 disables automatic sync and background egress for
-	// this source; a manual refresh still syncs it.
+	// this source; a requested sync (POST /catalog/sources/{slug}:sync) still syncs
+	// it.
 	MaxAgeSeconds int `json:"max_age_seconds,omitempty,omitzero" yaml:"max_age_seconds,omitempty" mapstructure:"max_age_seconds,omitempty"`
 
 	// Mass-removal guard: a sync removing more than this share is held.
 	MaxRemovalRatio float64 `json:"max_removal_ratio,omitempty,omitzero" yaml:"max_removal_ratio,omitempty" mapstructure:"max_removal_ratio,omitempty"`
 
+	// A :notify within this many seconds of the source's last started sync joins it
+	// instead of asking for another.
+	MinNotifyIntervalSeconds int `json:"min_notify_interval_seconds,omitempty,omitzero" yaml:"min_notify_interval_seconds,omitempty" mapstructure:"min_notify_interval_seconds,omitempty"`
+
 	// The removal ratio only trips above this many removals.
 	MinRemovalCount int `json:"min_removal_count,omitempty,omitzero" yaml:"min_removal_count,omitempty" mapstructure:"min_removal_count,omitempty"`
+
+	// A :sync within this many seconds of the source's last started sync is due when
+	// the interval ends (a forced :sync is not held back).
+	MinSyncIntervalSeconds int `json:"min_sync_interval_seconds,omitempty,omitzero" yaml:"min_sync_interval_seconds,omitempty" mapstructure:"min_sync_interval_seconds,omitempty"`
 
 	// Rank when two sources list the same catalog_api_id (higher wins). An untrusted
 	// source may not rank above any enabled curated source (startup fails).
@@ -531,7 +529,14 @@ type CatalogSourceConfig struct {
 	// limits concurrency only, with no bucket and no database round trip.
 	RequestsPerSecond interface{} `json:"requests_per_second,omitempty,omitzero" yaml:"requests_per_second,omitempty" mapstructure:"requests_per_second,omitempty"`
 
-	// Kind-specific settings.
+	// Kind-specific settings. git-manifest: url (its apis.json). http-index: exactly
+	// one of index_url (an APIs.json-style index) or specs (a static list of
+	// {external_id, spec_url, catalog_api_id?, title?, tags?}, at most 100000 items).
+	// With index_url, max_entries (default 10000, at most 100000) caps the listing:
+	// an index listing more fails the sync run with listing_too_large (GET
+	// /catalog/sources shows it as last_error_code) and the stored entries stay; it
+	// does not apply to specs. index_url and spec_url must not carry user:pass@;
+	// index-listed spec URLs that do are ignored.
 	Settings CatalogSourceConfigSettings `json:"settings,omitempty,omitzero" yaml:"settings,omitempty" mapstructure:"settings,omitempty"`
 
 	// Source identifier and entry_id prefix; matches ^[a-z][a-z0-9-]{0,31}$.
@@ -582,7 +587,14 @@ func (j *CatalogSourceConfigReaders) UnmarshalJSON(value []byte) error {
 
 type CatalogSourceConfigRequestsPerSecond_0 *float64
 
-// Kind-specific settings.
+// Kind-specific settings. git-manifest: url (its apis.json). http-index: exactly
+// one of index_url (an APIs.json-style index) or specs (a static list of
+// {external_id, spec_url, catalog_api_id?, title?, tags?}, at most 100000 items).
+// With index_url, max_entries (default 10000, at most 100000) caps the listing: an
+// index listing more fails the sync run with listing_too_large (GET
+// /catalog/sources shows it as last_error_code) and the stored entries stay; it
+// does not apply to specs. index_url and spec_url must not carry user:pass@;
+// index-listed spec URLs that do are ignored.
 type CatalogSourceConfigSettings map[string]interface{}
 
 type CatalogSourceConfigTrust string
@@ -708,11 +720,23 @@ func (j *CatalogSourceConfig) UnmarshalJSON(value []byte) error {
 	if 0 > plain.MaxRemovalRatio {
 		return fmt.Errorf("field %s: must be >= %v", "max_removal_ratio", 0)
 	}
+	if v, ok := raw["min_notify_interval_seconds"]; !ok || v == nil {
+		plain.MinNotifyIntervalSeconds = 60
+	}
+	if 0 > plain.MinNotifyIntervalSeconds {
+		return fmt.Errorf("field %s: must be >= %v", "min_notify_interval_seconds", 0)
+	}
 	if v, ok := raw["min_removal_count"]; !ok || v == nil {
 		plain.MinRemovalCount = 5
 	}
 	if 0 > plain.MinRemovalCount {
 		return fmt.Errorf("field %s: must be >= %v", "min_removal_count", 0)
+	}
+	if v, ok := raw["min_sync_interval_seconds"]; !ok || v == nil {
+		plain.MinSyncIntervalSeconds = 10
+	}
+	if 0 > plain.MinSyncIntervalSeconds {
+		return fmt.Errorf("field %s: must be >= %v", "min_sync_interval_seconds", 0)
 	}
 	if v, ok := raw["precedence"]; !ok || v == nil {
 		plain.Precedence = 0
@@ -2936,18 +2960,27 @@ func (j *SigningKeyConfig) UnmarshalJSON(value []byte) error {
 
 // How a catalog source authenticates its requests.
 //
-// Only “none“ is built in; other resolver types are registered by extensions.
-// The secret itself never appears here: “env“ names the variable holding it.
+// Built in: “none“, “bearer_from_env“ (“Authorization: Bearer <value of
+// env>“)
+// and “header_from_env“ (“<header>: <value of env>“); extensions register
+// more. The secret itself never appears here: “env“ names the variable
+// holding it, read on every request.
 type SourceAuthConfig struct {
-	// Name of the environment variable holding the secret, for a credentialed
-	// resolver to read; ignored by none.
+	// Name of the environment variable holding the secret (never the secret itself);
+	// none takes no env.
 	Env interface{} `json:"env,omitempty,omitzero" yaml:"env,omitempty" mapstructure:"env,omitempty"`
 
-	// Request header a credentialed resolver sends the secret in; ignored by none.
+	// Request header the secret is sent in (header_from_env only).
 	Header interface{} `json:"header,omitempty,omitzero" yaml:"header,omitempty" mapstructure:"header,omitempty"`
 
-	// Auth resolver type; it must be registered. Only none is built in; startup fails
-	// on an unknown type.
+	// Extra origins (scheme://host[:port]) that may receive the credential. By
+	// default it goes only to the origins the source's settings name (a
+	// git-manifest's url, an http-index index_url or static spec_urls), never to a
+	// host a listing points at.
+	Origins []string `json:"origins,omitempty,omitzero" yaml:"origins,omitempty" mapstructure:"origins,omitempty"`
+
+	// Auth resolver type; it must be registered. Built in: none, bearer_from_env and
+	// header_from_env; startup fails on an unknown type.
 	Type string `json:"type,omitempty,omitzero" yaml:"type,omitempty" mapstructure:"type,omitempty"`
 }
 
@@ -2971,6 +3004,33 @@ func (j *SourceAuthConfig) UnmarshalJSON(value []byte) error {
 	}
 	*j = SourceAuthConfig(plain)
 	return nil
+}
+
+// Extra egress one catalog source's own client may use.
+//
+// Added to “ingest.egress“ for this source's requests only; no other source
+// and no other outbound client gets it. A range or domain that would reach a
+// cloud-metadata endpoint is refused at load.
+//
+// The widening covers every URL the source fetches, including spec URLs its
+// upstream index lists (an internal index usually lists specs on sibling
+// internal hosts). Whoever controls the index can therefore point it anywhere
+// in these ranges, so keep the CIDRs narrow and name the hosts with
+// “allowed_internal_domains“: an IP-literal URL needs only the CIDR. The
+// source's credentials stay on its configured origins regardless.
+type SourceEgressConfig struct {
+	// Domain suffixes whose private addresses this source may reach (recommended
+	// alongside allowed_private_subnets, to name the hosts an index may list). A
+	// cloud-metadata host, or a suffix covering one, is refused.
+	AllowedInternalDomains []string `json:"allowed_internal_domains,omitempty,omitzero" yaml:"allowed_internal_domains,omitempty" mapstructure:"allowed_internal_domains,omitempty"`
+
+	// Private CIDRs this source may reach (a resolved name must also match
+	// allowed_internal_domains; an IP-literal URL needs only the CIDR). It applies to
+	// every URL the source fetches, spec URLs its index lists included, so keep it
+	// narrow. A range containing a cloud-metadata address (e.g. 169.254.169.254, or
+	// ::ffff:169.254.169.254) is refused; an IPv4-mapped IPv6 range
+	// (::ffff:10.0.0.0/104) is read as its IPv4 range.
+	AllowedPrivateSubnets []interface{} `json:"allowed_private_subnets,omitempty,omitzero" yaml:"allowed_private_subnets,omitempty" mapstructure:"allowed_private_subnets,omitempty"`
 }
 
 // Reader ACL of a “restricted“ catalog source (any one match admits).
@@ -3544,15 +3604,11 @@ type VendorIdentityProbeConfig struct {
 type VendorIdentityProbeConfigMethod string
 
 const VendorIdentityProbeConfigMethodGET VendorIdentityProbeConfigMethod = "GET"
-const VendorIdentityProbeConfigMethodPOST VendorIdentityProbeConfigMethod = "POST"
-
-var enumValues_VendorIdentityProbeConfigMethod = []interface{}{
-	"GET",
-	"POST",
-}
 
 type VendorAuthConfigIdentityProbe_0 = VendorIdentityProbeConfig
 
+const VendorScopeConfigClassificationRead VendorScopeConfigClassification = "read"
+const VendorScopeConfigClassificationWrite VendorScopeConfigClassification = "write"
 const VendorScopeConfigClassificationAdmin VendorScopeConfigClassification = "admin"
 
 // A single OAuth scope exposed by the vendor.
@@ -3601,7 +3657,13 @@ func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-const VendorScopeConfigClassificationRead VendorScopeConfigClassification = "read"
+var enumValues_VendorScopeConfigClassification = []interface{}{
+	"read",
+	"write",
+	"admin",
+}
+
+type VendorScopeConfigClassification string
 
 // UnmarshalJSON implements json.Unmarshaler.
 func (j *VendorScopeConfigClassification) UnmarshalJSON(value []byte) error {
@@ -3622,16 +3684,6 @@ func (j *VendorScopeConfigClassification) UnmarshalJSON(value []byte) error {
 	*j = VendorScopeConfigClassification(v)
 	return nil
 }
-
-var enumValues_VendorScopeConfigClassification = []interface{}{
-	"read",
-	"write",
-	"admin",
-}
-
-type VendorScopeConfigClassification string
-
-const VendorScopeConfigClassificationWrite VendorScopeConfigClassification = "write"
 
 // UnmarshalJSON implements json.Unmarshaler.
 func (j *VendorIdentityProbeConfig) UnmarshalJSON(value []byte) error {
@@ -3657,6 +3709,28 @@ func (j *VendorIdentityProbeConfig) UnmarshalJSON(value []byte) error {
 		plain.Method = "GET"
 	}
 	*j = VendorIdentityProbeConfig(plain)
+	return nil
+}
+
+const VendorIdentityProbeConfigMethodPOST VendorIdentityProbeConfigMethod = "POST"
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *VendorIdentityProbeConfigMethod) UnmarshalJSON(value []byte) error {
+	var v string
+	if err := json.Unmarshal(value, &v); err != nil {
+		return err
+	}
+	var ok bool
+	for _, expected := range enumValues_VendorIdentityProbeConfigMethod {
+		if reflect.DeepEqual(v, expected) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorIdentityProbeConfigMethod, v)
+	}
+	*j = VendorIdentityProbeConfigMethod(v)
 	return nil
 }
 
@@ -3751,24 +3825,9 @@ func (j *WorkerConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorIdentityProbeConfigMethod) UnmarshalJSON(value []byte) error {
-	var v string
-	if err := json.Unmarshal(value, &v); err != nil {
-		return err
-	}
-	var ok bool
-	for _, expected := range enumValues_VendorIdentityProbeConfigMethod {
-		if reflect.DeepEqual(v, expected) {
-			ok = true
-			break
-		}
-	}
-	if !ok {
-		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorIdentityProbeConfigMethod, v)
-	}
-	*j = VendorIdentityProbeConfigMethod(v)
-	return nil
+var enumValues_VendorIdentityProbeConfigMethod = []interface{}{
+	"GET",
+	"POST",
 }
 
 type CatalogSourceConfigReaders_0 = SourceReadersConfig

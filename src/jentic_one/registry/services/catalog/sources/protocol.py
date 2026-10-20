@@ -139,6 +139,10 @@ class SpecGoneError(Exception):
     """Permanent: the backend says the spec no longer exists (404, 410, deleted)."""
 
 
+class ListingTooLargeError(Exception):
+    """The listing has more entries than the kind allows; the run applies nothing."""
+
+
 @dataclass(frozen=True, slots=True)
 class SourceHealth:
     """A source's reachability as of ``checked_at``."""

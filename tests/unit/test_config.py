@@ -7,8 +7,11 @@ import builtins
 import copy
 import io
 import os
+import subprocess
+import sys
 import threading
 import time
+import traceback
 from collections.abc import MutableMapping
 from pathlib import Path
 from typing import Any
@@ -103,6 +106,157 @@ def test_missing_required_field_raises(tmp_path: Path):
     path.write_text(yaml.dump(incomplete))
     with pytest.raises(ConfigError, match="validation failed"):
         load_config(path)
+
+
+def test_validation_error_names_the_field_but_never_echoes_its_input(tmp_path: Path):
+    """A boot error names where and why, never the input: it can carry a secret."""
+    origin = "https://u:hunter2@cdn.example.com"  # pragma: allowlist secret
+    data = {
+        "databases": {
+            "registry": {"name": "reg"},
+            "admin": {"name": "admin"},
+            "control": {"name": "ctrl"},
+        },
+        "catalog": {
+            "sources": [
+                {
+                    "slug": "corp",
+                    "kind": "http-index",
+                    "settings": {"index_url": "https://index.example.com/apis.json"},
+                    "auth": {
+                        "type": "bearer_from_env",
+                        "env": "CORP_TOKEN",
+                        "origins": [origin],
+                    },
+                }
+            ]
+        },
+    }
+    path = tmp_path / "bad.yaml"
+    path.write_text(yaml.dump(data))
+    with pytest.raises(ConfigError) as exc:
+        load_config(path)
+    message = str(exc.value)
+    assert "Configuration validation failed" in message
+    assert "catalog.sources.0.auth.origins" in message
+    assert "must not carry credentials" in message
+    _assert_never_echoed(exc.value, "hunter2")
+
+
+def _assert_never_echoed(error: BaseException, secret: str) -> None:
+    """``secret`` is in neither ``error`` nor its chain nor its printed traceback."""
+    assert secret not in str(error)
+    assert "input_value" not in str(error)
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    rendered = "".join(traceback.format_exception(error))
+    assert secret not in rendered
+    assert "input_value" not in rendered
+
+
+def _catalog_source_with_origins(origins: list[str]) -> dict[str, Any]:
+    return {
+        "databases": {
+            "registry": {"name": "reg"},
+            "admin": {"name": "admin"},
+            "control": {"name": "ctrl"},
+        },
+        "catalog": {
+            "sources": [
+                {
+                    "slug": "corp",
+                    "kind": "http-index",
+                    "settings": {"index_url": "https://index.example.com/apis.json"},
+                    "auth": {"type": "bearer_from_env", "env": "CORP_TOKEN", "origins": origins},
+                }
+            ]
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("origin", "expected"),
+    [
+        ("https://cdn.example.com/?token=hunter2", "must be an origin"),
+        ("https://cdn.example.com/hunter2", "must be an origin"),
+        ("https://cdn.example.com/#hunter2", "must be an origin"),
+        ("ftp://cdn.example.com/hunter2", "auth.origins[0] is not an http(s) origin"),
+        ("hunter2", "auth.origins[0] is not an http(s) origin"),
+    ],
+)
+def test_auth_origins_error_never_echoes_the_entry(
+    tmp_path: Path, origin: str, expected: str
+) -> None:
+    """An ``auth.origins`` error names the entry by position or host, never its text."""
+    path = tmp_path / "bad.yaml"
+    path.write_text(yaml.dump(_catalog_source_with_origins([origin])))
+    with pytest.raises(ConfigError) as exc:
+        load_config(path)
+    assert expected in str(exc.value)
+    _assert_never_echoed(exc.value, "hunter2")
+
+
+def test_unexpected_validator_error_names_type_and_location_but_never_its_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A bug in a validator is locatable from the boot error, which still holds no input."""
+
+    def _buggy(cls: type[AppConfig], data: Any) -> AppConfig:
+        raise KeyError(f"hunter2 {data!r}")
+
+    raised_at = _buggy.__code__.co_firstlineno + 1
+    monkeypatch.setattr(AppConfig, "model_validate", classmethod(_buggy))
+    path = tmp_path / "ok.yaml"
+    path.write_text(yaml.dump(_catalog_source_with_origins([])))
+    with pytest.raises(ConfigError) as exc:
+        load_config(path)
+    message = str(exc.value)
+    assert f"unexpected KeyError at {__file__}:{raised_at}" in message
+    _assert_never_echoed(exc.value, "hunter2")
+
+
+def test_config_error_from_a_validator_keeps_its_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _guard(cls: type[AppConfig], data: Any) -> AppConfig:
+        raise ConfigError("auth.secret must be explicitly configured in production")
+
+    monkeypatch.setattr(AppConfig, "model_validate", classmethod(_guard))
+    path = tmp_path / "ok.yaml"
+    path.write_text(yaml.dump(_catalog_source_with_origins([])))
+    with pytest.raises(ConfigError, match=r"auth\.secret must be explicitly configured"):
+        load_config(path)
+
+
+def test_yaml_syntax_error_names_the_position_but_never_the_line(tmp_path: Path) -> None:
+    """PyYAML quotes the offending line; the boot error gives only where it is."""
+    path = tmp_path / "bad.yaml"
+    path.write_text("databases:\n  registry:\n    password: hunter2: oops\n")
+    with pytest.raises(ConfigError) as exc:
+        load_config(path)
+    assert "is not valid YAML at line 3" in str(exc.value)
+    _assert_never_echoed(exc.value, "hunter2")
+
+
+def test_serve_boot_failure_never_prints_the_offending_input(tmp_path: Path) -> None:
+    """The traceback ``python -m jentic_one serve`` prints holds no config input."""
+    path = tmp_path / "bad.yaml"
+    origin = "https://u:hunter2@cdn.example.com"  # pragma: allowlist secret
+    path.write_text(yaml.dump(_catalog_source_with_origins([origin])))
+    env = {**os.environ, "JENTIC_CONFIG_FILE": str(path)}
+    env.pop("JENTIC_ENV", None)
+    result = subprocess.run(
+        [sys.executable, "-m", "jentic_one", "serve"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "must not carry credentials" in result.stderr
+    assert "hunter2" not in result.stderr + result.stdout
+    assert "input_value" not in result.stderr
 
 
 def test_env_overrides_file_values(config_file: Path):

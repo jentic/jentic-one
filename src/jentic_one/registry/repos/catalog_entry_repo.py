@@ -7,10 +7,10 @@ transaction per staging batch, one for the apply).
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.registry.core.schema.catalog_entries import CatalogEntryRow
@@ -162,6 +162,29 @@ class CatalogSyncRunRepository:
     @staticmethod
     async def get(session: AsyncSession, run_id: str) -> CatalogSyncRun | None:
         return await session.get(CatalogSyncRun, run_id)
+
+    @staticmethod
+    async def last_started_at(session: AsyncSession, slug: str) -> datetime | None:
+        """When the source's most recent run (finished or not) started."""
+        result = await session.execute(
+            select(func.max(CatalogSyncRun.started_at)).where(CatalogSyncRun.source_slug == slug)
+        )
+        value: datetime | None = result.scalar_one_or_none()
+        if value is not None and value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value
+
+    @staticmethod
+    async def last_error_code(session: AsyncSession, slug: str) -> str | None:
+        """The ``error_code`` of the source's most recently started finished run."""
+        result = await session.execute(
+            select(CatalogSyncRun.error_code)
+            .where(CatalogSyncRun.source_slug == slug, CatalogSyncRun.finished_at.is_not(None))
+            .order_by(CatalogSyncRun.started_at.desc())
+            .limit(1)
+        )
+        code: str | None = result.scalar_one_or_none()
+        return code
 
     @staticmethod
     async def finish(session: AsyncSession, run_id: str, **values: Any) -> None:

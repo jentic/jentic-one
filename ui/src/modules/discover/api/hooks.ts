@@ -678,46 +678,44 @@ export function useImportCatalogApi(): UseImportResult {
 	};
 }
 
+/** How long after a requested sync the feed is re-read once more. */
+const SYNC_SETTLE_MS = 5_000;
+
 interface UseRefreshCatalogResult {
-	/** Force a backend catalog source sync, then refetch the Discover feed. */
+	/** Request a background sync of every visible source, then refetch the Discover feed. */
 	refresh: () => void;
 	isRefreshing: boolean;
 }
 
 /**
- * Force-refresh the catalog snapshot via `POST /catalog:refresh`.
+ * Request a re-sync of every visible catalog source (`:sync` per source).
  *
  * This differs from a client refetch of the loaded pages: it asks the backend
- * to sync its catalog sources again, which is what actually resets
- * `oldest_source_sync_age_seconds`. On success we invalidate the whole catalog feed so
- * the ledger + status row re-read the fresh snapshot, and toast the new entry
- * count.
+ * to pull each upstream listing again. The syncs run in the background, so on
+ * success we toast that they were requested and invalidate the catalog feed
+ * now and again shortly after, once the syncs have had a moment to land.
  */
 export function useRefreshCatalog(): UseRefreshCatalogResult {
 	const queryClient = useQueryClient();
 
 	const mutation = useMutation({
 		mutationFn: () => refreshCatalog(),
-		onSuccess: (res) => {
-			if (res.status === 'partial') {
-				// Some sources failed or ran out of time; they keep their last good
-				// entries and the scanner retries them.
-				const failed = (res.sources ?? [])
-					.filter((s) => s.status === 'failed' || s.status === 'skipped')
-					.map((s) => s.slug);
-				toast({
-					title: 'Catalog partly refreshed',
-					description: `Couldn't refresh ${failed.join(', ') || 'some sources'}; they keep their last entries (${res.count.toLocaleString()} APIs).`,
-					variant: 'warning',
-				});
-			} else {
-				toast({
-					title: 'Catalog refreshed',
-					description: `Synced the catalog sources (${res.count.toLocaleString()} APIs).`,
-					variant: 'success',
-				});
-			}
+		onSuccess: ({ requested, failed }) => {
+			const n = requested.length;
+			const syncing = `Re-syncing ${n.toLocaleString()} catalog ${n === 1 ? 'source' : 'sources'} in the background.`;
+			toast(
+				failed.length === 0
+					? { title: 'Catalog sync requested', description: syncing, variant: 'success' }
+					: {
+							title: 'Catalog sync partly requested',
+							description: `${syncing} Couldn't sync ${failed.map((f) => f.slug).join(', ')}.`,
+							variant: 'warning',
+						},
+			);
 			queryClient.invalidateQueries({ queryKey: discoverKeys.catalogAll });
+			setTimeout(() => {
+				queryClient.invalidateQueries({ queryKey: discoverKeys.catalogAll });
+			}, SYNC_SETTLE_MS);
 		},
 		onError: (error: unknown) => {
 			toast({

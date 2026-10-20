@@ -5,8 +5,10 @@
 import type { ApiImportResponse } from '../models/ApiImportResponse';
 import type { CatalogEntryResponse } from '../models/CatalogEntryResponse';
 import type { CatalogListResponse } from '../models/CatalogListResponse';
-import type { CatalogRefreshResponse } from '../models/CatalogRefreshResponse';
 import type { CatalogSnoozeRequest } from '../models/CatalogSnoozeRequest';
+import type { CatalogSourceListResponse } from '../models/CatalogSourceListResponse';
+import type { CatalogSourceNotifyRequest } from '../models/CatalogSourceNotifyRequest';
+import type { CatalogSourceSyncResponse } from '../models/CatalogSourceSyncResponse';
 import type { OperationPreviewListResponse } from '../models/OperationPreviewListResponse';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
@@ -85,6 +87,117 @@ export class CatalogService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * List Catalog Sources
+     * List the catalog sources the caller can see, with their sync state.
+     *
+     * An ``org:admin`` caller sees every configured source, plus its readers,
+     * trust, precedence, a ``warnings`` list (mapping rows that match no entry,
+     * entries claiming an API another source owns) and, while a source is
+     * ``failed``, its last run's ``last_error_code``.
+     * @returns CatalogSourceListResponse Successful Response
+     * @throws ApiError
+     */
+    public static listCatalogSources(): CancelablePromise<CatalogSourceListResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/catalog/sources',
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Notify Catalog Source
+     * Tell the catalog a push-capable source changed; a sync follows in the background.
+     *
+     * Single-flight per source: a notification joins a pending sync, and one
+     * within the source's ``min_notify_interval_seconds`` of the last run's start
+     * queues a sync for when that interval ends. ``external_ids`` is a hint only;
+     * the sync still lists the whole source.
+     * @returns CatalogSourceSyncResponse Successful Response
+     * @throws ApiError
+     */
+    public static notifyCatalogSource({
+        slug,
+        requestBody,
+    }: {
+        /**
+         * Catalog source slug, as `GET /catalog/sources` lists it.
+         */
+        slug: string,
+        /**
+         * Request payload for the `notifyCatalogSource` operation.
+         */
+        requestBody?: (CatalogSourceNotifyRequest | null),
+    }): CancelablePromise<CatalogSourceSyncResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/catalog/sources/{slug}:notify',
+            path: {
+                'slug': slug,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `The source does not exist, the caller cannot see it, or it takes no push notifications.`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Sync Catalog Source
+     * Request a sync of one catalog source; it runs in the background.
+     *
+     * Answers ``202`` at once: the sync starts through the source's lease, after
+     * any run in progress. A request while one is pending joins it.
+     * ``force=true`` (``org:admin``) skips the mass-removal guard for that run.
+     * @returns CatalogSourceSyncResponse Successful Response
+     * @throws ApiError
+     */
+    public static syncCatalogSource({
+        slug,
+        force = false,
+    }: {
+        /**
+         * Catalog source slug, as `GET /catalog/sources` lists it.
+         */
+        slug: string,
+        /**
+         * Apply the sync even when it would remove more entries than the source's mass-removal guard allows (`org:admin`).
+         */
+        force?: boolean,
+    }): CancelablePromise<CatalogSourceSyncResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/catalog/sources/{slug}:sync',
+            path: {
+                'slug': slug,
+            },
+            query: {
+                'force': force,
+            },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `The source does not exist or the caller cannot see it.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -289,43 +402,6 @@ export class CatalogService {
             url: '/catalog/{entry_id}:unsnooze',
             path: {
                 'entry_id': entryId,
-            },
-            errors: {
-                400: `Bad Request`,
-                401: `Unauthorized`,
-                403: `Forbidden`,
-                422: `Unprocessable Entity`,
-                500: `Internal Server Error`,
-                503: `Service Unavailable`,
-            },
-        });
-    }
-    /**
-     * Refresh Catalog
-     * Sync now every enabled catalog source the caller may read (catalog:sync).
-     *
-     * Each source's listing fetch is bounded by ``ingest.fetch_timeout_s`` and all
-     * of them together by ``catalog.refresh_deadline_seconds``. ``status`` is
-     * ``partial`` when a refreshed source failed, was busy or was skipped; ``sources``
-     * gives each one's outcome. Sources the caller cannot read are not synced or
-     * reported. ``force=true`` (``org:admin``) overrides the mass-removal guard
-     * for this run.
-     * @returns CatalogRefreshResponse Successful Response
-     * @throws ApiError
-     */
-    public static refreshCatalog({
-        force = false,
-    }: {
-        /**
-         * Apply each source's sync even when it would remove more entries than the source's mass-removal guard allows (`org:admin`).
-         */
-        force?: boolean,
-    }): CancelablePromise<CatalogRefreshResponse> {
-        return __request(OpenAPI, {
-            method: 'POST',
-            url: '/catalog:refresh',
-            query: {
-                'force': force,
             },
             errors: {
                 400: `Bad Request`,

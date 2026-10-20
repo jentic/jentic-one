@@ -77,6 +77,12 @@ class CatalogSourceRow(RegistryBase):
     sync_lease_owner: Mapped[str | None] = mapped_column(String(30), nullable=True)
     sync_lease_until: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     sync_wanted_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    #: A requested sync (operator or push) that the scanner starts once this time
+    #: has passed and no run holds the lease.
+    sync_due_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    #: Set when the next run should skip the mass-removal guard; the run that
+    #: claims the lease consumes it.
+    sync_forced_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     reresolve_wanted_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     #: Digest of the resolver's config inputs (mappings, trust, enabled) that this
     #: source's stored ``catalog_api_id`` values were last resolved under.

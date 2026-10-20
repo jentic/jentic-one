@@ -869,13 +869,16 @@ describe('LibraryPage', () => {
 		expect(screen.queryByTestId('catalog-status-pending')).not.toBeInTheDocument();
 	});
 
-	it('refreshes the catalog via POST /catalog:refresh', async () => {
+	it('refreshes the catalog by requesting a sync of each visible source', async () => {
 		const user = userEvent.setup();
-		let refreshHit = false;
+		const synced: string[] = [];
 		worker.use(
-			http.post('/catalog:refresh', () => {
-				refreshHit = true;
-				return HttpResponse.json({ count: 3, status: 'refreshed' });
+			http.post('/catalog/sources/:action', ({ params }) => {
+				synced.push(String(params.action));
+				return HttpResponse.json(
+					{ slug: 'public', status: 'queued', forced: false, due_at: null },
+					{ status: 202 },
+				);
 			}),
 		);
 
@@ -889,37 +892,8 @@ describe('LibraryPage', () => {
 
 		await user.click(screen.getByTestId('discover-refresh'));
 
-		await waitFor(() => expect(refreshHit).toBe(true));
-		expect(await screen.findByText('Catalog refreshed')).toBeInTheDocument();
-	});
-
-	it('says which sources a partial refresh missed', async () => {
-		const user = userEvent.setup();
-		worker.use(
-			http.post('/catalog:refresh', () =>
-				HttpResponse.json({
-					count: 3,
-					status: 'partial',
-					sources: [
-						{ slug: 'public', status: 'applied', error_code: null },
-						{ slug: 'corp', status: 'failed', error_code: 'listing_timeout' },
-					],
-				}),
-			),
-		);
-
-		renderWithProviders(
-			<>
-				<LibraryPage />
-				<Toaster />
-			</>,
-		);
-		await screen.findByText('stripe.com');
-
-		await user.click(screen.getByTestId('discover-refresh'));
-
-		expect(await screen.findByText('Catalog partly refreshed')).toBeInTheDocument();
-		expect(screen.getByText(/Couldn't refresh corp;/)).toBeInTheDocument();
+		await waitFor(() => expect(synced).toEqual(['public:sync']));
+		expect(await screen.findByText('Catalog sync requested')).toBeInTheDocument();
 	});
 
 	it('surfaces a titled error with Try again, and hides the count line meanwhile', async () => {

@@ -324,57 +324,6 @@ func (e BearerTokenUpdateRequestType) Valid() bool {
 	}
 }
 
-// Defines values for CatalogRefreshResponseStatus.
-const (
-	Partial   CatalogRefreshResponseStatus = "partial"
-	Refreshed CatalogRefreshResponseStatus = "refreshed"
-)
-
-// Valid indicates whether the value is a known member of the CatalogRefreshResponseStatus enum.
-func (e CatalogRefreshResponseStatus) Valid() bool {
-	switch e {
-	case Partial:
-		return true
-	case Refreshed:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for CatalogRefreshSourceResponseStatus.
-const (
-	CatalogRefreshSourceResponseStatusApplied      CatalogRefreshSourceResponseStatus = "applied"
-	CatalogRefreshSourceResponseStatusBusy         CatalogRefreshSourceResponseStatus = "busy"
-	CatalogRefreshSourceResponseStatusDisabled     CatalogRefreshSourceResponseStatus = "disabled"
-	CatalogRefreshSourceResponseStatusFailed       CatalogRefreshSourceResponseStatus = "failed"
-	CatalogRefreshSourceResponseStatusSkipped      CatalogRefreshSourceResponseStatus = "skipped"
-	CatalogRefreshSourceResponseStatusSuperseded   CatalogRefreshSourceResponseStatus = "superseded"
-	CatalogRefreshSourceResponseStatusSuspectEmpty CatalogRefreshSourceResponseStatus = "suspect_empty"
-)
-
-// Valid indicates whether the value is a known member of the CatalogRefreshSourceResponseStatus enum.
-func (e CatalogRefreshSourceResponseStatus) Valid() bool {
-	switch e {
-	case CatalogRefreshSourceResponseStatusApplied:
-		return true
-	case CatalogRefreshSourceResponseStatusBusy:
-		return true
-	case CatalogRefreshSourceResponseStatusDisabled:
-		return true
-	case CatalogRefreshSourceResponseStatusFailed:
-		return true
-	case CatalogRefreshSourceResponseStatusSkipped:
-		return true
-	case CatalogRefreshSourceResponseStatusSuperseded:
-		return true
-	case CatalogRefreshSourceResponseStatusSuspectEmpty:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for ConnectSessionSummaryResponseState.
 const (
 	ConnectSessionSummaryResponseStateAwaitingApp ConnectSessionSummaryResponseState = "awaiting_app"
@@ -2685,56 +2634,6 @@ type CatalogListResponse struct {
 	RegisteredCount int `json:"registered_count"`
 }
 
-// CatalogRefreshResponse Outcome of a catalog refresh, over the sources the caller may read.
-//
-// Examples: {"count":5231,"sources":[{"slug":"public","status":"applied"}],"status":"refreshed"}
-type CatalogRefreshResponse struct {
-	// Count Live entries of the refreshed sources after the sync.
-	//
-	// Examples: 5231
-	Count int `json:"count"`
-
-	// Sources Each refreshed source's outcome, in sync order.
-	//
-	// Examples: [{"slug":"public","status":"applied"}]
-	Sources *[]CatalogRefreshSourceResponse `json:"sources,omitempty"`
-
-	// Status refreshed when no refreshed source failed, was held by another run (busy) or was skipped; partial otherwise (those keep serving their last applied entries).
-	//
-	// Examples: refreshed
-	Status *CatalogRefreshResponseStatus `json:"status,omitempty"`
-}
-
-// CatalogRefreshResponseStatus refreshed when no refreshed source failed, was held by another run (busy) or was skipped; partial otherwise (those keep serving their last applied entries).
-//
-// Examples: refreshed
-type CatalogRefreshResponseStatus string
-
-// CatalogRefreshSourceResponse One refreshed source's run outcome.
-//
-// Examples: {"slug":"public","status":"applied"}
-type CatalogRefreshSourceResponse struct {
-	// ErrorCode Why a failed or skipped run did not apply, e.g. listing_timeout.
-	//
-	// Examples: listing_timeout
-	ErrorCode *string `json:"error_code,omitempty"`
-
-	// Slug The source's slug.
-	//
-	// Examples: public
-	Slug string `json:"slug"`
-
-	// Status Run outcome: applied, suspect_empty (held by the mass-removal guard), superseded, busy (another run holds the source; this refresh applied nothing for it), disabled, failed, or skipped (the refresh deadline passed before it started; the scanner syncs it).
-	//
-	// Examples: applied
-	Status CatalogRefreshSourceResponseStatus `json:"status"`
-}
-
-// CatalogRefreshSourceResponseStatus Run outcome: applied, suspect_empty (held by the mass-removal guard), superseded, busy (another run holds the source; this refresh applied nothing for it), disabled, failed, or skipped (the refresh deadline passed before it started; the scanner syncs it).
-//
-// Examples: applied
-type CatalogRefreshSourceResponseStatus string
-
 // CatalogSnoozeRequest Body for “POST /catalog/{entry_id}:snooze“.
 //
 // “snoozed_until“ is optional: omit or send “null“ to mute-until-newer (the primary
@@ -2747,6 +2646,169 @@ type CatalogSnoozeRequest struct {
 	//
 	// Examples: 2026-02-01T00:00:00Z
 	SnoozedUntil *time.Time `json:"snoozed_until,omitempty"`
+}
+
+// CatalogSourceListResponse The configured catalog sources the caller can see.
+//
+// Examples: {"data":[{"consecutive_failures":0,"kind":"jentic-public-apis","last_sync_at":"2026-01-15T10:30:00Z","live_entries":5231,"slug":"public","status":"ok","sync_pending":false,"visibility":"public"}]}
+type CatalogSourceListResponse struct {
+	// Data Sources, ordered by slug.
+	//
+	// Examples: [{"consecutive_failures":0,"kind":"jentic-public-apis","last_sync_at":"2026-01-15T10:30:00Z","live_entries":5231,"slug":"public","status":"ok","sync_pending":false,"visibility":"public"}]
+	Data []CatalogSourceResponse `json:"data"`
+}
+
+// CatalogSourceNotifyRequest Optional body for “POST /catalog/sources/{slug}:notify“.
+//
+// Examples: {"external_ids":["stripe"]}
+type CatalogSourceNotifyRequest struct {
+	// ExternalIds Ids the upstream says changed (at most 100). A hint only: the sync still lists the whole source.
+	//
+	// Examples: ["stripe"]
+	ExternalIds *[]string `json:"external_ids,omitempty"`
+}
+
+// CatalogSourceReadersResponse Who may read a “restricted“ source (operator view only).
+//
+// Examples: {"actor_ids":["agent_abc123"],"permissions":["catalog:read:partner"]}
+type CatalogSourceReadersResponse struct {
+	// ActorIds These actors may read the source.
+	//
+	// Examples: ["agent_abc123"]
+	ActorIds []string `json:"actor_ids"`
+
+	// Permissions Any one of these permissions grants read access.
+	//
+	// Examples: ["catalog:read:partner"]
+	Permissions []string `json:"permissions"`
+}
+
+// CatalogSourceResponse One configured catalog source and its sync state.
+//
+// The operator fields (“enabled“ to “last_error_code“) are present only
+// for an “org:admin“ caller.
+//
+// Examples: {"consecutive_failures":0,"kind":"jentic-public-apis","last_sync_at":"2026-01-15T10:30:00Z","live_entries":5231,"slug":"public","status":"ok","sync_pending":false,"visibility":"public"}
+type CatalogSourceResponse struct {
+	// ConsecutiveFailures Failed syncs since the last success.
+	//
+	// Examples: 0
+	ConsecutiveFailures int `json:"consecutive_failures"`
+
+	// Enabled Whether the source is synced (operator only).
+	//
+	// Examples: true
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Kind Source kind.
+	//
+	// Examples: jentic-public-apis
+	Kind string `json:"kind"`
+
+	// LastErrorCode While `status` is `failed`, why the last sync run failed (operator only), e.g. `listing_too_large`, `listing_timeout` or `source_unavailable`.
+	//
+	// Examples: listing_too_large
+	LastErrorCode *string `json:"last_error_code,omitempty"`
+
+	// LastSyncAt When the last successful sync finished.
+	//
+	// Examples: 2026-01-15T10:30:00Z
+	LastSyncAt *time.Time `json:"last_sync_at"`
+
+	// LiveEntries Entries the source currently lists.
+	//
+	// Examples: 5231
+	LiveEntries int `json:"live_entries"`
+
+	// Precedence Rank when sources list the same API; lower wins (operator only).
+	//
+	// Examples: 0
+	Precedence *int `json:"precedence,omitempty"`
+
+	// Readers Readers of a restricted source (operator only).
+	//
+	// Examples: {"actor_ids":["agent_abc123"],"permissions":["catalog:read:partner"]}
+	Readers *CatalogSourceReadersResponse `json:"readers,omitempty"`
+
+	// Slug Source slug, the `entry_id` prefix.
+	//
+	// Examples: public
+	Slug string `json:"slug"`
+
+	// Status Outcome of the last sync.
+	//
+	// Examples: ok
+	Status string `json:"status"`
+
+	// SyncPending A sync is requested or wanted and has not started yet.
+	//
+	// Examples: false
+	SyncPending bool `json:"sync_pending"`
+
+	// Trust Source trust level (operator only).
+	//
+	// Examples: curated
+	Trust *string `json:"trust,omitempty"`
+
+	// Visibility `public` or `restricted` (readable only by its readers).
+	//
+	// Examples: public
+	Visibility string `json:"visibility"`
+
+	// Warnings Mapping and ownership problems (operator only).
+	//
+	// Examples: [{"catalog_api_id":"stripe.com","code":"mapping_unmatched","external_id":"stripe","local_api":"stripe.com/stripe/2024-06-20"}]
+	Warnings *[]CatalogSourceWarningResponse `json:"warnings,omitempty"`
+}
+
+// CatalogSourceSyncResponse Acknowledgement of a requested sync; the sync runs in the background.
+//
+// Examples: {"due_at":"2026-01-15T10:30:00Z","forced":false,"slug":"public","status":"queued"}
+type CatalogSourceSyncResponse struct {
+	// DueAt Earliest time the sync may start (a run in progress finishes first); null once the sync is already wanted.
+	//
+	// Examples: 2026-01-15T10:30:00Z
+	DueAt *time.Time `json:"due_at"`
+
+	// Forced The sync overrides the mass-removal guard.
+	//
+	// Examples: false
+	Forced bool `json:"forced"`
+
+	// Slug Source slug.
+	//
+	// Examples: public
+	Slug string `json:"slug"`
+
+	// Status `queued`: this call requested the sync; `coalesced`: it joined a sync already pending.
+	//
+	// Examples: queued
+	Status string `json:"status"`
+}
+
+// CatalogSourceWarningResponse An operator-facing problem with one source's mapping or rows.
+//
+// Examples: {"catalog_api_id":"stripe.com","code":"mapping_unmatched","external_id":"stripe","local_api":"stripe.com/stripe/2024-06-20"}
+type CatalogSourceWarningResponse struct {
+	// CatalogApiId The catalog API the warning concerns.
+	//
+	// Examples: stripe.com
+	CatalogApiId string `json:"catalog_api_id"`
+
+	// Code `mapping_unmatched`: a mapping row matches no curated id, so it is ignored; `ownership_conflict`: an entry claims a local API another source owns.
+	//
+	// Examples: mapping_unmatched
+	Code string `json:"code"`
+
+	// ExternalId The source's id for the entry.
+	//
+	// Examples: stripe
+	ExternalId string `json:"external_id"`
+
+	// LocalApi `vendor/name/version` of the local API, for an ownership conflict.
+	//
+	// Examples: stripe.com/stripe/2024-06-20
+	LocalApi *string `json:"local_api,omitempty"`
 }
 
 // ChangePasswordRequest Payload for changing own password.
@@ -7988,6 +8050,15 @@ type ListCatalogParams struct {
 	IncludeAlternates *bool `form:"include_alternates,omitempty" json:"include_alternates,omitempty"`
 }
 
+// NotifyCatalogSourceJSONBody defines parameters for NotifyCatalogSource.
+type NotifyCatalogSourceJSONBody = CatalogSourceNotifyRequest
+
+// SyncCatalogSourceParams defines parameters for SyncCatalogSource.
+type SyncCatalogSourceParams struct {
+	// Force Apply the sync even when it would remove more entries than the source's mass-removal guard allows (`org:admin`).
+	Force *bool `form:"force,omitempty" json:"force,omitempty"`
+}
+
 // PreviewCatalogOperationsParams defines parameters for PreviewCatalogOperations.
 type PreviewCatalogOperationsParams struct {
 	// Offset Number of matching operations to skip.
@@ -8011,12 +8082,6 @@ type ImportCatalogEntryParams struct {
 
 // SnoozeCatalogEntryJSONBody defines parameters for SnoozeCatalogEntry.
 type SnoozeCatalogEntryJSONBody = CatalogSnoozeRequest
-
-// RefreshCatalogParams defines parameters for RefreshCatalog.
-type RefreshCatalogParams struct {
-	// Force Apply each source's sync even when it would remove more entries than the source's mass-removal guard allows (`org:admin`).
-	Force *bool `form:"force,omitempty" json:"force,omitempty"`
-}
 
 // ListConnectSessionsParams defines parameters for ListConnectSessions.
 type ListConnectSessionsParams struct {
@@ -8480,6 +8545,9 @@ type ConfirmOverlayJSONRequestBody = OverlayConfirmRequest
 
 // LoginJSONRequestBody defines body for Login for application/json ContentType.
 type LoginJSONRequestBody = LoginRequest
+
+// NotifyCatalogSourceJSONRequestBody defines body for NotifyCatalogSource for application/json ContentType.
+type NotifyCatalogSourceJSONRequestBody = NotifyCatalogSourceJSONBody
 
 // SnoozeCatalogEntryJSONRequestBody defines body for SnoozeCatalogEntry for application/json ContentType.
 type SnoozeCatalogEntryJSONRequestBody = SnoozeCatalogEntryJSONBody
@@ -10758,6 +10826,57 @@ type ClientInterface interface {
 	// Corresponds with GET /catalog (the `ListCatalog` operationId).
 	ListCatalog(ctx context.Context, params *ListCatalogParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListCatalogSources List Catalog Sources
+	//
+	// List the catalog sources the caller can see, with their sync state.
+	//
+	// An ``org:admin`` caller sees every configured source, plus its readers,
+	// trust, precedence, a ``warnings`` list (mapping rows that match no entry,
+	// entries claiming an API another source owns) and, while a source is
+	// ``failed``, its last run's ``last_error_code``.
+	//
+	// Corresponds with GET /catalog/sources (the `ListCatalogSources` operationId).
+	ListCatalogSources(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// NotifyCatalogSourceWithBody Notify Catalog Source
+	//
+	// Tell the catalog a push-capable source changed; a sync follows in the background.
+	//
+	// Single-flight per source: a notification joins a pending sync, and one
+	// within the source's ``min_notify_interval_seconds`` of the last run's start
+	// queues a sync for when that interval ends. ``external_ids`` is a hint only;
+	// the sync still lists the whole source.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /catalog/sources/{slug}:notify (the `NotifyCatalogSource` operationId).
+	NotifyCatalogSourceWithBody(ctx context.Context, slug string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// NotifyCatalogSource Notify Catalog Source
+	//
+	// Tell the catalog a push-capable source changed; a sync follows in the background.
+	//
+	// Single-flight per source: a notification joins a pending sync, and one
+	// within the source's ``min_notify_interval_seconds`` of the last run's start
+	// queues a sync for when that interval ends. ``external_ids`` is a hint only;
+	// the sync still lists the whole source.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /catalog/sources/{slug}:notify (the `NotifyCatalogSource` operationId).
+	NotifyCatalogSource(ctx context.Context, slug string, body NotifyCatalogSourceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SyncCatalogSource Sync Catalog Source
+	//
+	// Request a sync of one catalog source; it runs in the background.
+	//
+	// Answers ``202`` at once: the sync starts through the source's lease, after
+	// any run in progress. A request while one is pending joins it.
+	// ``force=true`` (``org:admin``) skips the mass-removal guard for that run.
+	//
+	// Corresponds with POST /catalog/sources/{slug}:sync (the `SyncCatalogSource` operationId).
+	SyncCatalogSource(ctx context.Context, slug string, params *SyncCatalogSourceParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetCatalogEntry Get Catalog Entry
 	//
 	// Retrieve a single visible catalog entry by ``entry_id``.
@@ -10822,20 +10941,6 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /catalog/{entry_id}:unsnooze (the `UnsnoozeCatalogEntry` operationId).
 	UnsnoozeCatalogEntry(ctx context.Context, entryId string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RefreshCatalog Refresh Catalog
-	//
-	// Sync now every enabled catalog source the caller may read (catalog:sync).
-	//
-	// Each source's listing fetch is bounded by ``ingest.fetch_timeout_s`` and all
-	// of them together by ``catalog.refresh_deadline_seconds``. ``status`` is
-	// ``partial`` when a refreshed source failed, was busy or was skipped; ``sources``
-	// gives each one's outcome. Sources the caller cannot read are not synced or
-	// reported. ``force=true`` (``org:admin``) overrides the mass-removal guard
-	// for this run.
-	//
-	// Corresponds with POST /catalog:refresh (the `RefreshCatalog` operationId).
-	RefreshCatalog(ctx context.Context, params *RefreshCatalogParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListConnectSessions List connect sessions
 	//
@@ -14382,6 +14487,97 @@ func (c *Client) ListCatalog(ctx context.Context, params *ListCatalogParams, req
 	return c.Client.Do(req)
 }
 
+// ListCatalogSources List Catalog Sources
+//
+// List the catalog sources the caller can see, with their sync state.
+//
+// An “org:admin“ caller sees every configured source, plus its readers,
+// trust, precedence, a “warnings“ list (mapping rows that match no entry,
+// entries claiming an API another source owns) and, while a source is
+// “failed“, its last run's “last_error_code“.
+//
+// Corresponds with GET /catalog/sources (the `ListCatalogSources` operationId).
+func (c *Client) ListCatalogSources(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListCatalogSourcesRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// NotifyCatalogSourceWithBody Notify Catalog Source
+//
+// Tell the catalog a push-capable source changed; a sync follows in the background.
+//
+// Single-flight per source: a notification joins a pending sync, and one
+// within the source's “min_notify_interval_seconds“ of the last run's start
+// queues a sync for when that interval ends. “external_ids“ is a hint only;
+// the sync still lists the whole source.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /catalog/sources/{slug}:notify (the `NotifyCatalogSource` operationId).
+func (c *Client) NotifyCatalogSourceWithBody(ctx context.Context, slug string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewNotifyCatalogSourceRequestWithBody(c.Server, slug, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// NotifyCatalogSource Notify Catalog Source
+//
+// Tell the catalog a push-capable source changed; a sync follows in the background.
+//
+// Single-flight per source: a notification joins a pending sync, and one
+// within the source's “min_notify_interval_seconds“ of the last run's start
+// queues a sync for when that interval ends. “external_ids“ is a hint only;
+// the sync still lists the whole source.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /catalog/sources/{slug}:notify (the `NotifyCatalogSource` operationId).
+func (c *Client) NotifyCatalogSource(ctx context.Context, slug string, body NotifyCatalogSourceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewNotifyCatalogSourceRequest(c.Server, slug, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SyncCatalogSource Sync Catalog Source
+//
+// Request a sync of one catalog source; it runs in the background.
+//
+// Answers “202“ at once: the sync starts through the source's lease, after
+// any run in progress. A request while one is pending joins it.
+// “force=true“ (“org:admin“) skips the mass-removal guard for that run.
+//
+// Corresponds with POST /catalog/sources/{slug}:sync (the `SyncCatalogSource` operationId).
+func (c *Client) SyncCatalogSource(ctx context.Context, slug string, params *SyncCatalogSourceParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSyncCatalogSourceRequest(c.Server, slug, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetCatalogEntry Get Catalog Entry
 //
 // Retrieve a single visible catalog entry by “entry_id“.
@@ -14497,30 +14693,6 @@ func (c *Client) SnoozeCatalogEntry(ctx context.Context, entryId string, body Sn
 // Corresponds with POST /catalog/{entry_id}:unsnooze (the `UnsnoozeCatalogEntry` operationId).
 func (c *Client) UnsnoozeCatalogEntry(ctx context.Context, entryId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUnsnoozeCatalogEntryRequest(c.Server, entryId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RefreshCatalog Refresh Catalog
-//
-// Sync now every enabled catalog source the caller may read (catalog:sync).
-//
-// Each source's listing fetch is bounded by “ingest.fetch_timeout_s“ and all
-// of them together by “catalog.refresh_deadline_seconds“. “status“ is
-// “partial“ when a refreshed source failed, was busy or was skipped; “sources“
-// gives each one's outcome. Sources the caller cannot read are not synced or
-// reported. “force=true“ (“org:admin“) overrides the mass-removal guard
-// for this run.
-//
-// Corresponds with POST /catalog:refresh (the `RefreshCatalog` operationId).
-func (c *Client) RefreshCatalog(ctx context.Context, params *RefreshCatalogParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRefreshCatalogRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -21050,6 +21222,141 @@ func NewListCatalogRequest(server string, params *ListCatalogParams) (*http.Requ
 	return req, nil
 }
 
+// NewListCatalogSourcesRequest constructs an http.Request for the ListCatalogSources method
+func NewListCatalogSourcesRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/catalog/sources")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewNotifyCatalogSourceRequest calls the generic NotifyCatalogSource builder with application/json body
+func NewNotifyCatalogSourceRequest(server string, slug string, body NotifyCatalogSourceJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewNotifyCatalogSourceRequestWithBody(server, slug, "application/json", bodyReader)
+}
+
+// NewNotifyCatalogSourceRequestWithBody constructs an http.Request for the NotifyCatalogSource method, with any body, and a specified content type
+func NewNotifyCatalogSourceRequestWithBody(server string, slug string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "slug", slug, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/catalog/sources/%s:notify", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewSyncCatalogSourceRequest constructs an http.Request for the SyncCatalogSource method
+func NewSyncCatalogSourceRequest(server string, slug string, params *SyncCatalogSourceParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "slug", slug, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/catalog/sources/%s:sync", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Force != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "force", *params.Force, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetCatalogEntryRequest constructs an http.Request for the GetCatalogEntry method
 func NewGetCatalogEntryRequest(server string, entryId string) (*http.Request, error) {
 	var err error
@@ -21313,60 +21620,6 @@ func NewUnsnoozeCatalogEntryRequest(server string, entryId string) (*http.Reques
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewRefreshCatalogRequest constructs an http.Request for the RefreshCatalog method
-func NewRefreshCatalogRequest(server string, params *RefreshCatalogParams) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/catalog:refresh")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if params.Force != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "force", *params.Force, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
@@ -27290,6 +27543,61 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /catalog (the `ListCatalog` operationId).
 	ListCatalogWithResponse(ctx context.Context, params *ListCatalogParams, reqEditors ...RequestEditorFn) (*ListCatalogHTTPResp, error)
 
+	// ListCatalogSourcesWithResponse List Catalog Sources
+	//
+	// List the catalog sources the caller can see, with their sync state.
+	//
+	// An ``org:admin`` caller sees every configured source, plus its readers,
+	// trust, precedence, a ``warnings`` list (mapping rows that match no entry,
+	// entries claiming an API another source owns) and, while a source is
+	// ``failed``, its last run's ``last_error_code``.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /catalog/sources (the `ListCatalogSources` operationId).
+	ListCatalogSourcesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListCatalogSourcesHTTPResp, error)
+
+	// NotifyCatalogSourceWithBodyWithResponse Notify Catalog Source
+	//
+	// Tell the catalog a push-capable source changed; a sync follows in the background.
+	//
+	// Single-flight per source: a notification joins a pending sync, and one
+	// within the source's ``min_notify_interval_seconds`` of the last run's start
+	// queues a sync for when that interval ends. ``external_ids`` is a hint only;
+	// the sync still lists the whole source.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /catalog/sources/{slug}:notify (the `NotifyCatalogSource` operationId).
+	NotifyCatalogSourceWithBodyWithResponse(ctx context.Context, slug string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*NotifyCatalogSourceHTTPResp, error)
+
+	// NotifyCatalogSourceWithResponse Notify Catalog Source
+	//
+	// Tell the catalog a push-capable source changed; a sync follows in the background.
+	//
+	// Single-flight per source: a notification joins a pending sync, and one
+	// within the source's ``min_notify_interval_seconds`` of the last run's start
+	// queues a sync for when that interval ends. ``external_ids`` is a hint only;
+	// the sync still lists the whole source.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /catalog/sources/{slug}:notify (the `NotifyCatalogSource` operationId).
+	NotifyCatalogSourceWithResponse(ctx context.Context, slug string, body NotifyCatalogSourceJSONRequestBody, reqEditors ...RequestEditorFn) (*NotifyCatalogSourceHTTPResp, error)
+
+	// SyncCatalogSourceWithResponse Sync Catalog Source
+	//
+	// Request a sync of one catalog source; it runs in the background.
+	//
+	// Answers ``202`` at once: the sync starts through the source's lease, after
+	// any run in progress. A request while one is pending joins it.
+	// ``force=true`` (``org:admin``) skips the mass-removal guard for that run.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /catalog/sources/{slug}:sync (the `SyncCatalogSource` operationId).
+	SyncCatalogSourceWithResponse(ctx context.Context, slug string, params *SyncCatalogSourceParams, reqEditors ...RequestEditorFn) (*SyncCatalogSourceHTTPResp, error)
+
 	// GetCatalogEntryWithResponse Get Catalog Entry
 	//
 	// Retrieve a single visible catalog entry by ``entry_id``.
@@ -27362,22 +27670,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /catalog/{entry_id}:unsnooze (the `UnsnoozeCatalogEntry` operationId).
 	UnsnoozeCatalogEntryWithResponse(ctx context.Context, entryId string, reqEditors ...RequestEditorFn) (*UnsnoozeCatalogEntryHTTPResp, error)
-
-	// RefreshCatalogWithResponse Refresh Catalog
-	//
-	// Sync now every enabled catalog source the caller may read (catalog:sync).
-	//
-	// Each source's listing fetch is bounded by ``ingest.fetch_timeout_s`` and all
-	// of them together by ``catalog.refresh_deadline_seconds``. ``status`` is
-	// ``partial`` when a refreshed source failed, was busy or was skipped; ``sources``
-	// gives each one's outcome. Sources the caller cannot read are not synced or
-	// reported. ``force=true`` (``org:admin``) overrides the mass-removal guard
-	// for this run.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /catalog:refresh (the `RefreshCatalog` operationId).
-	RefreshCatalogWithResponse(ctx context.Context, params *RefreshCatalogParams, reqEditors ...RequestEditorFn) (*RefreshCatalogHTTPResp, error)
 
 	// ListConnectSessionsWithResponse List connect sessions
 	//
@@ -35063,6 +35355,290 @@ func (r ListCatalogHTTPResp) ContentType() string {
 	return ""
 }
 
+type ListCatalogSourcesHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CatalogSourceListResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListCatalogSourcesHTTPResp) GetJSON200() *CatalogSourceListResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListCatalogSourcesHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListCatalogSourcesHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListCatalogSourcesHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ListCatalogSourcesHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ListCatalogSourcesHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListCatalogSourcesHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListCatalogSourcesHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListCatalogSourcesHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListCatalogSourcesHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListCatalogSourcesHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListCatalogSourcesHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type NotifyCatalogSourceHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *CatalogSourceSyncResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r NotifyCatalogSourceHTTPResp) GetJSON202() *CatalogSourceSyncResponse {
+	return r.JSON202
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r NotifyCatalogSourceHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r NotifyCatalogSourceHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r NotifyCatalogSourceHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r NotifyCatalogSourceHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r NotifyCatalogSourceHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r NotifyCatalogSourceHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r NotifyCatalogSourceHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r NotifyCatalogSourceHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r NotifyCatalogSourceHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r NotifyCatalogSourceHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r NotifyCatalogSourceHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r NotifyCatalogSourceHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SyncCatalogSourceHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *CatalogSourceSyncResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r SyncCatalogSourceHTTPResp) GetJSON202() *CatalogSourceSyncResponse {
+	return r.JSON202
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r SyncCatalogSourceHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r SyncCatalogSourceHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r SyncCatalogSourceHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r SyncCatalogSourceHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r SyncCatalogSourceHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r SyncCatalogSourceHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r SyncCatalogSourceHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r SyncCatalogSourceHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r SyncCatalogSourceHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SyncCatalogSourceHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SyncCatalogSourceHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SyncCatalogSourceHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetCatalogEntryHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -35528,96 +36104,6 @@ func (r UnsnoozeCatalogEntryHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r UnsnoozeCatalogEntryHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type RefreshCatalogHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *CatalogRefreshResponse
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
-	ApplicationproblemJSON401 *ProblemDetail
-	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r RefreshCatalogHTTPResp) GetJSON200() *CatalogRefreshResponse {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r RefreshCatalogHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r RefreshCatalogHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
-	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r RefreshCatalogHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
-	return r.ApplicationproblemJSON403
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r RefreshCatalogHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r RefreshCatalogHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r RefreshCatalogHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r RefreshCatalogHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r RefreshCatalogHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r RefreshCatalogHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RefreshCatalogHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RefreshCatalogHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -45582,6 +46068,85 @@ func (c *ClientWithResponses) ListCatalogWithResponse(ctx context.Context, param
 	return ParseListCatalogHTTPResp(rsp)
 }
 
+// ListCatalogSourcesWithResponse List Catalog Sources
+//
+// List the catalog sources the caller can see, with their sync state.
+//
+// An “org:admin“ caller sees every configured source, plus its readers,
+// trust, precedence, a “warnings“ list (mapping rows that match no entry,
+// entries claiming an API another source owns) and, while a source is
+// “failed“, its last run's “last_error_code“.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /catalog/sources (the `ListCatalogSources` operationId).
+func (c *ClientWithResponses) ListCatalogSourcesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListCatalogSourcesHTTPResp, error) {
+	rsp, err := c.ListCatalogSources(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListCatalogSourcesHTTPResp(rsp)
+}
+
+// NotifyCatalogSourceWithBodyWithResponse Notify Catalog Source
+//
+// Tell the catalog a push-capable source changed; a sync follows in the background.
+//
+// Single-flight per source: a notification joins a pending sync, and one
+// within the source's “min_notify_interval_seconds“ of the last run's start
+// queues a sync for when that interval ends. “external_ids“ is a hint only;
+// the sync still lists the whole source.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /catalog/sources/{slug}:notify (the `NotifyCatalogSource` operationId).
+func (c *ClientWithResponses) NotifyCatalogSourceWithBodyWithResponse(ctx context.Context, slug string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*NotifyCatalogSourceHTTPResp, error) {
+	rsp, err := c.NotifyCatalogSourceWithBody(ctx, slug, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseNotifyCatalogSourceHTTPResp(rsp)
+}
+
+// NotifyCatalogSourceWithResponse Notify Catalog Source
+//
+// Tell the catalog a push-capable source changed; a sync follows in the background.
+//
+// Single-flight per source: a notification joins a pending sync, and one
+// within the source's “min_notify_interval_seconds“ of the last run's start
+// queues a sync for when that interval ends. “external_ids“ is a hint only;
+// the sync still lists the whole source.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /catalog/sources/{slug}:notify (the `NotifyCatalogSource` operationId).
+func (c *ClientWithResponses) NotifyCatalogSourceWithResponse(ctx context.Context, slug string, body NotifyCatalogSourceJSONRequestBody, reqEditors ...RequestEditorFn) (*NotifyCatalogSourceHTTPResp, error) {
+	rsp, err := c.NotifyCatalogSource(ctx, slug, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseNotifyCatalogSourceHTTPResp(rsp)
+}
+
+// SyncCatalogSourceWithResponse Sync Catalog Source
+//
+// Request a sync of one catalog source; it runs in the background.
+//
+// Answers “202“ at once: the sync starts through the source's lease, after
+// any run in progress. A request while one is pending joins it.
+// “force=true“ (“org:admin“) skips the mass-removal guard for that run.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /catalog/sources/{slug}:sync (the `SyncCatalogSource` operationId).
+func (c *ClientWithResponses) SyncCatalogSourceWithResponse(ctx context.Context, slug string, params *SyncCatalogSourceParams, reqEditors ...RequestEditorFn) (*SyncCatalogSourceHTTPResp, error) {
+	rsp, err := c.SyncCatalogSource(ctx, slug, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSyncCatalogSourceHTTPResp(rsp)
+}
+
 // GetCatalogEntryWithResponse Get Catalog Entry
 //
 // Retrieve a single visible catalog entry by “entry_id“.
@@ -45689,28 +46254,6 @@ func (c *ClientWithResponses) UnsnoozeCatalogEntryWithResponse(ctx context.Conte
 		return nil, err
 	}
 	return ParseUnsnoozeCatalogEntryHTTPResp(rsp)
-}
-
-// RefreshCatalogWithResponse Refresh Catalog
-//
-// Sync now every enabled catalog source the caller may read (catalog:sync).
-//
-// Each source's listing fetch is bounded by “ingest.fetch_timeout_s“ and all
-// of them together by “catalog.refresh_deadline_seconds“. “status“ is
-// “partial“ when a refreshed source failed, was busy or was skipped; “sources“
-// gives each one's outcome. Sources the caller cannot read are not synced or
-// reported. “force=true“ (“org:admin“) overrides the mass-removal guard
-// for this run.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /catalog:refresh (the `RefreshCatalog` operationId).
-func (c *ClientWithResponses) RefreshCatalogWithResponse(ctx context.Context, params *RefreshCatalogParams, reqEditors ...RequestEditorFn) (*RefreshCatalogHTTPResp, error) {
-	rsp, err := c.RefreshCatalog(ctx, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRefreshCatalogHTTPResp(rsp)
 }
 
 // ListConnectSessionsWithResponse List connect sessions
@@ -53207,6 +53750,245 @@ func ParseListCatalogHTTPResp(rsp *http.Response) (*ListCatalogHTTPResp, error) 
 	return response, nil
 }
 
+// ParseListCatalogSourcesHTTPResp parses an HTTP response from a ListCatalogSourcesWithResponse call
+func ParseListCatalogSourcesHTTPResp(rsp *http.Response) (*ListCatalogSourcesHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListCatalogSourcesHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CatalogSourceListResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseNotifyCatalogSourceHTTPResp parses an HTTP response from a NotifyCatalogSourceWithResponse call
+func ParseNotifyCatalogSourceHTTPResp(rsp *http.Response) (*NotifyCatalogSourceHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &NotifyCatalogSourceHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest CatalogSourceSyncResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSyncCatalogSourceHTTPResp parses an HTTP response from a SyncCatalogSourceWithResponse call
+func ParseSyncCatalogSourceHTTPResp(rsp *http.Response) (*SyncCatalogSourceHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SyncCatalogSourceHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest CatalogSourceSyncResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetCatalogEntryHTTPResp parses an HTTP response from a GetCatalogEntryWithResponse call
 func ParseGetCatalogEntryHTTPResp(rsp *http.Response) (*GetCatalogEntryHTTPResp, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -53554,81 +54336,6 @@ func ParseUnsnoozeCatalogEntryHTTPResp(rsp *http.Response) (*UnsnoozeCatalogEntr
 	switch {
 	case rsp.StatusCode == 204:
 		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseRefreshCatalogHTTPResp parses an HTTP response from a RefreshCatalogWithResponse call
-func ParseRefreshCatalogHTTPResp(rsp *http.Response) (*RefreshCatalogHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RefreshCatalogHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest CatalogRefreshResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest ProblemDetail

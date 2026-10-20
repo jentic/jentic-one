@@ -11,7 +11,8 @@ without a check. This scanner gives the sweep an owned cadence: a long-lived tas
 module set precisely because ``self`` can be GC'd), so the scanner constructs a fresh
 ``CatalogService(ctx)`` each tick and *awaits* the sweep to completion rather than
 detaching it. The per-API ``last_checked_at < interval`` gate inside ``_probe_one``
-means the scanner and the manual ``POST /catalog:refresh`` trigger coexist without
+means the scanner and the requested-sync trigger (``POST /catalog/sources/{slug}:sync``)
+coexist without
 double-probing within an interval, and the sweep's single-flight locks (in-process and
 a registry-DB advisory lock) mean only one sweep runs at a time across every process —
 a scanner tick that loses the race skips quietly.

@@ -93,6 +93,12 @@ class GitManifestSource:
         self._deps = deps
 
     @classmethod
+    def credential_urls(cls, settings: BaseModel) -> list[str]:
+        """The manifest URL: only its origin may receive the source's credentials."""
+        assert isinstance(settings, GitManifestSettings)
+        return [settings.url]
+
+    @classmethod
     def build(cls, cfg: CatalogSourceConfig, *, deps: SourceDeps) -> GitManifestSource:
         return cls(GitManifestSettings.model_validate(cfg.settings), deps=deps)
 

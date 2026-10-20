@@ -157,14 +157,114 @@ def test_restricted_source_needs_readers_and_others_reject_them() -> None:
     assert "only a restricted source" in _errors(_cfg(sources=[public_with_readers]))
 
 
-def test_unknown_auth_type_fails_validation() -> None:
-    src = {
+def _with_auth(auth: dict[str, Any]) -> dict[str, Any]:
+    return {
         "slug": "public",
         "kind": "git-manifest",
         "settings": {"url": "https://x/a.json"},
-        "auth": {"type": "bearer_from_env", "env": "TOKEN"},
+        "auth": auth,
     }
-    assert "unknown auth type 'bearer_from_env'" in _errors(_cfg(sources=[src]))
+
+
+def test_unknown_auth_type_fails_validation() -> None:
+    errors = _errors(_cfg(sources=[_with_auth({"type": "vault", "env": "TOKEN"})]))
+    assert "unknown auth type 'vault'" in errors
+
+
+def test_malformed_env_auth_fails_validation() -> None:
+    errors = _errors(_cfg(sources=[_with_auth({"type": "header_from_env", "env": "TOKEN"})]))
+    assert "sources[slug=public].auth: auth type 'header_from_env' needs header" in errors
+
+
+def test_env_auth_is_accepted_without_reading_the_variable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CATALOG_TOKEN", raising=False)
+    check_catalog_config(
+        _cfg(sources=[_with_auth({"type": "bearer_from_env", "env": "CATALOG_TOKEN"})])
+    )
+
+
+def _plain_http_source(**auth: Any) -> dict[str, Any]:
+    return {
+        "slug": "lab",
+        "kind": "http-index",
+        "trust": "untrusted",
+        "settings": {"index_url": "http://index.lab.example/apis.json"},
+        "auth": {"type": "bearer_from_env", "env": "CATALOG_TOKEN", **auth},
+    }
+
+
+def test_plain_http_credential_origin_fails_validation_in_production(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("JENTIC_ENV", "production")
+    errors = _errors(_cfg(sources=[_plain_http_source()]))
+    assert "sources[slug=lab].auth: credentials would be sent over plain http" in errors
+    assert "http://index.lab.example:80" in errors
+
+
+def test_plain_http_auth_origin_fails_validation_in_production(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("JENTIC_ENV", "production")
+    src = {
+        **_plain_http_source(origins=["http://cdn.lab.example"]),
+        "settings": {"index_url": "https://index.lab.example/apis.json"},
+    }
+    errors = _errors(_cfg(sources=[src]))
+    assert "http://cdn.lab.example:80" in errors
+    assert "index.lab.example" not in errors
+
+
+def test_plain_http_credential_origin_is_allowed_outside_production(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("JENTIC_ENV", raising=False)
+    check_catalog_config(_cfg(sources=[_plain_http_source()]))
+
+
+def test_plain_http_origin_without_credentials_is_fine_in_production(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("JENTIC_ENV", "production")
+    src = {**_plain_http_source(), "auth": {"type": "none"}}
+    check_catalog_config(_cfg(sources=[src]))
+
+
+def test_source_egress_rejects_cloud_metadata_at_load() -> None:
+    src = {
+        **_with_auth({"type": "none"}),
+        "egress": {"allowed_private_subnets": ["169.254.0.0/16"]},
+    }
+    with pytest.raises(ValidationError, match="cloud-metadata"):
+        _cfg(sources=[src])
+
+
+@pytest.mark.parametrize(
+    "subnet",
+    [
+        "::ffff:169.254.169.254/128",
+        "::ffff:0:0/96",
+        "::ffff:169.254.0.0/112",
+        "64:ff9b::a9fe:a9fe/128",  # NAT64 form of 169.254.169.254
+        "2002:a9fe:a9fe::/48",  # 6to4 form of 169.254.169.254
+        "::/0",
+    ],
+)
+def test_source_egress_rejects_embedded_ipv4_metadata(subnet: str) -> None:
+    src = {**_with_auth({"type": "none"}), "egress": {"allowed_private_subnets": [subnet]}}
+    with pytest.raises(ValidationError, match="cloud-metadata"):
+        _cfg(sources=[src])
+
+
+def test_source_egress_unwraps_ipv4_mapped_subnets() -> None:
+    src = {
+        **_with_auth({"type": "none"}),
+        "egress": {"allowed_private_subnets": ["::ffff:10.20.0.0/112", "fd00:1::/64"]},
+    }
+    egress = _cfg(sources=[src]).sources[0].egress
+    assert [str(n) for n in egress.allowed_private_subnets] == ["10.20.0.0/16", "fd00:1::/64"]
 
 
 def test_registered_credentialed_auth_type_is_accepted(

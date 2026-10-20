@@ -163,11 +163,8 @@ the CLI's agent-mode machine contract — so read this before rolling it out.
   re-import and mute actions act on it directly, and are disabled when it is
   `null`; only against a server that doesn't send the field do they look the
   entry up by the API's `catalog_api_id`.
-- **`POST /catalog:refresh`** needs `catalog:sync` (implied by `org:admin`)
-  and syncs only the sources the caller can read. Its response adds
-  `sources` (each source's outcome) and `status: "partial"` when one of
-  them failed or was skipped; `catalog.refresh_deadline_seconds` (default 45)
-  bounds the whole refresh.
+- **`POST /catalog:refresh` is replaced by per-source syncs**; see the
+  catalog sync notes below.
 - **MCP `import_api` takes `entry_id`.** `api_id`, `id` and `api` stay
   accepted as aliases, so existing tool calls keep working once they send an
   `entry_id` value. Both MCP surfaces (the `/mcp` mount and `jentic mcp`)
@@ -179,6 +176,51 @@ the CLI's agent-mode machine contract — so read this before rolling it out.
   `catalog:restricted:read`, `catalog:sync`) are implied by `org:admin` and
   granted to nobody else by default, so non-admin callers see public sources
   only.
+
+
+## Upgrading to the multi-source catalog release (0.44.0): catalog sync
+
+Part of the same breaking release as the `entry_id` catalog changes above (the
+multi-source storage and the read cutover); it ships with them, never on its own.
+
+- **`POST /catalog:refresh` is removed.** A refresh is now one request per
+  source: `GET /catalog/sources`, then `POST /catalog/sources/{slug}:sync` for
+  each enabled source. `:sync` needs the new `catalog:sync` permission
+  (implied by `org:admin`, granted to nobody else by default) instead of
+  `org:admin`; `?force=true` (skip the mass-removal guard once) stays
+  `org:admin` only.
+- **The response changed.** `:refresh` answered with the number of catalog
+  entries it loaded; `:sync` answers `202` with `{slug, status, forced,
+  due_at}`, the sync running in the background (`status: coalesced` when it
+  joined one already pending). `jentic catalog refresh --json` now reports how
+  many sources it asked to sync (`fields.sources`), the disabled ones it
+  skipped (`fields.skipped`) and those whose request failed (`fields.failed`)
+  — no longer an entry count.
+- **Older CLIs.** A pre-0.44.0 CLI's `jentic catalog refresh` (and the
+  dashboard's Refresh in an older UI build) still calls `POST
+  /catalog:refresh` and gets a bare `404`/`405` from a 0.44.0 server (older
+  CLIs have no catalog version gate to explain it). Upgrade the CLI with the
+  server.
+- **New config.** `http-index` source kind; `auth` (`bearer_from_env`,
+  `header_from_env`, plus `auth.origins`) and `egress` per source;
+  `min_sync_interval_seconds` / `min_notify_interval_seconds`. A source's
+  credentials are sent only to origins its configuration names (the
+  manifest or index URL, static spec URLs, `auth.origins`), never to a host a
+  listing points at. With `JENTIC_ENV=production`, startup refuses a
+  credentialed source whose credential origins include a plain `http://` one
+  (outside production it is logged as a warning). An `http-index` `index_url`
+  listing more than its `settings.max_entries` (default 10,000, at most
+  100,000) fails the sync run (`listing_too_large`, shown to operators as the
+  source's `last_error_code` in `GET /catalog/sources` and as the `error_code`
+  label of `catalog_source_sync_total`) and keeps the stored entries;
+  `max_entries` does not apply to a static `specs` list (at most 100,000 items). URLs carrying `user:pass@` are refused
+  in `index_url`, `spec_url` and `auth.origins`, an index-listed spec URL
+  carrying one is ignored (the entry is listed without a spec), and a redirect
+  to one fails the fetch. Credential origins are compared on the host the HTTP
+  client connects to (its IDNA 2008 encoding, case-insensitive, without a
+  trailing dot), so two spellings sent to different hosts never share an
+  origin. Config validation errors at startup name the field and the problem
+  but no longer repeat the offending value.
 
 
 ## Upgrading to the multi-source catalog release (0.44.0): update tracking

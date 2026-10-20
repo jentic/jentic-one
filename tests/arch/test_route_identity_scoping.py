@@ -123,8 +123,16 @@ _ALLOWLIST: dict[str, str] = {
     "registry/catalog.list_catalog": _PUBLIC_CATALOG,
     "registry/catalog.get_catalog_entry": _PUBLIC_CATALOG,
     "registry/catalog.preview_catalog_operations": _PUBLIC_CATALOG,
-    "registry/catalog.refresh_catalog": (
-        "org-wide upstream catalog cache refresh; requires org:admin"
+    "registry/catalog.list_catalog_sources": (
+        "org-wide source configuration filtered by the caller's catalog read ACLs; "
+        "passes identity.sub for actor readers"
+    ),
+    "registry/catalog.sync_catalog_source": (
+        "org-wide source sync request; requires catalog:sync, hidden sources 404 via identity.sub"
+    ),
+    "registry/catalog.notify_catalog_source": (
+        "org-wide source push notification; requires catalog:sync, hidden sources 404 via "
+        "identity.sub"
     ),
     "registry/inspect.inspect_operation": _REGISTRY_CATALOGUE,
     "registry/overlays.list_overlays": (

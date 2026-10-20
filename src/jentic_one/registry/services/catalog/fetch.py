@@ -19,17 +19,17 @@ import email.utils
 import hashlib
 import json
 import math
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urlsplit
 
 import httpx
 
 from jentic_one.shared.config import IngestConfig
 from jentic_one.shared.egress import build_pinned_transport
-from jentic_one.shared.url_validation import validate_upstream_url_async
+from jentic_one.shared.url_validation import validate_upstream_url_async, with_default_scheme
 
 #: Identify the catalog fetcher to upstream hosts. Server-initiated recurring
 #: third-party fetches announce themselves so operators can attribute traffic
@@ -105,9 +105,108 @@ def parse_retry_after(value: str | None, *, now: datetime | None = None) -> floa
     return min(max(seconds, 0.0), MAX_RETRY_AFTER_SECONDS)
 
 
-def _origin(url: str) -> tuple[str, str, int | None]:
+#: ``(scheme, host, port)``, with the scheme's default port filled in and the
+#: host in its canonical form (see :func:`canonical_host`).
+Origin = tuple[str, str, int]
+
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def canonical_host(raw_host: str) -> str | None:
+    """The on-the-wire (ASCII) host ``raw_host`` lower-cased, without one trailing
+    dot; ``None`` when it is empty or not ASCII.
+
+    ``raw_host`` is ``httpx.URL(...).raw_host``: internationalised names are
+    already in the punycode form the client connects to, so ``b.example.`` and
+    ``b.example`` match, and so do ``bücher.example`` and ``xn--bcher-kva.example``.
+    """
+    if not raw_host.isascii():
+        return None
+    host = raw_host.lower()
+    if host.endswith("."):
+        host = host[:-1]
+    return host or None
+
+
+def url_origin(url: str) -> Origin | None:
+    """The origin of an ``http(s)`` URL as the HTTP client sees it; ``None`` for
+    anything else, or for a URL the client would refuse."""
+    try:
+        parsed = httpx.URL(url)
+    except (httpx.InvalidURL, ValueError, TypeError):
+        return None
+    scheme = parsed.scheme
+    if scheme not in _DEFAULT_PORTS:
+        return None
+    port = parsed.port
+    if port is not None and not 0 < port < 65536:
+        return None
+    try:
+        host = canonical_host(parsed.raw_host.decode("ascii"))
+    except UnicodeDecodeError:
+        return None
+    if host is None:
+        return None
+    return scheme, host, port or _DEFAULT_PORTS[scheme]
+
+
+@dataclass(frozen=True)
+class OriginCredentials:
+    """A source's credential headers and the origins allowed to receive them.
+
+    ``headers`` is awaited at most once per fetch, and only when a request is
+    about to go to one of ``origins``.
+    """
+
+    origins: frozenset[Origin]
+    headers: Callable[[], Awaitable[Mapping[str, str]]]
+
+
+def _splits(url: str) -> bool:
+    """Whether ``urlsplit`` can read ``url`` (it refuses e.g. an unclosed IPv6
+    bracket, or a netloc that changes under NFKC normalisation)."""
+    try:
+        urlsplit(url)
+    except ValueError:
+        return False
+    return True
+
+
+def _parseable(url: str) -> bool:
+    """Whether ``url`` can be read as given and as the egress guard reads it
+    (:func:`with_default_scheme`)."""
+    return _splits(url) and _splits(with_default_scheme(url))
+
+
+def _parsed_userinfo(url: str) -> bool:
+    if not _splits(url):
+        # Fail closed: a URL whose userinfo cannot be read counts as carrying it.
+        return True
     parts = urlsplit(url)
-    return parts.scheme.lower(), (parts.hostname or "").lower(), parts.port
+    if parts.username is not None or parts.password is not None:
+        return True
+    try:
+        return bool(httpx.URL(url).userinfo)
+    except (httpx.InvalidURL, ValueError, TypeError):
+        return False
+
+
+def has_userinfo(url: str) -> bool:
+    """Whether ``url`` carries a ``user[:password]@`` part, by either URL parser.
+
+    ``url`` is read as given and as the egress guard reads it
+    (:func:`with_default_scheme`), so a scheme-less ``user:pass@host/x`` counts.
+    httpx turns userinfo into its own ``Authorization: Basic`` header, so a URL
+    carrying it is never sent: whoever wrote the URL would choose that header.
+    A URL ``urlsplit`` cannot read counts too (see :func:`_parseable`).
+    Never raises.
+    """
+    return _parsed_userinfo(url) or _parsed_userinfo(with_default_scheme(url))
+
+
+def _shown(url: str) -> str:
+    """``url`` for an error message: never one that carries userinfo."""
+    return "a URL carrying credentials" if has_userinfo(url) else url
 
 
 def _size_error(max_bytes: int) -> CatalogFetchError:
@@ -137,6 +236,37 @@ async def _send_capped(
         await response.aclose()
 
 
+async def _validated(url: str, config: IngestConfig) -> str:
+    """The URL the egress guard returns for ``url``; refused if it carries userinfo
+    or cannot be parsed.
+
+    Userinfo is checked on the URL that would be sent, after the guard has
+    normalised it, as well as on ``url`` itself. Never echo the URL: it may
+    carry a secret, and the parser's own error repeats the netloc.
+    """
+    if not _parseable(url):
+        raise CatalogFetchError("unsafe URL rejected: unparseable URL")
+    refused = CatalogFetchError("unsafe URL rejected: URL carries credentials (user:pass@)")
+    if has_userinfo(url):
+        raise refused
+    try:
+        validated = await validate_upstream_url_async(url, config.egress)
+    except ValueError as exc:
+        raise CatalogFetchError(f"unsafe URL rejected: {exc}") from exc
+    if has_userinfo(validated):
+        raise refused
+    return validated
+
+
+def _redirect_target(current: str, location: str) -> str:
+    """``location`` resolved against ``current`` by httpx, the parser that sends it."""
+    try:
+        return str(httpx.URL(current).join(location))
+    except (httpx.InvalidURL, ValueError, TypeError):
+        # The location is upstream-controlled; it is not repeated.
+        raise CatalogFetchError("redirect to an invalid URL refused") from None
+
+
 async def _get(
     url: str,
     *,
@@ -144,41 +274,42 @@ async def _get(
     client: httpx.AsyncClient | None,
     user_agent: str,
     conditional: Mapping[str, str],
-    headers: Mapping[str, str] | None,
+    credentials: OriginCredentials | None,
 ) -> tuple[httpx.Response, bytes]:
     """GET ``url`` following redirects by hand, re-validating every hop.
 
-    ``conditional`` headers (``If-None-Match``) go on every hop; ``headers``
-    (a source's credentials) only to the origin of ``url``, so a redirect to
-    another host never carries them.
+    ``conditional`` headers (``If-None-Match``) go on every hop. ``credentials``
+    go on a hop only when the origin of the URL actually sent there (the one
+    the egress guard returned) is one of ``credentials.origins``, so a redirect
+    to any other host never carries them. A hop whose URL carries userinfo is
+    refused (see :func:`has_userinfo`).
     """
-    try:
-        validated_url = await validate_upstream_url_async(url, config.egress)
-    except ValueError as exc:
-        raise CatalogFetchError(f"unsafe URL rejected: {exc}") from exc
-    first_origin = _origin(validated_url)
+    validated_url = await _validated(url, config)
+    resolved: Mapping[str, str] | None = None
 
-    def _headers_for(target: str) -> dict[str, str]:
+    async def _headers_for(target: str) -> dict[str, str]:
+        nonlocal resolved
         out = {"user-agent": user_agent, **conditional}
-        if headers and _origin(target) == first_origin:
-            out.update(headers)
+        if credentials is not None and url_origin(target) in credentials.origins:
+            if resolved is None:
+                resolved = await credentials.headers()
+            out.update(resolved)
         return out
 
     async def _follow(http: httpx.AsyncClient) -> tuple[httpx.Response, bytes]:
         target = validated_url
-        resp, body = await _send_capped(http, target, _headers_for(target), config.max_spec_bytes)
+        resp, body = await _send_capped(
+            http, target, await _headers_for(target), config.max_spec_bytes
+        )
         for _ in range(config.max_redirects):
             if resp.status_code < 300 or resp.status_code >= 400:
                 return resp, body
             location = resp.headers.get("location")
             if not location:
                 return resp, body
-            try:
-                target = await validate_upstream_url_async(urljoin(target, location), config.egress)
-            except ValueError as exc:
-                raise CatalogFetchError(f"unsafe URL rejected: {exc}") from exc
+            target = await _validated(_redirect_target(target, location), config)
             resp, body = await _send_capped(
-                http, target, _headers_for(target), config.max_spec_bytes
+                http, target, await _headers_for(target), config.max_spec_bytes
             )
         if 300 <= resp.status_code < 400:
             raise CatalogFetchError("too many redirects")
@@ -195,8 +326,8 @@ async def _get(
             return await _follow(own)
     except CatalogFetchError:
         raise
-    except httpx.HTTPError as exc:
-        raise CatalogFetchError(f"failed to fetch {url}: {exc}") from exc
+    except (httpx.HTTPError, httpx.InvalidURL) as exc:
+        raise CatalogFetchError(f"failed to fetch {_shown(url)}: {exc}") from exc
 
 
 def _raise_for_status(resp: httpx.Response, url: str) -> None:
@@ -208,7 +339,7 @@ def _raise_for_status(resp: httpx.Response, url: str) -> None:
         else None
     )
     raise CatalogFetchError(
-        f"non-success status {resp.status_code} fetching {url}",
+        f"non-success status {resp.status_code} fetching {_shown(url)}",
         status_code=resp.status_code,
         retry_after_s=retry_after,
     )
@@ -220,7 +351,7 @@ async def fetch_json(
     config: IngestConfig,
     client: httpx.AsyncClient | None = None,
     user_agent: str = CATALOG_USER_AGENT,
-    headers: Mapping[str, str] | None = None,
+    credentials: OriginCredentials | None = None,
 ) -> dict[str, Any]:
     """GET a URL and parse the body as JSON, with SSRF + redirect + size guards.
 
@@ -229,13 +360,18 @@ async def fetch_json(
     caps) but returns a plain decoded JSON object instead of an IngestSpecification.
     """
     resp, body = await _get(
-        url, config=config, client=client, user_agent=user_agent, conditional={}, headers=headers
+        url,
+        config=config,
+        client=client,
+        user_agent=user_agent,
+        conditional={},
+        credentials=credentials,
     )
     _raise_for_status(resp, url)
     try:
         parsed = json.loads(body)
     except (json.JSONDecodeError, ValueError) as exc:
-        raise CatalogFetchError(f"failed to parse JSON from {url}") from exc
+        raise CatalogFetchError(f"failed to parse JSON from {_shown(url)}") from exc
     if not isinstance(parsed, dict):
         raise CatalogFetchError("expected a JSON object")
     return parsed
@@ -248,7 +384,7 @@ async def fetch_bytes_conditional(
     etag: str | None = None,
     client: httpx.AsyncClient | None = None,
     user_agent: str = CATALOG_USER_AGENT,
-    headers: Mapping[str, str] | None = None,
+    credentials: OriginCredentials | None = None,
 ) -> ConditionalFetch:
     """Conditionally GET a URL's raw bytes, with the same SSRF/redirect/size guards.
 
@@ -267,7 +403,7 @@ async def fetch_bytes_conditional(
         client=client,
         user_agent=user_agent,
         conditional=conditional,
-        headers=headers,
+        credentials=credentials,
     )
     if resp.status_code == 304:
         return ConditionalFetch(

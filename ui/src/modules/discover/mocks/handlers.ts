@@ -4,7 +4,8 @@
  * Mocks the catalog backend surface the Discover module consumes:
  *   GET  /catalog                       — keyset-paginated browse/search/filter
  *   GET  /catalog/{entry_id}/operations — operation preview
- *   POST /catalog:refresh               — sync the catalog sources (ack)
+ *   GET  /catalog/sources               — the visible catalog sources
+ *   POST /catalog/sources/{slug}:sync   — request a background sync (ack)
  *   POST /catalog/{entry_id}:import     — enqueue import (202)
  *
  * Every fixture lives in the `public` source, so its `entry_id` is
@@ -405,10 +406,31 @@ export const discoverHandlers = [
 		});
 	}),
 
-	http.post('/catalog:refresh', () => {
-		// Force-rebuild ack. The real backend resets the manifest snapshot here;
-		// the fixture just echoes a fresh count so the success toast renders.
-		return HttpResponse.json({ count: CATALOG_ENTRIES.length, status: 'refreshed' });
+	http.get('/catalog/sources', () => {
+		return HttpResponse.json({
+			data: [
+				{
+					slug: 'public',
+					kind: 'git-manifest',
+					visibility: 'public',
+					status: 'ok',
+					last_sync_at: new Date().toISOString(),
+					live_entries: CATALOG_ENTRIES.length,
+					consecutive_failures: 0,
+					sync_pending: false,
+				},
+			],
+		});
+	}),
+
+	http.post('/catalog/sources/:action', ({ params }) => {
+		// `/catalog/sources/{slug}:sync`: the real backend queues a background
+		// sync; the fixture just acknowledges it so the success toast renders.
+		const slug = String(params.action).replace(/:(sync|notify)$/, '');
+		return HttpResponse.json(
+			{ slug, status: 'queued', forced: false, due_at: new Date().toISOString() },
+			{ status: 202 },
+		);
 	}),
 
 	http.post('/catalog/*', ({ request }) => {

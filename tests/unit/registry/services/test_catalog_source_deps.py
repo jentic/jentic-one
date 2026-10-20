@@ -19,26 +19,38 @@ from typing import Any
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
 from jentic_one.registry.services.catalog.fetch import (
     CATALOG_USER_AGENT,
     MAX_RETRY_AFTER_SECONDS,
+    has_userinfo,
     parse_retry_after,
 )
 from jentic_one.registry.services.catalog.sources import deps as deps_module
+from jentic_one.registry.services.catalog.sources import metrics as source_metrics
 from jentic_one.registry.services.catalog.sources.deps import (
     GuardedSourceHttpClient,
     build_source_deps,
     spec_fetch_lane,
 )
+from jentic_one.registry.services.catalog.sources.git_manifest import (
+    GitManifestSettings,
+    GitManifestSource,
+)
+from jentic_one.registry.services.catalog.sources.http_index import HttpIndexSource, index_changes
 from jentic_one.registry.services.catalog.sources.limits import ProcessSourceLimits
+from jentic_one.registry.services.catalog.sources.origins import url_origin
 from jentic_one.registry.services.catalog.sources.protocol import (
     NotModified,
     SourceUnavailableError,
     SpecBody,
     SpecGoneError,
+    Upserted,
 )
+from jentic_one.registry.services.catalog.sources.sanitize import clean_human_url
 from jentic_one.shared.config import CatalogSourceConfig, IngestConfig
+from jentic_one.testing.catalog_source import register_static_source_kind
 
 _URL = "https://specs.example.com/openapi.json"
 
@@ -59,7 +71,12 @@ def _http(
 ) -> GuardedSourceHttpClient:
     client = _client(handler)
     return GuardedSourceHttpClient(
-        "corp", IngestConfig(), limits=limits, auth=_Auth(), client=lambda: client
+        "corp",
+        IngestConfig(),
+        limits=limits,
+        auth=_Auth(),
+        client=lambda: client,
+        credential_origins=frozenset({("https", "specs.example.com", 443)}),
     )
 
 
@@ -95,6 +112,230 @@ async def test_sends_user_agent_and_auth_to_the_origin_only() -> None:
     assert first.headers["authorization"] == "Bearer source-token"
     assert second.headers["user-agent"] == CATALOG_USER_AGENT
     assert "authorization" not in second.headers  # a redirect off-origin drops the credential
+
+
+@pytest.mark.parametrize(
+    "location",
+    [
+        # Same origin, another origin, scheme-relative.
+        "https://attacker:chosen@specs.example.com/x.json",  # pragma: allowlist secret
+        "https://attacker@cdn.example.org/x.json",
+        "//attacker:chosen@specs.example.com/x.json",  # pragma: allowlist secret
+    ],
+)
+@pytest.mark.asyncio
+async def test_redirect_to_a_url_with_userinfo_is_refused(location: str) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(302, headers={"location": location})
+
+    with pytest.raises(SourceUnavailableError) as exc:
+        await _http(handler).get_bytes(_URL)
+    assert "carries credentials" in str(exc.value)
+    assert "chosen" not in str(exc.value)
+    assert len(seen) == 1  # the hop with userinfo is never sent
+
+
+def _recorder() -> tuple[list[httpx.Request], Callable[[httpx.Request], httpx.Response]]:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path == "/moved":
+            return httpx.Response(302, headers={"location": "HTTPS://specs.example.com/x.json"})
+        if request.url.path == "/away":
+            return httpx.Response(302, headers={"location": "HTTPS://cdn.example.org/x.json"})
+        return httpx.Response(200, content=b"{}")
+
+    return seen, handler
+
+
+@pytest.mark.parametrize(
+    ("url", "authorization"),
+    [
+        ("HTTPS://specs.example.com/openapi.json", "Bearer source-token"),
+        ("Https://specs.example.com/openapi.json", "Bearer source-token"),
+        # The credential origin is https; the same host over http gets nothing.
+        ("HTTP://specs.example.com/openapi.json", None),
+    ],
+)
+@pytest.mark.asyncio
+async def test_upper_case_scheme_goes_to_the_named_host(
+    url: str, authorization: str | None
+) -> None:
+    """``HTTPS://host`` is fetched from ``host``; the credential follows the URL sent."""
+    seen, handler = _recorder()
+    await _http(handler).get_bytes(url)
+    (request,) = seen
+    assert request.url.host == "specs.example.com"
+    assert request.headers.get("authorization") == authorization
+
+
+@pytest.mark.asyncio
+async def test_credential_is_decided_per_hop_on_the_url_sent() -> None:
+    """An upper-case-scheme redirect keeps the credential on its origin and off any other."""
+    seen, handler = _recorder()
+    http = _http(handler)
+    await http.get_bytes("https://specs.example.com/moved")
+    await http.get_bytes("https://specs.example.com/away")
+    sent = [(r.url.host, r.headers.get("authorization")) for r in seen]
+    assert sent == [
+        ("specs.example.com", "Bearer source-token"),
+        ("specs.example.com", "Bearer source-token"),
+        ("specs.example.com", "Bearer source-token"),
+        ("cdn.example.org", None),
+    ]
+    assert all(r.url.host not in ("https", "http") for r in seen)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "u:chosen@specs.example.com/openapi.json",  # pragma: allowlist secret
+        "chosen@specs.example.com/openapi.json",
+    ],
+)
+@pytest.mark.asyncio
+async def test_scheme_less_url_with_userinfo_is_refused(url: str) -> None:
+    """The guard adds ``https://``; the userinfo it then exposes is refused, not sent."""
+    seen, handler = _recorder()
+    with pytest.raises(SourceUnavailableError) as exc:
+        await _http(handler).get_bytes(url)
+    assert "carries credentials" in str(exc.value)
+    assert "chosen" not in str(exc.value)
+    assert seen == []
+
+
+@pytest.mark.parametrize(
+    "location",
+    [
+        "u:chosen@cdn.example.org/x.json",  # pragma: allowlist secret
+        "HTTPS://u:chosen@cdn.example.org/x.json",  # pragma: allowlist secret
+    ],
+)
+@pytest.mark.asyncio
+async def test_redirect_to_userinfo_in_any_scheme_spelling_is_refused(location: str) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(302, headers={"location": location})
+
+    with pytest.raises(SourceUnavailableError) as exc:
+        await _http(handler).get_bytes(_URL)
+    assert "chosen" not in str(exc.value)
+    assert len(seen) == 1
+
+
+@pytest.mark.parametrize(
+    ("location", "fetched"),
+    [
+        ("http://[::1/x", False),  # httpx cannot build a URL from it
+        ("https://cdn.example.org:abc/x", False),
+        ("https://cdn.example.org:+443/x", True),  # httpx reads it as port 443
+    ],
+)
+@pytest.mark.asyncio
+async def test_redirect_location_is_parsed_by_httpx(
+    location: str, fetched: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ``Location`` httpx refuses is a recorded ``SourceUnavailableError``, never a bare
+    error; one it accepts goes where httpx sends it, without the credential."""
+    outcomes: list[str] = []
+    monkeypatch.setattr(
+        source_metrics, "record_fetch", lambda _slug, outcome: outcomes.append(outcome)
+    )
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.host == "specs.example.com":
+            return httpx.Response(302, headers={"location": location})
+        return httpx.Response(200, content=b"{}")
+
+    if fetched:
+        await _http(handler).get_bytes(_URL)
+        assert outcomes == [source_metrics.FETCH_BODY]
+        assert (seen[-1].url.host, seen[-1].url.port) == ("cdn.example.org", None)
+        assert "authorization" not in seen[-1].headers
+    else:
+        with pytest.raises(SourceUnavailableError, match=r"(?i)invalid url"):
+            await _http(handler).get_bytes(_URL)
+        assert outcomes == [source_metrics.FETCH_TRANSIENT]
+        assert len(seen) == 1
+
+
+#: URLs ``urlsplit`` refuses: an unclosed IPv6 bracket, and netlocs that change
+#: under NFKC normalisation (a full-width solidus; one after userinfo).
+_UNPARSEABLE = [
+    "https://[::1/x",
+    "https://specs\uff0fexample.com/openapi.json",
+    "https://u:chosen@specs\uff0fexample.com/openapi.json",  # pragma: allowlist secret
+    "[::1/x",
+]
+
+
+@pytest.mark.parametrize("url", _UNPARSEABLE)
+@pytest.mark.parametrize("method", ["get_json", "get_bytes"])
+@pytest.mark.asyncio
+async def test_unparseable_url_is_a_recorded_source_unavailable(
+    url: str, method: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A URL the parsers cannot read is refused before sending, as a recorded
+    ``SourceUnavailableError`` that never repeats it, never a bare ``ValueError``."""
+    outcomes: list[str] = []
+    monkeypatch.setattr(
+        source_metrics, "record_fetch", lambda _slug, outcome: outcomes.append(outcome)
+    )
+    seen, handler = _recorder()
+    with pytest.raises(SourceUnavailableError, match="unparseable URL") as exc:
+        await getattr(_http(handler), method)(url)
+    assert "chosen" not in str(exc.value)
+    assert "\uff0f" not in str(exc.value)
+    assert outcomes == [source_metrics.FETCH_TRANSIENT]
+    assert seen == []
+
+
+@pytest.mark.parametrize("url", _UNPARSEABLE)
+def test_has_userinfo_never_raises_and_fails_closed(url: str) -> None:
+    assert has_userinfo(url) is True
+
+
+@pytest.mark.asyncio
+async def test_unparseable_url_health_is_unreachable() -> None:
+    seen, handler = _recorder()
+    deps = SimpleNamespace(http=_http(handler), clock=lambda: datetime(2026, 1, 1, tzinfo=UTC))
+    source = GitManifestSource(
+        GitManifestSettings(url="https://[::1/apis.json"),
+        deps=deps,  # type: ignore[arg-type]
+    )
+    health = await source.health()
+    assert (health.ok, health.reason) == (False, "unreachable")
+    assert seen == []
+
+
+def test_index_skips_spec_and_human_urls_it_cannot_parse() -> None:
+    """Upstream-controlled URLs that cannot be parsed leave the entry card-only."""
+    absolute = [url for url in _UNPARSEABLE if "://" in url]
+    doc = {
+        "apis": [
+            {
+                "aid": f"a{i}",
+                "humanURL": url,
+                "properties": [{"type": "OpenAPI", "url": url}],
+            }
+            for i, url in enumerate(absolute)
+        ]
+    }
+    changes = index_changes(doc, index_url="https://idx.example.com/apis.json")
+    assert len(changes) == len(absolute)
+    for change in changes:
+        assert isinstance(change, Upserted)
+        assert change.entry.spec_ref is None
+    for url in absolute:
+        assert clean_human_url(url) is None
 
 
 @pytest.mark.asyncio
@@ -214,6 +455,7 @@ class _Ctx:
 
 
 def _source(**kw: object) -> CatalogSourceConfig:
+    register_static_source_kind()
     return CatalogSourceConfig.model_validate(
         {"slug": "corp", "kind": "static", "settings": {}, **kw}
     )
@@ -268,6 +510,220 @@ async def test_429_through_source_deps_blocks_both_lanes(
     assert 0 < again.value.retry_after_s <= 20.0
     for callback in ctx.shutdown:
         await callback()
+
+
+# ── credentials go only to configured origins ─────────────────────────────────
+
+_TOKEN_ENV = "JENTIC_TEST_SOURCE_TOKEN"
+
+
+@pytest.fixture()
+def answering_transport(monkeypatch: pytest.MonkeyPatch) -> list[httpx.Request]:
+    """Route the pooled client through a mock that answers every request with ``{}``."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path == "/redirect":
+            return httpx.Response(302, headers={"location": "https://foreign.example.net/x"})
+        return httpx.Response(200, content=b"{}")
+
+    monkeypatch.setattr(
+        deps_module, "build_pinned_transport", lambda _egress: httpx.MockTransport(handler)
+    )
+    monkeypatch.setenv(_TOKEN_ENV, "source-token")
+    return seen
+
+
+def _auth(**extra: object) -> dict[str, object]:
+    return {"type": "bearer_from_env", "env": _TOKEN_ENV, **extra}
+
+
+def _authorized(seen: list[httpx.Request]) -> dict[str, str | None]:
+    return {str(r.url): r.headers.get("authorization") for r in seen}
+
+
+@pytest.mark.asyncio
+async def test_git_manifest_credential_never_reaches_a_listed_spec_host(
+    answering_transport: list[httpx.Request],
+) -> None:
+    cfg = CatalogSourceConfig.model_validate(
+        {
+            "slug": "corp",
+            "kind": "git-manifest",
+            "settings": {"url": "https://raw.example.com/corp/apis.json"},
+            "auth": _auth(),
+        }
+    )
+    deps = build_source_deps(_Ctx(), cfg)  # type: ignore[arg-type]
+    await deps.http.get_json("https://raw.example.com/corp/apis.json")
+    await deps.http.get_bytes("https://raw.example.com/corp/stripe.json")
+    await deps.http.get_bytes("https://attacker.example.net/spec.json")
+    assert _authorized(answering_transport) == {
+        "https://raw.example.com/corp/apis.json": "Bearer source-token",
+        "https://raw.example.com/corp/stripe.json": "Bearer source-token",
+        "https://attacker.example.net/spec.json": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_http_index_credential_never_reaches_an_index_listed_foreign_host(
+    answering_transport: list[httpx.Request],
+) -> None:
+    cfg = CatalogSourceConfig.model_validate(
+        {
+            "slug": "corp",
+            "kind": "http-index",
+            "settings": {"index_url": "https://index.example.com/apis.json"},
+            "auth": _auth(),
+        }
+    )
+    deps = build_source_deps(_Ctx(), cfg)  # type: ignore[arg-type]
+    # Even a connector that asks for credentials on the listed spec gets none.
+    await deps.http.get_bytes("https://cdn.foreign.example/spec.json", authenticate=True)
+    await deps.http.get_bytes("https://index.example.com/redirect")
+    seen = answering_transport
+    assert seen[0].headers.get("authorization") is None
+    assert seen[1].headers["authorization"] == "Bearer source-token"
+    assert str(seen[2].url) == "https://foreign.example.net/x"
+    assert "authorization" not in seen[2].headers  # stripped across the redirect
+
+
+@pytest.mark.asyncio
+async def test_http_index_specs_on_an_auth_origin_get_the_credential(
+    answering_transport: list[httpx.Request],
+) -> None:
+    """``auth.origins`` widens credentials to index-listed specs on that origin only."""
+    cfg = CatalogSourceConfig.model_validate(
+        {
+            "slug": "corp",
+            "kind": "http-index",
+            "settings": {"index_url": "https://index.example.com/apis.json"},
+            "auth": _auth(origins=["https://cdn.example.com"]),
+        }
+    )
+    deps = build_source_deps(_Ctx(), cfg)  # type: ignore[arg-type]
+    source = HttpIndexSource.build(cfg, deps=deps)
+    await source.fetch_spec({"url": "https://cdn.example.com/stripe.json"})
+    await source.fetch_spec({"url": "https://other.example.org/acme.json"})
+    assert _authorized(answering_transport) == {
+        "https://cdn.example.com/stripe.json": "Bearer source-token",
+        "https://other.example.org/acme.json": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_kind_naming_no_urls_sends_credentials_only_to_explicit_origins(
+    answering_transport: list[httpx.Request],
+) -> None:
+    plain = _source(auth=_auth())
+    deps = build_source_deps(_Ctx(), plain)  # type: ignore[arg-type]
+    await deps.http.get_bytes("https://specs.example.com/a.json")
+    assert answering_transport[-1].headers.get("authorization") is None  # default deny
+
+    explicit = _source(slug="corp2", auth=_auth(origins=["https://specs.example.com"]))
+    deps = build_source_deps(_Ctx(), explicit)  # type: ignore[arg-type]
+    await deps.http.get_bytes("https://specs.example.com/a.json")
+    await deps.http.get_bytes("http://specs.example.com/a.json")  # another scheme: another origin
+    assert answering_transport[-2].headers["authorization"] == "Bearer source-token"
+    assert answering_transport[-1].headers.get("authorization") is None
+
+
+@pytest.mark.parametrize(
+    "origin", ["ftp://specs.example.com", "https://specs.example.com/path", "specs.example.com"]
+)
+def test_auth_origins_must_be_http_origins(origin: str) -> None:
+    with pytest.raises(ValueError):
+        _source(auth=_auth(origins=[origin]))
+
+
+def test_auth_origins_with_userinfo_are_rejected_without_echoing_them() -> None:
+    with pytest.raises(ValidationError) as exc:
+        _source(auth=_auth(origins=["https://u:hunter2@specs.example.com"]))
+    [error] = exc.value.errors()
+    assert "must not carry credentials" in error["msg"]
+    assert "hunter2" not in error["msg"]
+
+
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        ("https://b.example./x", "https://b.example/y"),
+        ("https://B.Example:443/x", "https://b.example"),
+        ("https://bücher.example/x", "https://xn--bcher-kva.example/y"),
+        ("https://BÜCHER.example./x", "https://xn--bcher-kva.example"),
+    ],
+)
+def test_url_origin_canonicalises_trailing_dots_and_idn(a: str, b: str) -> None:
+    assert url_origin(a) is not None
+    assert url_origin(a) == url_origin(b)
+
+
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        # IDNA 2008 keeps these deviation characters: the client connects to a
+        # different, separately registrable name for each spelling.
+        ("https://straße.de/x", "https://strasse.de/x"),
+        ("https://\u03c2.example/x", "https://\u03c3.example/x"),
+        ("https://\u03c2.example/x", "https://xn--4xa.example/x"),
+    ],
+)
+def test_url_origin_keeps_idna_deviation_spellings_apart(a: str, b: str) -> None:
+    assert url_origin(a) is not None
+    assert url_origin(b) is not None
+    assert url_origin(a) != url_origin(b)
+
+
+def test_url_origin_is_the_host_the_client_connects_to() -> None:
+    for url in ("https://straße.de/x", "https://\u03c2.example/x", "https://bücher.example./x"):
+        origin = url_origin(url)
+        assert origin is not None
+        assert origin[1] == httpx.URL(url).raw_host.decode("ascii").rstrip(".")
+
+
+def test_url_origin_rejects_hosts_it_cannot_encode() -> None:
+    assert url_origin("https://./x") is None
+    assert url_origin("https://a..bücher.example/x") is None  # an empty IDN label
+    assert url_origin("https://\uff45xample.com/x") is None  # the client refuses it too
+    assert url_origin("https://example.com:99999/x") is None
+
+
+@pytest.mark.asyncio
+async def test_credential_reaches_trailing_dot_and_idn_forms_of_its_origin(
+    answering_transport: list[httpx.Request],
+) -> None:
+    cfg = _source(slug="corp3", auth=_auth(origins=["https://bücher.example"]))
+    deps = build_source_deps(_Ctx(), cfg)  # type: ignore[arg-type]
+    await deps.http.get_bytes("https://xn--bcher-kva.example/a.json")
+    await deps.http.get_bytes("https://xn--bcher-kva.example./b.json")
+    await deps.http.get_bytes("https://other.example/c.json")
+    assert [r.headers.get("authorization") for r in answering_transport[-3:]] == [
+        "Bearer source-token",
+        "Bearer source-token",
+        None,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_credential_never_reaches_an_idna_deviation_spelling_of_its_origin(
+    answering_transport: list[httpx.Request],
+) -> None:
+    cfg = _source(
+        slug="corp4", auth=_auth(origins=["https://strasse.de", "https://xn--4xa.example"])
+    )
+    deps = build_source_deps(_Ctx(), cfg)  # type: ignore[arg-type]
+    await deps.http.get_bytes("https://straße.de/a.json")
+    await deps.http.get_bytes("https://\u03c2.example/b.json")
+    await deps.http.get_bytes("https://strasse.de/c.json")
+    await deps.http.get_bytes("https://\u03c3.example/d.json")
+    sent = [(r.url.raw_host, r.headers.get("authorization")) for r in answering_transport[-4:]]
+    assert sent == [
+        (b"xn--strae-oqa.de", None),
+        (b"xn--3xa.example", None),
+        (b"strasse.de", "Bearer source-token"),
+        (b"xn--4xa.example", "Bearer source-token"),
+    ]
 
 
 class _LaneRecorder(ProcessSourceLimits):

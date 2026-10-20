@@ -361,8 +361,10 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "The public API **catalog** — a registry-side browse/preview/import surface over "
             "the Jentic public-APIs GitHub manifest. Powers the Discover experience: list "
             "importable APIs (`GET /catalog`, keyset cursor-paginated), preview an entry's "
-            "operations (`GET /catalog/{api_id}/operations`), refresh the cached manifest "
-            "(`POST /catalog:refresh`, `org:admin`), and import an entry into the local "
+            "operations (`GET /catalog/{api_id}/operations`), list the catalog sources "
+            "(`GET /catalog/sources`), request a source sync (`POST /catalog/sources/{slug}:sync`"
+            ", `catalog:sync`) or push a change notice (`:notify`), and import an entry into "
+            "the local "
             "registry (`POST /catalog/{api_id}:import`).\n\n"
             "The catalog is a cache of an upstream document, distinct from the local "
             "registry (`GET /apis`): `/apis` is what this deployment has imported, `/catalog` "
@@ -1020,7 +1022,7 @@ _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/apis"), "APIs"),
     # Identity-scoped host digest for integrators (#1278).
     (re.compile(r"^/governed-hosts$"), "Governed Hosts"),
-    # Catalog (Discover) — browse/preview/import + the :refresh verb. Broad
+    # Catalog (Discover) — browse/preview/import + the sources :sync/:notify verbs. Broad
     # ^/catalog is safe: no other surface shares the prefix.
     (re.compile(r"^/catalog"), "Catalog"),
     (re.compile(r"^/search"), "Search"),

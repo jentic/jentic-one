@@ -35,7 +35,7 @@ import contextlib
 import re
 import time
 import weakref
-from collections.abc import AsyncIterator, Callable, Collection, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -79,6 +79,7 @@ from jentic_one.registry.services.catalog.sources.deps import (
 )
 from jentic_one.registry.services.catalog.sources.protocol import (
     CatalogSource,
+    ListingTooLargeError,
     ListStream,
     Removed,
     SourceUnavailableError,
@@ -104,13 +105,10 @@ DepsFactory = Callable[[CatalogSourceConfig], SourceDeps]
 #: Outcome statuses besides the ``catalog_sync_runs`` ones.
 OUTCOME_BUSY = "busy"
 OUTCOME_DISABLED = "disabled"
-#: A source an operator refresh never started because its deadline had passed.
-OUTCOME_SKIPPED = "skipped"
 
 ERROR_LEASE_LOST = "lease_lost"
 ERROR_LISTING_TIMEOUT = "listing_timeout"
 ERROR_CANCELLED = "cancelled"
-ERROR_DEADLINE = "deadline"
 
 _END = object()
 
@@ -118,6 +116,7 @@ _END = object()
 #: its source's lease, belong to a process that died mid-run; a lease that
 #: expired longer ago than this is cleared.
 ABANDONED_STAGING_AGE = timedelta(hours=1)
+
 
 #: SQLite's per-source apply locks, one set per event loop (an ``asyncio.Lock``
 #: belongs to the loop it first waits on).
@@ -129,6 +128,33 @@ _SQLITE_LOCKS: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, as
 def _sqlite_lock(slug: str) -> asyncio.Lock:
     locks = _SQLITE_LOCKS.setdefault(asyncio.get_running_loop(), {})
     return locks.setdefault(slug, asyncio.Lock())
+
+
+#: ``SourceWarning.code`` values.
+WARNING_MAPPING_UNMATCHED = "mapping_unmatched"
+WARNING_OWNERSHIP_CONFLICT = "ownership_conflict"
+
+
+@dataclass(frozen=True, slots=True)
+class OwnershipConflict:
+    """An imported API holding a ``catalog_api_id`` a curated source now owns."""
+
+    entry_id: str
+    catalog_api_id: str
+    vendor: str
+    name: str
+    version: str
+
+
+@dataclass(frozen=True, slots=True)
+class SourceWarning:
+    """An operator-facing problem with one source's configuration or rows."""
+
+    code: str
+    external_id: str
+    catalog_api_id: str
+    #: ``vendor/name/version`` of the local API, for an ownership conflict.
+    local_api: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,7 +233,7 @@ def _record_detached_apply(
     logger.info(
         "catalog_source_detached_apply_done", source=slug, run_id=run_id, status=outcome.status
     )
-    metrics.record_sync(slug, outcome.status, time.monotonic() - clock_start)
+    metrics.record_sync(slug, outcome.status, time.monotonic() - clock_start, outcome.error_code)
 
 
 def _error_code(exc: BaseException) -> str:
@@ -217,6 +243,8 @@ def _error_code(exc: BaseException) -> str:
         return "source_unavailable"
     if isinstance(exc, SpecGoneError):
         return "source_gone"
+    if isinstance(exc, ListingTooLargeError):
+        return "listing_too_large"
     return "listing_error"
 
 
@@ -348,55 +376,6 @@ class CatalogSourceSync:
 
     # ── sync ───────────────────────────────────────────────────────────────────
 
-    async def sync_all(
-        self,
-        *,
-        forced: bool = False,
-        listing_timeout_s: float | None = None,
-        deadline_s: float | None = None,
-        slugs: Collection[str] | None = None,
-        count_timeouts: bool = True,
-    ) -> list[SyncOutcome]:
-        """Sync every enabled source (or those in ``slugs``) once (an operator refresh).
-
-        One after another, in configured order, so a curated source applies
-        before the sources it owns ids for resolve against it.
-        ``listing_timeout_s`` bounds each source's listing, so a slow source
-        fails its own run instead of stalling the rest. ``deadline_s`` bounds the
-        listings of the whole pass: each listing gets at most what is left of it,
-        and a source reached after it has passed is ``skipped`` and flagged
-        ``sync_wanted`` for the scanner (unless it already has failures, so its
-        backoff holds). Staging writes and the apply of a source
-        already listed are not cut short. ``count_timeouts`` is passed to
-        :meth:`sync_source`.
-        """
-        loop = asyncio.get_running_loop()
-        deadline = None if deadline_s is None else loop.time() + deadline_s
-        outcomes: list[SyncOutcome] = []
-        skipped: list[str] = []
-        for slug, cfg in list(self._sources.items()):
-            if slugs is not None and slug not in slugs:
-                continue
-            budget = listing_timeout_s
-            if deadline is not None and cfg.enabled:
-                left = deadline - loop.time()
-                if left <= 0:
-                    outcomes.append(
-                        SyncOutcome(slug=slug, status=OUTCOME_SKIPPED, error_code=ERROR_DEADLINE)
-                    )
-                    skipped.append(slug)
-                    continue
-                budget = left if budget is None else min(budget, left)
-            outcomes.append(
-                await self.sync_source(
-                    slug, forced=forced, listing_timeout_s=budget, count_timeouts=count_timeouts
-                )
-            )
-        if skipped:
-            async with self._ctx.registry_db.transaction() as session:
-                await CatalogSourceRepository.mark_sync_wanted(session, skipped, healthy_only=True)
-        return outcomes
-
     async def sync_source(
         self,
         slug: str,
@@ -404,17 +383,12 @@ class CatalogSourceSync:
         forced: bool = False,
         stream: ListStream | None = None,
         listing_timeout_s: float | None = None,
-        count_timeouts: bool = True,
     ) -> SyncOutcome:
         """Claim the lease and sync one source; ``busy`` when another run holds it.
 
         ``stream`` replaces the source's own listing (a caller that already holds
         the listing document, such as the snapshot refresh, passes it here).
-        ``listing_timeout_s`` caps the time spent awaiting the listing. With
-        ``count_timeouts=False`` a run that hits that cap is recorded as failed
-        but leaves the source's failure count (the scanner's backoff) alone and
-        flags the source ``sync_wanted``, so the scanner's own, unbounded listing
-        retries it on its next tick.
+        ``listing_timeout_s`` caps the time spent awaiting the listing.
         """
         cfg = self._sources[slug]
         if not cfg.enabled:
@@ -426,6 +400,9 @@ class CatalogSourceSync:
             )
             row = await CatalogSourceRepository.get(session, slug) if claimed else None
             watermark = row.watermark if row is not None else None
+            # A pending forced-sync request rides on whichever run claims next.
+            if claimed and await CatalogSourceRepository.take_forced(session, slug):
+                forced = True
         if not claimed:
             return SyncOutcome(slug=slug, status=OUTCOME_BUSY)
         if stream is None:
@@ -436,22 +413,14 @@ class CatalogSourceSync:
                 outcome = await self._fail(
                     slug, run_id, status=RUN_STATUS_FAILED, error_code="build_error"
                 )
-                metrics.record_sync(slug, outcome.status, 0.0)
+                metrics.record_sync(slug, outcome.status, 0.0, outcome.error_code)
                 return outcome
         if listing_timeout_s is not None:
             stream = _BoundedStream(stream, listing_timeout_s)
-        return await self.run_claimed(
-            cfg, stream, run_id=run_id, forced=forced, count_timeouts=count_timeouts
-        )
+        return await self.run_claimed(cfg, stream, run_id=run_id, forced=forced)
 
     async def run_claimed(
-        self,
-        cfg: CatalogSourceConfig,
-        stream: ListStream,
-        *,
-        run_id: str,
-        forced: bool = False,
-        count_timeouts: bool = True,
+        self, cfg: CatalogSourceConfig, stream: ListStream, *, run_id: str, forced: bool = False
     ) -> SyncOutcome:
         """Stage and apply ``stream`` for a source whose lease ``run_id`` already holds."""
         slug = cfg.slug
@@ -495,13 +464,7 @@ class CatalogSourceSync:
                 error_code=code,
                 error_type=type(exc).__name__,
             )
-            outcome = await self._fail(
-                slug,
-                run_id,
-                status=RUN_STATUS_FAILED,
-                error_code=code,
-                count_failure=count_timeouts or code != ERROR_LISTING_TIMEOUT,
-            )
+            outcome = await self._fail(slug, run_id, status=RUN_STATUS_FAILED, error_code=code)
         else:
             staged, is_full, watermark = staging.result()
             apply = asyncio.ensure_future(
@@ -529,7 +492,9 @@ class CatalogSourceSync:
                 outcome = await self._fail(
                     slug, run_id, status=RUN_STATUS_FAILED, error_code="apply_error", staged=staged
                 )
-        metrics.record_sync(slug, outcome.status, time.monotonic() - clock_start)
+        metrics.record_sync(
+            slug, outcome.status, time.monotonic() - clock_start, outcome.error_code
+        )
         return outcome
 
     async def _heartbeat(
@@ -590,22 +555,13 @@ class CatalogSourceSync:
         return staged, is_full, summary.watermark
 
     async def _fail(
-        self,
-        slug: str,
-        run_id: str,
-        *,
-        status: str,
-        error_code: str | None,
-        staged: int = 0,
-        count_failure: bool = True,
+        self, slug: str, run_id: str, *, status: str, error_code: str | None, staged: int = 0
     ) -> SyncOutcome:
         """End a run that applied nothing, in a fresh transaction.
 
         The source's failure count (and so the scanner's backoff) only moves when
         this run still held the lease; a run that lost it leaves the source to
-        the run that holds it now. With ``count_failure=False`` the source is
-        flagged ``sync_wanted`` instead, unless it already has failures: that
-        source stays on the scanner's backoff.
+        the run that holds it now.
         """
         async with self._ctx.registry_db.transaction() as session:
             await CatalogSyncRunRepository.delete_staged(session, run_id)
@@ -617,10 +573,7 @@ class CatalogSourceSync:
                 staged=staged,
                 finished_at=utcnow(),
             )
-            released = await CatalogSourceRepository.release_lease(session, slug=slug, owner=run_id)
-            if released and not count_failure:
-                await CatalogSourceRepository.mark_sync_wanted(session, [slug], healthy_only=True)
-            elif released:
+            if await CatalogSourceRepository.release_lease(session, slug=slug, owner=run_id):
                 source_status = (
                     SOURCE_STATUS_SUSPECT_EMPTY
                     if status == RUN_STATUS_SUSPECT_EMPTY
@@ -806,17 +759,13 @@ class CatalogSourceSync:
         ]
         await CatalogSourceRepository.mark_reresolve_wanted(session, slugs)
 
-    async def _record_ownership_conflicts(
-        self, session: Any, slug: str, resolver: CatalogApiIdResolver
-    ) -> int:
-        """Count imported APIs from ``slug`` that hold a curated-owned id they are not mapped to.
-
-        Such an API keeps its ``catalog_api_id`` (re-keying it would orphan its
-        credentials), so each one is logged, and the source's conflict gauge is
-        set to the count.
-        """
+    @staticmethod
+    async def _ownership_conflicts(
+        session: Any, slug: str, resolver: CatalogApiIdResolver
+    ) -> list[OwnershipConflict]:
+        """Imported APIs from ``slug`` that hold a curated-owned id they are not mapped to."""
         prefix = f"{slug}/"
-        conflicts = 0
+        conflicts: list[OwnershipConflict] = []
         for vendor, name, version, api_id, entry_id in await ApiRepository.imported_from_source(
             session, slug
         ):
@@ -825,18 +774,73 @@ class CatalogSourceSync:
             mapped = resolver.mapped(slug, entry_id.removeprefix(prefix))
             if mapped is not None and mapped.lower() == api_id.lower():
                 continue
-            conflicts += 1
+            conflicts.append(
+                OwnershipConflict(
+                    entry_id=entry_id,
+                    catalog_api_id=api_id,
+                    vendor=vendor,
+                    name=name,
+                    version=version,
+                )
+            )
+        return conflicts
+
+    async def _record_ownership_conflicts(
+        self, session: Any, slug: str, resolver: CatalogApiIdResolver
+    ) -> int:
+        """Count imported APIs from ``slug`` that hold a curated-owned id they are not mapped to.
+
+        Such an API keeps its ``catalog_api_id`` (re-keying it would orphan its
+        credentials), so each one is logged, and the source's conflict gauge is
+        set to the count (zero included, so a cleared conflict clears the gauge).
+        """
+        conflicts = await self._ownership_conflicts(session, slug, resolver)
+        for conflict in conflicts:
             logger.warning(
                 "catalog_ownership_conflict",
                 source=slug,
-                entry_id=entry_id,
-                catalog_api_id=api_id,
-                api_vendor=vendor,
-                api_name=name,
-                api_version=version,
+                entry_id=conflict.entry_id,
+                catalog_api_id=conflict.catalog_api_id,
+                api_vendor=conflict.vendor,
+                api_name=conflict.name,
+                api_version=conflict.version,
             )
-        metrics.record_ownership_conflicts(slug, conflicts)
-        return conflicts
+        metrics.record_ownership_conflicts(slug, len(conflicts))
+        return len(conflicts)
+
+    async def source_warnings(self) -> dict[str, list[SourceWarning]]:
+        """Each configured source's operator warnings, computed from the current rows.
+
+        Mapping rows that match no curated id (ignored, so their entries stay
+        namespaced) and, for non-curated sources, imported APIs whose
+        ``catalog_api_id`` a curated source now owns. Names local APIs, so it is
+        for operators only.
+        """
+        warnings: dict[str, list[SourceWarning]] = {slug: [] for slug in self._sources}
+        async with self._ctx.registry_db.session() as session:
+            resolver = await self._resolver(session)
+            for row in resolver.unmatched_mappings:
+                if row.source in warnings:
+                    warnings[row.source].append(
+                        SourceWarning(
+                            code=WARNING_MAPPING_UNMATCHED,
+                            external_id=row.external_id,
+                            catalog_api_id=row.catalog_api_id,
+                        )
+                    )
+            for cfg in self._sources.values():
+                if self._is_curated(cfg):
+                    continue
+                for conflict in await self._ownership_conflicts(session, cfg.slug, resolver):
+                    warnings[cfg.slug].append(
+                        SourceWarning(
+                            code=WARNING_OWNERSHIP_CONFLICT,
+                            external_id=conflict.entry_id.removeprefix(f"{cfg.slug}/"),
+                            catalog_api_id=conflict.catalog_api_id,
+                            local_api=f"{conflict.vendor}/{conflict.name}/{conflict.version}",
+                        )
+                    )
+        return warnings
 
     async def reresolve_source(self, slug: str) -> int:
         """Re-run the resolver over a source's stored rows; returns how many ids changed.

@@ -4,8 +4,9 @@
   ``CatalogSource`` kind honours the seam: ``is_full`` is declared before
   iteration, ``summary()`` is only valid after exhaustion, ``NotModified`` is
   honoured for a kind that declares conditional fetch, ``SpecGoneError`` and
-  ``SourceUnavailableError`` reach the caller unchanged, and no HTTP client is
-  built outside ``SourceDeps``. Subclass it as ``Test<YourKind>`` in your suite.
+  ``SourceUnavailableError`` reach the caller unchanged, and no HTTP client,
+  transport or socket is opened outside ``SourceDeps``. Subclass it as
+  ``Test<YourKind>`` in your suite.
 - ``FakeSourceHttp``: an in-memory ``SourceHttpClient`` the kit hands the source.
 - The test-only ``static`` kind, which lists entries from its own ``settings``.
   It is registered only by an explicit ``register_static_source_kind()`` call,
@@ -18,9 +19,11 @@ still change.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import inspect
 import json
+import socket
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from typing import Any, ClassVar
@@ -64,7 +67,8 @@ class FakeSourceHttp:
 
     ``get_bytes`` answers ``NotModified`` when the caller's validator equals the
     content's SHA-256. Set ``fail_with`` to make every request raise it. Each
-    requested URL is appended to ``requests``.
+    requested URL is appended to ``requests``, and to ``authenticated`` when the
+    source asked for its credentials to be sent.
     """
 
     def __init__(
@@ -77,24 +81,34 @@ class FakeSourceHttp:
         self.bytes_responses: dict[str, bytes] = dict(bytes_responses or {})
         self.fail_with: Exception | None = None
         self.requests: list[str] = []
+        self.authenticated: list[str] = []
 
-    def _check(self, url: str) -> None:
+    def _check(self, url: str, authenticate: bool) -> None:
         self.requests.append(url)
+        if authenticate:
+            self.authenticated.append(url)
         if self.fail_with is not None:
             raise self.fail_with
 
-    async def get_json(self, url: str, *, lane: FetchLane = "background") -> dict[str, Any]:
+    async def get_json(
+        self, url: str, *, lane: FetchLane = "background", authenticate: bool = True
+    ) -> dict[str, Any]:
         del lane
-        self._check(url)
+        self._check(url, authenticate)
         if url not in self.json_responses:
             raise SpecGoneError(f"no canned JSON for {url}")
         return self.json_responses[url]
 
     async def get_bytes(
-        self, url: str, *, validator: str | None = None, lane: FetchLane | None = None
+        self,
+        url: str,
+        *,
+        validator: str | None = None,
+        lane: FetchLane | None = None,
+        authenticate: bool = True,
     ) -> SpecFetch:
         del lane
-        self._check(url)
+        self._check(url, authenticate)
         if url not in self.bytes_responses:
             raise SpecGoneError(f"no canned bytes for {url}")
         content = self.bytes_responses[url]
@@ -253,12 +267,29 @@ def synthetic_catalog(n: int, sources: Sequence[str]) -> list[CatalogSourceConfi
 
 @contextmanager
 def _no_client_construction() -> Iterator[None]:
+    """Fail any HTTP client, transport or socket a source opens on its own.
+
+    ``SourceDeps.http`` carries the source's egress policy, limits and
+    credentials; a connector that builds its own client or transport (or opens
+    a raw connection) would bypass all three.
+    """
+
     def _refuse(*args: Any, **kwargs: Any) -> None:
-        raise AssertionError("a catalog source built its own HTTP client; use SourceDeps.http")
+        raise AssertionError(
+            "a catalog source opened its own HTTP client or transport; use SourceDeps.http"
+        )
+
+    async def _refuse_async(*args: Any, **kwargs: Any) -> None:
+        _refuse()
 
     with (
         mock.patch.object(httpx.AsyncClient, "__init__", _refuse),
         mock.patch.object(httpx.Client, "__init__", _refuse),
+        mock.patch.object(httpx.AsyncHTTPTransport, "__init__", _refuse),
+        mock.patch.object(httpx.HTTPTransport, "__init__", _refuse),
+        mock.patch.object(socket, "create_connection", _refuse),
+        mock.patch.object(asyncio, "open_connection", _refuse_async),
+        mock.patch.object(asyncio.BaseEventLoop, "create_connection", _refuse_async),
     ):
         yield
 
@@ -371,8 +402,8 @@ class SourceContract:
         raise AssertionError("fetch_spec swallowed or reclassified SourceUnavailableError")
 
     async def test_no_client_built_outside_deps(self) -> None:
-        source, _ = self._make()
         with _no_client_construction():
+            source, _ = self._make()
             ref = await self._spec_ref(source)
             await source.fetch_spec(ref)
             await source.health()

@@ -15,7 +15,7 @@ import {
 	ApiError,
 	CatalogService,
 	type ApiImportResponse,
-	type CatalogRefreshResponse,
+	type CatalogSourceSyncResponse,
 	type OperationPreviewListResponse,
 } from '@/shared/api';
 import { catalogEntryToEntity } from '@/modules/discover/api/adapters';
@@ -173,16 +173,49 @@ export async function importCatalogEntry(entryId: string): Promise<ApiImportResp
 	}
 }
 
+/** What one catalog refresh requested, skipped (disabled) and failed. */
+export interface CatalogRefreshResult {
+	requested: CatalogSourceSyncResponse[];
+	/** Sources with `enabled: false`: never asked to sync (the backend 404s it). */
+	skipped: string[];
+	/** Sources whose sync request failed, with the reason. */
+	failed: { slug: string; error: DiscoverApiError }[];
+}
+
 /**
- * Force the backend to re-sync its catalog sources (`POST /catalog:refresh`,
- * org:admin). Unlike a client refetch this resets their freshness —
- * `oldest_source_sync_age_seconds` returns to ~0 on the next `GET /catalog`,
- * which is what makes the "updated …" line move.
+ * Ask the backend to re-sync every enabled catalog source the caller can see
+ * (`GET /catalog/sources`, then `POST /catalog/sources/{slug}:sync` each,
+ * `catalog:sync`). The syncs run in the background: each call only queues one
+ * (or joins one already pending), so the feed catches up a moment later.
+ *
+ * One failed request does not abort the others; the failures are returned.
+ * Only a failed listing, or every request failing, throws.
  */
-export async function refreshCatalog(): Promise<CatalogRefreshResponse> {
+export async function refreshCatalog(): Promise<CatalogRefreshResult> {
+	let sources;
 	try {
-		return await CatalogService.refreshCatalog({});
+		({ data: sources } = await CatalogService.listCatalogSources());
 	} catch (error) {
 		throw toDiscoverError(error, 'Failed to refresh the catalog.');
 	}
+	const enabled = sources.filter((source) => source.enabled !== false);
+	const skipped = sources.filter((source) => source.enabled === false).map((s) => s.slug);
+	const settled = await Promise.allSettled(
+		enabled.map((source) => CatalogService.syncCatalogSource({ slug: source.slug })),
+	);
+	const result: CatalogRefreshResult = { requested: [], skipped, failed: [] };
+	settled.forEach((outcome, i) => {
+		if (outcome.status === 'fulfilled') {
+			result.requested.push(outcome.value);
+		} else {
+			result.failed.push({
+				slug: enabled[i].slug,
+				error: toDiscoverError(outcome.reason, `Failed to sync ${enabled[i].slug}.`),
+			});
+		}
+	});
+	if (result.requested.length === 0 && result.failed.length > 0) {
+		throw result.failed[0].error;
+	}
+	return result;
 }

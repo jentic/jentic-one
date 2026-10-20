@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { worker } from '@/mocks/browser';
 import { setToken } from '@/shared/api';
-import { catalogCursorAfter, listCatalog } from '@/modules/discover/api/client';
+import { catalogCursorAfter, listCatalog, refreshCatalog } from '@/modules/discover/api/client';
 
 /**
  * Repository-tier coverage for the catalog list call. We can't `vi.spyOn` the
@@ -105,5 +105,64 @@ describe('catalogCursorAfter', () => {
 	it('never throws on an id btoa cannot take raw (non-Latin-1)', () => {
 		expect(() => catalogCursorAfter('日本.jp')).not.toThrow();
 		expect(catalogCursorAfter('日本.jp')).not.toBeNull();
+	});
+});
+
+describe('refreshCatalog', () => {
+	beforeEach(() => {
+		setToken('test-token');
+	});
+
+	const source = (slug: string, enabled?: boolean) => ({
+		slug,
+		kind: 'http-index',
+		visibility: 'public',
+		status: 'ok',
+		last_sync_at: null,
+		live_entries: 0,
+		consecutive_failures: 0,
+		sync_pending: false,
+		...(enabled === undefined ? {} : { enabled }),
+	});
+
+	function serve(failing: string[]): string[] {
+		const synced: string[] = [];
+		worker.use(
+			http.get('/catalog/sources', () =>
+				HttpResponse.json({
+					data: [source('public', false), source('broken', true), source('corp')],
+				}),
+			),
+			http.post('/catalog/sources/:action', ({ params }) => {
+				const slug = String(params.action).replace(/:sync$/, '');
+				synced.push(slug);
+				if (failing.includes(slug)) {
+					return HttpResponse.json({ detail: `${slug} down` }, { status: 500 });
+				}
+				return HttpResponse.json(
+					{ slug, status: 'queued', forced: false, due_at: null },
+					{ status: 202 },
+				);
+			}),
+		);
+		return synced;
+	}
+
+	it('skips disabled sources and reports a failure without aborting the rest', async () => {
+		const synced = serve(['broken']);
+
+		const result = await refreshCatalog();
+
+		expect([...synced].sort()).toEqual(['broken', 'corp']);
+		expect(result.skipped).toEqual(['public']);
+		expect(result.requested.map((r) => r.slug)).toEqual(['corp']);
+		expect(result.failed.map((f) => f.slug)).toEqual(['broken']);
+		expect(result.failed[0].error.message).toBe('broken down');
+	});
+
+	it('throws when every sync request fails', async () => {
+		serve(['broken', 'corp']);
+
+		await expect(refreshCatalog()).rejects.toThrow(/down/);
 	});
 });

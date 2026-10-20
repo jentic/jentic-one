@@ -145,7 +145,7 @@ func newCatalogRefreshCmd(app *app) *cobra.Command {
 	var jsonFlag bool
 	cmd := &cobra.Command{
 		Use:   "refresh",
-		Short: "Refresh the catalog manifest from upstream (requires org:admin)",
+		Short: "Re-sync every visible catalog source from upstream (requires catalog:sync)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return app.catalogRefresh(cmd.Context(), cmdcore.JSONOrPretty(cmd, jsonFlag))
@@ -450,24 +450,37 @@ func (a *app) catalogRefresh(ctx context.Context, asJSON bool) error {
 	if err != nil {
 		return err
 	}
-	count, err := client.Refresh(ctx)
+	res, err := client.Refresh(ctx)
 	if err != nil {
 		var he *HTTPError
 		if errors.As(err, &he) && he.StatusCode == http.StatusForbidden {
-			return fmt.Errorf("refresh requires org:admin: %s", he.Detail())
+			return fmt.Errorf("refresh requires catalog:sync: %s", he.Detail())
 		}
 		return catalogListErr(err)
+	}
+	failed := res.failedSlugs()
+	msg := fmt.Sprintf("Catalog sync requested: %d sources", res.Requested)
+	if len(failed) > 0 {
+		msg += fmt.Sprintf(" (failed: %s)", strings.Join(failed, ", "))
 	}
 	if asJSON {
 		return cmdcore.WriteJSON(a.Out, ux.Result{
 			SchemaVersion: apiEnvelopeSchemaVersion,
 			Status:        ux.StatusUpdated,
 			Resource:      "catalog",
-			Message:       fmt.Sprintf("Catalog refreshed: %d entries", count),
-			Fields:        map[string]any{"count": count},
+			Message:       msg,
+			Fields: map[string]any{
+				"sources": res.Requested,
+				"skipped": res.Skipped,
+				"failed":  failed,
+			},
 		})
 	}
-	fmt.Fprintln(a.Out, theme.StylesFromContext(ctx).Successf("Catalog refreshed: %d entries", count))
+	st := theme.StylesFromContext(ctx)
+	fmt.Fprintln(a.Out, st.Successf("Catalog sync requested: %d sources", res.Requested))
+	for _, f := range res.Failed {
+		fmt.Fprintln(a.Err, st.Warnf("sync request for %s failed: %v", f.Slug, f.Err))
+	}
 	return nil
 }
 
