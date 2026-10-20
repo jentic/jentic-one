@@ -352,6 +352,104 @@ allows them. The same module holds the GitHub GraphQL rule presets
 (`read_only`, `pr_write`, `pr_write_with_approval`). A queued or approved call
 is re-inspected on the worker from the body it will send.
 
+### Governed git
+
+git's own clones, fetches and pushes to github.com run through a pipeline of
+their own
+([`broker/services/git/pipeline.py`](../../src/jentic_one/broker/services/git/pipeline.py)),
+not the execute pipeline, which needs a registry operation, buffers bodies and
+caps them at a few MiB. A git smart-HTTP URL at the proxy route,
+`/_facade/proxy/https://github.com/<owner>/<repo>[.git]/info/refs?service=git-upload-pack|git-receive-pack`,
+`…/git-upload-pack` or `…/git-receive-pack`, is matched by a route ahead of the
+general proxy route (`GitProxyRoute`). It takes a GitHub invocation token
+(another vendor's answers 403 `cli_invocation_vendor_mismatch`) and is served
+while the GitHub facade and `cli_facades.git.enabled` are on (else 404). Errors
+are one `text/plain` line, which git prints as `remote: Jentic: …`; a 401
+carries `WWW-Authenticate: Basic`, so git offers the token from its credential
+helper or URL. The execute pipeline refuses every github.com git URL (400
+`git_request_rejected`), whatever the registry holds, so a REST path rule can
+never decide a push.
+
+**API identity and credential.** The pipeline runs under a built-in API,
+`github-com` / `github-git` / `1`
+([`broker/core/git_api.py`](../../src/jentic_one/broker/core/git_api.py)), with
+operations `github-git.info-refs`, `github-git.upload-pack` and
+`github-git.receive-pack`. It is not a registry row: nothing needs discovering
+(three fixed endpoints on a fixed upstream), and a registry entry would let the
+buffered execute pipeline route these URLs. Bindings and credential selection
+work as for any API: a GitHub credential covers the git API when its API scope
+is the vendor only (`github.com`, no API name), or when it is scoped to
+`github-git`; a credential scoped to the REST API alone (`api.github.com`) does
+not. The stored token (bearer or OAuth) is injected as git's
+`Authorization: Basic base64("x-access-token:<token>")`; a credential that
+injects anything else answers 424 `git_credential_unsupported`.
+
+**Rules.** A rule with `match_mode: git` carries a selector in `path`,
+`<fetch|push|force>:<owner>/<repo>[:refs/heads/<glob>|refs/tags/<glob>]`
+([`shared/permissions/git_rules.py`](../../src/jentic_one/shared/permissions/git_rules.py)).
+Only a git rule or a condition-less `deny` decides a git request; git rules are
+`allow` or `deny` only and take no methods or operations. An `allow` covers its
+level and below (a push rule also allows the fetch and advertisement a push
+needs, `push.negotiate` included); a `deny` covers its level and above. A
+binding that may fetch `jentic/jentic-one-internal` and push only to
+`refs/heads/jentic-e2e/*` holds two rules, `allow fetch:jentic/jentic-one-internal`
+and `allow push:jentic/jentic-one-internal:refs/heads/jentic-e2e/*`; everything
+else is default-denied. A reader that does not know the mode never matches the
+selector (fail closed). The info/refs and upload-pack requests are checked as
+a fetch (or, for `git-receive-pack` info/refs, a push with no ref) and refused
+with 403 before any credential is decrypted.
+
+**Pushes.** The receive-pack body is spooled to a bounded temporary file
+(`spool_memory_bytes` in memory, then disk, up to `max_push_bytes`) and read
+before anything reaches GitHub: optional `shallow` lines, the ref commands
+(capabilities on the first), push options, then the pack. A body that is just
+a flush packet is git's authentication probe before a large push and is
+answered locally. Each command is then checked
+([`broker/core/git_push.py`](../../src/jentic_one/broker/core/git_push.py)):
+
+- **Hard limits.** Only well-formed `refs/heads/*` and `refs/tags/*` refs; `refs/jentic/*`
+  is reserved. No rule lifts these.
+- **Levels.** A create needs `push`; a deletion needs `force`; any update or
+  deletion of an existing tag needs `force`, even a fast-forward (tags are
+  immutable); a branch update needs `push`, and `force` unless it is shown to
+  be a fast-forward.
+- **The force-push check.** The pack is indexed for its commit objects
+  ([`broker/core/git_pack.py`](../../src/jentic_one/broker/core/git_pack.py),
+  a minimal reader: zlib, `OFS_DELTA` and `REF_DELTA` against in-pack bases,
+  trailing checksum verified, commit bytes capped by
+  `max_inspected_commit_bytes`). The walk goes from the new commit through
+  in-pack parents, first parent first; reaching the old commit proves a
+  fast-forward, otherwise each boundary commit (outside the pack) is compared
+  on GitHub (`GET /repos/{owner}/{repo}/compare/{old}...{boundary}` with the
+  bound credential) until one answers `ahead` or `identical`, at most
+  `max_compare_requests` calls per push. None does: a non-fast-forward, denied.
+  A boundary GitHub does not have, in a pack holding deltas against objects
+  outside it, is a thin pack hiding a commit: denied with the directive to
+  retry with `git -c pack.useThin=false push`.
+
+Any refused ref refuses the whole push, so the pipeline forwards the client's
+original body once or not at all, and GitHub keeps its own old-SHA
+compare-and-swap, `--atomic`, push protection and rulesets. A refusal is
+answered as git's report-status, `unpack ok` and `ng <ref> jentic: <reason>`
+for every ref (the others with "not applied"), on side-band 1 when the client
+asked for side-band, with a `remote:` progress line on band 2; git prints
+`! [remote rejected] <ref> (jentic: <reason>)`. Each refused ref also records
+`broker.pbac_denied` (`mode: git`, with `repository`, `ref`, `git_action` and
+`detail`). An allowed push streams upstream and GitHub's report-status streams
+back unchanged.
+
+**Streaming and limits.** Both bodies stream; the execute body caps, upstream
+timeout, retries and circuit breaker do not apply. The upstream is always
+`https://github.com` (and `https://api.github.com` for compare); redirects are
+never followed, so the credential is only sent there. `Git-Protocol` is not
+forwarded, so GitHub answers protocol v0, whose ref advertisement the
+pipeline filters as it streams: `refs/jentic/*` refs are dropped and the
+`push-cert` capability is withheld. Timeouts and sizes live under
+`cli_facades.git` (`connect_timeout_s`, `idle_timeout_s`, `transfer_timeout_s`,
+`compare_timeout_s`, `max_push_bytes`, `max_ref_updates`). Every served request
+leaves one execution record under the invocation token's trace id, written
+after its response ends; a refused push is recorded as failed.
+
 ## What gets recorded
 
 Executions land as append-only `ExecutionRecord` rows in the admin DB

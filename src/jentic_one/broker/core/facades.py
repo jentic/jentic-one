@@ -35,6 +35,7 @@ from types import MappingProxyType
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
+from jentic_one.broker.core.git_protocol import is_github_git_path
 from jentic_one.broker.core.proxy_headers import reconstruct_upstream_url
 from jentic_one.shared.cli_facades import FACADE_PATH_PREFIX, facade_path_prefix
 from jentic_one.shared.models.api_identity import slugify_api_field
@@ -152,17 +153,26 @@ PROXY_ERROR_SHAPE_DOMAINS: Mapping[str, str] = MappingProxyType(
 )
 
 
+#: The error shape of a git endpoint on github.com at the proxy route: plain
+#: text, which git prints as ``remote: <line>``.
+GIT_ERROR_SHAPE = "git"
+
+
 def proxy_error_vendor(scope: Mapping[str, Any]) -> str | None:
     """The vendor whose error shape a proxy-route request's errors take, or ``None``.
 
     Keyed on the host of the upstream URL the client called
     (:func:`proxy_upstream_url`), not on the invocation token, so an error
     raised before the token is read (a missing or invalid token) has the same
-    shape as one raised after.
+    shape as one raised after. A git endpoint on github.com
+    (:func:`~jentic_one.broker.core.git_protocol.is_github_git_path`) takes
+    :data:`GIT_ERROR_SHAPE`, since the client is git, not ``gh``.
     """
     url = proxy_upstream_url(scope)
     if url is None:
         return None
+    if is_github_git_path(url):
+        return GIT_ERROR_SHAPE
     try:
         host = urlsplit(url).hostname
     except ValueError:
@@ -516,6 +526,7 @@ __all__ = [
     "GITHUB_RESPONSE_HEADERS",
     "GITHUB_REST_FACADE",
     "GITHUB_UPLOADS_FACADE",
+    "GIT_ERROR_SHAPE",
     "PROXY_API_VENDORS",
     "PROXY_ERROR_SHAPE_DOMAINS",
     "PROXY_FACADE_PREFIX",

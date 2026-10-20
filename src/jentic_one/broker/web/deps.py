@@ -19,12 +19,14 @@ from fastapi import Depends, Request
 from jentic.problem_details import Forbidden, Unauthorized
 
 from jentic_one.broker.adapters.runners.base import UpstreamRunner
+from jentic_one.broker.adapters.runners.git import GitUpstream
 from jentic_one.broker.adapters.runners.registry import RunnerRegistry
 from jentic_one.broker.core.exceptions import OperationNotFoundError, RateLimitExceededError
 from jentic_one.broker.core.facades import proxy_upstream_url
 from jentic_one.broker.core.proxy_headers import reconstruct_upstream_url
 from jentic_one.broker.core.token_validation import CachedCliInvocationValidator
 from jentic_one.broker.services.auth import CompositeTokenValidator
+from jentic_one.broker.services.git.pipeline import GitPipeline
 from jentic_one.broker.services.idempotency import SharedStateIdempotencyStore
 from jentic_one.shared.auth.api_key_resolver import (
     RETIRED_SERVICE_ACCOUNT_KEY_DETAIL,
@@ -391,6 +393,31 @@ def get_cli_proxy_runner(request: Request) -> UpstreamRunner:
     return registry.select(upstream_url)
 
 
+def get_git_upstream(request: Request) -> GitUpstream:
+    """The governed git pipeline's upstream transport (github.com over the shared client).
+
+    A test swaps it via ``app.dependency_overrides[get_git_upstream]`` to
+    point git at a local stand-in upstream.
+    """
+    upstream: GitUpstream = request.app.state.broker_git_upstream
+    return upstream
+
+
+def get_git_pipeline(
+    ctx: Context = Depends(get_ctx),
+    credential_deriver: CredentialDeriverProtocol = Depends(get_credential_deriver),
+    rule_evaluator: AgentRuleEvaluatorProtocol = Depends(get_agent_rule_evaluator),
+    upstream: GitUpstream = Depends(get_git_upstream),
+) -> GitPipeline:
+    """A per-request governed git pipeline over the broker's deriver, rules and upstream."""
+    return GitPipeline(
+        ctx,
+        credential_deriver=credential_deriver,
+        rule_evaluator=rule_evaluator,
+        upstream=upstream,
+    )
+
+
 def get_http_runner(request: Request) -> UpstreamRunner:
     """Select the upstream runner for this request via the scheme→runner registry.
 
@@ -422,3 +449,4 @@ CredentialDeriver = Annotated[CredentialDeriverProtocol, Depends(get_credential_
 AgentRuleEvaluatorDep = Annotated[AgentRuleEvaluatorProtocol, Depends(get_agent_rule_evaluator)]
 HttpRunnerDep = Annotated[UpstreamRunner, Depends(get_http_runner)]
 IdempotencyStoreDep = Annotated[SharedStateIdempotencyStore | None, Depends(get_idempotency_store)]
+GitPipelineDep = Annotated[GitPipeline, Depends(get_git_pipeline)]

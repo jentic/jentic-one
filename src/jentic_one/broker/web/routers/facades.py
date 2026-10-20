@@ -26,6 +26,12 @@ host belongs to (:class:`ProxyFacadeRoute`): GitHub's for ``*.github.com``,
 Cloudflare's for ``*.cloudflare.com``, standard Problem Details for any other
 host.
 
+git smart-HTTP to github.com at the proxy route (``/_facade/proxy/https://
+github.com/<owner>/<repo>.git/...``) is served by a route of its own ahead of
+it (:class:`GitProxyRoute`), through the governed git pipeline
+(``broker/services/git``) instead of the execute pipeline; its errors are
+plain text git prints.
+
 Paths under ``/_facade`` that no facade serves answer 404 and never reach the
 catch-all.
 
@@ -48,17 +54,23 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.routing import APIRoute
+from starlette.background import BackgroundTask
 from starlette.datastructures import Headers
 from starlette.routing import Match
 from starlette.types import Scope
 
 from jentic_one.broker.adapters.runners.base import UpstreamRunner
-from jentic_one.broker.core.exceptions import OperationNotFoundError
+from jentic_one.broker.core.exceptions import (
+    CliInvocationVendorMismatchError,
+    OperationNotFoundError,
+    cli_invocation_vendor_mismatch_directive,
+)
 from jentic_one.broker.core.facades import (
     CLOUDFLARE_FACADE,
     FACADE_PATH_PREFIX,
+    GIT_ERROR_SHAPE,
     GITHUB_GRAPHQL_PATH,
     GITHUB_META_BODY,
     GITHUB_META_PATH,
@@ -66,6 +78,7 @@ from jentic_one.broker.core.facades import (
     GITHUB_UPLOADS_FACADE,
     PROXY_FACADE_PREFIX,
     cloudflare_error_body,
+    facade_error_message,
     facade_upstream_url,
     github_error_body,
     github_upstream_url,
@@ -77,9 +90,12 @@ from jentic_one.broker.core.facades import (
     rewrite_github_link_header,
     rewrite_github_url,
 )
+from jentic_one.broker.core.git_protocol import GitTarget, parse_git_url
+from jentic_one.broker.services.git.pipeline import GitCall
 from jentic_one.broker.web.deps import (
     AgentRuleEvaluatorDep,
     CredentialDeriver,
+    GitPipelineDep,
     IdempotencyStoreDep,
     get_cli_facade_runner,
     get_cli_proxy_runner,
@@ -382,14 +398,33 @@ async def github_facade_not_found(
 # ── Proxy route (full upstream URL) ──────────────────────────────────────────
 
 
+def git_error_response(request: Request, response: Response) -> Response:
+    """Re-render a central handler's error response as text git prints.
+
+    Same status; the body is one ``text/plain`` line (the problem's detail
+    and agent directive, :func:`~jentic_one.broker.core.facades.facade_error_message`),
+    which git shows as ``remote: <line>`` when a ref advertisement fails. A
+    401 carries a ``WWW-Authenticate: Basic`` challenge, so git offers the
+    invocation token from its credential helper or URL.
+    """
+    message = facade_error_message(_problem_of(response))
+    headers = _error_headers(response, is_facade_response_header)
+    if response.status_code == 401:
+        headers["WWW-Authenticate"] = 'Basic realm="Jentic"'
+    return PlainTextResponse(f"{message}\n", status_code=response.status_code, headers=headers)
+
+
 def proxy_error_response(request: Request, response: Response) -> Response:
     """Re-render a proxy-route error in the shape of the upstream URL's vendor.
 
-    GitHub's for a ``*.github.com`` URL, Cloudflare's for ``*.cloudflare.com``
+    Plain text for a git endpoint on github.com, GitHub's for any other
+    ``*.github.com`` URL, Cloudflare's for ``*.cloudflare.com``
     (:func:`~jentic_one.broker.core.facades.proxy_error_vendor`); any other
     URL, or none, keeps the central handler's Problem Details.
     """
     vendor = proxy_error_vendor(request.scope)
+    if vendor == GIT_ERROR_SHAPE:
+        return git_error_response(request, response)
     if vendor == "github":
         return github_error_response(request, response)
     if vendor == "cloudflare":
@@ -430,6 +465,9 @@ async def cli_proxy(
     choice. The response keeps the facade header allowlist, or GitHub's for a
     GitHub URL (``Link`` pagination, ``X-GitHub-*``), unchanged: the egress
     proxy's client addresses the vendor's own host.
+
+    A git smart-HTTP URL on github.com never reaches this handler: the git
+    route ahead of it (:func:`cli_git`) serves it.
     """
     upstream_url = proxy_upstream_url(request.scope)
     if upstream_url is None:
@@ -461,6 +499,90 @@ async def cli_proxy(
     return _restrict_response_headers(response)
 
 
+def _git_target(scope: Scope) -> GitTarget | None:
+    """The github.com smart-HTTP request a proxy-route scope names, or ``None``."""
+    url = proxy_upstream_url(scope)
+    method = scope.get("method")
+    if url is None or not isinstance(method, str):
+        return None
+    return parse_git_url(url, method)
+
+
+class GitProxyRoute(ProxyFacadeRoute):
+    """The proxy route for git smart-HTTP to github.com: matches only such a URL.
+
+    For any other URL :meth:`matches` answers ``Match.NONE`` and the request
+    reaches the general proxy route after it, so the git pipeline's
+    dependencies are only ever resolved for git. Errors take git's
+    plain-text shape (:func:`git_error_response`, through the proxy route's
+    hook).
+    """
+
+    def matches(self, scope: Scope) -> tuple[Match, Scope]:
+        """Match as an ``APIRoute`` would, for a github.com smart-HTTP URL only."""
+        if scope.get("type") != "http" or _git_target(scope) is None:
+            return Match.NONE, {}
+        return super().matches(scope)
+
+
+git_proxy_router = APIRouter(route_class=GitProxyRoute)
+
+
+@git_proxy_router.api_route(
+    f"{PROXY_FACADE_PREFIX}/{{upstream_url:path}}",
+    methods=["GET", "POST"],
+    include_in_schema=False,
+)
+async def cli_git(
+    request: Request,
+    pipeline: GitPipelineDep,
+    invocation: CliInvocationIdentity = Depends(require_cli_proxy_invocation),
+    ctx: Context = Depends(get_ctx),
+) -> Response:
+    """Serve git to github.com relayed by an egress proxy, through the governed git pipeline.
+
+    ``/_facade/proxy/https://github.com/<owner>/<repo>[.git]/info/refs?service=…``,
+    ``…/git-upload-pack`` and ``…/git-receive-pack``. The token must be a
+    GitHub one (else 403 ``cli_invocation_vendor_mismatch``) and the pipeline
+    switched on (``cli_facades.git``; else 404). Both bodies stream: the
+    response is sent as the upstream produces it, and its execution record is
+    written once it ends.
+    """
+    target = _git_target(request.scope)
+    if target is None or not ctx.config.cli_facades.git_enabled():
+        raise OperationNotFoundError(
+            "Git through Jentic is not enabled on this deployment.",
+            type="cli_facade_not_found",
+            instance=request.url.path,
+        )
+    claims = invocation.claims
+    if claims.vendor != GITHUB_REST_FACADE.vendor:
+        raise CliInvocationVendorMismatchError(
+            f"This invocation token is for {claims.vendor}; git to github.com needs a GitHub one.",
+            instance=request.url.path,
+            directive=cli_invocation_vendor_mismatch_directive(token_vendor=claims.vendor),
+        )
+    call = GitCall(
+        target=target,
+        identity=invocation.identity,
+        trace_id=claims.trace_id,
+        instance=request.url.path,
+        credential_name=claims.credential_name,
+        content_type=request.headers.get("content-type"),
+        content_encoding=request.headers.get("content-encoding"),
+        user_agent=request.headers.get("user-agent"),
+    )
+    with server_chosen_trace(claims.trace_id, "broker.cli_git"):
+        reply = await pipeline.handle(call, request.stream())
+    return StreamingResponse(
+        reply.body,
+        status_code=reply.status_code,
+        media_type=reply.media_type,
+        headers=reply.headers,
+        background=BackgroundTask(pipeline.record, reply),
+    )
+
+
 #: Paths under the reserved prefix that no facade serves. Registered after
 #: every facade router and before the catch-all, so they answer 404 instead
 #: of being read as a proxied URL.
@@ -486,9 +608,12 @@ async def unknown_facade(
 __all__ = [
     "CloudflareFacadeRoute",
     "GitHubFacadeRoute",
+    "GitProxyRoute",
     "ProxyFacadeRoute",
     "cloudflare_error_response",
     "cloudflare_router",
+    "git_error_response",
+    "git_proxy_router",
     "github_error_response",
     "github_not_found_router",
     "github_router",

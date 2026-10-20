@@ -29,16 +29,19 @@ from jentic_one.broker.core.exceptions import (
     BrokerError,
     CredentialBindingSuspendedError,
     CredentialIdentityMismatchError,
+    GitRequestRejectedError,
     GraphQLRequestRejectedError,
     credential_binding_suspended_directive,
     direct_action_denied_directive,
     direct_credential_identity_mismatch_directive,
+    git_request_rejected_directive,
     graphql_field_denied_directive,
     graphql_field_hard_denied_directive,
     graphql_request_rejected_directive,
     no_credential_binding_directive,
     suggested_permission_rules,
 )
+from jentic_one.broker.core.git_protocol import is_github_git_path
 from jentic_one.broker.services.credentials.connect_target import resolve_connect_target
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
 from jentic_one.broker.services.credentials.provisioning import open_session_provisioning_url
@@ -375,6 +378,52 @@ def _report_base_path_divergence(
     )
 
 
+async def record_pbac_denial(
+    ctx: Context,
+    *,
+    identity: Identity,
+    api: APIReference,
+    reason: DenialReason,
+    summary: str,
+    trace_id: str | None,
+    data: Mapping[str, Any],
+    mode: str = "direct",
+) -> None:
+    """Count an authorization denial and record it as ``PBAC_DENIED`` (best effort).
+
+    ``data`` adds what was denied to the event's flat keys (``reason``,
+    ``mode`` and the API identity): identifiers and schema names only, never
+    a concrete request path, query or body. ``mode`` is ``direct`` for the
+    execute pipeline and ``git`` for the governed git pipeline.
+    """
+    _authz_denied.add(1, {"reason": reason.value, "mode": mode, "vendor": api.vendor})
+    try:
+        async with ctx.admin_db.transaction() as session:
+            await emit_event_best_effort(
+                session,
+                type=EventType.PBAC_DENIED,
+                severity=EventSeverity.WARNING,
+                summary=summary,
+                trace_id=valid_trace_id_or_none(trace_id),
+                created_by=identity.sub,
+                actor_id=identity.sub,
+                actor_type=identity.actor_type.value,
+                # Flat keys, matching the other broker events that name an API
+                # or operation (``credential.accessed``,
+                # ``broker.execution_repeated_failure``).
+                data={
+                    "reason": reason.value,
+                    "mode": mode,
+                    "api_vendor": api.vendor,
+                    "api_name": api.name,
+                    "api_version": api.version,
+                    **data,
+                },
+            )
+    except Exception:
+        logger.warning("telemetry_emit_failed", event_type=EventType.PBAC_DENIED, exc_info=True)
+
+
 async def _deny(
     ctx: Context,
     *,
@@ -400,38 +449,20 @@ async def _deny(
     name, never an argument). The concrete request path and query are never
     recorded — they can carry identifiers or secrets.
     """
-    _authz_denied.add(
-        1,
-        {"reason": reason.value, "mode": "direct", "vendor": api.vendor},
+    await record_pbac_denial(
+        ctx,
+        identity=identity,
+        api=api,
+        reason=reason,
+        summary=summary,
+        trace_id=trace_id,
+        data={
+            "operation_id": operation_id,
+            "operation_method": operation_method,
+            "operation_path": operation_path,
+            **({"graphql_field": graphql_field} if graphql_field is not None else {}),
+        },
     )
-    try:
-        async with ctx.admin_db.transaction() as session:
-            await emit_event_best_effort(
-                session,
-                type=EventType.PBAC_DENIED,
-                severity=EventSeverity.WARNING,
-                summary=summary,
-                trace_id=valid_trace_id_or_none(trace_id),
-                created_by=identity.sub,
-                actor_id=identity.sub,
-                actor_type=identity.actor_type.value,
-                # Flat keys, matching the other broker events that name an API
-                # or operation (``credential.accessed``,
-                # ``broker.execution_repeated_failure``).
-                data={
-                    "reason": reason.value,
-                    "mode": "direct",
-                    "api_vendor": api.vendor,
-                    "api_name": api.name,
-                    "api_version": api.version,
-                    "operation_id": operation_id,
-                    "operation_method": operation_method,
-                    "operation_path": operation_path,
-                    **({"graphql_field": graphql_field} if graphql_field is not None else {}),
-                },
-            )
-    except Exception:
-        logger.warning("telemetry_emit_failed", event_type=EventType.PBAC_DENIED, exc_info=True)
     raise ActionDeniedError(
         detail=detail,
         type=problem_type,
@@ -493,6 +524,23 @@ def require_graphql_inspection(
         )
 
 
+def refuse_github_git_url(upstream_url: str | None, *, instance: str) -> None:
+    """Refuse a github.com git endpoint as an API call, whatever the registry holds.
+
+    git smart-HTTP to github.com runs only through the governed git pipeline,
+    which checks the binding's git rules per repository and ref. As an API
+    call, a REST path rule of the same credential (``allow POST .*``) would
+    decide a push instead.
+    """
+    if upstream_url is not None and is_github_git_path(upstream_url):
+        raise GitRequestRejectedError(
+            "git endpoints on github.com are not served as API calls: git runs through "
+            "Jentic's governed git pipeline only.",
+            instance=instance,
+            directive=git_request_rejected_directive(),
+        )
+
+
 async def authorize_execution(
     *,
     ctx: Context,
@@ -546,6 +594,7 @@ async def authorize_execution(
     when the execution is not allowed.
     """
     require_graphql_inspection(upstream_url, graphql, instance=instance)
+    refuse_github_git_url(upstream_url, instance=instance)
     # Derive candidates (0 → 403 with the right directive), then select the
     # single credential (name header → most-specific-wins →
     # Jentic-Credential-Id tie-breaker; genuine tie → 409), then enforce the

@@ -253,6 +253,28 @@ class GraphQLRequestRejectedError(BrokerError):
     default_type = "graphql_request_rejected"
 
 
+class GitRequestRejectedError(BrokerError):
+    """A git smart-HTTP request the governed git pipeline cannot read or serve (400).
+
+    A push whose ref commands are malformed, a signed push, an unsupported
+    object format, or a git URL the pipeline does not serve. The message is
+    one line git prints to the user.
+    """
+
+    default_type = "git_request_rejected"
+
+
+class GitCredentialUnsupportedError(BrokerError):
+    """The credential bound for git to github.com is not a token (424).
+
+    git authenticates to github.com with a token (a personal access token,
+    an OAuth or GitHub App token); a credential that injects anything else
+    (Basic, an API key in another header, SigV4) cannot carry it.
+    """
+
+    default_type = "git_credential_unsupported"
+
+
 class ApprovalPendingLimitError(BrokerError):
     """The agent already holds the configured maximum of pending approvals (403)."""
 
@@ -829,6 +851,43 @@ def graphql_field_denied_directive(*, operation_type: str, field: str) -> AgentD
             f"The GraphQL {operation_type} field '{field}' is denied by your credential "
             "binding's permission rules. Ask your operator to allow it if the task needs "
             "it; this is not something you can grant yourself."
+        ),
+    )
+
+
+def git_action_denied_directive(*, action: str, repository: str) -> AgentDirective:
+    """Directive for a git fetch or push the binding's git rules deny (403)."""
+    return AgentDirective(
+        strategy="prompt_human",
+        parameters={"action": action, "repository": repository},
+        human_readable_instruction=(
+            f"The binding's git rules do not allow {action} on {repository}. Ask your "
+            "operator to add a git rule for it if the task needs it; this is not something "
+            "you can grant yourself."
+        ),
+    )
+
+
+def git_request_rejected_directive() -> AgentDirective:
+    """Directive for the ``git_request_rejected`` 400: the git request must change."""
+    return AgentDirective(
+        strategy="fatal",
+        parameters={},
+        human_readable_instruction=(
+            "Use a plain git clone, fetch or push over HTTPS: signed pushes and "
+            "SHA-256 repositories are not supported through Jentic."
+        ),
+    )
+
+
+def git_credential_unsupported_directive() -> AgentDirective:
+    """Directive for the ``git_credential_unsupported`` 424: the bound credential is not a token."""
+    return AgentDirective(
+        strategy="prompt_human",
+        parameters={},
+        human_readable_instruction=(
+            "git to github.com needs a GitHub token credential (a personal access token, "
+            "an OAuth or GitHub App token). Ask your operator to bind one for github.com."
         ),
     )
 

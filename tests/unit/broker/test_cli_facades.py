@@ -25,11 +25,13 @@ from jentic_one.broker.core.exceptions import (
     AgentDirective,
     CliInvocationVendorMismatchError,
     ExecutionHeldError,
+    GitRequestRejectedError,
     OperationNotFoundError,
     RateLimitExceededError,
 )
 from jentic_one.broker.core.facades import (
     CLOUDFLARE_FACADE,
+    GIT_ERROR_SHAPE,
     PROXY_API_VENDORS,
     PROXY_FACADE_PREFIX,
     api_vendor_matches,
@@ -42,6 +44,7 @@ from jentic_one.broker.core.facades import (
     proxy_upstream_url,
 )
 from jentic_one.broker.core.problem import STATUS_BY_ERROR
+from jentic_one.broker.services.execution.authorization import refuse_github_git_url
 from jentic_one.broker.web.app import _routers as broker_routers
 from jentic_one.broker.web.errors import install_broker_error_handlers
 from jentic_one.broker.web.routers.facades import (
@@ -50,6 +53,7 @@ from jentic_one.broker.web.routers.facades import (
     ProxyFacadeRoute,
     _restrict_response_headers,
     cloudflare_error_response,
+    git_error_response,
 )
 from jentic_one.shared.cli_facades import SERVED_FACADE_CLIS, facade_path_prefix
 from jentic_one.shared.config import CliFacadeVendorsConfig
@@ -510,3 +514,65 @@ def test_server_chosen_trace_sets_the_current_trace_id() -> None:
 def test_server_chosen_trace_rejects_an_invalid_trace_id(bad: str) -> None:
     with pytest.raises(ValueError), server_chosen_trace(bad, "test"):
         pass
+
+
+# ── governed git at the proxy route ─────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "raw_path",
+    [
+        b"/_facade/proxy/https://github.com/o/r.git/info/refs",
+        b"/_facade/proxy/https://github.com/o/r/git-receive-pack",
+        b"/_facade/proxy/https://github.com/o/r.git/HEAD",
+    ],
+)
+def test_git_endpoints_take_the_git_error_shape(raw_path: bytes) -> None:
+    assert proxy_error_vendor(_scope(raw_path)) == GIT_ERROR_SHAPE
+
+
+def test_git_error_response_is_one_line_git_prints() -> None:
+    problem = JSONResponse(
+        {
+            "status": 403,
+            "detail": "The binding's git rules do not allow fetching o/r through Jentic.",
+            "agent_directive": {"human_readable_instruction": "Ask your operator."},
+        },
+        status_code=403,
+        media_type="application/problem+json",
+        headers={"Jentic-Error-Origin": "broker", "Set-Cookie": "x=1"},
+    )
+
+    response = git_error_response(_request(), problem)
+
+    assert response.status_code == 403
+    assert response.headers["content-type"].startswith("text/plain")
+    assert bytes(response.body) == (
+        b"Jentic: The binding's git rules do not allow fetching o/r through Jentic. "
+        b"Ask your operator.\n"
+    )
+    assert "set-cookie" not in response.headers
+    assert "www-authenticate" not in response.headers
+
+
+def test_a_git_401_challenges_for_basic_credentials() -> None:
+    problem = JSONResponse({"status": 401, "detail": "Invalid token"}, status_code=401)
+
+    response = git_error_response(_request(), problem)
+
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == 'Basic realm="Jentic"'
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com/o/r.git/git-receive-pack",
+        "https://github.com/o/r/info/refs?service=git-upload-pack",
+    ],
+)
+def test_the_execute_pipeline_refuses_github_git_urls(url: str) -> None:
+    with pytest.raises(GitRequestRejectedError):
+        refuse_github_git_url(url, instance="/x")
+    refuse_github_git_url("https://api.github.com/repos/o/r", instance="/x")
+    refuse_github_git_url(None, instance="/x")

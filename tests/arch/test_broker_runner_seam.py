@@ -21,6 +21,10 @@ _TRANSPORT_MODULES = ("httpx",)
 # The single sanctioned place the broker performs upstream HTTP.
 _ALLOWED_TRANSPORT_FILES = {
     SRC_ROOT / "broker" / "adapters" / "runners" / "http.py",
+    # The governed git pipeline's streaming transport — git smart-HTTP and the
+    # compare API to the fixed github.com upstream; a push is not resendable,
+    # so it sits outside the retry/circuit runner envelope by design.
+    SRC_ROOT / "broker" / "adapters" / "runners" / "git.py",
     # The shared bounded outbound client provider — owns the
     # ``httpx.AsyncClient`` the runner wraps; infra adapter, not core/.
     SRC_ROOT / "broker" / "adapters" / "http_client.py",

@@ -48,3 +48,22 @@ class DenialReason(StrEnum):
     """A GraphQL request selects a top-level field no rule can allow (it
     creates lasting access or credentials, or changes repository
     protections) (403)."""
+
+    # --- governed git (clones, fetches and pushes to github.com) -----------
+    GIT_REF_HARD_DENIED = "git_ref_hard_denied"
+    """A push updates a ref no rule can allow: outside ``refs/heads/`` and
+    ``refs/tags/``, under the reserved ``refs/jentic/``, or not a valid ref
+    name (refused in the push's report-status)."""
+
+    GIT_FORCE_DENIED = "git_force_denied"
+    """A push rewrites history (a non-fast-forward update, a deletion, or a
+    move or deletion of an existing tag) on a ref no rule allows force on."""
+
+    GIT_ANCESTRY_UNVERIFIED = "git_ancestry_unverified"
+    """The force-push check could not show a branch update is a fast-forward:
+    a commit could not be resolved (a thin pack) or GitHub's compare API gave
+    no answer."""
+
+    GIT_PUSH_REJECTED = "git_push_rejected"
+    """A push the broker could not inspect: an unreadable pack, or a push over
+    the size or ref-update limits (refused for every ref it updates)."""
