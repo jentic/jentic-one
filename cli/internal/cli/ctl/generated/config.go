@@ -72,8 +72,43 @@ type AdminConfig struct {
 	// Auth corresponds to the JSON schema field "auth".
 	Auth *AdminAuthConfig `json:"auth,omitempty,omitzero" yaml:"auth,omitempty" mapstructure:"auth,omitempty"`
 
+	// Events corresponds to the JSON schema field "events".
+	Events *AdminEventsConfig `json:"events,omitempty,omitzero" yaml:"events,omitempty" mapstructure:"events,omitempty"`
+
 	// Invite corresponds to the JSON schema field "invite".
 	Invite *AdminInviteConfig `json:"invite,omitempty,omitzero" yaml:"invite,omitempty" mapstructure:"invite,omitempty"`
+}
+
+// Admin event-stream settings.
+type AdminEventsConfig struct {
+	// How often an open ``GET /events/stream`` re-verifies the caller's credential
+	// and ``events:read`` / ``org:admin`` permission, and re-scopes the events it
+	// delivers. A disabled caller, a revoked or expired token, or a revoked
+	// permission ends the stream within one interval; a narrower permission set
+	// narrows it. Checks run before each poll of the stream (every 5 seconds), so a
+	// value below that behaves as 5 seconds.
+	StreamRecheckSeconds float64 `json:"stream_recheck_seconds,omitempty,omitzero" yaml:"stream_recheck_seconds,omitempty" mapstructure:"stream_recheck_seconds,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *AdminEventsConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain AdminEventsConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["stream_recheck_seconds"]; !ok || v == nil {
+		plain.StreamRecheckSeconds = 5.0
+	}
+	if 0 >= plain.StreamRecheckSeconds {
+		return fmt.Errorf("field %s: must be > %v", "stream_recheck_seconds", 0)
+	}
+	*j = AdminEventsConfig(plain)
+	return nil
 }
 
 // Admin invite token settings.

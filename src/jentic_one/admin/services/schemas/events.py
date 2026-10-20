@@ -48,3 +48,15 @@ class Heartbeat(BaseModel):
 
     type: str = "heartbeat"
     sent_at: datetime
+
+
+class StreamClosed(BaseModel):
+    """Terminal message sent when the server ends an event stream.
+
+    ``reason`` is why the caller may no longer receive events: ``refused``
+    (the credential no longer verifies), ``forbidden`` (it verifies but lacks
+    the stream's permission) or ``unavailable`` (it could not be re-verified).
+    """
+
+    type: str = "stream_closed"
+    reason: str

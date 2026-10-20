@@ -182,6 +182,7 @@ Admin surface configuration.
 | `admin.auth.failed_login_lockout_seconds` | integer | `900` | `JENTIC__ADMIN__AUTH__FAILED_LOGIN_LOCKOUT_SECONDS` | How long a locked admin account stays locked before logins are accepted again. |
 | `admin.invite.ttl_days` | integer | `7` | `JENTIC__ADMIN__INVITE__TTL_DAYS` |  |
 | `admin.invite.pepper` | string (secret) | `""` | `JENTIC__ADMIN__INVITE__PEPPER` |  |
+| `admin.events.stream_recheck_seconds` | number (> 0) | `5.0` | `JENTIC__ADMIN__EVENTS__STREAM_RECHECK_SECONDS` | How often an open `GET /events/stream` re-verifies the caller's credential and `events:read` / `org:admin` permission, and re-scopes the events it delivers. A disabled caller, a revoked or expired token, or a revoked permission ends the stream within one interval; a narrower permission set narrows it. Checks run before each poll of the stream (every 5 seconds), so a value below that behaves as 5 seconds. |
 
 ## `auth`
 

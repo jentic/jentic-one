@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import re
-import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from datetime import datetime
 from typing import Annotated
 
@@ -19,10 +18,13 @@ from jentic_one.admin.services.schemas.events import (
     EventFilter,
     EventView,
     Heartbeat,
+    StreamClosed,
 )
 from jentic_one.admin.web.deps import (
     get_event_service,
     get_event_stream_service,
+    get_stream_clock,
+    get_stream_recheck_seconds,
 )
 from jentic_one.admin.web.schemas.events import (
     EventLinks,
@@ -163,17 +165,18 @@ async def list_events(
     )
 
 
-#: How often an open ``/events/stream`` re-verifies its credential — the
-#: stream's poll interval, so an idle stream re-checks on every heartbeat.
-_STREAM_RECHECK_SECONDS = 5.0
+#: What admits a caller to ``/events/stream``; the open stream re-checks the same.
+_STREAM_PERMISSIONS = ["events:read"]
 
 
 @router.get("/events/stream")
 async def stream_events(
     request: Request,
-    identity: Identity = get_current_identity(required_permissions=["events:read"]),
+    identity: Identity = get_current_identity(required_permissions=_STREAM_PERMISSIONS),
     stream_svc: EventStreamService = Depends(get_event_stream_service),
     recheck_credential: CredentialRecheck = Depends(get_credential_recheck),
+    recheck_seconds: float = Depends(get_stream_recheck_seconds),
+    clock: Callable[[], float] = Depends(get_stream_clock),
     since: datetime | None = Query(
         default=None,
         description=(
@@ -227,11 +230,45 @@ async def stream_events(
 ) -> StreamingResponse:
     """Stream events as Server-Sent Events.
 
-    The stream ends once the caller's credential stops verifying (expired,
-    revoked, or its user disabled or deleted); reconnecting then returns 401.
+    The open stream re-verifies the caller every
+    `admin.events.stream_recheck_seconds` (default 5 s). Each poll is scoped by
+    the caller's current permissions, so a narrower permission set narrows the
+    stream. The stream ends with a `stream_closed` frame
+    (`{"type": "stream_closed", "reason": ...}`) once the credential stops
+    verifying (`refused`: expired, revoked, or its user or agent disabled or
+    deleted), the caller no longer holds `events:read` or `org:admin`
+    (`forbidden`), or the check cannot be answered (`unavailable`).
+    Reconnecting then returns the matching 401, 403 or 503.
     """
     if last_event_id is not None and not _LAST_EVENT_ID_RE.match(last_event_id):
         raise InvalidInputError("Last-Event-ID must match format evt_<24 hex chars>")
+
+    log = structlog.get_logger(__name__)
+    current = identity
+    last_verified = clock()
+    closed_reason: CredentialRecheckResult | None = None
+
+    async def refresh_identity() -> Identity | None:
+        # The stream outlives the verification that opened it. Before each poll,
+        # re-verify at most once per interval (#1139, #1836) and hand the
+        # service the fresh identity, so a dead credential or a revoked
+        # permission ends the stream and a narrower permission set narrows it.
+        nonlocal current, last_verified, closed_reason
+        now = clock()
+        if now - last_verified < recheck_seconds:
+            return current
+        outcome = await recheck_credential(required_permissions=_STREAM_PERMISSIONS)
+        if outcome.result is not CredentialRecheckResult.VALID or outcome.identity is None:
+            closed_reason = outcome.result
+            log.info(
+                "sse_stream_credential_unverified",
+                sub=identity.sub,
+                reason=outcome.result.value,
+            )
+            return None
+        current = outcome.identity
+        last_verified = now
+        return current
 
     async def generate() -> AsyncIterator[str]:
         # The ``async for`` protocol calls ``aclose()`` on the underlying stream
@@ -239,8 +276,6 @@ async def stream_events(
         # on client disconnect, so the per-poll DB session is always unwound and
         # the pooled connection returned (#627). The ``finally`` only logs — it
         # must never touch the DB.
-        log = structlog.get_logger(__name__)
-        last_verified = time.monotonic()
         try:
             async for item in stream_svc.stream(
                 identity=identity,
@@ -252,26 +287,10 @@ async def stream_events(
                 trace_id=trace_id,
                 actor_id=actor_id,
                 actor_type=actor_type,
+                refresh_identity=refresh_identity,
             ):
                 if await request.is_disconnected():
-                    break
-                # The stream outlives the verification that opened it: re-check
-                # the credential at most once per interval, so a token that
-                # expires, or whose user is disabled or deleted, stops receiving
-                # events within one interval (#1139). The client's reconnect
-                # then meets the auth gate's 401 (or a 503 while the database
-                # cannot answer).
-                now = time.monotonic()
-                if now - last_verified >= _STREAM_RECHECK_SECONDS:
-                    outcome = await recheck_credential()
-                    if outcome is not CredentialRecheckResult.VALID:
-                        log.info(
-                            "sse_stream_credential_unverified",
-                            sub=identity.sub,
-                            reason=outcome.value,
-                        )
-                        break
-                    last_verified = now
+                    return
                 if isinstance(item, Heartbeat):
                     yield f"event: heartbeat\ndata: {item.model_dump_json()}\n\n"
                 elif isinstance(item, EventView):
@@ -281,6 +300,9 @@ async def stream_events(
                         f"id: {resp.event_id}\n"
                         f"data: {resp.model_dump_json(by_alias=True)}\n\n"
                     )
+            if closed_reason is not None:
+                closed = StreamClosed(reason=closed_reason.value)
+                yield f"event: stream_closed\ndata: {closed.model_dump_json()}\n\n"
         finally:
             log.debug("sse_stream_closed")
 

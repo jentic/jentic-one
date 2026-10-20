@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
 from jentic_one.admin.core.schema.events import Event
@@ -17,6 +17,10 @@ from jentic_one.shared.models.events import EventSeverity
 # Rows fetched per repo page while draining the overlap window. A short page
 # (< limit) means the window is drained, saving the empty-batch round-trip.
 _PAGE_LIMIT = 100
+
+#: Called before every live poll with no arguments. Returns the identity to
+#: scope that poll by, or ``None`` to end the stream.
+IdentityRefresh = Callable[[], Awaitable[Identity | None]]
 
 
 class EventStreamService:
@@ -39,6 +43,7 @@ class EventStreamService:
         trace_id: str | None = None,
         actor_id: str | None = None,
         actor_type: str | None = None,
+        refresh_identity: IdentityRefresh | None = None,
     ) -> AsyncIterator[EventView | Heartbeat]:
         """Yield new events (and heartbeats when idle) forever.
 
@@ -72,6 +77,12 @@ class EventStreamService:
 
         The stream carries only events visible to ``identity`` (see
         ``EventService``); a ``Last-Event-ID`` the caller cannot see is ignored.
+
+        ``refresh_identity``, when given, runs before every live poll. Its
+        identity replaces ``identity`` for that poll's visibility filters, so a
+        caller whose permissions narrow (losing ``org:admin``, say) stops
+        receiving the wider set on the next poll without reconnecting (#1836).
+        ``None`` ends the stream.
         """
         access_filters = build_access_filters(identity, Event)
         overlap = timedelta(seconds=overlap_seconds)
@@ -149,6 +160,11 @@ class EventStreamService:
             page_cursor = (batch[-1].created_at, batch[-1].id)
 
         while True:
+            if refresh_identity is not None:
+                refreshed = await refresh_identity()
+                if refreshed is None:
+                    return
+                access_filters = build_access_filters(refreshed, Event)
             yielded = False
             # "" sorts before every real id, so the two-tuple cursor starts
             # strictly at the horizon without skipping same-instant rows.

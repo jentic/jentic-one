@@ -194,6 +194,71 @@ async def _streamed_ids(ctx: Context, identity: Identity) -> set[str]:
     return ids
 
 
+async def test_refreshed_identity_narrows_the_open_stream(
+    integration_context: Context, seed: _Seed
+) -> None:
+    """Pins #1836: an open stream scopes each poll by the identity its refresh
+    returns, so losing ``org:admin`` narrows delivery without a reconnect, and a
+    ``None`` refresh ends the stream."""
+    ctx = integration_context
+    owner_as_admin = _user(seed.owner_id, "org:admin")
+    owner_plain = _user(seed.owner_id, "events:read")
+    late: dict[str, str] = {}
+    calls = 0
+
+    async def _refresh() -> Identity | None:
+        # Poll 1 runs as org:admin. Before poll 2 the caller loses org:admin
+        # and two new events land: one only org:admin may see, one the owner
+        # may. Before poll 3 the credential stops verifying.
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return owner_as_admin
+        if calls == 2:
+            async with ctx.admin_db.session() as session:
+                late["system"] = await EventRepository.create(
+                    session,
+                    type="catalog.update_available",
+                    severity="info",
+                    summary="system event after downgrade",
+                    created_by=None,
+                )
+                late["owner"] = await EventRepository.create(
+                    session,
+                    type="credential.stored",
+                    severity="info",
+                    summary="owner event after downgrade",
+                    created_by=seed.owner_id,
+                    actor_id=seed.owner_id,
+                    actor_type="user",
+                )
+                await session.commit()
+            return owner_plain
+        return None
+
+    delivered: set[str] = set()
+    gen = cast(
+        "AsyncGenerator[EventView | Heartbeat, None]",
+        EventStreamService(ctx).stream(
+            identity=owner_as_admin,
+            since=datetime.now(UTC) - timedelta(minutes=5),
+            poll_interval_seconds=0,
+            refresh_identity=_refresh,
+        ),
+    )
+    try:
+        async for item in gen:
+            if isinstance(item, EventView):
+                delivered.add(item.id)
+    finally:
+        await gen.aclose()
+
+    assert seed.all <= delivered, "the org:admin poll delivers system events"
+    assert late["owner"] in delivered, "the downgraded poll still delivers the owner's event"
+    assert late["system"] not in delivered, "the downgraded poll drops what only org:admin sees"
+    assert calls == 3, "the stream ends when the refresh returns None"
+
+
 async def test_outsiders_see_nothing(integration_context: Context, seed: _Seed) -> None:
     ctx = integration_context
     outsiders = [

@@ -46,7 +46,6 @@ from jentic_one.admin.services._support.passwords import hash_password
 from jentic_one.admin.services.errors import ConflictError, InvalidCredentialsError
 from jentic_one.admin.services.event_stream_service import EventStreamService
 from jentic_one.admin.services.schemas.auth import LoginPayload
-from jentic_one.admin.web.routers import events as events_router
 from jentic_one.auth.services.errors import InvalidGrantError
 from jentic_one.auth.services.token_service import TokenService
 from jentic_one.broker.repos.actor_status import ActorStatusResolver
@@ -484,7 +483,7 @@ async def test_open_event_stream_ends_when_user_disabled(
     """An open ``/events/stream`` re-verifies its credential, so disabling the user
     ends the stream instead of letting it run on indefinitely."""
     ctx = integration_context
-    monkeypatch.setattr(events_router, "_STREAM_RECHECK_SECONDS", 0.0)
+    monkeypatch.setattr(ctx.config.admin.events, "stream_recheck_seconds", 0.01)
     monkeypatch.setattr(
         EventStreamService,
         "stream",
@@ -504,5 +503,8 @@ async def test_open_event_stream_ends_when_user_disabled(
 
     assert resp.status_code == 200
     assert "event: heartbeat" in resp.text
+    assert resp.text.endswith(
+        'event: stream_closed\ndata: {"type":"stream_closed","reason":"refused"}\n\n'
+    )
     closed = [e for e in logs if e["event"] == "sse_stream_credential_unverified"]
     assert [e["reason"] for e in closed] == ["refused"]

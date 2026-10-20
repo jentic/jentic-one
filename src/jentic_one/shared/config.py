@@ -635,11 +635,30 @@ class AdminInviteConfig(BaseModel):
         return self
 
 
+class AdminEventsConfig(BaseModel):
+    """Admin event-stream settings."""
+
+    stream_recheck_seconds: float = Field(
+        default=5.0,
+        gt=0,
+        description=(
+            "How often an open ``GET /events/stream`` re-verifies the caller's "
+            "credential and ``events:read`` / ``org:admin`` permission, and "
+            "re-scopes the events it delivers. A disabled caller, a revoked or "
+            "expired token, or a revoked permission ends the stream within one "
+            "interval; a narrower permission set narrows it. Checks run before "
+            "each poll of the stream (every 5 seconds), so a value below that "
+            "behaves as 5 seconds."
+        ),
+    )
+
+
 class AdminConfig(BaseModel):
     """Admin surface configuration."""
 
     auth: AdminAuthConfig = Field(default_factory=AdminAuthConfig)
     invite: AdminInviteConfig = Field(default_factory=AdminInviteConfig)
+    events: AdminEventsConfig = Field(default_factory=AdminEventsConfig)
 
 
 class SigningKeyConfig(BaseModel):
