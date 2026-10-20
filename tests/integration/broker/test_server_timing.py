@@ -329,14 +329,14 @@ async def test_execute_without_middleware_has_only_upstream_timing(
 async def test_execute_failed_upstream_reports_persist_of_failed_record(
     ctx: Context, seeded_credential: None, refused_port: int
 ) -> None:
-    """A ``BrokerError`` (connect refused → 504 ``upstream_connect_failed``) still
+    """A ``BrokerError`` (connect refused → 502 ``upstream_connect_failed``) still
     commits a FAILED record, and the header times that write as
     ``jentic-persist`` alongside the failed ``jentic-upstream``."""
     async with httpx.AsyncClient() as upstream_client:
         runner = _BufferedOnly(HttpRunner(upstream_client))
         resp = await _execute(_app(ctx, runner, server_timing=True), refused_port)
 
-    assert resp.status_code == 504, resp.text
+    assert resp.status_code == 502, resp.text
     assert resp.json()["type"] == "upstream_connect_failed"
     fields = resp.headers.get_list("server-timing")
     assert len(fields) == 1, fields  # no upstream response, so no upstream field
@@ -375,7 +375,7 @@ async def test_execute_failed_upstream_without_middleware_has_no_timing(
         runner = _BufferedOnly(HttpRunner(upstream_client))
         resp = await _execute(_app(ctx, runner, server_timing=False), refused_port)
 
-    assert resp.status_code == 504, resp.text
+    assert resp.status_code == 502, resp.text
     assert "server-timing" not in resp.headers
 
 
