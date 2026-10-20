@@ -16,6 +16,7 @@ from jentic_one.auth.web.errors import (
 from jentic_one.auth.web.routers import (
     agents,
     authorize,
+    cli_invocations,
     discovery,
     identity,
     local_login,
@@ -56,6 +57,7 @@ def get_routers() -> list[tuple[APIRouter, str, list[str]]]:
         (local_login.router, "", []),
         (identity.router, "", []),
         (agents.router, "", []),
+        (cli_invocations.router, "", []),
         (oauth.router, "", []),
         (oauth_client_registration.router, "", []),
         (oauth_grants.router, "", []),

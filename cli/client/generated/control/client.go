@@ -2658,6 +2658,121 @@ type ClaimRequest struct {
 	Token string `json:"token"`
 }
 
+// CliInvocationCreateRequest Request body for minting a CLI invocation token.
+//
+// Examples: {"command_title":"pr create","credential_name":"GitHub (acme org)","vendor":"github"}
+type CliInvocationCreateRequest struct {
+	// CommandTitle The command's subcommand path as reported by the agent, e.g. `pr create`; never its arguments (words starting with `-` are rejected). Display-only.
+	//
+	// Examples: pr create
+	CommandTitle *string `json:"command_title,omitempty"`
+
+	// CredentialName Name of the credential to use when the agent has several for this vendor (the wrapper's `JENTIC_CREDENTIAL`). The Broker applies it to every call the token makes, exactly as the `Jentic-Credential-Name` header; omit it to let the Broker select the credential as for any call. Not checked at mint: a name that matches none of the agent's credentials fails each call instead.
+	//
+	// Examples: GitHub (acme org)
+	CredentialName *string `json:"credential_name,omitempty"`
+
+	// Vendor Vendor whose CLI facade the token is for: `github`, `cloudflare` or `aws`.
+	//
+	// Examples: github
+	Vendor string `json:"vendor"`
+}
+
+// CliInvocationCreatedResponse A freshly minted CLI invocation, including its token (shown once).
+//
+// Examples: {"command_title":"pr create","credential_name":"GitHub (acme org)","expires_at":"2026-01-15T09:40:00Z","hard_expires_at":"2026-01-15T10:30:00Z","id":"cli_6968b398d3e1a7c40f2b9e58","revoked_at":null,"token":"cit_example-invocation-token","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","vendor":"github"}
+type CliInvocationCreatedResponse struct {
+	// CommandTitle Agent-reported subcommand path; null if not given.
+	//
+	// Examples: pr create
+	CommandTitle *string `json:"command_title,omitempty"`
+
+	// CredentialName Name of the credential the token's calls use; null when the Broker selects it.
+	//
+	// Examples: GitHub (acme org)
+	CredentialName *string `json:"credential_name,omitempty"`
+
+	// ExpiresAt When the token stops working unless renewed (RFC 3339).
+	//
+	// Examples: 2026-01-15T09:40:00Z
+	ExpiresAt time.Time `json:"expires_at"`
+
+	// HardExpiresAt When the token stops working regardless of renewals (RFC 3339).
+	//
+	// Examples: 2026-01-15T10:30:00Z
+	HardExpiresAt time.Time `json:"hard_expires_at"`
+
+	// Id Unique ID of the invocation.
+	//
+	// Examples: cli_6968b398d3e1a7c40f2b9e58
+	Id string `json:"id"`
+
+	// RevokedAt When the token was revoked (RFC 3339); null while live.
+	//
+	// Examples: null
+	RevokedAt *time.Time `json:"revoked_at,omitempty"`
+
+	// Token The invocation token (`cit_…`). Shown once; accepted only by the Broker's CLI facade for `vendor`.
+	//
+	// Examples: cit_example-invocation-token
+	Token string `json:"token"`
+
+	// TraceId W3C trace ID chosen by the server; every call the token makes is recorded under it.
+	//
+	// Examples: 4bf92f3577b34da6a3ce929d0e0e4736
+	TraceId string `json:"trace_id"`
+
+	// Vendor Vendor the token is for.
+	//
+	// Examples: github
+	Vendor string `json:"vendor"`
+}
+
+// CliInvocationResponse A CLI invocation token's record (never the token itself).
+//
+// Examples: {"command_title":"pr create","credential_name":"GitHub (acme org)","expires_at":"2026-01-15T09:40:00Z","hard_expires_at":"2026-01-15T10:30:00Z","id":"cli_6968b398d3e1a7c40f2b9e58","revoked_at":null,"trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","vendor":"github"}
+type CliInvocationResponse struct {
+	// CommandTitle Agent-reported subcommand path; null if not given.
+	//
+	// Examples: pr create
+	CommandTitle *string `json:"command_title,omitempty"`
+
+	// CredentialName Name of the credential the token's calls use; null when the Broker selects it.
+	//
+	// Examples: GitHub (acme org)
+	CredentialName *string `json:"credential_name,omitempty"`
+
+	// ExpiresAt When the token stops working unless renewed (RFC 3339).
+	//
+	// Examples: 2026-01-15T09:40:00Z
+	ExpiresAt time.Time `json:"expires_at"`
+
+	// HardExpiresAt When the token stops working regardless of renewals (RFC 3339).
+	//
+	// Examples: 2026-01-15T10:30:00Z
+	HardExpiresAt time.Time `json:"hard_expires_at"`
+
+	// Id Unique ID of the invocation.
+	//
+	// Examples: cli_6968b398d3e1a7c40f2b9e58
+	Id string `json:"id"`
+
+	// RevokedAt When the token was revoked (RFC 3339); null while live.
+	//
+	// Examples: null
+	RevokedAt *time.Time `json:"revoked_at,omitempty"`
+
+	// TraceId W3C trace ID chosen by the server; every call the token makes is recorded under it.
+	//
+	// Examples: 4bf92f3577b34da6a3ce929d0e0e4736
+	TraceId string `json:"trace_id"`
+
+	// Vendor Vendor the token is for.
+	//
+	// Examples: github
+	Vendor string `json:"vendor"`
+}
+
 // ConnectRequestBody Request body for initiating a credential connect flow.
 //
 // Examples: {"extra":{"prompt":"consent"},"scopes":["read_write"]}
@@ -8378,6 +8493,9 @@ type LoginJSONRequestBody = LoginRequest
 // SnoozeCatalogEntryJSONRequestBody defines body for SnoozeCatalogEntry for application/json ContentType.
 type SnoozeCatalogEntryJSONRequestBody = SnoozeCatalogEntryJSONBody
 
+// CreateCliInvocationJSONRequestBody defines body for CreateCliInvocation for application/json ContentType.
+type CreateCliInvocationJSONRequestBody = CliInvocationCreateRequest
+
 // ConfirmConnectSessionJSONRequestBody defines body for ConfirmConnectSession for application/json ContentType.
 type ConfirmConnectSessionJSONRequestBody ConfirmConnectSessionJSONBody
 
@@ -10757,6 +10875,73 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /catalog:refresh (the `RefreshCatalog` operationId).
 	RefreshCatalog(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateCliInvocationWithBody Mint a CLI invocation token
+	//
+	// Mint a short-lived invocation token for one vendor CLI command.
+	//
+	// Called by `jentic gh`/`cf`/`aws` before it runs the vendor CLI. Only an
+	// agent holding `capabilities:execute` and authenticated with its own
+	// access token (`at_…`, not an API key or JWT) may mint; anything else
+	// answers 403 (`cli_invocation_mint_forbidden`). The token lives
+	// `cli_facades.invocation_ttl_seconds` (renew it with `:renew`), never past
+	// `hard_expires_at`, and never past the access token it was minted with:
+	// revoking or expiring that access token ends the invocation token too.
+	// It is accepted only by the Broker's CLI facade for `vendor`; `/execute`,
+	// the control plane and MCP reject it. Answers 404 while
+	// `cli_facades.enabled` or the vendor's facade is off. Minting is rate
+	// limited per agent (`cli_facades.mint_rate_limit_per_minute`).
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /cli-invocations (the `CreateCliInvocation` operationId).
+	CreateCliInvocationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateCliInvocation Mint a CLI invocation token
+	//
+	// Mint a short-lived invocation token for one vendor CLI command.
+	//
+	// Called by `jentic gh`/`cf`/`aws` before it runs the vendor CLI. Only an
+	// agent holding `capabilities:execute` and authenticated with its own
+	// access token (`at_…`, not an API key or JWT) may mint; anything else
+	// answers 403 (`cli_invocation_mint_forbidden`). The token lives
+	// `cli_facades.invocation_ttl_seconds` (renew it with `:renew`), never past
+	// `hard_expires_at`, and never past the access token it was minted with:
+	// revoking or expiring that access token ends the invocation token too.
+	// It is accepted only by the Broker's CLI facade for `vendor`; `/execute`,
+	// the control plane and MCP reject it. Answers 404 while
+	// `cli_facades.enabled` or the vendor's facade is off. Minting is rate
+	// limited per agent (`cli_facades.mint_rate_limit_per_minute`).
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /cli-invocations (the `CreateCliInvocation` operationId).
+	CreateCliInvocation(ctx context.Context, body CreateCliInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RenewCliInvocation Renew a CLI invocation token
+	//
+	// Extend one of the caller's live invocation tokens.
+	//
+	// Moves `expires_at` to `cli_facades.invocation_ttl_seconds` from now, capped at
+	// `hard_expires_at`. The CLI wrapper calls this on a heartbeat while the
+	// command runs. Only the agent that minted the invocation may renew it;
+	// any other caller gets 404. A revoked or expired invocation answers 409.
+	//
+	// Corresponds with POST /cli-invocations/{invocation_id}:renew (the `RenewCliInvocation` operationId).
+	RenewCliInvocation(ctx context.Context, invocationId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeCliInvocation Revoke a CLI invocation token
+	//
+	// Revoke one of the caller's invocation tokens.
+	//
+	// The CLI wrapper calls this when the command exits. The Broker stops
+	// accepting the token within its token-cache TTL
+	// (`broker.resolve_cache_ttl_seconds`). Only the agent that minted the
+	// invocation may revoke it; any other caller gets 404. Revoking an
+	// already-revoked invocation succeeds.
+	//
+	// Corresponds with POST /cli-invocations/{invocation_id}:revoke (the `RevokeCliInvocation` operationId).
+	RevokeCliInvocation(ctx context.Context, invocationId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListConnectSessions List connect sessions
 	//
@@ -14505,6 +14690,113 @@ func (c *Client) UnsnoozeCatalogEntry(ctx context.Context, apiId string, reqEdit
 // Corresponds with POST /catalog:refresh (the `RefreshCatalog` operationId).
 func (c *Client) RefreshCatalog(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRefreshCatalogRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateCliInvocationWithBody Mint a CLI invocation token
+//
+// Mint a short-lived invocation token for one vendor CLI command.
+//
+// Called by `jentic gh`/`cf`/`aws` before it runs the vendor CLI. Only an
+// agent holding `capabilities:execute` and authenticated with its own
+// access token (`at_…`, not an API key or JWT) may mint; anything else
+// answers 403 (`cli_invocation_mint_forbidden`). The token lives
+// `cli_facades.invocation_ttl_seconds` (renew it with `:renew`), never past
+// `hard_expires_at`, and never past the access token it was minted with:
+// revoking or expiring that access token ends the invocation token too.
+// It is accepted only by the Broker's CLI facade for `vendor`; `/execute`,
+// the control plane and MCP reject it. Answers 404 while
+// `cli_facades.enabled` or the vendor's facade is off. Minting is rate
+// limited per agent (`cli_facades.mint_rate_limit_per_minute`).
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /cli-invocations (the `CreateCliInvocation` operationId).
+func (c *Client) CreateCliInvocationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateCliInvocationRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateCliInvocation Mint a CLI invocation token
+//
+// Mint a short-lived invocation token for one vendor CLI command.
+//
+// Called by `jentic gh`/`cf`/`aws` before it runs the vendor CLI. Only an
+// agent holding `capabilities:execute` and authenticated with its own
+// access token (`at_…`, not an API key or JWT) may mint; anything else
+// answers 403 (`cli_invocation_mint_forbidden`). The token lives
+// `cli_facades.invocation_ttl_seconds` (renew it with `:renew`), never past
+// `hard_expires_at`, and never past the access token it was minted with:
+// revoking or expiring that access token ends the invocation token too.
+// It is accepted only by the Broker's CLI facade for `vendor`; `/execute`,
+// the control plane and MCP reject it. Answers 404 while
+// `cli_facades.enabled` or the vendor's facade is off. Minting is rate
+// limited per agent (`cli_facades.mint_rate_limit_per_minute`).
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /cli-invocations (the `CreateCliInvocation` operationId).
+func (c *Client) CreateCliInvocation(ctx context.Context, body CreateCliInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateCliInvocationRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RenewCliInvocation Renew a CLI invocation token
+//
+// Extend one of the caller's live invocation tokens.
+//
+// Moves `expires_at` to `cli_facades.invocation_ttl_seconds` from now, capped at
+// `hard_expires_at`. The CLI wrapper calls this on a heartbeat while the
+// command runs. Only the agent that minted the invocation may renew it;
+// any other caller gets 404. A revoked or expired invocation answers 409.
+//
+// Corresponds with POST /cli-invocations/{invocation_id}:renew (the `RenewCliInvocation` operationId).
+func (c *Client) RenewCliInvocation(ctx context.Context, invocationId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRenewCliInvocationRequest(c.Server, invocationId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeCliInvocation Revoke a CLI invocation token
+//
+// Revoke one of the caller's invocation tokens.
+//
+// The CLI wrapper calls this when the command exits. The Broker stops
+// accepting the token within its token-cache TTL
+// (`broker.resolve_cache_ttl_seconds`). Only the agent that minted the
+// invocation may revoke it; any other caller gets 404. Revoking an
+// already-revoked invocation succeeds.
+//
+// Corresponds with POST /cli-invocations/{invocation_id}:revoke (the `RevokeCliInvocation` operationId).
+func (c *Client) RevokeCliInvocation(ctx context.Context, invocationId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeCliInvocationRequest(c.Server, invocationId)
 	if err != nil {
 		return nil, err
 	}
@@ -21367,6 +21659,114 @@ func NewRefreshCatalogRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewCreateCliInvocationRequest calls the generic CreateCliInvocation builder with application/json body
+func NewCreateCliInvocationRequest(server string, body CreateCliInvocationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateCliInvocationRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateCliInvocationRequestWithBody constructs an http.Request for the CreateCliInvocation method, with any body, and a specified content type
+func NewCreateCliInvocationRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/cli-invocations")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRenewCliInvocationRequest constructs an http.Request for the RenewCliInvocation method
+func NewRenewCliInvocationRequest(server string, invocationId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "invocation_id", invocationId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/cli-invocations/%s:renew", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRevokeCliInvocationRequest constructs an http.Request for the RevokeCliInvocation method
+func NewRevokeCliInvocationRequest(server string, invocationId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "invocation_id", invocationId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/cli-invocations/%s:revoke", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListConnectSessionsRequest constructs an http.Request for the ListConnectSessions method
 func NewListConnectSessionsRequest(server string, params *ListConnectSessionsParams) (*http.Request, error) {
 	var err error
@@ -27359,6 +27759,77 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /catalog:refresh (the `RefreshCatalog` operationId).
 	RefreshCatalogWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RefreshCatalogHTTPResp, error)
+
+	// CreateCliInvocationWithBodyWithResponse Mint a CLI invocation token
+	//
+	// Mint a short-lived invocation token for one vendor CLI command.
+	//
+	// Called by `jentic gh`/`cf`/`aws` before it runs the vendor CLI. Only an
+	// agent holding `capabilities:execute` and authenticated with its own
+	// access token (`at_…`, not an API key or JWT) may mint; anything else
+	// answers 403 (`cli_invocation_mint_forbidden`). The token lives
+	// `cli_facades.invocation_ttl_seconds` (renew it with `:renew`), never past
+	// `hard_expires_at`, and never past the access token it was minted with:
+	// revoking or expiring that access token ends the invocation token too.
+	// It is accepted only by the Broker's CLI facade for `vendor`; `/execute`,
+	// the control plane and MCP reject it. Answers 404 while
+	// `cli_facades.enabled` or the vendor's facade is off. Minting is rate
+	// limited per agent (`cli_facades.mint_rate_limit_per_minute`).
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /cli-invocations (the `CreateCliInvocation` operationId).
+	CreateCliInvocationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCliInvocationHTTPResp, error)
+
+	// CreateCliInvocationWithResponse Mint a CLI invocation token
+	//
+	// Mint a short-lived invocation token for one vendor CLI command.
+	//
+	// Called by `jentic gh`/`cf`/`aws` before it runs the vendor CLI. Only an
+	// agent holding `capabilities:execute` and authenticated with its own
+	// access token (`at_…`, not an API key or JWT) may mint; anything else
+	// answers 403 (`cli_invocation_mint_forbidden`). The token lives
+	// `cli_facades.invocation_ttl_seconds` (renew it with `:renew`), never past
+	// `hard_expires_at`, and never past the access token it was minted with:
+	// revoking or expiring that access token ends the invocation token too.
+	// It is accepted only by the Broker's CLI facade for `vendor`; `/execute`,
+	// the control plane and MCP reject it. Answers 404 while
+	// `cli_facades.enabled` or the vendor's facade is off. Minting is rate
+	// limited per agent (`cli_facades.mint_rate_limit_per_minute`).
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /cli-invocations (the `CreateCliInvocation` operationId).
+	CreateCliInvocationWithResponse(ctx context.Context, body CreateCliInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCliInvocationHTTPResp, error)
+
+	// RenewCliInvocationWithResponse Renew a CLI invocation token
+	//
+	// Extend one of the caller's live invocation tokens.
+	//
+	// Moves `expires_at` to `cli_facades.invocation_ttl_seconds` from now, capped at
+	// `hard_expires_at`. The CLI wrapper calls this on a heartbeat while the
+	// command runs. Only the agent that minted the invocation may renew it;
+	// any other caller gets 404. A revoked or expired invocation answers 409.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /cli-invocations/{invocation_id}:renew (the `RenewCliInvocation` operationId).
+	RenewCliInvocationWithResponse(ctx context.Context, invocationId string, reqEditors ...RequestEditorFn) (*RenewCliInvocationHTTPResp, error)
+
+	// RevokeCliInvocationWithResponse Revoke a CLI invocation token
+	//
+	// Revoke one of the caller's invocation tokens.
+	//
+	// The CLI wrapper calls this when the command exits. The Broker stops
+	// accepting the token within its token-cache TTL
+	// (`broker.resolve_cache_ttl_seconds`). Only the agent that minted the
+	// invocation may revoke it; any other caller gets 404. Revoking an
+	// already-revoked invocation succeeds.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /cli-invocations/{invocation_id}:revoke (the `RevokeCliInvocation` operationId).
+	RevokeCliInvocationWithResponse(ctx context.Context, invocationId string, reqEditors ...RequestEditorFn) (*RevokeCliInvocationHTTPResp, error)
 
 	// ListConnectSessionsWithResponse List connect sessions
 	//
@@ -35643,6 +36114,304 @@ func (r RefreshCatalogHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RefreshCatalogHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateCliInvocationHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *CliInvocationCreatedResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON429 the response for an HTTP 429 `application/problem+json` response
+	ApplicationproblemJSON429 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateCliInvocationHTTPResp) GetJSON201() *CliInvocationCreatedResponse {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r CreateCliInvocationHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r CreateCliInvocationHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r CreateCliInvocationHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r CreateCliInvocationHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r CreateCliInvocationHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
+func (r CreateCliInvocationHTTPResp) GetApplicationproblemJSON429() *ProblemDetail {
+	return r.ApplicationproblemJSON429
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r CreateCliInvocationHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r CreateCliInvocationHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateCliInvocationHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateCliInvocationHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateCliInvocationHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateCliInvocationHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateCliInvocationHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RenewCliInvocationHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CliInvocationResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RenewCliInvocationHTTPResp) GetJSON200() *CliInvocationResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r RenewCliInvocationHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r RenewCliInvocationHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r RenewCliInvocationHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r RenewCliInvocationHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r RenewCliInvocationHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r RenewCliInvocationHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r RenewCliInvocationHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r RenewCliInvocationHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RenewCliInvocationHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RenewCliInvocationHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RenewCliInvocationHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RenewCliInvocationHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RenewCliInvocationHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RevokeCliInvocationHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r RevokeCliInvocationHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r RevokeCliInvocationHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r RevokeCliInvocationHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r RevokeCliInvocationHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r RevokeCliInvocationHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r RevokeCliInvocationHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r RevokeCliInvocationHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokeCliInvocationHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokeCliInvocationHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeCliInvocationHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeCliInvocationHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokeCliInvocationHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -45757,6 +46526,101 @@ func (c *ClientWithResponses) RefreshCatalogWithResponse(ctx context.Context, re
 	return ParseRefreshCatalogHTTPResp(rsp)
 }
 
+// CreateCliInvocationWithBodyWithResponse Mint a CLI invocation token
+//
+// Mint a short-lived invocation token for one vendor CLI command.
+//
+// Called by `jentic gh`/`cf`/`aws` before it runs the vendor CLI. Only an
+// agent holding `capabilities:execute` and authenticated with its own
+// access token (`at_…`, not an API key or JWT) may mint; anything else
+// answers 403 (`cli_invocation_mint_forbidden`). The token lives
+// `cli_facades.invocation_ttl_seconds` (renew it with `:renew`), never past
+// `hard_expires_at`, and never past the access token it was minted with:
+// revoking or expiring that access token ends the invocation token too.
+// It is accepted only by the Broker's CLI facade for `vendor`; `/execute`,
+// the control plane and MCP reject it. Answers 404 while
+// `cli_facades.enabled` or the vendor's facade is off. Minting is rate
+// limited per agent (`cli_facades.mint_rate_limit_per_minute`).
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /cli-invocations (the `CreateCliInvocation` operationId).
+func (c *ClientWithResponses) CreateCliInvocationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCliInvocationHTTPResp, error) {
+	rsp, err := c.CreateCliInvocationWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateCliInvocationHTTPResp(rsp)
+}
+
+// CreateCliInvocationWithResponse Mint a CLI invocation token
+//
+// Mint a short-lived invocation token for one vendor CLI command.
+//
+// Called by `jentic gh`/`cf`/`aws` before it runs the vendor CLI. Only an
+// agent holding `capabilities:execute` and authenticated with its own
+// access token (`at_…`, not an API key or JWT) may mint; anything else
+// answers 403 (`cli_invocation_mint_forbidden`). The token lives
+// `cli_facades.invocation_ttl_seconds` (renew it with `:renew`), never past
+// `hard_expires_at`, and never past the access token it was minted with:
+// revoking or expiring that access token ends the invocation token too.
+// It is accepted only by the Broker's CLI facade for `vendor`; `/execute`,
+// the control plane and MCP reject it. Answers 404 while
+// `cli_facades.enabled` or the vendor's facade is off. Minting is rate
+// limited per agent (`cli_facades.mint_rate_limit_per_minute`).
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /cli-invocations (the `CreateCliInvocation` operationId).
+func (c *ClientWithResponses) CreateCliInvocationWithResponse(ctx context.Context, body CreateCliInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCliInvocationHTTPResp, error) {
+	rsp, err := c.CreateCliInvocation(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateCliInvocationHTTPResp(rsp)
+}
+
+// RenewCliInvocationWithResponse Renew a CLI invocation token
+//
+// Extend one of the caller's live invocation tokens.
+//
+// Moves `expires_at` to `cli_facades.invocation_ttl_seconds` from now, capped at
+// `hard_expires_at`. The CLI wrapper calls this on a heartbeat while the
+// command runs. Only the agent that minted the invocation may renew it;
+// any other caller gets 404. A revoked or expired invocation answers 409.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /cli-invocations/{invocation_id}:renew (the `RenewCliInvocation` operationId).
+func (c *ClientWithResponses) RenewCliInvocationWithResponse(ctx context.Context, invocationId string, reqEditors ...RequestEditorFn) (*RenewCliInvocationHTTPResp, error) {
+	rsp, err := c.RenewCliInvocation(ctx, invocationId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRenewCliInvocationHTTPResp(rsp)
+}
+
+// RevokeCliInvocationWithResponse Revoke a CLI invocation token
+//
+// Revoke one of the caller's invocation tokens.
+//
+// The CLI wrapper calls this when the command exits. The Broker stops
+// accepting the token within its token-cache TTL
+// (`broker.resolve_cache_ttl_seconds`). Only the agent that minted the
+// invocation may revoke it; any other caller gets 404. Revoking an
+// already-revoked invocation succeeds.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /cli-invocations/{invocation_id}:revoke (the `RevokeCliInvocation` operationId).
+func (c *ClientWithResponses) RevokeCliInvocationWithResponse(ctx context.Context, invocationId string, reqEditors ...RequestEditorFn) (*RevokeCliInvocationHTTPResp, error) {
+	rsp, err := c.RevokeCliInvocation(ctx, invocationId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeCliInvocationHTTPResp(rsp)
+}
+
 // ListConnectSessionsWithResponse List connect sessions
 //
 // List connect sessions with cursor-based pagination.
@@ -53738,6 +54602,262 @@ func ParseRefreshCatalogHTTPResp(rsp *http.Response) (*RefreshCatalogHTTPResp, e
 			return nil, err
 		}
 		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateCliInvocationHTTPResp parses an HTTP response from a CreateCliInvocationWithResponse call
+func ParseCreateCliInvocationHTTPResp(rsp *http.Response) (*CreateCliInvocationHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateCliInvocationHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest CliInvocationCreatedResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRenewCliInvocationHTTPResp parses an HTTP response from a RenewCliInvocationWithResponse call
+func ParseRenewCliInvocationHTTPResp(rsp *http.Response) (*RenewCliInvocationHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RenewCliInvocationHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CliInvocationResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokeCliInvocationHTTPResp parses an HTTP response from a RevokeCliInvocationWithResponse call
+func ParseRevokeCliInvocationHTTPResp(rsp *http.Response) (*RevokeCliInvocationHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeCliInvocationHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail

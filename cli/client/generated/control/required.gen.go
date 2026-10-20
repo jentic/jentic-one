@@ -89,6 +89,13 @@ func (ChangePasswordRequest) RequiredFields() []string {
 	return []string{"current_password", "new_password"}
 }
 func (ClaimRequest) RequiredFields() []string               { return []string{"token"} }
+func (CliInvocationCreateRequest) RequiredFields() []string { return []string{"vendor"} }
+func (CliInvocationCreatedResponse) RequiredFields() []string {
+	return []string{"expires_at", "hard_expires_at", "id", "token", "trace_id", "vendor"}
+}
+func (CliInvocationResponse) RequiredFields() []string {
+	return []string{"expires_at", "hard_expires_at", "id", "trace_id", "vendor"}
+}
 func (ConnectSessionListResponse) RequiredFields() []string { return []string{"data", "has_more"} }
 func (ConnectSessionSummaryResponse) RequiredFields() []string {
 	return []string{"created_at", "credential_id", "requested_by_actor_id", "session_id", "state", "vendor_display_name", "vendor_key"}

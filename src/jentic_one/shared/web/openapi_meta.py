@@ -618,6 +618,15 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         ),
     },
     {
+        "name": "CLI Invocations",
+        "description": (
+            "Short-lived invocation tokens for vendor CLIs run through Jentic (`jentic gh`, "
+            "`jentic cf`, `jentic aws`). An agent mints one per command with its own access "
+            "token, renews it while the command runs and revokes it on exit; only the "
+            "Broker's vendor CLI facades accept it."
+        ),
+    },
+    {
         "name": "Agent Registration",
         "description": (
             "Dynamic agent registration (RFC 7591-style) — register a new agent client, poll "
@@ -751,6 +760,7 @@ X_TAG_GROUPS: list[dict[str, Any]] = [
             "Identity",
             "Agents",
             "OAuth",
+            "CLI Invocations",
             "Agent Registration",
             "Discovery",
         ],
@@ -1050,6 +1060,7 @@ _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/oauth-app-registrations"), "OAuth App Registrations"),
     # Platform-actor surfaces (superset, not in the original reference).
     (re.compile(r"^/agents"), "Agents"),
+    (re.compile(r"^/cli-invocations"), "CLI Invocations"),
     (re.compile(r"^/oauth"), "OAuth"),
     (re.compile(r"^/authorize"), "OAuth"),
     (re.compile(r"^/error"), "OAuth"),

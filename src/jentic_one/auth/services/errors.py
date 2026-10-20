@@ -280,3 +280,50 @@ class InvalidIntrospectionRequestError(AuthServiceError):
     def __init__(self, reason: str = "token is required") -> None:
         super().__init__(reason)
         self.reason = reason
+
+
+class CliFacadeUnavailableError(AuthServiceError):
+    """Raised when invocation tokens are requested for a vendor with no served facade.
+
+    Covers ``cli_facades.enabled=false``, a vendor whose own ``enabled`` is
+    off, and an unknown vendor alike: maps to 404 so the response does not
+    reveal which switch is off.
+    """
+
+    def __init__(self, vendor: str) -> None:
+        super().__init__(f"No CLI facade is available for vendor '{vendor}'")
+        self.vendor = vendor
+
+
+class CliInvocationNotFoundError(AuthServiceError):
+    """Raised when an invocation does not exist or belongs to another actor.
+
+    One error for both cases so the response does not reveal another agent's
+    invocation ids.
+    """
+
+    def __init__(self, invocation_id: str) -> None:
+        super().__init__(f"CLI invocation '{invocation_id}' not found")
+        self.invocation_id = invocation_id
+
+
+class CliInvocationNotRenewableError(AuthServiceError):
+    """Raised when renewing an invocation that is revoked, expired or at its hard cap."""
+
+    def __init__(self, invocation_id: str, reason: str) -> None:
+        super().__init__(f"CLI invocation '{invocation_id}' cannot be renewed: {reason}")
+        self.invocation_id = invocation_id
+        self.reason = reason
+
+
+class CliInvocationMintForbiddenError(AuthServiceError):
+    """Raised when the caller is not an agent presenting its own ``at_`` access token.
+
+    Invocation tokens hang off a parent access token (the resolver re-checks
+    it on every use), so an API key, a JWT or a user's token cannot mint one.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Minting a CLI invocation token requires an agent's own access token (at_)"
+        )
