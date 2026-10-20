@@ -489,6 +489,13 @@ jobs:
           # compete with every other cache for the repo's 10 GB budget.
           cache-to: ${{ github.ref == 'refs/heads/main' && 'type=gha,scope=app-image,mode=max' || '' }}
 
+      # The image must ship exactly the `uv export --locked --no-dev` set the
+      # test jobs ran against (#1819) — a few seconds on the image just built.
+      # --locked also fails here when uv.lock is out of date with
+      # pyproject.toml, which the test jobs' `uv sync` would silently re-lock.
+      - name: Check image packages match uv.lock
+        run: make check-image-lock IMAGE=jentic-one/app:scan
+
       - name: Trivy image scan (fixable HIGH/CRITICAL)
         uses: aquasecurity/trivy-action@v0.36.0
         with:

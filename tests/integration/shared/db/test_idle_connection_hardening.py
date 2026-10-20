@@ -1,14 +1,17 @@
 """Integration tests for idle-connection hardening on Postgres (#1082).
 
 Covers the engine wiring that keeps pooled connections healthy across a
-dropped/idle connection: TCP keepalive on the client socket and transparent
-replacement of a pooled connection the server has terminated — and that real
-errors on a live connection are not mistaken for a lost one.
+dropped/idle connection: TCP keepalive on the client socket, transparent
+replacement of a pooled connection the server has terminated (pre-ping on),
+mapping that dead connection to a retryable ``DatabaseUnavailableError`` when
+pre-ping is off — and that real errors on a live connection are not mistaken
+for a lost one.
 """
 
 from __future__ import annotations
 
 import socket
+from collections.abc import AsyncGenerator
 
 import asyncpg
 import pytest
@@ -114,29 +117,89 @@ async def test_terminated_pooled_connection_is_replaced_transparently(
 
     Mirrors a connection dropped while idle (VM sleep, proxy timeout): the next
     checkout's pre-ping detects it and the pool reconnects before the caller's
-    statement runs.
+    statement runs — so even a bare ``transaction()`` (no retry) succeeds.
     """
     _require_postgres(admin_db)
+    stale_pid = await admin_db.run_in_transaction(_backend_pid)
+    await _terminate_backend(admin_db, stale_pid)
 
-    async def _pid(session: AsyncSession) -> int:
-        return int((await session.execute(text("SELECT pg_backend_pid()"))).scalar_one())
+    async with admin_db.transaction() as session:
+        fresh_pid = await _backend_pid(session)
+    assert fresh_pid != stale_pid
 
-    stale_pid = await admin_db.run_in_transaction(_pid)
 
-    # Kill the pooled backend from a separate, unpooled engine (a checkout
-    # from the same pool would hand back the very connection being killed).
-    killer_engine = create_async_engine(admin_db.engine.url, poolclass=NullPool)
+async def _backend_pid(session: AsyncSession) -> int:
+    return int((await session.execute(text("SELECT pg_backend_pid()"))).scalar_one())
+
+
+async def _terminate_backend(db: DatabaseSession, pid: int) -> None:
+    """Kill ``pid`` from a separate, unpooled engine (not a checkout from ``db``'s pool)."""
+    killer_engine = create_async_engine(db.engine.url, poolclass=NullPool)
     try:
         async with killer_engine.connect() as killer:
             killed = (
-                await killer.execute(text("SELECT pg_terminate_backend(:pid)"), {"pid": stale_pid})
+                await killer.execute(text("SELECT pg_terminate_backend(:pid)"), {"pid": pid})
             ).scalar_one()
     finally:
         await killer_engine.dispose()
     assert killed is True
 
-    fresh_pid = await admin_db.run_in_transaction(_pid)
+
+@pytest.fixture()
+async def no_pre_ping_db(
+    admin_db: DatabaseSession, integration_config: AppConfig
+) -> AsyncGenerator[DatabaseSession, None]:
+    """An admin ``DatabaseSession`` built with ``pool_pre_ping: false``."""
+    _require_postgres(admin_db)
+    config = integration_config.databases.admin.model_copy(update={"pool_pre_ping": False})
+    db = DatabaseSession(config)
+    await db.connect()
+    try:
+        yield db
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_without_pre_ping_terminated_connection_is_retried(
+    no_pre_ping_db: DatabaseSession,
+) -> None:
+    """With pre-ping off, ``run_in_transaction`` recovers from a dead pooled connection.
+
+    asyncpg surfaces the terminated backend as a bare ``DBAPIError`` (not
+    ``OperationalError``); it must still be classified as transient so the
+    unit of work is re-run on a fresh connection instead of escaping as a 500.
+    """
+    assert no_pre_ping_db.engine.pool._pre_ping is False
+    stale_pid = await no_pre_ping_db.run_in_transaction(_backend_pid)
+    await _terminate_backend(no_pre_ping_db, stale_pid)
+
+    fresh_pid = await no_pre_ping_db.run_in_transaction(_backend_pid)
     assert fresh_pid != stale_pid
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope", ["transaction", "session"])
+async def test_without_pre_ping_terminated_connection_raises_unavailable(
+    no_pre_ping_db: DatabaseSession, scope: str
+) -> None:
+    """A dead pooled connection maps to ``DatabaseUnavailableError`` (a 503), SQL redacted.
+
+    Covers both the write path (``transaction()``, no retry of its own) and
+    the read path (``session()``), and that the pool recovers on the next use.
+    """
+    stale_pid = await no_pre_ping_db.run_in_transaction(_backend_pid)
+    await _terminate_backend(no_pre_ping_db, stale_pid)
+
+    manager = no_pre_ping_db.transaction() if scope == "transaction" else no_pre_ping_db.session()
+    with pytest.raises(DatabaseUnavailableError) as caught:
+        async with manager as session:
+            await _backend_pid(session)
+    assert is_connection_loss(caught.value)
+    assert "[SQL:" not in str(caught.value)
+    assert "pg_backend_pid" not in str(caught.value)
+
+    assert await no_pre_ping_db.run_in_transaction(_backend_pid) != stale_pid
 
 
 @pytest.mark.asyncio

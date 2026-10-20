@@ -2,7 +2,8 @@
 
 Seeds an opaque ``access_tokens`` row and asserts the ``DualTokenValidator``:
   - resolves the opaque token via the in-process admin-DB resolver, and
-  - validates a short-TTL self-contained signed JWT **without** any DB lookup.
+  - validates a short-TTL self-contained signed JWT by signature and claims,
+    then checks the agent's (and its owner's) status in the admin DB.
 
 This exercises the §03 wiring (``install_broker_auth`` builds the same dispatcher)
 end-to-end through the real ``InProcessTokenResolver``.
@@ -17,6 +18,7 @@ from datetime import UTC, datetime, timedelta
 
 import jwt
 import pytest
+import structlog.testing
 from sqlalchemy import delete, event, update
 
 from jentic_one.admin.core.schema.access_tokens import AccessToken
@@ -27,10 +29,18 @@ from jentic_one.admin.core.schema.refresh_tokens import RefreshToken
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos.access_token_repo import AccessTokenRepository
 from jentic_one.admin.repos.actor_permission_grant_repo import ActorPermissionGrantRepository
+from jentic_one.admin.repos.agent_credential_repo import AgentCredentialRepository
 from jentic_one.admin.repos.refresh_token_repo import RefreshTokenRepository
-from jentic_one.broker.core.token_validation import CachedTokenValidator
+from jentic_one.broker.core.token_validation import CachedActorStatus, CachedTokenValidator
+from jentic_one.broker.repos.actor_status import ActorStatusResolver
 from jentic_one.broker.repos.token_resolver import InProcessTokenResolver
-from jentic_one.broker.services.auth import DualTokenValidator, JwtTokenValidator, JwtVerifier
+from jentic_one.broker.services.auth import (
+    CompositeTokenValidator,
+    DualTokenValidator,
+    JwtTokenValidator,
+    JwtVerifier,
+)
+from jentic_one.shared.auth.api_key_resolver import ApiKeyResolver
 from jentic_one.shared.auth.errors import TokenValidationError
 from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION
 from jentic_one.shared.db.session import DatabaseSession
@@ -58,12 +68,29 @@ async def clean_access_tokens(admin_db: DatabaseSession) -> AsyncGenerator[None,
     await _truncate()
 
 
+def _jwt_validator(admin_db: DatabaseSession, *, ttl: float = 30) -> JwtTokenValidator:
+    """The JWT arm as ``install_broker_auth`` wires it: signature, claims, then status."""
+    return JwtTokenValidator(
+        verifier=JwtVerifier(secret=_JWT_SECRET),
+        actor_status=CachedActorStatus(
+            resolver=ActorStatusResolver(admin_db), cache_ttl_seconds=ttl
+        ),
+    )
+
+
 def _dual(admin_db: DatabaseSession, *, with_jwt: bool = True) -> DualTokenValidator:
     opaque = CachedTokenValidator(resolver=InProcessTokenResolver(admin_db))
-    jwt_validator = (
-        JwtTokenValidator(verifier=JwtVerifier(secret=_JWT_SECRET)) if with_jwt else None
-    )
+    jwt_validator = _jwt_validator(admin_db) if with_jwt else None
     return DualTokenValidator(opaque=opaque, jwt=jwt_validator)
+
+
+def _agent_jwt(sub: str) -> str:
+    exp = int((datetime.now(UTC) + timedelta(minutes=2)).timestamp())
+    return jwt.encode(
+        {"sub": sub, "exp": exp, "actor_type": "agent", "scopes": [BROKER_EXECUTE_PERMISSION]},
+        _JWT_SECRET,
+        algorithm="HS256",
+    )
 
 
 async def _seed_agent(admin_db: DatabaseSession, agent_id: str, *, status: str = "active") -> None:
@@ -139,10 +166,11 @@ async def test_opaque_token_resolves_via_db(
     assert BROKER_EXECUTE_PERMISSION in resolved.permissions
 
 
-async def test_signed_jwt_validates_without_db_lookup(
+async def test_signed_jwt_validates_by_signature_and_agent_status(
     admin_db: DatabaseSession, clean_access_tokens: None
 ) -> None:
-    # No row seeded — a JWT must validate purely by signature.
+    # Identity and scopes come from the signed claims; the row only says "active".
+    await _seed_agent(admin_db, "agnt_jwt")
     exp = int((datetime.now(UTC) + timedelta(minutes=2)).timestamp())
     token = jwt.encode(
         {
@@ -525,3 +553,163 @@ async def test_client_gate_matrix_rejected_by_broker(
 
     with pytest.raises(TokenValidationError, match="token_inactive"):
         await _dual(admin_db).validate("at_gated_channel")
+
+
+# --- owned agents follow their owner's account status -----------------------
+# Both broker credential arms (opaque ``at_`` and ``jak_`` keys) refuse an
+# active agent while its owner is inactive, once the verdict cache lapses, and
+# accept it again after the owner is re-enabled. The agent row is untouched.
+
+_OWNER = "usr_broker_owner"
+_OWNED_AGENT = "agnt_broker_owned"
+_VERDICT_TTL = 0.05
+
+
+async def _seed_owned_agent_with_key(admin_db: DatabaseSession, *, api_key: str) -> None:
+    await _seed_user_row(admin_db, _OWNER)
+    async with admin_db.session() as session:
+        session.add(
+            Agent(
+                id=_OWNED_AGENT,
+                name="e2e-owned",
+                owner_id=_OWNER,
+                registered_by=_SEED_MARKER,
+                created_by=_SEED_MARKER,
+                status="active",
+            )
+        )
+        await session.flush()
+        await AgentCredentialRepository.create(
+            session,
+            agent_id=_OWNED_AGENT,
+            api_key_hash=hashlib.sha256(api_key.encode()).hexdigest(),
+            created_by=_SEED_MARKER,
+        )
+        await session.commit()
+
+
+async def _set_user_row(admin_db: DatabaseSession, user_id: str, **values: object) -> None:
+    async with admin_db.session() as session:
+        await session.execute(update(User).where(User.id == user_id).values(**values))
+        await session.commit()
+
+
+def _composite(admin_db: DatabaseSession) -> CompositeTokenValidator:
+    """The broker's credential dispatcher, with a short verdict-cache TTL."""
+    return CompositeTokenValidator(
+        opaque=CachedTokenValidator(
+            resolver=InProcessTokenResolver(admin_db), cache_ttl_seconds=_VERDICT_TTL
+        ),
+        api_key=CachedTokenValidator(
+            resolver=ApiKeyResolver(admin_db), cache_ttl_seconds=_VERDICT_TTL
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "owner_off",
+    [{"active": False}, {"active": False, "email": f"deleted-{_OWNER}@local"}],
+    ids=["owner-disabled", "owner-deleted"],
+)
+async def test_owned_agent_follows_owner_status_on_both_broker_arms(
+    admin_db: DatabaseSession, clean_access_tokens: None, owner_off: dict[str, object]
+) -> None:
+    api_key = "jak_broker_owned_key"  # pragma: allowlist secret
+    await _seed_owned_agent_with_key(admin_db, api_key=api_key)
+    await _seed_opaque_token(admin_db, plaintext="at_broker_owned", actor_id=_OWNED_AGENT)
+    validator = _composite(admin_db)
+
+    for credential in ("at_broker_owned", api_key):
+        assert (await validator.validate(credential)).sub == _OWNED_AGENT
+
+    await _set_user_row(admin_db, _OWNER, **owner_off)
+    # A cached verdict may pass until the TTL lapses; then both arms refuse.
+    await asyncio.sleep(_VERDICT_TTL + 0.01)
+    with structlog.testing.capture_logs() as logs:
+        with pytest.raises(TokenValidationError, match="token_inactive"):
+            await validator.validate("at_broker_owned")
+        with pytest.raises(TokenValidationError, match="unknown_token"):
+            await validator.validate(api_key)
+    owner_inactive = [log for log in logs if log["event"] == "agent_owner_inactive"]
+    assert [log["agent_id"] for log in owner_inactive] == [_OWNED_AGENT, _OWNED_AGENT]
+    assert all(log["log_level"] == "info" for log in owner_inactive)
+    assert all(log["owner_id"] == _OWNER for log in owner_inactive)
+
+    await _set_user_row(admin_db, _OWNER, active=True)
+    await asyncio.sleep(_VERDICT_TTL + 0.01)
+    for credential in ("at_broker_owned", api_key):
+        assert (await validator.validate(credential)).sub == _OWNED_AGENT
+
+    async with admin_db.session() as session:
+        agent = await session.get(Agent, _OWNED_AGENT)
+        assert agent is not None and agent.status == "active"
+
+
+async def test_ownerless_agent_token_ignores_user_status(
+    admin_db: DatabaseSession, clean_access_tokens: None
+) -> None:
+    """An agent with no owner resolves on its own status alone."""
+    await _seed_agent(admin_db, "agnt_opaque")
+    await _seed_opaque_token(admin_db, plaintext="at_ownerless")
+    await _seed_user_row(admin_db, "usr_broker_bystander", active=False)
+
+    resolved = await InProcessTokenResolver(admin_db).resolve_access_token("at_ownerless")
+
+    assert resolved is not None and resolved.active is True
+
+
+@pytest.mark.parametrize("status", ["suspended", "archived"])
+async def test_signed_jwt_for_an_inactive_agent_is_refused(
+    admin_db: DatabaseSession, clean_access_tokens: None, status: str
+) -> None:
+    await _seed_agent(admin_db, "agnt_jwt_inactive", status=status)
+    with pytest.raises(TokenValidationError, match="jwt_actor_inactive"):
+        await _jwt_validator(admin_db).validate(_agent_jwt("agnt_jwt_inactive"))
+
+
+async def test_signed_jwt_for_an_unknown_agent_is_refused(
+    admin_db: DatabaseSession, clean_access_tokens: None
+) -> None:
+    """A validly signed agent JWT naming no agent row fails closed."""
+    with (
+        structlog.testing.capture_logs() as logs,
+        pytest.raises(TokenValidationError, match="jwt_actor_inactive"),
+    ):
+        await _jwt_validator(admin_db).validate(_agent_jwt("agnt_jwt_missing"))
+    refused = [log for log in logs if log["event"] == "jwt_refused"]
+    assert [(log["reason"], log["sub"]) for log in refused] == [
+        ("jwt_actor_inactive", "agnt_jwt_missing")
+    ]
+
+
+@pytest.mark.parametrize(
+    "owner_off",
+    [{"active": False}, {"active": False, "email": f"deleted-{_OWNER}@local"}],
+    ids=["owner-disabled", "owner-deleted"],
+)
+async def test_signed_jwt_for_an_owned_agent_follows_owner_status(
+    admin_db: DatabaseSession, clean_access_tokens: None, owner_off: dict[str, object]
+) -> None:
+    await _seed_owned_agent_with_key(
+        admin_db,
+        api_key="jak_broker_owned_jwt",  # pragma: allowlist secret
+    )
+    validator = _jwt_validator(admin_db, ttl=_VERDICT_TTL)
+    token = _agent_jwt(_OWNED_AGENT)
+    assert (await validator.validate(token)).sub == _OWNED_AGENT
+
+    await _set_user_row(admin_db, _OWNER, **owner_off)
+    # A cached verdict may pass until the TTL lapses; then the JWT is refused.
+    await asyncio.sleep(_VERDICT_TTL + 0.01)
+    with (
+        structlog.testing.capture_logs() as logs,
+        pytest.raises(TokenValidationError, match="jwt_actor_inactive"),
+    ):
+        await validator.validate(token)
+    assert [log["agent_id"] for log in logs if log["event"] == "agent_owner_inactive"] == [
+        _OWNED_AGENT
+    ]
+
+    await _set_user_row(admin_db, _OWNER, active=True)
+    await asyncio.sleep(_VERDICT_TTL + 0.01)
+    assert (await validator.validate(token)).sub == _OWNED_AGENT

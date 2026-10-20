@@ -102,9 +102,12 @@ flowchart TB
   balancer. Set `broker.resilience.backend.backend` to `redis` (and give
   every replica the same `broker.resilience.backend.redis_url`) so rate
   limits, circuit breakers, and idempotency records are shared across
-  replicas. The redis client is an optional extra
-  (`pip install jentic-one[redis]`), not part of the published container
-  image — scaling out on that image means building your own with the extra.
+  replicas. The redis client is the optional `redis` extra
+  (`pip install jentic-one[redis]` for a pip install), not part of the
+  published container image — scaling out on that image means building
+  your own with `--build-arg EXTRAS=redis` (`make build-app EXTRAS=redis`
+  single-arch). The image installs the wheel `--no-deps`, so extras reach
+  it only through that build arg.
 
 ## The memory shared-state backend is bounded
 
@@ -142,6 +145,17 @@ flowchart TB
 > chart's 512Mi memory limit holds. The broker always runs as its own
 > process; the combined app holds one such backend each for the auth and
 > control surfaces.
+>
+> The local login page stores one CSRF nonce per page load in `login-csrf`
+> (16 MiB, about 18,600 nonces of about 900 bytes for their 5-minute TTL).
+> Each client, an IPv4 address or an IPv6 /64, may hold 2% of it, about 370
+> nonces: twice what the default authorize rate limit lets one client network
+> request in that time. A client flooding the page gets 503 with `Retry-After` while
+> other clients still sign in; a flood spread over about 50 or more networks
+> at once (one IPv6 /56 alone holds 256 /64s) can still fill it, which the
+> redis backend or a larger budget absorbs. Behind a reverse proxy, list it in
+> `auth.oauth_rate_limit.trusted_proxies`, or every client shares the
+> proxy's address and its share.
 >
 > To raise it: raise `broker.resilience.backend.memory.namespaces.idem`
 > (and its `max_owner_share`) together with `max_total_bytes`, or lower
@@ -183,6 +197,48 @@ The gate is the surface set (`enabled_apps`), not which DBs happen to be
 reachable: the broker is granted the registry DB for its synchronous resolve
 path, but it is not the registry surface, so it must not race the control
 plane for import jobs.
+
+### Job worker scheduling
+
+The `WorkerLoop` runs up to `worker.concurrency` jobs at once (default `1`,
+serial) and polls the jobs table every `worker.poll_interval_s` (default
+`2.0`, bounded `0.25`–`60`) while idle. It re-polls as soon as a running job
+frees a slot, and a job enqueued in the **same process** — the broker's
+`Prefer: respond-async` path, a registry import — wakes it the moment the
+enqueuing transaction commits, so in-process pickup does not wait out the
+interval. Jobs enqueued by another process are picked up on the next poll.
+Every poll is a write transaction, even against an empty queue (on SQLite it
+takes the database write lock), so a lower interval buys faster cross-process
+pickup and reclaim at a constant write cost per process.
+Between polls the loop also runs a retention sweep (lapsed approvals, expired
+job results, long-expired token rows) every `worker.sweep_interval_s` of wall
+time (default `120`).
+
+Every claim is one atomic `UPDATE … RETURNING` over a `FOR UPDATE SKIP LOCKED`
+subquery on Postgres (a `BEGIN IMMEDIATE` write transaction on SQLite), so any
+number of loops — several slots in one process, several uvicorn workers, or
+several replicas — can poll the same queue without double-claiming a job.
+Visibility-timeout reclaim and the retry/dead-letter budget apply per job
+unchanged.
+
+`worker.concurrency > 1` is Postgres-only. A job's handler runs in one admin
+transaction that spans its upstream call; on SQLite that transaction holds the
+database write lock, so a second concurrent job's claim or outcome write would
+wait past `busy_timeout` and fail. Config validation refuses
+`concurrency > 1` with a SQLite admin database (a loop built without validated
+config is clamped to `1` with a `worker_concurrency_clamped_sqlite` warning).
+On Postgres each in-flight job holds about **two** admin-DB connections at
+once — the handler transaction plus the run-time authorization or
+credential-audit session it opens — so validation requires
+`2 × worker.concurrency < databases.admin.pool_max`. Size `pool_max` above that
+with headroom for the HTTP requests and other background work sharing the
+admin pool in the same process.
+
+On shutdown the worker drains: it stops claiming and waits up to
+`worker.drain_timeout_s` for every in-flight job, including one whose claim was
+already under way when the drain began; jobs still running at the deadline are
+cancelled and left `RUNNING` for visibility-timeout reclaim (an approved
+execution is failed on reclaim rather than re-run).
 
 ## Related
 

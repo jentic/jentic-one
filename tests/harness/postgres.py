@@ -104,6 +104,13 @@ def postgres_config(database: str | None = None) -> AppConfig:
     )
 
 
+def superuser_config(db_config: DatabaseConfig) -> DatabaseConfig:
+    """``db_config`` connecting as the fixture's bootstrap superuser."""
+    return db_config.model_copy(
+        update={"user": _PG_SUPERUSER, "password": SecretStr(_PG_SUPERUSER_PASSWORD)}
+    )
+
+
 def migrate_to_head(config: AppConfig) -> None:
     """Create every surface schema (if missing) and run its migrations to ``head``.
 
@@ -179,10 +186,7 @@ async def ensure_schema(db_config: DatabaseConfig) -> None:
     first boot. Connects as the bootstrap superuser because CREATE SCHEMA
     requires the CREATE privilege on the database.
     """
-    superuser_config = db_config.model_copy(
-        update={"user": _PG_SUPERUSER, "password": SecretStr(_PG_SUPERUSER_PASSWORD)}
-    )
-    engine = create_async_engine(get_database_url(superuser_config))
+    engine = create_async_engine(get_database_url(superuser_config(db_config)))
     try:
         async with engine.begin() as conn:
             await conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{db_config.schema_name}"'))

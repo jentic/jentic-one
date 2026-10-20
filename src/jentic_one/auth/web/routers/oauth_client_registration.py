@@ -10,8 +10,9 @@ at admin approval + consent, not registration). The endpoint is instead:
   dependency, so every request against a disabled door — well-formed,
   malformed, or over-quota — gets the same plain 404 a build without the
   route would return (indistinguishable from not-shipped);
-- rate limited per-IP (``registration_rpm``/``registration_burst``) in its own
-  bucket namespace (it must not share quota with /authorize's bare-IP bucket);
+- rate limited per client network (IPv4 address or IPv6 /64;
+  ``registration_rpm``/``registration_burst``) in its own bucket namespace
+  (it must not share quota with /authorize's bucket for the same network);
 - only able to mint **public** (secret-less, PKCE-only) rows that land
   ``pending`` + inactive unless the D9 auto-approve policy applies.
 
@@ -36,7 +37,7 @@ from fastapi.routing import APIRoute
 
 from jentic_one.auth.services.errors import InvalidClientMetadataError, RateLimitExceededError
 from jentic_one.auth.services.oauth_dcr_service import OAuthDcrService
-from jentic_one.auth.web.ratelimit import client_ip, get_auth_backend
+from jentic_one.auth.web.ratelimit import client_rate_limit_key, get_auth_backend
 from jentic_one.auth.web.schemas.oauth_client_registration import (
     OAuthClientRegistrationRequest,
     OAuthClientRegistrationResponse,
@@ -140,11 +141,10 @@ def _get_registration_limiter(request: Request, ctx: Context) -> RateLimiter:
         return limiter
     cfg = ctx.config.auth.oauth_rate_limit
     backend = get_auth_backend(request)
-    # Own bucket namespace: /authorize (and /oauth/token) fall back to a
-    # bare-IP key when the request carries no client_id, and the shared store
-    # would otherwise hand both limiters the same bucket with different
-    # rate/burst params — client_id-less /authorize spam from an IP would
-    # drain this endpoint's quota and vice versa.
+    # Own bucket namespace: every auth-surface limiter keys on the client
+    # network, and the shared store would otherwise hand two of them the same
+    # bucket with different rate/burst params — /authorize traffic from a
+    # network would drain this endpoint's quota and vice versa.
     limiter = RateLimiter(
         backend,
         default_rpm=cfg.registration_rpm,
@@ -156,16 +156,16 @@ def _get_registration_limiter(request: Request, ctx: Context) -> RateLimiter:
 
 
 async def _check_registration_rate_limit(request: Request, ctx: Context = Depends(get_ctx)) -> None:
-    """Per-IP rate limiter for the anonymous registration endpoint.
+    """Per-client-network rate limiter for the anonymous registration endpoint.
 
-    Unlike /authorize and /oauth/token there is no client_id in the key — the
-    caller is registering to *get* one, and a self-chosen key component would
+    Keyed by client network only (IPv4 address or IPv6 /64): the caller is
+    registering to *get* a client_id, and a self-chosen key component would
     let one host sidestep the bucket.
     """
     trusted = ctx.config.auth.oauth_rate_limit.trusted_networks
-    ip = client_ip(request, trusted)
+    key = client_rate_limit_key(request, trusted)
     limiter = _get_registration_limiter(request, ctx)
-    outcome = await limiter.acquire(ip)
+    outcome = await limiter.acquire(key)
     if not outcome.allowed:
         raise RateLimitExceededError(retry_after=outcome.retry_after_s)
 

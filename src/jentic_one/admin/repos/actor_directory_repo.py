@@ -82,15 +82,21 @@ class ActorDirectoryRepository:
         ids: Sequence[str],
         *,
         agent_filters: Sequence[ColumnElement[bool]] = (),
+        user_filters: Sequence[ColumnElement[bool]] = (),
     ) -> list[Any]:
         """Return the directory rows whose id is in ``ids``; unknown ids are skipped.
 
-        ``agent_filters`` restricts which agent rows can match; user rows are
-        returned for any requested id.
+        ``agent_filters`` and ``user_filters`` restrict which agent and user
+        rows can match. The id bound is applied inside each arm, so every
+        filter is evaluated only for the requested ids.
         """
         if not ids:
             return []
-        subq = _build_union(agent_filters).subquery()
-        stmt = select(subq).where(subq.c.id.in_(list(ids))).order_by(subq.c.id)
+        id_list = list(ids)
+        subq = _build_union(
+            [Agent.id.in_(id_list), *agent_filters],
+            [User.id.in_(id_list), *user_filters],
+        ).subquery()
+        stmt = select(subq).order_by(subq.c.id)
         result = await session.execute(stmt)
         return list(result.all())

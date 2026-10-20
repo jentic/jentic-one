@@ -485,6 +485,17 @@ later rollback still decrypts what was written under the new key)
 > process; the combined app holds one such backend each for the auth and
 > control surfaces.
 >
+> The local login page stores one CSRF nonce per page load in `login-csrf`
+> (16 MiB, about 18,600 nonces of about 900 bytes for their 5-minute TTL).
+> Each client, an IPv4 address or an IPv6 /64, may hold 2% of it, about 370
+> nonces: twice what the default authorize rate limit lets one client network
+> request in that time. A client flooding the page gets 503 with `Retry-After` while
+> other clients still sign in; a flood spread over about 50 or more networks
+> at once (one IPv6 /56 alone holds 256 /64s) can still fill it, which the
+> redis backend or a larger budget absorbs. Behind a reverse proxy, list it in
+> `auth.oauth_rate_limit.trusted_proxies`, or every client shares the
+> proxy's address and its share.
+>
 > To raise it: raise `broker.resilience.backend.memory.namespaces.idem`
 > (and its `max_owner_share`) together with `max_total_bytes`, or lower
 > `broker.idempotency.ttl_s`. Raise the container memory limit by at least
@@ -511,12 +522,17 @@ is an OOM-kill, not a slowdown. Do not set the app's memory limit below
   `broker.resilience.backend.redis_url` (via `extraEnv`:
   `JENTIC__BROKER__RESILIENCE__BACKEND__BACKEND` /
   `…__REDIS_URL`, identical on every replica). The chart does not bundle
-  Redis — bring your own. **One hard caveat:** the Redis client is an
-  optional extra (`pip install jentic-one[redis]`) that the published
+  Redis — bring your own. **One hard caveat:** the Redis client is the
+  optional `redis` extra, which the published
   `ghcr.io/jentic/jentic-one-app` image does **not** include — configuring
   the redis backend on that image crash-loops every replica at startup. On
   the published image today, keep `broker.replicas: 1`; scaling out means
-  building your own image with the `[redis]` extra.
+  building your own image with the extra baked in through the `EXTRAS`
+  build arg: `docker buildx build -f deploy/docker/app.multiarch.Dockerfile
+  --build-arg EXTRAS=redis …` (single-arch: `make build-app EXTRAS=redis`).
+  Adding `[redis]` to the image's `pip install` line does not work: the
+  wheel installs `--no-deps`, so its extras are ignored
+  ([deploy/README.md](../../deploy/README.md#reproducibility-python-dependencies-come-from-uvlock)).
 - **App** — the same shared-state backend also carries the auth surface's
   OAuth rate limiters and consent-nonce anti-replay, so the same rule
   applies: keep `app.replicas: 1` on the `memory` backend; configure Redis

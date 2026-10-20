@@ -65,8 +65,13 @@ def test_postgres_make_url_and_engine_kwargs() -> None:
     assert kwargs["connect_args"]["server_settings"]["search_path"] == "registry,public"
 
 
+def test_sqlite_engine_kwargs_ignore_pool_pre_ping() -> None:
+    config = DatabaseConfig(backend="sqlite", path=":memory:", pool_pre_ping=False)
+    assert "pool_pre_ping" not in SqliteBackend().engine_kwargs(config)
+
+
 def test_postgres_engine_kwargs_harden_idle_connections() -> None:
-    """Pooled connections are pre-pinged, age-recycled, and use TCP keepalive (#1082)."""
+    """Default: pre-ping on, recycle every 1800s, TCP keepalive (#1082)."""
     kwargs = PostgresBackend().engine_kwargs(DatabaseConfig(name="reg"))
     assert kwargs["pool_pre_ping"] is True
     assert kwargs["pool_recycle"] == POOL_RECYCLE_S == 1800
@@ -78,15 +83,17 @@ def test_postgres_engine_kwargs_harden_idle_connections() -> None:
 
 
 def test_postgres_engine_kwargs_follow_configured_tunables() -> None:
-    """``databases.*`` pool-recycle and keepalive settings reach the engine kwargs."""
+    """``databases.*`` pre-ping, pool-recycle and keepalive settings reach the engine kwargs."""
     config = DatabaseConfig(
         name="reg",
+        pool_pre_ping=False,
         pool_recycle_s=300,
         tcp_keepalive_idle_s=30,
         tcp_keepalive_interval_s=3,
         tcp_keepalive_count=4,
     )
     kwargs = PostgresBackend().engine_kwargs(config)
+    assert kwargs["pool_pre_ping"] is False
     assert kwargs["pool_recycle"] == 300
     conn_cls = kwargs["connect_args"]["connection_class"]
     assert issubclass(conn_cls, KeepaliveConnection)
