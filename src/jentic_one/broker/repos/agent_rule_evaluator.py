@@ -13,6 +13,9 @@ strictly against the specific ``(agent, credential)`` binding (or its attached
 rule set). The credential's identity was already matched during derivation, so
 no vendor join is needed here.
 
+A GraphQL request (``graphql``) is evaluated once per top-level field and the
+most restrictive field verdict decides (``shared.permissions.graphql_rules``).
+
 Path matching (``regex``/``prefix``/``exact``) delegates to the shared
 ``shared.permissions.matching`` seam and the first-match-wins loop to
 ``shared.permissions.evaluation``, so the control dry-run
@@ -29,22 +32,33 @@ from __future__ import annotations
 import json
 import time
 from collections import OrderedDict
+from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any
 
 import structlog
 from sqlalchemy import text
 
 from jentic_one.broker.core.singleflight import SingleFlight
-from jentic_one.shared.broker.protocols import RuleEvaluation, RuleVerdict
+from jentic_one.shared.broker.protocols import (
+    GraphQLFieldEvaluation,
+    RuleEvaluation,
+    RuleVerdict,
+)
 from jentic_one.shared.db import DatabaseSession
 from jentic_one.shared.permissions.evaluation import (
     PermissionRule,
     base_path_divergence,
+    compile_rule,
     first_matching_rule,
-    normalize_methods,
     rule_verdict,
 )
-from jentic_one.shared.permissions.matching import PathMatcher, compile_matcher
+from jentic_one.shared.permissions.graphql_document import GraphQLCall
+from jentic_one.shared.permissions.graphql_rules import (
+    FieldVerdict,
+    GraphQLField,
+    combine_field_verdicts,
+)
 
 _logger = structlog.get_logger(__name__)
 
@@ -103,25 +117,79 @@ def _binding_label(*, agent_id: str, credential_id: str, rule_set_id: str | None
     return f"{agent_id}:{credential_id}"
 
 
-def _compile_path(raw: str | None, mode: str, *, binding: str) -> PathMatcher | None:
-    """Compile a stored path pattern; log-once on a fail-closed row.
+def _compile_row(row: Sequence[Any], *, binding: str) -> PermissionRule:
+    """Compile one stored rule row; log-once on a fail-closed row.
 
-    Delegates to the shared seam: an unparseable stored pattern
-    (a legacy row predating save-time validation) yields a matcher that never
+    Delegates to the shared seam: an unparseable stored pattern or GraphQL
+    selector (a row predating save-time validation) yields a rule that never
     matches — fail-closed, never a silent wildcard (#751) — and the warning
     identifies the misconfigured binding/rule set so an operator can fix it.
     """
-    matcher = compile_matcher(raw, mode)
-    if matcher is not None and matcher.never:
+    # Row columns: id(0), effect(1), methods(2), path(3), operations(4), match_mode(5)
+    mode = str(row[5] or "regex")
+    rule = compile_rule(
+        effect=row[1],
+        methods=_coerce_json_list(row[2]),
+        path=row[3],
+        match_mode=mode,
+        operations=_coerce_json_list(row[4]),
+        rule_id=str(row[0]) if row[0] is not None else None,
+    )
+    if rule.path is not None and rule.path.never:
         _logger.warning(
             "Ignoring direct-binding permission rule with an invalid stored path "
             "pattern (fail-closed — the rule never matches); fix the pattern to "
             "restore intent",
             binding=binding,
-            path=raw,
+            path=row[3],
             match_mode=mode,
         )
-    return matcher
+    return rule
+
+
+def _evaluate_graphql(
+    rules: list[PermissionRule],
+    graphql: GraphQLCall,
+    *,
+    method: str,
+    path: str,
+    operation_id: str | None,
+    binding: str,
+) -> RuleEvaluation:
+    """Evaluate the rule list once per top-level field; the most restrictive field decides."""
+    verdicts: list[FieldVerdict] = []
+    for position, name in enumerate(graphql.top_level_fields):
+        idx = first_matching_rule(
+            rules,
+            method=method,
+            path=path,
+            operation_id=operation_id,
+            binding=binding,
+            # One misconfiguration warning per request, not per field.
+            warn=position == 0,
+            graphql_field=GraphQLField(operation_type=graphql.operation_type, name=name),
+        )
+        verdicts.append(FieldVerdict(field=name, verdict=rule_verdict(rules, idx), rule_index=idx))
+    deciding = combine_field_verdicts(verdicts)
+    fields = tuple(
+        GraphQLFieldEvaluation(
+            field=v.field,
+            verdict=RuleVerdict(v.verdict),
+            matched_rule_id=rules[v.rule_index].rule_id if v.rule_index is not None else None,
+        )
+        for v in verdicts
+    )
+    if deciding is None:
+        # A parsed document always selects at least one field; fail closed.
+        return RuleEvaluation(verdict=RuleVerdict.DENY, rules_loaded=len(rules))
+    return RuleEvaluation(
+        verdict=RuleVerdict(deciding.verdict),
+        rules_loaded=len(rules),
+        matched_rule_id=(
+            rules[deciding.rule_index].rule_id if deciding.rule_index is not None else None
+        ),
+        graphql_fields=fields,
+    )
 
 
 @dataclass(slots=True)
@@ -168,6 +236,7 @@ class AgentRuleEvaluator:
         path: str,
         operation_id: str | None,
         upstream_path: str | None = None,
+        graphql: GraphQLCall | None = None,
     ) -> RuleEvaluation:
         """Evaluate the binding's (or its rule set's) rules for the request.
 
@@ -178,20 +247,34 @@ class AgentRuleEvaluator:
         path. With ``upstream_path`` (the normalized full upstream path) it also
         reports a verdict change caused by a rule still written with the server
         base path; that never alters the verdict.
+
+        With ``graphql`` the rules are evaluated once per top-level field
+        (``graphql_fields`` on the result) and the most restrictive field
+        verdict is the request's.
         """
         rules = await self._get_rules(
             agent_id=agent_id, credential_id=credential_id, rule_set_id=rule_set_id
         )
         if not rules:
             return RuleEvaluation(verdict=RuleVerdict.DENY, rules_loaded=0)
+        binding = _binding_label(
+            agent_id=agent_id, credential_id=credential_id, rule_set_id=rule_set_id
+        )
+        if graphql is not None:
+            return _evaluate_graphql(
+                rules,
+                graphql,
+                method=method,
+                path=path,
+                operation_id=operation_id,
+                binding=binding,
+            )
         idx = first_matching_rule(
             rules,
             method=method,
             path=path,
             operation_id=operation_id,
-            binding=_binding_label(
-                agent_id=agent_id, credential_id=credential_id, rule_set_id=rule_set_id
-            ),
+            binding=binding,
         )
         divergence = (
             base_path_divergence(
@@ -252,17 +335,7 @@ class AgentRuleEvaluator:
         )
         async with self._control_db.session() as session:
             rows = (await session.execute(query, params)).all()
-        # Row columns: id(0), effect(1), methods(2), path(3), operations(4), match_mode(5)
-        return [
-            PermissionRule(
-                rule_id=str(row[0]) if row[0] is not None else None,
-                effect=row[1],
-                methods=normalize_methods(_coerce_json_list(row[2])),
-                path=_compile_path(row[3], str(row[5] or "regex"), binding=binding_label),
-                operations=(tuple(ops) if (ops := _coerce_json_list(row[4])) is not None else None),
-            )
-            for row in rows
-        ]
+        return [_compile_row(row, binding=binding_label) for row in rows]
 
     def _store(self, key: str, entry: _CacheEntry) -> None:
         self._cache[key] = entry

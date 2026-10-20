@@ -43,6 +43,7 @@ from jentic_one.broker.core.exceptions import (
     ApprovalHoldUnavailableError,
     ApprovalPendingLimitError,
     ExecutionHeldError,
+    GraphQLRequestRejectedError,
     IdempotencyConflictError,
     IdempotencyInProgressError,
     OperationNotFoundError,
@@ -50,6 +51,7 @@ from jentic_one.broker.core.exceptions import (
     UpgradeNotSupportedError,
     UpstreamUrlNotAllowedError,
     approval_pending_limit_directive,
+    graphql_request_rejected_directive,
     switch_toolkit_directive,
 )
 from jentic_one.broker.core.execution import mint_execution_id
@@ -140,6 +142,12 @@ from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.models.jobs import JobKind
 from jentic_one.shared.permissions.evaluation import rule_request_path
+from jentic_one.shared.permissions.github_graphql import is_github_graphql_url
+from jentic_one.shared.permissions.graphql_document import (
+    GraphQLCall,
+    GraphQLRejection,
+    inspect_graphql_request,
+)
 from jentic_one.shared.tracing import (
     JENTIC_TRACESTATE_KEY,
     current_trace_id,
@@ -457,13 +465,53 @@ async def _read_capped_body(request: Request, max_bytes: int) -> bytes:
     return b"".join(chunks)
 
 
+@dataclass(frozen=True, slots=True)
+class _BufferedBody:
+    """A request body already read (under the cap) before authorization."""
+
+    body: bytes | None
+
+
 async def _read_request_body(request: Request, method: str, ctx: Context) -> bytes | None:
-    """Capped body read for body-bearing methods (None otherwise)."""
+    """Capped body read for body-bearing methods (None otherwise).
+
+    Returns the body buffered earlier for the same request (a GraphQL call is
+    read before authorization, see :func:`_inspect_graphql`), so it is read
+    from the client once.
+    """
+    buffered = getattr(request.state, "jentic_buffered_body", None)
+    if isinstance(buffered, _BufferedBody):
+        return buffered.body
     if method not in _BODY_METHODS:
         return None
     cfg = ctx.config.broker.resilience.upstream
     max_bytes = _resolve_body_cap(request.headers.get("content-type"), cfg)
     return await _read_capped_body(request, max_bytes)
+
+
+async def _inspect_graphql(
+    request: Request, method: str, upstream_url: str, ctx: Context
+) -> GraphQLCall | None:
+    """Inspect a call to the GitHub GraphQL endpoint; ``None`` for any other call.
+
+    The body is read under the usual cap and kept for the rest of the request
+    (:func:`_read_request_body`). A request whose operation cannot be
+    inspected is refused (``graphql_request_rejected``, 400) before discovery.
+    """
+    if not is_github_graphql_url(upstream_url):
+        return None
+    body = await _read_request_body(request, method, ctx)
+    request.state.jentic_buffered_body = _BufferedBody(body)
+    inspected = inspect_graphql_request(
+        method=method, query_string=urlparse(upstream_url).query, body=body
+    )
+    if isinstance(inspected, GraphQLRejection):
+        raise GraphQLRequestRejectedError(
+            f"GraphQL request rejected: {inspected.reason}.",
+            instance=request.url.path,
+            directive=graphql_request_rejected_directive(),
+        )
+    return inspected
 
 
 def _should_async(prefer: str | None) -> bool:
@@ -754,6 +802,8 @@ async def _handle(
     except ValueError as exc:
         raise UpstreamUrlNotAllowedError(detail=str(exc), type="invalid_upstream_url") from exc
 
+    graphql = await _inspect_graphql(request, method, upstream_url, ctx)
+
     resolver: RegistryResolverProtocol = request.app.state.broker_registry_resolver
 
     # Parse the multi-valued Jentic-Revision header at the edge. A malformed
@@ -845,6 +895,7 @@ async def _handle(
         server_variables_unresolved=ctx_req.server_variables_unresolved,
         trace_id=ctx_req.trace_id,
         operation_path=resolved.operation.path,
+        graphql=graphql,
     )
     selected_credential = authorization.selected_credential
     allowed_credential_ids = authorization.allowed_credential_ids

@@ -277,6 +277,7 @@ class ExecutionHandler:
                     server_variables=server_variables,
                     server_variables_unresolved=server_variables_unresolved,
                     job_id=job_id,
+                    body=body,
                 )
             )
             # One live read of the actor's rows (liveness + the execute

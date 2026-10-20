@@ -13,7 +13,8 @@ before any credential is resolved:
    ``user_permission_grants``); both come from one read;
 3. the actor's bindings for the API are re-derived, so a removed or
    suspended binding (or a disabled credential) no longer resolves;
-4. the binding's permission rules are re-evaluated for the operation.
+4. the binding's permission rules are re-evaluated for the operation (for a
+   GitHub GraphQL call, on the top-level fields of the body to be sent).
 
 A denial becomes a :class:`QueuedExecutionVerdict` carrying the problem body
 the sync route would have returned; the worker records it and never injects.
@@ -22,9 +23,16 @@ Implements the shared ``ExecutionAuthorizer`` protocol.
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 import structlog
 
-from jentic_one.broker.core.exceptions import BrokerError, OperationNotFoundError
+from jentic_one.broker.core.exceptions import (
+    BrokerError,
+    GraphQLRequestRejectedError,
+    OperationNotFoundError,
+    graphql_request_rejected_directive,
+)
 from jentic_one.broker.core.problem import broker_error_problem
 from jentic_one.broker.repos.actor_status import ActorStatusResolver
 from jentic_one.broker.services.execution.authorization import authorize_execution
@@ -45,9 +53,36 @@ from jentic_one.shared.jobs.queued_denials import (
 )
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.permissions.evaluation import rule_request_path
+from jentic_one.shared.permissions.github_graphql import is_github_graphql_url
+from jentic_one.shared.permissions.graphql_document import (
+    GraphQLCall,
+    GraphQLRejection,
+    inspect_graphql_request,
+)
 from jentic_one.shared.schemas import APIReference
 
 logger = structlog.get_logger(__name__)
+
+
+def _inspect_graphql(request: QueuedExecutionRequest, instance: str) -> GraphQLCall | None:
+    """The inspected operation of a queued GitHub GraphQL call; ``None`` for any other call.
+
+    Raises ``GraphQLRequestRejectedError`` when the body cannot be inspected.
+    """
+    if not is_github_graphql_url(request.upstream_url):
+        return None
+    inspected = inspect_graphql_request(
+        method=request.method,
+        query_string=urlparse(request.upstream_url).query,
+        body=request.body,
+    )
+    if isinstance(inspected, GraphQLRejection):
+        raise GraphQLRequestRejectedError(
+            f"GraphQL request rejected: {inspected.reason}.",
+            instance=instance,
+            directive=graphql_request_rejected_directive(),
+        )
+    return inspected
 
 
 class QueuedExecutionAuthorizer:
@@ -121,6 +156,7 @@ class QueuedExecutionAuthorizer:
             active=True,
         )
         try:
+            graphql = _inspect_graphql(request, instance)
             authorization = await authorize_execution(
                 ctx=self._ctx,
                 identity=identity,
@@ -145,6 +181,7 @@ class QueuedExecutionAuthorizer:
                 server_variables_unresolved=request.server_variables_unresolved,
                 trace_id=request.trace_id,
                 operation_path=request.operation_path,
+                graphql=graphql,
             )
         except BrokerError as exc:
             logger.info(

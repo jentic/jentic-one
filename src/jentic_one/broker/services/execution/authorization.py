@@ -25,12 +25,17 @@ import structlog
 from jentic_one.broker.core.denial import DenialReason
 from jentic_one.broker.core.exceptions import (
     ActionDeniedError,
+    AgentDirective,
     BrokerError,
     CredentialBindingSuspendedError,
     CredentialIdentityMismatchError,
+    GraphQLRequestRejectedError,
     credential_binding_suspended_directive,
     direct_action_denied_directive,
     direct_credential_identity_mismatch_directive,
+    graphql_field_denied_directive,
+    graphql_field_hard_denied_directive,
+    graphql_request_rejected_directive,
     no_credential_binding_directive,
     suggested_permission_rules,
 )
@@ -45,6 +50,8 @@ from jentic_one.shared.broker.protocols import (
     ConnectableRegistrationSourceProtocol,
     CredentialDerivation,
     CredentialDeriverProtocol,
+    GraphQLFieldEvaluation,
+    RuleEvaluation,
     RuleVerdict,
 )
 from jentic_one.shared.context import Context
@@ -52,6 +59,12 @@ from jentic_one.shared.events import emit_event_best_effort, valid_trace_id_or_n
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.permissions.evaluation import PathDivergence
+from jentic_one.shared.permissions.github_graphql import (
+    HELD_MUTATIONS,
+    hard_deny_reason,
+    is_github_graphql_url,
+)
+from jentic_one.shared.permissions.graphql_document import GraphQLCall
 from jentic_one.shared.schemas import APIReference
 from jentic_one.shared.url_path import has_ambiguous_traversal, normalize_path
 
@@ -375,13 +388,17 @@ async def _deny(
     operation_id: str | None = None,
     operation_method: str | None = None,
     operation_path: str | None = None,
+    graphql_field: str | None = None,
+    problem_type: str = "action_denied",
+    directive: AgentDirective | None = None,
 ) -> NoReturn:
     """Count, record (``PBAC_DENIED``) and raise a rule-level ``action_denied``.
 
     The event names what was denied by resolved identity only: the API and the
-    operation's id, method and spec path *template* (``/repos/{owner}/{repo}``).
-    The concrete request path and query are never recorded — they can carry
-    identifiers or secrets.
+    operation's id, method and spec path *template* (``/repos/{owner}/{repo}``),
+    plus, for a GraphQL request, the deciding top-level field name (a schema
+    name, never an argument). The concrete request path and query are never
+    recorded — they can carry identifiers or secrets.
     """
     _authz_denied.add(
         1,
@@ -410,16 +427,70 @@ async def _deny(
                     "operation_id": operation_id,
                     "operation_method": operation_method,
                     "operation_path": operation_path,
+                    **({"graphql_field": graphql_field} if graphql_field is not None else {}),
                 },
             )
     except Exception:
         logger.warning("telemetry_emit_failed", event_type=EventType.PBAC_DENIED, exc_info=True)
     raise ActionDeniedError(
         detail=detail,
-        type="action_denied",
+        type=problem_type,
         instance=instance,
-        directive=direct_action_denied_directive(),
+        directive=directive or direct_action_denied_directive(),
     )
+
+
+def _hold_ref_mutations(evaluation: RuleEvaluation) -> RuleEvaluation:
+    """Hold, instead of allowing, a GraphQL ref mutation a rule allows.
+
+    Rules cannot yet scope :data:`HELD_MUTATIONS` to a repository or branch,
+    so an ``allow`` verdict on one becomes ``require-approval``; a ``deny``
+    stays a deny. The request's verdict is recombined from the fields'.
+    """
+    if not evaluation.graphql_fields:
+        return evaluation
+    fields = tuple(
+        GraphQLFieldEvaluation(
+            field=f.field, verdict=RuleVerdict.REQUIRE_APPROVAL, matched_rule_id=f.matched_rule_id
+        )
+        if f.verdict == RuleVerdict.ALLOW and f.field in HELD_MUTATIONS
+        else f
+        for f in evaluation.graphql_fields
+    )
+    severity = {RuleVerdict.ALLOW: 0, RuleVerdict.REQUIRE_APPROVAL: 1, RuleVerdict.DENY: 2}
+    deciding = fields[0]
+    for f in fields[1:]:
+        if severity[f.verdict] > severity[deciding.verdict]:
+            deciding = f
+    return RuleEvaluation(
+        verdict=deciding.verdict,
+        rules_loaded=evaluation.rules_loaded,
+        matched_rule_id=deciding.matched_rule_id,
+        divergence=evaluation.divergence,
+        graphql_fields=fields,
+    )
+
+
+def _deciding_field(evaluation: RuleEvaluation) -> GraphQLFieldEvaluation | None:
+    """The first GraphQL field whose verdict is the request's, if any."""
+    return next((f for f in evaluation.graphql_fields if f.verdict == evaluation.verdict), None)
+
+
+def require_graphql_inspection(
+    upstream_url: str | None, graphql: GraphQLCall | None, *, instance: str
+) -> None:
+    """Refuse a GitHub GraphQL call that reached authorization without being inspected.
+
+    Every caller inspects the body of a call to the GitHub GraphQL endpoint
+    first; one that did not cannot have its top-level-field rules evaluated,
+    so it is refused rather than judged on its method and path alone.
+    """
+    if graphql is None and upstream_url is not None and is_github_graphql_url(upstream_url):
+        raise GraphQLRequestRejectedError(
+            "GraphQL request rejected: the request body was not inspected.",
+            instance=instance,
+            directive=graphql_request_rejected_directive(),
+        )
 
 
 async def authorize_execution(
@@ -440,6 +511,7 @@ async def authorize_execution(
     upstream_url: str | None = None,
     trace_id: str | None = None,
     operation_path: str | None = None,
+    graphql: GraphQLCall | None = None,
 ) -> ExecutionAuthorization:
     """Authorize one execution for ``identity`` against the discovered ``api``.
 
@@ -461,11 +533,19 @@ async def authorize_execution(
     ``operation_path`` is the operation's spec path template (never the concrete
     ``path``), recorded on the denial event.
 
+    ``graphql`` is the inspected operation of a call to the GitHub GraphQL
+    endpoint, required for such a call (``graphql_request_rejected`` without
+    it). Its top-level fields are checked against the hard-deny list (403
+    ``graphql_field_denied`` whatever the rules say), the rules are evaluated
+    per field, and a ref mutation a rule allows is held
+    (``shared.permissions.github_graphql``).
+
     Raises a :class:`BrokerError` (``ActionDeniedError`` /
     ``CredentialIdentityMismatchError`` → 403, ``AmbiguousMatchError`` → 409,
     and the credential-resolution taxonomy from ``CredentialService.select``)
     when the execution is not allowed.
     """
+    require_graphql_inspection(upstream_url, graphql, instance=instance)
     # Derive candidates (0 → 403 with the right directive), then select the
     # single credential (name header → most-specific-wins →
     # Jentic-Credential-Id tie-breaker; genuine tie → 409), then enforce the
@@ -519,18 +599,54 @@ async def authorize_execution(
                 "it. Send the path without encoded or backslash traversal."
             ),
         )
+    if graphql is not None and graphql.operation_type == "mutation":
+        for field in graphql.top_level_fields:
+            why = hard_deny_reason(field)
+            if why is None:
+                continue
+            await _deny(
+                ctx,
+                identity=identity,
+                api=api,
+                instance=instance,
+                trace_id=trace_id,
+                operation_id=operation_id,
+                operation_method=method,
+                operation_path=operation_path,
+                graphql_field=field,
+                reason=DenialReason.GRAPHQL_FIELD_HARD_DENIED,
+                summary="GraphQL mutation denied: no rule can allow it",
+                detail=(
+                    f"The GraphQL mutation field '{field}' is never allowed through Jentic: {why}."
+                ),
+                problem_type="graphql_field_denied",
+                directive=graphql_field_hard_denied_directive(field=field),
+            )
     upstream_path = (
         normalize_path(raw_upstream_path or "/") if raw_upstream_path is not None else None
     )
-    evaluation = await agent_rule_evaluator.evaluate(
-        agent_id=identity.sub,
-        credential_id=selected_credential.credential_id,
-        rule_set_id=rule_set_id,
-        method=method,
-        path=path,
-        operation_id=operation_id,
-        upstream_path=upstream_path if upstream_path != path else None,
-    )
+    if graphql is not None:
+        evaluation = _hold_ref_mutations(
+            await agent_rule_evaluator.evaluate(
+                agent_id=identity.sub,
+                credential_id=selected_credential.credential_id,
+                rule_set_id=rule_set_id,
+                method=method,
+                path=path,
+                operation_id=operation_id,
+                graphql=graphql,
+            )
+        )
+    else:
+        evaluation = await agent_rule_evaluator.evaluate(
+            agent_id=identity.sub,
+            credential_id=selected_credential.credential_id,
+            rule_set_id=rule_set_id,
+            method=method,
+            path=path,
+            operation_id=operation_id,
+            upstream_path=upstream_path if upstream_path != path else None,
+        )
     if evaluation.divergence is not None:
         _report_base_path_divergence(
             evaluation.divergence,
@@ -557,6 +673,31 @@ async def authorize_execution(
         # request.
         no_rules = evaluation.rules_loaded == 0
         reason = DenialReason.NO_RULES_LOADED if no_rules else DenialReason.NO_RULE_MATCHED
+        denied_field = _deciding_field(evaluation)
+        if graphql is not None and denied_field is not None and not no_rules:
+            await _deny(
+                ctx,
+                identity=identity,
+                api=api,
+                instance=instance,
+                trace_id=trace_id,
+                operation_id=operation_id,
+                operation_method=method,
+                operation_path=operation_path,
+                graphql_field=denied_field.field,
+                reason=reason,
+                summary=(
+                    "GraphQL operation denied by credential-binding permission rules "
+                    f"({graphql.operation_type} field '{denied_field.field}')"
+                ),
+                detail=(
+                    f"The GraphQL {graphql.operation_type} field '{denied_field.field}' is "
+                    "denied by a credential-binding permission rule."
+                ),
+                directive=graphql_field_denied_directive(
+                    operation_type=graphql.operation_type, field=denied_field.field
+                ),
+            )
         await _deny(
             ctx,
             identity=identity,

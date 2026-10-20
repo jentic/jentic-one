@@ -231,6 +231,17 @@ class ActionDeniedError(BrokerError):
     """The request was denied by a permission rule on the caller's binding (403)."""
 
 
+class GraphQLRequestRejectedError(BrokerError):
+    """A request to a GraphQL endpoint whose operation cannot be inspected (400).
+
+    Rules on a GraphQL endpoint match the document's top-level fields, so a
+    request they cannot be evaluated on (a batch, a persisted query, more than
+    one operation, an unparsable document, …) is refused before any rule runs.
+    """
+
+    default_type = "graphql_request_rejected"
+
+
 class ApprovalPendingLimitError(BrokerError):
     """The agent already holds the configured maximum of pending approvals (403)."""
 
@@ -754,6 +765,46 @@ def direct_action_denied_directive() -> AgentDirective:
             "forbid this specific call — ask your operator to adjust the "
             "binding's permission rules. This is not something you can grant "
             "yourself."
+        ),
+    )
+
+
+def graphql_request_rejected_directive() -> AgentDirective:
+    """Directive for the ``graphql_request_rejected`` 400: the request shape must change."""
+    return AgentDirective(
+        strategy="fatal",
+        parameters={},
+        human_readable_instruction=(
+            "Send one GraphQL query or mutation per request, as a POST with a JSON object "
+            "body holding the full document in 'query' (and optionally 'variables' and "
+            "'operationName'). Batches, persisted queries, subscriptions and documents "
+            "with several operations are refused."
+        ),
+    )
+
+
+def graphql_field_hard_denied_directive(*, field: str) -> AgentDirective:
+    """Directive for a GraphQL top-level field that no rule can allow (403)."""
+    return AgentDirective(
+        strategy="fatal",
+        parameters={"field": field},
+        human_readable_instruction=(
+            f"The '{field}' mutation is never allowed through Jentic, whatever the "
+            "binding's rules say. Do not retry it or look for another way to make the "
+            "same change; tell the user it needs to be done by a person outside Jentic."
+        ),
+    )
+
+
+def graphql_field_denied_directive(*, operation_type: str, field: str) -> AgentDirective:
+    """Directive for a GraphQL top-level field the binding's rules deny (403)."""
+    return AgentDirective(
+        strategy="prompt_human",
+        parameters={"operation_type": operation_type, "field": field},
+        human_readable_instruction=(
+            f"The GraphQL {operation_type} field '{field}' is denied by your credential "
+            "binding's permission rules. Ask your operator to allow it if the task needs "
+            "it; this is not something you can grant yourself."
         ),
     )
 

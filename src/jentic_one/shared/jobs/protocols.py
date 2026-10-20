@@ -120,6 +120,10 @@ class QueuedExecutionRequest:
     # the request and names what was denied without the concrete request path.
     trace_id: str | None = None
     operation_path: str | None = None
+    # The request body to be sent, so a call whose rules depend on it (the
+    # GitHub GraphQL endpoint's top-level-field rules) is judged on the same
+    # document at run time as at enqueue time.
+    body: bytes | None = None
 
 
 @dataclass(frozen=True, slots=True)

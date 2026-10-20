@@ -43,3 +43,8 @@ class DenialReason(StrEnum):
     """The request path spells a dot segment with escapes or backslashes
     (``%2F..%2F``, ``%2e%2e``, ``..\\``) — its meaning depends on the upstream
     stack, so rules cannot be enforced on it (403)."""
+
+    GRAPHQL_FIELD_HARD_DENIED = "graphql_field_hard_denied"
+    """A GraphQL request selects a top-level field no rule can allow (it
+    creates lasting access or credentials, or changes repository
+    protections) (403)."""

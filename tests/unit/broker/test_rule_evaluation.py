@@ -9,11 +9,17 @@ from __future__ import annotations
 
 import structlog.testing
 
-from jentic_one.broker.repos.agent_rule_evaluator import _coerce_json_list, _compile_path
+from jentic_one.broker.repos.agent_rule_evaluator import _coerce_json_list, _compile_row
 from jentic_one.shared.permissions.evaluation import PermissionRule, evaluate_rules
 from jentic_one.shared.permissions.evaluation import normalize_methods as _normalize_methods
 from jentic_one.shared.permissions.evaluation import rule_matches as _rule_matches
-from jentic_one.shared.permissions.matching import compile_matcher
+from jentic_one.shared.permissions.matching import PathMatcher, compile_matcher
+
+
+def _compile_path(path: str | None, mode: str, *, binding: str) -> PathMatcher | None:
+    """The path matcher a stored ``(path, match_mode)`` row compiles to."""
+    return _compile_row(("apr_1", "allow", None, path, None, mode), binding=binding).path
+
 
 # ---------------------------------------------------------------------------
 # Rule matching

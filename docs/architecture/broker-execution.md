@@ -294,6 +294,35 @@ the vendor's `public_address` when set, otherwise the broker URL
 Cloudflare credential variables removed), renews the token while `cf` runs,
 revokes it on exit and passes `cf`'s exit code through.
 
+### GraphQL top-level-field rules
+
+Every GitHub GraphQL operation travels as one `POST https://api.github.com/graphql`,
+so a rule on that path alone would allow every mutation. A call to that
+endpoint, through the GitHub facade or the forward proxy, is inspected before
+discovery
+([`shared/permissions/graphql_document.py`](../../src/jentic_one/shared/permissions/graphql_document.py)):
+the body is read once, under the usual body cap, and parsed by `graphql-core`
+into its operation type and top-level **field names** (aliases resolved, root
+fragments and inline fragments expanded). A request that cannot be judged that
+way (not `POST`, a URL query, a batch, a persisted query, duplicate JSON keys,
+more than one operation, a subscription, an unparsable document, a root
+fragment on another type) is refused with 400 `graphql_request_rejected`.
+
+Rules then run once per top-level field and the most restrictive field
+verdict is the call's. A rule with `match_mode: graphql` carries a selector in
+`path` (`query`, `mutation`, `mutation:createPullRequest,addComment`) and
+matches only such a field
+([`shared/permissions/graphql_rules.py`](../../src/jentic_one/shared/permissions/graphql_rules.py));
+a reader that does not know the mode compiles the selector as a path pattern
+of an unknown mode, which never matches. On top of the rules
+([`shared/permissions/github_graphql.py`](../../src/jentic_one/shared/permissions/github_graphql.py)),
+mutations that create lasting access or credentials or change repository
+protections are always denied (403 `graphql_field_denied`, naming the field),
+and mutations that move Git refs are held for approval even when a rule
+allows them. The same module holds the GitHub GraphQL rule presets
+(`read_only`, `pr_write`, `pr_write_with_approval`). A queued or approved call
+is re-inspected on the worker from the body it will send.
+
 ## What gets recorded
 
 Executions land as append-only `ExecutionRecord` rows in the admin DB

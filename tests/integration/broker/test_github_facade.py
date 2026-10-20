@@ -16,7 +16,9 @@ locally; calls recorded under the token's trace id; and every refusal
 (unregistered path, a path outside the GitHub layout, rule deny, hold, wrong
 token kind or vendor) answered in GitHub's error shape with the pipeline's
 status. On any other host, or with the facade switched off, the facade
-routes do not engage.
+routes do not engage. GraphQL calls are judged on their top-level fields:
+the GitHub GraphQL presets, aliases and fragments, hard-denied and held
+mutations, and requests that cannot be inspected.
 """
 
 from __future__ import annotations
@@ -53,7 +55,9 @@ from jentic_one.auth.services.cli_invocation_service import CliInvocationService
 from jentic_one.auth.services.schemas.cli_invocations import CliInvocationMintPayload
 from jentic_one.auth.services.token_service import TokenService
 from jentic_one.broker.adapters.runners.http import HttpRunner
+from jentic_one.broker.core.setup import build_queued_execution_authorizer
 from jentic_one.broker.web.app import create_app as create_broker_app
+from jentic_one.broker.web.deps import get_http_runner
 from jentic_one.broker.web.routers import facades
 from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
 from jentic_one.control.core.schema.credentials import Credential
@@ -75,7 +79,10 @@ from jentic_one.shared.auth.permission_catalog import (
 from jentic_one.shared.config import CliFacadesConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.ids import generate_ksuid
+from jentic_one.shared.jobs.protocols import QueuedExecutionRequest
 from jentic_one.shared.models import ActorStatus, ActorType, StoredCredentialType
+from jentic_one.shared.models.events import EventType
+from jentic_one.shared.permissions.github_graphql import GITHUB_GRAPHQL_PRESETS
 from jentic_one.wiring import install_broker_registry_resolver
 
 pytestmark = pytest.mark.integration
@@ -707,3 +714,280 @@ async def test_switched_off_facade_does_not_engage(env: _Env) -> None:
 
     assert response.headers["content-type"] == "application/problem+json", response.text
     assert env.upstream.requests == []
+
+
+# ── GraphQL top-level-field rules ────────────────────────────────────────────
+
+
+async def _use_preset(env: _Env, preset: str) -> None:
+    """Replace the agent's rules with a GitHub GraphQL preset."""
+    async with env.ctx.control_db.session() as session:
+        await session.execute(delete(AgentPermissionRule))
+        for sequence, rule in enumerate(GITHUB_GRAPHQL_PRESETS[preset], start=1):
+            session.add(
+                AgentPermissionRule(
+                    agent_id=env.agent_id,
+                    credential_id=env.credential_id,
+                    effect=rule["effect"],
+                    path=rule["path"],
+                    match_mode=rule["match_mode"],
+                    comment=rule.get("_comment"),
+                    sequence=sequence,
+                )
+            )
+        await session.commit()
+
+
+async def _held(env: _Env) -> list[HeldExecution]:
+    async with env.ctx.admin_db.session() as session:
+        return list((await session.execute(select(HeldExecution))).scalars().all())
+
+
+_SNEAKY_FRAGMENT = (
+    "mutation { ...Wrapped } "
+    "fragment Wrapped on Mutation { ... on Mutation { createPullRequest: deleteRef("
+    'input: {refId: "x"}) { clientMutationId } } }'
+)
+
+
+async def test_read_only_preset_allows_a_query(env: _Env) -> None:
+    await _use_preset(env, "read_only")
+    _access, token, trace_id = await _mint(env)
+
+    response = await _call(
+        env,
+        "POST",
+        "/api/graphql",
+        token,
+        json={"query": "query Q { viewer { login } __typename }", "operationName": "Q"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert len(env.upstream.requests) == 1
+    assert len(await _records(env.ctx, trace_id)) == 1
+
+
+async def test_read_only_preset_denies_a_mutation_naming_the_field(env: _Env) -> None:
+    await _use_preset(env, "read_only")
+    _access, token, _trace_id = await _mint(env)
+
+    response = await _call(
+        env,
+        "POST",
+        "/api/graphql",
+        token,
+        json={"query": "mutation { addComment(input: {}) { clientMutationId } }"},
+    )
+
+    message = _github_error(response, 403)["message"]
+    assert "mutation field 'addComment'" in message
+    assert "operator" in message
+    assert env.upstream.requests == []
+
+
+async def test_pr_write_with_approval_holds_create_pull_request(env: _Env) -> None:
+    await _use_preset(env, "pr_write_with_approval")
+    _access, token, trace_id = await _mint(env)
+
+    response = await _call(
+        env,
+        "POST",
+        "/api/graphql",
+        token,
+        json={"query": "mutation { createPullRequest(input: {}) { pullRequest { url } } }"},
+    )
+
+    body = _github_error(response, 409)
+    (held,) = await _held(env)
+    assert held.trace_id == trace_id
+    assert held.id in body["message"]
+    assert env.upstream.requests == []
+
+
+async def test_approved_graphql_hold_passes_the_run_time_recheck_on_its_body(env: _Env) -> None:
+    """The worker re-inspects the held body: the approved mutation runs, another is refused."""
+    await _use_preset(env, "pr_write_with_approval")
+    _access, token, _trace_id = await _mint(env)
+    held_body = b'{"query": "mutation { createPullRequest(input: {}) { a } }"}'
+    response = await _call(
+        env,
+        "POST",
+        "/api/graphql",
+        token,
+        content=held_body,
+        headers={"Content-Type": "application/json"},
+    )
+    _github_error(response, 409)
+    (held,) = await _held(env)
+    async with env.ctx.admin_db.transaction() as session:
+        await session.execute(
+            update(HeldExecution).where(HeldExecution.id == held.id).values(state="approved")
+        )
+    authorizer = build_queued_execution_authorizer(env.ctx)
+
+    def _queued(body: bytes) -> QueuedExecutionRequest:
+        return QueuedExecutionRequest(
+            actor_id=env.agent_id,
+            actor_type="agent",
+            method="POST",
+            upstream_url="https://api.github.com/graphql",
+            api_vendor=_VENDOR,
+            api_name="graphql",
+            api_version=_VERSION,
+            operation_id="graphql",
+            relative_path="/graphql",
+            credential_id=env.credential_id,
+            job_id=held.job_id,
+            body=body,
+        )
+
+    approved = await authorizer.authorize(_queued(held_body))
+    swapped = await authorizer.authorize(
+        _queued(b'{"query": "mutation { deleteRef(input: {}) { a } }"}')
+    )
+
+    assert approved.allowed is True, approved.problem
+    assert swapped.allowed is False
+    assert swapped.problem is not None
+    assert "'deleteRef'" in str(swapped.problem["detail"])
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        'mutation { createPullRequest: deleteRef(input: {refId: "x"}) { clientMutationId } }',
+        _SNEAKY_FRAGMENT,
+        "mutation { createPullRequest(input: {}) { a } ...D } "
+        "fragment D on Mutation { deleteRef(input: {}) { a } }",
+    ],
+)
+async def test_aliased_or_fragment_wrapped_mutation_is_still_caught(env: _Env, query: str) -> None:
+    await _use_preset(env, "pr_write_with_approval")
+    _access, token, _trace_id = await _mint(env)
+
+    response = await _call(env, "POST", "/api/graphql", token, json={"query": query})
+
+    assert "'deleteRef'" in _github_error(response, 403)["message"]
+    assert await _held(env) == []
+    assert env.upstream.requests == []
+
+
+@pytest.mark.parametrize(
+    "field", ["createBranchProtectionRule", "updateRepositoryRuleset", "updateTeamsRepository"]
+)
+async def test_hard_denied_mutation_is_denied_despite_an_allow_all_rule(
+    env: _Env, field: str
+) -> None:
+    # The seeded rules allow every GET and POST.
+    _access, token, _trace_id = await _mint(env)
+
+    response = await _call(
+        env,
+        "POST",
+        "/api/graphql",
+        token,
+        json={"query": f"mutation {{ ok: addComment {{ a }} {field}(input: {{}}) {{ a }} }}"},
+    )
+
+    message = _github_error(response, 403)["message"]
+    assert f"'{field}'" in message
+    assert "never allowed" in message
+    assert env.upstream.requests == []
+    async with env.ctx.admin_db.session() as session:
+        (event,) = (
+            (await session.execute(select(Event).where(Event.type == EventType.PBAC_DENIED)))
+            .scalars()
+            .all()
+        )
+    assert event.data["reason"] == "graphql_field_hard_denied"
+    assert event.data["graphql_field"] == field
+
+
+async def test_ref_mutation_allowed_by_a_rule_is_held(env: _Env) -> None:
+    # The seeded rules allow every GET and POST.
+    _access, token, _trace_id = await _mint(env)
+
+    response = await _call(
+        env,
+        "POST",
+        "/api/graphql",
+        token,
+        json={"query": "mutation { createCommitOnBranch(input: {}) { commit { oid } } }"},
+    )
+
+    _github_error(response, 409)
+    assert len(await _held(env)) == 1
+    assert env.upstream.requests == []
+
+
+@pytest.mark.parametrize(
+    ("method", "kwargs", "expected"),
+    [
+        (
+            "POST",
+            {"json": [{"query": "{ viewer { login } }"}, {"query": "{ viewer { id } }"}]},
+            "batch",
+        ),
+        (
+            "POST",
+            {"json": {"extensions": {"persistedQuery": {"version": 1, "sha256Hash": "a"}}}},
+            "persisted",
+        ),
+        (
+            "POST",
+            {"json": {"query": "query A { viewer { login } } mutation B { addComment { a } }"}},
+            "2 operations",
+        ),
+        (
+            "POST",
+            {
+                "content": b'{"query": "{ viewer { login } }", "query": "mutation { a }"}',
+                "headers": {"Content-Type": "application/json"},
+            },
+            "duplicate key",
+        ),
+        ("POST", {"json": {"query": "subscription { e { id } }"}}, "subscription"),
+        ("POST", {"json": {"query": "mutation {"}}, "not a valid GraphQL document"),
+        ("GET", {"params": {"query": "{ viewer { login } }"}}, "GraphQL over GET"),
+    ],
+)
+async def test_uninspectable_graphql_request_is_rejected(
+    env: _Env, method: str, kwargs: dict[str, Any], expected: str
+) -> None:
+    _access, token, _trace_id = await _mint(env)
+
+    response = await _call(env, method, "/api/graphql", token, **kwargs)
+
+    message = _github_error(response, 400)["message"]
+    assert expected in message
+    assert "one GraphQL query or mutation per request" in message
+    assert env.upstream.requests == []
+
+
+async def test_forward_proxy_applies_the_same_graphql_rules(env: _Env) -> None:
+    """The GitHub GraphQL endpoint is inspected on the forward proxy too, not only the facade."""
+    access, _token, _trace_id = await _mint(env)
+    upstream_client = httpx.AsyncClient(transport=httpx.MockTransport(env.upstream.handle))
+    env.broker.dependency_overrides[get_http_runner] = lambda: HttpRunner(upstream_client)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=env.broker), base_url="http://broker.test"
+    ) as client:
+        response = await client.post(
+            "/api.github.com/graphql",
+            headers={"Authorization": f"Bearer {access}"},
+            json={"query": "mutation { deleteBranchProtectionRule(input: {}) { a } }"},
+        )
+        batch = await client.post(
+            "/api.github.com/graphql",
+            headers={"Authorization": f"Bearer {access}"},
+            json=[{"query": "{ viewer { login } }"}],
+        )
+
+    assert response.status_code == 403, response.text
+    assert response.headers["content-type"] == "application/problem+json"
+    assert response.json()["type"] == "graphql_field_denied"
+    assert batch.status_code == 400, batch.text
+    assert batch.json()["type"] == "graphql_request_rejected"
+    assert env.upstream.requests == []
+    await upstream_client.aclose()

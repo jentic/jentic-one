@@ -179,3 +179,28 @@ def test_unmapped_broker_error_maps_to_500() -> None:
         pass
 
     assert broker_error_problem(_UnmappedError("x"))["status"] == 500
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        None,
+        b'[{"query": "{ viewer { login } }"}]',
+        b'{"query": "query A { a } mutation B { deleteRef { a } }"}',
+    ],
+)
+async def test_queued_github_graphql_call_is_reinspected_and_refused(body: bytes | None) -> None:
+    """A queued GitHub GraphQL call whose body cannot be inspected is refused before derivation."""
+    deriver = _DenyingCredentialDeriver()
+    authorizer, _ = _authorizer(active=True, deriver=deriver)
+
+    verdict = await authorizer.authorize(
+        _request(method="POST", upstream_url="https://api.github.com/graphql", body=body)
+    )
+
+    assert deriver.calls == 0
+    assert verdict.allowed is False
+    assert verdict.problem is not None
+    assert verdict.problem["type"] == "graphql_request_rejected"
+    assert verdict.problem["status"] == 400

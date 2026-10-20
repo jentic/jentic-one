@@ -11,6 +11,7 @@ from jentic_one.shared.auth.cli_invocation import CliInvocationIdentity
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models.credentials import CredentialType
 from jentic_one.shared.permissions.evaluation import PathDivergence
+from jentic_one.shared.permissions.graphql_document import GraphQLCall
 from jentic_one.shared.schemas import APIReference, OperationInfo
 
 
@@ -135,6 +136,15 @@ class RuleVerdict(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class GraphQLFieldEvaluation:
+    """The rule verdict for one top-level field of a GraphQL request."""
+
+    field: str
+    verdict: RuleVerdict
+    matched_rule_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class RuleEvaluation:
     """Outcome of a permission-rule evaluation.
 
@@ -160,6 +170,10 @@ class RuleEvaluation:
     # against the full upstream path (server base included) changes the
     # verdict versus the spec-relative path (#1424 upgrade diagnostics).
     divergence: PathDivergence | None = None
+    # A GraphQL request's per-field results, in document order (empty for any
+    # other request). ``verdict`` and ``matched_rule_id`` are those of the most
+    # restrictive field.
+    graphql_fields: tuple[GraphQLFieldEvaluation, ...] = ()
 
     @property
     def allowed(self) -> bool:
@@ -275,6 +289,9 @@ class AgentRuleEvaluatorProtocol(Protocol):
     ``rule_set_id`` the shared ``permission_rule_set_rules`` list is evaluated
     *instead of* the inline rows. First-match-wins over the ordered list; an
     exhausted list defaults to deny (secure-by-default).
+
+    With ``graphql`` (an inspected GraphQL request) the list is evaluated once
+    per top-level field and the most restrictive field verdict decides.
     """
 
     async def evaluate(
@@ -287,6 +304,7 @@ class AgentRuleEvaluatorProtocol(Protocol):
         path: str,
         operation_id: str | None,
         upstream_path: str | None = None,
+        graphql: GraphQLCall | None = None,
     ) -> RuleEvaluation: ...
 
 
