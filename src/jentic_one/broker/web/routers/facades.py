@@ -25,8 +25,9 @@ vendor is enabled (:class:`GitHubFacadeRoute`), so on the broker's own host
 they never match and every request reaches the routes after them as before.
 On the facade host every other path answers GitHub's 404 and never reaches
 the catch-all, apart from the broker routes included ahead of the facades
-(probes, ``/metrics``, agent discovery, the path-mode facades). Successful responses keep the GitHub header
-allowlist, with ``Link`` and ``Location`` pointed back at the facade.
+(probes, ``/metrics``, agent discovery, the path-mode facades). Successful
+responses keep the GitHub header allowlist, with ``Link`` and ``Location``
+pointed back at the facade.
 """
 
 from __future__ import annotations
