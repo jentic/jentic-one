@@ -73,7 +73,14 @@ from jentic_one.registry.services.catalog.snapshot import (
 from jentic_one.registry.services.catalog.sources import digests
 from jentic_one.registry.services.catalog.sources.deps import spec_fetch_lane
 from jentic_one.registry.services.catalog.sources.protocol import NotModified
-from jentic_one.registry.services.catalog.sources.sync import CatalogSourceSync, is_due
+from jentic_one.registry.services.catalog.sources.sync import (
+    OUTCOME_BUSY,
+    OUTCOME_DISABLED,
+    OUTCOME_SKIPPED,
+    CatalogSourceSync,
+    SyncOutcome,
+    is_due,
+)
 from jentic_one.registry.services.catalog.spec_fetch import CatalogSpecFetcher
 from jentic_one.registry.services.errors import (
     CatalogEntryHasNoSpecError,

@@ -1,7 +1,7 @@
 [
   {
     "name": "spec_gone",
-    "api_id": "corp/stripe.com",
+    "entry_id": "corp/stripe.com",
     "status": 410,
     "type": "catalog_spec_gone",
     "detail": "The source of catalog entry 'corp/stripe.com' no longer has its spec.",
@@ -16,14 +16,14 @@
   },
   {
     "name": "card_only",
-    "api_id": "corp/stripe.com",
+    "entry_id": "corp/stripe.com",
     "status": 409,
     "type": "catalog_entry_has_no_spec",
-    "detail": "Catalog entry 'corp/stripe.com' has no spec to preview or import.",
+    "detail": "Catalog entry 'corp/stripe.com' has no spec to preview or import",
     "retry_after": null,
     "payload": {
       "error_code": "RESOLVE_FAILED",
-      "error": "Catalog entry 'corp/stripe.com' has no spec to preview or import.",
+      "error": "Catalog entry 'corp/stripe.com' has no spec to preview or import",
       "actionable_step": "Pick another search_catalog hit for this API; this entry has no importable spec.",
       "next_tool": "search_catalog",
       "retryable": false
@@ -31,7 +31,7 @@
   },
   {
     "name": "source_unavailable",
-    "api_id": "corp/stripe.com",
+    "entry_id": "corp/stripe.com",
     "status": 503,
     "type": "catalog_source_unavailable",
     "detail": "The catalog source of 'corp/stripe.com' is unavailable; retry later.",

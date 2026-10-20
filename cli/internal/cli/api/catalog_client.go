@@ -238,8 +238,8 @@ func (c *catalogClient) List(ctx context.Context, p catalogListParams) (*catalog
 	return toCatalogListResult(resp.JSON200), nil
 }
 
-func (c *catalogClient) Get(ctx context.Context, apiID string) (*catalogEntry, error) {
-	resp, err := c.sdk.GetCatalogEntryWithResponse(ctx, apiID, rawPathEditor)
+func (c *catalogClient) Get(ctx context.Context, entryID string) (*catalogEntry, error) {
+	resp, err := c.sdk.GetCatalogEntryWithResponse(ctx, entryID, rawPathEditor)
 	if err := withRetryAfter(apiErrorFor(resp, err), resp); err != nil {
 		return nil, err
 	}
@@ -266,7 +266,7 @@ func (c *catalogClient) Preview(ctx context.Context, entryID string, offset, lim
 	if tag != "" {
 		params.Tag = ptr(tag)
 	}
-	resp, err := c.sdk.PreviewCatalogOperationsWithResponse(ctx, apiID, params, rawPathEditor)
+	resp, err := c.sdk.PreviewCatalogOperationsWithResponse(ctx, entryID, params, rawPathEditor)
 	if err := withRetryAfter(apiErrorFor(resp, err), resp); err != nil {
 		return nil, err
 	}
@@ -276,8 +276,8 @@ func (c *catalogClient) Preview(ctx context.Context, entryID string, offset, lim
 	return toCatalogPreview(resp.JSON200), nil
 }
 
-func (c *catalogClient) Import(ctx context.Context, apiID string) (string, error) {
-	resp, err := c.sdk.ImportCatalogEntryWithResponse(ctx, apiID, nil, rawPathEditor)
+func (c *catalogClient) Import(ctx context.Context, entryID string) (string, error) {
+	resp, err := c.sdk.ImportCatalogEntryWithResponse(ctx, entryID, nil, rawPathEditor)
 	if err := withRetryAfter(apiErrorFor(resp, err), resp); err != nil {
 		return "", err
 	}

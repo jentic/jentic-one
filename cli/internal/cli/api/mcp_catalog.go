@@ -342,21 +342,45 @@ func (s *mcpServer) trackImportJob(ctx context.Context, client *catalogClient, j
 // "stripe.com". Any other failure returns nil.
 func importAPINotFound(entryID string, err error) error {
 	var he *HTTPError
+	if !errors.As(err, &he) || he.StatusCode != http.StatusNotFound {
+		return nil
+	}
+	hint := ""
+	if suggestion := didYouMean(he); suggestion != "" {
+		hint = " — did you mean " + pyRepr(suggestion) + "?"
+	}
+	return invalidParams(fmt.Errorf("catalog entry %s not found%s; call search_catalog with a keyword "+
+		"for the API you need and pass the entry_id of one of its hits verbatim", pyRepr(entryID), hint))
+}
+
+// pyRepr quotes s the way the HTTP mount's Python repr() does for a printable
+// id: single quotes, unless s contains one and no double quote, with "\"
+// doubled. Keeps the two surfaces' invalid_params text identical for every
+// printable entry_id (repr also escapes non-printable characters such as C1
+// controls, which this doesn't reproduce).
+func pyRepr(s string) string {
+	if strings.Contains(s, "'") && !strings.Contains(s, `"`) {
+		return `"` + strings.ReplaceAll(s, `\`, `\\`) + `"`
+	}
+	return "'" + strings.ReplaceAll(strings.ReplaceAll(s, `\`, `\\`), "'", `\'`) + "'"
+}
+
+// importAPIError maps the remaining import-specific failures (a 404 is
+// importAPINotFound's): a catalog source's 410 / 409 card-only / 503 get the
+// coded errors the HTTP mount uses (tools.py), and a control-plane 403 on THIS
+// route is a missing catalog:import permission, whose recovery is asking the
+// operator to grant the permission (skill wording), not get_started.
+func (s *mcpServer) importAPIError(ctx context.Context, entryID string, err error) *mcp.CallToolResult {
+	s.logger.Warn("import_api failed", "entry_id", entryID, "error", redactedErr(err))
+	var he *HTTPError
 	if errors.As(err, &he) {
 		switch he.StatusCode {
-		case http.StatusNotFound:
-			return s.softErrorNext(ctx, &ux.CodedError{
-				Code: ux.CodeResolveFailed,
-				Msg:  fmt.Sprintf("catalog entry %q not found", apiID),
-				Actionable: "Call search_catalog with a keyword for the API you need and use the " +
-					"api_id from one of its hits.",
-			}, "search_catalog")
 		case http.StatusGone:
 			// The entry is listed but its source has no spec for it: retrying
 			// the same entry cannot help (the HTTP mount's mapping, tools.py).
 			return s.softErrorExtra(ctx, &ux.CodedError{
 				Code: ux.CodeResolveFailed,
-				Msg:  valueOr(problemDetail([]byte(he.Body)), fmt.Sprintf("The source of catalog entry '%s' no longer has its spec.", apiID)),
+				Msg:  valueOr(problemDetail([]byte(he.Body)), fmt.Sprintf("The source of catalog entry '%s' no longer has its spec.", entryID)),
 				Actionable: "Pick another search_catalog hit for this API; this entry has no " +
 					"importable spec.",
 			}, "search_catalog", map[string]any{"retryable": false})
@@ -365,7 +389,7 @@ func importAPINotFound(entryID string, err error) error {
 			if catalogProblemType(he) == "catalog_entry_has_no_spec" {
 				return s.softErrorExtra(ctx, &ux.CodedError{
 					Code: ux.CodeResolveFailed,
-					Msg:  valueOr(problemDetail([]byte(he.Body)), fmt.Sprintf("Catalog entry '%s' has no spec to preview or import.", apiID)),
+					Msg:  valueOr(problemDetail([]byte(he.Body)), fmt.Sprintf("Catalog entry '%s' has no spec to preview or import", entryID)),
 					Actionable: "Pick another search_catalog hit for this API; this entry has no " +
 						"importable spec.",
 				}, "search_catalog", map[string]any{"retryable": false})
@@ -373,7 +397,7 @@ func importAPINotFound(entryID string, err error) error {
 		case http.StatusServiceUnavailable:
 			if catalogProblemType(he) == "catalog_source_unavailable" {
 				wait := retryAfterSeconds(he.RetryAfter)
-				msg := valueOr(problemDetail([]byte(he.Body)), fmt.Sprintf("The catalog source of '%s' is unavailable; retry later.", apiID))
+				msg := valueOr(problemDetail([]byte(he.Body)), fmt.Sprintf("The catalog source of '%s' is unavailable; retry later.", entryID))
 				return s.softErrorExtra(ctx, &ux.CodedError{
 					Code: ux.CodeTransportError,
 					Msg:  fmt.Sprintf("%s Retry in %d seconds.", msg, wait),
@@ -419,7 +443,11 @@ func catalogProblemType(he *HTTPError) string {
 	return v
 }
 
-// validateAPIID syntactically guards the {api_id:path} route: the api_id is
+// maxEntryIDLength mirrors the server's entry_id width: a longer id can't name
+// an entry, so it is rejected before the wire like the other malformed shapes.
+const maxEntryIDLength = 320
+
+// checkEntryID syntactically guards the {entry_id:path} route: the entry_id is
 // spliced into the request path VERBATIM (catalog_client.go's rawPathEditor —
 // deliberately unescaped so the "/" between source and id stays literal),
 // which means a traversal-shaped value ("../access-requests", a leading "/",

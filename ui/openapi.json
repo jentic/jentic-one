@@ -33478,11 +33478,11 @@
             "content": {
               "application/problem+json": {
                 "example": {
-                  "detail": "The request conflicts with the current state of the resource.",
-                  "instance": "/example/path",
+                  "detail": "Catalog entry 'public/slack.com' has no spec to preview or import",
+                  "instance": "/catalog/public/slack.com/operations",
                   "status": 409,
                   "title": "Conflict",
-                  "type": "conflict"
+                  "type": "catalog_entry_has_no_spec"
                 },
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
@@ -33702,11 +33702,11 @@
             "content": {
               "application/problem+json": {
                 "example": {
-                  "detail": "The request conflicts with the current state of the resource.",
-                  "instance": "/example/path",
+                  "detail": "Catalog entry 'public/slack.com' has no spec to preview or import",
+                  "instance": "/catalog/public/slack.com:import",
                   "status": 409,
                   "title": "Conflict",
-                  "type": "conflict"
+                  "type": "catalog_entry_has_no_spec"
                 },
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"

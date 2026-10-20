@@ -828,18 +828,33 @@ async def test_catalog_source_errors_match_the_shared_fixture(
     the two surfaces cannot drift.
     """
     if case["status"] == 410:
-        _FakeCatalogService.import_error = CatalogSpecGoneError(case["api_id"])
+        _FakeCatalogService.import_error = CatalogSpecGoneError(case["entry_id"])
     elif case["status"] == 409:
-        _FakeCatalogService.import_error = CatalogEntryHasNoSpecError(case["api_id"])
+        _FakeCatalogService.import_error = CatalogEntryHasNoSpecError(case["entry_id"])
     else:
         _FakeCatalogService.import_error = CatalogSourceUnavailableError(
-            case["api_id"], retry_after_s=case["retry_after"]
+            case["entry_id"], retry_after_s=case["retry_after"]
         )
     env = _env(["catalog:import", "jobs:read"])
-    result = await dispatch_tool_call(env, "import_api", {"api_id": case["api_id"]})
+    result = await dispatch_tool_call(env, "import_api", {"entry_id": case["entry_id"]})
     assert result.is_error
     payload = _payload(result)
     assert str(_FakeCatalogService.import_error) == case["detail"]
     payload.pop("schema_version", None)
     payload.pop("instance", None)
     assert payload == case["payload"]
+
+
+@pytest.mark.parametrize("suggestion", ["../access-requests", "public//x", "public/a\nb", "  "])
+async def test_malformed_did_you_mean_is_dropped(services: None, suggestion: str) -> None:
+    """A suggestion that couldn't name an entry is never relayed into a retry
+    (Go: ``didYouMean`` drops what ``checkEntryID`` rejects)."""
+    _FakeCatalogService.import_error = CatalogEntryNotFoundError(
+        "stripe.com", did_you_mean=suggestion
+    )
+    env = _env(["catalog:import", "jobs:read"])
+    with pytest.raises(MCPError) as err:
+        await dispatch_tool_call(env, "import_api", {"entry_id": "stripe.com"})
+    assert err.value.error.code == mcp_types.INVALID_PARAMS
+    assert "did you mean" not in str(err.value)
+    assert "search_catalog" in str(err.value)
