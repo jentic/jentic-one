@@ -1298,6 +1298,35 @@
           ],
           "title": "Exporter",
           "type": "string"
+        },
+        "latency_buckets_ms": {
+          "default": [
+            1.0,
+            2.0,
+            5.0,
+            10.0,
+            15.0,
+            20.0,
+            25.0,
+            50.0,
+            100.0,
+            250.0,
+            500.0,
+            1000.0,
+            2500.0,
+            5000.0,
+            10000.0,
+            30000.0
+          ],
+          "description": "Explicit histogram bucket boundaries (milliseconds, strictly increasing, all > 0) for the request-latency histograms listed in docs/operations/monitoring.md; seconds-unit histograms get the list divided by 1000. Must be identical on every process whose series are aggregated together. As an env var, a comma-separated list.",
+          "items": {
+            "exclusiveMinimum": 0,
+            "type": "number"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "title": "Latency Buckets Ms",
+          "type": "array"
         }
       },
       "title": "MetricsConfig",

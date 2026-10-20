@@ -274,7 +274,7 @@ async def run_execution(
             started_at=started_at,
             status=status,
             http_status=result.status_code,
-            duration_ms=result.duration_ms,
+            duration_ms=int(result.duration_ms),
             error=error_msg,
             actor_id=actor_id,
             actor_type=actor_type,
@@ -321,7 +321,7 @@ async def persist_streaming_execution(
     started_at: datetime,
     status: ExecutionStatus,
     http_status: int | None,
-    duration_ms: int,
+    duration_ms: float,
     error: str | None,
     ctx_req: ExecuteRequestContext,
     actor_id: str,
@@ -333,17 +333,19 @@ async def persist_streaming_execution(
 
     Called from the background task after the streaming response body completes
     (or terminates with an error). Shares metrics instrumentation with the
-    buffered path for observability parity.
+    buffered path for observability parity. ``duration_ms`` is fractional; the
+    histogram records it as-is and the persisted record truncates it to ``int``.
     """
     operation_id = ctx_req.operation_id
     _executions_total.add(1, {"operation": operation_id or "", "status": status})
     _execution_duration.record(duration_ms, {"operation": operation_id or ""})
+    persisted_ms = int(duration_ms)
 
     logger.info(
         "execution_recorded",
         execution_id=execution_id,
         status=status,
-        duration_ms=duration_ms,
+        duration_ms=persisted_ms,
         stream=True,
     )
 
@@ -354,7 +356,7 @@ async def persist_streaming_execution(
         trace_id=ctx_req.trace_id,
         started_at=started_at,
         status=status,
-        duration_ms=duration_ms,
+        duration_ms=persisted_ms,
         operation=ctx_req.operation,
         api_vendor=ctx_req.api_vendor,
         api_name=ctx_req.api_name,

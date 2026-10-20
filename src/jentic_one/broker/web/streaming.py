@@ -115,7 +115,7 @@ async def guarded_body(
         raise
     finally:
         if outcome is not None:
-            outcome.duration_ms = int((time.perf_counter() - outcome.started_at_perf) * 1000)
+            outcome.duration_ms = (time.perf_counter() - outcome.started_at_perf) * 1000
         await stack.aclose()
 
 

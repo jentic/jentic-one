@@ -64,7 +64,9 @@ class RunnerResult:
     body: bytes
     headers: dict[str, str]
     content_type: str | None
-    duration_ms: int
+    #: Upstream round-trip in fractional milliseconds, so the latency histogram
+    #: resolves sub-millisecond buckets; persisted records truncate to ``int``.
+    duration_ms: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,7 +113,8 @@ class StreamingOutcome:
     execution_id: str
     http_status: int
     started_at_perf: float = field(default_factory=time.perf_counter)
-    duration_ms: int = 0
+    #: Fractional milliseconds (see :attr:`RunnerResult.duration_ms`).
+    duration_ms: float = 0.0
     error: str | None = None
     bytes_transferred: int = 0
 

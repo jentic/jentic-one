@@ -265,7 +265,7 @@ class HttpRunner(UpstreamRunner):
                 # into any traceback rendered from this error (span, log).
                 raise _map_transport_error(exc) from None
 
-        elapsed_ms = int((time.perf_counter() - start) * 1000)
+        elapsed_ms = (time.perf_counter() - start) * 1000
         return RunnerResult(
             status_code=resp.status_code,
             body=body,
