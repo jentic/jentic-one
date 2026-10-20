@@ -503,7 +503,7 @@ class _CompletionLostWorker(_MidJobWorker):
     async def _execute_handler(self, handler: Any, job: Any) -> JobResultPayload:
         return JobResultPayload(body={"ok": True})
 
-    async def _complete_job(self, job_id: str, kind: str, result: JobResultPayload) -> None:
+    async def _complete_job(self, job: Any, result: JobResultPayload) -> bool:
         raise self._exc
 
 

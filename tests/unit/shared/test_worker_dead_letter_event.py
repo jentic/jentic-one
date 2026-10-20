@@ -20,7 +20,7 @@ class _FailingHandler:
     async def execute(
         self,
         job_id: str,
-        session: Any,
+        db: Any,
         *,
         payload: dict[str, Any] | None = None,
         created_by: str | None = None,

@@ -34,7 +34,7 @@ class _OkHandler:
     async def execute(
         self,
         job_id: str,
-        session: Any,
+        db: Any,
         *,
         payload: dict[str, Any] | None = None,
         created_by: str | None = None,
@@ -49,13 +49,16 @@ class _ReclaimedMidRunHandler:
     async def execute(
         self,
         job_id: str,
-        session: Any,
+        db: Any,
         *,
         payload: dict[str, Any] | None = None,
         created_by: str | None = None,
         actor_type: str | None = None,
     ) -> JobResultPayload:
-        await session.execute(update(Job).where(Job.id == job_id).values(attempts=Job.attempts + 1))
+        async with db.transaction() as session:
+            await session.execute(
+                update(Job).where(Job.id == job_id).values(attempts=Job.attempts + 1)
+            )
         return JobResultPayload(body={"stale": True})
 
 
@@ -367,12 +370,12 @@ async def test_heartbeat_runs_alongside_handler_and_is_cancelled_after(
                 seen.append("cancelled")
 
     class _YieldingHandler(_OkHandler):
-        async def execute(self, job_id: str, session: Any, **kwargs: Any) -> JobResultPayload:
+        async def execute(self, job_id: str, db: Any, **kwargs: Any) -> JobResultPayload:
             await asyncio.sleep(0)
             seen.append("handler")
             if handler_raises:
                 raise RuntimeError("handler failed")
-            return await super().execute(job_id, session, **kwargs)
+            return await super().execute(job_id, db, **kwargs)
 
     registry = JobHandlerRegistry()
     registry.register(JobKind.EXECUTION, _YieldingHandler())
