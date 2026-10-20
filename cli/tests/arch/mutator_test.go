@@ -45,6 +45,13 @@ var configWriterAllowlist = map[string]bool{
 	"internal/cli/api/history.go":         true, // history export to user-chosen -o path (redacted JSON, not config)
 	"internal/cli/ctlcmd/update.go":       true, // fetched installer script
 	"internal/cli/ctlcmd/uninstall.go":    true, // backup/restore moves
+
+	// The `jentic run --container` egress proxy, which runs only inside its
+	// sidecar container: the session CA's public files on the session's CA
+	// volume, and the session token file on the proxy's private tmpfs. Both
+	// are atomic (temp+rename) and neither touches the CLI's config or state.
+	"internal/localagent/egressproxy/publish.go": true,
+	"internal/localagent/egressproxy/tokens.go":  true,
 }
 
 // Test1E_ConfigMutatorLock asserts every os.WriteFile / os.Rename in production
