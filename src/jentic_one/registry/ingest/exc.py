@@ -1,5 +1,7 @@
 """Ingest exception taxonomy."""
 
+from enum import StrEnum
+
 from jentic_one.shared.jobs.errors import RetryLaterJobError, TerminalJobError
 
 

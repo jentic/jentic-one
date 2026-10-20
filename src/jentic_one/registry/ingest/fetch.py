@@ -435,6 +435,7 @@ async def load_specification(
             )
         source_type = ApiRevisionSourceType.CATALOG
         source_url = fetched.source_url
+        retrieval_url: str | None = None
         source_filename: str | None = None
     elif isinstance(source, InlineSource):
         # Inline content bypasses the URL-fetch size checks below, so enforce the
@@ -447,6 +448,7 @@ async def load_specification(
         sha = hashlib.sha256(source.content.encode()).hexdigest()
         source_type = ApiRevisionSourceType.INLINE
         source_url = source.source_url
+        retrieval_url = None
         source_filename = source.filename
     else:
         try:

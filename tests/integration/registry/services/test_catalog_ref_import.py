@@ -99,7 +99,7 @@ async def test_import_job_resolves_the_spec_through_the_source(catalog_ctx: CtxF
         assert not {"url", "content", "spec_ref", "settings", "auth"} & set(source)
 
         result = await ImportHandler(ctx).execute(
-            job_id=str(uuid.uuid4()), session=None, payload=payload, created_by="usr_admin"
+            job_id=str(uuid.uuid4()), db=None, payload=payload, created_by="usr_admin"
         )
         [revision] = result.body["revisions"]
         async with ctx.registry_db.session() as session:
@@ -134,7 +134,7 @@ async def test_import_job_fails_readably_when_the_entry_is_gone(
         # Terminal: the worker fails the job instead of retrying a missing entry.
         with pytest.raises(TerminalIngestJobError, match="no longer listed"):
             await ImportHandler(ctx).execute(
-                job_id=str(uuid.uuid4()), session=None, payload=payload, created_by="usr_admin"
+                job_id=str(uuid.uuid4()), db=None, payload=payload, created_by="usr_admin"
             )
 
 
@@ -175,7 +175,7 @@ async def test_import_job_source_failures_steer_the_retry(
             pytest.raises(expected) as raised,
         ):
             await ImportHandler(ctx).execute(
-                job_id=str(uuid.uuid4()), session=None, payload=payload, created_by="usr_admin"
+                job_id=str(uuid.uuid4()), db=None, payload=payload, created_by="usr_admin"
             )
         if retry_after_s is not None:
             assert isinstance(raised.value, RetryLaterIngestJobError)
@@ -199,7 +199,7 @@ async def test_revision_digest_is_computed_over_the_bytes(catalog_ctx: CtxFactor
         )
         with patch.object(StaticSource, "fetch_spec", return_value=body):
             result = await ImportHandler(ctx).execute(
-                job_id=str(uuid.uuid4()), session=None, payload=payload, created_by="usr_admin"
+                job_id=str(uuid.uuid4()), db=None, payload=payload, created_by="usr_admin"
             )
         [revision] = result.body["revisions"]
         async with ctx.registry_db.session() as session:
