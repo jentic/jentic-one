@@ -96,6 +96,10 @@ _SWEEP_TASKS: set[asyncio.Task[None]] = set()
 #: Metric label for a cursor naming a strategy other than the configured one.
 _UNKNOWN_STRATEGY_LABEL = "unknown"
 
+#: Registry-DB advisory-lock key that single-flights the update-notify sweep across
+#: processes (scanner and request-triggered sweeps on every replica/worker).
+UPDATE_SWEEP_LOCK_KEY = advisory_lock_key("jentic_one.registry.catalog_update_sweep")
+
 
 def _is_upstream_tracked(spec: RegisteredSpec, manifest_urls: set[str]) -> bool:
     """Whether the update-notify sweep should probe this candidate (OQ-3 scope).
