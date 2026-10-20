@@ -334,7 +334,7 @@ Public API catalog settings (sources, staleness, update notify).
 | `catalog.sources.<n>.fetch_concurrency` | integer (>= 1, <= 64) | `4` | `JENTIC__CATALOG__SOURCES__<N>__FETCH_CONCURRENCY` | Most in-flight requests to this source per process (listing and spec fetches together). |
 | `catalog.sources.<n>.requests_per_second` | number (> 0) \| null | `null` | `JENTIC__CATALOG__SOURCES__<N>__REQUESTS_PER_SECOND` | Request rate shared by every process (a database-backed token bucket). null limits concurrency only, with no bucket and no database round trip. |
 | `catalog.sources.<n>.burst` | integer (>= 1) | `4` | `JENTIC__CATALOG__SOURCES__<N>__BURST` | Token bucket capacity; only used with requests_per_second. |
-| `catalog.sources.<n>.interactive_share` | number (>= 0.0, < 1.0) | `0.5` | `JENTIC__CATALOG__SOURCES__<N>__INTERACTIVE_SHARE` | Share of the concurrency slots and of the burst kept for preview, import and the update sweep, so background listings never take the last of them. |
+| `catalog.sources.<n>.interactive_share` | number (>= 0.0, < 1.0) | `0.5` | `JENTIC__CATALOG__SOURCES__<N>__INTERACTIVE_SHARE` | Share of the concurrency slots and of the burst kept for interactive preview and import, so background work (listings, the update sweep) never takes the last of them. |
 | `catalog.sources.<n>.auth.type` | string | `"none"` | `JENTIC__CATALOG__SOURCES__<N>__AUTH__TYPE` |  |
 | `catalog.sources.<n>.auth.env` | string \| null | `null` | `JENTIC__CATALOG__SOURCES__<N>__AUTH__ENV` | Environment variable holding the secret (never the secret). |
 | `catalog.sources.<n>.auth.header` | string \| null | `null` | `JENTIC__CATALOG__SOURCES__<N>__AUTH__HEADER` | Header name the secret is sent in (header_from_env only). |
@@ -351,7 +351,6 @@ Public API catalog settings (sources, staleness, update notify).
 | `catalog.catalog_api_id_mappings.<n>.external_id` | string | *required* | `JENTIC__CATALOG__CATALOG_API_ID_MAPPINGS__<N>__EXTERNAL_ID` |  |
 | `catalog.catalog_api_id_mappings.<n>.catalog_api_id` | string | *required* | `JENTIC__CATALOG__CATALOG_API_ID_MAPPINGS__<N>__CATALOG_API_ID` |  |
 | `catalog.legacy_source_slug` | string | `"public"` | `JENTIC__CATALOG__LEGACY_SOURCE_SLUG` | The git-manifest source that pre-existing catalog imports are reconciled against. |
-| `catalog.refresh_deadline_seconds` | number (> 0, <= 600) | `45.0` | `JENTIC__CATALOG__REFRESH_DEADLINE_SECONDS` | Bound on the source listings of one POST /catalog:refresh, taken together (each one is also capped by ingest.fetch_timeout_s). A source reached after it is skipped (status partial) and left to the scanner. |
 | `catalog.update_check_interval_seconds` | integer | `86400` | `JENTIC__CATALOG__UPDATE_CHECK_INTERVAL_SECONDS` |  |
 | `catalog.update_sweep_deadline_seconds` | integer | `300` | `JENTIC__CATALOG__UPDATE_SWEEP_DEADLINE_SECONDS` |  |
 | `catalog.update_sweep_max_concurrency` | integer | `4` | `JENTIC__CATALOG__UPDATE_SWEEP_MAX_CONCURRENCY` |  |

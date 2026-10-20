@@ -324,57 +324,6 @@ func (e BearerTokenUpdateRequestType) Valid() bool {
 	}
 }
 
-// Defines values for CatalogRefreshResponseStatus.
-const (
-	Partial   CatalogRefreshResponseStatus = "partial"
-	Refreshed CatalogRefreshResponseStatus = "refreshed"
-)
-
-// Valid indicates whether the value is a known member of the CatalogRefreshResponseStatus enum.
-func (e CatalogRefreshResponseStatus) Valid() bool {
-	switch e {
-	case Partial:
-		return true
-	case Refreshed:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for CatalogRefreshSourceResponseStatus.
-const (
-	CatalogRefreshSourceResponseStatusApplied      CatalogRefreshSourceResponseStatus = "applied"
-	CatalogRefreshSourceResponseStatusBusy         CatalogRefreshSourceResponseStatus = "busy"
-	CatalogRefreshSourceResponseStatusDisabled     CatalogRefreshSourceResponseStatus = "disabled"
-	CatalogRefreshSourceResponseStatusFailed       CatalogRefreshSourceResponseStatus = "failed"
-	CatalogRefreshSourceResponseStatusSkipped      CatalogRefreshSourceResponseStatus = "skipped"
-	CatalogRefreshSourceResponseStatusSuperseded   CatalogRefreshSourceResponseStatus = "superseded"
-	CatalogRefreshSourceResponseStatusSuspectEmpty CatalogRefreshSourceResponseStatus = "suspect_empty"
-)
-
-// Valid indicates whether the value is a known member of the CatalogRefreshSourceResponseStatus enum.
-func (e CatalogRefreshSourceResponseStatus) Valid() bool {
-	switch e {
-	case CatalogRefreshSourceResponseStatusApplied:
-		return true
-	case CatalogRefreshSourceResponseStatusBusy:
-		return true
-	case CatalogRefreshSourceResponseStatusDisabled:
-		return true
-	case CatalogRefreshSourceResponseStatusFailed:
-		return true
-	case CatalogRefreshSourceResponseStatusSkipped:
-		return true
-	case CatalogRefreshSourceResponseStatusSuperseded:
-		return true
-	case CatalogRefreshSourceResponseStatusSuspectEmpty:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for ConnectSessionSummaryResponseState.
 const (
 	ConnectSessionSummaryResponseStateAwaitingApp ConnectSessionSummaryResponseState = "awaiting_app"

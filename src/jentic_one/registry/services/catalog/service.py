@@ -73,14 +73,7 @@ from jentic_one.registry.services.catalog.snapshot import (
 from jentic_one.registry.services.catalog.sources import digests
 from jentic_one.registry.services.catalog.sources.deps import spec_fetch_lane
 from jentic_one.registry.services.catalog.sources.protocol import NotModified
-from jentic_one.registry.services.catalog.sources.sync import (
-    OUTCOME_BUSY,
-    OUTCOME_DISABLED,
-    OUTCOME_SKIPPED,
-    CatalogSourceSync,
-    SyncOutcome,
-    is_due,
-)
+from jentic_one.registry.services.catalog.sources.sync import CatalogSourceSync, is_due
 from jentic_one.registry.services.catalog.spec_fetch import CatalogSpecFetcher
 from jentic_one.registry.services.errors import (
     CatalogEntryHasNoSpecError,
@@ -201,16 +194,9 @@ class CatalogPreviewView:
 
 @dataclass(frozen=True)
 class CatalogRefreshResult:
-    """Outcome of a refresh, over the sources the caller may read.
-
-    ``count`` is their live entries after it; ``partial`` is set when any of
-    them failed, was held by another run (busy) or was skipped; ``sources`` is
-    each one's run outcome.
-    """
+    """Outcome of a refresh: the live entries of the enabled sources after it."""
 
     count: int
-    partial: bool = False
-    sources: tuple[SyncOutcome, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -252,44 +238,22 @@ class CatalogService:
 
     # ── refresh ──────────────────────────────────────────────────────────────
 
-    async def refresh(
-        self,
-        *,
-        permissions: frozenset[str] | None = None,
-        actor_id: str | None = None,
-        force: bool = False,
-    ) -> CatalogRefreshResult:
-        """Sync now every enabled source the caller may read; ``force`` overrides
-        the mass-removal guard.
+    async def refresh(self, *, force: bool = False) -> CatalogRefreshResult:
+        """Sync every enabled source now; ``force`` overrides the mass-removal guard.
 
-        Sources the caller cannot read are left to the scanner, so the result
-        (counts, outcomes and error detail) never covers a hidden source.
-        ``permissions=None`` (internal callers only) refreshes every source. Each
-        source's listing is bounded by ``ingest.fetch_timeout_s`` and all the
-        listings together by ``catalog.refresh_deadline_seconds``; a source
-        reached after that deadline is skipped and flagged for the scanner. A
-        listing timeout here leaves the source's scheduled backoff alone.
+        Each source's listing is bounded by ``ingest.fetch_timeout_s``, so a slow
+        source fails its own run (recorded, with backoff) instead of holding the
+        request open indefinitely.
 
         Raises ``CatalogUnavailableError`` when no source applied and at least
-        one failed; its detail lists the failed sources, then any that were not
-        refreshed (busy or skipped). Otherwise the result is ``partial`` when a
-        source failed, was held by another run (busy) or was skipped, and the
-        last good rows stay. A run held by the mass-removal guard is not a
-        failure: the source was reachable and keeps serving its last applied rows.
+        one failed; otherwise failures are logged and the last good rows stay.
+        A run held by the mass-removal guard is not a failure: the source was
+        reachable and keeps serving its last applied rows.
         """
-        allowed = (
-            frozenset(s.slug for s in self._enabled())
-            if permissions is None
-            else allowed_sources(self._sources.values(), permissions=permissions, actor_id=actor_id)
-        )
         sync = CatalogSourceSync(self._ctx)
         await sync.register_sources()
         outcomes = await sync.sync_all(
-            forced=force,
-            listing_timeout_s=self._ingest_cfg.fetch_timeout_s,
-            deadline_s=self._cfg.refresh_deadline_seconds,
-            slugs=allowed,
-            count_timeouts=False,
+            forced=force, listing_timeout_s=self._ingest_cfg.fetch_timeout_s
         )
         applied = [o for o in outcomes if o.status == RUN_STATUS_APPLIED]
         held = (RUN_STATUS_APPLIED, RUN_STATUS_SUSPECT_EMPTY, RUN_STATUS_SUPERSEDED)
@@ -302,10 +266,7 @@ class CatalogService:
                 detail += f"; not refreshed ({_outcome_codes(not_run)})"
             raise CatalogUnavailableError(detail)
         snapshot = await self._snapshot()
-        count = sum(1 for e in snapshot.entries if e.source_slug in allowed)
-        return CatalogRefreshResult(
-            count=count, partial=bool(failed or not_run), sources=tuple(outcomes)
-        )
+        return CatalogRefreshResult(count=len(snapshot.entries))
 
     # ── snapshot ─────────────────────────────────────────────────────────────
 

@@ -896,35 +896,6 @@ describe('LibraryPage', () => {
 		expect(await screen.findByText('Catalog sync requested')).toBeInTheDocument();
 	});
 
-	it('says which sources a partial refresh missed', async () => {
-		const user = userEvent.setup();
-		worker.use(
-			http.post('/catalog:refresh', () =>
-				HttpResponse.json({
-					count: 3,
-					status: 'partial',
-					sources: [
-						{ slug: 'public', status: 'applied', error_code: null },
-						{ slug: 'corp', status: 'failed', error_code: 'listing_timeout' },
-					],
-				}),
-			),
-		);
-
-		renderWithProviders(
-			<>
-				<LibraryPage />
-				<Toaster />
-			</>,
-		);
-		await screen.findByText('stripe.com');
-
-		await user.click(screen.getByTestId('discover-refresh'));
-
-		expect(await screen.findByText('Catalog partly refreshed')).toBeInTheDocument();
-		expect(screen.getByText(/Couldn't refresh corp;/)).toBeInTheDocument();
-	});
-
 	it('surfaces a titled error with Try again, and hides the count line meanwhile', async () => {
 		let failing = true;
 		worker.use(
