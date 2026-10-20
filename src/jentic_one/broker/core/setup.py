@@ -6,7 +6,11 @@ from dataclasses import dataclass
 
 from fastapi import FastAPI, Request
 
-from jentic_one.broker.core.token_validation import CachedActorStatus, CachedTokenValidator
+from jentic_one.broker.core.token_validation import (
+    CachedActorStatus,
+    CachedCliInvocationValidator,
+    CachedTokenValidator,
+)
 from jentic_one.broker.repos import (
     ActorStatusResolver,
     AgentRuleEvaluator,
@@ -123,6 +127,12 @@ def install_broker_auth(app: FastAPI, ctx: Context) -> None:
         jwt=jwt_validator,
     )
     app.state.broker_token_validator = triple
+    # CLI invocation tokens (``cit_``) get their own validator, reached only by
+    # the CLI-facade dependency: the composite validator above never sees one.
+    app.state.broker_cli_invocation_validator = CachedCliInvocationValidator(
+        resolver=resolver,
+        cache_ttl_seconds=ctx.config.broker.resolve_cache_ttl_seconds,
+    )
     app.state.broker_api_key_resolver = api_key_resolver
 
     # Direct-binding authorization (theme-5) — the only path since Phase 6b

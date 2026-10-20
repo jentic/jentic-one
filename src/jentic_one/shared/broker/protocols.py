@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
+from jentic_one.shared.auth.cli_invocation import CliInvocationIdentity
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models.credentials import CredentialType
 from jentic_one.shared.permissions.evaluation import PathDivergence
@@ -107,6 +108,12 @@ class TokenResolverProtocol(Protocol):
     """Resolves an opaque access token to actor identity."""
 
     async def resolve_access_token(self, token: str) -> Identity | None: ...
+
+
+class CliInvocationResolverProtocol(Protocol):
+    """Resolves a ``cit_`` CLI invocation token to its agent identity and claims."""
+
+    async def resolve_cli_invocation_token(self, token: str) -> CliInvocationIdentity | None: ...
 
 
 class RuleVerdict(StrEnum):

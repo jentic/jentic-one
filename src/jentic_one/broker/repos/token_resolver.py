@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from datetime import UTC, datetime
 
 from sqlalchemy import Boolean, text
 
+from jentic_one.shared.auth.cli_invocation import (
+    CLI_INVOCATION_TOKEN_PREFIX,
+    CliInvocationClaims,
+    CliInvocationIdentity,
+    hash_token,
+)
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.owner_status import log_agent_owner_inactive
 from jentic_one.shared.auth.verify import scopes_to_permissions
@@ -20,10 +25,12 @@ _OWNER_INACTIVE = "owner_inactive"
 
 
 class InProcessTokenResolver:
-    """Resolves opaque access tokens by querying the admin schema directly.
+    """Resolves opaque access and CLI invocation tokens by querying the admin schema directly.
 
-    Avoids importing from the `auth` module — uses a raw SQL query against the
-    `access_tokens` table in the admin schema.
+    Avoids importing from the `auth` module — uses raw SQL queries against the
+    `access_tokens` and `cli_invocations` tables in the admin schema. The two
+    token kinds have separate entry points: :meth:`resolve_access_token`
+    (the composite validator's opaque path) never resolves a ``cit_`` token.
     """
 
     def __init__(self, admin_db: DatabaseSession) -> None:
@@ -32,8 +39,62 @@ class InProcessTokenResolver:
     async def resolve_access_token(self, token: str) -> Identity | None:
         if not token.startswith(ACCESS_TOKEN_PREFIX):
             return None
+        return await self._resolve_access_token_hash(hash_token(token))
 
-        token_hash = hashlib.sha256(token.encode()).hexdigest()
+    async def resolve_cli_invocation_token(self, token: str) -> CliInvocationIdentity | None:
+        """Resolve a ``cit_`` invocation token through its parent access token.
+
+        The parent ``at_`` token is resolved by the same query as any access
+        token, so the agent's status, its owner's status, the OAuth client and
+        grant gates and live permissions all apply, and a revoked or expired
+        parent ends the child. The child is active only while the parent is
+        and while the invocation itself is unrevoked and inside both expiries.
+        ``None`` (unknown token, missing parent, or a parent that is not the
+        same agent) fails closed.
+        """
+        if not token.startswith(CLI_INVOCATION_TOKEN_PREFIX):
+            return None
+        stmt = text(
+            "SELECT id, parent_token_hash, actor_id, actor_type, vendor, credential_name,"
+            " trace_id, command_title, expires_at, hard_expires_at, revoked_at"
+            " FROM cli_invocations WHERE token_hash = :token_hash"
+        )
+        async with self._admin_db.session() as session:
+            result = await session.execute(stmt, {"token_hash": hash_token(token)})
+            row = result.one_or_none()
+        if row is None:
+            return None
+
+        parent = await self._resolve_access_token_hash(str(row.parent_token_hash))
+        if (
+            parent is None
+            or parent.sub != row.actor_id
+            or parent.actor_type != ActorType.AGENT
+            or row.actor_type != ActorType.AGENT.value
+        ):
+            return None
+
+        now = datetime.now(UTC)
+        expires_at = _as_aware_datetime(row.expires_at)
+        hard_expires_at = _as_aware_datetime(row.hard_expires_at)
+        effective_expiry = min(expires_at, hard_expires_at)
+        if parent.expires_at is not None:
+            effective_expiry = min(effective_expiry, parent.expires_at)
+        active = parent.active and row.revoked_at is None and effective_expiry > now
+        identity = parent.model_copy(update={"active": active, "expires_at": effective_expiry})
+        claims = CliInvocationClaims(
+            invocation_id=str(row.id),
+            vendor=str(row.vendor),
+            credential_name=row.credential_name,
+            trace_id=str(row.trace_id),
+            command_title=row.command_title,
+            expires_at=expires_at,
+            hard_expires_at=hard_expires_at,
+        )
+        return CliInvocationIdentity(identity=identity, claims=claims)
+
+    async def _resolve_access_token_hash(self, token_hash: str) -> Identity | None:
+        """Resolve an access token by its SHA-256 hash (the shared ``at_`` query)."""
         now = datetime.now(UTC)
 
         # actor_status re-checks the actor row on every resolve (#1136): a

@@ -9,8 +9,10 @@ the injected ``get_credential_deriver`` provider.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import time
-from typing import Annotated
+from typing import Annotated, Any
 
 import structlog
 from fastapi import Depends, Request
@@ -20,11 +22,16 @@ from jentic_one.broker.adapters.runners.base import UpstreamRunner
 from jentic_one.broker.adapters.runners.registry import RunnerRegistry
 from jentic_one.broker.core.exceptions import RateLimitExceededError
 from jentic_one.broker.core.proxy_headers import reconstruct_upstream_url
+from jentic_one.broker.core.token_validation import CachedCliInvocationValidator
 from jentic_one.broker.services.auth import CompositeTokenValidator
 from jentic_one.broker.services.idempotency import SharedStateIdempotencyStore
 from jentic_one.shared.auth.api_key_resolver import (
     RETIRED_SERVICE_ACCOUNT_KEY_DETAIL,
     is_retired_service_account_key,
+)
+from jentic_one.shared.auth.cli_invocation import (
+    CLI_INVOCATION_TOKEN_PREFIX,
+    CliInvocationIdentity,
 )
 from jentic_one.shared.auth.errors import TokenValidationError
 from jentic_one.shared.auth.identity import Identity
@@ -138,6 +145,98 @@ async def require_broker_identity(request: Request) -> Identity:
         actor_type=resolved.actor_type.value,
     )
     return resolved
+
+
+def _extract_cli_invocation_token(request: Request) -> str | None:
+    """The credential a vendor CLI sends in ``Authorization``, in any scheme it uses.
+
+    ``gh`` sends ``token <t>``, ``cf`` sends ``Bearer <t>`` and git sends
+    Basic auth with the token as the password. ``x-jentic-api-key`` is never
+    read: a vendor CLI does not send it. Returns ``None`` when no credential
+    can be read.
+    """
+    header = request.headers.get("Authorization")
+    if not header:
+        return None
+    scheme, _, value = header.strip().partition(" ")
+    scheme = scheme.lower()
+    value = value.strip()
+    if scheme in ("token", "bearer"):
+        return value or None
+    if scheme == "basic":
+        try:
+            decoded = base64.b64decode(value, validate=True).decode("utf-8")
+        except (binascii.Error, UnicodeDecodeError):
+            return None
+        _, separator, password = decoded.partition(":")
+        return password if separator and password else None
+    return None
+
+
+def _cli_invocation_unauthorized(request: Request) -> Unauthorized:
+    # One detail for every refusal (missing, wrong kind, unknown, revoked,
+    # expired, wrong vendor): a distinguishable response is an oracle.
+    return Unauthorized(
+        detail="Invalid or expired CLI invocation token",
+        instance=request.url.path,
+        type="unauthorized",
+    )
+
+
+async def require_cli_invocation(request: Request) -> CliInvocationIdentity:
+    """Authenticate a vendor CLI's ``cit_`` invocation token (any vendor).
+
+    The broker's CLI facades authenticate with this, never with
+    :func:`require_broker_identity`: only ``cit_`` tokens are accepted here
+    (an ``at_`` token, API key or JWT is refused), and the composite
+    validator behind ``/execute`` never resolves a ``cit_`` token. Facade
+    routes use :func:`require_cli_facade_invocation`, which adds the vendor
+    check on top of this.
+    """
+    token = _extract_cli_invocation_token(request)
+    if token is None or not token.startswith(CLI_INVOCATION_TOKEN_PREFIX):
+        raise _cli_invocation_unauthorized(request)
+    validator: CachedCliInvocationValidator = request.app.state.broker_cli_invocation_validator
+    try:
+        resolved = await validator.validate(token)
+    except TokenValidationError as exc:
+        raise _cli_invocation_unauthorized(request) from exc
+    resolved.identity.origin = derive_origin(request.headers.get("user-agent"))
+    return resolved
+
+
+def require_cli_facade_invocation(vendor: str) -> Any:
+    """Dependency factory: a valid invocation token minted for ``vendor``'s facade.
+
+    A token minted for another vendor answers the same 401 as an invalid one,
+    so a token leaked to one facade cannot be replayed at another. The agent
+    must still hold the broker execute permission (live, through the parent
+    token), the same gate ``/execute`` applies.
+    """
+
+    async def _dependency(
+        request: Request,
+        invocation: CliInvocationIdentity = Depends(require_cli_invocation),
+    ) -> CliInvocationIdentity:
+        if invocation.claims.vendor != vendor:
+            _logger.info(
+                "cli_invocation_vendor_mismatch",
+                invocation_id=invocation.claims.invocation_id,
+                actor_id=invocation.identity.sub,
+                token_vendor=invocation.claims.vendor,
+                facade_vendor=vendor,
+            )
+            raise _cli_invocation_unauthorized(request)
+        if BROKER_EXECUTE_PERMISSION not in invocation.identity.permissions:
+            _record_auth_failure(invocation.identity.sub, request)
+            raise Forbidden(
+                detail=f"Insufficient scope: '{BROKER_EXECUTE_PERMISSION}' required",
+                instance=request.url.path,
+                type="insufficient_scope",
+            )
+        return invocation
+
+    return Depends(_dependency)
 
 
 async def require_execute_permission(request: Request) -> Identity:
