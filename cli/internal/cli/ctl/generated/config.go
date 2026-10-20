@@ -3685,16 +3685,6 @@ func (j *VendorScopeConfigClassification) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-var enumValues_VendorScopeConfigClassification = []interface{}{
-	"read",
-	"write",
-	"admin",
-}
-
-type VendorScopeConfigClassification string
-
-const VendorScopeConfigClassificationWrite VendorScopeConfigClassification = "write"
-
 // UnmarshalJSON implements json.Unmarshaler.
 func (j *VendorIdentityProbeConfig) UnmarshalJSON(value []byte) error {
 	var raw map[string]interface{}
