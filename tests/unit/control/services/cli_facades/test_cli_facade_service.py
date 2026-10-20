@@ -63,16 +63,22 @@ def test_a_switched_off_facade_is_not_listed(cli_facades: dict[str, Any]) -> Non
 
 
 def test_an_enabled_vendor_the_broker_does_not_serve_is_not_listed() -> None:
+    svc = _service(cli_facades={"enabled": True, "vendors": {"aws": {"enabled": True}}})
+    assert svc.list_served() == []
+
+
+def test_host_mode_address_is_https_on_the_facade_host() -> None:
     svc = _service(
         cli_facades={
             "enabled": True,
-            "vendors": {
-                "github": {"enabled": True, "host": "github.jentic.example.com"},
-                "aws": {"enabled": True},
-            },
+            "vendors": {"github": {"enabled": True, "host": "github.jentic.example.com"}},
         }
     )
-    assert svc.list_served() == []
+    assert svc.list_served() == [
+        CliFacadeView(
+            vendor="github", cli="gh", mode="host", address="https://github.jentic.example.com"
+        )
+    ]
 
 
 def test_remote_backend_with_a_loopback_broker_url_has_no_address() -> None:

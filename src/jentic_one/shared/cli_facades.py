@@ -19,7 +19,9 @@ FACADE_PATH_PREFIX = "/_facade"
 #: Vendors whose facade the broker implements, mapped to the vendor CLI it
 #: serves. A vendor enabled in ``cli_facades`` but missing here has no facade
 #: route yet, so it is never advertised.
-SERVED_FACADE_CLIS: MappingProxyType[str, str] = MappingProxyType({"cloudflare": "cf"})
+SERVED_FACADE_CLIS: MappingProxyType[str, str] = MappingProxyType(
+    {"github": "gh", "cloudflare": "cf"}
+)
 
 
 def facade_path_prefix(vendor: str) -> str:
