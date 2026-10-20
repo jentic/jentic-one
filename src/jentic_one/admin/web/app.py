@@ -31,6 +31,7 @@ from jentic_one.shared.web.app_factory import (
     create_surface_app,
     get_control_plane_reference_router,
 )
+from jentic_one.shared.web.auth_state import install_auth_state_backend
 from jentic_one.shared.web.static import mount_spa
 
 
@@ -78,11 +79,23 @@ def get_exception_handlers() -> list[tuple[type[Exception], Any]]:
     ]
 
 
+def install_on_app(app: FastAPI, ctx: Context) -> None:
+    """Install the pre-auth state backend ``POST /auth/login``'s rate limiter reads.
+
+    It is shared with the auth surface when both ride one app (built once,
+    whatever the order) and closed by the app lifespan. The identity verifier
+    is not installed here: ``shared.web.app_factory`` owns it
+    (``install_platform_token_verifier``).
+    """
+    install_auth_state_backend(app, ctx)
+
+
 def create_app(ctx: Context) -> FastAPI:
     """Create the admin FastAPI application for standalone deployment."""
     app = create_surface_app(
         ctx, title="jentic-one-admin", routers=get_routers(), enabled_apps={"admin"}
     )
+    install_on_app(app, ctx)
     for exc_class, handler in get_exception_handlers():
         app.add_exception_handler(exc_class, handler)
     # The docs SPA is served from this surface, so its endpoint reference is

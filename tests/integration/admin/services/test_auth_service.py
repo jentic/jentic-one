@@ -154,8 +154,12 @@ async def test_login_locked_account(
 
     # Lock the account
     async with ctx.admin_db.session() as session:
-        await UserSecretRepository.lock_until(
-            session, user_id, locked_until=datetime.now(UTC) + timedelta(minutes=15)
+        await UserSecretRepository.record_failed_login(
+            session,
+            user_id,
+            lockout_threshold=1,
+            locked_until=datetime.now(UTC) + timedelta(minutes=15),
+            now=datetime.now(UTC),
         )
         await session.commit()
 
@@ -165,9 +169,7 @@ async def test_login_locked_account(
 
     # Unlock for cleanup
     async with ctx.admin_db.session() as session:
-        await UserSecretRepository.lock_until(
-            session, user_id, locked_until=datetime.now(UTC) - timedelta(minutes=1)
-        )
+        await UserSecretRepository.unlock(session, user_id)
         await session.commit()
 
 
@@ -275,8 +277,12 @@ async def test_authenticate_burns_dummy_verify_on_early_rejection(
     elif arm == "locked":
         expected_error = AccountLockedError
         async with ctx.admin_db.session() as session:
-            await UserSecretRepository.lock_until(
-                session, user_id, locked_until=datetime.now(UTC) + timedelta(minutes=15)
+            await UserSecretRepository.record_failed_login(
+                session,
+                user_id,
+                lockout_threshold=1,
+                locked_until=datetime.now(UTC) + timedelta(minutes=15),
+                now=datetime.now(UTC),
             )
             await session.commit()
     else:
@@ -338,7 +344,7 @@ async def test_authenticate_wrong_password_skips_dummy_verify(
     assert len(real_calls) == 1
 
     async with ctx.admin_db.session() as session:
-        await UserSecretRepository.reset_failed_logins(session, user_id)
+        await UserSecretRepository.unlock(session, user_id)
         await session.commit()
 
 
@@ -478,8 +484,12 @@ async def test_reset_password_clears_lockout(
     ctx = integration_context
 
     async with ctx.admin_db.session() as session:
-        await UserSecretRepository.lock_until(
-            session, user_id, locked_until=datetime.now(UTC) + timedelta(minutes=15)
+        await UserSecretRepository.record_failed_login(
+            session,
+            user_id,
+            lockout_threshold=1,
+            locked_until=datetime.now(UTC) + timedelta(minutes=15),
+            now=datetime.now(UTC),
         )
         await session.commit()
 

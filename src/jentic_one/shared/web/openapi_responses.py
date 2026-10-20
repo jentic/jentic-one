@@ -190,9 +190,46 @@ def gone(description: str = "Gone") -> dict[int | str, dict[str, Any]]:
     return {410: _entry(description)}
 
 
-def too_many_requests(description: str = "Too Many Requests") -> dict[int | str, dict[str, Any]]:
-    """A 429 entry for routes with a rate limit or a quota."""
-    return {429: _entry(description)}
+#: Response headers a token-bucket ``429`` carries (``RateLimiter`` outcomes).
+RATE_LIMIT_HEADERS: dict[str, dict[str, Any]] = {
+    "Retry-After": {
+        "description": "Seconds to wait before the bucket holds a token again.",
+        "schema": {"type": "integer", "minimum": 1},
+    },
+    "RateLimit-Limit": {
+        "description": "Bucket capacity (burst) of the limit that was exceeded.",
+        "schema": {"type": "integer"},
+    },
+    "RateLimit-Remaining": {
+        "description": "Tokens left in the bucket (always 0 on a 429).",
+        "schema": {"type": "integer"},
+    },
+}
+
+
+def too_many_requests(
+    description: str = "Too Many Requests",
+    *,
+    detail: str | None = None,
+    instance: str | None = None,
+    rate_limit_headers: bool = False,
+) -> dict[int | str, dict[str, Any]]:
+    """A 429 entry for routes with a rate limit or a quota.
+
+    ``detail`` / ``instance`` replace the generic example's fields with the
+    route's real ones; ``rate_limit_headers`` documents :data:`RATE_LIMIT_HEADERS`.
+    """
+    entry = _entry(description)
+    if detail is not None or instance is not None:
+        example = dict(STATUS_EXAMPLES["429"])
+        if detail is not None:
+            example["detail"] = detail
+        if instance is not None:
+            example["instance"] = instance
+        entry["content"] = {"application/json": {"example": example}}
+    if rate_limit_headers:
+        entry["headers"] = RATE_LIMIT_HEADERS
+    return {429: entry}
 
 
 def problem(description: str) -> dict[str, Any]:

@@ -1159,7 +1159,9 @@ def _normalise_error_responses(responses: dict[str, Any]) -> None:
         # A schema-less problem+json placeholder (an earlier pass, or a route
         # that pre-declared the media type) is superseded by the real entry.
         content.pop(PROBLEM_JSON, None)
-        media["example"] = STATUS_EXAMPLES[code]
+        # A route-specific example (e.g. the login 429's real detail) wins
+        # over the generic per-status one.
+        media.setdefault("example", STATUS_EXAMPLES[code])
         content[PROBLEM_JSON] = media
 
 
