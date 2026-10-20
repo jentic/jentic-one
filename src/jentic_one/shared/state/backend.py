@@ -8,9 +8,10 @@ Rather than a single fat interface that every consumer depends on, the surface
 is split into three **narrow, role-specific** protocols (ISP): a rate limiter
 should not see ``set_if_absent`` and a cache should not see the Lua
 ``token_bucket``. The concrete backends (:class:`MemoryStateBackend` here,
-``RedisStateBackend`` in :mod:`jentic_one.shared.state.redis`) implement all
-three roles; the factory builds a single instance per process. Consumers,
-however, type their dependency on the one role they need.
+``RedisStateBackend`` in :mod:`jentic_one.shared.state.redis`, and any backend
+an extension registers) implement all three roles; the process builds a single
+instance shared by every surface it serves. Consumers, however, type their
+dependency on the one role they need.
 """
 
 from __future__ import annotations
@@ -251,8 +252,9 @@ class MemoryStateBackend:
     """In-process implementation of all three state roles.
 
     Backed by plain dicts with monotonic-clock TTL expiry. Scope is
-    per-process, which is fine behind autoscaling for most installs; the Redis
-    backend exists for cross-instance coordination.
+    per-process, which matches the supported one-process-per-surface
+    deployment; cross-process coordination needs a shared backend registered
+    with ``register_state_backend``.
 
     A ``clock`` callable (defaulting to :func:`time.monotonic`) can be injected
     to make TTL and token-bucket refill behaviour deterministic in tests.
@@ -504,9 +506,8 @@ class MemoryStateBackend:
                     "the in-process state backend namespace (or one owner's share "
                     "of it, or the backend as a whole) is full of live entries, so "
                     "new writes to it are refused (callers answer 503) until entries "
-                    "expire. Raise broker.resilience.backend.memory budgets (and the "
-                    "container memory limit with them), shorten the TTL of what it "
-                    "stores, or use the redis backend."
+                    "expire. Raise the state.memory budgets (and the container "
+                    "memory limit with them) or shorten the TTL of what it stores."
                 ),
             )
         return StateBackendCapacityError(

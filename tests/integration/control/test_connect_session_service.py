@@ -74,6 +74,7 @@ from jentic_one.control.services.integrations.flow_handlers.device_authorization
     DeviceAuthorizationHandler,
 )
 from jentic_one.control.web.app import get_exception_handlers
+from jentic_one.control.web.connect_limits import install_connect_limiters
 from jentic_one.control.web.routers import integrations as integrations_router
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
@@ -1541,6 +1542,7 @@ def _session_app(ctx: Context, identity: Identity) -> FastAPI:
     for exc_class, handler in get_exception_handlers():
         app.add_exception_handler(exc_class, handler)
     app.state.ctx = ctx
+    install_connect_limiters(app, ctx)
     app.dependency_overrides[resolve_identity] = lambda: identity
     return app
 

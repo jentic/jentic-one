@@ -13,6 +13,7 @@ from jentic_one.shared.crypto import EncryptionService
 from jentic_one.shared.db import DatabaseSession
 from jentic_one.shared.provider_config_store import load_provider_configs
 from jentic_one.shared.release_check import ReleaseChecker
+from jentic_one.shared.state import SharedStateBackend, build_state_backend
 
 if TYPE_CHECKING:
     from jentic_one.control.services.credentials.providers.registry import ProviderRegistry
@@ -63,6 +64,8 @@ class Context:
         self._control_db: DatabaseSession | None = None
         self._update_sweep_lock: asyncio.Lock | None = None
         self._release_checker: ReleaseChecker | None = None
+        self._state_backend: SharedStateBackend | None = None
+        self._state_backend_closed = False
         # Product telemetry (issue #446). Resolved + owned by the lifespan when
         # telemetry is enabled; both stay None otherwise (the single consent gate).
         self._instance_id: str | None = None
@@ -244,6 +247,25 @@ class Context:
             self._release_checker = ReleaseChecker(self._config)
         return self._release_checker
 
+    @property
+    def state_backend(self) -> SharedStateBackend:
+        """The process's one shared-state backend, built from ``config.state``.
+
+        Every surface this process serves (the auth limiters and single-use
+        markers, the broker's rate limiter, circuit breaker, idempotency
+        store and auth-failure counters, the control connect limiters, and
+        the MCP session-event dedupe) shares this instance, so the
+        memory backend's budgets cap the whole process. Built on first access,
+        when the app is assembled, so an unknown or misconfigured backend
+        fails before the process serves; the app lifespan closes it once,
+        last (:meth:`close_state_backend`).
+        """
+        if self._state_backend is None:
+            self._state_backend = build_state_backend(
+                self._config.state, apps=frozenset(self._config.apps)
+            )
+        return self._state_backend
+
     async def startup(self) -> None:
         """Connect allowed databases (validating the encryption keyset first)."""
         # A configured-but-invalid keyset (wrong-length key, duplicate id,
@@ -284,10 +306,36 @@ class Context:
                 logger.warning("provider_refresh_on_boot_failed", error=str(exc))
 
     async def shutdown(self) -> None:
-        """Close all connected databases."""
+        """Close all connected databases.
+
+        The shared-state backend is closed separately, by
+        :meth:`close_state_backend`, so the app lifespan can close it after
+        every surface teardown that may still touch it.
+        """
         for db in (self._control_db, self._admin_db, self._registry_db):
             if db is not None:
                 await db.close()
+
+    async def close_state_backend(self) -> None:
+        """Close the process's shared-state backend, if built. Idempotent.
+
+        Best-effort, like the other shutdown steps: a failing ``aclose()`` is
+        logged, not raised, so it never masks the error that ended a lifespan
+        (a failed startup, say). The closed instance stays in place; the
+        process does not build a second one.
+        """
+        backend = self._state_backend
+        if backend is None or self._state_backend_closed:
+            return
+        self._state_backend_closed = True
+        try:
+            await backend.aclose()
+        except Exception:
+            logger.warning(
+                "state_backend_close_failed",
+                backend=self._config.state.backend,
+                exc_info=True,
+            )
 
     async def __aenter__(self) -> Context:
         await self.startup()
@@ -299,4 +347,7 @@ class Context:
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
-        await self.shutdown()
+        try:
+            await self.shutdown()
+        finally:
+            await self.close_state_backend()

@@ -10,7 +10,9 @@ caller's concern (the runner returns the verbatim upstream result).
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 from datetime import UTC, datetime
+from types import MappingProxyType
 from typing import Any
 from urllib.parse import urlparse
 
@@ -59,32 +61,15 @@ _execution_duration = _meter.create_histogram(
     description="Duration of broker executions in milliseconds",
 )
 
-_circuit_event_last_emitted: dict[str, datetime] = {}
-
 #: Upstream auth-rejection status → third-party ``auth_failure`` tag. 401 is an
 #: RFC-tight authentication rejection; 403 mixes auth + authorization (kept as a
 #: distinct, lower-precision tag so the funnel can separate them downstream).
-_THIRDPARTY_AUTH_TAGS: dict[int, ErrorSource] = {
-    401: ErrorSource.AUTH_THIRDPARTY_UNAUTHORIZED,
-    403: ErrorSource.AUTH_THIRDPARTY_FORBIDDEN,
-}
-
-
-def _should_emit_circuit_event(host: str, cooldown_s: int = 15) -> bool:
-    """Return True if no circuit-open event was emitted for this host within the cooldown."""
-    now = datetime.now(UTC)
-    last = _circuit_event_last_emitted.get(host)
-    if last is not None and (now - last).total_seconds() < cooldown_s:
-        return False
-    _circuit_event_last_emitted[host] = now
-    stale = [
-        h
-        for h, ts in _circuit_event_last_emitted.items()
-        if (now - ts).total_seconds() > cooldown_s
-    ]
-    for h in stale:
-        _circuit_event_last_emitted.pop(h, None)
-    return True
+_THIRDPARTY_AUTH_TAGS: Mapping[int, ErrorSource] = MappingProxyType(
+    {
+        401: ErrorSource.AUTH_THIRDPARTY_UNAUTHORIZED,
+        403: ErrorSource.AUTH_THIRDPARTY_FORBIDDEN,
+    }
+)
 
 
 def default_pipeline(runner: UpstreamRunner) -> BrokerExecutionPipeline:
@@ -231,22 +216,23 @@ async def run_execution(
                 security_config=security_config,
                 origin=origin,
             )
-            if isinstance(exc, CircuitOpenError):
+            # The breaker marks one refusal per host per open period as the one
+            # that reports it, across every process sharing the state backend.
+            if isinstance(exc, CircuitOpenError) and exc.report:
                 host = urlparse(ctx_req.upstream_url).netloc or "<unknown>"
-                if _should_emit_circuit_event(host):
-                    try:
-                        await emit_event(
-                            session,
-                            type=EventType.UPSTREAM_CIRCUIT_OPEN,
-                            severity=EventSeverity.WARNING,
-                            summary=f"Circuit breaker opened for upstream {host}",
-                            created_by=actor_id,
-                            actor_id=actor_id,
-                            actor_type=actor_type,
-                            data={"host": host},
-                        )
-                    except Exception:
-                        logger.warning("emit_circuit_event_failed", host=host)
+                try:
+                    await emit_event(
+                        session,
+                        type=EventType.UPSTREAM_CIRCUIT_OPEN,
+                        severity=EventSeverity.WARNING,
+                        summary=f"Circuit breaker opened for upstream {host}",
+                        created_by=actor_id,
+                        actor_id=actor_id,
+                        actor_type=actor_type,
+                        data={"host": host},
+                    )
+                except Exception:
+                    logger.warning("emit_circuit_event_failed", host=host)
         raise
 
     result = outcome.result

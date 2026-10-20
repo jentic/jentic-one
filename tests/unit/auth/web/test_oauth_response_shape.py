@@ -36,6 +36,7 @@ from jentic_one.auth.web.errors import service_error_handler
 from jentic_one.auth.web.routers import oauth
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import AuthConfig, PlatformClientConfig
+from jentic_one.shared.state.backend import MemoryStateBackend
 from jentic_one.shared.web.deps import resolve_identity
 
 _PLATFORM_CLIENT_ID = "jentic-one-spa"
@@ -64,6 +65,7 @@ def client() -> TestClient:
         ],
     )
     app.state.ctx = mock_ctx
+    app.state.auth_state_backend = MemoryStateBackend()
     return TestClient(app)
 
 

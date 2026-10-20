@@ -43,6 +43,8 @@ _APPROVALS_HEAD = "3306fb9172f1"  # pragma: allowlist secret
 _REPEATED_FAILURE_INDEX_HEAD = "c00de2f5d777"  # pragma: allowlist secret
 #: The events ``(created_by, actor_id)`` index, stacked on the repeated-failure index.
 _EVENTS_CREATED_BY_ACTOR_HEAD = "a1c3e5f7b9d2"  # pragma: allowlist secret
+#: The assertion ``jti`` replay table, stacked on the events index.
+_ASSERTION_JTIS_HEAD = "bf1a695f4db0"  # pragma: allowlist secret
 
 
 def _create_tables(op: Operations, *, pg: bool) -> None:
@@ -212,6 +214,7 @@ def restore_pre_sa_drop_admin(integration_config: AppConfig) -> None:
         [_APPROVALS_HEAD],
         [_REPEATED_FAILURE_INDEX_HEAD],
         [_EVENTS_CREATED_BY_ACTOR_HEAD],
+        [_ASSERTION_JTIS_HEAD],
     ), f"extend restore_pre_sa_drop_admin for new heads {heads}"
     if not asyncio.run(_has_service_account_tables(db_config)):
         command.downgrade(cfg, _SA_DROP)

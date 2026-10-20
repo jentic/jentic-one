@@ -26,6 +26,7 @@ from jentic_one.shared.config import (
     AdminInviteConfig,
     AppConfig,
     AuthConfig,
+    BrokerResilienceConfig,
     CatalogConfig,
     ConfigError,
     ConnectConfig,
@@ -60,7 +61,6 @@ from jentic_one.shared.config import (
     resolved_control_egress,
 )
 from jentic_one.shared.state import (
-    BackendKind,
     MemoryBackendConfig,
     MemoryStateBackend,
     NamespaceBudget,
@@ -2599,31 +2599,190 @@ def test_worker_sweep_interval_rejects_out_of_bounds(value: float):
 
 def test_memory_backend_namespace_budgets_are_configurable(config_file: Path):
     env = {
-        "JENTIC__BROKER__RESILIENCE__BACKEND__MEMORY__MAX_ENTRIES_PER_NAMESPACE": "500",
-        "JENTIC__BROKER__RESILIENCE__BACKEND__MEMORY__MAX_BYTES_PER_NAMESPACE": "1000000",
+        "JENTIC__STATE__MEMORY__MAX_ENTRIES_PER_NAMESPACE": "500",
+        "JENTIC__STATE__MEMORY__MAX_BYTES_PER_NAMESPACE": "1000000",
     }
     with patch.dict(os.environ, env, clear=False):
-        memory = load_config(config_file).broker.resilience.backend.memory
+        memory = load_config(config_file).state.memory
     assert memory.max_entries_per_namespace == 500
     assert memory.max_bytes_per_namespace == 1_000_000
     assert memory.budgets()["idem"].max_entries == 250_000
 
 
 def test_memory_backend_total_cap_defaults_and_is_configurable(config_file: Path):
-    default = load_config(config_file).broker.resilience.backend.memory
+    default = load_config(config_file).state.memory
     assert default.max_total_bytes == 192 * 1024 * 1024
     assert default.max_bytes_per_namespace == 16 * 1024 * 1024
     assert default.budgets()["idem"].max_bytes == 128 * 1024 * 1024
     assert default.budgets()["idem-body"].max_bytes == 32 * 1024 * 1024
-    env = {"JENTIC__BROKER__RESILIENCE__BACKEND__MEMORY__MAX_TOTAL_BYTES": "5000"}
+    env = {"JENTIC__STATE__MEMORY__MAX_TOTAL_BYTES": "5000"}
     with patch.dict(os.environ, env, clear=False):
-        memory = load_config(config_file).broker.resilience.backend.memory
+        memory = load_config(config_file).state.memory
     assert memory.max_total_bytes == 5_000
     backend = build_state_backend(StateBackendConfig(memory=memory))
     assert isinstance(backend, MemoryStateBackend)
     assert backend._max_total_bytes == 5_000
     with pytest.raises(ValidationError):
         MemoryBackendConfig(max_total_bytes=0)
+
+
+# --- top-level ``state`` and the deprecated broker.resilience.backend alias ----
+
+
+@pytest.fixture()
+def _fresh_state_deprecation_latch(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(config_module, "_deprecated_state_section_warned", threading.Event())
+
+
+def _write(tmp_path: Path, data: dict[str, Any]) -> Path:
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.dump(data))
+    return path
+
+
+def test_state_defaults_to_memory(config_file: Path):
+    config = load_config(config_file)
+    assert config.state == StateBackendConfig()
+    assert config.state.backend == "memory"
+    assert "backend" not in BrokerResilienceConfig.model_fields
+
+
+def test_state_section_from_yaml_and_env(tmp_path: Path, sample_config_dict: dict[str, Any]):
+    sample_config_dict["state"] = {"backend": "custom", "options": {"url": "x://y"}}
+    path = _write(tmp_path, sample_config_dict)
+    assert load_config(path).state.options == {"url": "x://y"}
+    with patch.dict(os.environ, {"JENTIC__STATE__BACKEND": "other"}, clear=False):
+        assert load_config(path).state.backend == "other"
+
+
+@pytest.mark.usefixtures("_fresh_state_deprecation_latch")
+def test_the_deprecated_yaml_section_is_read_into_state(
+    tmp_path: Path, sample_config_dict: dict[str, Any]
+):
+    sample_config_dict["broker"] = {
+        "resilience": {
+            "max_in_flight": 7,
+            "backend": {"backend": "memory", "memory": {"max_total_bytes": 4096}},
+        }
+    }
+    path = _write(tmp_path, sample_config_dict)
+    with structlog.testing.capture_logs() as logs:
+        config = load_config(path)
+        load_config(path)
+    assert config.state.memory.max_total_bytes == 4096
+    assert config.broker.resilience.max_in_flight == 7
+    warnings = [e for e in logs if e["event"] == "config_deprecated_setting"]
+    assert len(warnings) == 1, "the deprecation warning is logged once per process"
+    assert warnings[0]["log_level"] == "warning"
+    assert warnings[0]["setting"] == "broker.resilience.backend"
+    assert warnings[0]["replacement"] == "state"
+
+
+@pytest.mark.usefixtures("_fresh_state_deprecation_latch")
+def test_the_deprecated_env_vars_are_read_into_state(config_file: Path):
+    env = {
+        "JENTIC__BROKER__RESILIENCE__BACKEND__BACKEND": "redis",
+        "JENTIC__BROKER__RESILIENCE__BACKEND__REDIS_URL": "redis://r:6379/0",
+        "JENTIC__BROKER__RESILIENCE__BACKEND__MEMORY__MAX_TOTAL_BYTES": "5000",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        state = load_config(config_file).state
+    assert state.backend == "redis"
+    assert state.redis_url is not None
+    assert state.redis_url.get_secret_value() == "redis://r:6379/0"
+    assert state.memory.max_total_bytes == 5000
+
+
+@pytest.mark.usefixtures("_fresh_state_deprecation_latch")
+def test_old_and_new_sections_merge_when_they_set_different_keys(
+    tmp_path: Path, sample_config_dict: dict[str, Any]
+):
+    sample_config_dict["state"] = {"memory": {"max_total_bytes": 4096}}
+    path = _write(tmp_path, sample_config_dict)
+    env = {"JENTIC__BROKER__RESILIENCE__BACKEND__MEMORY__MAX_ENTRIES_PER_NAMESPACE": "9"}
+    with patch.dict(os.environ, env, clear=False):
+        state = load_config(path).state
+    assert state.memory.max_total_bytes == 4096
+    assert state.memory.max_entries_per_namespace == 9
+
+
+@pytest.mark.usefixtures("_fresh_state_deprecation_latch")
+def test_old_and_new_sections_may_set_the_same_value(
+    tmp_path: Path, sample_config_dict: dict[str, Any]
+):
+    """An env-var string and a YAML int for the same value are not a conflict."""
+    sample_config_dict["state"] = {"memory": {"max_total_bytes": 4096}}
+    path = _write(tmp_path, sample_config_dict)
+    env = {"JENTIC__BROKER__RESILIENCE__BACKEND__MEMORY__MAX_TOTAL_BYTES": "4096"}
+    with patch.dict(os.environ, env, clear=False):
+        assert load_config(path).state.memory.max_total_bytes == 4096
+
+
+@pytest.mark.usefixtures("_fresh_state_deprecation_latch")
+@pytest.mark.parametrize(
+    ("new", "old_env", "field"),
+    [
+        (
+            {"backend": "memory"},
+            {"JENTIC__BROKER__RESILIENCE__BACKEND__BACKEND": "redis"},
+            "backend",
+        ),
+        (
+            {"memory": {"max_total_bytes": 4096}},
+            {"JENTIC__BROKER__RESILIENCE__BACKEND__MEMORY__MAX_TOTAL_BYTES": "5000"},
+            "memory",
+        ),
+    ],
+)
+def test_conflicting_old_and_new_sections_fail_to_load(
+    tmp_path: Path,
+    sample_config_dict: dict[str, Any],
+    new: dict[str, Any],
+    old_env: dict[str, str],
+    field: str,
+):
+    sample_config_dict["state"] = new
+    path = _write(tmp_path, sample_config_dict)
+    with (
+        patch.dict(os.environ, old_env, clear=False),
+        pytest.raises(ConfigError, match=r"broker\.resilience\.backend both set") as exc,
+    ):
+        load_config(path)
+    assert field in str(exc.value)
+
+
+@pytest.mark.usefixtures("_fresh_state_deprecation_latch")
+def test_an_invalid_deprecated_value_under_a_valid_state_value_is_a_conflict(
+    tmp_path: Path, sample_config_dict: dict[str, Any]
+):
+    """A key set under both, valid only under ``state``, must not be silently dropped."""
+    sample_config_dict["state"] = {"memory": {"max_total_bytes": 4096}}
+    path = _write(tmp_path, sample_config_dict)
+    env = {"JENTIC__BROKER__RESILIENCE__BACKEND__MEMORY__MAX_TOTAL_BYTES": "0"}
+    with (
+        patch.dict(os.environ, env, clear=False),
+        pytest.raises(ConfigError, match=r"broker\.resilience\.backend both set memory"),
+    ):
+        load_config(path)
+
+
+@pytest.mark.usefixtures("_fresh_state_deprecation_latch")
+def test_the_deprecated_section_may_be_a_model_instance(sample_config_dict: dict[str, Any]):
+    """A programmatic caller passing a StateBackendConfig keeps working."""
+    sample_config_dict["broker"] = {
+        **sample_config_dict.get("broker", {}),
+        "resilience": {
+            "backend": StateBackendConfig.model_validate({"memory": {"max_total_bytes": 4096}})
+        },
+    }
+    config = AppConfig.model_validate(sample_config_dict)
+    assert config.state.memory.max_total_bytes == 4096
+
+
+def test_a_backend_name_must_be_well_formed(tmp_path: Path, sample_config_dict: dict[str, Any]):
+    sample_config_dict["state"] = {"backend": "Not A Name"}
+    with pytest.raises(ConfigError, match=r"state\.backend"):
+        load_config(_write(tmp_path, sample_config_dict))
 
 
 def test_an_idem_override_keeps_the_per_caller_share_unless_set():
@@ -2662,13 +2821,14 @@ def test_login_csrf_has_a_per_client_share_sized_like_other_namespaces():
 @pytest.mark.parametrize(
     ("backend", "configured", "expected"),
     [
-        (BackendKind.MEMORY, None, 3_600.0),
-        (BackendKind.REDIS, None, 86_400.0),
-        (BackendKind.MEMORY, 120.0, 120.0),
-        (BackendKind.REDIS, 120.0, 120.0),
+        ("memory", None, 3_600.0),
+        ("redis", None, 86_400.0),
+        ("redis-cluster", None, 86_400.0),
+        ("memory", 120.0, 120.0),
+        ("redis", 120.0, 120.0),
     ],
 )
 def test_idempotency_replay_ttl_defaults_by_backend(
-    backend: BackendKind, configured: float | None, expected: float
+    backend: str, configured: float | None, expected: float
 ):
     assert IdempotencyConfig(ttl_s=configured).replay_ttl_s(backend) == expected

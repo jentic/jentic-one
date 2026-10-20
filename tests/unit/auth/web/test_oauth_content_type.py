@@ -22,6 +22,7 @@ from jentic_one.auth.web.errors import service_error_handler
 from jentic_one.auth.web.routers import oauth
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import AuthConfig
+from jentic_one.shared.state.backend import MemoryStateBackend
 from jentic_one.shared.web.deps import resolve_identity
 
 
@@ -42,6 +43,7 @@ def client() -> TestClient:
         assertion_max_ttl_seconds=300,
     )
     app.state.ctx = mock_ctx
+    app.state.auth_state_backend = MemoryStateBackend()
     return TestClient(app)
 
 
@@ -180,5 +182,6 @@ def test_introspect_unauthenticated_is_401_before_body_parse(kwargs: dict[str, o
     app.include_router(oauth.router)
     app.add_exception_handler(AuthServiceError, service_error_handler)
     app.state.ctx = MagicMock()
+    app.state.auth_state_backend = MemoryStateBackend()
     resp = TestClient(app).post("/oauth/introspect", **kwargs)  # type: ignore[arg-type]
     assert resp.status_code == 401
