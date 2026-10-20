@@ -215,35 +215,64 @@ function isEntryId(id: string): boolean {
 }
 
 /**
- * The `entry_id` of the registered catalog entry for `catalogApiId` — the one
- * the API was imported from — read off `GET /catalog?registered_only=true`.
- * `null` when no registered entry carries exactly that `catalog_api_id`.
+ * The `entry_id` of the registered catalog entry for `catalogApiId`, read off
+ * `GET /catalog?registered_only=true` — only for a backend whose APIs response
+ * predates `catalog_entry_id`. `null` when no registered entry carries exactly
+ * that `catalog_api_id`. Two registered entries for it fail: either may be the
+ * one this API came from, and guessing would act on the other. Lookup errors
+ * (403, 5xx, network) propagate rather than fall back to a guess.
  */
 async function registeredEntryIdFor(catalogApiId: string): Promise<string | null> {
-	try {
-		const page = await CatalogService.listCatalog({
-			q: catalogApiId,
-			registeredOnly: true,
-			limit: 50,
-		});
-		return page.data.find((e) => e.catalog_api_id === catalogApiId)?.entry_id ?? null;
-	} catch {
-		return null;
+	const page = await CatalogService.listCatalog({
+		q: catalogApiId,
+		registeredOnly: true,
+		limit: 50,
+	});
+	const matches = page.data.filter((e) => e.catalog_api_id === catalogApiId);
+	if (matches.length > 1) {
+		throw new WorkspaceApiError(
+			`More than one registered catalog entry serves ${catalogApiId}, so this API's own entry can't be told apart.`,
+			409,
+			null,
+		);
 	}
+	return matches[0]?.entry_id ?? null;
 }
 
 /**
- * Run a catalog call for the API's `catalog_api_id`. The catalog routes take
- * an `entry_id`, which the APIs response no longer carries, so it is resolved:
- * the registered entry for that `catalog_api_id` when the catalog lists one;
- * otherwise the call goes out with the `catalog_api_id` and follows the 404's
- * `did_you_mean` (the visible entry for it) once, when that is a well-formed
- * entry_id.
+ * The catalog entry a workspace API's Update/Mute acts on: its own
+ * `catalog_entry_id` from the APIs response (`null` when the backend withholds
+ * it because the caller can't read the entry's source; `undefined` from a
+ * backend that predates the field), plus its `catalog_api_id`.
+ */
+export interface CatalogTarget {
+	entryId?: string | null;
+	catalogApiId: string;
+}
+
+/**
+ * Run a catalog call for a workspace API. With the API's own `entry_id` the call
+ * goes straight to that entry — never to another entry sharing its
+ * `catalog_api_id` — and a 404 (the entry is gone or its source hidden) is final.
+ * A withheld entry (`null`) fails without a request: guessing would act on a
+ * different entry. Only a backend that never sends the field (`undefined`)
+ * resolves the registered entry for the `catalog_api_id`; failing that, the
+ * call goes out with the `catalog_api_id` and follows the 404's `did_you_mean`
+ * once, when that is a well-formed entry_id.
  */
 async function withCatalogEntry<T>(
 	target: CatalogTarget,
 	call: (entryId: string) => Promise<T>,
 ): Promise<T> {
+	if (target.entryId) return call(target.entryId);
+	if (target.entryId === null) {
+		throw new WorkspaceApiError(
+			"This API's catalog source isn't visible to you, so it can't be updated or muted from here.",
+			404,
+			null,
+		);
+	}
+	const { catalogApiId } = target;
 	const registered = await registeredEntryIdFor(catalogApiId);
 	if (registered) return call(registered);
 	try {

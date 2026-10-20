@@ -997,7 +997,7 @@ async def _file_import(env: CallEnv, entry_id: str) -> str:
         ) from None
     except CatalogEntryHasNoSpecError:
         raise invalid_params(
-            f"catalog entry {api_id!r} has no spec to import; pick another search_catalog hit"
+            f"catalog entry {entry_id!r} has no spec to import; pick another search_catalog hit"
         ) from None
     except CatalogUnavailableError as exc:
         raise ToolError(CODE_INTERNAL_ERROR, f"catalog not available: {exc}") from None
