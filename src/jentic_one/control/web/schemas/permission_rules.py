@@ -88,10 +88,17 @@ class BasePermissionRuleSchema(BaseModel):
     def _reject_held_git_rule(self) -> BasePermissionRuleSchema:
         # A held git push would block git with no output past an agent's tool
         # timeout, so git rules allow or deny only (``shared.permissions.git_rules``).
-        if self.match_mode == GIT_MATCH_MODE and getattr(self, "effect", None) == (
-            "require-approval"
-        ):
+        if self.match_mode != GIT_MATCH_MODE:
+            return self
+        if getattr(self, "effect", None) == "require-approval":
             raise ValueError("A 'git' rule's effect must be 'allow' or 'deny'")
+        # A git request has no HTTP method or registry operation a rule could
+        # match, so a git rule constraining either would never match.
+        if self.methods or self.operations:
+            raise ValueError(
+                "A 'git' rule takes no methods or operations: its selector in 'path' "
+                "names the git action, repository and ref"
+            )
         return self
 
     @model_validator(mode="after")

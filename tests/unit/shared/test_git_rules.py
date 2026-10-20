@@ -212,3 +212,50 @@ def test_a_held_git_rule_is_refused_at_save_time() -> None:
         PermissionRuleSchema(effect="allow", path="pull:octo-org/app", match_mode="git")
     rule = PermissionRuleSchema(effect="allow", path="push:octo-org/app", match_mode="git")
     assert rule.match_mode == "git"
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [{"methods": ["POST"]}, {"operations": ["op_1"]}, {"effect": "require-approval"}],
+)
+def test_git_rules_take_no_methods_operations_or_holds(extra: dict[str, object]) -> None:
+    body: dict[str, object] = {
+        "effect": "allow",
+        "path": "push:octo-org/app",
+        "match_mode": "git",
+        **extra,
+    }
+    with pytest.raises(ValidationError):
+        PermissionRuleSchema.model_validate(body)
+
+
+def test_fetch_one_repo_push_only_to_one_namespace() -> None:
+    rules = [
+        compile_rule(
+            effect="allow",
+            methods=None,
+            path="push:jentic/jentic-one-internal:refs/heads/jentic-e2e/*",
+            match_mode="git",
+            operations=None,
+        ),
+        compile_rule(
+            effect="allow",
+            methods=None,
+            path="fetch:jentic/jentic-one-internal",
+            match_mode="git",
+            operations=None,
+        ),
+    ]
+    repo = ("jentic", "jentic-one-internal")
+
+    def allowed(item: GitItem) -> bool:
+        idx = first_matching_rule(rules, method="", path="", operation_id=None, git_item=item)
+        return rule_verdict(rules, idx) == "allow"
+
+    assert allowed(GitItem(GitAction.FETCH, *repo))
+    assert allowed(GitItem(GitAction.PUSH, *repo))  # the advertisement before a push
+    assert allowed(GitItem(GitAction.PUSH, *repo, "refs/heads/jentic-e2e/a/b"))
+    assert not allowed(GitItem(GitAction.PUSH, *repo, "refs/heads/main"))
+    assert not allowed(GitItem(GitAction.PUSH, *repo, "refs/tags/v1"))
+    assert not allowed(GitItem(GitAction.FORCE, *repo, "refs/heads/jentic-e2e/a"))
+    assert not allowed(GitItem(GitAction.FETCH, "jentic", "other"))

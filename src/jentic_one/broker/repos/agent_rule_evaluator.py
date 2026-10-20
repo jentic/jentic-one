@@ -15,6 +15,8 @@ no vendor join is needed here.
 
 A GraphQL request (``graphql``) is evaluated once per top-level field and the
 most restrictive field verdict decides (``shared.permissions.graphql_rules``).
+A git request is evaluated once per item (:meth:`AgentRuleEvaluator.evaluate_git`,
+``shared.permissions.git_rules``), allow or deny only.
 
 Path matching (``regex``/``prefix``/``exact``) delegates to the shared
 ``shared.permissions.matching`` seam and the first-match-wins loop to
@@ -41,6 +43,8 @@ from sqlalchemy import text
 
 from jentic_one.broker.core.singleflight import SingleFlight
 from jentic_one.shared.broker.protocols import (
+    GitEvaluation,
+    GitItemEvaluation,
     GraphQLFieldEvaluation,
     RuleEvaluation,
     RuleVerdict,
@@ -53,6 +57,7 @@ from jentic_one.shared.permissions.evaluation import (
     first_matching_rule,
     rule_verdict,
 )
+from jentic_one.shared.permissions.git_rules import GitItem
 from jentic_one.shared.permissions.graphql_document import GraphQLCall
 from jentic_one.shared.permissions.graphql_rules import (
     FieldVerdict,
@@ -293,6 +298,48 @@ class AgentRuleEvaluator:
             matched_rule_id=rules[idx].rule_id if idx is not None else None,
             divergence=divergence,
         )
+
+    async def evaluate_git(
+        self,
+        *,
+        agent_id: str,
+        credential_id: str,
+        rule_set_id: str | None,
+        items: Sequence[GitItem],
+    ) -> GitEvaluation:
+        """Evaluate the binding's (or its rule set's) rules once per git item.
+
+        An item is allowed only by an ``allow`` rule that decides it; a deny,
+        no matching rule and a ``require-approval`` rule (refused for git rules
+        at save time) all deny it. The method, path and operation a rule may
+        also constrain are empty for a git item, so a git rule saved with any
+        of them never matches (fail closed).
+        """
+        rules = await self._get_rules(
+            agent_id=agent_id, credential_id=credential_id, rule_set_id=rule_set_id
+        )
+        binding = _binding_label(
+            agent_id=agent_id, credential_id=credential_id, rule_set_id=rule_set_id
+        )
+        evaluated: list[GitItemEvaluation] = []
+        for position, item in enumerate(items):
+            idx = first_matching_rule(
+                rules,
+                method="",
+                path="",
+                operation_id=None,
+                binding=binding,
+                warn=position == 0,
+                git_item=item,
+            )
+            evaluated.append(
+                GitItemEvaluation(
+                    item=item,
+                    allowed=rule_verdict(rules, idx) == RuleVerdict.ALLOW,
+                    matched_rule_id=rules[idx].rule_id if idx is not None else None,
+                )
+            )
+        return GitEvaluation(items=tuple(evaluated), rules_loaded=len(rules))
 
     async def _get_rules(
         self, *, agent_id: str, credential_id: str, rule_set_id: str | None

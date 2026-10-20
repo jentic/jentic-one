@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
@@ -11,6 +12,7 @@ from jentic_one.shared.auth.cli_invocation import CliInvocationIdentity
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models.credentials import CredentialType
 from jentic_one.shared.permissions.evaluation import PathDivergence
+from jentic_one.shared.permissions.git_rules import GitItem
 from jentic_one.shared.permissions.graphql_document import GraphQLCall
 from jentic_one.shared.schemas import APIReference, OperationInfo
 
@@ -182,6 +184,27 @@ class RuleEvaluation:
 
 
 @dataclass(frozen=True, slots=True)
+class GitItemEvaluation:
+    """The rule verdict for one thing a git request does (a fetch, one ref update).
+
+    Git rules are allow-or-deny: ``allowed`` is False for a deny, for no
+    matching rule and for a matching ``require-approval`` rule alike.
+    """
+
+    item: GitItem
+    allowed: bool
+    matched_rule_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class GitEvaluation:
+    """The rule verdicts for the items of one git request, in the order given."""
+
+    items: tuple[GitItemEvaluation, ...]
+    rules_loaded: int
+
+
+@dataclass(frozen=True, slots=True)
 class IdentityMismatch:
     """A nearest-miss credential identity for an unresolved-but-bound API.
 
@@ -306,6 +329,21 @@ class AgentRuleEvaluatorProtocol(Protocol):
         upstream_path: str | None = None,
         graphql: GraphQLCall | None = None,
     ) -> RuleEvaluation: ...
+
+    async def evaluate_git(
+        self,
+        *,
+        agent_id: str,
+        credential_id: str,
+        rule_set_id: str | None,
+        items: Sequence[GitItem],
+    ) -> GitEvaluation:
+        """Evaluate the binding's rules once per git item (``shared.permissions.git_rules``).
+
+        Only a ``match_mode="git"`` rule or a condition-less ``deny`` decides a
+        git item; an exhausted list denies it.
+        """
+        ...
 
 
 @dataclass(frozen=True, slots=True)
