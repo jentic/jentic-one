@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from types import TracebackType
 from typing import TYPE_CHECKING
 
@@ -15,12 +16,17 @@ from jentic_one.shared.provider_config_store import load_provider_configs
 from jentic_one.shared.release_check import ReleaseChecker
 
 if TYPE_CHECKING:
+    from jentic_one.control.services.credentials.providers.base import CredentialProvider
     from jentic_one.control.services.credentials.providers.registry import ProviderRegistry
     from jentic_one.shared.telemetry.sink import TelemetrySink
 
 logger = structlog.get_logger(__name__)
 
-logger = structlog.get_logger(__name__)
+#: How long a provider replaced by a registry rebuild stays open before it is
+#: closed. A request that resolved it just before the swap keeps using it, so
+#: this outlasts a whole provider operation (a connect makes a few sequential
+#: upstream calls, each under a 30 s HTTP timeout).
+PROVIDER_RETIRE_GRACE_S = 120.0
 
 ALL_DB_NAMES: frozenset[str] = frozenset(("registry", "admin", "control"))
 
@@ -58,6 +64,17 @@ class Context:
         )
         self._encryption: EncryptionService | None = None
         self._providers: ProviderRegistry | None = None
+        # Refresh single-flight: a refresh requested while another is running
+        # waits for the lock, then is skipped if a rebuild that *started* after
+        # it was requested has already completed (that rebuild read the DB after
+        # the change that prompted the request had committed).
+        self._provider_refresh_lock: asyncio.Lock | None = None
+        self._provider_refresh_requested = 0
+        self._provider_refresh_completed = 0
+        # Providers replaced by a rebuild, with the monotonic time each batch
+        # may be closed at; closed by the next rebuild after that, or at shutdown.
+        self._retired_providers: list[tuple[float, list[CredentialProvider]]] = []
+        self._provider_retire_grace_s = PROVIDER_RETIRE_GRACE_S
         self._registry_db: DatabaseSession | None = None
         self._admin_db: DatabaseSession | None = None
         self._control_db: DatabaseSession | None = None
@@ -80,6 +97,15 @@ class Context:
         if not self._is_allowed(name):
             return False
         return getattr(self, f"_{name}_db") is not None
+
+    @property
+    def resolves_providers(self) -> bool:
+        """Whether this process resolves credential providers (control, broker).
+
+        Such a process merges the DB-backed provider configs at boot and keeps
+        its registry in step with later writes (see :meth:`refresh_providers`).
+        """
+        return self._refresh_providers_on_boot
 
     @property
     def has_encryption_keyset(self) -> bool:
@@ -105,12 +131,13 @@ class Context:
 
     @property
     def providers(self) -> ProviderRegistry:
-        """Lazily-built provider registry from credentials config.
+        """The process's provider registry: an in-memory lookup, never a DB read.
 
-        Built synchronously from YAML config only. Runtime (DB-backed) provider
-        configs are merged in by :meth:`refresh_providers`, which the admin API
-        calls after a write so a fresh process picks up DB config without a
-        restart. ``get()`` stays synchronous (no DB access on the hot path).
+        Built lazily from YAML config. Runtime (DB-backed) provider configs are
+        merged in by :meth:`refresh_providers` — at boot, after an admin write
+        in this process, and whenever another process commits a change to the
+        stored configs (the app factory subscribes the refresh to the
+        ``InvalidationBus``). ``get()`` stays synchronous.
         """
         if self._providers is None:
             from jentic_one.control.services.credentials.providers.registry import (
@@ -124,33 +151,70 @@ class Context:
         """Rebuild the provider registry from YAML config + runtime DB config.
 
         Reads runtime provider configs from the admin DB via the boundary-safe
-        shared reader, decrypts known secret fields, then rebuilds the
-        synchronous registry. Dynamic entries override YAML entries of the same
-        name. The swapped-in registry is what subsequent ``providers`` access
-        and ``providers.get(...)`` resolve against — no restart required.
+        shared reader, decrypts known secret fields, then builds a new registry
+        (reusing every provider whose config is unchanged) and swaps it in.
+        Dynamic entries override YAML entries of the same name. Subsequent
+        ``providers.get(...)`` calls resolve against the new registry; a request
+        already holding a replaced provider finishes on it, and the replaced
+        provider is closed by the first refresh after
+        :data:`PROVIDER_RETIRE_GRACE_S` has passed, or at :meth:`shutdown`.
 
-        SINGLE-PROCESS ONLY. This rebuilds the registry on *this* process's
-        Context. In the combined deployment (one process serving all surfaces)
-        an admin PUT immediately affects the same in-memory registry that the
-        control/broker paths resolve against. In a parts/multi-process topology
-        (admin, control, registry as separate services — see
-        ``deploy/helm/values/local-parts.yaml``) the control/broker processes
-        do NOT share this Context: they pick up DB-backed provider config only
-        at their own boot (and only if granted admin-DB access), not after an
-        admin PUT in another process. Cross-process propagation (control reads
-        the DB on discovery, or a notify/poll mechanism) is tracked as a
-        follow-up. See the PR description's "Topology / propagation" note.
+        Concurrent calls are serialised. A call is answered without a rebuild of
+        its own when a rebuild that started after the call was made has already
+        completed: that rebuild read the stored configs after the caller's change.
         """
+        if self._provider_refresh_lock is None:
+            self._provider_refresh_lock = asyncio.Lock()
+        self._provider_refresh_requested += 1
+        requested = self._provider_refresh_requested
+        async with self._provider_refresh_lock:
+            if self._provider_refresh_completed >= requested:
+                return self.providers
+            started = self._provider_refresh_requested
+            new = await self._build_providers()
+            self._swap_providers(new)
+            self._provider_refresh_completed = started
+        await self._close_retired_providers()
+        return new
+
+    async def _build_providers(self) -> ProviderRegistry:
         from jentic_one.control.services.credentials.providers.registry import ProviderRegistry
 
         async with self.admin_db.session() as session:
             stored = await load_provider_configs(session)
-
         decrypted = {name: self.decrypt_provider_config(cfg) for name, cfg in stored.items()}
-        self._providers = ProviderRegistry.from_config_and_dynamic(
-            self._config.credentials, decrypted
+        return ProviderRegistry.from_config_and_dynamic(
+            self._config.credentials, decrypted, previous=self._providers
         )
-        return self._providers
+
+    def _swap_providers(self, new: ProviderRegistry) -> None:
+        """Install ``new`` and queue the providers it replaced for a deferred close."""
+        old, self._providers = self._providers, new
+        if old is None:
+            return
+        replaced = old.superseded_by(new)
+        if replaced:
+            deadline = time.monotonic() + self._provider_retire_grace_s
+            self._retired_providers.append((deadline, replaced))
+
+    async def _close_retired_providers(self, *, force: bool = False) -> None:
+        """Close retired providers whose grace has passed (all of them when ``force``)."""
+        from jentic_one.control.services.credentials.providers.registry import aclose_providers
+
+        now = time.monotonic()
+        due = [batch for deadline, batch in self._retired_providers if force or deadline <= now]
+        self._retired_providers = [
+            entry for entry in self._retired_providers if not (force or entry[0] <= now)
+        ]
+        # Due batches leave the queue before any await, so a concurrent call
+        # never closes the same batch twice. A cancelled close re-queues the
+        # batches it had not reached, so shutdown still closes them.
+        for index, batch in enumerate(due):
+            try:
+                await aclose_providers(batch)
+            except BaseException:
+                self._retired_providers.extend((now, rest) for rest in due[index + 1 :])
+                raise
 
     def decrypt_provider_config(self, cfg: dict[str, object]) -> dict[str, object]:
         """Return a copy of a stored provider config with secret fields decrypted.
@@ -271,8 +335,8 @@ class Context:
         # the YAML-only registry from the lazy `providers` property.
         #
         # Best-effort: a transient admin-DB blip at boot must not crash startup.
-        # On failure we keep the lazy YAML-only registry and let the next admin
-        # write (which calls refresh_providers explicitly) reconcile DB state.
+        # On failure we keep the lazy YAML-only registry; the next refresh (an
+        # admin write here, or a change notification) reconciles DB state.
         if (
             self._refresh_providers_on_boot
             and self._is_allowed("admin")
@@ -281,10 +345,27 @@ class Context:
             try:
                 await self.refresh_providers()
             except Exception as exc:
-                logger.warning("provider_refresh_on_boot_failed", error=str(exc))
+                logger.warning(
+                    "provider_refresh_on_boot_failed",
+                    error_type=type(exc).__name__,
+                    actionable_step=(
+                        "Check that this process can read the admin database and holds "
+                        "the credential keyset; the YAML-configured providers stay in "
+                        "use until a later refresh succeeds."
+                    ),
+                )
 
     async def shutdown(self) -> None:
-        """Close all connected databases."""
+        """Close the provider registry's providers, then all connected databases."""
+        from jentic_one.control.services.credentials.providers.registry import aclose_providers
+
+        await self._close_retired_providers(force=True)
+        if self._providers is not None:
+            await aclose_providers(self._providers.list_all().values())
+        # A later startup builds afresh: a rebuild must never carry over a
+        # provider instance that has been closed.
+        self._providers = None
+        self._provider_refresh_lock = None
         for db in (self._control_db, self._admin_db, self._registry_db):
             if db is not None:
                 await db.close()

@@ -165,6 +165,19 @@ count scales with the number of processes. Only disable pre-ping where those
 events are rare and that error is acceptable. See
 [`databases.*.pool_pre_ping`](../reference/config.md#databases).
 
+The broker, and every process serving the control surface, also holds
+**one extra connection per database server it listens on** outside the
+pools — a `LISTEN` for cross-process cache invalidation and credential
+provider config changes (visible as
+`application_name = 'jentic-one-invalidation'`). The broker listens on every
+server carrying the admin or control database; a control-plane process
+listens only on the admin database's server. A
+pooler in **transaction** mode (pgbouncer `pool_mode=transaction`) cannot
+hold a `LISTEN`: point those processes' databases at Postgres directly (or a
+session-mode pool), or set `JENTIC__INVALIDATION__ENABLED=false`, in which
+case revokes reach the broker only when its cache TTLs lapse, and a provider
+config change reaches the other processes at their next restart.
+
 Secrets go in an env file, `/etc/jentic/prod.env` (`chmod 600`, values
 unquoted — `docker --env-file` takes them literally):
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import time
 from collections import OrderedDict
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Protocol
@@ -51,6 +52,9 @@ class CachedTokenValidator:
     _single_flight: SingleFlight[Identity | None] = field(
         default_factory=SingleFlight, init=False, repr=False
     )
+    # Bumped by every invalidation; a load only caches its result when no
+    # invalidation happened while it was reading.
+    _generation: int = field(default=0, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.max_entries < 1:
@@ -71,17 +75,26 @@ class CachedTokenValidator:
             self._cache.move_to_end(cache_key)
             return self._check_active(entry.resolved)
 
+        generation = self._generation
+
         async def _load() -> Identity | None:
             # Stamped with the leader's pre-lookup time, so a verdict never
             # outlives the TTL measured from when its DB read began.
             started = time.monotonic()
             resolved = await self.resolver.resolve_access_token(token)
-            self._store(cache_key, _CacheEntry(resolved=resolved, cached_at=started))
+            # An invalidation that lands while the read is in flight may
+            # describe a commit the read did not see: answer this caller, but
+            # never cache a verdict that could predate the change.
+            if generation == self._generation:
+                self._store(cache_key, _CacheEntry(resolved=resolved, cached_at=started))
             return resolved
 
         # Concurrent misses for one token (cold start, TTL expiry) share a single
         # resolver lookup; a raised lookup reaches every waiter and is not cached.
-        resolved = await self._single_flight.do(cache_key, _load)
+        # The generation is part of the flight key: a caller arriving after an
+        # invalidation starts a fresh read instead of sharing one that began
+        # before the change.
+        resolved = await self._single_flight.do(f"{cache_key}\x00{generation}", _load)
         return self._check_active(resolved)
 
     def _store(self, cache_key: str, entry: _CacheEntry) -> None:
@@ -103,10 +116,42 @@ class CachedTokenValidator:
     def invalidate(self, token: str) -> None:
         """Remove a token from the cache (useful for testing)."""
         cache_key = hashlib.sha256(token.encode()).hexdigest()
-        self._cache.pop(cache_key, None)
+        self.invalidate_digests((cache_key,))
+
+    def invalidate_digests(self, digests: Iterable[str]) -> None:
+        """Drop the entries for these sha256 token digests.
+
+        The cache key is the hex ``sha256`` of the token — the same digest the
+        admin DB stores (``access_tokens.token_hash``,
+        ``agent_credentials.api_key_hash``) — so a change to one token row maps
+        to exactly one entry.
+        """
+        self._generation += 1
+        for digest in digests:
+            self._cache.pop(digest, None)
+
+    def invalidate_matching(self, predicate: Callable[[Identity], bool]) -> None:
+        """Drop every entry whose identity matches ``predicate``, and every negative one.
+
+        For changes keyed on something other than the token (the actor, its
+        grants, its OAuth client or consent grant). Negative entries go too:
+        they carry no identity to match, and an actor change (an agent
+        re-enabled, a key re-bound) can turn a token that resolved to nothing
+        into a live one. A linear scan over a bounded cache, run only on admin
+        writes.
+        """
+        self._generation += 1
+        stale = [
+            key
+            for key, entry in self._cache.items()
+            if entry.resolved is None or predicate(entry.resolved)
+        ]
+        for key in stale:
+            del self._cache[key]
 
     def clear(self) -> None:
         """Clear the entire cache."""
+        self._generation += 1
         self._cache.clear()
 
 

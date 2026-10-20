@@ -169,18 +169,97 @@ load-bearing:
 
 1. **Startup:** `ctx.startup()` → DB instrumentation → telemetry → the
    surface's own `extra_lifespan` (the broker opens its shared outbound
-   `httpx.AsyncClient` here) → container-injected lifespans (the `/mcp`
-   session manager) → background workers.
+   `httpx.AsyncClient` here) → the invalidation bus starts (below) → the
+   provider-config refresher starts → container-injected lifespans (the
+   `/mcp` session manager) → background workers.
 2. **Shutdown**, with a drain step first: the broker's admission gate
    reports unready (so the load balancer deregisters the instance) →
-   scanners stop → the job worker drains → telemetry flushes →
-   `ctx.shutdown()` → container-injected lifespans exit in reverse → the
-   surface lifespan closes the shared HTTP client. Draining the worker
+   scanners stop → the job worker drains → telemetry flushes → the
+   provider-config refresher stops → the surface installers' shutdown
+   handlers run (closing the auth and control shared-state backends) →
+   `ctx.shutdown()` (closes the providers) → container-injected lifespans
+   exit in reverse → the
+   invalidation bus stops → the surface lifespan closes the shared HTTP
+   client. Draining the worker
    *before* closing the client matters: an async execution mid-flight must
    finish over a live connection pool. Between the telemetry flush and
    `ctx.shutdown()` the lifespan also runs the shutdown handlers that surface
    installers registered on the app; they close the auth and control
    surfaces' shared-state backends.
+
+## Cross-process cache invalidation
+
+The broker caches authorization state in-process — opaque-token and API-key
+verdicts, permission-rule lists, credential-binding derivations — under short
+TTLs. With several processes (a broker fleet, a separate control plane), a
+change committed by one process must reach the others' caches. The
+`InvalidationBus` seam
+([`shared/invalidation/`](../../src/jentic_one/shared/invalidation/protocol.py))
+carries that signal:
+
+```mermaid
+flowchart LR
+    CP["control plane: revoke token"] -->|"UPDATE access_tokens (commit)"| PG[("PostgreSQL")]
+    PG -->|"trigger: pg_notify on commit"| PG
+    PG -->|"LISTEN jentic_one_invalidation"| B1["broker A: drop entry"]
+    PG -->|"LISTEN jentic_one_invalidation"| B2["broker B: drop entry"]
+```
+
+- **Publishing is transactional and lives in the database.** `AFTER` row
+  triggers on the admin tables (`access_tokens`, `agent_credentials`,
+  `agents`, `users`, `actor_permission_grants`, `oauth_clients`,
+  `oauth_client_grants`, `agent_credential_bindings`) and control tables
+  (`agent_permission_rules`, `permission_rule_set_rules`, `credentials`) call
+  `pg_notify` with a small JSON payload naming the table and the changed key
+  values. `NOTIFY` is delivered only on commit, so a rolled-back change never
+  invalidates anything, and every writer — any surface, any process, a manual
+  `psql` session — publishes without application code. A payload that would
+  exceed the `NOTIFY` size limit, and every `TRUNCATE`, sends a "flush this
+  table" message instead; an `UPDATE` that changes only the `updated_at` /
+  `last_used_at` bookkeeping timestamps sends nothing.
+- **Listening is one dedicated connection per database server per process**,
+  opened directly with asyncpg outside the SQLAlchemy pool (a `LISTEN` is
+  session state). The bus opens it only when something subscribed, and only
+  to a server that carries a subscribed topic's database — the broker and any
+  process that resolves credential providers (below) subscribe; a process
+  serving only registry, admin or auth opens nothing. It is visible in
+  `pg_stat_activity` as `application_name = 'jentic-one-invalidation'`.
+- **A lost connection degrades to TTLs, never to stale forever.** The bus
+  probes the connection, reconnects with capped exponential backoff
+  (`invalidation.reconnect_backoff_*`), and after reconnecting flushes every
+  subscribed cache, because notifications sent while it was down are gone.
+  Startup waits a bounded time for the first `LISTEN`; a database that is
+  slower than that does not hold up boot, and when its `LISTEN` lands later
+  the bus flushes too (requests may have been cached in between).
+- **SQLite runs a no-op bus**: there is no notification channel, and a
+  single-file database has no second writer process. The TTLs apply. Set
+  `invalidation.enabled: false` where `LISTEN` cannot work (a transaction-mode
+  connection pooler) to get the same TTL-only behaviour on PostgreSQL.
+- **Credential provider configs ride the same bus.** An admin write to a
+  provider config (`PUT /admin/config/providers/{name}`) rebuilds the
+  provider registry of the process that served it, and the trigger on
+  `provider_configs` notifies every other process that resolves providers
+  (control, the broker, a combined app) on the `admin.provider_configs`
+  topic. Each one rebuilds its registry from the stored configs
+  ([`shared/provider_refresh.py`](../../src/jentic_one/shared/provider_refresh.py)),
+  so a rotated or removed client secret stops being used without a restart.
+  The payload names the provider only — never the config or its ciphertext.
+  Rebuilds are debounced and single-flighted (a burst of writes is one
+  rebuild; a write landing mid-rebuild causes one more), a reconnect flush
+  triggers one, and a failed rebuild is retried with backoff. Resolving a
+  provider stays an in-memory lookup: the database is read only on a
+  rebuild. A rebuild reuses every provider whose config is unchanged; a
+  replaced provider stays usable by the requests that already resolved it
+  and is closed (if it holds resources) by the first rebuild after a grace
+  period, or at shutdown.
+  With a bus that never delivers (SQLite's single process, or
+  `invalidation.enabled: false`) only the writing process rebuilds, and the
+  others merge the stored configs at their next boot.
+- **Pluggable.** `AppContainer.invalidation_bus` replaces the default
+  (`build_invalidation_bus(ctx)`); the app factory stashes the chosen bus on
+  `app.state.invalidation_bus` before installers run, so caches subscribe at
+  build time, and starts and stops it in the lifespan. An alternative
+  transport proves itself with `jentic_one.testing.BaseInvalidationBusContract`.
 
 ## Background work
 

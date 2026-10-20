@@ -130,8 +130,9 @@ class ProviderConfigService:
             )
             view = _to_view(record)
 
-        # Rebuild the in-process provider registry so the change takes effect
-        # without a restart. NOTE: single-process only — see refresh_providers().
+        # Rebuild this process's provider registry so the change is live before
+        # the response. Every other process that resolves providers rebuilds on
+        # the provider_configs change notification (see shared/provider_refresh).
         await self._ctx.refresh_providers()
         return view
 

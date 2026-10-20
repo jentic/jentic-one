@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI, Request
 
+from jentic_one.broker.core.cache_invalidation import subscribe_broker_caches
 from jentic_one.broker.core.token_validation import CachedActorStatus, CachedTokenValidator
 from jentic_one.broker.repos import (
     ActorStatusResolver,
@@ -27,6 +28,7 @@ from jentic_one.shared.auth.jwt_verification import TrustedIssuerVerifier
 from jentic_one.shared.broker.protocols import CredentialDeriverProtocol
 from jentic_one.shared.config import BrokerConfig
 from jentic_one.shared.context import Context
+from jentic_one.shared.invalidation import InvalidationBus, NoopInvalidationBus
 
 
 def build_jwt_verifier(broker: BrokerConfig) -> TokenVerifier | None:
@@ -45,7 +47,13 @@ def build_jwt_verifier(broker: BrokerConfig) -> TokenVerifier | None:
 
 
 def install_broker_auth(app: FastAPI, ctx: Context) -> None:
-    """Wire token validation and credential-binding enforcement onto app state."""
+    """Wire token validation and credential-binding enforcement onto app state.
+
+    The token, API-key, rule and binding caches subscribe to the app's
+    ``InvalidationBus`` (``app.state.invalidation_bus``, set by
+    ``create_surface_app``), so a change committed by another process drops the
+    affected entries before their TTL lapses.
+    """
     resolver = InProcessTokenResolver(ctx.admin_db)
     opaque = CachedTokenValidator(
         resolver=resolver,
@@ -79,20 +87,32 @@ def install_broker_auth(app: FastAPI, ctx: Context) -> None:
     # Direct-binding authorization (theme-5) — the only path since Phase 6b
     # deleted toolkit derivation. ``toolkit_cache_ttl_s`` keeps its legacy
     # config key name (operator compatibility); it bounds this cache now.
-    app.state.broker_agent_rule_evaluator = AgentRuleEvaluator(
+    rule_evaluator = AgentRuleEvaluator(
         ctx.control_db,
         cache_ttl_seconds=ctx.config.broker.rule_cache_ttl_s,
         max_entries=ctx.config.broker.rule_cache_max_entries,
     )
+    app.state.broker_agent_rule_evaluator = rule_evaluator
     credential_deriver: CredentialDeriverProtocol = CredentialBindingResolver(
         ctx.admin_db, ctx.control_db
     )
+    binding_cache: CachingCredentialDeriver | None = None
     binding_cache_ttl_s = ctx.config.broker.toolkit_cache_ttl_s
     if binding_cache_ttl_s > 0:
-        credential_deriver = CachingCredentialDeriver(
+        binding_cache = CachingCredentialDeriver(
             credential_deriver, cache_ttl_seconds=binding_cache_ttl_s
         )
+        credential_deriver = binding_cache
     app.state.broker_credential_deriver = credential_deriver
+
+    bus: InvalidationBus | None = getattr(app.state, "invalidation_bus", None)
+    subscribe_broker_caches(
+        bus if bus is not None else NoopInvalidationBus(),
+        access_tokens=opaque,
+        api_keys=api_key_cached,
+        rules=rule_evaluator,
+        bindings=binding_cache,
+    )
 
     async def _verify_token(token: str, request: Request) -> Identity:
         return await triple.validate(token)
