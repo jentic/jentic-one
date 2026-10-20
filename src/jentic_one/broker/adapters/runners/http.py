@@ -56,8 +56,9 @@ _tracer = trace.get_tracer("broker.runner")
 _TransportFailure = httpx.HTTPError | UpstreamHostUnresolvedError
 _TRANSPORT_FAILURES = (httpx.HTTPError, UpstreamHostUnresolvedError)
 #: The connect-phase subset: raised by ``client.send`` before any request byte
-#: reached the upstream (``ConnectTimeout`` subclasses ``ConnectError``).
-_CONNECT_PHASE_FAILURES = (httpx.ConnectError, UpstreamHostUnresolvedError)
+#: reached the upstream. ``ConnectTimeout`` is listed on its own: it is a
+#: ``TimeoutException``, not a ``ConnectError``.
+_CONNECT_PHASE_FAILURES = (httpx.ConnectError, httpx.ConnectTimeout, UpstreamHostUnresolvedError)
 
 
 def _transport_error_detail(exc: _TransportFailure) -> str:
