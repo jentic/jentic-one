@@ -14,6 +14,7 @@ from __future__ import annotations
 from jentic_one.shared.access_guidance import (
     ConnectTarget,
     catalog_api_id_covers,
+    catalog_api_scopes,
     catalog_import_name,
     connect_target,
     connect_vendor_key,
@@ -24,6 +25,11 @@ from jentic_one.shared.config import (
     VendorDeviceAuthorizationFlowConfig,
     VendorIdentityProbeConfig,
     VendorRegistryConfig,
+)
+from jentic_one.shared.models.api_identity import (
+    CredentialScope,
+    canonical_credential_scope,
+    credential_covers,
 )
 
 _FLOW = VendorDeviceAuthorizationFlowConfig(
@@ -136,6 +142,27 @@ def test_sub_segment_match_still_requires_the_vendor_axis() -> None:
 def test_bare_domain_entry_covers_its_whole_id_name() -> None:
     """A bare-domain catalog id seeds its whole id as the name."""
     assert catalog_api_id_covers("coincap.io", vendor="coincap-io", name="coincap-io", version="2")
+
+
+def _vendor_wide(scopes: tuple[CredentialScope, ...], vendor: str) -> bool:
+    """Whether a vendor-wide credential for ``vendor`` covers any of ``scopes``."""
+    wide = canonical_credential_scope(vendor=vendor, name=None, version=None)
+    return any(
+        credential_covers(wide, vendor=s.vendor, name=s.name or "", version="1") for s in scopes
+    )
+
+
+def test_namespaced_catalog_id_scopes_are_not_covered_by_the_curated_vendor() -> None:
+    """A namespaced id (``corp~api.stripe.com``) is its own vendor, so a vendor-wide
+    ``stripe-com`` credential never covers what its import registers."""
+    scopes = catalog_api_scopes("corp~api.stripe.com")
+    assert {s.vendor for s in scopes} == {"corp-api-stripe-com"}
+    assert not _vendor_wide(scopes, "stripe.com")
+
+
+def test_plain_catalog_id_scopes_are_covered_by_their_vendor() -> None:
+    assert _vendor_wide(catalog_api_scopes("stripe.com"), "stripe.com")
+    assert _vendor_wide(catalog_api_scopes("api.stripe.com"), "stripe.com")
 
 
 _GMAIL = ConnectableRegistration(

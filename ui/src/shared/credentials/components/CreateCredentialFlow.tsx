@@ -755,7 +755,7 @@ export function CreateCredentialFlow({
 			selectedApi?.source === 'catalog' && !selectedApi.registered && !!selectedApi.apiId;
 		if (importQueued && selectedApi?.apiId) {
 			try {
-				await importMutation.mutateAsync(selectedApi.apiId);
+				await importMutation.mutateAsync(selectedApi.entryId ?? selectedApi.apiId);
 			} catch {
 				return;
 			}

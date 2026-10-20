@@ -19,6 +19,7 @@ function api(apiId: string, extra: Partial<DiscoveryEntity> = {}): DiscoveryEnti
 	const sub = apiId.split('/')[1];
 	return {
 		id: apiId,
+		entryId: `public/${apiId}`,
 		apiId,
 		summary: sub ? sub.charAt(0).toUpperCase() + sub.slice(1) : apiId,
 		registered: false,

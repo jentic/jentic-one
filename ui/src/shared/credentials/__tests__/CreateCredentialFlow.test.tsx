@@ -15,6 +15,7 @@ import { renderWithProviders, screen, waitFor, userEvent, within } from '@/__tes
 import { worker } from '@/mocks/browser';
 import { setToken } from '@/shared/api';
 import {
+	catalogPreviewOf,
 	makeMockApi,
 	makeMockCredential,
 	resetApisStore,
@@ -304,7 +305,7 @@ describe('CreateCredentialFlow', () => {
 	});
 
 	describe('a catalog API whose spec declares no authentication', () => {
-		const SPEC_URL = 'https://specs.test/holidays/openapi.json';
+		const PREVIEW_URL = '/catalog/public/holidays.test/operations';
 		const HOLIDAYS: SelectedApi = {
 			source: 'catalog',
 			registered: false,
@@ -313,10 +314,10 @@ describe('CreateCredentialFlow', () => {
 			version: '1.0.0',
 			label: 'Holidays',
 			apiId: 'holidays.test',
-			specUrl: SPEC_URL,
+			entryId: 'public/holidays.test',
 		};
 		const stubSpec = (spec: Record<string, unknown>): void => {
-			worker.use(http.get(SPEC_URL, () => HttpResponse.json(spec)));
+			worker.use(http.get(PREVIEW_URL, () => HttpResponse.json(catalogPreviewOf(spec))));
 		};
 		const PUBLIC_SPEC = {
 			openapi: '3.0.0',

@@ -14,12 +14,14 @@ import { request as __request } from '../core/request';
 export class CatalogService {
     /**
      * List Catalog
-     * List a keyset page of browsable catalog entries (search/filter aware).
+     * List a keyset page of the catalog entries visible to the caller.
      *
      * The catalog holds thousands of entries, so this is cursor-paginated like
-     * ``GET /apis``: follow ``next_cursor`` until ``has_more`` is false.
-     * ``catalog_total``/``registered_count``/``outdated_count`` count the whole
-     * manifest, not the page, so the Discover status row stays stable while scrolling.
+     * ``GET /apis``: follow ``next_cursor`` until ``has_more`` is false. Visible
+     * entries sharing a ``catalog_api_id`` collapse into one (registered first,
+     * then source precedence) unless ``include_alternates`` is set.
+     * ``catalog_total``/``registered_count``/``outdated_count`` count the visible
+     * collapsed list before filters and paging, so the status row stays stable.
      * @returns CatalogListResponse Successful Response
      * @throws ApiError
      */
@@ -31,9 +33,10 @@ export class CatalogService {
         includeSnoozed = false,
         cursor,
         limit = 50,
+        includeAlternates = false,
     }: {
         /**
-         * Search text matched against entry IDs; results are ranked by match quality.
+         * Search text matched against each entry's `catalog_api_id`; results are ranked by match quality.
          */
         q?: (string | null),
         /**
@@ -60,6 +63,10 @@ export class CatalogService {
          * Maximum number of entries to return (1-200).
          */
         limit?: number,
+        /**
+         * Return every visible entry instead of collapsing entries that share a `catalog_api_id` into one.
+         */
+        includeAlternates?: boolean,
     }): CancelablePromise<CatalogListResponse> {
         return __request(OpenAPI, {
             method: 'GET',
@@ -72,6 +79,7 @@ export class CatalogService {
                 'include_snoozed': includeSnoozed,
                 'cursor': cursor,
                 'limit': limit,
+                'include_alternates': includeAlternates,
             },
             errors: {
                 400: `Bad Request`,
@@ -85,23 +93,26 @@ export class CatalogService {
     }
     /**
      * Get Catalog Entry
-     * Retrieve a single catalog entry by api_id.
+     * Retrieve a single visible catalog entry by ``entry_id``.
+     *
+     * A hidden or unknown id is a ``404``; when the id looks like a bare
+     * ``catalog_api_id`` the body's ``did_you_mean`` names the visible entry for it.
      * @returns CatalogEntryResponse Successful Response
      * @throws ApiError
      */
     public static getCatalogEntry({
-        apiId,
+        entryId,
     }: {
         /**
-         * Catalog identity of the API (`domain[/sub-api]`); send any `/` unencoded.
+         * Catalog entry identity, `{source_slug}/{external_id}`; send every `/` unencoded.
          */
-        apiId: string,
+        entryId: string,
     }): CancelablePromise<CatalogEntryResponse> {
         return __request(OpenAPI, {
             method: 'GET',
-            url: '/catalog/{api_id}',
+            url: '/catalog/{entry_id}',
             path: {
-                'api_id': apiId,
+                'entry_id': entryId,
             },
             errors: {
                 400: `Bad Request`,
@@ -124,16 +135,16 @@ export class CatalogService {
      * @throws ApiError
      */
     public static previewCatalogOperations({
-        apiId,
+        entryId,
         offset,
         limit = 200,
         tag,
         q,
     }: {
         /**
-         * Catalog identity of the API (`domain[/sub-api]`); send any `/` unencoded.
+         * Catalog entry identity, `{source_slug}/{external_id}`; send every `/` unencoded.
          */
-        apiId: string,
+        entryId: string,
         /**
          * Number of matching operations to skip.
          */
@@ -153,9 +164,9 @@ export class CatalogService {
     }): CancelablePromise<OperationPreviewListResponse> {
         return __request(OpenAPI, {
             method: 'GET',
-            url: '/catalog/{api_id}/operations',
+            url: '/catalog/{entry_id}/operations',
             path: {
-                'api_id': apiId,
+                'entry_id': entryId,
             },
             query: {
                 'offset': offset,
@@ -167,6 +178,7 @@ export class CatalogService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                409: `The catalog entry has no spec (card-only; type \`catalog_entry_has_no_spec\`).`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -175,28 +187,37 @@ export class CatalogService {
     }
     /**
      * Import Catalog Entry
-     * Enqueue an async import of a catalog entry into the local registry.
+     * Enqueue an async import of a visible catalog entry into the local registry.
      * @returns ApiImportResponse Successful Response
      * @throws ApiError
      */
     public static importCatalogEntry({
-        apiId,
+        entryId,
+        switchSource = false,
     }: {
         /**
-         * Catalog identity of the API (`domain[/sub-api]`); send any `/` unencoded.
+         * Catalog entry identity, `{source_slug}/{external_id}`; send every `/` unencoded.
          */
-        apiId: string,
+        entryId: string,
+        /**
+         * When another catalog entry's import already holds this entry's `catalog_api_id`, supersede that API with this entry's spec (its credentials then point at it). Needs `credentials:write`; without it the import takes a distinct name and leaves that API untouched.
+         */
+        switchSource?: boolean,
     }): CancelablePromise<ApiImportResponse> {
         return __request(OpenAPI, {
             method: 'POST',
-            url: '/catalog/{api_id}:import',
+            url: '/catalog/{entry_id}:import',
             path: {
-                'api_id': apiId,
+                'entry_id': entryId,
+            },
+            query: {
+                'switch_source': switchSource,
             },
             errors: {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                409: `The catalog entry has no spec (card-only; type \`catalog_entry_has_no_spec\`).`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -205,7 +226,7 @@ export class CatalogService {
     }
     /**
      * Snooze Catalog Entry
-     * Snooze the outstanding update notification for a catalog entry (C1, #925).
+     * Snooze the outstanding update notification for a catalog entry.
      *
      * Operator action (``events:write``): quiet the "update available" badge for a
      * known-and-accepted upstream change without adopting it. Body is optional — omit or send
@@ -216,13 +237,13 @@ export class CatalogService {
      * @throws ApiError
      */
     public static snoozeCatalogEntry({
-        apiId,
+        entryId,
         requestBody,
     }: {
         /**
-         * Catalog identity of the API (`domain[/sub-api]`); send any `/` unencoded.
+         * Catalog entry identity, `{source_slug}/{external_id}`; send every `/` unencoded.
          */
-        apiId: string,
+        entryId: string,
         /**
          * Request payload for the `snoozeCatalogEntry` operation.
          */
@@ -230,9 +251,9 @@ export class CatalogService {
     }): CancelablePromise<void> {
         return __request(OpenAPI, {
             method: 'POST',
-            url: '/catalog/{api_id}:snooze',
+            url: '/catalog/{entry_id}:snooze',
             path: {
-                'api_id': apiId,
+                'entry_id': entryId,
             },
             body: requestBody,
             mediaType: 'application/json',
@@ -249,23 +270,23 @@ export class CatalogService {
     }
     /**
      * Unsnooze Catalog Entry
-     * Clear a snooze for a catalog entry (C1). Operator action (``events:write``).
+     * Clear a snooze for a catalog entry. Operator action (``events:write``).
      * @returns void
      * @throws ApiError
      */
     public static unsnoozeCatalogEntry({
-        apiId,
+        entryId,
     }: {
         /**
-         * Catalog identity of the API (`domain[/sub-api]`); send any `/` unencoded.
+         * Catalog entry identity, `{source_slug}/{external_id}`; send every `/` unencoded.
          */
-        apiId: string,
+        entryId: string,
     }): CancelablePromise<void> {
         return __request(OpenAPI, {
             method: 'POST',
-            url: '/catalog/{api_id}:unsnooze',
+            url: '/catalog/{entry_id}:unsnooze',
             path: {
-                'api_id': apiId,
+                'entry_id': entryId,
             },
             errors: {
                 400: `Bad Request`,
@@ -279,10 +300,14 @@ export class CatalogService {
     }
     /**
      * Refresh Catalog
-     * Force a refresh of the catalog cache from the upstream manifest (org:admin).
+     * Sync now every enabled catalog source the caller may read (catalog:sync).
      *
-     * Also syncs every enabled catalog source; ``force=true`` overrides the
-     * mass-removal guard for this run.
+     * Each source's listing fetch is bounded by ``ingest.fetch_timeout_s`` and all
+     * of them together by ``catalog.refresh_deadline_seconds``. ``status`` is
+     * ``partial`` when a refreshed source failed, was busy or was skipped; ``sources``
+     * gives each one's outcome. Sources the caller cannot read are not synced or
+     * reported. ``force=true`` (``org:admin``) overrides the mass-removal guard
+     * for this run.
      * @returns CatalogRefreshResponse Successful Response
      * @throws ApiError
      */
@@ -290,7 +315,7 @@ export class CatalogService {
         force = false,
     }: {
         /**
-         * Apply each source's sync even when it would remove more entries than the source's mass-removal guard allows.
+         * Apply each source's sync even when it would remove more entries than the source's mass-removal guard allows (`org:admin`).
          */
         force?: boolean,
     }): CancelablePromise<CatalogRefreshResponse> {

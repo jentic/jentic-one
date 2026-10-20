@@ -320,14 +320,12 @@ Public API catalog settings (sources, staleness, update notify).
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
-| `catalog.manifest_url` | string | `"https://raw.githubusercontent.com/jentic/jentic-public-a…` | `JENTIC__CATALOG__MANIFEST_URL` | Deprecated alias for the legacy source's settings.url (catalog.sources[slug=legacy_source_slug]). Full default: https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json |
-| `catalog.manifest_max_age_seconds` | integer | `86400` | `JENTIC__CATALOG__MANIFEST_MAX_AGE_SECONDS` | Deprecated alias for the legacy source's max_age_seconds. |
 | `catalog.sources` | list of CatalogSourceConfig | — | `JENTIC__CATALOG__SOURCES` | Catalog sources. The default is the curated public-apis manifest. |
 | `catalog.sources.<n>.slug` | string | *required* | `JENTIC__CATALOG__SOURCES__<N>__SLUG` | Source identifier and entry_id prefix; matches ^[a-z][a-z0-9-]{0,31}$. |
 | `catalog.sources.<n>.kind` | string | *required* | `JENTIC__CATALOG__SOURCES__<N>__KIND` | Registered source kind, e.g. git-manifest. |
 | `catalog.sources.<n>.enabled` | boolean | `true` | `JENTIC__CATALOG__SOURCES__<N>__ENABLED` | Disabled sources are never synced (kill switch for this source). |
 | `catalog.sources.<n>.visibility` | "public" \| "org" \| "restricted" | `"public"` | `JENTIC__CATALOG__SOURCES__<N>__VISIBILITY` |  |
-| `catalog.sources.<n>.trust` | "curated" \| "internal" \| "untrusted" | `"untrusted"` | `JENTIC__CATALOG__SOURCES__<N>__TRUST` | curated sources own the catalog_api_ids they list. |
+| `catalog.sources.<n>.trust` | "curated" \| "internal" \| "untrusted" | `"untrusted"` | `JENTIC__CATALOG__SOURCES__<N>__TRUST` | curated sources own the catalog_api_ids they list. A curated source must be public (startup fails otherwise). |
 | `catalog.sources.<n>.precedence` | integer | `0` | `JENTIC__CATALOG__SOURCES__<N>__PRECEDENCE` | Rank when two sources list the same catalog_api_id (higher wins). An untrusted source may not rank above any enabled curated source (startup fails). |
 | `catalog.sources.<n>.max_age_seconds` | integer (>= 0) | `86400` | `JENTIC__CATALOG__SOURCES__<N>__MAX_AGE_SECONDS` | Background sync interval. 0 disables automatic sync and background egress for this source; a manual refresh still syncs it. |
 | `catalog.sources.<n>.max_removal_ratio` | number (>= 0.0, <= 1.0) | `0.2` | `JENTIC__CATALOG__SOURCES__<N>__MAX_REMOVAL_RATIO` | Mass-removal guard: a sync removing more than this share is held. |
@@ -343,7 +341,8 @@ Public API catalog settings (sources, staleness, update notify).
 | `catalog.catalog_api_id_mappings.<n>.source` | string | *required* | `JENTIC__CATALOG__CATALOG_API_ID_MAPPINGS__<N>__SOURCE` |  |
 | `catalog.catalog_api_id_mappings.<n>.external_id` | string | *required* | `JENTIC__CATALOG__CATALOG_API_ID_MAPPINGS__<N>__EXTERNAL_ID` |  |
 | `catalog.catalog_api_id_mappings.<n>.catalog_api_id` | string | *required* | `JENTIC__CATALOG__CATALOG_API_ID_MAPPINGS__<N>__CATALOG_API_ID` |  |
-| `catalog.legacy_source_slug` | string | `"public"` | `JENTIC__CATALOG__LEGACY_SOURCE_SLUG` | The git-manifest source the deprecated manifest_* keys map onto and that pre-existing catalog imports are reconciled against. |
+| `catalog.legacy_source_slug` | string | `"public"` | `JENTIC__CATALOG__LEGACY_SOURCE_SLUG` | The git-manifest source that pre-existing catalog imports are reconciled against. |
+| `catalog.refresh_deadline_seconds` | number (> 0, <= 600) | `45.0` | `JENTIC__CATALOG__REFRESH_DEADLINE_SECONDS` | Bound on the source listings of one POST /catalog:refresh, taken together (each one is also capped by ingest.fetch_timeout_s). A source reached after it is skipped (status partial) and left to the scanner. |
 | `catalog.update_check_interval_seconds` | integer | `86400` | `JENTIC__CATALOG__UPDATE_CHECK_INTERVAL_SECONDS` |  |
 | `catalog.update_sweep_deadline_seconds` | integer | `300` | `JENTIC__CATALOG__UPDATE_SWEEP_DEADLINE_SECONDS` |  |
 | `catalog.update_sweep_max_concurrency` | integer | `4` | `JENTIC__CATALOG__UPDATE_SWEEP_MAX_CONCURRENCY` |  |

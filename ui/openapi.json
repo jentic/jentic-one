@@ -1694,6 +1694,7 @@
                   "version": "2024-04-10"
                 },
                 "catalog_api_id": "stripe.com",
+                "catalog_entry_id": "public/stripe.com",
                 "created_at": "2026-01-10T08:00:00Z",
                 "current_revision_id": "3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c",
                 "description": "Online payments platform: charges, customers, subscriptions and payouts.",
@@ -1732,6 +1733,7 @@
                     "version": "2024-04-10"
                   },
                   "catalog_api_id": "stripe.com",
+                  "catalog_entry_id": "public/stripe.com",
                   "created_at": "2026-01-10T08:00:00Z",
                   "current_revision_id": "3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c",
                   "description": "Online payments platform: charges, customers, subscriptions and payouts.",
@@ -1862,6 +1864,7 @@
               "version": "2024-04-10"
             },
             "catalog_api_id": "stripe.com",
+            "catalog_entry_id": "public/stripe.com",
             "created_at": "2026-01-10T08:00:00Z",
             "current_revision_id": "3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c",
             "description": "Online payments platform: charges, customers, subscriptions and payouts.",
@@ -1914,6 +1917,21 @@
               "stripe.com"
             ],
             "title": "Catalog Api Id"
+          },
+          "catalog_entry_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Catalog entry (`{source_slug}/{external_id}`) the API was imported from: the `entry_id` to pass to the catalog's `:import`, `:snooze` and `:unsnooze` routes to act on this API. Null for manual imports, and when the caller can't read the entry's source.",
+            "examples": [
+              "public/stripe.com"
+            ],
+            "title": "Catalog Entry Id"
           },
           "created_at": {
             "description": "When the API was created (RFC 3339).",
@@ -2930,7 +2948,7 @@
             "examples": [
               "github.com/api.github.com"
             ],
-            "maxLength": 255,
+            "maxLength": 320,
             "minLength": 1,
             "pattern": "^[^/].*/.*[^/]$",
             "title": "Catalog Api Id",
@@ -3865,14 +3883,28 @@
         "description": "Hypermedia links for a catalog entry.",
         "examples": [
           {
-            "github": "https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/stripe.com",
-            "import": "/catalog/stripe.com:import",
-            "operations": "/catalog/stripe.com/operations",
-            "self": "/catalog/stripe.com"
+            "alternates": [],
+            "human": "https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/stripe.com",
+            "import": "/catalog/public/stripe.com:import",
+            "operations": "/catalog/public/stripe.com/operations",
+            "self": "/catalog/public/stripe.com"
           }
         ],
         "properties": {
-          "github": {
+          "alternates": {
+            "description": "URLs of the visible entries with the same `catalog_api_id` collapsed into this one (empty when nothing was collapsed).",
+            "examples": [
+              [
+                "https://jentic.example.com/catalog/internal/stripe.com"
+              ]
+            ],
+            "items": {
+              "type": "string"
+            },
+            "title": "Alternates",
+            "type": "array"
+          },
+          "human": {
             "anyOf": [
               {
                 "type": "string"
@@ -3881,16 +3913,16 @@
                 "type": "null"
               }
             ],
-            "description": "Human-facing GitHub tree URL for the entry, when known.",
+            "description": "Human-facing page for the entry at its source, when known.",
             "examples": [
               "https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/stripe.com"
             ],
-            "title": "Github"
+            "title": "Human"
           },
           "import": {
-            "description": "URL of the catalog import action (`POST /catalog/{api_id}:import`).",
+            "description": "URL of the catalog import action (`POST /catalog/{entry_id}:import`).",
             "examples": [
-              "https://jentic.example.com/catalog/stripe.com:import"
+              "https://jentic.example.com/catalog/public/stripe.com:import"
             ],
             "title": "Import",
             "type": "string"
@@ -3898,7 +3930,7 @@
           "operations": {
             "description": "URL of the entry's operation preview.",
             "examples": [
-              "https://jentic.example.com/catalog/stripe.com/operations"
+              "https://jentic.example.com/catalog/public/stripe.com/operations"
             ],
             "title": "Operations",
             "type": "string"
@@ -3906,7 +3938,7 @@
           "self": {
             "description": "Canonical URL of this catalog entry.",
             "examples": [
-              "https://jentic.example.com/catalog/stripe.com"
+              "https://jentic.example.com/catalog/public/stripe.com"
             ],
             "title": "Self",
             "type": "string"
@@ -3925,15 +3957,25 @@
         "examples": [
           {
             "_links": {
-              "import": "/catalog/stripe.com:import",
-              "operations": "/catalog/stripe.com/operations",
-              "self": "/catalog/stripe.com"
+              "alternates": [],
+              "human": "https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/stripe.com",
+              "import": "/catalog/public/stripe.com:import",
+              "operations": "/catalog/public/stripe.com/operations",
+              "self": "/catalog/public/stripe.com"
             },
-            "api_id": "stripe.com",
-            "path": "apis/openapi/stripe.com",
+            "alternates": 0,
+            "catalog_api_id": "stripe.com",
+            "display_vendor": "stripe.com",
+            "entry_id": "public/stripe.com",
+            "has_spec": true,
+            "human_url": "https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/stripe.com",
             "registered": false,
-            "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-01-01/openapi.json",
-            "vendor": "stripe.com"
+            "source_slug": "public",
+            "tags": [],
+            "title": "Stripe API",
+            "update_available": false,
+            "vendor": "stripe.com",
+            "version": "2024-01-01"
           }
         ],
         "properties": {
@@ -3941,22 +3983,32 @@
             "$ref": "#/components/schemas/CatalogEntryLinksResponse",
             "examples": [
               {
-                "github": "https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/stripe.com",
-                "import": "/catalog/stripe.com:import",
-                "operations": "/catalog/stripe.com/operations",
-                "self": "/catalog/stripe.com"
+                "alternates": [],
+                "human": "https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/stripe.com",
+                "import": "/catalog/public/stripe.com:import",
+                "operations": "/catalog/public/stripe.com/operations",
+                "self": "/catalog/public/stripe.com"
               }
             ]
           },
-          "api_id": {
-            "description": "Catalog identity of the API (manifest domain, e.g. `stripe.com`).",
+          "alternates": {
+            "default": 0,
+            "description": "How many visible entries with the same `catalog_api_id` are collapsed into this one (see `_links.alternates`).",
+            "examples": [
+              0
+            ],
+            "title": "Alternates",
+            "type": "integer"
+          },
+          "catalog_api_id": {
+            "description": "Canonical, cross-source API identity (`domain[/sub-api]`, or `{source_slug}~{id}` when namespaced). Credentials match on it.",
             "examples": [
               "stripe.com"
             ],
-            "title": "Api Id",
+            "title": "Catalog Api Id",
             "type": "string"
           },
-          "path": {
+          "display_vendor": {
             "anyOf": [
               {
                 "type": "string"
@@ -3965,21 +4017,74 @@
                 "type": "null"
               }
             ],
-            "description": "Manifest path of the entry within the public-APIs repo.",
+            "description": "Vendor for grouping entries in a UI; never used for identity.",
             "examples": [
-              "apis/openapi/stripe.com"
+              "stripe.com"
             ],
-            "title": "Path"
+            "title": "Display Vendor"
+          },
+          "entry_id": {
+            "description": "Catalog entry identity, `{source_slug}/{external_id}`; the key every `/catalog/{entry_id}` route takes.",
+            "examples": [
+              "public/stripe.com"
+            ],
+            "title": "Entry Id",
+            "type": "string"
+          },
+          "has_spec": {
+            "default": true,
+            "description": "Whether the entry has an importable spec (false for a listing-only card).",
+            "examples": [
+              true
+            ],
+            "title": "Has Spec",
+            "type": "boolean"
+          },
+          "human_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Human-facing page for the entry at its source, when known.",
+            "examples": [
+              "https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/stripe.com"
+            ],
+            "title": "Human Url"
           },
           "registered": {
-            "description": "Whether this entry is already imported locally — its `spec_url` backs a non-archived revision in `GET /apis`.",
+            "description": "Whether this entry is already imported into the local registry.",
             "examples": [
               true
             ],
             "title": "Registered",
             "type": "boolean"
           },
-          "spec_url": {
+          "source_slug": {
+            "description": "Slug of the catalog source the entry comes from.",
+            "examples": [
+              "public"
+            ],
+            "title": "Source Slug",
+            "type": "string"
+          },
+          "tags": {
+            "description": "Entry tags from the source.",
+            "examples": [
+              [
+                "payments"
+              ]
+            ],
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "title": {
             "anyOf": [
               {
                 "type": "string"
@@ -3988,11 +4093,11 @@
                 "type": "null"
               }
             ],
-            "description": "Fetchable OpenAPI spec URL the entry resolves to (used for import + coverage).",
+            "description": "Entry title.",
             "examples": [
-              "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-04-10/openapi.json"
+              "Stripe API"
             ],
-            "title": "Spec Url"
+            "title": "Title"
           },
           "update_available": {
             "default": false,
@@ -4012,18 +4117,33 @@
                 "type": "null"
               }
             ],
-            "description": "Registrable-domain vendor derived from `api_id` (e.g. `stripe.com`).",
+            "description": "Identity vendor derived from `catalog_api_id` (credentials match on it).",
             "examples": [
               "stripe.com"
             ],
             "title": "Vendor"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Entry version, when the source lists one.",
+            "examples": [
+              "2024-04-10"
+            ],
+            "title": "Version"
           }
         },
         "required": [
-          "api_id",
+          "entry_id",
+          "source_slug",
+          "catalog_api_id",
           "vendor",
-          "path",
-          "spec_url",
           "registered",
           "_links"
         ],
@@ -4037,14 +4157,15 @@
             "catalog_total": 5231,
             "data": [],
             "has_more": true,
-            "manifest_age_seconds": 3600,
-            "next_cursor": "eyJpZCI6ICJzdHJpcGUuY29tIn0=",
+            "next_cursor": "eyJpZCI6ICJwdWJsaWMvc3RyaXBlLmNvbSJ9",
+            "oldest_source_sync_age_seconds": 3600,
+            "outdated_count": 1,
             "registered_count": 12
           }
         ],
         "properties": {
           "catalog_total": {
-            "description": "Total entries in the whole manifest (pre-filter, pre-page).",
+            "description": "Entries visible to the caller after collapsing (pre-filter, pre-page).",
             "examples": [
               5231
             ],
@@ -4057,15 +4178,25 @@
               [
                 {
                   "_links": {
-                    "import": "/catalog/stripe.com:import",
-                    "operations": "/catalog/stripe.com/operations",
-                    "self": "/catalog/stripe.com"
+                    "alternates": [],
+                    "human": "https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/stripe.com",
+                    "import": "/catalog/public/stripe.com:import",
+                    "operations": "/catalog/public/stripe.com/operations",
+                    "self": "/catalog/public/stripe.com"
                   },
-                  "api_id": "stripe.com",
-                  "path": "apis/openapi/stripe.com",
+                  "alternates": 0,
+                  "catalog_api_id": "stripe.com",
+                  "display_vendor": "stripe.com",
+                  "entry_id": "public/stripe.com",
+                  "has_spec": true,
+                  "human_url": "https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/stripe.com",
                   "registered": false,
-                  "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-01-01/openapi.json",
-                  "vendor": "stripe.com"
+                  "source_slug": "public",
+                  "tags": [],
+                  "title": "Stripe API",
+                  "update_available": false,
+                  "vendor": "stripe.com",
+                  "version": "2024-01-01"
                 }
               ]
             ],
@@ -4084,21 +4215,6 @@
             "title": "Has More",
             "type": "boolean"
           },
-          "manifest_age_seconds": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Age of the cached manifest in seconds, or null when the cache is empty.",
-            "examples": [
-              3600
-            ],
-            "title": "Manifest Age Seconds"
-          },
           "next_cursor": {
             "anyOf": [
               {
@@ -4110,13 +4226,28 @@
             ],
             "description": "Opaque keyset cursor for the next page (null when done).",
             "examples": [
-              "eyJpZCI6ICJzdHJpcGUuY29tIn0="
+              "eyJpZCI6ICJwdWJsaWMvc3RyaXBlLmNvbSJ9"
             ],
             "title": "Next Cursor"
           },
+          "oldest_source_sync_age_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Seconds since the least recently synced visible source last synced, or null when none has synced.",
+            "examples": [
+              3600
+            ],
+            "title": "Oldest Source Sync Age Seconds"
+          },
           "outdated_count": {
             "default": 0,
-            "description": "Count of whole-manifest registered entries with an upstream update available.",
+            "description": "Count of visible registered entries with an upstream update available (pre-filter).",
             "examples": [
               1
             ],
@@ -4124,7 +4255,7 @@
             "type": "integer"
           },
           "registered_count": {
-            "description": "Count of whole-manifest entries already imported locally.",
+            "description": "Count of visible entries already imported locally (pre-filter).",
             "examples": [
               12
             ],
@@ -4141,25 +4272,51 @@
         "type": "object"
       },
       "CatalogRefreshResponse": {
-        "description": "Acknowledgement of a manifest refresh.",
+        "description": "Outcome of a catalog refresh, over the sources the caller may read.",
         "examples": [
           {
             "count": 5231,
+            "sources": [
+              {
+                "slug": "public",
+                "status": "applied"
+              }
+            ],
             "status": "refreshed"
           }
         ],
         "properties": {
           "count": {
-            "description": "Number of entries in the freshly fetched manifest.",
+            "description": "Live entries of the refreshed sources after the sync.",
             "examples": [
               5231
             ],
             "title": "Count",
             "type": "integer"
           },
+          "sources": {
+            "description": "Each refreshed source's outcome, in sync order.",
+            "examples": [
+              [
+                {
+                  "slug": "public",
+                  "status": "applied"
+                }
+              ]
+            ],
+            "items": {
+              "$ref": "#/components/schemas/CatalogRefreshSourceResponse"
+            },
+            "title": "Sources",
+            "type": "array"
+          },
           "status": {
             "default": "refreshed",
-            "description": "Refresh outcome marker.",
+            "description": "refreshed when no refreshed source failed, was held by another run (busy) or was skipped; partial otherwise (those keep serving their last applied entries).",
+            "enum": [
+              "refreshed",
+              "partial"
+            ],
             "examples": [
               "refreshed"
             ],
@@ -4173,8 +4330,65 @@
         "title": "CatalogRefreshResponse",
         "type": "object"
       },
+      "CatalogRefreshSourceResponse": {
+        "description": "One refreshed source's run outcome.",
+        "examples": [
+          {
+            "slug": "public",
+            "status": "applied"
+          }
+        ],
+        "properties": {
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why a failed or skipped run did not apply, e.g. listing_timeout.",
+            "examples": [
+              "listing_timeout"
+            ],
+            "title": "Error Code"
+          },
+          "slug": {
+            "description": "The source's slug.",
+            "examples": [
+              "public"
+            ],
+            "title": "Slug",
+            "type": "string"
+          },
+          "status": {
+            "description": "Run outcome: applied, suspect_empty (held by the mass-removal guard), superseded, busy (another run holds the source; this refresh applied nothing for it), disabled, failed, or skipped (the refresh deadline passed before it started; the scanner syncs it).",
+            "enum": [
+              "applied",
+              "suspect_empty",
+              "superseded",
+              "busy",
+              "disabled",
+              "failed",
+              "skipped"
+            ],
+            "examples": [
+              "applied"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "status"
+        ],
+        "title": "CatalogRefreshSourceResponse",
+        "type": "object"
+      },
       "CatalogSnoozeRequest": {
-        "description": "Body for ``POST /catalog/{api_id}:snooze`` (C1, #925).\n\n``snoozed_until`` is optional: omit or send ``null`` to mute-until-newer (the primary\nper-API affordance — the badge re-lights only when a *newer* upstream digest lands);\nprovide an ISO-8601 timestamp for a time-boxed snooze that lapses at that instant.",
+        "description": "Body for ``POST /catalog/{entry_id}:snooze``.\n\n``snoozed_until`` is optional: omit or send ``null`` to mute-until-newer (the primary\nper-API affordance — the badge re-lights only when a *newer* upstream digest lands);\nprovide an ISO-8601 timestamp for a time-boxed snooze that lapses at that instant.",
         "examples": [
           {
             "snoozed_until": "2026-02-01T00:00:00Z"
@@ -5870,7 +6084,7 @@
             "examples": [
               "github.com/api.github.com"
             ],
-            "maxLength": 255,
+            "maxLength": 320,
             "minLength": 1,
             "pattern": "^[^/].*/.*[^/]$",
             "title": "Catalog Api Id",
@@ -12753,7 +12967,9 @@
               "version": "2024-01-01"
             },
             "offset": 0,
+            "required_schemes": [],
             "security_schemes": {},
+            "server_variables": {},
             "total": 42,
             "truncated": true
           }
@@ -12804,12 +13020,25 @@
             "title": "Offset",
             "type": "integer"
           },
+          "required_schemes": {
+            "description": "Every security scheme some operation in the spec requires, over the whole spec (not just this window or filter).",
+            "examples": [
+              [
+                "BearerAuth"
+              ]
+            ],
+            "items": {
+              "type": "string"
+            },
+            "title": "Required Schemes",
+            "type": "array"
+          },
           "security_schemes": {
             "additionalProperties": {
               "additionalProperties": true,
               "type": "object"
             },
-            "description": "Slimmed `components.securitySchemes` projection.",
+            "description": "Slimmed `components.securitySchemes` projection. An `oauth2` scheme lists its flow names in `flows` and each flow's `authorizationUrl`, `tokenUrl`, `refreshUrl` and `scopes` in `flow_details`.",
             "examples": [
               {
                 "BearerAuth": {
@@ -12819,6 +13048,23 @@
               }
             ],
             "title": "Security Schemes",
+            "type": "object"
+          },
+          "server_variables": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "description": "The first server's URL variables (`servers[0].variables`), each with its `default`, `enum` and `description` when the spec sets them.",
+            "examples": [
+              {
+                "tenant": {
+                  "default": "acme",
+                  "description": "Your tenant subdomain."
+                }
+              }
+            ],
+            "title": "Server Variables",
             "type": "object"
           },
           "total": {
@@ -18867,6 +19113,9 @@
               "capabilities:execute": "Execute capabilities via the broker.",
               "capabilities:read": "Read capability metadata.",
               "catalog:import": "Import an API from the public catalog into the local registry.",
+              "catalog:org:read": "Read catalog entries of org-visibility catalog sources.",
+              "catalog:restricted:read": "Read catalog entries of restricted catalog sources whose reader list admits the caller.",
+              "catalog:sync": "Trigger a sync of a catalog source.",
               "config:read": "Read runtime platform configuration.",
               "config:write": "Create and update runtime platform configuration.",
               "credentials:connect": "Start and poll an integration connect session (agent-driven SSO). Cannot read tokens or manage other credentials.",
@@ -26267,6 +26516,7 @@
                         "version": "2024-04-10"
                       },
                       "catalog_api_id": "stripe.com",
+                      "catalog_entry_id": "public/stripe.com",
                       "created_at": "2026-01-10T08:00:00Z",
                       "current_revision_id": "3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c",
                       "description": "Online payments platform: charges, customers, subscriptions and payouts.",
@@ -26883,6 +27133,7 @@
                     "version": "2024-04-10"
                   },
                   "catalog_api_id": "stripe.com",
+                  "catalog_entry_id": "public/stripe.com",
                   "created_at": "2026-01-10T08:00:00Z",
                   "current_revision_id": "3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c",
                   "description": "Online payments platform: charges, customers, subscriptions and payouts.",
@@ -32493,11 +32744,11 @@
     "/catalog": {
       "description": "`GET`: List Catalog.",
       "get": {
-        "description": "List a keyset page of browsable catalog entries (search/filter aware).\n\nThe catalog holds thousands of entries, so this is cursor-paginated like\n``GET /apis``: follow ``next_cursor`` until ``has_more`` is false.\n``catalog_total``/``registered_count``/``outdated_count`` count the whole\nmanifest, not the page, so the Discover status row stays stable while scrolling.",
+        "description": "List a keyset page of the catalog entries visible to the caller.\n\nThe catalog holds thousands of entries, so this is cursor-paginated like\n``GET /apis``: follow ``next_cursor`` until ``has_more`` is false. Visible\nentries sharing a ``catalog_api_id`` collapse into one (registered first,\nthen source precedence) unless ``include_alternates`` is set.\n``catalog_total``/``registered_count``/``outdated_count`` count the visible\ncollapsed list before filters and paging, so the status row stays stable.",
         "operationId": "listCatalog",
         "parameters": [
           {
-            "description": "Search text matched against entry IDs; results are ranked by match quality.",
+            "description": "Search text matched against each entry's `catalog_api_id`; results are ranked by match quality.",
             "examples": {
               "example": {
                 "summary": "Example query value for `q`",
@@ -32520,7 +32771,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Search text matched against entry IDs; results are ranked by match quality.",
+              "description": "Search text matched against each entry's `catalog_api_id`; results are ranked by match quality.",
               "examples": [
                 "charges"
               ],
@@ -32663,6 +32914,27 @@
               "title": "Limit",
               "type": "integer"
             }
+          },
+          {
+            "description": "Return every visible entry instead of collapsing entries that share a `catalog_api_id` into one.",
+            "examples": {
+              "example": {
+                "summary": "Example query value for `include_alternates`",
+                "value": false
+              }
+            },
+            "in": "query",
+            "name": "include_alternates",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Return every visible entry instead of collapsing entries that share a `catalog_api_id` into one.",
+              "examples": [
+                false
+              ],
+              "title": "Include Alternates",
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -32673,8 +32945,9 @@
                   "catalog_total": 5231,
                   "data": [],
                   "has_more": true,
-                  "manifest_age_seconds": 3600,
-                  "next_cursor": "eyJpZCI6ICJzdHJpcGUuY29tIn0=",
+                  "next_cursor": "eyJpZCI6ICJwdWJsaWMvc3RyaXBlLmNvbSJ9",
+                  "oldest_source_sync_age_seconds": 3600,
+                  "outdated_count": 1,
                   "registered_count": 12
                 },
                 "schema": {
@@ -32808,29 +33081,29 @@
       },
       "summary": "List Catalog"
     },
-    "/catalog/{api_id}": {
+    "/catalog/{entry_id}": {
       "description": "`GET`: Get Catalog Entry.",
       "get": {
-        "description": "Retrieve a single catalog entry by api_id.",
+        "description": "Retrieve a single visible catalog entry by ``entry_id``.\n\nA hidden or unknown id is a ``404``; when the id looks like a bare\n``catalog_api_id`` the body's ``did_you_mean`` names the visible entry for it.",
         "operationId": "getCatalogEntry",
         "parameters": [
           {
-            "description": "Catalog identity of the API (`domain[/sub-api]`); send any `/` unencoded.",
+            "description": "Catalog entry identity, `{source_slug}/{external_id}`; send every `/` unencoded.",
             "examples": {
               "example": {
-                "summary": "API vendor domain",
-                "value": "stripe.com"
+                "summary": "Catalog entry ID",
+                "value": "public/stripe.com"
               }
             },
             "in": "path",
-            "name": "api_id",
+            "name": "entry_id",
             "required": true,
             "schema": {
-              "description": "Catalog identity of the API (`domain[/sub-api]`); send any `/` unencoded.",
+              "description": "Catalog entry identity, `{source_slug}/{external_id}`; send every `/` unencoded.",
               "examples": [
-                "stripe.com"
+                "public/stripe.com"
               ],
-              "title": "Api Id",
+              "title": "Entry Id",
               "type": "string"
             }
           }
@@ -32841,15 +33114,25 @@
               "application/json": {
                 "example": {
                   "_links": {
-                    "import": "/catalog/stripe.com:import",
-                    "operations": "/catalog/stripe.com/operations",
-                    "self": "/catalog/stripe.com"
+                    "alternates": [],
+                    "human": "https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/stripe.com",
+                    "import": "/catalog/public/stripe.com:import",
+                    "operations": "/catalog/public/stripe.com/operations",
+                    "self": "/catalog/public/stripe.com"
                   },
-                  "api_id": "stripe.com",
-                  "path": "apis/openapi/stripe.com",
+                  "alternates": 0,
+                  "catalog_api_id": "stripe.com",
+                  "display_vendor": "stripe.com",
+                  "entry_id": "public/stripe.com",
+                  "has_spec": true,
+                  "human_url": "https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/stripe.com",
                   "registered": false,
-                  "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-01-01/openapi.json",
-                  "vendor": "stripe.com"
+                  "source_slug": "public",
+                  "tags": [],
+                  "title": "Stripe API",
+                  "update_available": false,
+                  "vendor": "stripe.com",
+                  "version": "2024-01-01"
                 },
                 "schema": {
                   "$ref": "#/components/schemas/CatalogEntryResponse"
@@ -32982,29 +33265,29 @@
       },
       "summary": "Get Catalog Entry"
     },
-    "/catalog/{api_id}/operations": {
+    "/catalog/{entry_id}/operations": {
       "description": "`GET`: Preview Catalog Operations.",
       "get": {
         "description": "Preview the operations of a catalog entry's spec (capped, offset-paginated).\n\n``tag`` and ``q`` filter the spec's operations server-side before windowing,\nso the UI's search box covers every operation in the spec and pages the\nfiltered set via ``offset``/``limit`` (\"Load more\").",
         "operationId": "previewCatalogOperations",
         "parameters": [
           {
-            "description": "Catalog identity of the API (`domain[/sub-api]`); send any `/` unencoded.",
+            "description": "Catalog entry identity, `{source_slug}/{external_id}`; send every `/` unencoded.",
             "examples": {
               "example": {
-                "summary": "API vendor domain",
-                "value": "stripe.com"
+                "summary": "Catalog entry ID",
+                "value": "public/stripe.com"
               }
             },
             "in": "path",
-            "name": "api_id",
+            "name": "entry_id",
             "required": true,
             "schema": {
-              "description": "Catalog identity of the API (`domain[/sub-api]`); send any `/` unencoded.",
+              "description": "Catalog entry identity, `{source_slug}/{external_id}`; send every `/` unencoded.",
               "examples": [
-                "stripe.com"
+                "public/stripe.com"
               ],
-              "title": "Api Id",
+              "title": "Entry Id",
               "type": "string"
             }
           },
@@ -33127,7 +33410,9 @@
                     "version": "2024-01-01"
                   },
                   "offset": 0,
+                  "required_schemes": [],
                   "security_schemes": {},
+                  "server_variables": {},
                   "total": 42,
                   "truncated": true
                 },
@@ -33188,6 +33473,23 @@
               }
             },
             "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Catalog entry 'public/slack.com' has no spec to preview or import",
+                  "instance": "/catalog/public/slack.com/operations",
+                  "status": 409,
+                  "title": "Conflict",
+                  "type": "catalog_entry_has_no_spec"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "The catalog entry has no spec (card-only; type `catalog_entry_has_no_spec`)."
           },
           "422": {
             "content": {
@@ -33262,30 +33564,51 @@
       },
       "summary": "Preview Catalog Operations"
     },
-    "/catalog/{api_id}:import": {
+    "/catalog/{entry_id}:import": {
       "description": "`POST`: Import Catalog Entry.",
       "post": {
-        "description": "Enqueue an async import of a catalog entry into the local registry.",
+        "description": "Enqueue an async import of a visible catalog entry into the local registry.",
         "operationId": "importCatalogEntry",
         "parameters": [
           {
-            "description": "Catalog identity of the API (`domain[/sub-api]`); send any `/` unencoded.",
+            "description": "Catalog entry identity, `{source_slug}/{external_id}`; send every `/` unencoded.",
             "examples": {
               "example": {
-                "summary": "API vendor domain",
-                "value": "stripe.com"
+                "summary": "Catalog entry ID",
+                "value": "public/stripe.com"
               }
             },
             "in": "path",
-            "name": "api_id",
+            "name": "entry_id",
             "required": true,
             "schema": {
-              "description": "Catalog identity of the API (`domain[/sub-api]`); send any `/` unencoded.",
+              "description": "Catalog entry identity, `{source_slug}/{external_id}`; send every `/` unencoded.",
               "examples": [
-                "stripe.com"
+                "public/stripe.com"
               ],
-              "title": "Api Id",
+              "title": "Entry Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "When another catalog entry's import already holds this entry's `catalog_api_id`, supersede that API with this entry's spec (its credentials then point at it). Needs `credentials:write`; without it the import takes a distinct name and leaves that API untouched.",
+            "examples": {
+              "example": {
+                "summary": "Example query value for `switch_source`",
+                "value": false
+              }
+            },
+            "in": "query",
+            "name": "switch_source",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "When another catalog entry's import already holds this entry's `catalog_api_id`, supersede that API with this entry's spec (its credentials then point at it). Needs `credentials:write`; without it the import takes a distinct name and leaves that API untouched.",
+              "examples": [
+                false
+              ],
+              "title": "Switch Source",
+              "type": "boolean"
             }
           }
         ],
@@ -33357,6 +33680,23 @@
               }
             },
             "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Catalog entry 'public/slack.com' has no spec to preview or import",
+                  "instance": "/catalog/public/slack.com:import",
+                  "status": 409,
+                  "title": "Conflict",
+                  "type": "catalog_entry_has_no_spec"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "The catalog entry has no spec (card-only; type `catalog_entry_has_no_spec`)."
           },
           "422": {
             "content": {
@@ -33431,29 +33771,29 @@
       },
       "summary": "Import Catalog Entry"
     },
-    "/catalog/{api_id}:snooze": {
+    "/catalog/{entry_id}:snooze": {
       "description": "`POST`: Snooze Catalog Entry.",
       "post": {
-        "description": "Snooze the outstanding update notification for a catalog entry (C1, #925).\n\nOperator action (``events:write``): quiet the \"update available\" badge for a\nknown-and-accepted upstream change without adopting it. Body is optional — omit or send\n``{\"snoozed_until\": null}`` to mute until a newer upstream digest lands (the primary\nper-API affordance); send an ISO-8601 ``snoozed_until`` for a time-boxed snooze. A\ngenuinely newer upstream change re-lights the badge automatically.",
+        "description": "Snooze the outstanding update notification for a catalog entry.\n\nOperator action (``events:write``): quiet the \"update available\" badge for a\nknown-and-accepted upstream change without adopting it. Body is optional — omit or send\n``{\"snoozed_until\": null}`` to mute until a newer upstream digest lands (the primary\nper-API affordance); send an ISO-8601 ``snoozed_until`` for a time-boxed snooze. A\ngenuinely newer upstream change re-lights the badge automatically.",
         "operationId": "snoozeCatalogEntry",
         "parameters": [
           {
-            "description": "Catalog identity of the API (`domain[/sub-api]`); send any `/` unencoded.",
+            "description": "Catalog entry identity, `{source_slug}/{external_id}`; send every `/` unencoded.",
             "examples": {
               "example": {
-                "summary": "API vendor domain",
-                "value": "stripe.com"
+                "summary": "Catalog entry ID",
+                "value": "public/stripe.com"
               }
             },
             "in": "path",
-            "name": "api_id",
+            "name": "entry_id",
             "required": true,
             "schema": {
-              "description": "Catalog identity of the API (`domain[/sub-api]`); send any `/` unencoded.",
+              "description": "Catalog entry identity, `{source_slug}/{external_id}`; send every `/` unencoded.",
               "examples": [
-                "stripe.com"
+                "public/stripe.com"
               ],
-              "title": "Api Id",
+              "title": "Entry Id",
               "type": "string"
             }
           }
@@ -33621,29 +33961,29 @@
       },
       "summary": "Snooze Catalog Entry"
     },
-    "/catalog/{api_id}:unsnooze": {
+    "/catalog/{entry_id}:unsnooze": {
       "description": "`POST`: Unsnooze Catalog Entry.",
       "post": {
-        "description": "Clear a snooze for a catalog entry (C1). Operator action (``events:write``).",
+        "description": "Clear a snooze for a catalog entry. Operator action (``events:write``).",
         "operationId": "unsnoozeCatalogEntry",
         "parameters": [
           {
-            "description": "Catalog identity of the API (`domain[/sub-api]`); send any `/` unencoded.",
+            "description": "Catalog entry identity, `{source_slug}/{external_id}`; send every `/` unencoded.",
             "examples": {
               "example": {
-                "summary": "API vendor domain",
-                "value": "stripe.com"
+                "summary": "Catalog entry ID",
+                "value": "public/stripe.com"
               }
             },
             "in": "path",
-            "name": "api_id",
+            "name": "entry_id",
             "required": true,
             "schema": {
-              "description": "Catalog identity of the API (`domain[/sub-api]`); send any `/` unencoded.",
+              "description": "Catalog entry identity, `{source_slug}/{external_id}`; send every `/` unencoded.",
               "examples": [
-                "stripe.com"
+                "public/stripe.com"
               ],
-              "title": "Api Id",
+              "title": "Entry Id",
               "type": "string"
             }
           }
@@ -33779,11 +34119,11 @@
     "/catalog:refresh": {
       "description": "`POST`: Refresh Catalog.",
       "post": {
-        "description": "Force a refresh of the catalog cache from the upstream manifest (org:admin).\n\nAlso syncs every enabled catalog source; ``force=true`` overrides the\nmass-removal guard for this run.",
+        "description": "Sync now every enabled catalog source the caller may read (catalog:sync).\n\nEach source's listing fetch is bounded by ``ingest.fetch_timeout_s`` and all\nof them together by ``catalog.refresh_deadline_seconds``. ``status`` is\n``partial`` when a refreshed source failed, was busy or was skipped; ``sources``\ngives each one's outcome. Sources the caller cannot read are not synced or\nreported. ``force=true`` (``org:admin``) overrides the mass-removal guard\nfor this run.",
         "operationId": "refreshCatalog",
         "parameters": [
           {
-            "description": "Apply each source's sync even when it would remove more entries than the source's mass-removal guard allows.",
+            "description": "Apply each source's sync even when it would remove more entries than the source's mass-removal guard allows (`org:admin`).",
             "examples": {
               "example": {
                 "summary": "Example query value for `force`",
@@ -33795,7 +34135,7 @@
             "required": false,
             "schema": {
               "default": false,
-              "description": "Apply each source's sync even when it would remove more entries than the source's mass-removal guard allows.",
+              "description": "Apply each source's sync even when it would remove more entries than the source's mass-removal guard allows (`org:admin`).",
               "examples": [
                 false
               ],
@@ -33810,6 +34150,12 @@
               "application/json": {
                 "example": {
                   "count": 5231,
+                  "sources": [
+                    {
+                      "slug": "public",
+                      "status": "applied"
+                    }
+                  ],
                   "status": "refreshed"
                 },
                 "schema": {

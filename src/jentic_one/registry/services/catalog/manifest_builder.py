@@ -12,13 +12,17 @@ scope (workflows stay deferred per D-001).
 
 from __future__ import annotations
 
+import bisect
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from jentic_one.shared.models.api_identity import slugify_api_field
 from jentic_one.shared.vendor_domain import vendor_from_api_id
+
+if TYPE_CHECKING:
+    from jentic_one.registry.services.catalog.entries import CatalogEntry
 
 # api_id is parsed out of an apis.json `include[].url` of the shape
 # .../apis/openapi/{domain}/{sub}/{version}/apis.json
@@ -147,16 +151,16 @@ def _tokenise(text: str) -> list[str]:
 
 
 def score_entry(api_id: str, q_tokens: list[str]) -> int:
-    """Relevance score for an ``api_id`` against (deduplicated) query tokens.
+    """Relevance score for a ``catalog_api_id`` against (deduplicated) query tokens.
 
     Two signals, folded into one integer (see the encoding note above):
 
     - **coverage** (dominant): the number of query tokens that match at all —
-      as a whole ``api_id`` token or as a substring of one. Identical to the
+      as a whole id token or as a substring of one. Identical to the
       membership/recall predicate used since the original scorer.
     - **whole-token quality** (tie-break): of the covered tokens, how many are
-      whole ``api_id`` tokens (query "stripe" IS the id token "stripe") rather
-      than incidental substrings ("box" buried inside "mapbox").
+      whole id tokens (query "stripe" IS the id token "stripe") rather than
+      incidental substrings ("box" buried inside "mapbox").
 
     A whole-token hit and a substring hit are mutually exclusive per query
     token — a whole-token match already satisfies the substring test, so it is
@@ -164,145 +168,202 @@ def score_entry(api_id: str, q_tokens: list[str]) -> int:
     so the sort key and the cursor round-trip without float error.
     """
     name_tokens = _tokenise(api_id)
+    return score_tokens(name_tokens, frozenset(name_tokens), q_tokens)
+
+
+def score_tokens(
+    name_tokens: Sequence[str],
+    name_token_set: frozenset[str],
+    q_tokens: list[str],
+    joined: str | None = None,
+) -> int:
+    """``score_entry`` over an id already split into tokens.
+
+    ``joined`` is ``" ".join(name_tokens)``, precomputable per id: tokens are
+    alphanumeric, so a query token is a substring of some id token exactly when
+    it is a substring of the joined form.
+    """
     if not name_tokens or not q_tokens:
         return 0
-    name_token_set = set(name_tokens)
+    hay = joined if joined is not None else " ".join(name_tokens)
     coverage = 0
     whole = 0
     for t in q_tokens:
         if t in name_token_set:
             coverage += 1
             whole += 1
-        elif any(t in nt for nt in name_tokens):
+        elif t in hay:
             coverage += 1
     return coverage * (len(q_tokens) + 1) + whole
 
 
+#: An id's precomputed scorer input: ``(tokens, token set)``, optionally with
+#: the space-joined tokens as a third item.
+NameTokens = tuple[Sequence[str], frozenset[str]] | tuple[Sequence[str], frozenset[str], str]
+
+
+def has_query_tokens(q: str | None) -> bool:
+    """Whether ``q`` holds any token the scorer matches (else the request is a browse)."""
+    return bool(q and _tokenise(q))
+
+
 def score_entries(
-    entries: list[ManifestEntry], q: str | None
-) -> list[tuple[ManifestEntry, int | None]]:
+    entries: Sequence[CatalogEntry],
+    q: str | None,
+    *,
+    tokens: Mapping[str, NameTokens] | None = None,
+    ordered: bool = False,
+) -> list[tuple[CatalogEntry, int | None]]:
     """Order entries for paging, returning each with its sort score.
 
-    Two stable orderings, each with a unique tail key (``api_id``) so keyset
-    paging never skips or repeats:
+    Entries are scored on their ``catalog_api_id`` (never the ``entry_id``, so a
+    source slug prefix adds no match) and ordered by ``entry_id``, the unique
+    tail key that keeps keyset paging free of skips and repeats:
 
-    - **Browse** (empty ``q``): the natural ``api_id`` order, score ``None``.
-    - **Search**: matches only, sorted by ``(-score, api_id)``; the integer score
-      is carried in the cursor so the next page resumes at the exact tie-break.
+    - **Browse** (``q`` without tokens): ``entry_id`` order, score ``None``.
+    - **Search**: matches only, sorted by ``(-score, entry_id)``; the integer
+      score is carried in the cursor so the next page resumes at the exact
+      tie-break.
 
-    Membership (which entries appear at all) is unchanged from the original
-    token-overlap behaviour: an entry qualifies iff at least one query token
-    substring-matches one of its ``api_id`` tokens. Only the *scoring* — and thus
-    the *order* — is graded by match quality (see ``score_entry``); recall is
-    identical to before.
+    ``tokens`` optionally maps ``entry_id`` to the id's precomputed
+    ``NameTokens``, so a large catalog is not re-tokenised per query.
+    ``ordered`` says ``entries`` are already in ``entry_id`` order, which spares
+    the browse sort and makes the search sort a stable one on score alone.
+    Membership is the token-overlap rule: an entry qualifies iff at least one
+    query token substring-matches one of its id tokens.
     """
-    if not q or not q.strip():
-        return [(e, None) for e in sorted(entries, key=lambda e: e.api_id)]
-    # Dedupe tokens (order-preserving): duplicates would scale every entry's
-    # score uniformly — no ranking effect — while inflating scan cost, and the
-    # coverage encoding assumes each query token counts once.
-    q_tokens = list(dict.fromkeys(_tokenise(q)))
+    q_tokens = list(dict.fromkeys(_tokenise(q or "")))
     if not q_tokens:
-        return [(e, None) for e in sorted(entries, key=lambda e: e.api_id)]
-    scored = [(e, score_entry(e.api_id, q_tokens)) for e in entries]
-    # Keep only positive scores. This also guarantees a search cursor's carried
-    # score is always > 0, so it is never confused with the browse cursor (which
-    # carries score None) — `_is_after_cursor` distinguishes the two by None-ness.
-    scored = [(e, s) for e, s in scored if s > 0]
-    scored.sort(key=lambda x: (-x[1], x[0].api_id))
-    return [(e, s) for e, s in scored]
+        browse = entries if ordered else sorted(entries, key=lambda e: e.entry_id)
+        return [(e, None) for e in browse]
+    scored: list[tuple[CatalogEntry, int | None]] = []
+    for entry in entries:
+        pre = tokens.get(entry.entry_id) if tokens is not None else None
+        if pre is None:
+            names = _tokenise(entry.catalog_api_id)
+            pre = (names, frozenset(names))
+        score = score_tokens(pre[0], pre[1], q_tokens, pre[2] if len(pre) == 3 else None)
+        # Only positive scores: a search cursor's carried score is then always
+        # > 0, never confused with the browse cursor's None.
+        if score > 0:
+            scored.append((entry, score))
+    if ordered:
+        scored.sort(key=lambda x: -(x[1] or 0))
+    else:
+        scored.sort(key=lambda x: (-(x[1] or 0), x[0].entry_id))
+    return scored
 
 
 @dataclass(frozen=True)
 class EntryPage:
     """A keyset page over the in-memory catalog list."""
 
-    items: list[ManifestEntry]
+    items: list[CatalogEntry]
     has_more: bool
-    next_api_id: str | None
+    next_entry_id: str | None
     next_score: int | None
 
 
 def paginate_entries(
-    scored: list[tuple[ManifestEntry, int | None]],
+    scored: Sequence[tuple[CatalogEntry, int | None]],
     *,
-    after_api_id: str | None,
+    after_entry_id: str | None,
     after_score: float | None,
     limit: int,
 ) -> EntryPage:
     """Slice an ordered ``(entry, score)`` list into a keyset page.
 
     ``scored`` must already be in the final display order (see ``score_entries``).
-    The cursor is the ``(score, api_id)`` of the last item returned; the next
-    request resumes at the first item strictly after it in that same order. This
-    is an in-memory slice — the whole catalog is a ~1 MB cached blob — so there
-    is no DB cost to paging.
+    The cursor is the ``(score, entry_id)`` of the last item returned; the next
+    request resumes at the first item strictly after it in that same order.
 
     ``after_score`` is decoded from a client cursor and typed ``float`` so any
-    historical/foreign cursor value round-trips; our own scores are integers, and
+    foreign cursor value round-trips; our own scores are integers, and
     ``int``/``float`` compare exactly for these small values in ``_is_after_cursor``.
     """
-    if after_api_id is not None:
+    browse_list = not scored or scored[0][1] is None
+    if after_entry_id is None:
         start = 0
-        for i, (entry, score) in enumerate(scored):
-            if _is_after_cursor(score, entry.api_id, after_score, after_api_id):
-                start = i
-                break
-        else:
-            start = len(scored)
+    elif browse_list:
+        # Browse order is ascending entry_id: the resume point is a binary search.
+        start = bisect.bisect_right(scored, after_entry_id, key=lambda x: x[0].entry_id)
+    elif after_score is not None:
+        # Search order is ascending (-score, entry_id).
+        start = bisect.bisect_right(
+            scored, (-after_score, after_entry_id), key=lambda x: (-(x[1] or 0), x[0].entry_id)
+        )
     else:
-        start = 0
+        # A browse cursor on a search list: the first later entry_id, by scan.
+        start = next(
+            (
+                i
+                for i, (entry, score) in enumerate(scored)
+                if _is_after_cursor(score, entry.entry_id, after_score, after_entry_id)
+            ),
+            len(scored),
+        )
 
     if limit <= 0:
         # An empty window is terminal: there is no usable cursor for "give me
-        # nothing", so never advertise more (would strand the caller with
-        # has_more=True / next_cursor=None). The router forbids limit<1 anyway;
-        # this guards non-router callers.
-        return EntryPage(items=[], has_more=False, next_api_id=None, next_score=None)
+        # nothing", so never advertise more.
+        return EntryPage(items=[], has_more=False, next_entry_id=None, next_score=None)
     window = scored[start : start + limit]
     has_more = start + len(window) < len(scored)
     if window and has_more:
         last_entry, last_score = window[-1]
-        next_api_id: str | None = last_entry.api_id
+        next_entry_id: str | None = last_entry.entry_id
         next_score = last_score
     else:
-        next_api_id = None
+        next_entry_id = None
         next_score = None
     return EntryPage(
         items=[e for e, _ in window],
         has_more=has_more,
-        next_api_id=next_api_id,
+        next_entry_id=next_entry_id,
         next_score=next_score,
     )
 
 
-def _is_after_cursor(
-    score: int | None, api_id: str, cursor_score: float | None, cursor_api_id: str
-) -> bool:
-    """Whether ``(score, api_id)`` sorts strictly after the cursor position.
+def paginate_browse(
+    entries: Sequence[CatalogEntry], *, after_entry_id: str | None, limit: int
+) -> EntryPage:
+    """A browse keyset page over ``entries`` already in ``entry_id`` order.
 
-    Browse order is ascending ``api_id``. Search order is descending ``score``
-    then ascending ``api_id`` — so "after" means lower score, or equal score and
-    a later ``api_id``.
+    Same page as ``paginate_entries(score_entries(entries, None), ...)`` without
+    materialising a scored pair per entry, so a browse request allocates only
+    its page.
+    """
+    if limit <= 0:
+        return EntryPage(items=[], has_more=False, next_entry_id=None, next_score=None)
+    start = (
+        0
+        if after_entry_id is None
+        else bisect.bisect_right(entries, after_entry_id, key=lambda e: e.entry_id)
+    )
+    window = list(entries[start : start + limit])
+    has_more = start + len(window) < len(entries)
+    return EntryPage(
+        items=window,
+        has_more=has_more,
+        next_entry_id=window[-1].entry_id if window and has_more else None,
+        next_score=None,
+    )
+
+
+def _is_after_cursor(
+    score: int | None, entry_id: str, cursor_score: float | None, cursor_entry_id: str
+) -> bool:
+    """Whether ``(score, entry_id)`` sorts strictly after the cursor position.
+
+    Browse order is ascending ``entry_id``. Search order is descending ``score``
+    then ascending ``entry_id`` — so "after" means lower score, or equal score
+    and a later ``entry_id``.
     """
     if score is None or cursor_score is None:
-        return api_id > cursor_api_id
+        return entry_id > cursor_entry_id
     if score != cursor_score:
         return score < cursor_score
-    return api_id > cursor_api_id
-
-
-def is_registered(entry: ManifestEntry, registered_spec_urls: set[str]) -> bool:
-    """Whether a catalog entry is already imported into the local registry.
-
-    Coverage is keyed on the entry's ``spec_url`` matching the ``source_url`` of a
-    local API revision — an exact, reliable join. Vendor/domain matching is
-    deliberately *not* used: jentic-one's local identity is the slugified spec
-    triple ``(vendor, name, version)``, which does not map back to a catalog
-    domain id, so any domain-based guess produces both false positives (one
-    ``googleapis.com/*`` import hiding every sibling) and false negatives.
-    """
-    return entry.spec_url is not None and entry.spec_url in registered_spec_urls
+    return entry_id > cursor_entry_id
 
 
 def catalog_api_name(api_id: str, manifest_api_ids: Iterable[str]) -> str:
@@ -339,13 +400,6 @@ def catalog_api_name(api_id: str, manifest_api_ids: Iterable[str]) -> str:
         ):
             return api_id
     return sub
-
-
-def filter_unregistered(
-    entries: list[ManifestEntry], registered_spec_urls: set[str]
-) -> list[ManifestEntry]:
-    """Drop catalog entries already imported locally (by spec_url match)."""
-    return [e for e in entries if not is_registered(e, registered_spec_urls)]
 
 
 # ── preview projectors (pure) ────────────────────────────────────────────────
@@ -391,6 +445,10 @@ class PreviewProjection:
     operations: list[PreviewOperation]
     info: PreviewInfo
     security_schemes: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: ``servers[0].variables`` (name -> ``default`` / ``enum`` / ``description``).
+    server_variables: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: Every scheme some operation requires, over the whole spec (unfiltered).
+    required_schemes: list[str] = field(default_factory=list)
 
 
 def resolve_local_ref(doc: dict[str, Any], ref: str) -> dict[str, Any] | None:
@@ -464,10 +522,71 @@ def slim_security_schemes(doc: dict[str, Any]) -> dict[str, dict[str, Any]]:
         elif scheme_type == "oauth2":
             flows = scheme.get("flows") or {}
             slim["flows"] = list(flows.keys()) if isinstance(flows, dict) else []
+            slim["flow_details"] = _oauth_flow_details(flows)
         elif scheme_type == "openIdConnect":
             slim["openIdConnectUrl"] = scheme.get("openIdConnectUrl")
         out[name] = slim
     return out
+
+
+def _oauth_flow_details(flows: object) -> dict[str, dict[str, Any]]:
+    """Each OAuth2 flow's URLs and scopes, keeping only well-typed values."""
+    if not isinstance(flows, dict):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for flow_name, flow in flows.items():
+        if not isinstance(flow_name, str) or not isinstance(flow, dict):
+            continue
+        detail: dict[str, Any] = {
+            key: flow[key]
+            for key in ("authorizationUrl", "tokenUrl", "refreshUrl")
+            if isinstance(flow.get(key), str)
+        }
+        scopes = flow.get("scopes")
+        if isinstance(scopes, dict):
+            detail["scopes"] = {str(k): v if isinstance(v, str) else "" for k, v in scopes.items()}
+        out[flow_name] = detail
+    return out
+
+
+def server_variables(doc: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """``servers[0].variables``, keeping ``default``, ``enum`` and ``description``."""
+    servers = doc.get("servers")
+    if not isinstance(servers, list) or not servers or not isinstance(servers[0], dict):
+        return {}
+    variables = servers[0].get("variables")
+    if not isinstance(variables, dict):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for name, var in variables.items():
+        if not isinstance(name, str) or not isinstance(var, dict):
+            continue
+        slim: dict[str, Any] = {}
+        if isinstance(var.get("default"), str):
+            slim["default"] = var["default"]
+        if isinstance(var.get("description"), str):
+            slim["description"] = var["description"]
+        enum = var.get("enum")
+        if isinstance(enum, list):
+            slim["enum"] = [v for v in enum if isinstance(v, str)]
+        out[name] = slim
+    return out
+
+
+def required_security_schemes(doc: dict[str, Any]) -> list[str]:
+    """Every scheme name some operation requires (op security, else the doc's), in order."""
+    doc_security = flatten_security(doc.get("security"))
+    seen: dict[str, None] = {}
+    for methods in (doc.get("paths") or {}).values():
+        if not isinstance(methods, dict):
+            continue
+        for method, op in methods.items():
+            if method.lower() not in _HTTP_METHODS or not isinstance(op, dict):
+                continue
+            raw = op.get("security")
+            for name in flatten_security(raw) if raw is not None else doc_security:
+                seen.setdefault(name, None)
+    return list(seen)
 
 
 def parse_preview_operations(
@@ -556,4 +675,6 @@ def project_preview(
             description=info_raw.get("description"),
         ),
         security_schemes=slim_security_schemes(doc),
+        server_variables=server_variables(doc),
+        required_schemes=required_security_schemes(doc),
     )

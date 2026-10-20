@@ -439,7 +439,7 @@ export function useOperationPreview(
 		queryKey: [...discoverKeys.operations(apiId ?? ''), { q: q ?? '', tag: tag ?? '' }],
 		queryFn: async ({ pageParam }) => {
 			const res = await previewOperations({
-				apiId: apiId as string,
+				entryId: apiId as string,
 				offset: pageParam as number,
 				limit: OPERATION_PREVIEW_PAGE_SIZE,
 				q,
@@ -556,7 +556,7 @@ export function useImportCatalogApi(): UseImportResult {
 	}, []);
 
 	const mutation = useMutation({
-		mutationFn: (entity: DiscoveryEntity) => importCatalogEntry(entity.apiId),
+		mutationFn: (entity: DiscoveryEntity) => importCatalogEntry(entity.entryId),
 		onMutate: (entity) => {
 			inFlightRef.current.add(entity.apiId);
 			labelsRef.current.set(entity.apiId, entity.summary);
@@ -677,11 +677,24 @@ export function useRefreshCatalog(): UseRefreshCatalogResult {
 	const mutation = useMutation({
 		mutationFn: () => refreshCatalog(),
 		onSuccess: (res) => {
-			toast({
-				title: 'Catalog refreshed',
-				description: `Pulled the latest manifest from the Jentic public catalog (${res.count.toLocaleString()} APIs).`,
-				variant: 'success',
-			});
+			if (res.status === 'partial') {
+				// Some sources failed or ran out of time; they keep their last good
+				// entries and the scanner retries them.
+				const failed = (res.sources ?? [])
+					.filter((s) => s.status === 'failed' || s.status === 'skipped')
+					.map((s) => s.slug);
+				toast({
+					title: 'Catalog partly refreshed',
+					description: `Couldn't refresh ${failed.join(', ') || 'some sources'}; they keep their last entries (${res.count.toLocaleString()} APIs).`,
+					variant: 'warning',
+				});
+			} else {
+				toast({
+					title: 'Catalog refreshed',
+					description: `Pulled the latest manifest from the Jentic public catalog (${res.count.toLocaleString()} APIs).`,
+					variant: 'success',
+				});
+			}
 			queryClient.invalidateQueries({ queryKey: discoverKeys.catalogAll });
 		},
 		onError: (error: unknown) => {

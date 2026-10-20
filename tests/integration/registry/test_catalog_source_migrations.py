@@ -80,3 +80,63 @@ async def test_catalog_source_migrations_round_trip(
     assert tables >= _NEW_TABLES
     assert "catalog_entry_id" in cols
     assert "catalog_snapshots" in tables
+
+
+_WIDEN_REGISTRY = ("b1c2d3e4f5a7", "a0b1c2d3e4f6")  # pragma: allowlist secret
+_WIDEN_CONTROL = ("ee5f6a7b8c9d", "dd4e5f6a7b8c")  # pragma: allowlist secret
+
+
+@pytest.fixture()
+async def restore_control_head(integration_config: AppConfig) -> AsyncGenerator[None, None]:
+    yield
+    cfg = alembic_config_for("control", integration_config.databases.control)
+    await asyncio.to_thread(command.upgrade, cfg, "head")
+
+
+async def _widths(db: DatabaseSession, tables: tuple[str, ...]) -> dict[str, int | None]:
+    async with db.session() as session:
+        conn = await session.connection()
+
+        def _inspect(sync: Connection) -> dict[str, int | None]:
+            insp = inspect(sync)
+            return {
+                t: next(
+                    getattr(c["type"], "length", None)
+                    for c in insp.get_columns(t)
+                    if c["name"] == "catalog_api_id"
+                )
+                for t in tables
+            }
+
+        return await conn.run_sync(_inspect)
+
+
+@pytest.mark.parametrize(
+    ("tree", "revs", "tables"),
+    [
+        ("registry", _WIDEN_REGISTRY, ("apis",)),
+        ("control", _WIDEN_CONTROL, ("credentials", "oauth_app_registrations")),
+    ],
+)
+async def test_catalog_api_id_widening_round_trip(
+    integration_config: AppConfig,
+    registry_db: DatabaseSession,
+    control_db: DatabaseSession,
+    restore_head: None,
+    restore_control_head: None,
+    tree: str,
+    revs: tuple[str, str],
+    tables: tuple[str, ...],
+) -> None:
+    """The widening revisions move every ``catalog_api_id`` copy 255 -> 320 and back."""
+    db = registry_db if tree == "registry" else control_db
+    cfg = alembic_config_for(tree, getattr(integration_config.databases, tree))
+    head, parent = revs
+    assert ScriptDirectory.from_config(cfg).get_revision(head).down_revision == parent
+    assert set((await _widths(db, tables)).values()) == {320}
+
+    await asyncio.to_thread(command.downgrade, cfg, parent)
+    assert set((await _widths(db, tables)).values()) == {255}
+
+    await asyncio.to_thread(command.upgrade, cfg, head)
+    assert set((await _widths(db, tables)).values()) == {320}

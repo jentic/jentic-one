@@ -12,6 +12,7 @@ import re
 import secrets
 import stat
 import threading
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
@@ -2191,7 +2192,10 @@ class CatalogSourceConfig(BaseModel):
     visibility: CatalogVisibility = "public"
     trust: CatalogTrust = Field(
         default="untrusted",
-        description="curated sources own the catalog_api_ids they list.",
+        description=(
+            "curated sources own the catalog_api_ids they list. A curated source "
+            "must be public (startup fails otherwise)."
+        ),
     )
     precedence: int = Field(
         default=0,
@@ -2262,24 +2266,18 @@ class CatalogApiIdMappingConfig(BaseModel):
     catalog_api_id: str
 
 
+#: Catalog keys that no longer exist, with the setting that replaces each.
+_REMOVED_CATALOG_SETTINGS: dict[str, str] = {
+    "manifest_url": "catalog.sources[slug=<legacy_source_slug>].settings.url",
+    "manifest_max_age_seconds": "catalog.sources[slug=<legacy_source_slug>].max_age_seconds",
+}
+
+
 class CatalogConfig(BaseModel):
     """Public API catalog settings (sources, staleness, update notify)."""
 
-    manifest_url: str = Field(
-        default=DEFAULT_PUBLIC_MANIFEST_URL,
-        description=(
-            "Deprecated alias for the legacy source's settings.url "
-            "(catalog.sources[slug=legacy_source_slug]). Full default: "
-            "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/"
-            "apis/openapi/apis.json"
-        ),
-    )
-    # Deprecated alias for the legacy source's ``max_age_seconds``. Zero disables
-    # auto-refresh (manual :refresh only).
-    manifest_max_age_seconds: int = Field(
-        default=86400,
-        description="Deprecated alias for the legacy source's max_age_seconds.",
-    )
+    model_config = ConfigDict(extra="forbid")
+
     sources: list[CatalogSourceConfig] = Field(
         default_factory=_default_catalog_sources,
         description="Catalog sources. The default is the curated public-apis manifest.",
@@ -2294,8 +2292,17 @@ class CatalogConfig(BaseModel):
     legacy_source_slug: str = Field(
         default=DEFAULT_PUBLIC_SOURCE_SLUG,
         description=(
-            "The git-manifest source the deprecated manifest_* keys map onto and "
-            "that pre-existing catalog imports are reconciled against."
+            "The git-manifest source that pre-existing catalog imports are reconciled against."
+        ),
+    )
+    refresh_deadline_seconds: float = Field(
+        default=45.0,
+        gt=0,
+        le=600,
+        description=(
+            "Bound on the source listings of one POST /catalog:refresh, taken "
+            "together (each one is also capped by ingest.fetch_timeout_s). A source "
+            "reached after it is skipped (status partial) and left to the scanner."
         ),
     )
     # Update-notify (Flow 3): the standalone ``CatalogUpdateScanner`` (started in
@@ -2324,65 +2331,24 @@ class CatalogConfig(BaseModel):
     # so the cadence stays ~daily; 0 disables jitter (deterministic, e.g. for tests).
     update_sweep_jitter_ratio: float = Field(default=0.15, ge=0.0, le=1.0)
 
-    def deprecated_keys_set(self) -> list[str]:
-        """The deprecated ``manifest_*`` keys the operator set explicitly."""
-        return [
-            key
-            for key in ("manifest_url", "manifest_max_age_seconds")
-            if key in self.model_fields_set
-        ]
-
-    def effective_sources(self) -> list[CatalogSourceConfig]:
-        """``sources`` with the deprecated ``manifest_*`` keys mapped onto the legacy source.
-
-        Each deprecated key, when set explicitly, overrides the legacy source's
-        value (``manifest_url`` -> ``settings.url``, ``manifest_max_age_seconds``
-        -> ``max_age_seconds``). Computed per call so a key assigned after load is
-        honoured too.
-        """
-        fields_set = self.model_fields_set
-        out: list[CatalogSourceConfig] = []
-        for source in self.sources:
-            if source.slug == self.legacy_source_slug:
-                update: dict[str, Any] = {}
-                if "manifest_url" in fields_set:
-                    update["settings"] = {**source.settings, "url": self.manifest_url}
-                if "manifest_max_age_seconds" in fields_set:
-                    update["max_age_seconds"] = max(0, self.manifest_max_age_seconds)
-                if update:
-                    source = source.model_copy(update=update)
-            out.append(source)
-        return out
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_removed_keys(cls, data: Any) -> Any:
+        """Fail with the replacement's name when a removed ``manifest_*`` key is set."""
+        if isinstance(data, Mapping):
+            set_keys = [k for k in _REMOVED_CATALOG_SETTINGS if k in data]
+            if set_keys:
+                raise ValueError(
+                    "; ".join(
+                        f"catalog.{key} was removed: set {_REMOVED_CATALOG_SETTINGS[key]} instead"
+                        for key in set_keys
+                    )
+                )
+        return data
 
     def legacy_source(self) -> CatalogSourceConfig | None:
-        """The effective ``legacy_source_slug`` source, if configured."""
-        return next(
-            (s for s in self.effective_sources() if s.slug == self.legacy_source_slug), None
-        )
-
-    def legacy_manifest_url(self) -> str | None:
-        """The manifest URL the snapshot refresh fetches (the legacy source's ``url``).
-
-        ``None`` when no legacy source is configured: dropping it from
-        ``catalog.sources`` stops the snapshot's manifest egress.
-        """
-        legacy = self.legacy_source()
-        if legacy is None:
-            return None
-        url = legacy.settings.get("url")
-        if isinstance(url, str) and url:
-            return url
-        return self.manifest_url
-
-    def legacy_max_age_seconds(self) -> int:
-        """Snapshot staleness gate (the legacy source's ``max_age_seconds``; 0 = manual).
-
-        0 when no legacy source is configured, so nothing refreshes the snapshot.
-        """
-        legacy = self.legacy_source()
-        if legacy is None:
-            return 0
-        return legacy.max_age_seconds if legacy.enabled else 0
+        """The ``legacy_source_slug`` source, if configured."""
+        return next((s for s in self.sources if s.slug == self.legacy_source_slug), None)
 
 
 class McpOAuthConfig(BaseModel):

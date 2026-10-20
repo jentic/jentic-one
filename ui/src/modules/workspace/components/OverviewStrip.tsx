@@ -16,7 +16,7 @@ import {
 	useReimportFromCatalog,
 	useSnoozeCatalogUpdate,
 } from '@/modules/workspace/api';
-import type { ApiKey, WorkspaceApi } from '@/modules/workspace/api';
+import type { ApiKey, CatalogTarget, WorkspaceApi } from '@/modules/workspace/api';
 import { schemeTypeLabel } from '@/shared/credentials/lib/schemes';
 
 function relativeTime(iso: string): string | null {
@@ -71,17 +71,31 @@ export function OverviewStrip({ api }: { api: WorkspaceApi }) {
 	// dialog first (the "close the overlay-update loop" flow). When `origin` is
 	// absent (older backend), we treat it as catalog and re-import directly.
 	const isOverlayOrigin = api.origin === 'overlay';
-	// The catalog entry is addressed by its `api_id`. For umbrella specs that id is
-	// `domain/sub` (e.g. `nytimes.com/article_search`), which the API's vendor alone
-	// can't resolve — so prefer the real `catalogApiId` surfaced by the backend and
-	// fall back to the vendor only for older backends that don't emit it.
-	const catalogApiId = api.catalogApiId ?? api.api.vendor;
+	// Update and Mute act on the catalog entry this API was imported from: its
+	// own `catalogEntryId` (null when its source is hidden from the caller, and
+	// then they fail rather than guess). A backend that predates the field gets
+	// the `catalogApiId` (`domain/sub` for umbrella specs, which the vendor alone
+	// can't resolve), falling back to the vendor for backends that emit neither.
+	const target: CatalogTarget = {
+		entryId: api.catalogEntryId,
+		catalogApiId: api.catalogApiId ?? api.api.vendor,
+	};
+	// With no entry to act on, Update and Mute could only fail, so they are
+	// disabled with the reason: a manual import tracked upstream by its spec URL
+	// has no catalog id at all; otherwise the entry's source is hidden from the
+	// caller, disabled, or no longer configured.
+	const noEntryReason =
+		api.catalogEntryId !== null
+			? null
+			: api.catalogApiId === null
+				? "This API wasn't imported from the catalog, so it can't be updated or muted from here."
+				: "This API's catalog source isn't available to you, so it can't be updated or muted from here.";
 
 	const handleReimportClick = () => {
 		if (isOverlayOrigin) {
 			setConfirmOpen(true);
 		} else {
-			reimport(catalogApiId);
+			reimport(target);
 		}
 	};
 
@@ -100,12 +114,25 @@ export function OverviewStrip({ api }: { api: WorkspaceApi }) {
 							The upstream spec has changed since this API was imported.
 						</span>
 					</div>
+					{noEntryReason ? (
+						<p
+							id="workspace-update-unavailable"
+							className="text-muted-foreground text-xs"
+							data-testid="workspace-update-unavailable"
+						>
+							{noEntryReason}
+						</p>
+					) : null}
 					<div className="flex shrink-0 items-center gap-2">
 						<Button
 							variant="ghost"
 							size="sm"
 							loading={isSnoozing}
-							onClick={() => snooze(catalogApiId)}
+							disabled={noEntryReason !== null}
+							aria-describedby={
+								noEntryReason ? 'workspace-update-unavailable' : undefined
+							}
+							onClick={() => snooze(target)}
 							data-testid="workspace-snooze"
 						>
 							<BellOff size={14} aria-hidden="true" />
@@ -115,6 +142,10 @@ export function OverviewStrip({ api }: { api: WorkspaceApi }) {
 							variant="outline"
 							size="sm"
 							loading={isReimporting}
+							disabled={noEntryReason !== null}
+							aria-describedby={
+								noEntryReason ? 'workspace-update-unavailable' : undefined
+							}
 							onClick={handleReimportClick}
 							data-testid="workspace-reimport"
 						>
@@ -192,7 +223,7 @@ export function OverviewStrip({ api }: { api: WorkspaceApi }) {
 				onClose={() => setConfirmOpen(false)}
 				onConfirm={() => {
 					setConfirmOpen(false);
-					reimport(catalogApiId);
+					reimport(target);
 				}}
 			/>
 		</section>

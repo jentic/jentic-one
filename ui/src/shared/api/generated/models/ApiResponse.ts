@@ -19,6 +19,10 @@ export type ApiResponse = {
      */
     catalog_api_id: (string | null);
     /**
+     * Catalog entry (`{source_slug}/{external_id}`) the API was imported from: the `entry_id` to pass to the catalog's `:import`, `:snooze` and `:unsnooze` routes to act on this API. Null for manual imports, and when the caller can't read the entry's source.
+     */
+    catalog_entry_id?: (string | null);
+    /**
      * When the API was created (RFC 3339).
      */
     created_at: string;

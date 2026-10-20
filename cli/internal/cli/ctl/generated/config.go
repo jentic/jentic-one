@@ -409,17 +409,14 @@ type CatalogConfig struct {
 	// case-insensitively and applied in the curated casing.
 	CatalogApiIdMappings []CatalogApiIdMappingConfig `json:"catalog_api_id_mappings,omitempty,omitzero" yaml:"catalog_api_id_mappings,omitempty" mapstructure:"catalog_api_id_mappings,omitempty"`
 
-	// The git-manifest source the deprecated manifest_* keys map onto and that
-	// pre-existing catalog imports are reconciled against.
+	// The git-manifest source that pre-existing catalog imports are reconciled
+	// against.
 	LegacySourceSlug string `json:"legacy_source_slug,omitempty,omitzero" yaml:"legacy_source_slug,omitempty" mapstructure:"legacy_source_slug,omitempty"`
 
-	// Deprecated alias for the legacy source's max_age_seconds.
-	ManifestMaxAgeSeconds int `json:"manifest_max_age_seconds,omitempty,omitzero" yaml:"manifest_max_age_seconds,omitempty" mapstructure:"manifest_max_age_seconds,omitempty"`
-
-	// Deprecated alias for the legacy source's settings.url
-	// (catalog.sources[slug=legacy_source_slug]). Full default:
-	// https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json
-	ManifestUrl string `json:"manifest_url,omitempty,omitzero" yaml:"manifest_url,omitempty" mapstructure:"manifest_url,omitempty"`
+	// Bound on the source listings of one POST /catalog:refresh, taken together (each
+	// one is also capped by ingest.fetch_timeout_s). A source reached after it is
+	// skipped (status partial) and left to the scanner.
+	RefreshDeadlineSeconds float64 `json:"refresh_deadline_seconds,omitempty,omitzero" yaml:"refresh_deadline_seconds,omitempty" mapstructure:"refresh_deadline_seconds,omitempty"`
 
 	// Catalog sources. The default is the curated public-apis manifest.
 	Sources []CatalogSourceConfig `json:"sources,omitempty,omitzero" yaml:"sources,omitempty" mapstructure:"sources,omitempty"`
@@ -455,11 +452,14 @@ func (j *CatalogConfig) UnmarshalJSON(value []byte) error {
 	if v, ok := raw["legacy_source_slug"]; !ok || v == nil {
 		plain.LegacySourceSlug = "public"
 	}
-	if v, ok := raw["manifest_max_age_seconds"]; !ok || v == nil {
-		plain.ManifestMaxAgeSeconds = 86400
+	if v, ok := raw["refresh_deadline_seconds"]; !ok || v == nil {
+		plain.RefreshDeadlineSeconds = 45.0
 	}
-	if v, ok := raw["manifest_url"]; !ok || v == nil {
-		plain.ManifestUrl = "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json"
+	if 600 < plain.RefreshDeadlineSeconds {
+		return fmt.Errorf("field %s: must be <= %v", "refresh_deadline_seconds", 600)
+	}
+	if 0 >= plain.RefreshDeadlineSeconds {
+		return fmt.Errorf("field %s: must be > %v", "refresh_deadline_seconds", 0)
 	}
 	if v, ok := raw["update_check_interval_seconds"]; !ok || v == nil {
 		plain.UpdateCheckIntervalSeconds = 86400
@@ -524,7 +524,8 @@ type CatalogSourceConfig struct {
 	// Cross-process sync lease, renewed every third of it.
 	SyncLeaseSeconds int `json:"sync_lease_seconds,omitempty,omitzero" yaml:"sync_lease_seconds,omitempty" mapstructure:"sync_lease_seconds,omitempty"`
 
-	// curated sources own the catalog_api_ids they list.
+	// curated sources own the catalog_api_ids they list. A curated source must be
+	// public (startup fails otherwise).
 	Trust CatalogSourceConfigTrust `json:"trust,omitempty,omitzero" yaml:"trust,omitempty" mapstructure:"trust,omitempty"`
 
 	// Visibility corresponds to the JSON schema field "visibility".

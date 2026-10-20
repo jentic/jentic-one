@@ -155,10 +155,11 @@ func CuratedBindings() []CuratedBinding {
 				"limit":             "limit",
 			},
 			NotExposed: map[string]string{
-				"q":               "keyword search is the sibling `catalog search <query>` positional; reachable via `jentic api ListCatalog`",
-				"outdated_only":   "set by the sibling `catalog outdated` command, not a `catalog list` flag",
-				"include_snoozed": "exposed as --include-snoozed on the sibling `catalog outdated` command",
-				"cursor":          "internal keyset cursor threaded by the --all pagination loop, not a user flag",
+				"q":                  "keyword search is the sibling `catalog search <query>` positional; reachable via `jentic api ListCatalog`",
+				"outdated_only":      "set by the sibling `catalog outdated` command, not a `catalog list` flag",
+				"include_snoozed":    "exposed as --include-snoozed on the sibling `catalog outdated` command",
+				"cursor":             "internal keyset cursor threaded by the --all pagination loop, not a user flag",
+				"include_alternates": "per-source listing is not a CLI flag yet; reachable via `jentic api ListCatalog`",
 			},
 		},
 		{

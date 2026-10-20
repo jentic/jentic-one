@@ -79,12 +79,13 @@ func (CatalogEntryLinksResponse) RequiredFields() []string {
 	return []string{"import", "operations", "self"}
 }
 func (CatalogEntryResponse) RequiredFields() []string {
-	return []string{"_links", "api_id", "path", "registered", "spec_url", "vendor"}
+	return []string{"_links", "catalog_api_id", "entry_id", "registered", "source_slug", "vendor"}
 }
 func (CatalogListResponse) RequiredFields() []string {
 	return []string{"catalog_total", "data", "registered_count"}
 }
-func (CatalogRefreshResponse) RequiredFields() []string { return []string{"count"} }
+func (CatalogRefreshResponse) RequiredFields() []string       { return []string{"count"} }
+func (CatalogRefreshSourceResponse) RequiredFields() []string { return []string{"slug", "status"} }
 func (ChangePasswordRequest) RequiredFields() []string {
 	return []string{"current_password", "new_password"}
 }

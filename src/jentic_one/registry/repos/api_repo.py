@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 from urllib.parse import urlparse
 
 from sqlalchemy import and_, delete, func, or_, select, update
@@ -24,6 +24,18 @@ class CatalogApiIdConflictError(Exception):
     def __init__(self, *, stored_id: str) -> None:
         super().__init__(f"Api already carries catalog_api_id {stored_id!r}")
         self.stored_id = stored_id
+
+
+class CatalogHolder(NamedTuple):
+    """An API row holding a ``catalog_api_id``."""
+
+    id: uuid.UUID
+    vendor: str
+    name: str
+    version: str
+    catalog_entry_id: str | None
+    #: Whether the API has a current revision (its import has landed).
+    is_current: bool
 
 
 class ApiRepository:
@@ -59,6 +71,78 @@ class ApiRepository:
         )
         row = result.first()
         return (row.vendor, row.name) if row is not None else None
+
+    @staticmethod
+    async def registered_catalog_entry_ids(session: AsyncSession) -> frozenset[str]:
+        """``catalog_entry_id`` of every API with at least one non-archived revision.
+
+        Any non-archived revision counts, not only the current one: a catalog
+        import lands as a revision before anyone promotes it, and an API whose
+        revisions are all archived no longer stands for its catalog entry.
+        """
+        live = (
+            select(ApiRevision.id)
+            .where(ApiRevision.api_id == Api.id, ApiRevision.state != "archived")
+            .exists()
+        )
+        result = await session.execute(
+            select(Api.catalog_entry_id).where(Api.catalog_entry_id.is_not(None), live).distinct()
+        )
+        return frozenset(str(v) for v in result.scalars().all() if v)
+
+    @staticmethod
+    async def identity_for_catalog_entry_id(
+        session: AsyncSession, catalog_entry_id: str
+    ) -> tuple[str, str] | None:
+        """The stored ``(vendor, name)`` of the oldest API imported from ``catalog_entry_id``."""
+        result = await session.execute(
+            select(Api.vendor, Api.name)
+            .where(Api.catalog_entry_id == catalog_entry_id)
+            .order_by(Api.created_at, Api.id)
+            .limit(1)
+        )
+        row = result.first()
+        return (row.vendor, row.name) if row is not None else None
+
+    @staticmethod
+    async def live_api_id_for_catalog_entry_id(
+        session: AsyncSession, catalog_entry_id: str
+    ) -> uuid.UUID | None:
+        """The newest API imported from ``catalog_entry_id`` that serves a revision."""
+        result = await session.execute(
+            select(Api.id)
+            .where(Api.catalog_entry_id == catalog_entry_id, Api.current_revision_id.is_not(None))
+            .order_by(Api.created_at.desc(), Api.id.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def catalog_holders(session: AsyncSession, catalog_api_id: str) -> list[CatalogHolder]:
+        """The APIs holding ``catalog_api_id``, newest first."""
+        result = await session.execute(
+            select(
+                Api.id,
+                Api.vendor,
+                Api.name,
+                Api.version,
+                Api.catalog_entry_id,
+                Api.current_revision_id,
+            )
+            .where(Api.catalog_api_id == catalog_api_id)
+            .order_by(Api.created_at.desc(), Api.id.desc())
+        )
+        return [
+            CatalogHolder(
+                id=r[0],
+                vendor=r[1],
+                name=r[2],
+                version=r[3],
+                catalog_entry_id=r[4],
+                is_current=r[5] is not None,
+            )
+            for r in result.all()
+        ]
 
     @staticmethod
     async def get_by_identifier_with_current_revision(

@@ -8,6 +8,7 @@ from __future__ import annotations
 import pytest
 
 from jentic_one.registry.services.catalog import manifest_builder as mb
+from jentic_one.registry.services.catalog.entries import CatalogEntry, build_catalog_entry
 
 
 def _include(url: str) -> dict[str, str]:
@@ -98,12 +99,8 @@ def test_from_dict_rederives_vendor_from_api_id() -> None:
 # ── search ───────────────────────────────────────────────────────────────────
 
 
-def _search_entries() -> list[mb.ManifestEntry]:
-    return [
-        mb.ManifestEntry(api_id="stripe.com", path="p", spec_url=None, github_url="g"),
-        mb.ManifestEntry(api_id="slack.com", path="p", spec_url=None, github_url="g"),
-        mb.ManifestEntry(api_id="github.com", path="p", spec_url=None, github_url="g"),
-    ]
+def _search_entries() -> list[CatalogEntry]:
+    return _entries("stripe.com", "slack.com", "github.com")
 
 
 def test_search_empty_query_returns_all() -> None:
@@ -113,7 +110,7 @@ def test_search_empty_query_returns_all() -> None:
 
 def test_search_filters_by_token() -> None:
     result = mb.score_entries(_search_entries(), "stripe")
-    assert [e.api_id for e, _ in result] == ["stripe.com"]
+    assert [e.catalog_api_id for e, _ in result] == ["stripe.com"]
 
 
 def test_search_no_match_returns_empty() -> None:
@@ -127,7 +124,7 @@ def test_whole_word_match_outranks_substring_match() -> None:
     # token "soundstripe"), even though "soundstripe" sorts first alphabetically.
     entries = _entries("soundstripe.com", "stripe.com")
     scored = mb.score_entries(entries, "stripe")
-    assert [e.api_id for e, _ in scored] == ["stripe.com", "soundstripe.com"]
+    assert [e.catalog_api_id for e, _ in scored] == ["stripe.com", "soundstripe.com"]
     # same coverage (1 of 1 tokens, base 2), whole-token hit breaks the tie
     assert scored[0][1] == 3  # coverage 1 x 2 + whole 1
     assert scored[1][1] == 2  # coverage 1 x 2 + whole 0
@@ -138,7 +135,7 @@ def test_whole_word_match_wins_regardless_of_alphabetical_order() -> None:
     # scorer tied them and alphabetised, burying box.com. Quality tiers fix it.
     entries = _entries("Mapbox", "box.com")
     scored = mb.score_entries(entries, "box")
-    assert [e.api_id for e, _ in scored] == ["box.com", "Mapbox"]
+    assert [e.catalog_api_id for e, _ in scored] == ["box.com", "Mapbox"]
 
 
 def test_whole_and_substring_hits_on_same_id_count_once_at_the_higher_tier() -> None:
@@ -155,7 +152,7 @@ def test_coverage_dominates_match_quality_on_multi_word_queries() -> None:
     # *-api.com entry in the catalog buries the obvious intent match.
     entries = _entries("rest-api.com", "googleapis.com")
     scored = mb.score_entries(entries, "google api")
-    assert [e.api_id for e, _ in scored] == ["googleapis.com", "rest-api.com"]
+    assert [e.catalog_api_id for e, _ in scored] == ["googleapis.com", "rest-api.com"]
     assert scored[0][1] == 6  # coverage 2 x 3 + whole 0
     assert scored[1][1] == 4  # coverage 1 x 3 + whole 1
 
@@ -176,28 +173,63 @@ def test_search_membership_unchanged_only_order_differs() -> None:
     # (recall), only their order. Any entry with at least one substring hit on a
     # query token still qualifies, exactly as before.
     entries = _entries("stripe.com", "soundstripe.com", "unrelated.com")
-    result_ids = {e.api_id for e, _ in mb.score_entries(entries, "stripe")}
+    result_ids = {e.catalog_api_id for e, _ in mb.score_entries(entries, "stripe")}
     assert result_ids == {"stripe.com", "soundstripe.com"}
+
+
+def test_search_never_matches_the_source_slug() -> None:
+    # The scorer reads catalog_api_id only: a slug in the entry_id adds no hit.
+    entries = _entries("acme.com", source="stripe")
+    assert mb.score_entries(entries, "stripe") == []
+
+
+def test_search_matches_a_namespaced_catalog_api_id_on_its_hint() -> None:
+    [entry] = _entries("corp~stripe.com", source="corp")
+    assert [e.entry_id for e, _ in mb.score_entries([entry], "stripe")] == ["corp/corp~stripe.com"]
+
+
+def test_equal_scores_across_sources_order_by_entry_id() -> None:
+    entries = _entries("stripe.com", source="zeta") + _entries("stripe.com", source="alpha")
+    scored = mb.score_entries(entries, "stripe")
+    assert [e.entry_id for e, _ in scored] == ["alpha/stripe.com", "zeta/stripe.com"]
+
+
+def test_precomputed_tokens_score_like_fresh_ones() -> None:
+    entries = _entries("soundstripe.com", "stripe.com")
+    tokens = {e.entry_id: (["x"], frozenset({"x"})) for e in entries}
+    # The precomputed map wins over the id: only "x" is matched.
+    assert mb.score_entries(entries, "stripe", tokens=tokens) == []
+    assert len(mb.score_entries(entries, "x", tokens=tokens)) == 2
 
 
 # ── score_entries / paginate_entries (keyset paging) ──────────────────────────
 
 
-def _entries(*api_ids: str) -> list[mb.ManifestEntry]:
-    return [mb.ManifestEntry(api_id=a, path="p", spec_url=None, github_url="g") for a in api_ids]
+def _entries(*api_ids: str, source: str = "public") -> list[CatalogEntry]:
+    return [
+        build_catalog_entry(
+            source_slug=source,
+            external_id=a,
+            catalog_api_id=a,
+            hint=a,
+            title=None,
+            version=None,
+        )
+        for a in api_ids
+    ]
 
 
-def test_score_entries_browse_is_api_id_sorted_with_none_score() -> None:
+def test_score_entries_browse_is_entry_id_sorted_with_none_score() -> None:
     scored = mb.score_entries(_entries("zeta.com", "alpha.com", "mid.com"), None)
-    assert [e.api_id for e, _ in scored] == ["alpha.com", "mid.com", "zeta.com"]
+    assert [e.catalog_api_id for e, _ in scored] == ["alpha.com", "mid.com", "zeta.com"]
     assert all(s is None for _, s in scored)
 
 
-def test_score_entries_search_sorted_by_score_then_api_id() -> None:
+def test_score_entries_search_sorted_by_score_then_entry_id() -> None:
     entries = _entries("api.foo.com", "foo.com", "bar.com")
     scored = mb.score_entries(entries, "foo")
-    # both foo entries score equally on the single token; api_id breaks the tie
-    assert [e.api_id for e, _ in scored] == ["api.foo.com", "foo.com"]
+    # both foo entries score equally on the single token; entry_id breaks the tie
+    assert [e.catalog_api_id for e, _ in scored] == ["api.foo.com", "foo.com"]
     assert all(s is not None and s > 0 for _, s in scored)
 
 
@@ -206,15 +238,15 @@ def test_score_entries_distinct_scores_rank_higher_first() -> None:
     # id-tokens (2x3+2=8) outranks covering only one (1x3+1=4).
     entries = _entries("foo-bar.com", "foo-only.com", "bar-only.com", "nope.com")
     scored = mb.score_entries(entries, "foo bar")
-    ids = [e.api_id for e, _ in scored]
-    # full match (8) first, then the two single-token hits (4) in api_id order, nope excluded
+    ids = [e.catalog_api_id for e, _ in scored]
+    # full match (8) first, then the two single-token hits (4) in entry_id order, nope excluded
     assert ids == ["foo-bar.com", "bar-only.com", "foo-only.com"]
     assert scored[0][1] == 8
     assert scored[1][1] == 4
 
 
-def _paginate_all(scored: list[tuple[mb.ManifestEntry, int | None]], limit: int) -> list[str]:
-    """Walk every page via cursors and return the flat api_id sequence."""
+def _paginate_all(scored: list[tuple[CatalogEntry, int | None]], limit: int) -> list[str]:
+    """Walk every page via cursors and return the flat catalog_api_id sequence."""
     out: list[str] = []
     after_id: str | None = None
     after_score: float | None = None
@@ -223,13 +255,13 @@ def _paginate_all(scored: list[tuple[mb.ManifestEntry, int | None]], limit: int)
         guard += 1
         assert guard < 1000, "pagination did not terminate"
         page = mb.paginate_entries(
-            scored, after_api_id=after_id, after_score=after_score, limit=limit
+            scored, after_entry_id=after_id, after_score=after_score, limit=limit
         )
-        out.extend(e.api_id for e in page.items)
+        out.extend(e.catalog_api_id for e in page.items)
         if not page.has_more:
             break
-        assert page.next_api_id is not None
-        after_id, after_score = page.next_api_id, page.next_score
+        assert page.next_entry_id is not None
+        after_id, after_score = page.next_entry_id, page.next_score
     return out
 
 
@@ -242,25 +274,25 @@ def test_paginate_browse_walks_every_entry_once_in_order() -> None:
 
 def test_paginate_browse_has_more_and_cursor_at_boundary() -> None:
     scored = mb.score_entries(_entries("a.com", "b.com", "c.com"), None)
-    page1 = mb.paginate_entries(scored, after_api_id=None, after_score=None, limit=2)
-    assert [e.api_id for e in page1.items] == ["a.com", "b.com"]
+    page1 = mb.paginate_entries(scored, after_entry_id=None, after_score=None, limit=2)
+    assert [e.catalog_api_id for e in page1.items] == ["a.com", "b.com"]
     assert page1.has_more is True
-    assert page1.next_api_id == "b.com"
+    assert page1.next_entry_id == "public/b.com"
 
     page2 = mb.paginate_entries(
-        scored, after_api_id=page1.next_api_id, after_score=page1.next_score, limit=2
+        scored, after_entry_id=page1.next_entry_id, after_score=page1.next_score, limit=2
     )
-    assert [e.api_id for e in page2.items] == ["c.com"]
+    assert [e.catalog_api_id for e in page2.items] == ["c.com"]
     assert page2.has_more is False
-    assert page2.next_api_id is None
+    assert page2.next_entry_id is None
 
 
 def test_paginate_last_full_page_reports_no_more() -> None:
     scored = mb.score_entries(_entries("a.com", "b.com"), None)
-    page = mb.paginate_entries(scored, after_api_id=None, after_score=None, limit=2)
-    assert [e.api_id for e in page.items] == ["a.com", "b.com"]
+    page = mb.paginate_entries(scored, after_entry_id=None, after_score=None, limit=2)
+    assert [e.catalog_api_id for e in page.items] == ["a.com", "b.com"]
     assert page.has_more is False
-    assert page.next_api_id is None
+    assert page.next_entry_id is None
 
 
 def test_paginate_search_walks_ranked_results_in_order_across_pages() -> None:
@@ -270,14 +302,14 @@ def test_paginate_search_walks_ranked_results_in_order_across_pages() -> None:
     entries = _entries("foo-bar.com", "foo-x.com", "bar-y.com", "unrelated.com")
     scored = mb.score_entries(entries, "foo bar")
     walked = _paginate_all(scored, limit=1)
-    # foo-bar (8) first; then the two single-token hits (4) in api_id order
+    # foo-bar (8) first; then the two single-token hits (4) in entry_id order
     assert walked == ["foo-bar.com", "bar-y.com", "foo-x.com"]
     assert "unrelated.com" not in walked
 
 
-def test_paginate_search_equal_scores_walk_in_api_id_order() -> None:
+def test_paginate_search_equal_scores_walk_in_entry_id_order() -> None:
     # Single-token query => all matches score equally (whole-token hit, 3);
-    # the (score, api_id) tie-break must yield ascending api_id order, with no
+    # the (score, entry_id) tie-break must yield ascending entry_id order, with no
     # skips/dups, across pages.
     entries = _entries("foo-c.com", "foo-a.com", "foo-b.com", "nope.com")
     scored = mb.score_entries(entries, "foo")
@@ -287,56 +319,19 @@ def test_paginate_search_equal_scores_walk_in_api_id_order() -> None:
 
 def test_paginate_cursor_past_end_returns_empty_terminal_page() -> None:
     scored = mb.score_entries(_entries("a.com", "b.com"), None)
-    page = mb.paginate_entries(scored, after_api_id="zzz.com", after_score=None, limit=10)
+    page = mb.paginate_entries(scored, after_entry_id="public/zzz.com", after_score=None, limit=10)
     assert page.items == []
     assert page.has_more is False
-    assert page.next_api_id is None
+    assert page.next_entry_id is None
 
 
 def test_paginate_zero_limit_returns_empty_terminal_page() -> None:
     scored = mb.score_entries(_entries("a.com", "b.com"), None)
-    page = mb.paginate_entries(scored, after_api_id=None, after_score=None, limit=0)
+    page = mb.paginate_entries(scored, after_entry_id=None, after_score=None, limit=0)
     assert page.items == []
     # an empty window is terminal — never strand the caller with has_more/no-cursor
     assert page.has_more is False
-    assert page.next_api_id is None
-
-
-# ── coverage / registered (spec_url keyed) ───────────────────────────────────
-
-
-def _entry(api_id: str, spec_url: str | None) -> mb.ManifestEntry:
-    return mb.ManifestEntry(api_id=api_id, path="p", spec_url=spec_url, github_url="g")
-
-
-def test_is_registered_matches_on_spec_url() -> None:
-    e = _entry("stripe.com", "https://x/stripe/openapi.json")
-    assert mb.is_registered(e, {"https://x/stripe/openapi.json"}) is True
-    assert mb.is_registered(e, {"https://x/other/openapi.json"}) is False
-
-
-def test_is_registered_false_without_spec_url() -> None:
-    assert mb.is_registered(_entry("nospec.com", None), {"https://x"}) is False
-
-
-def test_sub_api_coverage_does_not_leak_to_siblings() -> None:
-    """Importing one googleapis.com/* must not mark its siblings registered.
-
-    This is the umbrella regression the old eTLD+1 vendor match caused: coverage
-    is keyed on the exact spec_url, so gmail being imported leaves admin unregistered.
-    """
-    gmail = _entry("googleapis.com/gmail", "https://x/googleapis.com/gmail/openapi.json")
-    admin = _entry("googleapis.com/admin", "https://x/googleapis.com/admin/openapi.json")
-    covered = {"https://x/googleapis.com/gmail/openapi.json"}
-    assert mb.is_registered(gmail, covered) is True
-    assert mb.is_registered(admin, covered) is False
-
-
-def test_filter_unregistered_drops_only_exact_matches() -> None:
-    gmail = _entry("googleapis.com/gmail", "https://x/gmail.json")
-    admin = _entry("googleapis.com/admin", "https://x/admin.json")
-    out = mb.filter_unregistered([gmail, admin], {"https://x/gmail.json"})
-    assert [e.api_id for e in out] == ["googleapis.com/admin"]
+    assert page.next_entry_id is None
 
 
 def test_manifest_entry_round_trips_through_dict() -> None:
@@ -512,3 +507,158 @@ def test_catalog_api_name_host_qualifies_every_member_of_a_clash_group(api_id: s
 def test_catalog_api_name_clash_compares_slugified_subs() -> None:
     manifest = ["stripe.com/Check_Out", "api.stripe.com/check-out"]
     assert mb.catalog_api_name("stripe.com/Check_Out", manifest) == "stripe.com/Check_Out"
+
+
+# ── fast paths agree with the reference ordering ─────────────────────────────
+
+_MIXED = (
+    "stripe.com",
+    "soundstripe.com",
+    "stripe.com/checkout",
+    "mapbox.com",
+    "box.com",
+    "acme.io",
+    "foo-bar.com",
+    "bar.io",
+)
+
+
+def _ref_page(
+    scored: list[tuple[CatalogEntry, int | None]],
+    after_id: str | None,
+    after_score: float | None,
+    limit: int,
+) -> list[str]:
+    start = 0
+    if after_id is not None:
+        start = next(
+            (
+                i
+                for i, (e, s) in enumerate(scored)
+                if mb._is_after_cursor(s, e.entry_id, after_score, after_id)
+            ),
+            len(scored),
+        )
+    return [e.entry_id for e, _ in scored[start : start + limit]]
+
+
+@pytest.mark.parametrize("q", ["stripe", "box", "foo bar", "io", "com", "zzz"])
+def test_ordered_scoring_matches_the_unordered_sort(q: str) -> None:
+    entries = _entries(*_MIXED) + _entries(*_MIXED, source="corp")
+    ordered = sorted(entries, key=lambda e: e.entry_id)
+    assert mb.score_entries(ordered, q, ordered=True) == mb.score_entries(entries[::-1], q)
+
+
+@pytest.mark.parametrize("q", ["stripe", "box", "foo bar", "com"])
+def test_search_bisect_resume_matches_the_linear_scan(q: str) -> None:
+    entries = sorted(_entries(*_MIXED) + _entries(*_MIXED, source="corp"), key=lambda e: e.entry_id)
+    scored = mb.score_entries(entries, q, ordered=True)
+    for entry, score in scored:
+        for limit in (1, 3):
+            page = mb.paginate_entries(
+                scored, after_entry_id=entry.entry_id, after_score=score, limit=limit
+            )
+            assert [e.entry_id for e in page.items] == _ref_page(
+                scored, entry.entry_id, score, limit
+            )
+    # A browse cursor on a search list resumes at the first later entry_id.
+    page = mb.paginate_entries(scored, after_entry_id="corp/zzz", after_score=None, limit=50)
+    assert [e.entry_id for e in page.items] == _ref_page(scored, "corp/zzz", None, 50)
+
+
+def test_paginate_browse_matches_paginate_entries() -> None:
+    entries = sorted(_entries(*_MIXED) + _entries(*_MIXED, source="corp"), key=lambda e: e.entry_id)
+    scored = mb.score_entries(entries, None, ordered=True)
+    cursors: list[str | None] = [None, "a", "corp/box.com", "corp/zzz", "public/zzz", "zzz"]
+    for after in cursors:
+        for limit in (0, 1, 4, 50):
+            fast = mb.paginate_browse(entries, after_entry_id=after, limit=limit)
+            ref = mb.paginate_entries(scored, after_entry_id=after, after_score=None, limit=limit)
+            assert fast == ref
+
+
+def test_score_tokens_joined_form_matches_per_token_substrings() -> None:
+    names = ("api", "stripe", "com")
+    for t in ("str", "ipe", "co", "api", "pis", "x", "comx"):
+        expected = mb.score_tokens(names, frozenset(names), [t])
+        assert mb.score_tokens(names, frozenset(names), [t], " ".join(names)) == expected
+
+
+# ── preview: what the credential picker reads ──────────────────────────────
+
+
+def _picker_doc() -> dict[str, object]:
+    paths: dict[str, object] = {
+        f"/open/{i}": {"get": {"security": [], "responses": {}}} for i in range(250)
+    }
+    paths["/tickets"] = {"get": {"security": [{"OAuth": ["read"]}], "responses": {}}}
+    return {
+        "openapi": "3.0.0",
+        "info": {"title": "Zendesk", "version": "2"},
+        "servers": [
+            {
+                "url": "https://{subdomain}.zendesk.com/api/v2",
+                "variables": {
+                    "subdomain": {"default": "acme", "description": "Your subdomain"},
+                    "region": {"default": "us", "enum": ["us", "eu", 3]},
+                    "bad": "not-an-object",
+                },
+            },
+            {"url": "https://ignored.example", "variables": {"other": {"default": "x"}}},
+        ],
+        "paths": paths,
+        "components": {
+            "securitySchemes": {
+                "OAuth": {
+                    "type": "oauth2",
+                    "flows": {
+                        "authorizationCode": {
+                            "authorizationUrl": "https://{subdomain}.zendesk.com/oauth/new",
+                            "tokenUrl": "https://{subdomain}.zendesk.com/oauth/tokens",
+                            "refreshUrl": "https://{subdomain}.zendesk.com/oauth/refresh",
+                            "scopes": {"read": "Read", "write": "Write"},
+                        },
+                        "clientCredentials": {"tokenUrl": 42, "scopes": {}},
+                    },
+                }
+            }
+        },
+    }
+
+
+def test_preview_carries_oauth_flow_urls_and_scopes() -> None:
+    scheme = mb.project_preview(_picker_doc()).security_schemes["OAuth"]
+    assert scheme["flows"] == ["authorizationCode", "clientCredentials"]
+    assert scheme["flow_details"] == {
+        "authorizationCode": {
+            "authorizationUrl": "https://{subdomain}.zendesk.com/oauth/new",
+            "tokenUrl": "https://{subdomain}.zendesk.com/oauth/tokens",
+            "refreshUrl": "https://{subdomain}.zendesk.com/oauth/refresh",
+            "scopes": {"read": "Read", "write": "Write"},
+        },
+        # A non-string URL is dropped rather than passed through.
+        "clientCredentials": {"scopes": {}},
+    }
+
+
+def test_preview_carries_the_first_servers_variables() -> None:
+    assert mb.project_preview(_picker_doc()).server_variables == {
+        "subdomain": {"default": "acme", "description": "Your subdomain"},
+        "region": {"default": "us", "enum": ["us", "eu"]},
+    }
+
+
+def test_preview_required_schemes_cover_every_operation_regardless_of_filter() -> None:
+    # The only OAuth operation sorts after the first 200 and is filtered out by q.
+    proj = mb.project_preview(_picker_doc(), q="/open/")
+    assert all(op.security == [] for op in proj.operations)
+    assert proj.required_schemes == ["OAuth"]
+
+
+def test_preview_required_schemes_inherit_document_security() -> None:
+    doc = {
+        "security": [{"Key": []}],
+        "paths": {"/a": {"get": {}}, "/b": {"post": {"security": [{"Basic": []}]}}},
+    }
+    assert mb.project_preview(doc).required_schemes == ["Key", "Basic"]
+    assert mb.project_preview({"paths": {}}).server_variables == {}

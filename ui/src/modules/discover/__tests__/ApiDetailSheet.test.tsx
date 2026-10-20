@@ -10,6 +10,7 @@ import { ApiDetailSheet } from '@/modules/discover/components/ApiDetailSheet';
 
 const ADYEN: DiscoveryEntity = {
 	id: 'adyen.com',
+	entryId: 'public/adyen.com',
 	apiId: 'adyen.com',
 	summary: 'adyen.com',
 	registered: false,

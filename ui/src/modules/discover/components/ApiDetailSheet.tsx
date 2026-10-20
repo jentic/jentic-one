@@ -89,7 +89,7 @@ export function ApiDetailSheet({
 	const q = search ? debouncedSearch : '';
 
 	// Preview the catalog entry's operations; disabled while the sheet is closed.
-	const previewId = open ? (entity?.apiId ?? null) : null;
+	const previewId = open ? (entity?.entryId ?? null) : null;
 	const preview = useOperationPreview(previewId, { q, tag: activeTag });
 
 	const operations = preview.operations;
@@ -101,7 +101,7 @@ export function ApiDetailSheet({
 		returnFocusRef.current = null;
 		setSearch('');
 		setActiveTag(null);
-	}, [entity?.apiId, open]);
+	}, [entity?.entryId, open]);
 
 	// Changing the filter re-queries the operation set; the previously selected
 	// op may no longer be present, so drop the drill-down back to the list.

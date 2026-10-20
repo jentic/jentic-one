@@ -20,6 +20,7 @@ import {
 import { worker } from '@/mocks/browser';
 import { setToken } from '@/shared/api';
 import {
+	catalogPreviewOf,
 	makeMockApi,
 	makeMockCredential,
 	resetApisStore,
@@ -724,19 +725,18 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 		// The live GitHub pick: name is the whole `api_id`, which the backend
 		// rejects in `api.name` (`/` reads as a spec path). The import answers 202
 		// and the API only lands later, so the credential must not depend on it.
-		const SPEC_URL =
-			'https://raw.githubusercontent.com/jentic/jentic-public-apis/refs/heads/main/apis/openapi/github.com/api.github.com/1.1.4/openapi.json';
+		const PREVIEW_URL = '/catalog/public/github.com/api.github.com/operations';
 		const imports: string[] = [];
 		const creates: { api?: Record<string, unknown> }[] = [];
 		worker.use(
-			http.get(SPEC_URL, () =>
-				HttpResponse.json({
-					openapi: '3.0.0',
-					info: { title: 'GitHub v3 REST API', version: '1.1.4' },
-					components: {
-						securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer' } },
-					},
-				}),
+			http.get(PREVIEW_URL, () =>
+				HttpResponse.json(
+					catalogPreviewOf({
+						components: {
+							securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer' } },
+						},
+					}),
+				),
 			),
 			http.post('/catalog/*', ({ request }) => {
 				imports.push(new URL(request.url).pathname);
@@ -756,7 +756,7 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 			name: 'github.com/api.github.com',
 			version: '1.0.0',
 			apiId: 'github.com/api.github.com',
-			specUrl: SPEC_URL,
+			entryId: 'public/github.com/api.github.com',
 			registered: false,
 			label: 'GitHub',
 		};
@@ -785,7 +785,7 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 
 		await waitFor(() => expect(creates).toHaveLength(1));
 		await addWithAccess(user, 'GitHub');
-		expect(imports).toEqual(['/catalog/github.com/api.github.com:import']);
+		expect(imports).toEqual(['/catalog/public/github.com/api.github.com:import']);
 		// The identity the import registers (slug), with the verbatim id as provenance.
 		expect(creates[0]!.api).toMatchObject({
 			vendor: 'github.com',

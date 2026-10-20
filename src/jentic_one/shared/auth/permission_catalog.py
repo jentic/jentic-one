@@ -49,6 +49,9 @@ CREDENTIALS_CONNECT = "credentials:connect"
 APIS_READ = "apis:read"
 APIS_WRITE = "apis:write"
 CATALOG_IMPORT = "catalog:import"
+CATALOG_ORG_READ = "catalog:org:read"
+CATALOG_RESTRICTED_READ = "catalog:restricted:read"
+CATALOG_SYNC = "catalog:sync"
 OVERLAYS_CONFIRM = "overlays:confirm"
 EXECUTIONS_READ = "executions:read"
 AUDIT_READ = "audit:read"
@@ -163,6 +166,9 @@ ALL_PERMISSIONS: dict[str, Permission] = {
                 APIS_READ,
                 APIS_WRITE,
                 CATALOG_IMPORT,
+                CATALOG_ORG_READ,
+                CATALOG_RESTRICTED_READ,
+                CATALOG_SYNC,
                 OVERLAYS_CONFIRM,
                 EXECUTIONS_READ,
                 AUDIT_READ,
@@ -240,6 +246,20 @@ ALL_PERMISSIONS: dict[str, Permission] = {
         name=CATALOG_IMPORT,
         description="Import an API from the public catalog into the local registry",
         implies=frozenset({APIS_READ}),
+    ),
+    CATALOG_ORG_READ: Permission(
+        name=CATALOG_ORG_READ,
+        description="Read catalog entries of org-visibility catalog sources",
+    ),
+    CATALOG_RESTRICTED_READ: Permission(
+        name=CATALOG_RESTRICTED_READ,
+        description=(
+            "Read catalog entries of restricted catalog sources whose reader list admits the caller"
+        ),
+    ),
+    CATALOG_SYNC: Permission(
+        name=CATALOG_SYNC,
+        description="Trigger a sync of a catalog source",
     ),
     OVERLAYS_CONFIRM: Permission(
         name=OVERLAYS_CONFIRM,
@@ -350,6 +370,9 @@ __all__ = [
     "CAPABILITIES_EXECUTE",
     "CAPABILITIES_READ",
     "CATALOG_IMPORT",
+    "CATALOG_ORG_READ",
+    "CATALOG_RESTRICTED_READ",
+    "CATALOG_SYNC",
     "CONFIG_READ",
     "CONFIG_WRITE",
     "CREDENTIALS_CONNECT",

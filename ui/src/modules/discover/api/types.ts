@@ -16,12 +16,14 @@
  * render only this shape.
  */
 export interface DiscoveryEntity {
-	/** Stable, unique row id (also the React key). Mirrors the catalog `api_id`. */
+	/** Stable, unique row id (also the React key). Mirrors the catalog `entry_id`. */
 	id: string;
 	/**
-	 * Catalog api_id used to address the entry on the catalog routes
-	 * (`/catalog/{api_id}`, `/catalog/{api_id}/operations`, `/catalog/{api_id}:import`).
+	 * Catalog `entry_id` used to address the entry on the catalog routes
+	 * (`/catalog/{entry_id}`, `/catalog/{entry_id}/operations`, `:import`).
 	 */
+	entryId: string;
+	/** The entry's `catalog_api_id` (the identity workspace APIs record at import). */
 	apiId: string;
 	/**
 	 * Human-readable title, distinct per entry even within one umbrella vendor.

@@ -1494,7 +1494,7 @@
       },
       "method": "GET",
       "operation_id": "getCatalogEntry",
-      "path": "/catalog/{api_id}",
+      "path": "/catalog/{entry_id}",
       "public": false,
       "required_permissions": [
         "capabilities:read"
@@ -1516,7 +1516,7 @@
       },
       "method": "GET",
       "operation_id": "previewCatalogOperations",
-      "path": "/catalog/{api_id}/operations",
+      "path": "/catalog/{entry_id}/operations",
       "public": false,
       "required_permissions": [
         "capabilities:read"
@@ -1540,7 +1540,7 @@
       },
       "method": "POST",
       "operation_id": "importCatalogEntry",
-      "path": "/catalog/{api_id}:import",
+      "path": "/catalog/{entry_id}:import",
       "public": false,
       "required_permissions": [
         "catalog:import"
@@ -1564,7 +1564,7 @@
       },
       "method": "POST",
       "operation_id": "snoozeCatalogEntry",
-      "path": "/catalog/{api_id}:snooze",
+      "path": "/catalog/{entry_id}:snooze",
       "public": false,
       "required_permissions": [
         "events:write"
@@ -1588,7 +1588,7 @@
       },
       "method": "POST",
       "operation_id": "unsnoozeCatalogEntry",
-      "path": "/catalog/{api_id}:unsnooze",
+      "path": "/catalog/{entry_id}:unsnooze",
       "public": false,
       "required_permissions": [
         "events:write"
@@ -1604,44 +1604,20 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Operator-facing (typically a human operator / admin)",
+      "group": "Any authenticated actor",
       "implied_permissions": {
-        "org:admin": [
-          "agents:read",
-          "agents:write",
-          "apis:read",
-          "apis:write",
-          "audit:read",
-          "capabilities:execute",
-          "capabilities:read",
-          "catalog:import",
-          "config:read",
-          "config:write",
-          "credentials:connect",
-          "credentials:read",
-          "credentials:write",
-          "events:read",
-          "events:write",
-          "executions:read",
-          "jobs:read",
-          "jobs:write",
-          "oauth-clients:read",
-          "oauth-clients:write",
-          "overlays:confirm",
-          "users:read",
-          "users:write"
-        ]
+        "catalog:sync": []
       },
       "method": "POST",
       "operation_id": "refreshCatalog",
       "path": "/catalog:refresh",
       "public": false,
       "required_permissions": [
-        "org:admin"
+        "catalog:sync"
       ],
       "summary": "Refresh Catalog",
       "surface": "catalog:refresh",
-      "typical_caller": "operator"
+      "typical_caller": "any"
     },
     {
       "actor_types": [
@@ -2602,6 +2578,9 @@
           "capabilities:execute",
           "capabilities:read",
           "catalog:import",
+          "catalog:org:read",
+          "catalog:restricted:read",
+          "catalog:sync",
           "config:read",
           "config:write",
           "credentials:connect",
@@ -2648,6 +2627,9 @@
           "capabilities:execute",
           "capabilities:read",
           "catalog:import",
+          "catalog:org:read",
+          "catalog:restricted:read",
+          "catalog:sync",
           "config:read",
           "config:write",
           "credentials:connect",
@@ -2784,6 +2766,9 @@
           "capabilities:execute",
           "capabilities:read",
           "catalog:import",
+          "catalog:org:read",
+          "catalog:restricted:read",
+          "catalog:sync",
           "config:read",
           "config:write",
           "credentials:connect",
@@ -2830,6 +2815,9 @@
           "capabilities:execute",
           "capabilities:read",
           "catalog:import",
+          "catalog:org:read",
+          "catalog:restricted:read",
+          "catalog:sync",
           "config:read",
           "config:write",
           "credentials:connect",
@@ -2876,6 +2864,9 @@
           "capabilities:execute",
           "capabilities:read",
           "catalog:import",
+          "catalog:org:read",
+          "catalog:restricted:read",
+          "catalog:sync",
           "config:read",
           "config:write",
           "credentials:connect",
@@ -2922,6 +2913,9 @@
           "capabilities:execute",
           "capabilities:read",
           "catalog:import",
+          "catalog:org:read",
+          "catalog:restricted:read",
+          "catalog:sync",
           "config:read",
           "config:write",
           "credentials:connect",
@@ -2968,6 +2962,9 @@
           "capabilities:execute",
           "capabilities:read",
           "catalog:import",
+          "catalog:org:read",
+          "catalog:restricted:read",
+          "catalog:sync",
           "config:read",
           "config:write",
           "credentials:connect",
@@ -3014,6 +3011,9 @@
           "capabilities:execute",
           "capabilities:read",
           "catalog:import",
+          "catalog:org:read",
+          "catalog:restricted:read",
+          "catalog:sync",
           "config:read",
           "config:write",
           "credentials:connect",
@@ -3959,6 +3959,9 @@
               "capabilities:execute",
               "capabilities:read",
               "catalog:import",
+              "catalog:org:read",
+              "catalog:restricted:read",
+              "catalog:sync",
               "config:read",
               "config:write",
               "credentials:connect",
@@ -3984,6 +3987,9 @@
               "capabilities:execute",
               "capabilities:read",
               "catalog:import",
+              "catalog:org:read",
+              "catalog:restricted:read",
+              "catalog:sync",
               "config:read",
               "config:write",
               "credentials:connect",
@@ -4086,6 +4092,33 @@
             ],
             "is_superuser": false,
             "name": "catalog:import"
+          },
+          {
+            "action": "read",
+            "description": "Read catalog entries of org-visibility catalog sources",
+            "family": "catalog",
+            "implies": [],
+            "implies_transitive": [],
+            "is_superuser": false,
+            "name": "catalog:org:read"
+          },
+          {
+            "action": "read",
+            "description": "Read catalog entries of restricted catalog sources whose reader list admits the caller",
+            "family": "catalog",
+            "implies": [],
+            "implies_transitive": [],
+            "is_superuser": false,
+            "name": "catalog:restricted:read"
+          },
+          {
+            "action": "sync",
+            "description": "Trigger a sync of a catalog source",
+            "family": "catalog",
+            "implies": [],
+            "implies_transitive": [],
+            "is_superuser": false,
+            "name": "catalog:sync"
           }
         ]
       },
@@ -4493,6 +4526,33 @@
       },
       {
         "action": "read",
+        "description": "Read catalog entries of org-visibility catalog sources",
+        "family": "catalog",
+        "implies": [],
+        "implies_transitive": [],
+        "is_superuser": false,
+        "name": "catalog:org:read"
+      },
+      {
+        "action": "read",
+        "description": "Read catalog entries of restricted catalog sources whose reader list admits the caller",
+        "family": "catalog",
+        "implies": [],
+        "implies_transitive": [],
+        "is_superuser": false,
+        "name": "catalog:restricted:read"
+      },
+      {
+        "action": "sync",
+        "description": "Trigger a sync of a catalog source",
+        "family": "catalog",
+        "implies": [],
+        "implies_transitive": [],
+        "is_superuser": false,
+        "name": "catalog:sync"
+      },
+      {
+        "action": "read",
         "description": "Read runtime platform configuration",
         "family": "config",
         "implies": [],
@@ -4634,6 +4694,9 @@
           "capabilities:execute",
           "capabilities:read",
           "catalog:import",
+          "catalog:org:read",
+          "catalog:restricted:read",
+          "catalog:sync",
           "config:read",
           "config:write",
           "credentials:connect",
@@ -4659,6 +4722,9 @@
           "capabilities:execute",
           "capabilities:read",
           "catalog:import",
+          "catalog:org:read",
+          "catalog:restricted:read",
+          "catalog:sync",
           "config:read",
           "config:write",
           "credentials:connect",
@@ -4748,7 +4814,7 @@
       }
     ],
     "schema": "jentic.permission-catalog/v1",
-    "total": 27
+    "total": 30
   },
   "schema": "jentic.endpoint-permission-tree/v1",
   "total": 170

@@ -28,7 +28,7 @@ import { apiRefDisplayName } from '@/shared/lib';
 import { useEagerCursorDrain, type DrainedList } from '@/shared/hooks/useEagerCursorDrain';
 import { APIS_READ, useCanAccess, usePermissionsKnown } from '@/shared/auth/useCanAccess';
 import {
-	fetchPublicSpec,
+	fetchCatalogSchemeSpec,
 	getApi,
 	getApiSpec,
 	getImportedApiRefs,
@@ -61,7 +61,7 @@ export const apiPickerKeys = {
 	apiSpec: (vendor: string, name: string, version: string) =>
 		['credentials', 'apis', 'spec', vendor, name, version] as const,
 	catalog: (q: string) => [...apiPickerKeys.catalogList(), { q }] as const,
-	publicSpec: (url: string) => ['credentials', 'public-spec', url] as const,
+	catalogSchemes: (entryId: string) => ['credentials', 'catalog-schemes', entryId] as const,
 };
 
 /**
@@ -78,8 +78,8 @@ export interface SelectedApi {
 	 * credential's stored `catalog_api_id`). Set for catalog rows and for
 	 * workspace rows whose API recorded one at import. */
 	apiId?: string;
-	/** Catalog-only: public URL for the spec (raw GitHub). */
-	specUrl?: string;
+	/** Catalog-only: the entry's `entry_id`, the id `POST /catalog/{entry_id}:import` takes. */
+	entryId?: string;
 	/** Catalog-only: true when the entry has already been imported. */
 	registered?: boolean;
 	/** Cheap auth-type hint from the local `/apis` row (string[]). */
@@ -105,7 +105,7 @@ export function catalogToSelected(entry: CatalogEntryResponse): SelectedApi {
 	// The label reads from `api_id` through the shared helper the workspace rows
 	// use, so one API never titles two ways. Version isn't on the catalog entry;
 	// a credential leaves it unpinned anyway.
-	const slug = entry.api_id;
+	const slug = entry.catalog_api_id;
 	const vendor = entry.vendor ?? slug.split('/')[0] ?? slug;
 	return {
 		source: 'catalog',
@@ -113,7 +113,7 @@ export function catalogToSelected(entry: CatalogEntryResponse): SelectedApi {
 		name: slug,
 		version: '1.0.0',
 		apiId: slug,
-		specUrl: entry.spec_url ?? undefined,
+		entryId: entry.entry_id,
 		registered: entry.registered,
 		label: apiRefDisplayName({ catalogApiId: slug, vendor, name: slug }),
 	};
@@ -251,9 +251,10 @@ export interface ServerVarDef {
  *  - **local** — call `GET /apis/{vendor}/{name}/{version}/openapi`. The list
  *    row's `security_schemes` is a flat `string[]` (just type names) so it
  *    isn't enough for field-level shaping; the served spec is.
- *  - **catalog** — follow `selectedApi.specUrl` (raw GitHub) and parse
- *    `components.securitySchemes` and `servers[0].variables` off the YAML/JSON.
- *    Cached for 5 minutes so flipping between auth pills doesn't refetch.
+ *  - **catalog** — read the entry's security schemes (with OAuth2 flow URLs
+ *    and scopes) and `servers[0].variables` through the catalog operations
+ *    preview (`selectedApi.entryId`). Cached for 5 minutes so flipping between
+ *    auth pills doesn't refetch.
  *
  * Returns the parsed scheme options plus the raw scheme map (callers that need
  * `name`/`in` detail consume the raw map; the rest use `options`).
@@ -284,15 +285,15 @@ export function useApiSchemes(selectedApi: SelectedApi | null): {
 		staleTime: 5 * 60 * 1000,
 	});
 
-	const publicSpecQuery = useQuery({
-		queryKey: apiPickerKeys.publicSpec(selectedApi?.specUrl ?? ''),
-		queryFn: () => fetchPublicSpec(selectedApi!.specUrl as string),
-		enabled: !!selectedApi && isCatalog && !!selectedApi.specUrl,
+	const catalogSchemesQuery = useQuery({
+		queryKey: apiPickerKeys.catalogSchemes(selectedApi?.entryId ?? ''),
+		queryFn: () => fetchCatalogSchemeSpec(selectedApi!.entryId as string),
+		enabled: !!selectedApi && isCatalog && !!selectedApi.entryId,
 		staleTime: 5 * 60 * 1000,
 		retry: false,
 	});
 
-	const spec = isLocal ? localSpecQuery.data : isCatalog ? publicSpecQuery.data : null;
+	const spec = isLocal ? localSpecQuery.data : isCatalog ? catalogSchemesQuery.data : null;
 
 	const { schemes, options, serverVars } = useMemo(() => {
 		const components = (spec as { components?: { securitySchemes?: RawSchemes } } | null)
@@ -323,11 +324,15 @@ export function useApiSchemes(selectedApi: SelectedApi | null): {
 		options,
 		serverVars,
 		spec: (spec as Record<string, unknown> | undefined) ?? null,
-		loading: isLocal ? localSpecQuery.isLoading : isCatalog ? publicSpecQuery.isLoading : false,
+		loading: isLocal
+			? localSpecQuery.isLoading
+			: isCatalog
+				? catalogSchemesQuery.isLoading
+				: false,
 		error: (isLocal
 			? localSpecQuery.error
 			: isCatalog
-				? publicSpecQuery.error
+				? catalogSchemesQuery.error
 				: null) as Error | null,
 	};
 }
@@ -344,9 +349,9 @@ export function useNoAuthPicks(apis: SelectedApi[]): ReadonlySet<string> {
 		queries: apis.map((api) =>
 			api.source === 'catalog'
 				? {
-						queryKey: apiPickerKeys.publicSpec(api.specUrl ?? ''),
-						queryFn: () => fetchPublicSpec(api.specUrl as string),
-						enabled: !!api.specUrl,
+						queryKey: apiPickerKeys.catalogSchemes(api.entryId ?? ''),
+						queryFn: () => fetchCatalogSchemeSpec(api.entryId as string),
+						enabled: !!api.entryId,
 						staleTime: 5 * 60 * 1000,
 						retry: false,
 					}
@@ -383,7 +388,7 @@ export function useNoAuthPicks(apis: SelectedApi[]): ReadonlySet<string> {
 export function useImportCatalogEntry() {
 	const queryClient = useQueryClient();
 	return useMutation<ApiImportResponse, Error, string>({
-		mutationFn: (apiId) => importCatalogEntry(apiId),
+		mutationFn: (entryId) => importCatalogEntry(entryId),
 		onSuccess: () => {
 			invalidateApiLists(queryClient);
 			void queryClient.invalidateQueries({ queryKey: apiPickerKeys.catalogList() });

@@ -1042,7 +1042,11 @@ class ConnectSessionService:
         # rules-page operation-impact preview mounts, the ops list is
         # usually available. Idempotent + best-effort; ``:confirm`` still
         # calls this as a defensive re-trigger for edge cases.
-        await self._maybe_import_catalog(api_id=entry.vendor, initiator_actor_id=initiator_actor_id)
+        await self._maybe_import_catalog(
+            catalog_api_id=entry.vendor,
+            initiator_actor_id=initiator_actor_id,
+            initiator_permissions=frozenset(compute_effective(set(identity.permissions))),
+        )
         return CreatedSession(
             session_id=row.id,
             approval_url=approval_url,
@@ -1569,7 +1573,9 @@ class ConnectSessionService:
             api_name = credential.api_name if credential else None
             api_version = None
             if self._catalog_auto_importer is not None:
-                api_version = await self._catalog_auto_importer.current_version(api_id=entry.vendor)
+                api_version = await self._catalog_auto_importer.current_version(
+                    catalog_api_id=entry.vendor
+                )
 
         agent = await self._agent_view(row.agent_id)
         endpoints = catalog_oauth_endpoints(view) if row.scheme_type == SCHEME_OAUTH2 else None
@@ -3142,8 +3148,10 @@ class ConnectSessionService:
         )
 
         self._record_connected(row, connected_as=connected_as)
+        # The finishing poll runs without the initiator's identity, so the
+        # re-trigger resolves over public sources only.
         await self._maybe_import_catalog(
-            api_id=entry.vendor, initiator_actor_id=row.initiator_actor_id
+            catalog_api_id=entry.vendor, initiator_actor_id=row.initiator_actor_id
         )
         return StatusResult(
             status="connected",
@@ -3208,7 +3216,7 @@ class ConnectSessionService:
         )
         if credential.catalog_api_id:
             await self._maybe_import_catalog(
-                api_id=credential.catalog_api_id,
+                catalog_api_id=credential.catalog_api_id,
                 initiator_actor_id=credential.created_by,
             )
         return StatusResult(
@@ -3343,7 +3351,7 @@ class ConnectSessionService:
         registered = None
         if self._catalog_auto_importer is not None:
             registered = await self._catalog_auto_importer.registered_identity(
-                api_id=catalog_api_id
+                catalog_api_id=catalog_api_id
             )
         if registered is not None:
             return canonical_credential_scope(
@@ -3355,20 +3363,29 @@ class ConnectSessionService:
             version=None,
         )
 
-    async def _maybe_import_catalog(self, *, api_id: str, initiator_actor_id: str) -> None:
-        """Best-effort catalog auto-import — see the phase-1 rationale.
+    async def _maybe_import_catalog(
+        self,
+        *,
+        catalog_api_id: str,
+        initiator_actor_id: str,
+        initiator_permissions: frozenset[str] = frozenset(),
+    ) -> None:
+        """Best-effort catalog auto-import of the vendor's API.
 
         A connected credential is only useful to the broker once the
         vendor's OpenAPI is registered — the broker's URL→operation
         discovery is a registry-DB read and returns 404 for unregistered
         upstreams. Idempotent (skips when already registered), best-effort
         (never raises — the credential is still valid without the import).
+        ``initiator_permissions`` picks which catalog sources the API may be
+        imported from; without them only public sources are used.
         """
         if self._catalog_auto_importer is None:
             return
         await self._catalog_auto_importer.ensure_imported(
-            api_id=api_id,
+            catalog_api_id=catalog_api_id,
             initiator_actor_id=initiator_actor_id,
+            initiator_permissions=initiator_permissions,
         )
 
     async def _mark_terminal(

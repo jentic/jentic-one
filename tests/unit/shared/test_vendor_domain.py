@@ -88,6 +88,8 @@ def test_distinct_companies_under_shared_suffix_get_distinct_vendors() -> None:
         ("generativelanguage.googleapis.com/gemini-api", "googleapis.com"),
         ("finage.co.uk/main", "finage.co.uk"),
         ("stripe", "stripe"),
+        ("corp~api.stripe.com", "corp~api.stripe.com"),
+        ("corp~stripe.com/payments", "corp~stripe.com/payments"),
         ("", None),
         ("/orphan", None),
     ],

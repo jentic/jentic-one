@@ -91,31 +91,31 @@ def decode_search_cursor(cursor: str) -> tuple[float, str]:
         raise InvalidSearchCursorError("Invalid search cursor") from exc
 
 
-def encode_catalog_cursor(api_id: str, score: float | None = None) -> str:
+def encode_catalog_cursor(entry_id: str, score: float | None = None) -> str:
     """Encode an in-memory catalog cursor as an opaque keyset token.
 
     The catalog is an in-memory list paged purely by sort key, so the cursor
-    just carries the last item's position: its ``api_id`` for the browse order
-    (sorted by ``api_id``) and additionally its relevance ``score`` for the
-    search order (sorted by ``(-score, api_id)``).
+    just carries the last item's position: its ``entry_id`` for the browse
+    order (sorted by ``entry_id``) and additionally its relevance ``score`` for
+    the search order (sorted by ``(-score, entry_id)``).
     """
-    payload: dict[str, object] = {"id": api_id}
+    payload: dict[str, object] = {"id": entry_id}
     if score is not None:
         payload["s"] = score
     return b64encode(json.dumps(payload).encode()).decode()
 
 
 def decode_catalog_cursor(cursor: str) -> tuple[str, float | None]:
-    """Decode a catalog cursor into ``(api_id, score)`` (``score`` None for browse)."""
+    """Decode a catalog cursor into ``(entry_id, score)`` (``score`` None for browse)."""
     try:
         payload = json.loads(b64decode(cursor.encode()).decode())
-        api_id = payload["id"]
-        if not isinstance(api_id, str):
+        entry_id = payload["id"]
+        if not isinstance(entry_id, str):
             raise ValueError("id must be a string")
         raw_score = payload.get("s")
         score = None if raw_score is None else float(raw_score)
         if score is not None and not math.isfinite(score):
             raise ValueError("score must be finite")
-        return api_id, score
+        return entry_id, score
     except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
         raise InvalidCursorError("Invalid pagination cursor") from exc

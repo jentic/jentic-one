@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from jentic.problem_details import BadRequest, ProblemDetailException
 
 from jentic_one.registry.services.api_service import ApiService, ApiView
+from jentic_one.registry.services.catalog.snapshot import allowed_sources
 from jentic_one.registry.services.operation_service import OperationService, OperationSummaryPage
 from jentic_one.registry.services.revision_service import (
     RevisionPageItem,
@@ -39,6 +40,7 @@ from jentic_one.registry.web.schemas.apis import (
     SecuritySchemeListResponse,
 )
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import compute_effective
 from jentic_one.shared.context import Context
 from jentic_one.shared.jobs.enqueue import enqueue_job
 from jentic_one.shared.models import ApiRevisionSourceType, ApiRevisionState
@@ -57,6 +59,7 @@ async def list_apis(
     request: Request,
     identity: Identity = get_current_identity(required_permissions=["apis:read"]),
     api_svc: ApiService = Depends(get_api_service),
+    ctx: Context = Depends(get_ctx),
     vendor: str | None = Query(
         default=None,
         description="Only return APIs from this vendor.",
@@ -86,6 +89,7 @@ async def list_apis(
     except InvalidCursorError:
         raise BadRequest(detail="Invalid pagination cursor", instance="/apis") from None
 
+    entry_ref = _CatalogEntryRef(ctx, identity)
     data: list[ApiResponse] = []
     for item in page.data:
         self_link = build_link(request, f"/apis/{item.vendor}/{item.name}/{item.version}")
@@ -111,6 +115,7 @@ async def list_apis(
                     host=item.host,
                 ),
                 catalog_api_id=item.catalog_api_id,
+                catalog_entry_id=entry_ref(item.catalog_entry_id, item.catalog_api_id),
                 display_name=item.display_name,
                 description=item.description,
                 icon_url=item.icon_url,
@@ -152,7 +157,7 @@ async def get_api(
     svc = ApiService(ctx)
     view = await svc.get_by_identity(vendor, name, version)
 
-    resp = _build_api_response(view, request)
+    resp = _build_api_response(view, request, ctx, identity)
     return JSONResponse(
         status_code=200,
         content=resp.model_dump(mode="json", by_alias=True),
@@ -221,7 +226,37 @@ async def import_apis(
     )
 
 
-def _build_api_response(view: ApiView, request: Request) -> ApiResponse:
+class _CatalogEntryRef:
+    """The catalog ``entry_id`` a caller may act on for an API, or ``None``.
+
+    An API with a ``catalog_api_id`` but no recorded entry was imported from the
+    legacy source, so its entry is ``{legacy_source_slug}/{catalog_api_id}``. An
+    entry whose source the caller can't read is withheld, exactly as the catalog
+    routes answer 404 for it, so this field never names a hidden source. (An
+    API's own name can still carry a source slug when its import picked a
+    distinct name; that is the name, shown to every ``apis:read`` caller.)
+    """
+
+    def __init__(self, ctx: Context, identity: Identity) -> None:
+        catalog = ctx.config.catalog
+        self._legacy = catalog.legacy_source_slug
+        self._allowed = allowed_sources(
+            catalog.sources,
+            permissions=frozenset(compute_effective(set(identity.permissions))),
+            actor_id=identity.sub or None,
+        )
+
+    def __call__(self, entry_id: str | None, catalog_api_id: str | None) -> str | None:
+        if entry_id is None:
+            if catalog_api_id is None:
+                return None
+            entry_id = f"{self._legacy}/{catalog_api_id}"
+        return entry_id if entry_id.split("/", 1)[0] in self._allowed else None
+
+
+def _build_api_response(
+    view: ApiView, request: Request, ctx: Context, identity: Identity
+) -> ApiResponse:
     self_link = build_link(request, f"/apis/{view.vendor}/{view.name}/{view.version}")
     current_rev_link = (
         build_link(
@@ -239,6 +274,9 @@ def _build_api_response(view: ApiView, request: Request) -> ApiResponse:
             host=view.host,
         ),
         catalog_api_id=view.catalog_api_id,
+        catalog_entry_id=_CatalogEntryRef(ctx, identity)(
+            view.catalog_entry_id, view.catalog_api_id
+        ),
         display_name=view.display_name,
         description=view.description,
         icon_url=view.icon_url,
@@ -623,7 +661,7 @@ async def update_api(
     else:
         view = await svc.update(vendor, name, version, fields=fields, identity=identity)
 
-    resp = _build_api_response(view, request)
+    resp = _build_api_response(view, request, ctx, identity)
     return JSONResponse(status_code=200, content=resp.model_dump(mode="json", by_alias=True))
 
 
@@ -687,7 +725,7 @@ async def promote_revision(
     svc = RevisionService(ctx)
     view = await svc.promote(vendor, name, version, revision_id, identity=identity)
 
-    resp = _build_api_response(view, request)
+    resp = _build_api_response(view, request, ctx, identity)
     return JSONResponse(status_code=200, content=resp.model_dump(mode="json", by_alias=True))
 
 

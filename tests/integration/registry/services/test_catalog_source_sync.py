@@ -25,14 +25,13 @@ from jentic_one.registry.repos.catalog_entry_repo import (
     CatalogSyncRunRepository,
 )
 from jentic_one.registry.repos.catalog_source_repo import CatalogSourceRepository
-from jentic_one.registry.services.catalog import service as service_module
 from jentic_one.registry.services.catalog.entries import (
     CatalogApiIdMapping,
     build_catalog_entry,
     curated_vendors_of,
     exclude_unowned,
 )
-from jentic_one.registry.services.catalog.service import CatalogService
+from jentic_one.registry.services.catalog.sources import metrics
 from jentic_one.registry.services.catalog.sources import sync as sync_module
 from jentic_one.registry.services.catalog.sources.protocol import Removed, Upserted
 from jentic_one.registry.services.catalog.sources.scanner import CatalogSourceSyncScanner
@@ -139,6 +138,100 @@ async def test_listing_that_raises_midway_applies_nothing(catalog_ctx: CtxFactor
         async with ctx.registry_db.session() as session:
             run = await session.get(CatalogSyncRun, outcome.run_id)
         assert run is not None and run.status == "failed"
+
+
+async def test_listing_over_its_timeout_fails_and_releases_the_lease(
+    catalog_ctx: CtxFactory,
+) -> None:
+    async with catalog_ctx(sources=[git_source("public", trust="curated")]) as ctx:
+        sync = CatalogSourceSync(ctx)
+        await sync.register_sources()
+        stuck = ScriptedStream([Upserted(entry("a.io"))], gate=asyncio.Event())
+        outcome = await sync.sync_source("public", stream=stuck, listing_timeout_s=0.05)
+        assert (outcome.status, outcome.error_code) == ("failed", "listing_timeout")
+        source = await _source(ctx, "public")
+        assert (source.last_status, source.consecutive_failures) == ("failed", 1)
+        assert source.sync_lease_owner is None
+        assert await _staged_count(ctx) == 0
+
+
+async def test_listing_timeout_counts_only_time_spent_awaiting_the_listing(
+    catalog_ctx: CtxFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Slow staging writes do not eat the listing budget."""
+    async with catalog_ctx(sources=[git_source("public", trust="curated")]) as ctx:
+        sync = CatalogSourceSync(ctx)
+        await sync.register_sources()
+        real_stage = CatalogSyncRunRepository.stage
+
+        async def _slow_stage(session: Any, batch: Any) -> None:
+            await asyncio.sleep(0.2)
+            await real_stage(session, batch)
+
+        monkeypatch.setattr(sync_module, "STAGE_BATCH_SIZE", 1)
+        monkeypatch.setattr(CatalogSyncRunRepository, "stage", staticmethod(_slow_stage))
+        outcome = await sync.sync_source(
+            "public", stream=full("a.io", "b.io", "c.io"), listing_timeout_s=0.3
+        )
+        assert (outcome.status, outcome.upserted) == ("applied", 3)
+
+
+async def test_apply_outlives_a_cancelled_caller_and_logs_its_outcome(
+    catalog_ctx: CtxFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async with catalog_ctx(sources=[git_source("public", trust="curated")]) as ctx:
+        sync = CatalogSourceSync(ctx)
+        await sync.register_sources()
+        entered, release = asyncio.Event(), asyncio.Event()
+        real_apply = CatalogSourceSync._apply
+
+        async def _gated_apply(self: CatalogSourceSync, *args: Any, **kwargs: Any) -> Any:
+            entered.set()
+            await release.wait()
+            return await real_apply(self, *args, **kwargs)
+
+        monkeypatch.setattr(CatalogSourceSync, "_apply", _gated_apply)
+        recorded: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            metrics,
+            "record_sync",
+            lambda slug, status, _seconds: recorded.append((slug, status)),
+        )
+        task = asyncio.create_task(sync.sync_source("public", stream=full("a.io")))
+        await entered.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        with capture_logs() as logs:
+            release.set()
+            for _ in range(50):
+                if recorded:
+                    break
+                await asyncio.sleep(0.02)
+        assert recorded == [("public", "applied")]
+        assert any(e["event"] == "catalog_source_detached_apply_done" for e in logs)
+        source = await _source(ctx, "public")
+        assert (source.last_status, source.sync_lease_owner) == ("ok", None)
+
+
+async def test_run_cancelled_while_listing_fails_and_releases_the_lease(
+    catalog_ctx: CtxFactory,
+) -> None:
+    async with catalog_ctx(sources=[git_source("public", trust="curated")]) as ctx:
+        sync = CatalogSourceSync(ctx)
+        await sync.register_sources()
+        stuck = ScriptedStream([Upserted(entry("a.io"))], gate=asyncio.Event())
+        task = asyncio.create_task(sync.sync_source("public", stream=stuck))
+        await asyncio.sleep(0.1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        source = await _source(ctx, "public")
+        assert (source.last_status, source.consecutive_failures) == ("failed", 1)
+        assert source.sync_lease_owner is None
+        async with ctx.registry_db.session() as session:
+            runs = (await session.execute(select(CatalogSyncRun))).scalars().all()
+        assert [(r.status, r.error_code) for r in runs] == [("failed", "cancelled")]
 
 
 async def test_delta_listing_never_tombstones_unlisted_rows(catalog_ctx: CtxFactory) -> None:
@@ -317,8 +410,10 @@ async def test_build_error_counts_as_a_failure_and_backs_off(
         corp = await _source(ctx, "corp")
         assert (corp.consecutive_failures, corp.last_status) == (1, "failed")
         assert corp.sync_lease_owner is None
-        # Backing off: the scanner does not flag it again straight away.
-        assert await sync.mark_stale_wanted() == 0
+        # Backing off: the scanner does not flag it again straight away (the
+        # never-synced "public" is flagged; "corp" is not).
+        assert await sync.mark_stale_wanted() == 1
+        assert (await _source(ctx, "corp")).sync_wanted_at is None
 
 
 async def test_apply_that_raises_fails_the_run_in_a_fresh_transaction(
@@ -516,23 +611,27 @@ async def test_stale_source_is_flagged_and_the_scanner_drains_it(
     async with catalog_ctx(sources=sources) as ctx:
         sync = CatalogSourceSync(ctx)
         await sync.register_sources()
-        # Only "corp": the legacy source is synced by the snapshot refresh.
-        assert await sync.mark_stale_wanted() == 1
-        assert (await _source(ctx, "public")).sync_wanted_at is None
-        flagged = await _source(ctx, "corp")
-        assert flagged.sync_wanted_at is not None
-        assert flagged.sync_lease_owner is None  # flagging starts no sync
+        # The legacy source is flagged like any other.
+        assert await sync.mark_stale_wanted() == 2
+        for slug in ("public", "corp"):
+            flagged = await _source(ctx, slug)
+            assert flagged.sync_wanted_at is not None
+            assert flagged.sync_lease_owner is None  # flagging starts no sync
 
         monkeypatch.setattr(CatalogSourceSync, "build_source", _scripted_source(full("a.io")))
         outcomes = await CatalogSourceSyncScanner(ctx).tick()
-        assert [(o.slug, o.status) for o in outcomes] == [("corp", "applied")]
-        drained = await _source(ctx, "corp")
-        assert drained.sync_wanted_at is None
-        assert drained.last_sync_at is not None
+        assert sorted((o.slug, o.status) for o in outcomes) == [
+            ("corp", "applied"),
+            ("public", "applied"),
+        ]
+        for slug in ("public", "corp"):
+            drained = await _source(ctx, slug)
+            assert drained.sync_wanted_at is None
+            assert drained.last_sync_at is not None
         assert await sync.mark_stale_wanted() == 0
 
 
-async def test_scanner_never_flags_the_legacy_source_on_max_age(
+async def test_scanner_flags_the_legacy_source_on_max_age(
     catalog_ctx: CtxFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async with catalog_ctx(sources=[git_source("public", trust="curated")]) as ctx:
@@ -551,42 +650,131 @@ async def test_scanner_never_flags_the_legacy_source_on_max_age(
             return _scripted_source(full())(self, cfg)
 
         monkeypatch.setattr(CatalogSourceSync, "build_source", _build)
-        assert await sync.mark_stale_wanted() == 0
-        assert await CatalogSourceSyncScanner(ctx).tick() == []
-        assert built == []
+        assert await sync.mark_stale_wanted() == 1
+        assert [o.slug for o in await CatalogSourceSyncScanner(ctx).tick()] == ["public"]
+        assert built == ["public"]
         assert (await _source(ctx, "public")).sync_wanted_at is None
 
 
+async def test_sync_all_bounds_each_listing_so_a_stuck_source_never_stalls_the_rest(
+    catalog_ctx: CtxFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sources = [git_source("public", trust="curated"), git_source("corp")]
+    async with catalog_ctx(sources=sources) as ctx:
+        sync = CatalogSourceSync(ctx)
+        await sync.register_sources()
+        streams = {
+            "public": ScriptedStream([Upserted(entry("a.io"))], gate=asyncio.Event()),
+            "corp": full("b.io"),
+        }
+        monkeypatch.setattr(
+            CatalogSourceSync,
+            "build_source",
+            lambda self, cfg: _scripted_source(streams[cfg.slug])(self, cfg),
+        )
+        outcomes = await asyncio.wait_for(sync.sync_all(listing_timeout_s=0.05), timeout=5)
+        assert [(o.slug, o.status, o.error_code) for o in outcomes] == [
+            ("public", "failed", "listing_timeout"),
+            ("corp", "applied", None),
+        ]
+
+
+async def test_an_uncounted_listing_timeout_leaves_backoff_alone_and_flags_the_scanner(
+    catalog_ctx: CtxFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An operator refresh's listing timeout never delays the source's scheduled sync."""
+    async with catalog_ctx(sources=[git_source("public", trust="curated")]) as ctx:
+        sync = CatalogSourceSync(ctx)
+        await sync.register_sources()
+        stuck = ScriptedStream([Upserted(entry("a.io"))], gate=asyncio.Event())
+        monkeypatch.setattr(CatalogSourceSync, "build_source", _scripted_source(stuck))
+        [outcome] = await sync.sync_all(listing_timeout_s=0.05, count_timeouts=False)
+        assert (outcome.status, outcome.error_code) == ("failed", "listing_timeout")
+        row = await _source(ctx, "public")
+        assert row.consecutive_failures == 0
+        assert row.sync_wanted_at is not None
+        assert row.sync_lease_owner is None
+        # The default (scanner, first read) still counts it.
+        stuck = ScriptedStream([Upserted(entry("a.io"))], gate=asyncio.Event())
+        monkeypatch.setattr(CatalogSourceSync, "build_source", _scripted_source(stuck))
+        await sync.sync_source("public", listing_timeout_s=0.05)
+        assert (await _source(ctx, "public")).consecutive_failures == 1
+
+
+async def test_an_uncounted_timeout_never_flags_a_source_already_in_backoff(
+    catalog_ctx: CtxFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A refresh must not bypass the scanner's backoff for a failing source."""
+    sources = [git_source("public", trust="curated"), git_source("corp")]
+    async with catalog_ctx(sources=sources) as ctx:
+        sync = CatalogSourceSync(ctx)
+        await sync.register_sources()
+        streams = {
+            "public": ScriptedStream([Upserted(entry("a.io"))], gate=asyncio.Event()),
+            "corp": ScriptedStream([Upserted(entry("b.io"))], gate=asyncio.Event()),
+        }
+        monkeypatch.setattr(
+            CatalogSourceSync,
+            "build_source",
+            lambda self, cfg: _scripted_source(streams[cfg.slug])(self, cfg),
+        )
+        # Counted timeouts put both sources into backoff.
+        await sync.sync_all(listing_timeout_s=0.05)
+        for slug in ("public", "corp"):
+            assert (await _source(ctx, slug)).consecutive_failures == 1
+
+        # A refresh: one uncounted timeout, one deadline skip.
+        outcomes = await asyncio.wait_for(
+            sync.sync_all(listing_timeout_s=30, deadline_s=0.05, count_timeouts=False), timeout=5
+        )
+        assert [(o.slug, o.status, o.error_code) for o in outcomes] == [
+            ("public", "failed", "listing_timeout"),
+            ("corp", "skipped", "deadline"),
+        ]
+        for slug in ("public", "corp"):
+            row = await _source(ctx, slug)
+            assert row.consecutive_failures == 1
+            assert row.sync_wanted_at is None
+            assert row.sync_lease_owner is None
+
+
+async def test_sync_all_deadline_skips_the_sources_it_never_reached(
+    catalog_ctx: CtxFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sources = [git_source("public", trust="curated"), git_source("corp")]
+    async with catalog_ctx(sources=sources) as ctx:
+        sync = CatalogSourceSync(ctx)
+        await sync.register_sources()
+        streams = {
+            "public": ScriptedStream([Upserted(entry("a.io"))], gate=asyncio.Event()),
+            "corp": full("b.io"),
+        }
+        monkeypatch.setattr(
+            CatalogSourceSync,
+            "build_source",
+            lambda self, cfg: _scripted_source(streams[cfg.slug])(self, cfg),
+        )
+        outcomes = await asyncio.wait_for(
+            sync.sync_all(listing_timeout_s=30, deadline_s=0.05, count_timeouts=False), timeout=5
+        )
+        assert [(o.slug, o.status, o.error_code) for o in outcomes] == [
+            ("public", "failed", "listing_timeout"),
+            ("corp", "skipped", "deadline"),
+        ]
+        corp = await _source(ctx, "corp")
+        assert corp.sync_wanted_at is not None
+        assert corp.consecutive_failures == 0
+        assert await _rows(ctx, "corp") == {}
+
+
 async def test_max_age_zero_source_is_never_flagged(catalog_ctx: CtxFactory) -> None:
-    async with catalog_ctx(manifest_max_age_seconds=0) as ctx:
+    async with catalog_ctx(
+        sources=[git_source("public", trust="curated", max_age_seconds=0)]
+    ) as ctx:
         sync = CatalogSourceSync(ctx)
         await sync.register_sources()
         assert await sync.mark_stale_wanted() == 0
         assert await CatalogSourceSyncScanner(ctx).tick() == []
-
-
-async def test_refresh_without_a_legacy_source_fetches_no_manifest(
-    catalog_ctx: CtxFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Dropping the legacy source stops the snapshot's manifest egress; an
-    operator refresh still syncs the remaining sources."""
-
-    async def _no_egress(*args: Any, **kwargs: Any) -> Any:
-        raise AssertionError("the snapshot refresh fetched a manifest")
-
-    monkeypatch.setattr(service_module, "fetch_json", _no_egress)
-    monkeypatch.setattr(CatalogSourceSync, "build_source", _scripted_source(full("a.io")))
-    async with catalog_ctx(sources=[git_source("corp")]) as ctx:
-        svc = CatalogService(ctx)
-        assert not svc._is_stale(None)
-        with capture_logs() as logs:
-            assert (await svc.refresh(sync_sources=True)).count == 0
-        assert {
-            "event": "catalog_snapshot_refresh_skipped",
-            "reason": "no_legacy_source",
-            "log_level": "info",
-        } in logs
-        assert set(await _rows(ctx, "corp")) == {"a.io"}
 
 
 # ── abandoned runs and sync history ───────────────────────────────────────────

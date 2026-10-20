@@ -297,6 +297,7 @@
       "type": "object"
     },
     "CatalogConfig": {
+      "additionalProperties": false,
       "description": "Public API catalog settings (sources, staleness, update notify).",
       "properties": {
         "catalog_api_id_mappings": {
@@ -309,21 +310,17 @@
         },
         "legacy_source_slug": {
           "default": "public",
-          "description": "The git-manifest source the deprecated manifest_* keys map onto and that pre-existing catalog imports are reconciled against.",
+          "description": "The git-manifest source that pre-existing catalog imports are reconciled against.",
           "title": "Legacy Source Slug",
           "type": "string"
         },
-        "manifest_max_age_seconds": {
-          "default": 86400,
-          "description": "Deprecated alias for the legacy source's max_age_seconds.",
-          "title": "Manifest Max Age Seconds",
-          "type": "integer"
-        },
-        "manifest_url": {
-          "default": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json",
-          "description": "Deprecated alias for the legacy source's settings.url (catalog.sources[slug=legacy_source_slug]). Full default: https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json",
-          "title": "Manifest Url",
-          "type": "string"
+        "refresh_deadline_seconds": {
+          "default": 45.0,
+          "description": "Bound on the source listings of one POST /catalog:refresh, taken together (each one is also capped by ingest.fetch_timeout_s). A source reached after it is skipped (status partial) and left to the scanner.",
+          "exclusiveMinimum": 0,
+          "maximum": 600,
+          "title": "Refresh Deadline Seconds",
+          "type": "number"
         },
         "sources": {
           "description": "Catalog sources. The default is the curated public-apis manifest.",
@@ -437,7 +434,7 @@
         },
         "trust": {
           "default": "untrusted",
-          "description": "curated sources own the catalog_api_ids they list.",
+          "description": "curated sources own the catalog_api_ids they list. A curated source must be public (startup fails otherwise).",
           "enum": [
             "curated",
             "internal",

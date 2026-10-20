@@ -215,6 +215,180 @@ describe('OverviewStrip — update-available re-import', () => {
 		expect(await screen.findByText('Re-import complete')).toBeInTheDocument();
 	});
 
+	it('follows the catalog did_you_mean hint to the entry_id on re-import', async () => {
+		const user = userEvent.setup();
+		const imported: string[] = [];
+		worker.use(
+			http.post('/catalog/*', ({ request }) => {
+				const id = decodeURIComponent(
+					new URL(request.url).pathname.replace(/^\/catalog\//, ''),
+				).replace(/:import$/, '');
+				imported.push(id);
+				if (id === 'stripe.com') {
+					return HttpResponse.json(
+						{
+							type: 'urn:jentic:errors:catalog_entry_not_found',
+							title: 'Not Found',
+							status: 404,
+							did_you_mean: 'public/stripe.com',
+						},
+						{ status: 404 },
+					);
+				}
+				return HttpResponse.json(
+					{ job_id: 'job_reimport', status: 'queued' },
+					{ status: 202 },
+				);
+			}),
+		);
+
+		renderWithProviders(
+			<>
+				<OverviewStrip
+					api={makeApi({
+						updateAvailable: true,
+						origin: 'catalog',
+						catalogApiId: 'stripe.com',
+					})}
+				/>
+				<Toaster />
+			</>,
+		);
+
+		await user.click(screen.getByTestId('workspace-reimport'));
+
+		await waitFor(() => expect(imported).toEqual(['stripe.com', 'public/stripe.com']));
+		expect(await screen.findByText('Re-import complete')).toBeInTheDocument();
+	});
+
+	it("acts on the API's own catalog entry when two entries share its catalog_api_id", async () => {
+		const user = userEvent.setup();
+		const calls: string[] = [];
+		worker.use(
+			http.post('/catalog/*', ({ request }) => {
+				calls.push(
+					decodeURIComponent(new URL(request.url).pathname.replace(/^\/catalog\//, '')),
+				);
+				if (calls[calls.length - 1].endsWith(':snooze')) {
+					return HttpResponse.json({}, { status: 200 });
+				}
+				return HttpResponse.json(
+					{ job_id: 'job_reimport', status: 'queued' },
+					{ status: 202 },
+				);
+			}),
+		);
+
+		renderWithProviders(
+			<>
+				<OverviewStrip
+					api={makeApi({
+						updateAvailable: true,
+						origin: 'catalog',
+						catalogApiId: 'stripe.com',
+						catalogEntryId: 'public/stripe.com',
+					})}
+				/>
+				<Toaster />
+			</>,
+		);
+
+		await user.click(screen.getByTestId('workspace-snooze'));
+		await waitFor(() => expect(calls).toEqual(['public/stripe.com:snooze']));
+		await user.click(screen.getByTestId('workspace-reimport'));
+		await waitFor(() =>
+			expect(calls).toEqual(['public/stripe.com:snooze', 'public/stripe.com:import']),
+		);
+		expect(await screen.findByText('Re-import complete')).toBeInTheDocument();
+	});
+
+	it.each([
+		[
+			'a hidden or removed source',
+			'stripe.com',
+			"This API's catalog source isn't available to you, so it can't be updated or muted from here.",
+		],
+		[
+			'a manual import',
+			null,
+			"This API wasn't imported from the catalog, so it can't be updated or muted from here.",
+		],
+	])(
+		'disables Update and Mute with the reason when the entry is withheld (%s)',
+		async (_case, catalogApiId, reason) => {
+			const calls: string[] = [];
+			worker.use(
+				http.post('/catalog/*', ({ request }) => {
+					calls.push(new URL(request.url).pathname);
+					return HttpResponse.json(
+						{ job_id: 'job_x', status: 'queued' },
+						{ status: 202 },
+					);
+				}),
+			);
+
+			renderWithProviders(
+				<OverviewStrip
+					api={makeApi({
+						updateAvailable: true,
+						origin: 'catalog',
+						catalogApiId,
+						catalogEntryId: null,
+					})}
+				/>,
+			);
+
+			expect(screen.getByTestId('workspace-update-unavailable')).toHaveTextContent(reason);
+			for (const id of ['workspace-reimport', 'workspace-snooze']) {
+				const button = screen.getByTestId(id);
+				expect(button).toBeDisabled();
+				expect(button).toHaveAccessibleDescription(reason);
+			}
+			expect(calls).toEqual([]);
+		},
+	);
+
+	it("never follows did_you_mean away from the API's own catalog entry", async () => {
+		const user = userEvent.setup();
+		const imported: string[] = [];
+		worker.use(
+			http.post('/catalog/*', ({ request }) => {
+				imported.push(
+					decodeURIComponent(
+						new URL(request.url).pathname.replace(/^\/catalog\//, ''),
+					).replace(/:import$/, ''),
+				);
+				return HttpResponse.json(
+					{
+						type: 'urn:jentic:errors:catalog_entry_not_found',
+						title: 'Not Found',
+						status: 404,
+						did_you_mean: 'corp/stripe.com',
+					},
+					{ status: 404 },
+				);
+			}),
+		);
+
+		renderWithProviders(
+			<>
+				<OverviewStrip
+					api={makeApi({
+						updateAvailable: true,
+						origin: 'catalog',
+						catalogApiId: 'stripe.com',
+						catalogEntryId: 'public/stripe.com',
+					})}
+				/>
+				<Toaster />
+			</>,
+		);
+
+		await user.click(screen.getByTestId('workspace-reimport'));
+		expect(await screen.findByText('Re-import failed')).toBeInTheDocument();
+		expect(imported).toEqual(['public/stripe.com']);
+	});
+
 	it('polls the re-import job to completion before signalling done (badge clears only after the revision lands)', async () => {
 		const user = userEvent.setup();
 		let jobPolled = false;

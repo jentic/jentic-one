@@ -89,7 +89,9 @@ export function useGithubPick(): GithubPick {
 	}, [apis.items]);
 
 	const fromCatalog = useMemo(() => {
-		const entry = bestGithub(catalog.data?.data ?? [], (e) => githubRank(e.api_id, e.vendor));
+		const entry = bestGithub(catalog.data?.data ?? [], (e) =>
+			githubRank(e.catalog_api_id, e.vendor),
+		);
 		// Titled as the landing names it: the catalog title of the umbrella id is
 		// its sub-segment (`api.github.com`), which reads as a host, not GitHub.
 		return entry ? { ...catalogToSelected(entry), label: 'GitHub' } : null;

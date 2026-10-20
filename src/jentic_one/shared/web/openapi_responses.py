@@ -144,8 +144,12 @@ STATUS_EXAMPLES: dict[str, dict[str, Any]] = {
 }
 
 
-def _entry(description: str) -> dict[str, Any]:
-    return {"description": description, "model": ProblemDetail}
+def _entry(description: str, example: dict[str, Any] | None = None) -> dict[str, Any]:
+    entry: dict[str, Any] = {"description": description, "model": ProblemDetail}
+    if example is not None:
+        # Kept by the OpenAPI post-processor in place of the per-status example.
+        entry["content"] = {"application/json": {"example": example}}
+    return entry
 
 
 # Attached to every authenticated operation.
@@ -180,9 +184,15 @@ def not_found(description: str = "Not Found") -> dict[int | str, dict[str, Any]]
     return {404: _entry(description)}
 
 
-def conflict(description: str = "Conflict") -> dict[int | str, dict[str, Any]]:
-    """A 409 entry for routes with state conflicts."""
-    return {409: _entry(description)}
+def conflict(
+    description: str = "Conflict", *, example: dict[str, Any] | None = None
+) -> dict[int | str, dict[str, Any]]:
+    """A 409 entry for routes with state conflicts.
+
+    ``example`` documents the route's own Problem Details body (its specific
+    ``type``) instead of the generic per-status one.
+    """
+    return {409: _entry(description, example)}
 
 
 def gone(description: str = "Gone") -> dict[int | str, dict[str, Any]]:

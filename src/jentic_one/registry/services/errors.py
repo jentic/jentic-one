@@ -283,11 +283,53 @@ class InvalidNoteResourceError(RegistryServiceError):
 
 
 class CatalogEntryNotFoundError(RegistryServiceError):
-    """Raised when a catalog entry cannot be resolved by api_id."""
+    """Raised when a catalog entry is missing or hidden from the caller (one answer for both).
 
-    def __init__(self, api_id: str) -> None:
-        super().__init__(f"Catalog entry '{api_id}' not found")
-        self.api_id = api_id
+    ``did_you_mean`` names the caller's visible collapse winner for an id that
+    looks like a bare ``catalog_api_id`` (its first segment is no visible source
+    slug); it depends only on visible entries, so it reveals no hidden one.
+    """
+
+    def __init__(self, entry_id: str, *, did_you_mean: str | None = None) -> None:
+        super().__init__(f"Catalog entry '{entry_id}' not found")
+        self.entry_id = entry_id
+        self.did_you_mean = did_you_mean
+
+
+class ForcedSyncForbiddenError(RegistryServiceError):
+    """Raised when ``force=true`` is sent by a caller without ``org:admin``.
+
+    A forced sync skips the mass-removal guard, so it may delete every entry
+    of the source; it is an operator action. Maps to 403.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("A forced catalog source sync requires the 'org:admin' permission")
+
+
+class SourceSwitchForbiddenError(RegistryServiceError):
+    """Raised when ``switch_source=true`` is sent by a caller without ``credentials:write``.
+
+    Switching re-points an existing API, and the credentials bound to it, at a
+    different catalog entry's spec, so it is an operator action. Maps to 403.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Switching an API to another catalog source requires the 'credentials:write' permission"
+        )
+
+
+class CatalogEntryHasNoSpecError(RegistryServiceError):
+    """Raised when a listed catalog entry carries no spec (a card-only entry).
+
+    That is the entry's state, not an upstream outage, so retrying will not
+    help until its source lists a spec for it. Maps to 409.
+    """
+
+    def __init__(self, entry_id: str) -> None:
+        super().__init__(f"Catalog entry '{entry_id}' has no spec to preview or import")
+        self.entry_id = entry_id
 
 
 class CatalogUnavailableError(RegistryServiceError):

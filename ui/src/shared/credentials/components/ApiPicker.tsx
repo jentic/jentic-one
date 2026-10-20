@@ -289,7 +289,7 @@ export function ApiPicker({
 						animate="show"
 					>
 						{catalogRows.slice(0, 20).map((entry) => (
-							<motion.li key={entry.api_id} variants={ROW_VARIANTS}>
+							<motion.li key={entry.entry_id} variants={ROW_VARIANTS}>
 								<CatalogRow
 									entry={entry}
 									onSelect={onSelect}

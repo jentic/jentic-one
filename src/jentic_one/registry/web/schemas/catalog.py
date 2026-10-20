@@ -3,18 +3,22 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from jentic_one.shared.web import openapi_examples as ex
 
 # Example-only values shared by several fields below.
-_EX_ENTRY_URL = f"{ex.BASE_URL}/catalog/{ex.CATALOG_API_ID}"
-_EX_MANIFEST_PATH = f"apis/openapi/{ex.CATALOG_API_ID}"
+_EX_ENTRY_ID = ex.CATALOG_ENTRY_ID
+_EX_ENTRY_URL = f"{ex.BASE_URL}/catalog/{_EX_ENTRY_ID}"
+_EX_HUMAN_URL = (
+    f"https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/{ex.CATALOG_API_ID}"
+)
 
 
 class CatalogSnoozeRequest(BaseModel):
-    """Body for ``POST /catalog/{api_id}:snooze`` (C1, #925).
+    """Body for ``POST /catalog/{entry_id}:snooze``.
 
     ``snoozed_until`` is optional: omit or send ``null`` to mute-until-newer (the primary
     per-API affordance — the badge re-lights only when a *newer* upstream digest lands);
@@ -41,10 +45,11 @@ class CatalogEntryLinksResponse(BaseModel):
         json_schema_extra={
             "examples": [
                 {
-                    "self": "/catalog/stripe.com",
-                    "operations": "/catalog/stripe.com/operations",
-                    "import": "/catalog/stripe.com:import",
-                    "github": "https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/stripe.com",
+                    "self": "/catalog/public/stripe.com",
+                    "operations": "/catalog/public/stripe.com/operations",
+                    "import": "/catalog/public/stripe.com:import",
+                    "human": _EX_HUMAN_URL,
+                    "alternates": [],
                 }
             ]
         },
@@ -61,13 +66,21 @@ class CatalogEntryLinksResponse(BaseModel):
     )
     import_link: str = Field(
         serialization_alias="import",
-        description="URL of the catalog import action (`POST /catalog/{api_id}:import`).",
+        description="URL of the catalog import action (`POST /catalog/{entry_id}:import`).",
         examples=[f"{_EX_ENTRY_URL}:import"],
     )
-    github: str | None = Field(
+    human: str | None = Field(
         default=None,
-        description="Human-facing GitHub tree URL for the entry, when known.",
-        examples=[f"https://github.com/jentic/jentic-public-apis/tree/main/{_EX_MANIFEST_PATH}"],
+        description="Human-facing page for the entry at its source, when known.",
+        examples=[_EX_HUMAN_URL],
+    )
+    alternates: list[str] = Field(
+        default_factory=list,
+        description=(
+            "URLs of the visible entries with the same `catalog_api_id` collapsed into "
+            "this one (empty when nothing was collapsed)."
+        ),
+        examples=[[f"{ex.BASE_URL}/catalog/internal/stripe.com"]],
     )
 
 
@@ -79,47 +92,78 @@ class CatalogEntryResponse(BaseModel):
         json_schema_extra={
             "examples": [
                 {
-                    "api_id": "stripe.com",
+                    "entry_id": "public/stripe.com",
+                    "source_slug": "public",
+                    "catalog_api_id": "stripe.com",
                     "vendor": "stripe.com",
-                    "path": "apis/openapi/stripe.com",
-                    "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-01-01/openapi.json",
+                    "display_vendor": "stripe.com",
+                    "title": "Stripe API",
+                    "version": "2024-01-01",
+                    "tags": [],
+                    "human_url": _EX_HUMAN_URL,
+                    "has_spec": True,
                     "registered": False,
+                    "update_available": False,
+                    "alternates": 0,
                     "_links": {
-                        "self": "/catalog/stripe.com",
-                        "operations": "/catalog/stripe.com/operations",
-                        "import": "/catalog/stripe.com:import",
+                        "self": "/catalog/public/stripe.com",
+                        "operations": "/catalog/public/stripe.com/operations",
+                        "import": "/catalog/public/stripe.com:import",
+                        "human": _EX_HUMAN_URL,
+                        "alternates": [],
                     },
                 }
             ]
         },
     )
 
-    api_id: str = Field(
-        description="Catalog identity of the API (manifest domain, e.g. `stripe.com`).",
+    entry_id: str = Field(
+        description=(
+            "Catalog entry identity, `{source_slug}/{external_id}`; the key every "
+            "`/catalog/{entry_id}` route takes."
+        ),
+        examples=[_EX_ENTRY_ID],
+    )
+    source_slug: str = Field(
+        description="Slug of the catalog source the entry comes from.", examples=["public"]
+    )
+    catalog_api_id: str = Field(
+        description=(
+            "Canonical, cross-source API identity (`domain[/sub-api]`, or "
+            "`{source_slug}~{id}` when namespaced). Credentials match on it."
+        ),
         examples=[ex.CATALOG_API_ID],
     )
     vendor: str | None = Field(
-        description="Registrable-domain vendor derived from `api_id` (e.g. `stripe.com`).",
+        description="Identity vendor derived from `catalog_api_id` (credentials match on it).",
         examples=[ex.API_VENDOR],
     )
-    path: str | None = Field(
-        description="Manifest path of the entry within the public-APIs repo.",
-        examples=[_EX_MANIFEST_PATH],
+    display_vendor: str | None = Field(
+        default=None,
+        description="Vendor for grouping entries in a UI; never used for identity.",
+        examples=[ex.API_VENDOR],
     )
-    spec_url: str | None = Field(
-        description=(
-            "Fetchable OpenAPI spec URL the entry resolves to (used for import + coverage)."
-        ),
-        examples=[
-            "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/"
-            f"{_EX_MANIFEST_PATH}/main/{ex.API_VERSION}/openapi.json"
-        ],
+    title: str | None = Field(default=None, description="Entry title.", examples=["Stripe API"])
+    version: str | None = Field(
+        default=None,
+        description="Entry version, when the source lists one.",
+        examples=[ex.API_VERSION],
+    )
+    tags: list[str] = Field(
+        default_factory=list, description="Entry tags from the source.", examples=[["payments"]]
+    )
+    human_url: str | None = Field(
+        default=None,
+        description="Human-facing page for the entry at its source, when known.",
+        examples=[_EX_HUMAN_URL],
+    )
+    has_spec: bool = Field(
+        default=True,
+        description="Whether the entry has an importable spec (false for a listing-only card).",
+        examples=[True],
     )
     registered: bool = Field(
-        description=(
-            "Whether this entry is already imported locally — its `spec_url` backs a "
-            "non-archived revision in `GET /apis`."
-        ),
+        description="Whether this entry is already imported into the local registry.",
         examples=[True],
     )
     update_available: bool = Field(
@@ -129,6 +173,14 @@ class CatalogEntryResponse(BaseModel):
             "revision hasn't adopted yet. Always false for unregistered entries."
         ),
         examples=[False],
+    )
+    alternates: int = Field(
+        default=0,
+        description=(
+            "How many visible entries with the same `catalog_api_id` are collapsed into "
+            "this one (see `_links.alternates`)."
+        ),
+        examples=[0],
     )
     links: CatalogEntryLinksResponse = Field(serialization_alias="_links")
 
@@ -143,9 +195,13 @@ class CatalogListResponse(BaseModel):
                     "data": [],
                     "catalog_total": 5231,
                     "registered_count": 12,
-                    "manifest_age_seconds": 3600,
+                    "outdated_count": 1,
+                    "oldest_source_sync_age_seconds": 3600,
                     "has_more": True,
-                    "next_cursor": "eyJpZCI6ICJzdHJpcGUuY29tIn0=",
+                    # base64 of {"id": "public/stripe.com"}
+                    "next_cursor": (
+                        "eyJpZCI6ICJwdWJsaWMvc3RyaXBlLmNvbSJ9"  # pragma: allowlist secret
+                    ),
                 }
             ]
         }
@@ -153,47 +209,101 @@ class CatalogListResponse(BaseModel):
 
     data: list[CatalogEntryResponse] = Field(description="The page of catalog entries.")
     catalog_total: int = Field(
-        description="Total entries in the whole manifest (pre-filter, pre-page).",
+        description="Entries visible to the caller after collapsing (pre-filter, pre-page).",
         examples=[5231],
     )
     registered_count: int = Field(
-        description="Count of whole-manifest entries already imported locally.", examples=[12]
+        description="Count of visible entries already imported locally (pre-filter).",
+        examples=[12],
     )
     outdated_count: int = Field(
         default=0,
         description=(
-            "Count of whole-manifest registered entries with an upstream update available."
+            "Count of visible registered entries with an upstream update available (pre-filter)."
         ),
         examples=[1],
     )
-    manifest_age_seconds: int | None = Field(
+    oldest_source_sync_age_seconds: int | None = Field(
         default=None,
-        description="Age of the cached manifest in seconds, or null when the cache is empty.",
+        description=(
+            "Seconds since the least recently synced visible source last synced, or null "
+            "when none has synced."
+        ),
         examples=[3600],
     )
     has_more: bool = Field(
         default=False, description="Whether another page follows.", examples=[True]
     )
-    # Catalog keyset cursor: base64 ``{"id": <last api_id>}``, not the ``{t, id}`` form.
+    # Catalog keyset cursor: base64 ``{"id": <last entry_id>}``, not the ``{t, id}`` form.
     next_cursor: str | None = Field(
         default=None,
         description="Opaque keyset cursor for the next page (null when done).",
-        examples=["eyJpZCI6ICJzdHJpcGUuY29tIn0="],
+        examples=["eyJpZCI6ICJwdWJsaWMvc3RyaXBlLmNvbSJ9"],  # pragma: allowlist secret
+    )
+
+
+#: A refreshed source's run outcome (``SyncOutcome.status``).
+CatalogRefreshSourceStatus = Literal[
+    "applied", "suspect_empty", "superseded", "busy", "disabled", "failed", "skipped"
+]
+
+
+class CatalogRefreshSourceResponse(BaseModel):
+    """One refreshed source's run outcome."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [{"slug": "public", "status": "applied", "error_code": None}]
+        }
+    )
+
+    slug: str = Field(description="The source's slug.", examples=["public"])
+    status: CatalogRefreshSourceStatus = Field(
+        description=(
+            "Run outcome: applied, suspect_empty (held by the mass-removal guard), "
+            "superseded, busy (another run holds the source; this refresh applied "
+            "nothing for it), disabled, failed, or skipped (the refresh deadline "
+            "passed before it started; the scanner syncs it)."
+        ),
+        examples=["applied"],
+    )
+    error_code: str | None = Field(
+        default=None,
+        description="Why a failed or skipped run did not apply, e.g. listing_timeout.",
+        examples=["listing_timeout"],
     )
 
 
 class CatalogRefreshResponse(BaseModel):
-    """Acknowledgement of a manifest refresh."""
+    """Outcome of a catalog refresh, over the sources the caller may read."""
 
     model_config = ConfigDict(
-        json_schema_extra={"examples": [{"count": 5231, "status": "refreshed"}]}
+        json_schema_extra={
+            "examples": [
+                {
+                    "count": 5231,
+                    "status": "refreshed",
+                    "sources": [{"slug": "public", "status": "applied", "error_code": None}],
+                }
+            ]
+        }
     )
 
     count: int = Field(
-        description="Number of entries in the freshly fetched manifest.", examples=[5231]
+        description="Live entries of the refreshed sources after the sync.", examples=[5231]
     )
-    status: str = Field(
-        default="refreshed", description="Refresh outcome marker.", examples=["refreshed"]
+    status: Literal["refreshed", "partial"] = Field(
+        default="refreshed",
+        description=(
+            "refreshed when no refreshed source failed, was held by another run "
+            "(busy) or was skipped; partial otherwise (those keep serving their last "
+            "applied entries)."
+        ),
+        examples=["refreshed"],
+    )
+    sources: list[CatalogRefreshSourceResponse] = Field(
+        default_factory=list,
+        description="Each refreshed source's outcome, in sync order.",
     )
 
 
@@ -307,6 +417,8 @@ class OperationPreviewListResponse(BaseModel):
                         "description": "Payments.",
                     },
                     "security_schemes": {},
+                    "server_variables": {},
+                    "required_schemes": [],
                 }
             ]
         }
@@ -320,6 +432,26 @@ class OperationPreviewListResponse(BaseModel):
     )
     info: PreviewInfoResponse = Field(description="The spec's `info` block.")
     security_schemes: dict[str, dict[str, object]] = Field(
-        description="Slimmed `components.securitySchemes` projection.",
+        description=(
+            "Slimmed `components.securitySchemes` projection. An `oauth2` scheme lists "
+            "its flow names in `flows` and each flow's `authorizationUrl`, `tokenUrl`, "
+            "`refreshUrl` and `scopes` in `flow_details`."
+        ),
         examples=[{"BearerAuth": {"type": "http", "scheme": "bearer"}}],
+    )
+    server_variables: dict[str, dict[str, object]] = Field(
+        default_factory=dict,
+        description=(
+            "The first server's URL variables (`servers[0].variables`), each with its "
+            "`default`, `enum` and `description` when the spec sets them."
+        ),
+        examples=[{"tenant": {"default": "acme", "description": "Your tenant subdomain."}}],
+    )
+    required_schemes: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Every security scheme some operation in the spec requires, over the whole "
+            "spec (not just this window or filter)."
+        ),
+        examples=[["BearerAuth"]],
     )
