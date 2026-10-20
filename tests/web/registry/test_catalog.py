@@ -10,19 +10,18 @@ from __future__ import annotations
 
 import base64
 import json
-from collections.abc import AsyncGenerator, Iterator
+from collections.abc import Iterator
 from typing import Any
 from unittest.mock import patch
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import delete, text
+from sqlalchemy import text
 
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
-from jentic_one.registry.core.schema.catalog_snapshots import CatalogSnapshot
 from jentic_one.registry.services.catalog.service import CatalogEntryView, CatalogService
 from jentic_one.registry.web.app import create_app
 from jentic_one.shared.auth.identity import Identity
@@ -30,6 +29,7 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.pagination import encode_catalog_cursor
 from jentic_one.shared.web.deps import resolve_identity
 from tests.web.conftest import noop_lifespan
+from tests.web.registry.conftest import seed_catalog_snapshot
 
 pytestmark = pytest.mark.integration
 
@@ -89,17 +89,8 @@ def _mock_github() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
-async def _clean_catalog(web_context: Context) -> AsyncGenerator[None, None]:
-    """Empty the catalog cache around each test for deterministic counts."""
-
-    async def _truncate() -> None:
-        async with web_context.registry_db.session() as session:
-            await session.execute(delete(CatalogSnapshot))
-            await session.commit()
-
-    await _truncate()
-    yield
-    await _truncate()
+def _clean(clean_catalog: None) -> None:
+    """Every test in this module starts from an empty catalog cache."""
 
 
 # ── auth ─────────────────────────────────────────────────────────────────────
@@ -161,21 +152,7 @@ def test_list_search_filter(admin_client: TestClient) -> None:
 
 
 async def _seed_snapshot(web_context: Context, api_ids: list[str]) -> None:
-    entries = [
-        {
-            "api_id": a,
-            "vendor": a,
-            "path": f"apis/openapi/{a}",
-            "spec_url": f"{_MANIFEST_BASE}/openapi/{a}/openapi.json",
-            "github_url": f"https://github.com/jentic/jentic-public-apis/tree/main/{a}",
-        }
-        for a in api_ids
-    ]
-    async with web_context.registry_db.session() as session:
-        session.add(
-            CatalogSnapshot(source_url=_MANIFEST_URL, entry_count=len(entries), entries=entries)
-        )
-        await session.commit()
+    await seed_catalog_snapshot(web_context, api_ids)
 
 
 def _walk_catalog(client: TestClient, **params: str | int) -> list[str]:

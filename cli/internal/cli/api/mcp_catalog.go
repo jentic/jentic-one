@@ -105,6 +105,25 @@ func (s *mcpServer) handleSearchCatalog(ctx context.Context, req *mcp.CallToolRe
 					Code: ux.CodeInternalError,
 					Msg:  fmt.Sprintf("catalog not available on this server (HTTP %d)", he.StatusCode),
 				}), nil
+			case http.StatusBadRequest:
+				// GET /catalog answers 400 only for the cursor: malformed, or
+				// from a search ranking the server no longer uses. Either way the
+				// fix is a fresh walk — a correctable call, not a backend fault
+				// (Python /mcp twin: invalid params on InvalidCursorError).
+				return nil, invalidParams(errors.New(
+					"invalid pagination cursor: call search_catalog again without a cursor to restart the search"))
+			case http.StatusServiceUnavailable:
+				// 503 catalog_search_unavailable: the walk's ranking strategy
+				// failed on this page (error, timeout, no valid rows). Same
+				// retryable TRANSPORT_ERROR and wording as the Python /mcp handler
+				// (mcp/tools.py handle_search_catalog), without the get_started
+				// pointer — the identity and connection are fine.
+				return s.softErrorExtra(cctx, &ux.CodedError{
+					Code:       ux.CodeTransportError,
+					Msg:        "catalog search is temporarily unavailable for this page",
+					Actionable: "Retry search_catalog with the same cursor shortly, or call it again without a cursor to restart the search.",
+					Cause:      err,
+				}, "", map[string]any{"retryable": true}), nil
 			case http.StatusForbidden:
 				// A 403 on THIS route is the missing capabilities:read permission,
 				// not a revoked identity — the generic NOT_AUTHENTICATED +
@@ -377,7 +396,8 @@ func (s *mcpServer) catalogToolSpecs() []mcpToolSpec {
 					`Example: {"query": "spreadsheets", "limit": 10}. Returns one page as ` +
 					"{data, catalog_total, registered_count, has_more, next_cursor}; each entry carries " +
 					"the api_id to pass to import_api and `registered` (true = already imported — skip " +
-					"the import). When has_more is true, pass next_cursor back as cursor.",
+					"the import), and may carry `match` (why it matched the query). When has_more is " +
+					"true, pass next_cursor back as cursor.",
 				InputSchema: searchCatalogSchema,
 				Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 			},

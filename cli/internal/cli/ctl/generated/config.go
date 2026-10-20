@@ -7,6 +7,7 @@ import "errors"
 import "fmt"
 import "reflect"
 import "regexp"
+import "unicode/utf8"
 
 // Admin authentication settings.
 type AdminAuthConfig struct {
@@ -377,6 +378,19 @@ type CatalogConfig struct {
 	// https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json
 	ManifestUrl string `json:"manifest_url,omitempty,omitzero" yaml:"manifest_url,omitempty" mapstructure:"manifest_url,omitempty"`
 
+	// Time budget in milliseconds for one ranking call by a non-`token` search
+	// strategy. On the first page of a walk a timeout falls back to `token` for the
+	// whole walk; on a later page it answers 503. Every page re-ranks, so set it well
+	// above the strategy's tail latency.
+	SearchDeadlineMs int `json:"search_deadline_ms,omitempty,omitzero" yaml:"search_deadline_ms,omitempty" mapstructure:"search_deadline_ms,omitempty"`
+
+	// Ranking strategy for `GET /catalog?q=`, by registered name. `token` is the
+	// built-in token-overlap scorer; other names must be registered by an extension
+	// (provisional extension seam; see the extending guide), or app startup fails.
+	// Register a strategy on every replica before selecting it, and switch back to
+	// `token` before downgrading.
+	SearchStrategy string `json:"search_strategy,omitempty,omitzero" yaml:"search_strategy,omitempty" mapstructure:"search_strategy,omitempty"`
+
 	// UpdateCheckIntervalSeconds corresponds to the JSON schema field
 	// "update_check_interval_seconds".
 	UpdateCheckIntervalSeconds int `json:"update_check_interval_seconds,omitempty,omitzero" yaml:"update_check_interval_seconds,omitempty" mapstructure:"update_check_interval_seconds,omitempty"`
@@ -410,6 +424,21 @@ func (j *CatalogConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["manifest_url"]; !ok || v == nil {
 		plain.ManifestUrl = "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json"
+	}
+	if v, ok := raw["search_deadline_ms"]; !ok || v == nil {
+		plain.SearchDeadlineMs = 300
+	}
+	if 60000 < plain.SearchDeadlineMs {
+		return fmt.Errorf("field %s: must be <= %v", "search_deadline_ms", 60000)
+	}
+	if 1 > plain.SearchDeadlineMs {
+		return fmt.Errorf("field %s: must be >= %v", "search_deadline_ms", 1)
+	}
+	if v, ok := raw["search_strategy"]; !ok || v == nil {
+		plain.SearchStrategy = "token"
+	}
+	if utf8.RuneCountInString(string(plain.SearchStrategy)) < 1 {
+		return fmt.Errorf("field %s length: must be >= %d", "search_strategy", 1)
 	}
 	if v, ok := raw["update_check_interval_seconds"]; !ok || v == nil {
 		plain.UpdateCheckIntervalSeconds = 86400

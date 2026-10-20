@@ -487,3 +487,63 @@ func TestMCPSearchCatalog_TransportFailureIsRetryable(t *testing.T) {
 		t.Errorf("next_tool = %v, want get_started", payload["next_tool"])
 	}
 }
+
+// TestMCPSearchCatalog_503IsRetryableTransportError pins parity with the
+// Python /mcp handler: GET /catalog's 503 catalog_search_unavailable (the
+// walk's ranking can't serve this page right now) is a retryable
+// TRANSPORT_ERROR with the restart hint — never INTERNAL_ERROR.
+func TestMCPSearchCatalog_503IsRetryableTransportError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.Header().Set("Retry-After", "1")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"type":"catalog_search_unavailable","status":503,"detail":"Catalog search is temporarily unavailable; retry or restart the search without a cursor"}`))
+	}))
+	defer srv.Close()
+
+	s := fastAccessServer(t)
+	res, err := s.handleSearchCatalog(activeCtx(srv.URL), callToolRequest("search_catalog", `{"query":"x","cursor":"c1"}`))
+	if err != nil {
+		t.Fatalf("a 503 must be a soft error, not a protocol error: %v", err)
+	}
+	if !res.IsError {
+		t.Fatalf("want IsError result")
+	}
+	payload := decodeToolJSON(t, res)
+	if payload["error_code"] != ux.CodeTransportError {
+		t.Errorf("error_code = %v, want %q", payload["error_code"], ux.CodeTransportError)
+	}
+	if payload["retryable"] != true {
+		t.Errorf("retryable = %v, want true", payload["retryable"])
+	}
+	if msg, _ := payload["error"].(string); msg != "catalog search is temporarily unavailable for this page" {
+		t.Errorf("error = %q, want the Python /mcp wording", msg)
+	}
+	if step, _ := payload["actionable_step"].(string); !strings.Contains(step, "without a cursor") {
+		t.Errorf("actionable_step = %q, want the restart-without-cursor hint", step)
+	}
+	if _, has := payload["next_tool"]; has {
+		t.Errorf("next_tool = %v, want none (identity and connection are fine)", payload["next_tool"])
+	}
+}
+
+// TestMCPSearchCatalog_400IsInvalidParamsRestartHint: GET /catalog's only 400
+// is a bad or stale cursor, a correctable call — invalid params telling the
+// model to restart the walk, never INTERNAL_ERROR.
+func TestMCPSearchCatalog_400IsInvalidParamsRestartHint(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"status":400,"detail":"Pagination cursor belongs to a search ranking that is not in use; restart the search without a cursor"}`))
+	}))
+	defer srv.Close()
+
+	s := fastAccessServer(t)
+	res, err := s.handleSearchCatalog(activeCtx(srv.URL), callToolRequest("search_catalog", `{"query":"x","cursor":"stale"}`))
+	if res != nil {
+		t.Fatalf("want a protocol error, got a result: %v", res)
+	}
+	if err == nil || !strings.Contains(err.Error(), "without a cursor") {
+		t.Fatalf("err = %v, want an invalid-params error with the restart hint", err)
+	}
+}

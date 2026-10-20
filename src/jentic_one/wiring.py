@@ -39,6 +39,7 @@ from jentic_one.mcp.installer import (
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.registry.services.api_security_lookup_service import ApiSecurityLookupService
+from jentic_one.registry.services.catalog.search import validate_catalog_search_config
 from jentic_one.registry.services.catalog.service import CatalogService
 from jentic_one.registry.services.errors import CatalogEntryNotFoundError
 from jentic_one.registry.services.inspect.registry_service import RegistryService
@@ -248,12 +249,23 @@ def build_default_container(ctx: Context) -> AppContainer:
     discovery-chain 401 challenge (never a dangling 404) even though the real
     transport lives with control.
 
+    Any process that can read the registry DB may serve catalog searches (the
+    registry surface, or control's ``/mcp`` ``search_catalog`` tool), so this is
+    also where ``catalog.search_strategy`` is validated: an unregistered or
+    unbuildable strategy fails the boot with ``ConfigError``. The check keys
+    on registry DB access, not on the surface, so it also runs in processes
+    that hold that access without serving the catalog (the broker included);
+    failing fast there too is deliberate. Downstream containers that start
+    here inherit the check.
+
     Combined shapes that serve admin and can read the control DB carry the
     credential-creator lookup (:func:`install_credential_creator_lookup`), so
     the actor lookup can label the creator of a credential the caller can read.
     A standalone admin process builds no container and has no control DB, so
     it does not carry it (see that function for the effect).
     """
+    if ctx.is_db_allowed("registry"):
+        validate_catalog_search_config(ctx.config)
     container = AppContainer.default(ctx)
     if "control" in ctx.config.apps:
         container = replace(

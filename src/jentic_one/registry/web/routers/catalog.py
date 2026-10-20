@@ -26,12 +26,14 @@ from fastapi.responses import JSONResponse
 from jentic.problem_details import BadRequest, ProblemDetailException
 
 from jentic_one.registry.services.catalog.service import CatalogEntryView, CatalogService
+from jentic_one.registry.services.errors import StaleCatalogCursorError
 from jentic_one.registry.web.deps import get_catalog_service
 from jentic_one.registry.web.schemas.apis import ApiImportLinksResponse, ApiImportResponse
 from jentic_one.registry.web.schemas.catalog import (
     CatalogEntryLinksResponse,
     CatalogEntryResponse,
     CatalogListResponse,
+    CatalogMatchResponse,
     CatalogRefreshResponse,
     CatalogSnoozeRequest,
     OperationPreviewListResponse,
@@ -64,6 +66,11 @@ def _entry_response(request: Request, view: CatalogEntryView) -> CatalogEntryRes
             import_link=f"{self_link}:import",
             github=view.github_url,
         ),
+        match=(
+            CatalogMatchResponse(channels=list(view.match.channels))
+            if view.match is not None
+            else None
+        ),
     )
 
 
@@ -75,7 +82,10 @@ async def list_catalog(
     q: str | None = Query(
         default=None,
         max_length=500,
-        description="Search text matched against entry IDs; results are ranked by match quality.",
+        description=(
+            "Search text matched against entry IDs; results are ranked by the configured "
+            "catalog search strategy (by default, match quality)."
+        ),
         openapi_examples=ex.example("charges"),
     ),
     registered_only: bool = Query(
@@ -105,7 +115,8 @@ async def list_catalog(
         default=None,
         description=(
             "Opaque cursor from a previous page's `next_cursor`; keep the other filters "
-            "unchanged while paging."
+            "unchanged while paging. A cursor longer than 1 KB, or one this server didn't "
+            "issue, answers 400."
         ),
         openapi_examples=ex.example(ex.CURSOR),
     ),
@@ -123,6 +134,11 @@ async def list_catalog(
     ``GET /apis``: follow ``next_cursor`` until ``has_more`` is false.
     ``catalog_total``/``registered_count``/``outdated_count`` count the whole
     manifest, not the page, so the Discover status row stays stable while scrolling.
+
+    A search walk keeps the ranking that served its first page. A later page
+    whose cursor names a ranking that is not the configured one answers 400
+    (restart the search without a cursor); one whose ranking fails answers 503
+    ``catalog_search_unavailable`` (retry the page, or restart the search).
     """
     if registered_only and unregistered_only:
         raise ProblemDetailException(
@@ -151,6 +167,8 @@ async def list_catalog(
             limit=limit,
             include_snoozed=include_snoozed,
         )
+    except StaleCatalogCursorError as exc:
+        raise BadRequest(detail=str(exc), instance="/catalog") from None
     except InvalidCursorError:
         raise BadRequest(detail="Invalid pagination cursor", instance="/catalog") from None
 

@@ -13,7 +13,7 @@ scope (workflows stay deferred per D-001).
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -126,6 +126,15 @@ def _tokenise(text: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", (text or "").lower())
 
 
+def has_query_tokens(q: str | None) -> bool:
+    """Whether ``q`` is a search (has at least one token) rather than a browse.
+
+    Empty, blank and token-free queries (e.g. ``"---"``) are browses: they list
+    the catalog in ``api_id`` order and never reach a ranking strategy.
+    """
+    return bool(q and _tokenise(q))
+
+
 #: Encoding of the two ranking signals into one sortable integer (the cursor
 #: carries a single number). ``coverage`` — how many query tokens matched at
 #: all — is the dominant signal and preserves the pre-existing recall-fraction
@@ -220,14 +229,14 @@ class EntryPage:
     items: list[ManifestEntry]
     has_more: bool
     next_api_id: str | None
-    next_score: int | None
+    next_score: int | float | None
 
 
 def paginate_entries(
-    scored: list[tuple[ManifestEntry, int | None]],
+    scored: Sequence[tuple[ManifestEntry, int | float | None]],
     *,
     after_api_id: str | None,
-    after_score: float | None,
+    after_score: int | float | None,
     limit: int,
 ) -> EntryPage:
     """Slice an ordered ``(entry, score)`` list into a keyset page.
@@ -238,9 +247,10 @@ def paginate_entries(
     is an in-memory slice — the whole catalog is a ~1 MB cached blob — so there
     is no DB cost to paging.
 
-    ``after_score`` is decoded from a client cursor and typed ``float`` so any
-    historical/foreign cursor value round-trips; our own scores are integers, and
-    ``int``/``float`` compare exactly for these small values in ``_is_after_cursor``.
+    ``after_score`` is decoded from a client cursor: an integer score decodes as
+    ``int`` and anything else as a finite ``float`` (JSON round-trips Python
+    floats exactly), so ``_is_after_cursor`` compares it exactly against the
+    scores of the same ranking.
     """
     if after_api_id is not None:
         start = 0
@@ -264,7 +274,7 @@ def paginate_entries(
     if window and has_more:
         last_entry, last_score = window[-1]
         next_api_id: str | None = last_entry.api_id
-        next_score = last_score
+        next_score: int | float | None = last_score
     else:
         next_api_id = None
         next_score = None
@@ -277,7 +287,10 @@ def paginate_entries(
 
 
 def _is_after_cursor(
-    score: int | None, api_id: str, cursor_score: float | None, cursor_api_id: str
+    score: int | float | None,
+    api_id: str,
+    cursor_score: int | float | None,
+    cursor_api_id: str,
 ) -> bool:
     """Whether ``(score, api_id)`` sorts strictly after the cursor position.
 

@@ -3956,6 +3956,18 @@
             "title": "Api Id",
             "type": "string"
           },
+          "match": {
+            "$ref": "#/components/schemas/CatalogMatchResponse",
+            "description": "Why this entry matched the search `q`. Present only when the configured ranking strategy reports match evidence; omitted for browse and for the default ranking.",
+            "examples": [
+              {
+                "channels": [
+                  "alias"
+                ]
+              }
+            ],
+            "title": "Match"
+          },
           "path": {
             "anyOf": [
               {
@@ -4138,6 +4150,39 @@
           "registered_count"
         ],
         "title": "CatalogListResponse",
+        "type": "object"
+      },
+      "CatalogMatchResponse": {
+        "description": "Why a catalog entry matched a search, as reported by the ranking strategy.",
+        "examples": [
+          {
+            "channels": [
+              "alias"
+            ]
+          }
+        ],
+        "properties": {
+          "channels": {
+            "description": "Kinds of evidence behind the match, as short slugs (e.g. `alias`). An open set: new values may appear, so clients must accept values they don't recognise.",
+            "examples": [
+              [
+                "alias"
+              ]
+            ],
+            "items": {
+              "maxLength": 32,
+              "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+              "type": "string"
+            },
+            "maxItems": 8,
+            "title": "Channels",
+            "type": "array"
+          }
+        },
+        "required": [
+          "channels"
+        ],
+        "title": "CatalogMatchResponse",
         "type": "object"
       },
       "CatalogRefreshResponse": {
@@ -32493,11 +32538,11 @@
     "/catalog": {
       "description": "`GET`: List Catalog.",
       "get": {
-        "description": "List a keyset page of browsable catalog entries (search/filter aware).\n\nThe catalog holds thousands of entries, so this is cursor-paginated like\n``GET /apis``: follow ``next_cursor`` until ``has_more`` is false.\n``catalog_total``/``registered_count``/``outdated_count`` count the whole\nmanifest, not the page, so the Discover status row stays stable while scrolling.",
+        "description": "List a keyset page of browsable catalog entries (search/filter aware).\n\nThe catalog holds thousands of entries, so this is cursor-paginated like\n``GET /apis``: follow ``next_cursor`` until ``has_more`` is false.\n``catalog_total``/``registered_count``/``outdated_count`` count the whole\nmanifest, not the page, so the Discover status row stays stable while scrolling.\n\nA search walk keeps the ranking that served its first page. A later page\nwhose cursor names a ranking that is not the configured one answers 400\n(restart the search without a cursor); one whose ranking fails answers 503\n``catalog_search_unavailable`` (retry the page, or restart the search).",
         "operationId": "listCatalog",
         "parameters": [
           {
-            "description": "Search text matched against entry IDs; results are ranked by match quality.",
+            "description": "Search text matched against entry IDs; results are ranked by the configured catalog search strategy (by default, match quality).",
             "examples": {
               "example": {
                 "summary": "Example query value for `q`",
@@ -32520,7 +32565,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Search text matched against entry IDs; results are ranked by match quality.",
+              "description": "Search text matched against entry IDs; results are ranked by the configured catalog search strategy (by default, match quality).",
               "examples": [
                 "charges"
               ],
@@ -32612,7 +32657,7 @@
             }
           },
           {
-            "description": "Opaque cursor from a previous page's `next_cursor`; keep the other filters unchanged while paging.",
+            "description": "Opaque cursor from a previous page's `next_cursor`; keep the other filters unchanged while paging. A cursor longer than 1 KB, or one this server didn't issue, answers 400.",
             "examples": {
               "example": {
                 "summary": "Opaque cursor from a previous page",
@@ -32634,7 +32679,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Opaque cursor from a previous page's `next_cursor`; keep the other filters unchanged while paging.",
+              "description": "Opaque cursor from a previous page's `next_cursor`; keep the other filters unchanged while paging. A cursor longer than 1 KB, or one this server didn't issue, answers 400.",
               "examples": [
                 "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
               ],

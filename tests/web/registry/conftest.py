@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncGenerator, Iterator
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import delete, text
 
 from jentic_one.admin.services._support.tokens import issue_jwt
+from jentic_one.registry.core.schema.api_revisions import ApiRevision
+from jentic_one.registry.core.schema.apis import Api
+from jentic_one.registry.core.schema.catalog_snapshots import CatalogSnapshot
 from jentic_one.registry.web.app import create_app
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
@@ -16,6 +20,77 @@ from jentic_one.shared.web.deps import resolve_identity
 from tests.web.conftest import noop_lifespan
 
 pytestmark = pytest.mark.integration
+
+CATALOG_MANIFEST_BASE = "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis"
+CATALOG_MANIFEST_URL = f"{CATALOG_MANIFEST_BASE}/openapi/apis.json"
+
+
+def catalog_spec_url(api_id: str) -> str:
+    """The spec URL ``seed_catalog_snapshot`` records for ``api_id``."""
+    return f"{CATALOG_MANIFEST_BASE}/openapi/{api_id}/openapi.json"
+
+
+async def seed_catalog_snapshot(ctx: Context, api_ids: list[str]) -> None:
+    """Persist a fresh catalog snapshot holding exactly ``api_ids`` (in that order)."""
+    entries = [
+        {
+            "api_id": a,
+            "vendor": a,
+            "path": f"apis/openapi/{a}",
+            "spec_url": catalog_spec_url(a),
+            "github_url": f"https://github.com/jentic/jentic-public-apis/tree/main/{a}",
+        }
+        for a in api_ids
+    ]
+    async with ctx.registry_db.session() as session:
+        session.add(
+            CatalogSnapshot(
+                source_url=CATALOG_MANIFEST_URL, entry_count=len(entries), entries=entries
+            )
+        )
+        await session.commit()
+
+
+async def register_catalog_entries(ctx: Context, api_ids: list[str]) -> None:
+    """Mark ``api_ids`` locally registered (a draft revision sourced from their spec URL)."""
+    async with ctx.registry_db.session() as session:
+        for i, a in enumerate(sorted(api_ids)):
+            api = Api(vendor=a, name=f"n{i}", version="v1", revision_count=1)
+            session.add(api)
+            await session.flush()
+            session.add(
+                ApiRevision(
+                    api_id=api.id,
+                    state="draft",
+                    spec_digest=f"sha256:{i}",
+                    source_type="url",
+                    source_url=catalog_spec_url(a),
+                )
+            )
+        await session.commit()
+
+
+async def delete_registered_apis(ctx: Context) -> None:
+    """Remove every local API + revision (cleanup for ``register_catalog_entries``)."""
+    async with ctx.registry_db.session() as session:
+        await session.execute(text("UPDATE registry.apis SET current_revision_id = NULL"))
+        await session.execute(text("DELETE FROM registry.api_revisions"))
+        await session.execute(text("DELETE FROM registry.apis"))
+        await session.commit()
+
+
+@pytest.fixture()
+async def clean_catalog(web_context: Context) -> AsyncGenerator[None, None]:
+    """Empty the catalog cache around a test for deterministic counts."""
+
+    async def _truncate() -> None:
+        async with web_context.registry_db.session() as session:
+            await session.execute(delete(CatalogSnapshot))
+            await session.commit()
+
+    await _truncate()
+    yield
+    await _truncate()
 
 
 def _build_app(ctx: Context) -> FastAPI:

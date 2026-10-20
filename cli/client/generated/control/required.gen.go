@@ -84,6 +84,7 @@ func (CatalogEntryResponse) RequiredFields() []string {
 func (CatalogListResponse) RequiredFields() []string {
 	return []string{"catalog_total", "data", "registered_count"}
 }
+func (CatalogMatchResponse) RequiredFields() []string   { return []string{"channels"} }
 func (CatalogRefreshResponse) RequiredFields() []string { return []string{"count"} }
 func (ChangePasswordRequest) RequiredFields() []string {
 	return []string{"current_password", "new_password"}
