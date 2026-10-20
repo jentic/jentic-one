@@ -176,7 +176,8 @@ async def _actor_is_active(session: AsyncSession, actor_id: str, actor_type: str
         return may_act
     if actor_type == ActorType.USER:
         user = await UserRepository.get_by_id(session, actor_id)
-        return user is not None and user.active
+        # Delete is terminal: a deleted row is refused even if it reads active.
+        return user is not None and user.active and user.deleted_at is None
     return False
 
 

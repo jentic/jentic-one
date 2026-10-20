@@ -19023,8 +19023,9 @@ paths:
         ``must_change_password`` gate are re-read from the database at re-mint.
         Refusal modes: 401 ``session_expired`` once the original authentication is
         older than the absolute window (``admin.auth.session_ttl_seconds``), 401
-        ``invalid_credentials`` for deactivated users, non-user tokens, or opaque
-        (non-JWT) credentials. Clients should then send the user back to login.
+        ``unauthorized`` from the auth gate for a disabled, deleted or unknown user,
+        and 401 ``invalid_credentials`` for non-user tokens or opaque (non-JWT)
+        credentials. Clients should then send the user back to login.
       operationId: refreshSession
       responses:
         '200':
@@ -22397,7 +22398,11 @@ paths:
   /events/stream:
     description: '`GET`: Stream Events.'
     get:
-      description: Stream events as Server-Sent Events.
+      description: |-
+        Stream events as Server-Sent Events.
+
+        The stream ends once the caller's credential stops verifying (expired,
+        revoked, or its user disabled or deleted); reconnecting then returns 401.
       operationId: streamEvents
       parameters:
       - description: Stream events created after this time (RFC 3339); defaults to now, and a future time is treated as now.
@@ -28493,7 +28498,11 @@ paths:
         The row is retained — the account is anonymized (tombstone email) and
         deactivated so history and audit references stay resolvable — but the
         action is terminal: there is no re-enable arm. For the reversible kill
-        switch use ``:disable`` / ``:enable`` instead.
+        switch use ``:disable`` / ``:enable`` instead. Deleting a user also cancels
+        their outstanding invites: redeeming one answers 409
+        ``invite_already_redeemed``, the same as an invite replaced by a reissue.
+        Idempotent: deleting an already-deleted user answers 204 and changes
+        nothing.
       operationId: deleteUser
       parameters:
       - description: ID of the user.
@@ -28680,7 +28689,8 @@ paths:
         Update a user's profile fields.
 
         Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
-        else only themselves. Any other user answers 404.
+        else only themselves. Any other user answers 404. A deleted user cannot be
+        edited (409).
       operationId: updateUser
       parameters:
       - description: ID of the user.
@@ -28747,7 +28757,7 @@ paths:
               example: *id222
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
-          description: The email is already in use
+          description: The email is already in use, or the user has been deleted
         '422':
           content:
             application/problem+json:
@@ -28786,7 +28796,10 @@ paths:
   /users/{user_id}/permissions:
     description: '`PUT`: Set User Permissions.'
     put:
-      description: Set the assigned permissions for a user.
+      description: |-
+        Set the assigned permissions for a user.
+
+        A deleted user's permissions cannot be changed (409).
       operationId: setUserPermissions
       parameters:
       - description: ID of the user.
@@ -28853,7 +28866,7 @@ paths:
               example: *id222
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
-          description: Would remove org:admin from the last active org:admin
+          description: Would remove org:admin from the last active org:admin, or the user has been deleted
         '422':
           content:
             application/problem+json:
@@ -28892,7 +28905,10 @@ paths:
   /users/{user_id}:disable:
     description: '`POST`: Disable User.'
     post:
-      description: Disable a user account.
+      description: |-
+        Disable a user account.
+
+        A deleted user is already permanently inactive and cannot be disabled (409).
       operationId: disableUser
       parameters:
       - description: ID of the user.
@@ -28946,7 +28962,7 @@ paths:
               example: *id222
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
-          description: The user is the last active org:admin
+          description: The user is the last active org:admin, or the user has been deleted
         '422':
           content:
             application/problem+json:
@@ -28985,7 +29001,11 @@ paths:
   /users/{user_id}:enable:
     description: '`POST`: Enable User.'
     post:
-      description: Enable a user account.
+      description: |-
+        Enable a disabled user account.
+
+        A deleted user cannot be re-enabled (409). Login sessions issued before the
+        account was disabled stay revoked; the user signs in again.
       operationId: enableUser
       parameters:
       - description: ID of the user.
@@ -29026,6 +29046,20 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id184
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '409':
+          content:
+            application/problem+json:
+              example: *id222
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: The user has been deleted
         '422':
           content:
             application/problem+json:
@@ -29110,6 +29144,20 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id184
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '409':
+          content:
+            application/problem+json:
+              example: *id222
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: The user has already redeemed an invite, or has been deleted
         '422':
           content:
             application/problem+json:

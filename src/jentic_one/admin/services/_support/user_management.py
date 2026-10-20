@@ -1,8 +1,8 @@
 """Guards shared by the services that manage *other* users.
 
 Used by ``UserService`` (email change, disable/enable/delete, re-invite) and
-``PermissionService.set_assigned`` so both apply one ceiling and one
-last-``org:admin`` rule.
+``PermissionService.set_assigned`` so both apply one ceiling, one
+last-``org:admin`` rule and one deleted-user refusal.
 """
 
 from __future__ import annotations
@@ -10,10 +10,25 @@ from __future__ import annotations
 from typing import Any
 
 from jentic_one.admin.core.permissions import ORG_ADMIN, compute_effective
+from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import UserRepository
-from jentic_one.admin.services.errors import LastActiveAdminError, UserManagementForbiddenError
+from jentic_one.admin.services.errors import (
+    LastActiveAdminError,
+    UserDeletedError,
+    UserManagementForbiddenError,
+)
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import RETIRED_PERMISSIONS
+
+
+def ensure_not_deleted(user: User, action: str) -> None:
+    """Refuse ``action`` on a deleted user: delete is terminal (``deleted_at`` is set).
+
+    Call after the caller's scope and ``ensure_can_manage`` checks, so the
+    409 only reaches a caller who may already read the row.
+    """
+    if user.deleted_at is not None:
+        raise UserDeletedError(action)
 
 
 def ensure_can_manage(

@@ -59,8 +59,9 @@ async def refresh_session(
     ``must_change_password`` gate are re-read from the database at re-mint.
     Refusal modes: 401 ``session_expired`` once the original authentication is
     older than the absolute window (``admin.auth.session_ttl_seconds``), 401
-    ``invalid_credentials`` for deactivated users, non-user tokens, or opaque
-    (non-JWT) credentials. Clients should then send the user back to login.
+    ``unauthorized`` from the auth gate for a disabled, deleted or unknown user,
+    and 401 ``invalid_credentials`` for non-user tokens or opaque (non-JWT)
+    credentials. Clients should then send the user back to login.
     """
     _ = identity  # Auth gate only; the service re-derives everything it needs.
     bundle = await auth_svc.refresh(extract_credential(request))
