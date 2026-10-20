@@ -214,7 +214,8 @@ Executions land as append-only `ExecutionRecord` rows in the admin DB
 ([`shared/executions/ingest.py`](../../src/jentic_one/shared/executions/ingest.py)): status, duration, operation and API
 identity, HTTP status, actor, origin, and the credential used (by id and
 name, never the secret). On the buffered and async paths the write happens
-before the response. On the streaming fast path every outcome — completed,
+before the response, except for a buffered call's unmapped failure (below).
+On the streaming fast path every outcome — completed,
 failed partway through the body, or cut off by a client disconnect — writes
 exactly one record, and the write is **best-effort** and never holds the
 response: it is handed to the app's background-task registry
@@ -229,8 +230,36 @@ fails partway through a streamed body, the status line has already been sent:
 the broker logs one `upstream_network_failure` (or `streaming_response_aborted`
 for a size-cap or transfer-deadline cut-off) and closes the connection without
 the final chunk, so an HTTP/1.1 chunked or HTTP/2 client sees a truncated body
-(an HTTP/1.0 client reads a close-delimited body and cannot tell). Lifecycle events (`EXECUTION_COMPLETED` /
-`EXECUTION_FAILED`), permission denials (`PBAC_DENIED`), and credential
+(an HTTP/1.0 client reads a close-delimited body and cannot tell). A streaming
+call that ends before the response headers — its upstream fails (connection
+refused, a TLS failure, a timeout), the circuit breaker fast-fails it, or the
+request is cancelled — records one `FAILED` row with no HTTP status, handed
+to the same registry alongside the error response (best-effort; the error
+response never waits on it). A circuit fast-fail also raises the
+rate-limited `UPSTREAM_CIRCUIT_OPEN` event, as on the buffered path. A
+buffered call that ends in an exception that is not a broker error and that
+the caller receives as a 500 (no dedicated handler, or one carrying status
+500) also records one `FAILED` row with no HTTP status, handed to the same
+registry and bounded by the same timeout, so the 500 never waits on it. An
+exception a dedicated handler answers with another status (a 4xx, or a 503)
+writes no record and, on the sync path, is not counted on
+`broker.executions.total`; the async worker counts every exception that is
+not a broker error as `FAILED`. Every failure with no upstream response
+stores the elapsed time as its `duration_ms`, on both paths.
+
+The record's `error` uses one vocabulary on every path: the problem `type` the
+caller received for a broker error (`upstream_connect_failed`,
+`upstream_timeout`, `upstream_transport_error` for the upstream;
+`circuit_open`, `deadline_exceeded`, `upstream_response_too_large` for a
+broker decision), `server_error: <ExceptionClass>` for an unmapped failure,
+`Upstream returned <status>` for an upstream 4xx/5xx, and, on the streaming
+path only, `client_disconnect`, `transfer_deadline_exceeded` and `cancelled`.
+On the async path the job result carries the failure, and an unmapped
+exception writes no execution record there. A failure with no upstream
+response counts on `broker.executions.total` but adds no
+`broker.execution.duration_ms` sample. Lifecycle events
+(`EXECUTION_COMPLETED` / `EXECUTION_FAILED`), permission denials
+(`PBAC_DENIED`), and credential
 incidents each emit typed events into the monitor.
 
 ## Related

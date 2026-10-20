@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlencode, urlparse, urlunparse
@@ -23,6 +24,7 @@ from urllib.parse import urlencode, urlparse, urlunparse
 import structlog
 from fastapi import APIRouter, Depends, Request, Response
 from jentic.problem_details import ProblemDetailException
+from starlette.applications import Starlette
 from starlette.datastructures import Headers
 
 from jentic_one.broker.adapters.runners.base import (
@@ -78,8 +80,12 @@ from jentic_one.broker.services.execution.authorization import (
 )
 from jentic_one.broker.services.execution.pipeline import ExecutionOutcome
 from jentic_one.broker.services.execution.service import (
+    ServerErrorClassifier,
+    UnmappedFailure,
+    UnmappedFailureRecorder,
     default_broker,
     persist_streaming_execution,
+    persist_unmapped_failure,
     run_execution,
 )
 from jentic_one.broker.services.idempotency import (
@@ -158,6 +164,37 @@ router = APIRouter()
 _BODY_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 
+def _off_request_admin_transaction(ctx: Context) -> AbstractAsyncContextManager[Any]:
+    """Open the admin transaction for both off-request record writes.
+
+    Used by a streaming execution's record and a buffered call's
+    unmapped-failure record, both written after the response.
+    """
+    return ctx.admin_db.transaction()
+
+
+def _server_error_classifier(app: Starlette) -> ServerErrorClassifier:
+    """Whether ``app`` answers an exception with a 500.
+
+    Looks the exception up in ``app``'s handlers the way Starlette does (most
+    specific class in its MRO first). No handler, or the catch-all
+    ``Exception`` handler, is a 500; a dedicated handler (problem details, a
+    Starlette ``HTTPException``, a 503 for an unavailable database) maps it to
+    its own status, so it is a 500 only when it carries ``status_code`` 500.
+    A dedicated handler for an exception without ``status_code`` is assumed
+    not to answer 500.
+    """
+    handlers = app.exception_handlers
+
+    def _is_server_error(exc: Exception) -> bool:
+        for cls in type(exc).__mro__:
+            if cls in handlers:
+                return cls is Exception or getattr(exc, "status_code", None) == 500
+        return True
+
+    return _is_server_error
+
+
 async def _persist_streaming_outcome(
     outcome: StreamingOutcome,
     ctx: Context,
@@ -174,18 +211,20 @@ async def _persist_streaming_outcome(
     ``broker.streaming_persist_timeout_s``. A DB failure, or the write being
     abandoned (its timeout or the shutdown drain cancels it), is logged and
     counted on ``broker.streaming_execution.persist_failures``; the
-    cancellation itself propagates.
+    cancellation itself propagates. An outcome with no ``http_status`` (the
+    stream never opened, or was cancelled first) always carries an ``error``
+    and records as FAILED.
     """
     status = (
         ExecutionStatus.FAILED
-        if outcome.error or outcome.http_status >= 400
+        if outcome.error or (outcome.http_status is not None and outcome.http_status >= 400)
         else ExecutionStatus.COMPLETED
     )
     error_msg = outcome.error or (
         f"Upstream returned {outcome.http_status}" if status is ExecutionStatus.FAILED else None
     )
     try:
-        async with ctx.admin_db.transaction() as session:
+        async with _off_request_admin_transaction(ctx) as session:
             await persist_streaming_execution(
                 session,
                 execution_id=outcome.execution_id,
@@ -199,6 +238,7 @@ async def _persist_streaming_outcome(
                 actor_type=actor_type,
                 origin=origin,
                 security_config=ctx.config.security,
+                circuit_open=outcome.circuit_open,
             )
     except asyncio.CancelledError:
         _streaming_persist_failures.add(1)
@@ -218,6 +258,76 @@ async def _persist_streaming_outcome(
             execution_id=outcome.execution_id,
             exc_info=True,
         )
+
+
+async def _persist_unmapped_failure(
+    failure: UnmappedFailure,
+    ctx: Context,
+    ctx_req: ExecuteRequestContext,
+    actor_id: str,
+    actor_type: str,
+    origin: str | None = None,
+) -> None:
+    """Write the FAILED record of a buffered call that ended in an unmapped error.
+
+    Runs off the request on the app's background-task registry, under
+    ``broker.streaming_persist_timeout_s``, so the 500 never waits on the admin
+    DB. A DB failure, timeout or shutdown cancellation propagates to the
+    registry, which logs it and counts it on ``app.background_tasks``
+    (``kind=unmapped_failure_persist``). It never returns without writing, so
+    a lost record is counted as ``failed``, ``timed_out`` or ``cancelled``,
+    never as ``completed``.
+    """
+    async with _off_request_admin_transaction(ctx) as session:
+        await persist_unmapped_failure(
+            session,
+            failure,
+            ctx_req=ctx_req,
+            actor_id=actor_id,
+            actor_type=actor_type,
+            origin=origin,
+            security_config=ctx.config.security,
+        )
+
+
+def _unmapped_failure_recorder(
+    request: Request, ctx: Context, ctx_req: ExecuteRequestContext, identity: Identity
+) -> UnmappedFailureRecorder:
+    """The buffered path's recorder: schedule the record write and return.
+
+    Without a background-task registry (a bare test app; every app from
+    ``create_surface_app`` has one) the record is skipped with a warning, never
+    written inline, so the 500 never waits on the admin database (on SQLite an
+    inline write can wait out ``busy_timeout`` behind another writer).
+    """
+    background_tasks = get_background_tasks(request.app)
+    timeout_s = ctx.config.broker.streaming_persist_timeout_s
+
+    async def _record(failure: UnmappedFailure) -> None:
+        if background_tasks is None:
+            logger.warning(
+                "unmapped_failure_record_skipped",
+                execution_id=failure.execution_id,
+                trace_id=ctx_req.trace_id,
+                reason="no_background_task_registry",
+            )
+            return
+        persist = _persist_unmapped_failure(
+            failure,
+            ctx,
+            ctx_req,
+            identity.sub,
+            identity.actor_type.value,
+            origin=identity.origin.value,
+        )
+        background_tasks.spawn(
+            persist,
+            kind="unmapped_failure_persist",
+            timeout_s=timeout_s,
+            log_fields={"execution_id": failure.execution_id, "trace_id": ctx_req.trace_id},
+        )
+
+    return _record
 
 
 def _resolve_body_cap(content_type: str | None, cfg: UpstreamClientConfig) -> int:
@@ -783,6 +893,8 @@ async def _execute_buffered(
         security_config=ctx.config.security,
         signing=injection.signing,
         has_idempotency_key=has_idempotency_key,
+        on_unmapped_failure=_unmapped_failure_recorder(request, ctx, ctx_req, identity),
+        is_server_error=_server_error_classifier(request.app),
     )
 
 
@@ -806,11 +918,13 @@ async def _handle_streaming(
 
     Persistence is best-effort and never holds the response: once the
     streaming body ends — completed, failed mid-body, or cut off by a client
-    disconnect — the completion callback schedules ``_persist_streaming_outcome``
-    exactly once on the app's background-task registry and returns, so an
-    aborted response's connection closes without waiting on the database. A DB
-    failure, timeout or shutdown cancellation is logged + counted and never
-    affects the already-sent response.
+    disconnect — or the stream fails to open or is cancelled before the
+    response headers (a FAILED record with no upstream status), the completion
+    callback schedules ``_persist_streaming_outcome`` exactly once on the app's
+    background-task registry and returns. Neither an aborted response nor a
+    pre-header error response (a circuit-open fast-fail included) waits on the
+    database. A DB failure, timeout or shutdown cancellation is logged +
+    counted and never affects the response.
     """
     body = await _read_request_body(request, ctx_req.method, ctx)
     credential_name = request.headers.get("jentic-credential-name")
@@ -849,8 +963,21 @@ async def _handle_streaming(
 
     background_tasks = get_background_tasks(request.app)
     persist_timeout_s = ctx.config.broker.streaming_persist_timeout_s
+    persisted = False
 
     async def _persist_callback(outcome: StreamingOutcome) -> None:
+        # One record per execution id, whichever delivery comes first. The
+        # default broker delivers once; an injected broker that delivers again
+        # breaks the seam's contract, so the drop is logged, not silent.
+        nonlocal persisted
+        if persisted:
+            logger.warning(
+                "streaming_outcome_duplicate_ignored",
+                execution_id=outcome.execution_id,
+                trace_id=ctx_req.trace_id,
+            )
+            return
+        persisted = True
         persist = _persist_streaming_outcome(
             outcome,
             ctx,

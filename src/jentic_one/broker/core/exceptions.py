@@ -309,10 +309,10 @@ class UpstreamBodyInterruptedError(BrokerError):
 
     Raised from the streaming body iterator, after the response status line has
     been sent, so it never becomes an error response: the streaming edge logs
-    it as ``upstream_network_failure``, aborts the response, and records
-    ``transport_error`` on the execution. ``transport_error`` is the ``httpx``
-    exception class name (never its message, which can quote request
-    material). Typed ``upstream_timeout`` for a read stall, else
+    it as ``upstream_network_failure``, aborts the response, and logs
+    ``transport_error`` — the ``httpx`` exception class name (never its
+    message, which can quote request material); the execution record stores
+    the problem ``type``. Typed ``upstream_timeout`` for a read stall, else
     ``upstream_transport_error``. The streaming edge classifies by this class,
     never by the problem ``type`` or ``extra`` members.
     """

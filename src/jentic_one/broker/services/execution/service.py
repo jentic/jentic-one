@@ -10,6 +10,8 @@ caller's concern (the runner returns the verbatim upstream result).
 from __future__ import annotations
 
 import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
@@ -19,7 +21,7 @@ from opentelemetry import trace
 
 from jentic_one.broker.adapters.runners.base import RunnerRequest, UpstreamRunner
 from jentic_one.broker.core.exceptions import BrokerError, CircuitOpenError
-from jentic_one.broker.core.execution import mint_execution_id
+from jentic_one.broker.core.execution import execution_error, mint_execution_id
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.default_broker import DefaultBroker
 from jentic_one.broker.services.execution.pipeline import (
@@ -70,6 +72,35 @@ _THIRDPARTY_AUTH_TAGS: dict[int, ErrorSource] = {
 }
 
 
+@dataclass(frozen=True, slots=True)
+class UnmappedFailure:
+    """A buffered execution that ended in an exception the broker does not map.
+
+    The caller receives a 500 for it; this carries what its FAILED record needs.
+    ``error`` is :func:`execution_error`'s ``server_error: <ExceptionClass>``.
+    """
+
+    execution_id: str
+    started_at: datetime
+    duration_ms: int
+    error: str
+
+
+#: Records an :class:`UnmappedFailure` without holding the error response: the
+#: sync router's recorder hands the write to the app's background-task registry
+#: and returns.
+UnmappedFailureRecorder = Callable[[UnmappedFailure], Awaitable[None]]
+
+#: Whether a non-``BrokerError`` exception reaches the caller as a 500. The sync
+#: router answers from its app's exception handlers, so an exception a handler
+#: maps to a 4xx or a 503 is never recorded as ``server_error``.
+ServerErrorClassifier = Callable[[Exception], bool]
+
+
+def _elapsed_ms(t0: float) -> int:
+    return int((time.perf_counter() - t0) * 1000)
+
+
 def _should_emit_circuit_event(host: str, cooldown_s: int = 15) -> bool:
     """Return True if no circuit-open event was emitted for this host within the cooldown."""
     now = datetime.now(UTC)
@@ -85,6 +116,33 @@ def _should_emit_circuit_event(host: str, cooldown_s: int = 15) -> bool:
     for h in stale:
         _circuit_event_last_emitted.pop(h, None)
     return True
+
+
+async def _emit_circuit_open_event(
+    session: Any, ctx_req: ExecuteRequestContext, *, actor_id: str, actor_type: str
+) -> None:
+    """Emit the rate-limited ``upstream.circuit_open`` event for a circuit fast-fail.
+
+    Shared by the buffered and streaming paths so either one raises the same
+    operator-facing event, under the same per-host cooldown. A failed emit is
+    logged, never raised.
+    """
+    host = urlparse(ctx_req.upstream_url).netloc or "<unknown>"
+    if not _should_emit_circuit_event(host):
+        return
+    try:
+        await emit_event(
+            session,
+            type=EventType.UPSTREAM_CIRCUIT_OPEN,
+            severity=EventSeverity.WARNING,
+            summary=f"Circuit breaker opened for upstream {host}",
+            created_by=actor_id,
+            actor_id=actor_id,
+            actor_type=actor_type,
+            data={"host": host},
+        )
+    except Exception:
+        logger.warning("emit_circuit_event_failed", host=host)
 
 
 def default_pipeline(runner: UpstreamRunner) -> BrokerExecutionPipeline:
@@ -133,6 +191,8 @@ async def run_execution(
     security_config: SecurityConfig | None = None,
     signing: SigV4Material | None = None,
     has_idempotency_key: bool = False,
+    on_unmapped_failure: UnmappedFailureRecorder | None = None,
+    is_server_error: ServerErrorClassifier | None = None,
 ) -> ExecutionOutcome:
     """Run the upstream call through the injected ``Broker`` and persist the record.
 
@@ -146,6 +206,16 @@ async def run_execution(
     it to problem+json. The ``broker`` (and thus the shared upstream client it
     wraps) is supplied by the caller (one client per process); the default
     builds a :class:`DefaultBroker` per request, a caller may inject its own.
+
+    An exception that is not a ``BrokerError`` and that ``is_server_error``
+    says reaches the caller as a 500 (every such exception when it is
+    ``None``) is counted as a FAILED execution and handed to
+    ``on_unmapped_failure``, then re-raised unchanged. One the classifier
+    rejects (an app handler maps it to a 4xx or a 503) is re-raised untouched:
+    no count, no record. The sync router's recorder writes the FAILED record
+    off the request, so the 500 never waits on the database; a recorder that
+    raises is logged and never masks the cause. Without a recorder no record
+    is written: the async worker reports the failure on the job result.
 
     ``execution_id`` lets the async worker reuse the id already handed to the
     client in the ``202`` (and used as the job's correlation id) so the persisted
@@ -201,7 +271,16 @@ async def run_execution(
             with jentic_tracestate(tracestate_member):
                 outcome = await broker.execute(runner_request, exec_context)
     except BrokerError as exc:
-        logger.error("execution_failed", execution_id=execution_id, error=exc.detail[:128])
+        error = execution_error(exc)
+        duration_ms = _elapsed_ms(t0)
+        logger.error(
+            "execution_failed", execution_id=execution_id, error=error, detail=exc.detail[:128]
+        )
+        # No upstream response: counted as a FAILED execution, but no
+        # duration sample — the streaming path applies the same policy.
+        _executions_total.add(
+            1, {"operation": operation_id or "", "status": ExecutionStatus.FAILED}
+        )
         # Committed before the re-raise that maps the BrokerError to HTTP.
         async with admin_db.transaction() as session:
             await _persist(
@@ -211,8 +290,8 @@ async def run_execution(
                 started_at=started_at,
                 status=ExecutionStatus.FAILED,
                 http_status=None,
-                duration_ms=0,
-                error=exc.detail[:128],
+                duration_ms=duration_ms,
+                error=error,
                 actor_id=actor_id,
                 actor_type=actor_type,
                 origin=origin,
@@ -221,7 +300,7 @@ async def run_execution(
                 session,
                 execution_id=execution_id,
                 status=ExecutionStatus.FAILED,
-                error_msg=exc.detail[:128],
+                error_msg=error,
                 trace_id=ctx_req.trace_id,
                 actor_id=actor_id,
                 actor_type=actor_type,
@@ -232,21 +311,24 @@ async def run_execution(
                 origin=origin,
             )
             if isinstance(exc, CircuitOpenError):
-                host = urlparse(ctx_req.upstream_url).netloc or "<unknown>"
-                if _should_emit_circuit_event(host):
-                    try:
-                        await emit_event(
-                            session,
-                            type=EventType.UPSTREAM_CIRCUIT_OPEN,
-                            severity=EventSeverity.WARNING,
-                            summary=f"Circuit breaker opened for upstream {host}",
-                            created_by=actor_id,
-                            actor_id=actor_id,
-                            actor_type=actor_type,
-                            data={"host": host},
-                        )
-                    except Exception:
-                        logger.warning("emit_circuit_event_failed", host=host)
+                await _emit_circuit_open_event(
+                    session, ctx_req, actor_id=actor_id, actor_type=actor_type
+                )
+        raise
+    except Exception as exc:
+        if is_server_error is not None and not is_server_error(exc):
+            raise
+        await _settle_unmapped_failure(
+            exc,
+            operation_id=operation_id,
+            failure=UnmappedFailure(
+                execution_id=execution_id,
+                started_at=started_at,
+                duration_ms=_elapsed_ms(t0),
+                error=execution_error(exc),
+            ),
+            recorder=on_unmapped_failure,
+        )
         raise
 
     result = outcome.result
@@ -314,6 +396,80 @@ async def run_execution(
     return outcome
 
 
+async def _settle_unmapped_failure(
+    exc: Exception,
+    *,
+    operation_id: str | None,
+    failure: UnmappedFailure,
+    recorder: UnmappedFailureRecorder | None,
+) -> None:
+    """Count and hand off an unmapped failure; never raises over ``exc``."""
+    logger.error(
+        "execution_failed",
+        execution_id=failure.execution_id,
+        error=failure.error,
+    )
+    # No upstream response: one FAILED execution, no duration sample — the
+    # same policy as a BrokerError and the streaming path.
+    _executions_total.add(1, {"operation": operation_id or "", "status": ExecutionStatus.FAILED})
+    if recorder is None:
+        return
+    try:
+        await recorder(failure)
+    except Exception:
+        logger.error(
+            "unmapped_failure_record_failed",
+            execution_id=failure.execution_id,
+            error_type=type(exc).__name__,
+            exc_info=True,
+        )
+
+
+async def persist_unmapped_failure(
+    session: Any,
+    failure: UnmappedFailure,
+    *,
+    ctx_req: ExecuteRequestContext,
+    actor_id: str,
+    actor_type: str,
+    origin: str | None = None,
+    security_config: SecurityConfig | None = None,
+) -> None:
+    """Write the FAILED record and lifecycle events for an :class:`UnmappedFailure`.
+
+    The metric is already counted by :func:`run_execution` when it hands the
+    failure off; this writes only the row (no upstream status) and the
+    ``execution.failed`` event, as a ``BrokerError`` does.
+    """
+    await _persist(
+        ctx_req,
+        session=session,
+        execution_id=failure.execution_id,
+        started_at=failure.started_at,
+        status=ExecutionStatus.FAILED,
+        http_status=None,
+        duration_ms=failure.duration_ms,
+        error=failure.error,
+        actor_id=actor_id,
+        actor_type=actor_type,
+        origin=origin,
+    )
+    await _emit_execution_lifecycle(
+        session,
+        execution_id=failure.execution_id,
+        status=ExecutionStatus.FAILED,
+        error_msg=failure.error,
+        trace_id=ctx_req.trace_id,
+        actor_id=actor_id,
+        actor_type=actor_type,
+        toolkit_id=ctx_req.toolkit_id,
+        credential_id=ctx_req.credential_id,
+        operation=ctx_req.operation,
+        security_config=security_config,
+        origin=origin,
+    )
+
+
 async def persist_streaming_execution(
     session: Any,
     *,
@@ -328,16 +484,23 @@ async def persist_streaming_execution(
     actor_type: str,
     origin: str | None = None,
     security_config: SecurityConfig | None = None,
+    circuit_open: bool = False,
 ) -> None:
     """Persist an execution record for a streaming-path execution.
 
-    Called once after the streaming response body ends, on every outcome
-    (completed, failed mid-body, client disconnect). Shares metrics
-    instrumentation with the buffered path for observability parity.
+    Called once per streaming execution, on every outcome: after the response
+    body ends (completed, failed mid-body, client disconnect), or when the
+    stream ends before any response exists (it failed to open, or the request
+    was cancelled first — ``http_status`` is ``None``). Metrics follow the
+    buffered path: every execution counts on ``broker.executions.total``, and
+    only one with an upstream response adds a duration sample. A
+    ``circuit_open`` fast-fail also raises ``upstream.circuit_open``, under the
+    buffered path's per-host cooldown.
     """
     operation_id = ctx_req.operation_id
     _executions_total.add(1, {"operation": operation_id or "", "status": status})
-    _execution_duration.record(duration_ms, {"operation": operation_id or ""})
+    if http_status is not None:
+        _execution_duration.record(duration_ms, {"operation": operation_id or ""})
 
     logger.info(
         "execution_recorded",
@@ -395,6 +558,8 @@ async def persist_streaming_execution(
         error_tags=error_tags,
         origin=origin,
     )
+    if circuit_open:
+        await _emit_circuit_open_event(session, ctx_req, actor_id=actor_id, actor_type=actor_type)
 
 
 async def _persist(

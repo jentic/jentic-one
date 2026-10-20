@@ -10,7 +10,15 @@ lifecycle event land in the real admin DB. Covered outcomes:
   ``upstream_network_failure`` log line bound to the request id, no
   ``unhandled_exception`` log, and a response the client sees as truncated;
 * the client disconnects mid-body → one record;
-* persisting the record fails → the failure is counted, nothing escapes.
+* persisting the record fails → the failure is counted, nothing escapes;
+* the upstream fails before the response headers — connection refused, a
+  timeout waiting for the headers, an open circuit (#1753) → the client gets
+  the unchanged problem+json error at once, and exactly one FAILED record (no
+  upstream status, the problem ``type`` as its error) plus one
+  ``execution.failed`` event land after it, off the request; an open circuit
+  also raises ``upstream.circuit_open``;
+* an injected broker that delivers an outcome twice → one record and a
+  logged warning.
 """
 
 from __future__ import annotations
@@ -34,18 +42,24 @@ from sqlalchemy import delete, select
 
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
+from jentic_one.broker.adapters.runners.base import StreamingUpstreamRunner
+from jentic_one.broker.adapters.runners.circuit import CircuitBreakerRunner
 from jentic_one.broker.adapters.runners.http import HttpRunner
 from jentic_one.broker.core.execution import mint_execution_id
 from jentic_one.broker.core.headers import JenticHeader
 from jentic_one.broker.core.schemas import ExecuteRequestContext
+from jentic_one.broker.services.execution.service import _circuit_event_last_emitted
 from jentic_one.broker.web.errors import install_broker_error_handlers
 from jentic_one.broker.web.routers import execute as execute_router
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.broker.execution import StreamingOutcome
 from jentic_one.shared.context import Context
 from jentic_one.shared.logging import RequestIDMiddleware, install_server_log_filters
 from jentic_one.shared.models import ActorType, ExecutionStatus
 from jentic_one.shared.models.events import EventType
+from jentic_one.shared.resilience import CircuitBreaker
 from jentic_one.shared.schemas import OperationInfo
+from jentic_one.shared.state.backend import MemoryStateBackend
 from jentic_one.shared.web.background_tasks import (
     BackgroundTaskRegistry,
     get_background_tasks,
@@ -66,16 +80,27 @@ _IDENTITY = Identity(
 )
 
 
+def _free_port() -> int:
+    """A port nothing listens on once this returns (connection refused)."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port: int = sock.getsockname()[1]
+        return port
+
+
 @dataclass
 class _Upstream:
     """A chunked HTTP/1.1 upstream on a real socket.
 
     ``/ok`` sends a complete body; ``/drop`` sends one chunk then closes the
     socket without the terminating chunk; ``/hang`` sends one chunk then holds
-    the connection open until the broker closes it.
+    the connection open until the broker closes it; ``/silent`` reads the
+    request and never answers, so no response headers arrive. ``closed_port``
+    is a port nothing listens on (connection refused).
     """
 
     port: int
+    closed_port: int
 
 
 @pytest.fixture()
@@ -83,6 +108,12 @@ async def upstream() -> AsyncGenerator[_Upstream, None]:
     async def _serve(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         head = await reader.readuntil(b"\r\n\r\n")
         path = head.split(b" ", 2)[1].decode()
+        if path == "/silent":
+            # Hold the connection without a status line until the broker gives up.
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(reader.read(), 10)
+            writer.close()
+            return
         writer.write(
             b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n"
             b"Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
@@ -102,13 +133,13 @@ async def upstream() -> AsyncGenerator[_Upstream, None]:
 
     server = await asyncio.start_server(_serve, "127.0.0.1", 0)
     try:
-        yield _Upstream(port=server.sockets[0].getsockname()[1])
+        yield _Upstream(port=server.sockets[0].getsockname()[1], closed_port=_free_port())
     finally:
         server.close()
         await server.wait_closed()
 
 
-def _app(ctx: Context, runner: HttpRunner, upstream_port: int) -> FastAPI:
+def _app(ctx: Context, runner: StreamingUpstreamRunner, upstream: _Upstream) -> FastAPI:
     """The streaming handler with the broker's request-id middleware + error handlers.
 
     Carries the app-owned background-task registry the record writes run on
@@ -122,8 +153,9 @@ def _app(ctx: Context, runner: HttpRunner, upstream_port: int) -> FastAPI:
 
     @app.get("/execute/{mode}")
     async def execute(mode: str, request: Request) -> Response:
+        port = upstream.closed_port if mode == "refused" else upstream.port
         ctx_req = ExecuteRequestContext(
-            upstream_url=f"http://127.0.0.1:{upstream_port}/{mode}",
+            upstream_url=f"http://127.0.0.1:{port}/{mode}",
             method=request.method,
             trace_id=_TRACE_ID,
             operation=OperationInfo(id="getStream", path="/stream", method="GET"),
@@ -153,21 +185,35 @@ class _Records(logging.Handler):
 
 @dataclass
 class _Served:
+    app: FastAPI
     base_url: str
     logs: list[MutableMapping[str, Any]]
     server_log: _Records
     background_tasks: BackgroundTaskRegistry
+    runner: StreamingUpstreamRunner
+    breaker: CircuitBreaker
 
 
 @pytest.fixture()
 async def served(
     request: pytest.FixtureRequest, integration_context: Context, upstream: _Upstream
 ) -> AsyncGenerator[_Served, None]:
-    """The app behind uvicorn; an indirect param sets the runner's response-size cap."""
+    """The app behind uvicorn; an indirect param sets the runner's response-size cap.
+
+    The ``HttpRunner`` sits behind a blocking ``CircuitBreakerRunner`` (as the
+    default broker's stack does) over an in-memory breaker a test can trip.
+    """
     max_response_bytes: int = getattr(request, "param", 0)
+    breaker = CircuitBreaker(
+        MemoryStateBackend(), failure_ratio=1.0, min_calls=1, window_s=30, cooldown_s=30
+    )
     async with httpx.AsyncClient() as upstream_client:
-        runner = HttpRunner(upstream_client, max_response_bytes=max_response_bytes)
-        app = _app(integration_context, runner, upstream.port)
+        runner = CircuitBreakerRunner(
+            HttpRunner(upstream_client, max_response_bytes=max_response_bytes),
+            breaker,
+            enforcement_mode="blocking",
+        )
+        app = _app(integration_context, runner, upstream)
         background_tasks = get_background_tasks(app)
         assert background_tasks is not None
         # Bound before uvicorn starts and handed over, so no other process can
@@ -189,7 +235,15 @@ async def served(
                     while not server.started:
                         assert not task.done(), "uvicorn exited before it started"
                         await asyncio.sleep(0.02)
-                yield _Served(f"http://127.0.0.1:{port}", logs, server_log, background_tasks)
+                yield _Served(
+                    app,
+                    f"http://127.0.0.1:{port}",
+                    logs,
+                    server_log,
+                    background_tasks,
+                    runner,
+                    breaker,
+                )
             finally:
                 server.should_exit = True
                 await task
@@ -200,13 +254,38 @@ async def served(
 
 @pytest.fixture()
 async def execution_ids(integration_context: Context) -> AsyncGenerator[list[str], None]:
-    """Execution ids the test produced; their records and events are removed after."""
+    """Execution ids the test produced; their records and events are removed after.
+
+    Also resets the per-host circuit-event cooldown and removes the
+    host-level ``upstream.circuit_open`` events this module's actor raised.
+    """
+    _circuit_event_last_emitted.clear()
     ids: list[str] = []
     yield ids
-    if ids:
-        async with integration_context.admin_db.transaction() as session:
+    async with integration_context.admin_db.transaction() as session:
+        await session.execute(
+            delete(Event).where(
+                Event.type == EventType.UPSTREAM_CIRCUIT_OPEN, Event.actor_id == _IDENTITY.sub
+            )
+        )
+        if ids:
             await session.execute(delete(Event).where(Event.execution_id.in_(ids)))
             await session.execute(delete(ExecutionRecord).where(ExecutionRecord.id.in_(ids)))
+    _circuit_event_last_emitted.clear()
+
+
+async def _circuit_events(ctx: Context, host: str) -> list[Event]:
+    """The ``upstream.circuit_open`` events this module's actor raised for ``host``."""
+    async with ctx.admin_db.session() as session:
+        events = (
+            await session.execute(
+                select(Event).where(
+                    Event.type == EventType.UPSTREAM_CIRCUIT_OPEN,
+                    Event.actor_id == _IDENTITY.sub,
+                )
+            )
+        ).scalars()
+        return [e for e in events if e.data.get("host") == host]
 
 
 async def _records(ctx: Context, execution_id: str) -> list[ExecutionRecord]:
@@ -289,7 +368,7 @@ async def test_midbody_upstream_drop_persists_one_failed_record(
     assert len(records) == 1
     assert records[0].status == ExecutionStatus.FAILED
     assert records[0].http_status == 200
-    assert records[0].error == "upstream_error: RemoteProtocolError"
+    assert records[0].error == "upstream_transport_error"
     events = await _events(integration_context, execution_id)
     assert [e.type for e in events] == [EventType.EXECUTION_FAILED]
 
@@ -323,11 +402,11 @@ async def test_size_cap_exceeded_midbody_persists_one_failed_record(
     records = await _wait_for_records(integration_context, execution_id)
     assert len(records) == 1
     assert records[0].status == ExecutionStatus.FAILED
-    assert records[0].error == "upstream_error: UpstreamResponseTooLargeError"
+    assert records[0].error == "upstream_response_too_large"
     assert len(await _events(integration_context, execution_id)) == 1
     aborts = [e for e in served.logs if e["event"] == "streaming_response_aborted"]
     assert len(aborts) == 1
-    assert aborts[0]["reason"] == "upstream_error: UpstreamResponseTooLargeError"
+    assert aborts[0]["reason"] == "upstream_response_too_large"
     assert aborts[0]["execution_id"] == execution_id
     assert "request_id" in aborts[0]
     assert _unhandled(served) == []
@@ -420,3 +499,148 @@ async def test_aborted_response_reaches_the_client_before_the_record_is_written(
     records = await _records(integration_context, execution_id)
     assert len(records) == 1
     assert records[0].status == ExecutionStatus.FAILED
+
+
+async def _trip_breaker(served: _Served, upstream: _Upstream) -> None:
+    await served.breaker.record(f"127.0.0.1:{upstream.port}", ok=False)
+
+
+@pytest.mark.parametrize(
+    ("mode", "status", "problem_type", "upstream_timeout_s", "prepare"),
+    [
+        # Connection refused: nothing listens on the port. The status and type
+        # are whatever the transport mapping answers; the record must match them.
+        pytest.param("refused", None, None, 30.0, None, id="connect-refused"),
+        pytest.param("silent", 504, "upstream_timeout", 0.3, None, id="pre-header-timeout"),
+        pytest.param("ok", 503, "circuit_open", 30.0, _trip_breaker, id="circuit-open"),
+    ],
+)
+async def test_stream_open_failure_persists_one_failed_record(
+    integration_context: Context,
+    served: _Served,
+    upstream: _Upstream,
+    execution_ids: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    status: int | None,
+    problem_type: str | None,
+    upstream_timeout_s: float,
+    prepare: Any,
+) -> None:
+    """Pins #1753: a stream that never opens still writes exactly one FAILED record."""
+    execution_id = f"exec_pr1753openfail{mode}"
+    execution_ids.append(execution_id)
+    monkeypatch.setattr(integration_context.config.broker, "upstream_timeout_s", upstream_timeout_s)
+    if prepare is not None:
+        await prepare(served, upstream)
+
+    with patch.object(execute_router, "mint_execution_id", return_value=execution_id):
+        async with httpx.AsyncClient(base_url=served.base_url) as client:
+            resp = await client.get(f"/execute/{mode}")
+
+    problem = resp.json()
+    assert resp.headers["content-type"].startswith("application/problem+json")
+    assert problem["status"] == resp.status_code
+    assert resp.status_code >= 500
+    if status is not None:
+        assert resp.status_code == status
+        assert problem["type"] == problem_type
+    records = await _wait_for_records(integration_context, execution_id)
+    assert len(records) == 1
+    record = records[0]
+    assert record.status == ExecutionStatus.FAILED
+    assert record.http_status is None
+    # The problem type the caller received — no upstream-blame prefix.
+    assert record.error == problem["type"]
+    assert record.actor_id == _IDENTITY.sub
+    assert record.trace_id == _TRACE_ID
+    events = await _events(integration_context, execution_id)
+    assert [e.type for e in events] == [EventType.EXECUTION_FAILED]
+    circuit_events = await _circuit_events(integration_context, f"127.0.0.1:{upstream.port}")
+    assert len(circuit_events) == (1 if mode == "ok" else 0)
+    assert _unhandled(served) == []
+
+
+async def test_circuit_open_error_response_does_not_wait_on_the_record_write(
+    integration_context: Context,
+    served: _Served,
+    upstream: _Upstream,
+    execution_ids: list[str],
+) -> None:
+    """The fast-fail 503 is answered at once; the slowed record write lands after.
+
+    The write is slowed, not mocked: the real write still runs and lands once,
+    so an error response that waited on it would arrive only after the delay.
+    """
+    write_delay_s = 1.0
+    written_at: list[float] = []
+    real_persist = execute_router._persist_streaming_outcome
+
+    async def _slow_persist(*args: Any, **kwargs: Any) -> None:
+        await asyncio.sleep(write_delay_s)
+        await real_persist(*args, **kwargs)
+        written_at.append(time.monotonic())
+
+    execution_id = mint_execution_id()
+    execution_ids.append(execution_id)
+    await _trip_breaker(served, upstream)
+    with (
+        patch.object(execute_router, "mint_execution_id", return_value=execution_id),
+        patch.object(execute_router, "_persist_streaming_outcome", _slow_persist),
+    ):
+        async with httpx.AsyncClient(base_url=served.base_url) as client:
+            sent_at = time.monotonic()
+            resp = await client.get("/execute/ok")
+            answered_after = time.monotonic() - sent_at
+        assert resp.status_code == 503
+        assert written_at == []
+        assert served.background_tasks.pending == 1
+        await served.background_tasks.drain(5)
+
+    assert answered_after < write_delay_s / 2
+    assert len(written_at) == 1
+    records = await _records(integration_context, execution_id)
+    assert [(r.status, r.error) for r in records] == [(ExecutionStatus.FAILED, "circuit_open")]
+
+
+class _DoubleDeliveryBroker:
+    """An injected broker that breaks the seam contract by delivering the outcome twice."""
+
+    async def execute_streaming(
+        self,
+        runner: Any,
+        request: Any,
+        ctx_req: ExecuteRequestContext,
+        execution_id: str,
+        *,
+        transfer_deadline_s: float,
+        background_callback: Any = None,
+    ) -> Response:
+        assert background_callback is not None
+        await background_callback(StreamingOutcome(execution_id=execution_id, http_status=200))
+        await background_callback(
+            StreamingOutcome(execution_id=execution_id, http_status=None, error="cancelled")
+        )
+        return Response(b"ok", headers={JenticHeader.EXECUTION_ID.value: execution_id})
+
+
+async def test_a_second_outcome_delivery_is_dropped_and_logged(
+    integration_context: Context, served: _Served, execution_ids: list[str]
+) -> None:
+    """The handler persists one record per execution id; a duplicate is a logged warning."""
+    served.app.state.broker = _DoubleDeliveryBroker()
+    try:
+        async with httpx.AsyncClient(base_url=served.base_url) as client:
+            resp = await client.get("/execute/ok")
+    finally:
+        del served.app.state.broker
+    execution_id = resp.headers[JenticHeader.EXECUTION_ID.value]
+    execution_ids.append(execution_id)
+    await served.background_tasks.drain(5)
+
+    records = await _records(integration_context, execution_id)
+    assert [(r.status, r.http_status) for r in records] == [(ExecutionStatus.COMPLETED, 200)]
+    (duplicate,) = [e for e in served.logs if e["event"] == "streaming_outcome_duplicate_ignored"]
+    assert duplicate["log_level"] == "warning"
+    assert duplicate["execution_id"] == execution_id
+    assert _unhandled(served) == []
