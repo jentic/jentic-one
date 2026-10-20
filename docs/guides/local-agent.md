@@ -314,9 +314,10 @@ user. No agent account, grant or sandbox profile is involved: the container is
 the isolation.
 
 ```bash
-# Build the two images once, from a jentic-one checkout (they are not published):
+# Build the three images once, from a jentic-one checkout (they are not published):
 docker build -f deploy/docker/run-agent.Dockerfile -t jentic-run-agent:local cli
 docker build -f deploy/docker/run-bridge.Dockerfile -t jentic-run-bridge:local deploy/docker
+docker build -f deploy/docker/run-proxy.Dockerfile -t jentic-run-proxy:local cli
 
 jentic run --container claude ~/src/project
 ```
@@ -328,10 +329,36 @@ jentic run --container claude ~/src/project
   the broker's port), so tokens and audiences match. The context must be on
   this machine's loopback. The active context is exported into the session's
   home volume, mode `agent`, as on the agent-user path.
-- **Nothing else is reachable.** The only egress mode so far is
-  `--container-egress none`: no route, no DNS, no other container. The agent's
-  calls to its LLM provider and to vendor APIs fail, so Claude Code starts but
-  cannot answer prompts yet.
+- **Egress goes through the session's proxy** (`--container-egress proxy`, the
+  default). The agent's only route out is a proxy sidecar
+  (`HTTPS_PROXY=http://jentic-run-<session>-proxy:3128`), which:
+  - **tunnels** the agent's LLM provider without decrypting it: for Claude
+    Code `api.anthropic.com`, `platform.claude.com`, `statsig.anthropic.com`
+    and `console.anthropic.com`, plus the Bedrock and AWS SSO hosts when
+    `CLAUDE_CODE_USE_BEDROCK` is set, or the Vertex hosts when
+    `CLAUDE_CODE_USE_VERTEX` is set (with `CLOUD_ML_REGION`);
+  - **governs** the vendor APIs whose CLI facade this Jentic serves
+    (`github.com`, `api.cloudflare.com`, `amazonaws.com`, see
+    `jentic cli list`): `gh api /user`, `curl https://api.github.com/…`, the
+    AWS SDKs and so on run as usual, but each call goes to the broker
+    (`/_facade/proxy/https://<host>/<path>`) under the agent's rules, with
+    the vendor credential injected there. No vendor credential enters the
+    container. Calls are recorded under a session invocation token
+    (`command_title` `session`) that `jentic run` mints when the session
+    starts, renews while it runs and revokes when it ends. A command can
+    attribute its own calls with `HTTPS_PROXY=http://<cit_ token>:x@<proxy>:3128`.
+    Jentic's refusals come back in the vendor's error shape;
+  - **refuses** everything else, plain-HTTP proxying included, with a 403
+    (logged by the proxy). `git push`/`git fetch` over HTTPS to a governed
+    host gets a clear "not supported yet" error.
+
+  Trust for the governed hosts comes from a per-session CA the proxy creates
+  in memory, name-constrained to those domains (and to no IP address), and
+  handed to the agent's TLS clients through `SSL_CERT_FILE`,
+  `REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`, `GIT_SSL_CAINFO`,
+  `AWS_CA_BUNDLE` and `CURL_CA_BUNDLE`. It is never installed in any trust
+  store. `--container-egress none` gives the agent no route at all: its calls
+  to its LLM provider and to vendor APIs fail.
 - **Hardening:** an unprivileged uid, every capability dropped,
   `no-new-privileges`, a read-only root filesystem, no Docker socket.
 - **Config seeding** writes a fresh `~/.claude.json` (onboarding done, the work
@@ -339,8 +366,9 @@ jentic run --container claude ~/src/project
   your theme, model, permissions and `CLAUDE.md`. Hooks, the status line, key
   helpers, `env`, plugins, credentials and login state are never copied, nor is
   any provider config (`~/.aws`, gcloud).
-- **Teardown:** the agent, bridge containers, network and volumes are removed
-  when the session ends, on exit, Ctrl-C or SIGTERM. If the client is killed
+- **Teardown:** the session's invocation tokens are revoked, and the agent,
+  bridge and proxy containers, networks and volumes are removed when the
+  session ends, on exit, Ctrl-C or SIGTERM. If the client is killed
   outright, the next `jentic run --container` removes the leftovers. The
   agent's exit code is passed through.
 - **Native Linux Docker:** the bridge that carries the Jentic ports runs in
@@ -354,12 +382,16 @@ jentic run --container claude ~/src/project
 | ---- | ------- |
 | `--container` | Run in a container (experimental). Refused together with the agent-user flags (`--home`, `--allow-dir`, `--grant`, …). |
 | `--container-image <ref>` | Agent image (default `jentic-run-agent:local`). |
-| `--container-egress none` | Egress mode. `none` is the only one so far. |
+| `--container-egress proxy\|none` | Egress mode (default `proxy`; see above). |
 
 A Docker engine that is unreachable, a missing image, a remote context or
 file-less mode (`JENTIC_BEARER_TOKEN`) fail closed with
-`CONFINEMENT_UNAVAILABLE` (exit 1) and the fix to apply. `jentic run` never
-falls back to an unisolated launch.
+`CONFINEMENT_UNAVAILABLE` (exit 1) and the fix to apply. With the proxy, so do
+a broker URL that is not plain HTTP on the loopback, a control plane that
+cannot list its CLI facades, an agent that cannot mint invocation tokens (it
+needs `capabilities:execute` and its own access token, not an API key) and a
+proxy that does not publish this session's CA in time. `jentic run` never
+falls back to an unisolated launch or a looser egress.
 
 ## Where state lives
 

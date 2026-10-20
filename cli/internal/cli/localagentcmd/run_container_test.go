@@ -112,7 +112,7 @@ func TestRunContainerNeedsALocalContext(t *testing.T) {
 		t.Errorf("no active context: %v", err)
 	}
 
-	err = app.runE(cmd, &runOptions{container: containerOptions{enabled: true, egress: "proxy"}}, []string{"claude", work})
+	err = app.runE(cmd, &runOptions{container: containerOptions{enabled: true, egress: "socks"}}, []string{"claude", work})
 	if err == nil || !strings.Contains(err.Error(), "egress") {
 		t.Errorf("an unknown egress mode is refused before anything runs: %v", err)
 	}

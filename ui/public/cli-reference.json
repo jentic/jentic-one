@@ -2705,8 +2705,8 @@
             {
               "name": "container-egress",
               "type": "string",
-              "default": "none",
-              "usage": "EXPERIMENTAL: the --container egress mode; none (none: the agent reaches only Jentic, so LLM and vendor calls fail)"
+              "default": "proxy",
+              "usage": "EXPERIMENTAL: the --container egress mode; proxy, none (proxy: the agent's LLM provider is tunnelled, governed vendor APIs go through Jentic, everything else is refused; none: the agent reaches only Jentic)"
             },
             {
               "name": "container-image",

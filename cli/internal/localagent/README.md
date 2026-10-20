@@ -35,7 +35,8 @@ Security design: [`docs/security/same-host/`](../../../docs/security/same-host/R
 | `confine.go` | Per-session confinement: prereq probing (`AgentUserPrereqs`), `SessionAccess` (single source of truth for what a session reaches), SBPL profile builder (macOS), `bwrap` argv builder (Linux), `ConfineLaunchCmd` |
 | `serviceaccount.go` | The MCP service-account profile (`_jentic-<runtime>`): account + 0700 home creation, root-side context export, the argv-pinned MCP sudoers rule, teardown |
 | `servicebinary.go` | The root-owned jentic copy (`/usr/local/libexec/jentic/jentic`) the MCP sudoers rule and sudo-shim entry pin: atomic root-side install/refresh, removal, staleness check |
-| `container/` | `jentic run --container` (experimental): session plan and hardened container specs, the `Egress` seam, the docker-CLI driver, teardown and the stale-session reaper, home seeding (stdlib-only, like this package) |
+| `container/` | `jentic run --container` (experimental): session plan and hardened container specs, the `Egress` seam and the `proxy` egress, the session token keeper, the docker-CLI driver, teardown and the stale-session reaper, home seeding (stdlib-only, like this package) |
+| `egressproxy/` | The `--container` egress proxy (run by `cmd/jentic-egress-proxy` inside its sidecar, never linked into `jentic`): per-session name-constrained CA, host policy (tunnel / govern / refuse), the relay to the broker's `/_facade/proxy` route, CA publication and the readiness nonce (stdlib-only) |
 | `validate.go` | The injection choke point: `ValidateAgentUser`, `ValidateHomeDir`, `ValidateGrantPath` — every operator-editable value is constrained here before it reaches a shell, sudoers line, ACL entry, or SBPL profile |
 | `operators_test.go` | Registry ↔ `internal/skillgen` parity guardrail, descriptor well-formedness, adversarial scrub-path containment |
 

@@ -38,6 +38,10 @@ type Spec struct {
 	// Network is the --network value: a network name, "host", "none" or
 	// "container:<name>".
 	Network string
+	// ExtraNetworks are further networks (by name) the container joins
+	// before it starts (Session.Up runs `docker create`, `docker network
+	// connect`, then `docker start` for such a container).
+	ExtraNetworks []string
 	// AddHosts are --add-host entries ("host.docker.internal:host-gateway").
 	AddHosts []string
 	// User is the --user value (uid:gid). Required: no session container runs
@@ -84,6 +88,11 @@ func (s Spec) Validate() error {
 	}
 	if s.User == "" || s.User == "0" || strings.HasPrefix(s.User, "0:") || s.User == "root" {
 		return fmt.Errorf("container %s must run as an unprivileged user, not %q", s.Name, s.User)
+	}
+	for _, n := range s.ExtraNetworks {
+		if n == "" || n == "host" || n == "none" || n == "bridge" || strings.ContainsAny(n, ":,= \n\r\x00") || strings.HasPrefix(n, "-") {
+			return fmt.Errorf("container %s: invalid extra network %q", s.Name, n)
+		}
 	}
 	for _, m := range s.Mounts {
 		if m.Type != "bind" && m.Type != "volume" {

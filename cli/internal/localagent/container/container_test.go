@@ -296,7 +296,9 @@ type recordingEgress struct {
 	ready error
 }
 
-func (recordingEgress) Name() string { return "test" }
+func (recordingEgress) Name() string            { return "test" }
+func (recordingEgress) Networks(*Plan) []string { return nil }
+func (recordingEgress) Volumes(*Plan) []string  { return nil }
 func (recordingEgress) Sidecars(*Plan) []Spec {
 	return []Spec{{Name: "jentic-run-" + testSession + "-egress", Image: "egress:test", User: "65534:65534", Detach: true}}
 }
@@ -340,8 +342,13 @@ func TestEgressSeam(t *testing.T) {
 	if d.called("create") {
 		t.Errorf("the agent must not be created when the egress is not ready")
 	}
-	if eg, err := ResolveEgress("proxy"); err == nil || eg != nil {
+	if mode, err := ParseEgressMode("socks"); err == nil || mode != "" {
 		t.Errorf("unknown egress modes are refused")
+	}
+	for in, want := range map[string]string{"": EgressProxy, "proxy": EgressProxy, "none": EgressNone} {
+		if got, err := ParseEgressMode(in); err != nil || got != want {
+			t.Errorf("ParseEgressMode(%q) = %q, %v; want %q", in, got, err, want)
+		}
 	}
 }
 

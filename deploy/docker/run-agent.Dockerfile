@@ -2,7 +2,10 @@
 #
 # The agent image of `jentic run --container` (experimental): the jentic CLI,
 # gh, git, Node.js and Claude Code's native Linux build, run as an
-# unprivileged user. Not published; build it locally from the cli/ module:
+# unprivileged user. The session's egress points the TLS clients at its CA
+# bundle through the container's environment (SSL_CERT_FILE and friends);
+# nothing is added to the image's trust store. Not published; build it
+# locally from the cli/ module:
 #
 #   docker build -f deploy/docker/run-agent.Dockerfile -t jentic-run-agent:local cli
 #
@@ -49,25 +52,10 @@ RUN userdel --remove node \
  && useradd --uid 1000 --gid 1000 --no-create-home --home-dir /home/agent --shell /bin/bash agent \
  && rm -rf /home/*
 
-# CA-bundle hook for a future egress proxy: when JENTIC_EGRESS_CA_BUNDLE names
-# a readable bundle, the per-client trust variables point at it. Nothing sets
-# it yet, so it does nothing.
-COPY --chmod=0644 <<'HOOK' /etc/profile.d/jentic-egress-trust.sh
-if [ -n "${JENTIC_EGRESS_CA_BUNDLE:-}" ] && [ -r "${JENTIC_EGRESS_CA_BUNDLE}" ]; then
-  export SSL_CERT_FILE="${JENTIC_EGRESS_CA_BUNDLE}"
-  export GIT_SSL_CAINFO="${JENTIC_EGRESS_CA_BUNDLE}"
-  export REQUESTS_CA_BUNDLE="${JENTIC_EGRESS_CA_BUNDLE}"
-  export CURL_CA_BUNDLE="${JENTIC_EGRESS_CA_BUNDLE}"
-  export AWS_CA_BUNDLE="${JENTIC_EGRESS_CA_BUNDLE}"
-  export NODE_EXTRA_CA_CERTS="${JENTIC_EGRESS_CA_BUNDLE}"
-fi
-HOOK
-
 ENV HOME=/home/agent \
     DISABLE_AUTOUPDATER=1 \
     GH_NO_UPDATE_NOTIFIER=1 \
-    GIT_TERMINAL_PROMPT=0 \
-    BASH_ENV=/etc/profile.d/jentic-egress-trust.sh
+    GIT_TERMINAL_PROMPT=0
 
 USER 1000:1000
 WORKDIR /tmp

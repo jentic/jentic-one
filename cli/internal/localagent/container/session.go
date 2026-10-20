@@ -181,6 +181,11 @@ func NewPlan(o Options) (*Plan, error) {
 			return nil, err
 		}
 	}
+	if v, ok := o.Egress.(interface{ Validate(*Plan) error }); ok {
+		if err := v.Validate(p); err != nil {
+			return nil, err
+		}
+	}
 	return p, nil
 }
 
@@ -222,7 +227,17 @@ func (s *Session) Up(ctx context.Context) error {
 	if _, err := d.Output(ctx, append(netArgs, p.Network)...); err != nil {
 		return fmt.Errorf("create the session network: %w", err)
 	}
-	for _, v := range []struct{ name, role string }{{p.HomeVolume, RoleHome}, {p.SocketVolume, RoleSockets}} {
+	for _, name := range p.Egress.Networks(p) {
+		args := append([]string{"network", "create"}, p.labelArgs(RoleEgress)...)
+		if _, err := d.Output(ctx, append(args, name)...); err != nil {
+			return fmt.Errorf("create the egress network %s: %w", name, err)
+		}
+	}
+	volumes := []struct{ name, role string }{{p.HomeVolume, RoleHome}, {p.SocketVolume, RoleSockets}}
+	for _, name := range p.Egress.Volumes(p) {
+		volumes = append(volumes, struct{ name, role string }{name, RoleEgress})
+	}
+	for _, v := range volumes {
 		args := append([]string{"volume", "create"}, p.labelArgs(v.role)...)
 		if _, err := d.Output(ctx, append(args, v.name)...); err != nil {
 			return fmt.Errorf("create volume %s: %w", v.name, err)
@@ -260,12 +275,33 @@ func (s *Session) Up(ctx context.Context) error {
 	return nil
 }
 
+// start runs a detached container. One with extra networks is created,
+// connected to each, and only then started, so it never runs before it has
+// all its routes.
 func (s *Session) start(ctx context.Context, spec Spec) error {
-	args, err := spec.RunArgs()
+	if len(spec.ExtraNetworks) == 0 {
+		args, err := spec.RunArgs()
+		if err != nil {
+			return err
+		}
+		if _, err := s.Docker.Output(ctx, args...); err != nil {
+			return fmt.Errorf("start %s: %w", spec.Name, err)
+		}
+		return nil
+	}
+	args, err := spec.CreateArgs()
 	if err != nil {
 		return err
 	}
 	if _, err := s.Docker.Output(ctx, args...); err != nil {
+		return fmt.Errorf("create %s: %w", spec.Name, err)
+	}
+	for _, n := range spec.ExtraNetworks {
+		if _, err := s.Docker.Output(ctx, "network", "connect", n, spec.Name); err != nil {
+			return fmt.Errorf("connect %s to %s: %w", spec.Name, n, err)
+		}
+	}
+	if _, err := s.Docker.Output(ctx, "start", spec.Name); err != nil {
 		return fmt.Errorf("start %s: %w", spec.Name, err)
 	}
 	return nil

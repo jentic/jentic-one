@@ -4,9 +4,12 @@
 //
 // A session is a handful of Docker objects that share one session id label:
 //
-//   - a per-session `internal` network with no gateway; the loopback container
-//     is its only member today, and an egress sidecar joins it when there is one
-//     (Egress);
+//   - a per-session `internal` network with no gateway, whose members are the
+//     loopback container and the egress sidecar, if there is one (Egress);
+//   - with the default "proxy" egress, the egress proxy sidecar
+//     (ProxyEgress), the only member of the internal network with a route
+//     out, through a per-session egress network of its own, and a CA volume
+//     holding its public certificates;
 //   - the loopback container, which owns the agent's network namespace and
 //     listens on 127.0.0.1 at Jentic's ports before the agent starts, so the
 //     agent cannot bind them first;
@@ -56,11 +59,12 @@ const (
 	RoleSockets  = "sockets"
 )
 
-// Default image references. Neither is published: build them locally with the
+// Default image references. None is published: build them locally with the
 // Dockerfiles under deploy/docker (see BuildHint).
 const (
 	DefaultAgentImage  = "jentic-run-agent:local"
 	DefaultBridgeImage = "jentic-run-bridge:local"
+	DefaultProxyImage  = "jentic-run-proxy:local"
 )
 
 // AgentHome is the agent's home inside the agent container. The session's home
@@ -97,5 +101,6 @@ func OwnerLabel(uid int, host string) string { return fmt.Sprintf("%d@%s", uid, 
 // checkout, for the error a missing image produces.
 func BuildHint() string {
 	return "docker build -f deploy/docker/run-agent.Dockerfile -t " + DefaultAgentImage + " cli && " +
-		"docker build -f deploy/docker/run-bridge.Dockerfile -t " + DefaultBridgeImage + " deploy/docker"
+		"docker build -f deploy/docker/run-bridge.Dockerfile -t " + DefaultBridgeImage + " deploy/docker && " +
+		"docker build -f deploy/docker/run-proxy.Dockerfile -t " + DefaultProxyImage + " cli"
 }

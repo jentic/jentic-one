@@ -54,6 +54,30 @@ type Descriptor struct {
 	// authenticates as itself, keeping the operator's raw keys out of the agent
 	// account. Tilde-relative, expanded per user.
 	SecretConfigPaths []string
+	// ContainerTunnel are the hosts the egress proxy of `jentic run
+	// --container` tunnels for this agent without terminating TLS: its LLM
+	// provider and the endpoints its login and telemetry need. An entry is an
+	// exact host or has "*" for exactly one label. Tunnel hosts take
+	// precedence over governed vendor domains, so a provider endpoint under
+	// one (Bedrock under amazonaws.com) is never decrypted. An agent without
+	// any reaches only Jentic and the governed vendors from a container.
+	ContainerTunnel []string
+	// ContainerProviderTunnels add tunnel hosts for an alternative provider
+	// when the operator's environment selects it.
+	ContainerProviderTunnels []ProviderTunnel
+}
+
+// ProviderTunnel is the tunnel allowlist of one alternative LLM provider.
+type ProviderTunnel struct {
+	// Env is the variable that selects the provider ("1"/"true").
+	Env string
+	// Hosts are tunnelled when it does.
+	Hosts []string
+	// RegionEnv names the variable holding the provider's region, and
+	// RegionHost the host it adds ("{region}" is replaced), for a provider
+	// whose regional endpoints a one-label wildcard cannot express.
+	RegionEnv  string
+	RegionHost string
 }
 
 // Registry is the set of known RUNNABLE agents — the ones `jentic run <id>` can
@@ -73,6 +97,24 @@ var Registry = map[string]Descriptor{
 		// gives the agent account the operator's Claude Code setup; the operator
 		// still authenticates separately on first launch.
 		ConfigPaths: []string{"~/.claude", "~/.claude.json"},
+		ContainerTunnel: []string{
+			"api.anthropic.com", "platform.claude.com", "statsig.anthropic.com", "console.anthropic.com",
+		},
+		ContainerProviderTunnels: []ProviderTunnel{
+			{
+				Env: "CLAUDE_CODE_USE_BEDROCK",
+				// Inference and the IAM Identity Center login only: every
+				// other AWS host stays governed (aws CLI calls go through
+				// Jentic).
+				Hosts: []string{"bedrock-runtime.*.amazonaws.com", "oidc.*.amazonaws.com", "portal.sso.*.amazonaws.com"},
+			},
+			{
+				Env:        "CLAUDE_CODE_USE_VERTEX",
+				Hosts:      []string{"aiplatform.googleapis.com", "oauth2.googleapis.com"},
+				RegionEnv:  "CLOUD_ML_REGION",
+				RegionHost: "{region}-aiplatform.googleapis.com",
+			},
+		},
 	},
 	"codex": {
 		ID:         "codex",

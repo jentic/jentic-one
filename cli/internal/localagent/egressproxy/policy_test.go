@@ -1,6 +1,19 @@
 package egressproxy
 
-import "testing"
+import (
+	"slices"
+	"testing"
+
+	"github.com/jentic/jentic-one/cli/internal/localagent/container"
+)
+
+// The CLI decides which vendors a session governs from the container
+// package's list; the proxy must govern exactly those.
+func TestGovernableVendorsMatchTheCLI(t *testing.T) {
+	if !slices.Equal(GovernableVendors(), container.GovernableVendors()) {
+		t.Errorf("proxy vendors %v != CLI vendors %v", GovernableVendors(), container.GovernableVendors())
+	}
+}
 
 var claudeTunnel = []string{
 	"api.anthropic.com", "platform.claude.com", "statsig.anthropic.com", "console.anthropic.com",

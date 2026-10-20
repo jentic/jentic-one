@@ -6,6 +6,9 @@ package localagentcmd
 // the isolation, so no agent account, ACL grant or confinement profile is
 // involved; the work folder is bind-mounted at its host path and the active
 // context is exported into the session's home volume, which teardown deletes.
+// With the default "proxy" egress the agent reaches its LLM provider and the
+// governed vendor APIs through the session's egress proxy
+// (run_container_egress.go).
 
 import (
 	"bytes"
@@ -73,9 +76,10 @@ func addContainerFlags(cmd *cobra.Command, o *containerOptions) {
 			"(the work folder is mounted; only Jentic is reachable from inside)")
 	cmd.Flags().StringVar(&o.image, "container-image", container.DefaultAgentImage,
 		"EXPERIMENTAL: the agent image for --container")
-	cmd.Flags().StringVar(&o.egress, "container-egress", container.EgressNone,
+	cmd.Flags().StringVar(&o.egress, "container-egress", container.EgressProxy,
 		"EXPERIMENTAL: the --container egress mode; "+strings.Join(container.EgressModes(), ", ")+
-			" (none: the agent reaches only Jentic, so LLM and vendor calls fail)")
+			" (proxy: the agent's LLM provider is tunnelled, governed vendor APIs go through Jentic, everything else is refused;"+
+			" none: the agent reaches only Jentic)")
 }
 
 // containerConflicts names the flags that only mean something for the agent
@@ -109,7 +113,7 @@ func (a *Cmd) runContainer(cmd *cobra.Command, opts *runOptions, agentID string,
 	if !ok {
 		return fmt.Errorf("--container runs only %s for now, not %q", strings.Join(containerAgentIDs(), ", "), agentID)
 	}
-	egress, err := container.ResolveEgress(opts.container.egress)
+	egressMode, err := container.ParseEgressMode(opts.container.egress)
 	if err != nil {
 		return err
 	}
@@ -134,7 +138,11 @@ func (a *Cmd) runContainer(cmd *cobra.Command, opts *runOptions, agentID string,
 	}
 
 	d := container.CLI{}
-	engine, err := container.Preflight(ctx, d, opts.container.image, container.DefaultBridgeImage)
+	images := []string{opts.container.image, container.DefaultBridgeImage}
+	if egressMode == container.EgressProxy {
+		images = append(images, container.DefaultProxyImage)
+	}
+	engine, err := container.Preflight(ctx, d, images...)
 	if err != nil {
 		var pe *container.PreflightError
 		if errors.As(err, &pe) {
@@ -198,6 +206,23 @@ func (a *Cmd) runContainer(cmd *cobra.Command, opts *runOptions, agentID string,
 
 	uid := containerUID(engine)
 	desc, _ := localagent.Lookup(agentID)
+	var egress container.Egress = container.NoEgress{}
+	var proxy *proxyEgressSetup
+	if egressMode == container.EgressProxy {
+		if proxy, err = setUpProxyEgress(ctx, st, desc, container.DefaultProxyImage); err != nil {
+			return err
+		}
+		// Registered after the teardown, so it runs first: the tokens are
+		// dead before the containers go.
+		defer func() {
+			rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), containerTeardownTimeout)
+			defer cancel()
+			if err := proxy.Close(rctx); err != nil {
+				fmt.Fprintln(a.Err, theme.Warnf("not every session invocation token was revoked (each expires on its own): %v", err))
+			}
+		}()
+		egress = proxy.egress
+	}
 	plan, err := container.NewPlan(container.Options{
 		SessionID:   sessionID,
 		Owner:       owner,
@@ -222,12 +247,15 @@ func (a *Cmd) runContainer(cmd *cobra.Command, opts *runOptions, agentID string,
 
 	fmt.Fprintln(a.Out, theme.Warnf("--container is experimental."))
 	fmt.Fprintln(a.Out, theme.Infof("Starting %s in a container (session %s) with %s mounted ...", desc.Binary, sessionID, workDir))
-	if egress.Name() == container.EgressNone {
-		fmt.Fprintln(a.Out, theme.Dim.Render("  Egress: none. The agent reaches only Jentic; calls to its LLM provider and to vendor APIs fail."))
-	}
+	printEgressSummary(a, egressMode, proxy)
 	sess := &container.Session{Plan: plan, Docker: d}
 	if err := sess.Up(ctx); err != nil {
 		return containerUnavailableErr(fmt.Sprintf("could not start the container session: %v", err), "")
+	}
+	if proxy != nil && proxy.keeper != nil {
+		proxy.keeper.Run(ctx, func(ctx context.Context, tokens map[string]string) error {
+			return proxy.egress.PushTokens(ctx, d, plan, tokens)
+		})
 	}
 	if err := sess.Seed(ctx, bytes.NewReader(archive)); err != nil {
 		return containerUnavailableErr(err.Error(), "")
@@ -275,6 +303,23 @@ func (a *Cmd) attachContainer(ctx context.Context, sess *container.Session) erro
 		return &cmdcore.ExitCodeError{Code: exitErr.ExitCode()}
 	}
 	return fmt.Errorf("run the agent container: %w", waitErr)
+}
+
+// printEgressSummary says what the agent can reach beyond Jentic.
+func printEgressSummary(a *Cmd, mode string, proxy *proxyEgressSetup) {
+	if mode == container.EgressNone || proxy == nil {
+		fmt.Fprintln(a.Out, theme.Dim.Render("  Egress: none. The agent reaches only Jentic; calls to its LLM provider and to vendor APIs fail."))
+		return
+	}
+	governed := "none"
+	if len(proxy.egress.Vendors) > 0 {
+		governed = strings.Join(proxy.egress.Vendors, ", ")
+	}
+	tunnel := "none"
+	if len(proxy.egress.Tunnel) > 0 {
+		tunnel = strings.Join(proxy.egress.Tunnel, ", ")
+	}
+	fmt.Fprintln(a.Out, theme.Dim.Render("  Egress: proxy. Governed through Jentic: "+governed+"; tunnelled: "+tunnel+"; everything else is refused."))
 }
 
 func containerAgentIDs() []string {
