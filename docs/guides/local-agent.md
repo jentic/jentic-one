@@ -307,6 +307,60 @@ revocable virtual key, so nothing sensitive comes to rest in the agent account.
   deliberately *not* shared — the agent can't reach into your home. Install
   those in the agent account, or use the binary-copy route.
 
+### Container mode (experimental) — `jentic run --container`
+
+`--container` runs the agent in a Docker container instead of as the agent
+user. No agent account, grant or sandbox profile is involved: the container is
+the isolation.
+
+```bash
+# Build the two images once, from a jentic-one checkout (they are not published):
+docker build -f deploy/docker/run-agent.Dockerfile -t jentic-run-agent:local cli
+docker build -f deploy/docker/run-bridge.Dockerfile -t jentic-run-bridge:local deploy/docker
+
+jentic run --container claude ~/src/project
+```
+
+- **The work folder** is bind-mounted read-write at its host path and is the
+  agent's working directory. The same folders the grant policy bans (a home
+  root, `~/.ssh`, `~/.config`, system trees) are refused.
+- **Jentic** stays at the active context's URLs (`http://127.0.0.1:8000` and
+  the broker's port), so tokens and audiences match. The context must be on
+  this machine's loopback. The active context is exported into the session's
+  home volume, mode `agent`, as on the agent-user path.
+- **Nothing else is reachable.** The only egress mode so far is
+  `--container-egress none`: no route, no DNS, no other container. The agent's
+  calls to its LLM provider and to vendor APIs fail, so Claude Code starts but
+  cannot answer prompts yet.
+- **Hardening:** an unprivileged uid, every capability dropped,
+  `no-new-privileges`, a read-only root filesystem, no Docker socket.
+- **Config seeding** writes a fresh `~/.claude.json` (onboarding done, the work
+  folder trusted). With `--seed-config` (or a yes at the prompt) it also copies
+  your theme, model, permissions and `CLAUDE.md`. Hooks, the status line, key
+  helpers, `env`, plugins, credentials and login state are never copied, nor is
+  any provider config (`~/.aws`, gcloud).
+- **Teardown:** the agent, bridge containers, network and volumes are removed
+  when the session ends, on exit, Ctrl-C or SIGTERM. If the client is killed
+  outright, the next `jentic run --container` removes the leftovers. The
+  agent's exit code is passed through.
+- **Native Linux Docker:** the bridge that carries the Jentic ports runs in
+  the host's network namespace (the agent never does), so a Jentic bound to
+  `127.0.0.1` is reachable. Under Docker Desktop and OrbStack it uses
+  `host.docker.internal`. The agent runs with your uid on a native engine, so
+  files it writes are yours; under Docker Desktop it runs as uid 1000 and
+  Desktop maps ownership to you.
+
+| Flag | Meaning |
+| ---- | ------- |
+| `--container` | Run in a container (experimental). Refused together with the agent-user flags (`--home`, `--allow-dir`, `--grant`, …). |
+| `--container-image <ref>` | Agent image (default `jentic-run-agent:local`). |
+| `--container-egress none` | Egress mode. `none` is the only one so far. |
+
+A Docker engine that is unreachable, a missing image, a remote context or
+file-less mode (`JENTIC_BEARER_TOKEN`) fail closed with
+`CONFINEMENT_UNAVAILABLE` (exit 1) and the fix to apply. `jentic run` never
+falls back to an unisolated launch.
+
 ## Where state lives
 
 Everything jentic-owned is XDG on both sides (localagent keeps nothing in

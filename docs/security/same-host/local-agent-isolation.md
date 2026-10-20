@@ -604,6 +604,50 @@ tokens. Two further details from live testing, both baked into `jentic run`:
   it, bash emits `getcwd: Permission denied` noise. `jentic run` sets the child's
   dir to `/` for every agent-user invocation.
 
+## Container mode (experimental) — `jentic run --container`
+
+`jentic run --container <agent> [path]` replaces the agent account with a
+Docker container per session (`cli/internal/localagent/container`). The work
+folder is bind-mounted at its host path; the grant policy's banned folders are
+refused.
+
+```
+host Jentic (127.0.0.1:8000/8100)
+   ▲  TCP
+relay container ── unix sockets in a per-session volume ──▶ loopback container
+(host network on native Linux,                              (internal network, no peers;
+ host.docker.internal elsewhere)                             listens on 127.0.0.1:<ports>)
+                                                                 ▲ shares its network namespace
+                                                            agent container
+```
+
+- **The agent reaches Jentic and nothing else.** It shares the loopback
+  container's network namespace: `lo` plus a per-session `internal` network
+  with no gateway and no other member. The loopback forwards Jentic's ports
+  over unix sockets to the relay; the socket volume is never mounted in the
+  agent. Bytes pass unchanged, so `Host: 127.0.0.1:8000` and token audiences
+  match. The loopback listens before the agent starts; if a bridge container
+  stops, the CLI ends the session rather than leave the ports free to take.
+- **Egress is a seam, and closed today.** An egress mode adds sidecars to the
+  internal network, plus environment and read-only mounts for the agent. The
+  only mode is `none`, so LLM and vendor calls fail inside the container.
+- **The agent container** runs as an unprivileged uid under Docker's init, with
+  `--cap-drop ALL`, `no-new-privileges`, a read-only root (tmpfs `/tmp`) and
+  no Docker socket. A spec that mounts one is refused before Docker is called.
+- **Its home** is a per-session volume, seeded before start with the exported
+  context (as on the agent-user path) and a generated Claude Code config. The
+  operator's settings are copied only on opt-in, allowlisted key by key: no
+  hooks, helpers, `env`, plugins, credentials or login state.
+- **Teardown** removes every object carrying the session label, on exit,
+  Ctrl-C and SIGTERM. Each client holds a lock file for its session; the
+  kernel releases it when the client dies, so the next run removes sessions
+  whose lock is free (SIGKILL, a crash). It only removes the sessions of the
+  same uid and host.
+
+Preflight fails closed (`CONFINEMENT_UNAVAILABLE`) when Docker is unreachable,
+an image is missing, the context is not on the host's loopback, or the session
+is file-less.
+
 ## `jentic reset` — tear down the account and this machine's identity state
 
 Onboarding (`setup`/`wizard`) and `jentic run` accumulate real system state on
