@@ -714,14 +714,35 @@ does not start.
   refuses the session. A command can use its own token through Basic proxy
   credentials (`HTTPS_PROXY=http://<cit_ token>:x@…`), which take precedence;
   with no usable token the proxy answers `407` with `Proxy-Authenticate` on
-  the same connection (git sends credentials only after a 407).
+  the same connection. The agent's git gets `GIT_HTTP_PROXY_AUTHMETHOD=basic`
+  so it sends a command's proxy credentials up front instead of waiting for a
+  407 the session token would never trigger.
 - **Vendor-shaped errors.** The broker's proxy route renders its errors in
   the shape of the URL's vendor (GitHub's for `*.github.com`, Cloudflare's for
   `*.cloudflare.com`, Problem Details otherwise); the proxy's own errors
   inside a governed session (the broker unreachable) use the same shapes.
-- **git over HTTPS is not governed yet.** git's HTTP requests to a governed
-  host (`…/info/refs`, `…/git-upload-pack`, `…/git-receive-pack`) get a 403
-  whose text git prints; they are neither tunnelled nor relayed.
+- **git to github.com goes through the governed git pipeline.** On
+  `github.com` itself the proxy relays only git smart HTTP:
+  `GET /<owner>/<repo>[.git]/info/refs?service=git-upload-pack|git-receive-pack`
+  and `POST /<owner>/<repo>[.git]/git-upload-pack|git-receive-pack`, with the
+  path exactly as sent. They take the same route and token as any governed
+  call; the broker serves them through its git pipeline, which checks the
+  binding's git rules per repository and ref before it decrypts the
+  credential, and injects it as git's Basic auth toward GitHub
+  (see [Governed git](../../architecture/broker-execution.md#governed-git)).
+  git inside the container needs no credential helper and no `insteadOf`: it
+  talks to the real `https://github.com/…` URL through `HTTPS_PROXY` and the
+  session CA. It runs with `GIT_TERMINAL_PROMPT=0`, and it never meets a
+  credential challenge: the client's own `Authorization` is dropped, the proxy
+  injects the invocation token on every request, and a broker 401 to git (a
+  refused or expired token) is passed on as a 403 without
+  `WWW-Authenticate`, so git prints the broker's line and stops instead of
+  asking for a credential. Both bodies stream (a large push stays chunked;
+  gzip bodies pass through untouched); the broker applies the size and time
+  limits (`cli_facades.git`). Everything else on `github.com` (web pages, the
+  OAuth endpoints, dumb HTTP, `git-upload-archive`, Git LFS), and any
+  git-shaped path on another governed host, is refused with a 403 whose text
+  git and curl print, and is never relayed.
 
 ### Sharing the operator's provider login (`--container-share-provider-credentials`)
 

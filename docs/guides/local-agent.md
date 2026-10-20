@@ -348,9 +348,11 @@ jentic run --container claude ~/src/project
     starts, renews while it runs and revokes when it ends. A command can
     attribute its own calls with `HTTPS_PROXY=http://<cit_ token>:x@<proxy>:3128`.
     Jentic's refusals come back in the vendor's error shape;
+    git to `github.com` (clone, fetch, push) is governed the same way, by
+    the agent's git rules (see [git in container mode](#git-in-container-mode));
   - **refuses** everything else, plain-HTTP proxying included, with a 403
-    (logged by the proxy). `git push`/`git fetch` over HTTPS to a governed
-    host gets a clear "not supported yet" error.
+    (logged by the proxy). On `github.com` only git is relayed: its web pages
+    and Git LFS are refused.
 
   Trust for the governed hosts comes from a per-session CA the proxy creates
   in memory, name-constrained to those domains (and to no IP address), and
@@ -394,6 +396,63 @@ cannot list its CLI facades, an agent that cannot mint invocation tokens (it
 needs `capabilities:execute` and its own access token, not an API key) and a
 proxy that does not publish this session's CA in time. `jentic run` never
 falls back to an unisolated launch or a looser egress.
+
+#### git in container mode
+
+git inside the container clones, fetches and pushes over HTTPS to the real
+`https://github.com/<owner>/<repo>.git` URL, with no credential helper, token
+or `insteadOf`: the proxy relays git's requests to the broker, which checks
+the agent's git rules per repository and ref and injects the GitHub
+credential itself
+([Governed git](../architecture/broker-execution.md#governed-git)). SSH
+remotes (`git@github.com:…`) do not work: only HTTPS leaves the container.
+`jentic cli list` shows `git` among GitHub's protocols while the deployment
+serves it (`cli_facades.git.enabled`, on by default with the GitHub facade).
+
+The agent needs a credential that covers the built-in git API
+(`github-com/github-git`) and git rules on its binding. The GitHub REST
+credential `jentic connect github` creates (scoped to `api-github-com`) does
+not cover git, and a git credential covers no REST or GraphQL call: each
+binding has its own rules. To connect one through the normal flow, the
+operator adds a vendor entry that targets the git API (same OAuth app as the
+`github` entry; `config/local.yaml` ships it):
+
+```yaml
+vendors:
+  entries:
+    github-git:
+      vendor: github.com/github-git    # the built-in git API, not a catalog API
+      display_name: GitHub (git)
+      flows:
+        - kind: device_authorization
+          client_id: "<your GitHub OAuth app client id>"
+          authorization_endpoint: https://github.com/login/device/code
+          token_endpoint: https://github.com/login/oauth/access_token
+      scopes:
+        - {name: repo, classification: write, default: true}
+```
+
+The agent then asks for it, with the rules it needs; the human approves both
+in the browser:
+
+```bash
+jentic connect github-git --scopes repo --wait --rules '[
+  {"effect": "allow", "match_mode": "git", "path": "fetch:octo-org/app"},
+  {"effect": "allow", "match_mode": "git", "path": "push:octo-org/app:refs/heads/agent/*"}
+]'
+```
+
+That binding may clone and fetch `octo-org/app` and push to `agent/*`
+branches (create or fast-forward); a force-push, a push to any other branch
+or tag, and every other repository are refused, and git prints
+`! [remote rejected] <ref> (jentic: <reason>)`. A git request with no git
+binding is refused with the `jentic connect github-git` command to run.
+
+A vendor-wide credential (vendor `github.com`, no API name, entered by hand)
+also covers git, but it covers every GitHub API of the deployment, including
+ones imported later, under one rule list: REST, GraphQL and git rules still
+each decide only their own kind of request, but a broad REST rule then
+reaches every GitHub REST API. Prefer the per-API `github-git` credential.
 
 #### Testing with your own provider login
 

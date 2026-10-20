@@ -365,8 +365,10 @@ general proxy route (`GitProxyRoute`). It takes a GitHub invocation token
 (another vendor's answers 403 `cli_invocation_vendor_mismatch`) and is served
 while the GitHub facade and `cli_facades.git.enabled` are on (else 404). Errors
 are one `text/plain` line, which git prints as `remote: Jentic: …`; a 401
-carries `WWW-Authenticate: Basic`, so git offers the token from its credential
-helper or URL. The execute pipeline refuses every github.com git URL (400
+carries `WWW-Authenticate: Basic`, so a git holding the token in a credential
+helper or URL offers it. The egress proxy of `jentic run --container`, which
+injects the token itself, passes a 401 on to git as a 403 without the
+challenge, so git prints the line instead of prompting. The execute pipeline refuses every github.com git URL (400
 `git_request_rejected`), whatever the registry holds, so a REST path rule can
 never decide a push.
 
@@ -380,7 +382,16 @@ buffered execute pipeline route these URLs. Bindings and credential selection
 work as for any API: a GitHub credential covers the git API when its API scope
 is the vendor only (`github.com`, no API name), or when it is scoped to
 `github-git`; a credential scoped to the REST API alone (`api.github.com`) does
-not. The stored token (bearer or OAuth) is injected as git's
+not. The normal connect flow creates a `github-git` credential from a vendor
+entry whose `vendor` names the built-in API's catalog id,
+`github.com/github-git`
+([`shared/builtin_apis.py`](../../src/jentic_one/shared/builtin_apis.py); no
+catalog import is attempted for it): `jentic connect github-git`. It covers the
+git API only, and its binding carries its own rules, apart from the REST
+binding's. A vendor-wide credential covers git too, but also every other
+GitHub API under one rule list (jentic/jentic-one#1908); only the rule kinds
+stay separate (a REST path rule never decides a git request, a git rule never
+a REST one). The stored token (bearer or OAuth) is injected as git's
 `Authorization: Basic base64("x-access-token:<token>")`; a credential that
 injects anything else answers 424 `git_credential_unsupported`.
 
