@@ -18,6 +18,7 @@ from jentic_one.admin.repos import (
     AgentCredentialRepository,
     AgentRepository,
     AuthorizationCodeRepository,
+    CliInvocationRepository,
     JobRepository,
     OAuthClientGrantRepository,
     RefreshTokenRepository,
@@ -593,6 +594,7 @@ class AgentService:
             refresh = await RefreshTokenRepository.delete_for_actor(
                 session, agent_id, grant_ids=grant_ids
             )
+            cli_invocations = await CliInvocationRepository.delete_for_actor(session, agent_id)
             await AgentRepository.delete(session, agent_id)
             await record_audit(
                 session,
@@ -619,6 +621,7 @@ class AgentService:
             authorization_codes=codes,
             access_tokens=access,
             refresh_tokens=refresh,
+            cli_invocations=cli_invocations,
             cancelled_jobs=jobs,
             pending_credentials=control.pending_credentials,
             connect_sessions=control.connect_sessions,

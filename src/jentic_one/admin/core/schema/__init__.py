@@ -9,6 +9,7 @@ from jentic_one.admin.core.schema.agent_credentials import AgentCredential
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.core.schema.authorization_codes import AuthorizationCode
+from jentic_one.admin.core.schema.cli_invocations import CliInvocation
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.admin.core.schema.external_identities import ExternalIdentity
@@ -36,6 +37,7 @@ __all__ = [
     "AgentCredentialBinding",
     "AuditEntry",
     "AuthorizationCode",
+    "CliInvocation",
     "Event",
     "ExecutionRecord",
     "ExternalIdentity",
