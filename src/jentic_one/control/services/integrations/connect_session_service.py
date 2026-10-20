@@ -144,6 +144,7 @@ from jentic_one.shared.auth.permission_catalog import (
     ORG_ADMIN,
     compute_effective,
 )
+from jentic_one.shared.builtin_apis import is_builtin_catalog_api_id
 from jentic_one.shared.catalog import (
     ApiSecurityView,
     CatalogAutoImportProtocol,
@@ -3525,7 +3526,9 @@ class ConnectSessionService:
         upstreams. Idempotent (skips when already registered), best-effort
         (never raises — the credential is still valid without the import).
         """
-        if self._catalog_auto_importer is None:
+        if self._catalog_auto_importer is None or is_builtin_catalog_api_id(api_id):
+            # A built-in API (the GitHub git API) has no catalog entry: the
+            # broker serves it without a registry row.
             return
         await self._catalog_auto_importer.ensure_imported(
             api_id=api_id,

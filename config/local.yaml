@@ -127,6 +127,34 @@ vendors:
         method: GET
         identity_field: login
         display_template: "@{login}"
+    # git to github.com through Jentic (clone, fetch, push from
+    # `jentic run --container`): a credential scoped to the broker's built-in
+    # GitHub git API only (`github-com/github-git`), connected with
+    # `jentic connect github-git`. It covers no GitHub REST or GraphQL call,
+    # and the github entry's credential covers no git. The same OAuth app
+    # (client_id) serves both entries.
+    github-git:
+      vendor: github.com/github-git
+      display_name: GitHub (git)
+      flows:
+        - kind: device_authorization
+          client_id: "CHANGE_ME_LOCAL_ONLY"
+          authorization_endpoint: https://github.com/login/device/code
+          token_endpoint: https://github.com/login/oauth/access_token
+      scopes:
+        - name: "repo"
+          classification: write
+          default: true
+          description: "Clone, fetch and push private and public repositories"
+        - name: "workflow"
+          classification: write
+          default: false
+          description: "Push changes to GitHub Actions workflow files"
+      identity_probe:
+        endpoint: https://api.github.com/user
+        method: GET
+        identity_field: login
+        display_template: "@{login}"
 
 # The OAuth issuer / endpoint URIs, the JWT-Bearer assertion audience and the
 # SPA login callback (the "jentic-one-spa" platform client) derive from

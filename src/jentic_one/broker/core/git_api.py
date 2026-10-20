@@ -18,6 +18,10 @@ git authenticates to github.com with HTTP Basic, the token as the password of
 the user ``x-access-token`` (:func:`git_basic_authorization`); the compare API
 the force-push check calls takes the same token as a bearer token.
 
+The identity's axes live in ``shared.builtin_apis``, where the control surface
+reads them too: a vendor-registry entry naming ``github.com/github-git``
+connects a credential scoped to this API only.
+
 Pure module: no FastAPI, httpx or DB imports.
 """
 
@@ -26,10 +30,17 @@ from __future__ import annotations
 import base64
 
 from jentic_one.broker.core.git_protocol import GitEndpoint, GitService, GitTarget
+from jentic_one.shared.builtin_apis import (
+    GITHUB_GIT_API_NAME,
+    GITHUB_GIT_API_VENDOR,
+    GITHUB_GIT_API_VERSION,
+)
 from jentic_one.shared.schemas import APIReference, OperationInfo
 
 #: The git API's identity, as credentials and execution records name it.
-GITHUB_GIT_API = APIReference(vendor="github-com", name="github-git", version="1")
+GITHUB_GIT_API = APIReference(
+    vendor=GITHUB_GIT_API_VENDOR, name=GITHUB_GIT_API_NAME, version=GITHUB_GIT_API_VERSION
+)
 
 #: ``GET /{owner}/{repo}.git/info/refs?service=…``: the ref advertisement.
 INFO_REFS_OPERATION = OperationInfo(
