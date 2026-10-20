@@ -60,14 +60,15 @@ var containerEnvPassthrough = []string{"TERM", "COLORTERM", "LANG", "LC_ALL", "L
 
 // containerAgents are the agents container mode can run, mapped to the
 // builder of their own home files.
-var containerAgents = map[string]func(a *Cmd, prefs seedPrefs, workDir string) ([]container.HomeFile, error){
+var containerAgents = map[string]func(a *Cmd, prefs seedPrefs, workDir string, share *container.ProviderShare) ([]container.HomeFile, error){
 	"claude": claudeContainerFiles,
 }
 
 type containerOptions struct {
-	enabled bool
-	image   string
-	egress  string
+	enabled       bool
+	image         string
+	egress        string
+	shareProvider bool
 }
 
 func addContainerFlags(cmd *cobra.Command, o *containerOptions) {
@@ -80,6 +81,10 @@ func addContainerFlags(cmd *cobra.Command, o *containerOptions) {
 		"EXPERIMENTAL: the --container egress mode; "+strings.Join(container.EgressModes(), ", ")+
 			" (proxy: the agent's LLM provider is tunnelled, governed vendor APIs go through Jentic, everything else is refused;"+
 			" none: the agent reaches only Jentic)")
+	cmd.Flags().BoolVar(&o.shareProvider, shareProviderFlag, false,
+		"EXPERIMENTAL, for local testing: share your own LLM-provider login with the --container agent "+
+			"(~/.aws or ~/.config/gcloud mounted read-only, the provider's env, or ANTHROPIC_API_KEY); "+
+			"the agent can then use that identity directly, bypassing Jentic. Asks for confirmation unless --yes")
 }
 
 // containerConflicts names the flags that only mean something for the agent
@@ -169,7 +174,11 @@ func (a *Cmd) runContainer(cmd *cobra.Command, opts *runOptions, agentID string,
 	if err != nil {
 		return err
 	}
-	agentFiles, err := homeFilesFor(a, opts.seedPrefs(cmd), workDir)
+	share, err := a.prepareProviderShare(cmd, opts)
+	if err != nil {
+		return err
+	}
+	agentFiles, err := homeFilesFor(a, opts.seedPrefs(cmd), workDir, share)
 	if err != nil {
 		return err
 	}
@@ -209,7 +218,7 @@ func (a *Cmd) runContainer(cmd *cobra.Command, opts *runOptions, agentID string,
 	var egress container.Egress = container.NoEgress{}
 	var proxy *proxyEgressSetup
 	if egressMode == container.EgressProxy {
-		if proxy, err = setUpProxyEgress(ctx, st, desc, container.DefaultProxyImage); err != nil {
+		if proxy, err = setUpProxyEgress(ctx, st, desc, container.DefaultProxyImage, providerShareGetenv(share)); err != nil {
 			return err
 		}
 		// Registered after the teardown, so it runs first: the tokens are
@@ -223,19 +232,24 @@ func (a *Cmd) runContainer(cmd *cobra.Command, opts *runOptions, agentID string,
 		}()
 		egress = proxy.egress
 	}
+	var providerMounts []container.Mount
+	if share != nil {
+		providerMounts = share.Mounts
+	}
 	plan, err := container.NewPlan(container.Options{
-		SessionID:   sessionID,
-		Owner:       owner,
-		AgentImage:  opts.container.image,
-		BridgeImage: container.DefaultBridgeImage,
-		WorkDir:     workDir,
-		JenticPorts: ports,
-		Route:       container.RouteFor(engine, runtime.GOOS),
-		AgentUser:   fmt.Sprintf("%d:%d", uid, uid),
-		TTY:         prompt.StdinIsTerminal() && cmdcore.StdoutIsTerminal(),
-		Env:         passthroughEnv(),
-		Command:     append([]string{desc.Binary}, agentArgs...),
-		Egress:      egress,
+		SessionID:      sessionID,
+		Owner:          owner,
+		AgentImage:     opts.container.image,
+		BridgeImage:    container.DefaultBridgeImage,
+		WorkDir:        workDir,
+		JenticPorts:    ports,
+		Route:          container.RouteFor(engine, runtime.GOOS),
+		AgentUser:      fmt.Sprintf("%d:%d", uid, uid),
+		TTY:            prompt.StdinIsTerminal() && cmdcore.StdoutIsTerminal(),
+		Env:            passthroughEnv(),
+		Command:        append([]string{desc.Binary}, agentArgs...),
+		Egress:         egress,
+		ProviderMounts: providerMounts,
 	})
 	if err != nil {
 		return err
@@ -481,7 +495,9 @@ func (m *exportMaterial) homeFiles() ([]container.HomeFile, error) {
 // operator's own preferences, settings and CLAUDE.md are read only when the
 // operator agrees to seed them (the same --seed-config/--no-seed-config
 // decision as the agent-user path), and only their allowlisted parts are kept.
-func claudeContainerFiles(a *Cmd, prefs seedPrefs, workDir string) ([]container.HomeFile, error) {
+// A provider share (--container-share-provider-credentials) adds its env to
+// the settings and the home directories its mounts sit below.
+func claudeContainerFiles(a *Cmd, prefs seedPrefs, workDir string, share *container.ProviderShare) ([]container.HomeFile, error) {
 	var seed container.ClaudeSeed
 	home := localagent.OperatorHome()
 	sources := []string{filepath.Join(home, ".claude.json"), filepath.Join(home, ".claude", "settings.json"), filepath.Join(home, ".claude", "CLAUDE.md")}
@@ -506,7 +522,18 @@ func claudeContainerFiles(a *Cmd, prefs seedPrefs, workDir string) ([]container.
 		seed = container.ClaudeSeed{State: read(sources[0]), Settings: read(sources[1]), Memory: read(sources[2])}
 		fmt.Fprintln(a.Out, theme.Dim.Render("  Seeding your Claude Code preferences (no hooks, plugins, API keys or login state)."))
 	}
-	return container.ClaudeHomeFiles(workDir, seed)
+	var dirs []container.HomeFile
+	if share != nil {
+		seed.ProviderEnv = share.Env
+		for _, d := range share.Dirs {
+			dirs = append(dirs, container.HomeFile{Rel: d, Dir: true})
+		}
+	}
+	files, err := container.ClaudeHomeFiles(workDir, seed)
+	if err != nil {
+		return nil, err
+	}
+	return append(files, dirs...), nil
 }
 
 // containerLocks are the per-session lock files that tell a live session from

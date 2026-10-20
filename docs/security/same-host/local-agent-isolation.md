@@ -723,6 +723,36 @@ does not start.
   host (`…/info/refs`, `…/git-upload-pack`, `…/git-receive-pack`) get a 403
   whose text git prints; they are neither tunnelled nor relayed.
 
+### Sharing the operator's provider login (`--container-share-provider-credentials`)
+
+An opt-in for local testing, off by default, that deliberately breaks the
+rule that no operator credential enters the agent: the agent gets the
+operator's own LLM-provider session and can use it directly, outside Jentic.
+`jentic run` prints a warning on stderr and asks for confirmation (`--yes`
+skips it; without a terminal and without `--yes` it refuses with
+`INTERACTIVE_CONFIRM_BLOCKED`). What it shares is bounded:
+
+- **Mounts, read-only binds only:** `~/.aws` at `/home/agent/.aws` for
+  Bedrock; `~/.config/gcloud` at `/home/agent/.config/gcloud` and a
+  `GOOGLE_APPLICATION_CREDENTIALS` file at
+  `/run/jentic-provider/google-application-credentials.json` for Vertex;
+  nothing for the Anthropic API. Each source is resolved first and refused
+  if it leaves the operator's home, is the home itself, contains a sensitive
+  dir, or lands in a sensitive dir other than its own (a `~/.aws` symlinked
+  to `~/.ssh`). The plan refuses any provider mount that is writable or
+  targets another path.
+- **Environment, filtered:** only the provider selection, profile, region,
+  model and output-limit variables (from the operator's
+  `~/.claude/settings.json` env block and the process environment), and for
+  the Anthropic API `ANTHROPIC_API_KEY` from the process environment only.
+  They are written to the agent's `~/.claude/settings.json` env block in the
+  session volume, never to `docker` argv. Hooks, `awsAuthRefresh` and the
+  other helpers are never copied.
+- **Egress unchanged:** the provider's tunnel hosts are chosen from the
+  shared environment (Bedrock runtime and the IAM Identity Center OIDC and
+  portal hosts for Bedrock); every other AWS host, `sts.*` included, stays
+  governed through the broker.
+
 ## `jentic reset` — tear down the account and this machine's identity state
 
 Onboarding (`setup`/`wizard`) and `jentic run` accumulate real system state on

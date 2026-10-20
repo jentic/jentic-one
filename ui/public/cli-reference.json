@@ -2715,6 +2715,12 @@
               "usage": "EXPERIMENTAL: the agent image for --container"
             },
             {
+              "name": "container-share-provider-credentials",
+              "type": "bool",
+              "default": "false",
+              "usage": "EXPERIMENTAL, for local testing: share your own LLM-provider login with the --container agent (~/.aws or ~/.config/gcloud mounted read-only, the provider's env, or ANTHROPIC_API_KEY); the agent can then use that identity directly, bypassing Jentic. Asks for confirmation unless --yes"
+            },
+            {
               "name": "context",
               "type": "string",
               "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"

@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"slices"
 	"sort"
 	"strconv"
@@ -212,9 +211,10 @@ func (s *proxyEgressSetup) Close(ctx context.Context) error {
 }
 
 // setUpProxyEgress decides what the session governs and tunnels, and mints
-// its tokens. It fails closed: any step that cannot complete refuses the
-// session, with every token minted so far revoked.
-func setUpProxyEgress(ctx context.Context, st *clictx.ActiveState, desc localagent.Descriptor, image string) (*proxyEgressSetup, error) {
+// its tokens. getenv answers the provider selection the tunnel allowlist
+// reads (containerTunnelHosts). It fails closed: any step that cannot
+// complete refuses the session, with every token minted so far revoked.
+func setUpProxyEgress(ctx context.Context, st *clictx.ActiveState, desc localagent.Descriptor, image string, getenv func(string) string) (*proxyEgressSetup, error) {
 	brokerURL := st.BrokerURL
 	if brokerURL == "" {
 		brokerURL = "http://127.0.0.1:" + strconv.Itoa(defaultBrokerPort)
@@ -257,7 +257,7 @@ func setUpProxyEgress(ctx context.Context, st *clictx.ActiveState, desc localage
 	setup.egress = &container.ProxyEgress{
 		Image:      image,
 		Vendors:    vendors,
-		Tunnel:     containerTunnelHosts(desc, os.Getenv),
+		Tunnel:     containerTunnelHosts(desc, getenv),
 		BrokerURL:  strings.TrimRight(brokerURL, "/"),
 		BrokerPort: brokerPort,
 		Nonce:      nonce,

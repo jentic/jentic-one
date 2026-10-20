@@ -192,7 +192,7 @@ func (a *Cmd) runE(cmd *cobra.Command, opts *runOptions, args []string) error {
 	if opts.container.enabled {
 		return a.runContainer(cmd, opts, agentID, posArgs, agentArgs)
 	}
-	for _, name := range []string{"container-image", "container-egress"} {
+	for _, name := range []string{"container-image", "container-egress", shareProviderFlag} {
 		if cmd.Flags().Changed(name) {
 			return fmt.Errorf("--%s needs --container", name)
 		}

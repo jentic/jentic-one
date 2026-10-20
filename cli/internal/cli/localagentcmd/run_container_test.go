@@ -190,21 +190,21 @@ func TestClaudeContainerFilesHonourNoSeed(t *testing.T) {
 		t.Fatal(err)
 	}
 	app := testApp(t)
-	files, err := claudeContainerFiles(app, seedPrefs{forceNoSeed: true}, "/w")
+	files, err := claudeContainerFiles(app, seedPrefs{forceNoSeed: true}, "/w", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(files) != 1 || strings.Contains(string(files[0].Data), "light") {
 		t.Errorf("--no-seed-config must not read the operator's config: %v", files)
 	}
-	files, err = claudeContainerFiles(app, seedPrefs{forceSeed: true}, "/w")
+	files, err = claudeContainerFiles(app, seedPrefs{forceSeed: true}, "/w", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(files[0].Data), "light") || strings.Contains(string(files[0].Data), "sk-x") {
 		t.Errorf("--seed-config keeps allowlisted keys only: %s", files[0].Data)
 	}
-	files, err = claudeContainerFiles(app, seedPrefs{}, "/w")
+	files, err = claudeContainerFiles(app, seedPrefs{}, "/w", nil)
 	if err != nil || strings.Contains(string(files[0].Data), "light") {
 		t.Errorf("non-interactive default is not to seed: %v %v", files, err)
 	}

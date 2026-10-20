@@ -365,7 +365,8 @@ jentic run --container claude ~/src/project
   folder trusted). With `--seed-config` (or a yes at the prompt) it also copies
   your theme, model, permissions and `CLAUDE.md`. Hooks, the status line, key
   helpers, `env`, plugins, credentials and login state are never copied, nor is
-  any provider config (`~/.aws`, gcloud).
+  any provider config (`~/.aws`, gcloud), unless you opt in with
+  `--container-share-provider-credentials` (see below).
 - **Teardown:** the session's invocation tokens are revoked, and the agent,
   bridge and proxy containers, networks and volumes are removed when the
   session ends, on exit, Ctrl-C or SIGTERM. If the client is killed
@@ -383,6 +384,7 @@ jentic run --container claude ~/src/project
 | `--container` | Run in a container (experimental). Refused together with the agent-user flags (`--home`, `--allow-dir`, `--grant`, …). |
 | `--container-image <ref>` | Agent image (default `jentic-run-agent:local`). |
 | `--container-egress proxy\|none` | Egress mode (default `proxy`; see above). |
+| `--container-share-provider-credentials` | For local testing: share your own LLM-provider login with the agent (see below). Off by default; asks for confirmation unless `--yes`. |
 
 A Docker engine that is unreachable, a missing image, a remote context or
 file-less mode (`JENTIC_BEARER_TOKEN`) fail closed with
@@ -392,6 +394,63 @@ cannot list its CLI facades, an agent that cannot mint invocation tokens (it
 needs `capabilities:execute` and its own access token, not an API key) and a
 proxy that does not publish this session's CA in time. `jentic run` never
 falls back to an unisolated launch or a looser egress.
+
+#### Testing with your own provider login
+
+Out of the box the agent in the container has no LLM credential: container
+mode never copies one in, so Claude Code there has to log in on its own. To
+try container mode with the login your own Claude Code already uses (AWS
+Bedrock, say), opt in explicitly:
+
+```bash
+jentic run --container --container-share-provider-credentials claude ~/src/project
+```
+
+`jentic run` prints a warning and asks you to confirm (`--yes` confirms up
+front; without a terminal and without `--yes` it refuses). What the agent gets
+depends on the provider your `~/.claude/settings.json` env block (or your
+shell) selects:
+
+| Provider | Mounted read-only | Passed |
+| -------- | ----------------- | ------ |
+| Bedrock (`CLAUDE_CODE_USE_BEDROCK`) | `~/.aws` → `/home/agent/.aws` | `CLAUDE_CODE_USE_BEDROCK`, `AWS_PROFILE`, `AWS_REGION`, `AWS_DEFAULT_REGION` |
+| Vertex (`CLAUDE_CODE_USE_VERTEX`) | `~/.config/gcloud` → `/home/agent/.config/gcloud`; a `GOOGLE_APPLICATION_CREDENTIALS` file → `/run/jentic-provider/google-application-credentials.json` | `CLAUDE_CODE_USE_VERTEX`, `CLOUD_ML_REGION`, `ANTHROPIC_VERTEX_PROJECT_ID`, `GOOGLE_APPLICATION_CREDENTIALS` (the mounted copy) |
+| Anthropic API (default) | nothing | `ANTHROPIC_API_KEY`, from your shell only (never from a file) |
+
+For every provider the `ANTHROPIC_*MODEL*` variables,
+`CLAUDE_CODE_MAX_OUTPUT_TOKENS` and `MAX_THINKING_TOKENS` are passed too. A
+value in your settings wins over your shell's, as in Claude Code itself. The
+variables go into the agent's own `~/.claude/settings.json` env block in the
+session volume; nothing else from your settings env is passed, and hooks,
+`awsAuthRefresh` and the other helpers are never copied. A claude.ai
+subscription login (kept in your keychain) is not shared.
+
+With Bedrock and an IAM Identity Center (SSO) profile:
+
+- The agent's AWS SDK reads your profile and the SSO token cache in
+  `~/.aws/sso/cache` from the read-only mount. When it refreshes a token it
+  keeps the new one in memory (the SDK ignores a failed cache write), so the
+  mount does not need to be writable.
+- `awsAuthRefresh` runs a command on your machine, so it is not run in the
+  container. When your SSO session lapses, run `aws sso login` (or your
+  usual refresh) on the host. The mount is live, so the agent sees the new
+  token; if Claude Code keeps a failed login, restart the session.
+- The egress proxy tunnels Bedrock runtime (`bedrock-runtime.<region>.amazonaws.com`)
+  and the SSO OIDC and portal hosts (`oidc.<region>…`, `portal.sso.<region>…`),
+  chosen from the shared settings. Every other AWS host, `sts.*` included,
+  stays governed through Jentic, so a profile that assumes a role through
+  STS (`role_arn`/`source_profile`) or runs a `credential_process` does not
+  work in the container; an SSO profile or static keys in `~/.aws` do.
+
+Why it is not the default: container mode's guarantee is that the agent holds
+no credential of yours and reaches vendor APIs only through Jentic. A shared
+provider login breaks that for the provider: the agent can read the mounted
+files (every profile and key in `~/.aws`, not only the one in use) and call
+the provider as you, without Jentic governing, recording or limiting those
+calls. The mounts are read-only and limited to the paths above; a `~/.aws`
+or gcloud dir that is a symlink out of your home, to your home itself or
+into another sensitive dir (`~/.ssh`, …) is refused. Use it on your own
+machine, for testing.
 
 ## Where state lives
 
