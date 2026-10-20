@@ -2384,6 +2384,23 @@ def test_worker_reconnect_backoff_out_of_bounds_rejected(config_file: Path, key:
         load_config(config_file)
 
 
+def test_broker_server_timing_defaults_off(config_file: Path) -> None:
+    """Server-Timing exposes stage latencies, so it is opt-in (#1717)."""
+    assert load_config(config_file).broker.server_timing is False
+
+
+def test_broker_server_timing_from_yaml_and_env(
+    tmp_path: Path, sample_config_dict: dict[str, Any]
+) -> None:
+    sample_config_dict["broker"] = {"server_timing": True}
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.dump(sample_config_dict))
+    assert load_config(path).broker.server_timing is True
+
+    with patch.dict(os.environ, {"JENTIC__BROKER__SERVER_TIMING": "false"}, clear=False):
+        assert load_config(path).broker.server_timing is False
+
+
 # --- trusted-issuer jwks_url scheme (#1723) -----------------------------------
 
 _HTTP_JWKS_EVENT = "trusted_issuer_jwks_url_plain_http"

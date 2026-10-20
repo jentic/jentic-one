@@ -649,6 +649,32 @@ components:
         type: string
         examples:
           - Stripe prod key
+    ServerTiming:
+      description: |
+        W3C Server-Timing. When the upstream sends its own
+        `Server-Timing`, it is forwarded. When the deployment
+        enables `broker.server_timing` (off by default), the Broker
+        appends a second field with per-stage durations in milliseconds
+        for authenticated callers: `jentic-auth`, `jentic-egress`,
+        `jentic-discover`, `jentic-rules`, `jentic-body`,
+        `jentic-idempotency`, `jentic-cred`, `jentic-upstream`,
+        `jentic-persist`, `jentic-total` — fixed names in the reserved
+        `jentic-` namespace (an upstream entry claiming that prefix is
+        dropped), no identifiers. Only the stages that ran are listed. On
+        a streamed response the headers precede the body, so
+        `jentic-upstream` is the wait for the upstream headers and
+        `jentic-persist` is absent. The field also appears on
+        post-authentication error responses: with durations once the
+        upstream was called (e.g. a `504`), and as stage names only for an
+        error the Broker raises before the upstream call (e.g. `404`,
+        `403`, `409`, `424`). `jentic-upstream` includes the circuit-breaker
+        check, so a circuit-open `503` carries durations even though no
+        upstream request was sent. It never appears on `401`, a missing-permission
+        `403`, a rate-limit `429` or a load-shed `503`.
+      schema:
+        type: string
+        examples:
+          - jentic-auth;dur=1.4, jentic-egress;dur=0.3, jentic-discover;dur=0.9, jentic-rules;dur=2.1, jentic-body;dur=0.1, jentic-cred;dur=3.0, jentic-upstream;dur=84.2, jentic-persist;dur=4.7, jentic-total;dur=97.6
   parameters:
     UpstreamUrl:
       name: upstream_url
@@ -1175,6 +1201,8 @@ components:
           $ref: "#/components/headers/JenticCredentialId"
         Jentic-Credential-Name:
           $ref: "#/components/headers/JenticCredentialName"
+        Server-Timing:
+          $ref: "#/components/headers/ServerTiming"
       content:
         "*/*":
           schema:
@@ -1236,6 +1264,8 @@ components:
             type: string
             examples:
               - getTrack
+        Server-Timing:
+          $ref: "#/components/headers/ServerTiming"
       content:
         application/json:
           schema:

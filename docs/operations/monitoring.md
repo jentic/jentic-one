@@ -174,3 +174,73 @@ its record was silently dropped — the only signal that happened),
 0.9 of), `broker.circuit.open_total`, `broker.retry.exhausted_total`,
 `broker.deadline.exceeded_total`, `broker.rate_limited_total`, and
 `audit.events`.
+
+### Per-request stage timing (`Server-Timing`)
+
+To see where one broker request spends its time without a profiler, set
+`broker.server_timing: true` (`JENTIC__BROKER__SERVER_TIMING=true`). Execute
+responses to authenticated callers then carry a W3C
+[`Server-Timing`](https://www.w3.org/TR/server-timing/) header — durations in
+milliseconds, fixed stage names only (never URLs, ids or secrets):
+
+```text
+Server-Timing: jentic-auth;dur=1.4, jentic-egress;dur=0.3, jentic-discover;dur=0.9, jentic-rules;dur=2.1, jentic-body;dur=0.1, jentic-cred;dur=3.0, jentic-upstream;dur=84.2, jentic-persist;dur=4.7, jentic-total;dur=97.6
+```
+
+Only the stages a request ran are listed. A stage that fails is still
+reported, so a slow failure shows where the time went.
+
+| Stage | Covers |
+| ----- | ------ |
+| `jentic-auth` | Token validation, the execute-permission check and the rate limit |
+| `jentic-egress` | The egress allowlist check of the upstream URL, DNS resolution included — on entry, and again after credential injection when server variables rewrite the host |
+| `jentic-discover` | Operation discovery, including `Jentic-Revision` pin resolution and any unregistered-URL handler |
+| `jentic-rules` | Credential-binding derivation and permission-rule evaluation |
+| `jentic-body` | Reading (and size-capping) the request body |
+| `jentic-idempotency` | The `Idempotency-Key` claim and completion round-trips to shared state |
+| `jentic-cred` | Credential resolution and injection |
+| `jentic-upstream` | The upstream call (buffered: the whole exchange, retries and backoff included; streaming: until the upstream response headers arrive) |
+| `jentic-persist` | The request's admin-database write: the execution record and lifecycle events (including the `FAILED` record written when the upstream call fails), the queued job of an async call, or the hold of an approval-gated call |
+| `jentic-total` | From the broker's middleware stack admitting the request (inside admission control) to the response headers |
+
+`jentic-total` minus the other stages is routing, response assembly and the
+middleware itself. Time spent outside the broker's middleware stack (the
+admission gate, the ASGI server) is not included.
+
+`jentic-upstream` wraps the whole pipeline call, so on the buffered path it
+is at least the `broker.execution.duration_ms` the runner records for the
+same call: that metric is the final attempt's own round trip, while the stage
+also covers earlier retry attempts, backoff and the circuit-breaker check.
+
+On the streaming fast path the headers are sent before the body, and the
+execution record is written after it, so `jentic-persist` is absent there.
+
+**Namespacing and upstream timing.** Every broker name carries the `jentic-`
+prefix, so the broker's entries can't be confused with an upstream's own
+`total` or `db` metrics. If the upstream sent its own `Server-Timing`, it is
+passed through and the broker's entries follow as a second header field. An
+upstream entry that claims the `jentic-` prefix is dropped while the broker
+emits its own field, so every `jentic-*` metric a client sees comes from the
+broker. An idempotent replay doesn't call the upstream, so the stored
+response is kept without its upstream `Server-Timing`. The replay's broker
+field has no `jentic-upstream`.
+
+**Who sees what.** Requests rejected before the caller is fully admitted carry
+no broker timing at all: a `401`, a `403` for a missing execute permission, a
+rate-limit `429`, a load-shed `503`. An error the broker raises after
+admission but before calling the upstream lists the stages that ran **without
+durations**, for example `jentic-auth, jentic-egress, jentic-discover,
+jentic-total` on a `404 operation_not_found`. This covers a `404`, a rule-deny
+`403`, a `409`, a `424` and a replayed upstream error. Those responses are
+where an authenticated caller could compare server-side branches (an unknown
+revision pin versus another caller's draft), and a server-measured duration
+strips the network noise that otherwise hides the difference. Once the
+upstream was called, the durations are reported in full: success, an upstream
+error status, or a transport failure such as `504`. `jentic-upstream` includes
+the circuit-breaker check, so a circuit-open `503` also carries durations even
+though no upstream request was sent.
+
+The flag is **off by default** and should stay off on deployments exposed to
+callers you don't trust with it. On successful calls, per-stage latencies
+still help fingerprint the deployment and can tell a cache hit from a
+database read (for example in `jentic-auth` or `jentic-rules`).
