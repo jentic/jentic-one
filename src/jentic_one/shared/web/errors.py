@@ -7,6 +7,12 @@ and Problem Details response construction.
 :func:`sanitize_validation_errors` / :func:`request_validation_error_handler`
 strip the submitted values that FastAPI's default 422 body echoes back, so a
 malformed request carrying a secret never has it reflected in the response.
+
+:func:`apply_route_error_response_hook` is the route-scoped counterpart of
+the factory's ``response_hook``: the central handlers pass their error
+response through it, and a route whose clients cannot read Problem Details
+(a vendor CLI facade) reshapes it there, after the handler has mapped and
+logged the error as usual.
 """
 
 from __future__ import annotations
@@ -20,6 +26,8 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from jentic.problem_details import ProblemDetailException
+from starlette.responses import Response
+from starlette.routing import BaseRoute
 
 from jentic_one.shared.db.connectivity import redact_sql
 from jentic_one.shared.db.errors import DatabaseCommitOutcomeUnknownError, DatabaseUnavailableError
@@ -88,12 +96,15 @@ def sanitize_validation_errors(errors: Iterable[Any]) -> list[dict[str, Any]]:
 
 
 async def request_validation_error_handler(
-    _request: Request, exc: RequestValidationError
-) -> JSONResponse:
+    request: Request, exc: RequestValidationError
+) -> Response:
     """FastAPI's default 422 body (``{"detail": [...]}``) without echoed input."""
-    return JSONResponse(
-        status_code=422,
-        content={"detail": sanitize_validation_errors(exc.errors())},
+    return apply_route_error_response_hook(
+        request,
+        JSONResponse(
+            status_code=422,
+            content={"detail": sanitize_validation_errors(exc.errors())},
+        ),
     )
 
 
@@ -118,6 +129,34 @@ def log_database_unavailable(
 
 ResponseHook = Callable[[Request, Exception, int, JSONResponse], JSONResponse]
 ServiceErrorHandler = Callable[[Request, Any], Coroutine[Any, Any, JSONResponse]]
+
+#: Reshapes a central handler's error response for one route: ``(request, response) -> response``.
+RouteErrorResponseHook = Callable[[Request, Response], Response]
+
+#: The attribute a route class sets to a :data:`RouteErrorResponseHook`.
+ROUTE_ERROR_RESPONSE_HOOK_ATTR: Final = "error_response_hook"
+
+
+def apply_route_error_response_hook(request: Request, response: Response) -> Response:
+    """Pass an error response through the matched route's error-response hook, if any.
+
+    Every central exception handler calls this on the response it built, so a
+    route reshapes its errors in one place whatever raised them (an auth
+    dependency, a domain error, an unmapped exception). The route opts in by
+    being an instance of a route class that sets
+    :data:`ROUTE_ERROR_RESPONSE_HOOK_ATTR`; every other route, and an error
+    raised before any route matched, gets ``response`` unchanged. The hook
+    sees the finished response only: the mapping and the logging stay with
+    the handler.
+    """
+    scope = getattr(request, "scope", None)
+    route = scope.get("route") if isinstance(scope, dict) else None
+    if not isinstance(route, BaseRoute):
+        return response
+    hook: RouteErrorResponseHook | None = getattr(route, ROUTE_ERROR_RESPONSE_HOOK_ATTR, None)
+    if hook is None:
+        return response
+    return hook(request, response)
 
 
 def _safe_detail_for(
@@ -215,7 +254,7 @@ def make_service_error_handler(
     return handler
 
 
-async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+async def unhandled_exception_handler(request: Request, exc: Exception) -> Response:
     """Answer an exception no other handler claimed with a generic 500 Problem Details.
 
     Without this, Starlette's ``ServerErrorMiddleware`` answers ``text/plain``
@@ -244,17 +283,20 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
         if request_carries_credential(request.scope.get("headers", []))
         else None
     )
-    return JSONResponse(
-        status_code=500,
-        content=problem.detail,
-        media_type="application/problem+json",
-        headers=headers,
+    return apply_route_error_response_hook(
+        request,
+        JSONResponse(
+            status_code=500,
+            content=problem.detail,
+            media_type="application/problem+json",
+            headers=headers,
+        ),
     )
 
 
 async def state_backend_capacity_error_handler(
     request: Request, exc: StateBackendCapacityError
-) -> JSONResponse:
+) -> Response:
     """Refuse a request whose shared-state write was refused: 503 + ``Retry-After``.
 
     The write was a claim, a single-use marker or a nonce the request depends
@@ -277,9 +319,12 @@ async def state_backend_capacity_error_handler(
         title="Service Unavailable",
         instance=request.url.path,
     )
-    return JSONResponse(
-        status_code=503,
-        content=problem.detail,
-        media_type="application/problem+json",
-        headers={"Retry-After": str(exc.retry_after_s)},
+    return apply_route_error_response_hook(
+        request,
+        JSONResponse(
+            status_code=503,
+            content=problem.detail,
+            media_type="application/problem+json",
+            headers={"Retry-After": str(exc.retry_after_s)},
+        ),
     )

@@ -48,6 +48,7 @@ from jentic_one.shared.web.cache_control import AuthenticatedResponseCacheMiddle
 from jentic_one.shared.web.container import AppContainer, RouterSpec
 from jentic_one.shared.web.deps import TokenVerifier
 from jentic_one.shared.web.errors import (
+    apply_route_error_response_hook,
     request_validation_error_handler,
     state_backend_capacity_error_handler,
     unhandled_exception_handler,
@@ -79,7 +80,8 @@ async def spa_aware_problem_detail_handler(
     when an SPA is mounted we redirect into it and let the client-side auth
     state take over (login screen or dashboard). Everything else — API clients
     (JSON ``Accept``), requests that *did* present a credential, non-GETs —
-    keeps the RFC 9457 response byte-for-byte.
+    keeps the RFC 9457 response byte-for-byte, unless the matched route
+    reshapes its errors (:func:`apply_route_error_response_hook`).
     """
     if (
         exc.status_code == 401
@@ -90,7 +92,9 @@ async def spa_aware_problem_detail_handler(
         and API_KEY_HEADER not in request.headers
     ):
         return RedirectResponse(f"{SPA_MOUNT_PATH}/", status_code=302)
-    return await problem_detail_exception_handler(request, exc)
+    return apply_route_error_response_hook(
+        request, await problem_detail_exception_handler(request, exc)
+    )
 
 
 SURFACE_MODULES = {

@@ -9,6 +9,10 @@ leaks — every response the broker emits is RFC 9457 ``problem+json``.
 Every error carries the agent-recovery contract: ``error_origin`` (+ the
 ``Jentic-Error-Origin`` header) and, when present, the ``agent_directive``
 extension member.
+
+Each handler passes its response through
+:func:`~jentic_one.shared.web.errors.apply_route_error_response_hook`, so a
+CLI facade route answers its errors in the vendor's own error shape.
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette import exceptions as starlette_exceptions
+from starlette.responses import Response
 
 from jentic_one.broker.core.exceptions import (
     AgentDirective,
@@ -31,6 +36,7 @@ from jentic_one.broker.core.problem import problem_body, status_for_broker_error
 from jentic_one.shared.db.errors import DatabaseCommitOutcomeUnknownError, DatabaseUnavailableError
 from jentic_one.shared.web.errors import (
     DB_COMMIT_OUTCOME_UNKNOWN_DETAIL,
+    apply_route_error_response_hook,
     log_database_unavailable,
     sanitize_validation_errors,
 )
@@ -65,10 +71,10 @@ def problem_response(
     return JSONResponse(body, status_code=status, media_type=_PROBLEM_JSON, headers=hdrs)
 
 
-async def handle_broker_error(_request: Request, exc: BrokerError) -> JSONResponse:
+async def handle_broker_error(request: Request, exc: BrokerError) -> Response:
     """Map any ``BrokerError`` to problem+json via the status table."""
     status = status_for_broker_error(exc)
-    return problem_response(
+    response = problem_response(
         status,
         exc.detail,
         type=exc.type,
@@ -78,33 +84,34 @@ async def handle_broker_error(_request: Request, exc: BrokerError) -> JSONRespon
         headers=exc.headers or None,
         instance=exc.instance,
     )
+    return apply_route_error_response_hook(request, response)
 
 
-async def handle_validation(_request: Request, exc: RequestValidationError) -> JSONResponse:
+async def handle_validation(request: Request, exc: RequestValidationError) -> Response:
     """Override FastAPI's default 422 list with a problem+json envelope.
 
     The submitted ``input`` (and value-echoing ``ctx``) is stripped from each
     error item so a rejected request never reflects its values back.
     """
-    return problem_response(
+    response = problem_response(
         422,
         "Request validation failed",
         type="about:blank#validation",
         extra={"errors": sanitize_validation_errors(exc.errors())},
     )
+    return apply_route_error_response_hook(request, response)
 
 
 async def handle_http_exception(
-    _request: Request, exc: starlette_exceptions.HTTPException
-) -> JSONResponse:
+    request: Request, exc: starlette_exceptions.HTTPException
+) -> Response:
     """Override Starlette's default ``{"detail": …}`` (incl. catch-all 404)."""
     headers = getattr(exc, "headers", None)
-    return problem_response(exc.status_code, str(exc.detail), headers=headers)
+    response = problem_response(exc.status_code, str(exc.detail), headers=headers)
+    return apply_route_error_response_hook(request, response)
 
 
-async def handle_database_unavailable(
-    request: Request, exc: DatabaseUnavailableError
-) -> JSONResponse:
+async def handle_database_unavailable(request: Request, exc: DatabaseUnavailableError) -> Response:
     """Answer a transient broker-DB failure (e.g. a lost pooled connection) with a 503.
 
     The client gets a static detail — the wrapped driver message can carry
@@ -123,12 +130,13 @@ async def handle_database_unavailable(
         if isinstance(exc, DatabaseCommitOutcomeUnknownError)
         else "The broker's database is temporarily unavailable"
     )
-    return problem_response(
+    response = problem_response(
         503,
         detail,
         type="database_unavailable",
         instance=request.url.path,
     )
+    return apply_route_error_response_hook(request, response)
 
 
 def install_broker_error_handlers(app: FastAPI) -> None:
