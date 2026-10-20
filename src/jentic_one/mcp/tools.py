@@ -997,9 +997,9 @@ async def _file_import(env: CallEnv, entry_id: str) -> str:
             "overlay is an operator decision (overlays:confirm), not a permission an agent "
             "should request for itself.",
         ) from None
-    except CatalogSpecGoneError as exc:
-        # The entry is listed but its source has no spec for it: retrying the
-        # same entry cannot help.
+    except (CatalogSpecGoneError, CatalogEntryHasNoSpecError) as exc:
+        # The entry is listed but its source has no spec for it (gone upstream,
+        # or a card-only entry): retrying the same entry cannot help.
         raise ToolError(
             CODE_RESOLVE_FAILED,
             str(exc),

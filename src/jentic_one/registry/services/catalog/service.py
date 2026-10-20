@@ -77,7 +77,6 @@ from jentic_one.registry.services.catalog.spec_fetch import CatalogSpecFetcher
 from jentic_one.registry.services.errors import (
     CatalogEntryHasNoSpecError,
     CatalogEntryNotFoundError,
-    CatalogSpecGoneError,
     CatalogUnavailableError,
     NothingToSnoozeError,
     OverlaySupersedeForbiddenError,
@@ -1076,7 +1075,7 @@ class CatalogService:
     def _require_spec(entry: CatalogEntry) -> None:
         """A card-only entry (no ``spec_ref``) has nothing to preview or import."""
         if not entry.has_spec:
-            raise CatalogSpecGoneError(entry.entry_id)
+            raise CatalogEntryHasNoSpecError(entry.entry_id)
 
     async def preview(
         self,

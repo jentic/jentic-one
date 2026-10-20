@@ -92,7 +92,7 @@ def record_ownership_conflicts(source: str, count: int) -> None:
     _gauge(
         "catalog_ownership_conflicts",
         "Imported APIs whose catalog_api_id is now owned by a curated source.",
-    ).add(count, {"source": source})
+    ).set(count, {"source": source})
 
 
 #: ``catalog_source_fetch_total`` outcomes.
