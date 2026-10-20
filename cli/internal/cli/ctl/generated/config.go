@@ -81,12 +81,16 @@ type AdminConfig struct {
 
 // Admin event-stream settings.
 type AdminEventsConfig struct {
-	// How often an open ``GET /events/stream`` re-verifies the caller's credential
-	// and ``events:read`` / ``org:admin`` permission, and re-scopes the events it
-	// delivers. A disabled caller, a revoked or expired token, or a revoked
-	// permission ends the stream within one interval; a narrower permission set
-	// narrows it. Checks run before each poll of the stream (every 5 seconds), so a
-	// value below that behaves as 5 seconds.
+	// Minimum seconds between re-verifications of an open ``GET /events/stream``: its
+	// credential, ``events:read`` / ``org:admin`` permission, and the scope of the
+	// events it delivers. Checks run only at a poll or page boundary, so a check
+	// happens at the first poll or page after the interval elapses; an idle stream
+	// polls every few seconds, so a value below its poll interval behaves as that
+	// interval. A disabled caller, a revoked or expired token, or a revoked
+	// permission ends the stream at that check; a narrower permission set narrows it.
+	// Permissions are those the credential carries: API keys and agent ``at_`` access
+	// tokens resolve them live, while other tokens (a login session token, for one)
+	// carry the set they were issued with and reflect a change only once refreshed.
 	StreamRecheckSeconds float64 `json:"stream_recheck_seconds,omitempty,omitzero" yaml:"stream_recheck_seconds,omitempty" mapstructure:"stream_recheck_seconds,omitempty"`
 }
 

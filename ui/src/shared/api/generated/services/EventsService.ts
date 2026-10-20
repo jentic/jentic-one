@@ -97,8 +97,19 @@ export class EventsService {
      * Stream Events
      * Stream events as Server-Sent Events.
      *
-     * The stream ends once the caller's credential stops verifying (expired,
-     * revoked, or its user disabled or deleted); reconnecting then returns 401.
+     * The open stream re-verifies the caller at the first poll or page after each
+     * `admin.events.stream_recheck_seconds` interval (default 5 s) elapses. Each
+     * page is scoped by the caller's current permissions, so a narrower
+     * permission set narrows the stream. Permissions are those the credential
+     * carries: API keys and agent `at_` access tokens resolve them live, while
+     * other tokens (a login session token, for one) carry the set they were
+     * issued with and reflect a change only once refreshed. The stream ends
+     * with a `stream_closed` frame (`{"type": "stream_closed", "reason": ...}`)
+     * once the credential stops verifying (`refused`: expired, revoked, or its
+     * user or agent disabled or deleted), the caller no longer holds
+     * `events:read` or `org:admin` or must rotate their password (`forbidden`),
+     * or the check or the event store cannot be answered (`unavailable`).
+     * Reconnecting then returns the matching 401, 403 or 503.
      * @returns any Successful Response
      * @throws ApiError
      */

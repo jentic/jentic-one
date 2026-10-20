@@ -7,15 +7,19 @@ the way :class:`EventStreamService` does. This pins:
 * no re-verification before the interval elapses, one per interval after;
 * the refreshed identity is what scopes the next poll;
 * a refused credential, a revoked permission, or a verifier that cannot answer
-  each ends the stream with a ``stream_closed`` frame naming the reason.
+  each ends the stream with a ``stream_closed`` frame naming the reason;
+* an event store that cannot be read ends it with ``stream_closed: unavailable``;
+* a client disconnect ends it without a ``stream_closed`` frame.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, MutableMapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -32,9 +36,15 @@ from jentic_one.admin.web.deps import (
 )
 from jentic_one.admin.web.routers.events import router
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.config import AdminConfig
+from jentic_one.shared.config import AdminConfig, AdminEventsConfig
 from jentic_one.shared.db.errors import DatabaseUnavailableError
-from jentic_one.shared.web.deps import resolve_identity
+from jentic_one.shared.web.deps import (
+    CredentialRecheckOutcome,
+    CredentialRecheckResult,
+    get_credential_recheck,
+    get_ctx,
+    resolve_identity,
+)
 
 _OPENING = Identity(sub="usr_1", permissions=["events:read", "org:admin"])
 _POLL_SECONDS = 5.0
@@ -50,21 +60,32 @@ class _Clock:
 
 @dataclass
 class _FakeStream:
-    """Polls ``polls`` times, advancing the clock one poll interval before each."""
+    """Polls ``polls`` times, advancing the clock one poll interval before each.
+
+    With ``store_down_after`` set, the poll after that many raises
+    ``DatabaseUnavailableError`` the way an unreachable event store does.
+    """
 
     clock: _Clock
     polls: int
+    store_down_after: int | None = None
     scoped_by: list[Identity] = field(default_factory=list)
+    closed: bool = False
 
     def stream(self, *, refresh_identity: IdentityRefresh, **_: Any) -> AsyncIterator[Heartbeat]:
         async def _gen() -> AsyncIterator[Heartbeat]:
-            for _ in range(self.polls):
-                self.clock.now += _POLL_SECONDS
-                identity = await refresh_identity()
-                if identity is None:
-                    return
-                self.scoped_by.append(identity)
-                yield Heartbeat(sent_at=datetime.now(UTC))
+            try:
+                for poll in range(self.polls):
+                    if poll == self.store_down_after:
+                        raise DatabaseUnavailableError("admin db down")
+                    self.clock.now += _POLL_SECONDS
+                    identity = await refresh_identity()
+                    if identity is None:
+                        return
+                    self.scoped_by.append(identity)
+                    yield Heartbeat(sent_at=datetime.now(UTC))
+            finally:
+                self.closed = True
 
         return _gen()
 
@@ -73,10 +94,15 @@ Verdict = Identity | Exception
 
 
 def _app(
-    verdicts: list[Verdict], *, polls: int, recheck_seconds: float
+    verdicts: list[Verdict],
+    *,
+    polls: int,
+    recheck_seconds: float | None,
+    store_down_after: int | None = None,
 ) -> tuple[TestClient, _FakeStream, list[str]]:
+    """Build the app; ``recheck_seconds=None`` leaves the interval to config."""
     clock = _Clock()
-    stream = _FakeStream(clock=clock, polls=polls)
+    stream = _FakeStream(clock=clock, polls=polls, store_down_after=store_down_after)
     calls: list[str] = []
 
     async def _verify(token: str, request: Request) -> Identity:
@@ -92,7 +118,8 @@ def _app(
     app.dependency_overrides[resolve_identity] = lambda: _OPENING
     app.dependency_overrides[get_event_stream_service] = lambda: stream
     app.dependency_overrides[get_stream_clock] = lambda: clock
-    app.dependency_overrides[get_stream_recheck_seconds] = lambda: recheck_seconds
+    if recheck_seconds is not None:
+        app.dependency_overrides[get_stream_recheck_seconds] = lambda: recheck_seconds
     return TestClient(app), stream, calls
 
 
@@ -141,9 +168,13 @@ def test_refreshed_identity_scopes_the_next_poll() -> None:
     [
         (Unauthorized(detail="expired"), "refused"),
         (Identity(sub="usr_1", permissions=["apis:read"]), "forbidden"),
+        (
+            Identity(sub="usr_1", permissions=["events:read"], must_change_password=True),
+            "forbidden",
+        ),
         (DatabaseUnavailableError("admin db down"), "unavailable"),
     ],
-    ids=["refused", "permission-revoked", "unavailable"],
+    ids=["refused", "permission-revoked", "password-rotation-required", "unavailable"],
 )
 def test_failed_reverification_ends_with_stream_closed(verdict: Verdict, reason: str) -> None:
     # The first recheck passes, the second fails: the stream ends at that poll.
@@ -158,10 +189,86 @@ def test_failed_reverification_ends_with_stream_closed(verdict: Verdict, reason:
 
 
 def test_stream_that_ends_on_its_own_sends_no_stream_closed() -> None:
-    client, _, _ = _app([_OPENING], polls=2, recheck_seconds=_POLL_SECONDS)
+    client, stream, _ = _app([_OPENING], polls=2, recheck_seconds=_POLL_SECONDS)
 
     assert [name for name, _ in _get(client)] == ["heartbeat", "heartbeat"]
+    assert stream.closed
 
 
-def test_default_interval_comes_from_config() -> None:
-    assert AdminConfig().events.stream_recheck_seconds == 5.0
+def test_unreadable_event_store_ends_with_stream_closed_unavailable() -> None:
+    client, stream, _ = _app([_OPENING], polls=5, recheck_seconds=_POLL_SECONDS, store_down_after=1)
+
+    frames = _get(client)
+
+    assert [name for name, _ in frames] == ["heartbeat", "stream_closed"]
+    assert frames[-1][1] == {"type": "stream_closed", "reason": "unavailable"}
+    assert stream.closed
+
+
+async def test_client_disconnect_ends_the_stream_without_stream_closed() -> None:
+    client, stream, _ = _app([_OPENING], polls=1000, recheck_seconds=_POLL_SECONDS)
+    received = 0
+
+    async def _receive() -> dict[str, Any]:
+        # The first message carries the request; every later one is the
+        # disconnect, seen by the stream's per-item disconnect check.
+        nonlocal received
+        received += 1
+        if received == 1:
+            return {"type": "http.request", "body": b"", "more_body": False}
+        return {"type": "http.disconnect"}
+
+    body = bytearray()
+
+    async def _send(message: MutableMapping[str, Any]) -> None:
+        if message["type"] == "http.response.body":
+            body.extend(message.get("body", b""))
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.4"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": "/events/stream",
+        "raw_path": b"/events/stream",
+        "root_path": "",
+        "query_string": b"",
+        "headers": [(b"authorization", b"Bearer tok_live"), (b"host", b"testserver")],
+        "client": ("testclient", 123),
+        "server": ("testserver", 80),
+    }
+    await asyncio.wait_for(client.app(scope, _receive, _send), timeout=5)
+
+    assert b"stream_closed" not in body
+    assert len(stream.scoped_by) < 1000, "the disconnect ends the stream early"
+    assert stream.closed, "the service generator is closed on disconnect"
+
+
+def test_valid_outcome_without_identity_fails_closed_as_refused() -> None:
+    client, _, _ = _app([_OPENING], polls=3, recheck_seconds=_POLL_SECONDS)
+
+    async def _recheck(**_: Any) -> CredentialRecheckOutcome:
+        return CredentialRecheckOutcome(CredentialRecheckResult.VALID, None)
+
+    client.app.dependency_overrides[get_credential_recheck] = lambda: _recheck  # type: ignore[attr-defined]
+
+    frames = _get(client)
+
+    assert frames == [("stream_closed", {"type": "stream_closed", "reason": "refused"})]
+
+
+def test_interval_defaults_to_configured_value() -> None:
+    # No override of the interval dependency: it reads ``admin.events`` off the context.
+    ctx = SimpleNamespace(
+        config=SimpleNamespace(
+            admin=AdminConfig(events=AdminEventsConfig(stream_recheck_seconds=10.0))
+        )
+    )
+    client, _, calls = _app([_OPENING], polls=4, recheck_seconds=None)
+    client.app.dependency_overrides[get_ctx] = lambda: ctx  # type: ignore[attr-defined]
+
+    _get(client)
+
+    # Polls land at +5, +10, +15, +20: a 10 s configured interval re-verifies twice.
+    assert calls == ["tok_live", "tok_live"]

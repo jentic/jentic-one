@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
 from jentic_one.admin.core.schema.events import Event
@@ -14,12 +14,15 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.events import EventSeverity
 
-# Rows fetched per repo page while draining the overlap window. A short page
-# (< limit) means the window is drained, saving the empty-batch round-trip.
-_PAGE_LIMIT = 100
+#: Rows fetched per repo page while draining the overlap window. A short page
+#: (< limit) means the window is drained, saving the empty-batch round-trip.
+PAGE_LIMIT = 100
 
-#: Called before every live poll with no arguments. Returns the identity to
-#: scope that poll by, or ``None`` to end the stream.
+#: Seconds an idle stream waits between polls.
+POLL_INTERVAL_SECONDS = 5.0
+
+#: Called before every live page query with no arguments. Returns the identity
+#: to scope that page by, or ``None`` to end the stream.
 IdentityRefresh = Callable[[], Awaitable[Identity | None]]
 
 
@@ -35,8 +38,9 @@ class EventStreamService:
         identity: Identity,
         since: datetime | None = None,
         last_event_id: str | None = None,
-        poll_interval_seconds: float = 5.0,
+        poll_interval_seconds: float = POLL_INTERVAL_SECONDS,
         overlap_seconds: float = 15.0,
+        page_limit: int = PAGE_LIMIT,
         event_type: list[str] | None = None,
         severity: list[str] | None = None,
         requires_action: bool | None = None,
@@ -44,7 +48,7 @@ class EventStreamService:
         actor_id: str | None = None,
         actor_type: str | None = None,
         refresh_identity: IdentityRefresh | None = None,
-    ) -> AsyncIterator[EventView | Heartbeat]:
+    ) -> AsyncGenerator[EventView | Heartbeat, None]:
         """Yield new events (and heartbeats when idle) forever.
 
         Visibility-race note (the reason for ``overlap_seconds``)
@@ -78,11 +82,12 @@ class EventStreamService:
         The stream carries only events visible to ``identity`` (see
         ``EventService``); a ``Last-Event-ID`` the caller cannot see is ignored.
 
-        ``refresh_identity``, when given, runs before every live poll. Its
-        identity replaces ``identity`` for that poll's visibility filters, so a
-        caller whose permissions narrow (losing ``org:admin``, say) stops
-        receiving the wider set on the next poll without reconnecting (#1836).
-        ``None`` ends the stream.
+        ``refresh_identity``, when given, runs before every live page query —
+        each poll's first page and every further page of a burst. Its identity
+        replaces ``identity`` for that page's visibility filters, so a caller
+        whose permissions narrow (losing ``org:admin``, say) stops receiving the
+        wider set on the next page without reconnecting (#1836). ``None`` ends
+        the stream. The callable rate-limits itself; this loop does not.
         """
         access_filters = build_access_filters(identity, Event)
         overlap = timedelta(seconds=overlap_seconds)
@@ -130,7 +135,7 @@ class EventStreamService:
                 batch = await EventRepository.list_after_cursor(
                     session,
                     page_cursor,
-                    limit=_PAGE_LIMIT,
+                    limit=page_limit,
                     event_type=event_type,
                     severity=severity,
                     requires_action=requires_action,
@@ -155,22 +160,24 @@ class EventStreamService:
             # bound, an old resume point (a tab waking after hours) would page
             # the ENTIRE backlog to the present before the first yield — pure
             # wasted I/O the main loop then re-reads to deliver.
-            if len(batch) < _PAGE_LIMIT or batch[-1].created_at > watermark:
+            if len(batch) < page_limit or batch[-1].created_at > watermark:
                 break
             page_cursor = (batch[-1].created_at, batch[-1].id)
 
         while True:
-            if refresh_identity is not None:
-                refreshed = await refresh_identity()
-                if refreshed is None:
-                    return
-                access_filters = build_access_filters(refreshed, Event)
             yielded = False
             # "" sorts before every real id, so the two-tuple cursor starts
             # strictly at the horizon without skipping same-instant rows.
             page_cursor = (watermark - overlap, "")
 
             while True:
+                # Re-scope before every page, not just every poll: a burst can
+                # span many pages, and none of them may outrun a revocation.
+                if refresh_identity is not None:
+                    refreshed = await refresh_identity()
+                    if refreshed is None:
+                        return
+                    access_filters = build_access_filters(refreshed, Event)
                 # The DB session is strictly scoped to this ``async with`` block
                 # and never held across a yield or the ``asyncio.sleep`` below.
                 # Keeping the session local (never stashed on ``self``)
@@ -181,7 +188,7 @@ class EventStreamService:
                     batch = await EventRepository.list_after_cursor(
                         session,
                         page_cursor,
-                        limit=_PAGE_LIMIT,
+                        limit=page_limit,
                         event_type=event_type,
                         severity=severity,
                         requires_action=requires_action,
@@ -219,7 +226,7 @@ class EventStreamService:
                     )
                 # A short page means the window is drained — skip the extra
                 # round-trip that would only observe emptiness.
-                if len(batch) < _PAGE_LIMIT:
+                if len(batch) < page_limit:
                     break
                 page_cursor = (batch[-1].created_at, batch[-1].id)
 

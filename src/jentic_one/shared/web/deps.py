@@ -92,7 +92,7 @@ class CredentialRecheckResult(StrEnum):
     #: The verifier refused it: expired, revoked, or its actor disabled or deleted.
     REFUSED = "refused"
     #: The credential verifies, but its identity no longer meets the requirements
-    #: (a required permission was revoked).
+    #: (a required permission was revoked, or a password rotation is required).
     FORBIDDEN = "forbidden"
     #: The verifier could not answer (the database is unavailable).
     UNAVAILABLE = "unavailable"
@@ -123,8 +123,8 @@ def get_credential_recheck(request: Request) -> CredentialRecheck:
     applies :func:`enforce_identity_requirements` to the identity the verifier
     returns, so a revoked permission is seen as well as a dead credential
     (#1836). The identity carries whatever permissions the verifier resolves:
-    live grants for API keys and user access tokens, the embedded set for a
-    login JWT until it is re-minted.
+    live grants for API keys and agent access tokens, the issued set for
+    other tokens (a login JWT until it is re-minted).
 
     A database that cannot answer reads as ``UNAVAILABLE``, a requirement the
     identity no longer meets as ``FORBIDDEN``, and any other failure as
@@ -202,7 +202,7 @@ def enforce_identity_requirements(
 
 def get_current_identity(
     *,
-    required_permissions: list[str] | None = None,
+    required_permissions: Sequence[str] | None = None,
     allow_expired_password: bool = False,
     require_actor_type: ActorType | None = None,
 ) -> Any:

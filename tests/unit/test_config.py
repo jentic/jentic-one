@@ -137,6 +137,22 @@ def test_env_coerces_int(config_file: Path):
     assert config.databases.registry.port == 9999
 
 
+@pytest.mark.parametrize("seconds", ["0", "-1"])
+def test_events_stream_recheck_seconds_default_env_and_bounds(config_file: Path, seconds: str):
+    assert load_config(config_file).admin.events.stream_recheck_seconds == 5.0
+
+    env = {"JENTIC__ADMIN__EVENTS__STREAM_RECHECK_SECONDS": "2.5"}
+    with patch.dict(os.environ, env, clear=False):
+        assert load_config(config_file).admin.events.stream_recheck_seconds == 2.5
+
+    env = {"JENTIC__ADMIN__EVENTS__STREAM_RECHECK_SECONDS": seconds}
+    with (
+        patch.dict(os.environ, env, clear=False),
+        pytest.raises(ConfigError, match="stream_recheck_seconds"),
+    ):
+        load_config(config_file)
+
+
 def test_http_wire_trace_defaults_off_and_env_enables(config_file: Path):
     assert load_config(config_file).logging.http_wire_trace is False
     with patch.dict(os.environ, {"JENTIC__LOGGING__HTTP_WIRE_TRACE": "true"}, clear=False):

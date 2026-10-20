@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -50,13 +50,19 @@ class Heartbeat(BaseModel):
     sent_at: datetime
 
 
+#: Why the server ended an event stream; see :class:`StreamClosed`.
+StreamClosedReason = Literal["refused", "forbidden", "unavailable"]
+
+
 class StreamClosed(BaseModel):
     """Terminal message sent when the server ends an event stream.
 
     ``reason`` is why the caller may no longer receive events: ``refused``
     (the credential no longer verifies), ``forbidden`` (it verifies but lacks
-    the stream's permission) or ``unavailable`` (it could not be re-verified).
+    the stream's permission, or its user must rotate their password) or
+    ``unavailable`` (it could not be re-verified, or the event store could not
+    be read).
     """
 
     type: str = "stream_closed"
-    reason: str
+    reason: StreamClosedReason

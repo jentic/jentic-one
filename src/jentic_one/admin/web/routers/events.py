@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import re
 from collections.abc import AsyncIterator, Callable
+from contextlib import aclosing
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Final
 
 import structlog
 from fastapi import APIRouter, Depends, Header, Path, Query, Request
@@ -19,6 +20,7 @@ from jentic_one.admin.services.schemas.events import (
     EventView,
     Heartbeat,
     StreamClosed,
+    StreamClosedReason,
 )
 from jentic_one.admin.web.deps import (
     get_event_service,
@@ -32,6 +34,7 @@ from jentic_one.admin.web.schemas.events import (
     EventResponse,
 )
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.db.errors import DatabaseUnavailableError
 from jentic_one.shared.models.events import EventSeverity
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
@@ -165,8 +168,17 @@ async def list_events(
     )
 
 
-#: What admits a caller to ``/events/stream``; the open stream re-checks the same.
-_STREAM_PERMISSIONS = ["events:read"]
+#: What admits a caller to ``/events/stream``. The route gate and the open
+#: stream's re-verification both read this one constant, so they cannot drift.
+_STREAM_PERMISSIONS: Final = ("events:read",)
+
+#: How a failed re-verification reads in the ``stream_closed`` frame. Anything
+#: not listed (including a ``VALID`` outcome with no identity) fails closed.
+_CLOSED_REASONS: Final[dict[CredentialRecheckResult, StreamClosedReason]] = {
+    CredentialRecheckResult.REFUSED: "refused",
+    CredentialRecheckResult.FORBIDDEN: "forbidden",
+    CredentialRecheckResult.UNAVAILABLE: "unavailable",
+}
 
 
 @router.get("/events/stream")
@@ -230,14 +242,18 @@ async def stream_events(
 ) -> StreamingResponse:
     """Stream events as Server-Sent Events.
 
-    The open stream re-verifies the caller every
-    `admin.events.stream_recheck_seconds` (default 5 s). Each poll is scoped by
-    the caller's current permissions, so a narrower permission set narrows the
-    stream. The stream ends with a `stream_closed` frame
-    (`{"type": "stream_closed", "reason": ...}`) once the credential stops
-    verifying (`refused`: expired, revoked, or its user or agent disabled or
-    deleted), the caller no longer holds `events:read` or `org:admin`
-    (`forbidden`), or the check cannot be answered (`unavailable`).
+    The open stream re-verifies the caller at the first poll or page after each
+    `admin.events.stream_recheck_seconds` interval (default 5 s) elapses. Each
+    page is scoped by the caller's current permissions, so a narrower
+    permission set narrows the stream. Permissions are those the credential
+    carries: API keys and agent `at_` access tokens resolve them live, while
+    other tokens (a login session token, for one) carry the set they were
+    issued with and reflect a change only once refreshed. The stream ends
+    with a `stream_closed` frame (`{"type": "stream_closed", "reason": ...}`)
+    once the credential stops verifying (`refused`: expired, revoked, or its
+    user or agent disabled or deleted), the caller no longer holds
+    `events:read` or `org:admin` or must rotate their password (`forbidden`),
+    or the check or the event store cannot be answered (`unavailable`).
     Reconnecting then returns the matching 401, 403 or 503.
     """
     if last_event_id is not None and not _LAST_EVENT_ID_RE.match(last_event_id):
@@ -246,10 +262,10 @@ async def stream_events(
     log = structlog.get_logger(__name__)
     current = identity
     last_verified = clock()
-    closed_reason: CredentialRecheckResult | None = None
+    closed_reason: StreamClosedReason | None = None
 
     async def refresh_identity() -> Identity | None:
-        # The stream outlives the verification that opened it. Before each poll,
+        # The stream outlives the verification that opened it. Before each page,
         # re-verify at most once per interval (#1139, #1836) and hand the
         # service the fresh identity, so a dead credential or a revoked
         # permission ends the stream and a narrower permission set narrows it.
@@ -259,11 +275,11 @@ async def stream_events(
             return current
         outcome = await recheck_credential(required_permissions=_STREAM_PERMISSIONS)
         if outcome.result is not CredentialRecheckResult.VALID or outcome.identity is None:
-            closed_reason = outcome.result
+            closed_reason = _CLOSED_REASONS.get(outcome.result, "refused")
             log.info(
                 "sse_stream_credential_unverified",
                 sub=identity.sub,
-                reason=outcome.result.value,
+                reason=closed_reason,
             )
             return None
         current = outcome.identity
@@ -271,13 +287,13 @@ async def stream_events(
         return current
 
     async def generate() -> AsyncIterator[str]:
-        # The ``async for`` protocol calls ``aclose()`` on the underlying stream
-        # generator when we ``break`` or when this generator is cancelled/closed
-        # on client disconnect, so the per-poll DB session is always unwound and
-        # the pooled connection returned (#627). The ``finally`` only logs — it
-        # must never touch the DB.
+        nonlocal closed_reason
+        # ``aclosing`` closes the service generator on every exit — a ``return``
+        # on disconnect, an exception, or cancellation of this generator — so
+        # its per-page DB session is unwound and the pooled connection returned
+        # (#627). The ``finally`` only logs — it must never touch the DB.
         try:
-            async for item in stream_svc.stream(
+            items = stream_svc.stream(
                 identity=identity,
                 since=since,
                 last_event_id=last_event_id,
@@ -288,20 +304,29 @@ async def stream_events(
                 actor_id=actor_id,
                 actor_type=actor_type,
                 refresh_identity=refresh_identity,
-            ):
-                if await request.is_disconnected():
-                    return
-                if isinstance(item, Heartbeat):
-                    yield f"event: heartbeat\ndata: {item.model_dump_json()}\n\n"
-                elif isinstance(item, EventView):
-                    resp = _event_response(item, request)
-                    yield (
-                        f"event: {resp.type}\n"
-                        f"id: {resp.event_id}\n"
-                        f"data: {resp.model_dump_json(by_alias=True)}\n\n"
-                    )
+            )
+            try:
+                async with aclosing(items):
+                    async for item in items:
+                        if await request.is_disconnected():
+                            return
+                        if isinstance(item, Heartbeat):
+                            yield f"event: heartbeat\ndata: {item.model_dump_json()}\n\n"
+                        elif isinstance(item, EventView):
+                            resp = _event_response(item, request)
+                            yield (
+                                f"event: {resp.type}\n"
+                                f"id: {resp.event_id}\n"
+                                f"data: {resp.model_dump_json(by_alias=True)}\n\n"
+                            )
+            except DatabaseUnavailableError:
+                # The 200 and its headers are already sent, so the error
+                # handler cannot answer with a 503; the frame tells the client
+                # instead, and a reconnect gets the 503.
+                log.warning("sse_stream_store_unavailable", sub=identity.sub)
+                closed_reason = "unavailable"
             if closed_reason is not None:
-                closed = StreamClosed(reason=closed_reason.value)
+                closed = StreamClosed(reason=closed_reason)
                 yield f"event: stream_closed\ndata: {closed.model_dump_json()}\n\n"
         finally:
             log.debug("sse_stream_closed")
