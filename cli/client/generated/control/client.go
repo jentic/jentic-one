@@ -11680,8 +11680,8 @@ type ClientInterface interface {
 	// page treats a 400 as terminal ("retry the connection") because the blob
 	// shares the consent handle's lifetime — a retry re-enters the flow, which
 	// re-parks on a fresh awaiting page while the agent stays pending. Shares
-	// the approval-status poll's own per-IP rate bucket (same cadence, same
-	// caller shape).
+	// the approval-status poll's own per-client-network rate bucket (same
+	// cadence, same caller shape).
 	//
 	// Corresponds with GET /oauth/consent/agent/status (the `ConsentAgentStatus` operationId).
 	ConsentAgentStatus(ctx context.Context, params *ConsentAgentStatusParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -11756,8 +11756,9 @@ type ClientInterface interface {
 	//   die, so reconnecting requires fresh consent (deliberately beyond the
 	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-	//   64 KiB declared body length, and per-IP rate limited; its errors speak
-	//   the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+	//   64 KiB declared body length, and rate limited per client network
+	//   (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+	//   (RFC 7009 §2.2.1), not Problem Details.
 	// - **JSON** (any other content type — the pre-G11 contract, byte-identical
 	//   including 422 shapes): requires a platform bearer identity; revokes the
 	//   caller's own token (access → that token, refresh → its family). Used by
@@ -11792,8 +11793,9 @@ type ClientInterface interface {
 	//   die, so reconnecting requires fresh consent (deliberately beyond the
 	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-	//   64 KiB declared body length, and per-IP rate limited; its errors speak
-	//   the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+	//   64 KiB declared body length, and rate limited per client network
+	//   (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+	//   (RFC 7009 §2.2.1), not Problem Details.
 	// - **JSON** (any other content type — the pre-G11 contract, byte-identical
 	//   including 422 shapes): requires a platform bearer identity; revokes the
 	//   caller's own token (access → that token, refresh → its family). Used by
@@ -11828,8 +11830,9 @@ type ClientInterface interface {
 	//   die, so reconnecting requires fresh consent (deliberately beyond the
 	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-	//   64 KiB declared body length, and per-IP rate limited; its errors speak
-	//   the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+	//   64 KiB declared body length, and rate limited per client network
+	//   (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+	//   (RFC 7009 §2.2.1), not Problem Details.
 	// - **JSON** (any other content type — the pre-G11 contract, byte-identical
 	//   including 422 shapes): requires a platform bearer identity; revokes the
 	//   caller's own token (access → that token, refresh → its family). Used by
@@ -16152,8 +16155,8 @@ func (c *Client) ConsentAgentCreateWithFormdataBody(ctx context.Context, body Co
 // page treats a 400 as terminal ("retry the connection") because the blob
 // shares the consent handle's lifetime — a retry re-enters the flow, which
 // re-parks on a fresh awaiting page while the agent stays pending. Shares
-// the approval-status poll's own per-IP rate bucket (same cadence, same
-// caller shape).
+// the approval-status poll's own per-client-network rate bucket (same
+// cadence, same caller shape).
 //
 // Corresponds with GET /oauth/consent/agent/status (the `ConsentAgentStatus` operationId).
 func (c *Client) ConsentAgentStatus(ctx context.Context, params *ConsentAgentStatusParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -16268,8 +16271,9 @@ func (c *Client) IntrospectEndpointWithFormdataBody(ctx context.Context, body In
 //     die, so reconnecting requires fresh consent (deliberately beyond the
 //     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 //     is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-//     64 KiB declared body length, and per-IP rate limited; its errors speak
-//     the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+//     64 KiB declared body length, and rate limited per client network
+//     (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+//     (RFC 7009 §2.2.1), not Problem Details.
 //   - **JSON** (any other content type — the pre-G11 contract, byte-identical
 //     including 422 shapes): requires a platform bearer identity; revokes the
 //     caller's own token (access → that token, refresh → its family). Used by
@@ -16314,8 +16318,9 @@ func (c *Client) RevokeEndpointWithBody(ctx context.Context, contentType string,
 //     die, so reconnecting requires fresh consent (deliberately beyond the
 //     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 //     is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-//     64 KiB declared body length, and per-IP rate limited; its errors speak
-//     the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+//     64 KiB declared body length, and rate limited per client network
+//     (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+//     (RFC 7009 §2.2.1), not Problem Details.
 //   - **JSON** (any other content type — the pre-G11 contract, byte-identical
 //     including 422 shapes): requires a platform bearer identity; revokes the
 //     caller's own token (access → that token, refresh → its family). Used by
@@ -16360,8 +16365,9 @@ func (c *Client) RevokeEndpoint(ctx context.Context, body RevokeEndpointJSONRequ
 //     die, so reconnecting requires fresh consent (deliberately beyond the
 //     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 //     is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-//     64 KiB declared body length, and per-IP rate limited; its errors speak
-//     the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+//     64 KiB declared body length, and rate limited per client network
+//     (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+//     (RFC 7009 §2.2.1), not Problem Details.
 //   - **JSON** (any other content type — the pre-G11 contract, byte-identical
 //     including 422 shapes): requires a platform bearer identity; revokes the
 //     caller's own token (access → that token, refresh → its family). Used by
@@ -28214,8 +28220,8 @@ type ClientWithResponsesInterface interface {
 	// page treats a 400 as terminal ("retry the connection") because the blob
 	// shares the consent handle's lifetime — a retry re-enters the flow, which
 	// re-parks on a fresh awaiting page while the agent stays pending. Shares
-	// the approval-status poll's own per-IP rate bucket (same cadence, same
-	// caller shape).
+	// the approval-status poll's own per-client-network rate bucket (same
+	// cadence, same caller shape).
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -28292,8 +28298,9 @@ type ClientWithResponsesInterface interface {
 	//   die, so reconnecting requires fresh consent (deliberately beyond the
 	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-	//   64 KiB declared body length, and per-IP rate limited; its errors speak
-	//   the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+	//   64 KiB declared body length, and rate limited per client network
+	//   (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+	//   (RFC 7009 §2.2.1), not Problem Details.
 	// - **JSON** (any other content type — the pre-G11 contract, byte-identical
 	//   including 422 shapes): requires a platform bearer identity; revokes the
 	//   caller's own token (access → that token, refresh → its family). Used by
@@ -28328,8 +28335,9 @@ type ClientWithResponsesInterface interface {
 	//   die, so reconnecting requires fresh consent (deliberately beyond the
 	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-	//   64 KiB declared body length, and per-IP rate limited; its errors speak
-	//   the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+	//   64 KiB declared body length, and rate limited per client network
+	//   (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+	//   (RFC 7009 §2.2.1), not Problem Details.
 	// - **JSON** (any other content type — the pre-G11 contract, byte-identical
 	//   including 422 shapes): requires a platform bearer identity; revokes the
 	//   caller's own token (access → that token, refresh → its family). Used by
@@ -28364,8 +28372,9 @@ type ClientWithResponsesInterface interface {
 	//   die, so reconnecting requires fresh consent (deliberately beyond the
 	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-	//   64 KiB declared body length, and per-IP rate limited; its errors speak
-	//   the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+	//   64 KiB declared body length, and rate limited per client network
+	//   (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+	//   (RFC 7009 §2.2.1), not Problem Details.
 	// - **JSON** (any other content type — the pre-G11 contract, byte-identical
 	//   including 422 shapes): requires a platform bearer identity; revokes the
 	//   caller's own token (access → that token, refresh → its family). Used by
@@ -46982,8 +46991,8 @@ func (c *ClientWithResponses) ConsentAgentCreateWithFormdataBodyWithResponse(ctx
 // page treats a 400 as terminal ("retry the connection") because the blob
 // shares the consent handle's lifetime — a retry re-enters the flow, which
 // re-parks on a fresh awaiting page while the agent stays pending. Shares
-// the approval-status poll's own per-IP rate bucket (same cadence, same
-// caller shape).
+// the approval-status poll's own per-client-network rate bucket (same
+// cadence, same caller shape).
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -47084,8 +47093,9 @@ func (c *ClientWithResponses) IntrospectEndpointWithFormdataBodyWithResponse(ctx
 //     die, so reconnecting requires fresh consent (deliberately beyond the
 //     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 //     is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-//     64 KiB declared body length, and per-IP rate limited; its errors speak
-//     the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+//     64 KiB declared body length, and rate limited per client network
+//     (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+//     (RFC 7009 §2.2.1), not Problem Details.
 //   - **JSON** (any other content type — the pre-G11 contract, byte-identical
 //     including 422 shapes): requires a platform bearer identity; revokes the
 //     caller's own token (access → that token, refresh → its family). Used by
@@ -47126,8 +47136,9 @@ func (c *ClientWithResponses) RevokeEndpointWithBodyWithResponse(ctx context.Con
 //     die, so reconnecting requires fresh consent (deliberately beyond the
 //     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 //     is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-//     64 KiB declared body length, and per-IP rate limited; its errors speak
-//     the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+//     64 KiB declared body length, and rate limited per client network
+//     (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+//     (RFC 7009 §2.2.1), not Problem Details.
 //   - **JSON** (any other content type — the pre-G11 contract, byte-identical
 //     including 422 shapes): requires a platform bearer identity; revokes the
 //     caller's own token (access → that token, refresh → its family). Used by
@@ -47168,8 +47179,9 @@ func (c *ClientWithResponses) RevokeEndpointWithResponse(ctx context.Context, bo
 //     die, so reconnecting requires fresh consent (deliberately beyond the
 //     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 //     is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-//     64 KiB declared body length, and per-IP rate limited; its errors speak
-//     the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+//     64 KiB declared body length, and rate limited per client network
+//     (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+//     (RFC 7009 §2.2.1), not Problem Details.
 //   - **JSON** (any other content type — the pre-G11 contract, byte-identical
 //     including 422 shapes): requires a platform bearer identity; revokes the
 //     caller's own token (access → that token, refresh → its family). Used by

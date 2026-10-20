@@ -46826,7 +46826,7 @@
     "/oauth/consent/agent/status": {
       "description": "`GET`: Poll pending-agent approval status (consent awaiting page).",
       "get": {
-        "description": "Minimal tri-state poll for the pending-agent awaiting page (P4 hybrid).\n\nAnonymous but keyed by the signed ``agent-status`` blob — never a bare\nagent id, so the endpoint cannot be used to enumerate or probe agents:\nthe id it reports on is the one SIGNED into the blob, which only the\nconsent flow mints, and only for an agent it verified belongs to the\nhandle's subject. The response carries ONLY the tri-state — no name,\nowner, or scopes — and non-terminal lifecycle states (disabled, archived,\na vanished row) all read as ``pending``, so possession of a blob is not a\nlifecycle oracle either. Any verification failure (bad signature, wrong\npurpose, expired ``iat``, malformed blob) is a 400 ``invalid_grant``; the\npage treats a 400 as terminal (\"retry the connection\") because the blob\nshares the consent handle's lifetime — a retry re-enters the flow, which\nre-parks on a fresh awaiting page while the agent stays pending. Shares\nthe approval-status poll's own per-IP rate bucket (same cadence, same\ncaller shape).",
+        "description": "Minimal tri-state poll for the pending-agent awaiting page (P4 hybrid).\n\nAnonymous but keyed by the signed ``agent-status`` blob — never a bare\nagent id, so the endpoint cannot be used to enumerate or probe agents:\nthe id it reports on is the one SIGNED into the blob, which only the\nconsent flow mints, and only for an agent it verified belongs to the\nhandle's subject. The response carries ONLY the tri-state — no name,\nowner, or scopes — and non-terminal lifecycle states (disabled, archived,\na vanished row) all read as ``pending``, so possession of a blob is not a\nlifecycle oracle either. Any verification failure (bad signature, wrong\npurpose, expired ``iat``, malformed blob) is a 400 ``invalid_grant``; the\npage treats a 400 as terminal (\"retry the connection\") because the blob\nshares the consent handle's lifetime — a retry re-enters the flow, which\nre-parks on a fresh awaiting page while the agent stays pending. Shares\nthe approval-status poll's own per-client-network rate bucket (same\ncadence, same caller shape).",
         "operationId": "consentAgentStatus",
         "parameters": [
           {
@@ -47159,7 +47159,7 @@
     "/oauth/revoke": {
       "description": "`POST`: Revoke Endpoint.",
       "post": {
-        "description": "Revoke a token (RFC 7009). Always returns 200 for valid requests.\n\nTwo client-authentication arms, negotiated on the request content type by\n``_RevocationRoute`` (this function body IS the JSON arm — form-encoded\nrequests never reach it):\n\n- **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —\n  the shape MCP OAuth clients send, G11): `token` + optional\n  `token_type_hint` + `client_id`. Public (secret-less) clients\n  authenticate by client_id **lineage binding** — the call revokes\n  anything only when the token exists and was issued to that `client_id`;\n  everything else is a 200 no-op (no token-validity oracle). Revoking an\n  access token kills that token only; revoking a **refresh token is a full\n  disconnect** — every token of the consent grant AND the grant row itself\n  die, so reconnecting requires fresh consent (deliberately beyond the\n  RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm\n  is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at\n  64 KiB declared body length, and per-IP rate limited; its errors speak\n  the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.\n- **JSON** (any other content type — the pre-G11 contract, byte-identical\n  including 422 shapes): requires a platform bearer identity; revokes the\n  caller's own token (access → that token, refresh → its family). Used by\n  `jentic logout`.\n\nRevocation residual: a revoked **access** token dies on the control-plane\nresolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)\nmay honour an already-cached verdict for up to 30 s — the same residual as\nthe UI `:revoke` kill switch and the G10 transfer sweep.",
+        "description": "Revoke a token (RFC 7009). Always returns 200 for valid requests.\n\nTwo client-authentication arms, negotiated on the request content type by\n``_RevocationRoute`` (this function body IS the JSON arm — form-encoded\nrequests never reach it):\n\n- **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —\n  the shape MCP OAuth clients send, G11): `token` + optional\n  `token_type_hint` + `client_id`. Public (secret-less) clients\n  authenticate by client_id **lineage binding** — the call revokes\n  anything only when the token exists and was issued to that `client_id`;\n  everything else is a 200 no-op (no token-validity oracle). Revoking an\n  access token kills that token only; revoking a **refresh token is a full\n  disconnect** — every token of the consent grant AND the grant row itself\n  die, so reconnecting requires fresh consent (deliberately beyond the\n  RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm\n  is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at\n  64 KiB declared body length, and rate limited per client network\n  (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect\n  (RFC 7009 §2.2.1), not Problem Details.\n- **JSON** (any other content type — the pre-G11 contract, byte-identical\n  including 422 shapes): requires a platform bearer identity; revokes the\n  caller's own token (access → that token, refresh → its family). Used by\n  `jentic logout`.\n\nRevocation residual: a revoked **access** token dies on the control-plane\nresolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)\nmay honour an already-cached verdict for up to 30 s — the same residual as\nthe UI `:revoke` kill switch and the G10 transfer sweep.",
         "operationId": "revokeEndpoint",
         "requestBody": {
           "content": {
@@ -47284,7 +47284,7 @@
                 }
               }
             },
-            "description": "Form-encoded (RFC 7009) requests only: per-IP rate limit exceeded (`Retry-After` header set; RFC 6749 §5.2 dialect body, `error=slow_down` per RFC 8628 §3.5)."
+            "description": "Form-encoded (RFC 7009) requests only: per-client-network rate limit exceeded (`Retry-After` header set; RFC 6749 §5.2 dialect body, `error=slow_down` per RFC 8628 §3.5)."
           },
           "500": {
             "content": {
@@ -47577,7 +47577,7 @@
                 }
               }
             },
-            "description": "Per-client+IP rate limit exceeded (`Retry-After` header set; RFC 6749 §5.2 dialect body, `error=slow_down` per RFC 8628 §3.5)."
+            "description": "Per-client_id + client-network rate limit exceeded (`Retry-After` header set; RFC 6749 §5.2 dialect body, `error=slow_down` per RFC 8628 §3.5)."
           },
           "500": {
             "content": {

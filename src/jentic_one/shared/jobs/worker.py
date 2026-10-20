@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import random
 import time
 from datetime import UTC, datetime, timedelta
@@ -37,6 +38,7 @@ from jentic_one.shared.jobs.hold import (
     get_approved_by_job_id,
     set_execution_id_for_job,
 )
+from jentic_one.shared.jobs.wakeup import JobWakeup, job_wakeup
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.models.jobs import JobKind, JobStatus
 
@@ -45,8 +47,6 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-_POLL_INTERVAL_SECONDS = 2.0
-_RETENTION_SWEEP_INTERVAL = 60
 # Fallback approved-execution result retention when no config is supplied.
 _DEFAULT_APPROVED_RESULT_RETENTION_SECONDS = 86_400
 # Post-expiry grace before an access/refresh token row is deleted by the sweep.
@@ -133,211 +133,361 @@ def _reconnect_backoff_s(attempt: int, jitter: float, cfg: WorkerConfig) -> floa
 
 
 class WorkerLoop:
-    """Background worker that claims queued jobs and dispatches to handlers."""
+    """Background worker that claims queued jobs and dispatches to handlers.
+
+    Runs up to ``worker.concurrency`` jobs at once as children of one
+    ``TaskGroup``; each claim is atomic (see :meth:`_claim_next`), so several
+    loops — in one process or many — can share the queue. It polls every
+    ``worker.poll_interval_s`` while idle, re-polls as soon as a running job
+    frees a slot, and is woken early by :data:`~jentic_one.shared.jobs.wakeup.job_wakeup`
+    when a job is enqueued in the same process.
+    """
 
     def __init__(
         self,
         db: DatabaseSession,
         handler_registry: JobHandlerRegistry,
         *,
-        poll_interval: float = _POLL_INTERVAL_SECONDS,
         worker_config: WorkerConfig | None = None,
         approved_result_retention_seconds: int = _DEFAULT_APPROVED_RESULT_RETENTION_SECONDS,
+        wakeup: JobWakeup | None = None,
     ) -> None:
         self._db = db
         self._handlers = handler_registry
-        self._poll_interval = poll_interval
         self._config = worker_config or WorkerConfig()
+        self._poll_interval = self._config.poll_interval_s
+        self._concurrency = self._config.concurrency
+        if self._concurrency > 1 and db.backend.dialect_name == "sqlite":
+            # The handler's BEGIN IMMEDIATE transaction spans the upstream
+            # call, so a second slot's claim or outcome write waits on that
+            # lock past busy_timeout and fails — losing a finished job's
+            # outcome and re-running it on reclaim. AppConfig refuses this
+            # combination; the clamp covers a loop built without it.
+            logger.warning(
+                "worker_concurrency_clamped_sqlite",
+                requested=self._concurrency,
+                effective=1,
+            )
+            self._concurrency = 1
         self._approved_result_retention_seconds = approved_result_retention_seconds
+        self._wakeup = wakeup or job_wakeup
         self._running = False
         self._draining = False
-        self._tick_count = 0
-        # Set while a claimed job is being processed, cleared when it reaches a
-        # terminal/requeued state — so drain() can wait for the current job.
+        self._last_sweep = time.monotonic()
+        # Set by an in-process enqueue, a finished job freeing a slot, stop()
+        # and drain() — anything that makes polling (or exiting) worthwhile
+        # before the poll interval is up.
+        self._wake = asyncio.Event()
+        self._in_flight: set[asyncio.Task[None]] = set()
+        # Set while no claim is in flight and no claimed job is being
+        # processed — so drain() waits both for running jobs and for a claim
+        # that may yet hand it one.
+        self._claiming = False
         self._idle = asyncio.Event()
         self._idle.set()
 
     async def run(self) -> None:
-        """Main loop — poll for jobs until cancelled.
+        """Main loop — poll for jobs until stopped or cancelled.
 
-        A single tick must never kill the loop. ``_tick`` already guards
-        per-job handler failures, but the surrounding bookkeeping (claiming a
-        job, the retention sweep) issues its own DB transactions that can raise
-        transient errors — most notably during cold start before the database
-        is fully reachable. Such an exception escaping ``run`` would terminate
-        the worker permanently, leaving every queued job stuck forever. So we
-        catch and log non-cancellation errors here and keep polling.
+        A single poll must never kill the loop. Per-job failures are contained
+        in :meth:`_run_job`, but the poll's own bookkeeping (claiming jobs, the
+        retention sweep) issues DB transactions that can raise transient
+        errors — most notably during cold start before the database is fully
+        reachable. Such an exception escaping ``run`` would terminate the
+        worker permanently, leaving every queued job stuck forever. So we catch
+        and log non-cancellation errors here and keep polling.
 
         A lost or unreachable database (see
         :func:`~jentic_one.shared.db.connectivity.is_connection_loss`) is an
         expected condition — e.g. after a laptop's Docker VM sleeps — so it is
         logged as a single warning per outage (traceback at debug only), retried
         with capped, jittered exponential backoff, and reported once at info
-        when a tick succeeds again. Any other error keeps the full traceback,
+        when a poll succeeds again. Any other error keeps the full traceback,
         unless rendering it would print SQL (see :func:`_carries_sql`): then only
         type names and the SQL-free detail are logged.
+
+        On :meth:`stop`/:meth:`drain` the loop stops claiming and the
+        ``TaskGroup`` waits for in-flight jobs; on cancellation it cancels them
+        (they stay ``RUNNING`` and are reclaimed after their visibility timeout).
         """
         self._running = True
-        logger.info("worker_loop_started")
+        self._wakeup.subscribe(self._wake)
+        logger.info(
+            "worker_loop_started",
+            poll_interval_s=self._poll_interval,
+            concurrency=self._concurrency,
+        )
         outage_attempts = 0
         outage_started = 0.0
         try:
-            while self._running:
-                try:
-                    processed = await self._tick()
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:
-                    cause = connection_loss_cause(exc)
-                    if cause is None:
-                        if _carries_sql(exc):
-                            logger.error(
-                                "worker_loop_tick_error",
-                                error_type=type(exc).__name__,
-                                cause=type(exc.__cause__).__name__ if exc.__cause__ else None,
-                                error=redact_sql(str(exc))[:_ERROR_MAX_LEN],
-                            )
+            async with asyncio.TaskGroup() as tg:
+                while self._running:
+                    # Clear before polling: a wake-up landing mid-poll stays set
+                    # and short-circuits the wait below, so none is lost.
+                    self._wake.clear()
+                    try:
+                        more = await self._poll(tg)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        cause = connection_loss_cause(exc)
+                        if cause is None:
+                            if _carries_sql(exc):
+                                logger.error(
+                                    "worker_loop_tick_error",
+                                    error_type=type(exc).__name__,
+                                    cause=type(exc.__cause__).__name__ if exc.__cause__ else None,
+                                    error=redact_sql(str(exc))[:_ERROR_MAX_LEN],
+                                )
+                            else:
+                                logger.exception("worker_loop_tick_error")
+                            more = False
+                            # The database answered (or the failure is unrelated),
+                            # so the outage is over; a later drop warns afresh.
+                            outage_attempts = 0
                         else:
-                            logger.exception("worker_loop_tick_error")
-                        processed = False
-                        # The database answered (or the failure is unrelated),
-                        # so the outage is over; a later drop warns afresh.
-                        outage_attempts = 0
-                    else:
-                        outage_attempts += 1
-                        delay_s = _reconnect_backoff_s(
-                            outage_attempts, self._jitter(), self._config
-                        )
-                        if outage_attempts == 1:
-                            outage_started = time.monotonic()
-                            logger.warning(
-                                "worker_db_connection_lost",
-                                error_type=type(cause).__name__,
-                                error=describe_connection_loss(cause),
-                                retry_in_s=round(delay_s, 2),
+                            outage_attempts += 1
+                            delay_s = _reconnect_backoff_s(
+                                outage_attempts, self._jitter(), self._config
                             )
-                        logger.debug(
-                            "worker_db_reconnect_backoff",
-                            attempt=outage_attempts,
-                            retry_in_s=round(delay_s, 2),
-                            exc_info=True,
-                        )
-                        await self._sleep(delay_s)
-                        continue
-                else:
-                    if outage_attempts:
-                        logger.info(
-                            "worker_db_connection_recovered",
-                            failed_attempts=outage_attempts,
-                            outage_s=round(time.monotonic() - outage_started, 2),
-                        )
-                        outage_attempts = 0
-                if not processed:
-                    await self._sleep(self._poll_interval)
+                            if outage_attempts == 1:
+                                outage_started = time.monotonic()
+                                logger.warning(
+                                    "worker_db_connection_lost",
+                                    error_type=type(cause).__name__,
+                                    error=describe_connection_loss(cause),
+                                    retry_in_s=round(delay_s, 2),
+                                )
+                            logger.debug(
+                                "worker_db_reconnect_backoff",
+                                attempt=outage_attempts,
+                                retry_in_s=round(delay_s, 2),
+                                exc_info=True,
+                            )
+                            await self._sleep(delay_s)
+                            continue
+                    else:
+                        if outage_attempts:
+                            logger.info(
+                                "worker_db_connection_recovered",
+                                failed_attempts=outage_attempts,
+                                outage_s=round(time.monotonic() - outage_started, 2),
+                            )
+                            outage_attempts = 0
+                    # Re-poll at once while jobs keep coming; otherwise wait
+                    # for a wake-up (enqueue, freed slot, stop) or the interval.
+                    if not more:
+                        await self._wait_for_wake()
         except asyncio.CancelledError:
             logger.info("worker_loop_cancelled")
+            raise
         finally:
+            self._wakeup.unsubscribe(self._wake)
             self._running = False
             logger.info("worker_loop_stopped")
 
     async def _sleep(self, delay_s: float) -> None:
-        """Wait between ticks (a seam so tests can observe delays without waiting)."""
+        """Reconnect backoff wait (a seam so tests can observe delays without waiting)."""
         await asyncio.sleep(delay_s)
 
     def _jitter(self) -> float:
         """Uniform sample in ``[0, 1)`` used to spread reconnect attempts."""
         return random.random()
 
+    async def _poll(self, tg: asyncio.TaskGroup) -> bool:
+        """Claim jobs into free slots and start them.
+
+        Returns True when it started jobs without finding the queue empty —
+        polling again at once may find more. False means nothing was
+        claimable (or no slot was free), so the caller waits for a wake-up.
+        """
+        await self._maybe_sweep()
+        started = 0
+        while self._running and not self._draining and len(self._in_flight) < self._concurrency:
+            job = await self._claim_tracked()
+            if job is None:
+                return False
+            # Started even if drain()/stop() landed mid-claim: the job is
+            # already RUNNING with ``attempts`` bumped, so dropping it here
+            # would strand it until reclaim — and an approved execution is
+            # refused on reclaim, so its approved call would never run.
+            self._start_job(tg, job)
+            started += 1
+        return started > 0
+
+    async def _claim_tracked(self) -> Any:
+        """Claim the next job with the loop marked busy for the whole claim.
+
+        ``_idle`` stays clear from before the claim's first ``await`` until a
+        claimed job is tracked in ``_in_flight`` (or the claim found nothing),
+        so :meth:`drain` cannot report idle while a claim is in flight.
+        """
+        self._claiming = True
+        self._idle.clear()
+        job = None
+        try:
+            job = await self._claim_next()
+            return job
+        finally:
+            self._claiming = False
+            # A claimed job keeps the loop busy until _start_job tracks it;
+            # setting _idle here, even briefly, would release a drain() waiter.
+            if job is None:
+                self._mark_idle_if_quiet()
+
+    def _mark_idle_if_quiet(self) -> None:
+        if not self._claiming and not self._in_flight:
+            self._idle.set()
+
+    def _start_job(self, tg: asyncio.TaskGroup, job: Any) -> None:
+        """Run ``job`` as a child task, tracked for the concurrency bound and drain."""
+        self._idle.clear()
+        task = tg.create_task(self._run_job(job), name=f"job-{job.id}")
+        self._in_flight.add(task)
+        task.add_done_callback(self._on_job_done)
+
+    def _on_job_done(self, task: asyncio.Task[None]) -> None:
+        self._in_flight.discard(task)
+        self._mark_idle_if_quiet()
+        # A freed slot is worth an immediate poll.
+        self._wake.set()
+
+    async def _run_job(self, job: Any) -> None:
+        """Process one job, isolating its failures from siblings and the loop.
+
+        An exception escaping a ``TaskGroup`` child would cancel every other
+        in-flight job, so anything :meth:`_process_job` doesn't already handle
+        (e.g. a DB error while recording the outcome) is logged here; the job
+        stays ``RUNNING`` and is reclaimed after its visibility timeout.
+        """
+        try:
+            await self._process_job(job)
+        except Exception as exc:
+            cause = connection_loss_cause(exc)
+            if cause is None:
+                logger.exception("job_processing_error", job_id=job.id)
+            else:
+                # The database is still unreachable after the attempt failed;
+                # the run loop's next poll owns the outage warning and backoff.
+                logger.warning(
+                    "job_outcome_unrecorded_db_connection_lost",
+                    job_id=job.id,
+                    error_type=type(cause).__name__,
+                    error=describe_connection_loss(cause),
+                )
+
+    async def _wait_for_wake(self) -> None:
+        """Sleep until woken or the poll interval elapses, whichever is first."""
+        with contextlib.suppress(TimeoutError):
+            async with asyncio.timeout(self._poll_interval):
+                await self._wake.wait()
+
+    async def _maybe_sweep(self) -> None:
+        """Run the retention sweep once ``worker.sweep_interval_s`` has elapsed.
+
+        The interval restarts only after a sweep returns: a sweep cut short by
+        a lost connection re-raises, and the next poll after recovery retries
+        it rather than waiting out a full interval.
+        """
+        now = time.monotonic()
+        if now - self._last_sweep < self._config.sweep_interval_s:
+            return
+        await self._sweep_expired()
+        self._last_sweep = now
+
     async def _tick(self) -> bool:
-        """Claim one job and process it. Returns True if a job was processed."""
-        self._tick_count += 1
+        """Claim one job and process it inline. Returns True if a job was claimed.
 
-        if self._tick_count % _RETENTION_SWEEP_INTERVAL == 0:
-            await self._sweep_expired()
+        A single synchronous step of the loop (no concurrency) that drives the
+        worker deterministically one job at a time. It shares the claim
+        bookkeeping and per-job error handling of :meth:`_poll`.
+        """
+        await self._maybe_sweep()
 
-        # While draining we stop *claiming* new work, but a tick already in
-        # flight (below) is allowed to finish — drain() waits on _idle.
+        # While draining we stop *claiming* new work.
         if self._draining:
             return False
 
-        job = await self._claim_next()
+        job = await self._claim_tracked()
         if job is None:
             return False
-
-        self._idle.clear()
         try:
-            if await self._refuse_approved_reclaim(job):
-                return True
-            kind = JobKind(job.kind)
-            handler = self._handlers.get(kind)
-            if handler is None:
-                logger.error("job_no_handler", kind=kind, job_id=job.id)
-                await self._fail_job(job, f"no handler for kind={kind}")
-                return True
+            await self._run_job(job)
+        finally:
+            self._mark_idle_if_quiet()
+        return True
 
-            try:
-                result = await self._execute_handler(handler, job)
-                # A lost lease (reclaimed or cancelled meanwhile) drops the
-                # result and requeues nothing: the newer claim owns the job.
-                await self._complete_job(job, result)
-            except DatabaseCommitOutcomeUnknownError as exc:
-                # The connection dropped while committing, so the write may
-                # have landed (for _complete_job: the job is already
-                # COMPLETED). Requeueing would run the job again, so the row is
-                # left as is: if the commit did not land it stays RUNNING and
-                # the visibility-timeout reclaim picks it up.
-                leaf = connection_loss_cause(exc)
-                logged_cause = leaf or exc.__cause__ or exc
+    async def _process_job(self, job: Any) -> None:
+        """Dispatch a claimed job to its handler and record the outcome."""
+        if await self._refuse_approved_reclaim(job):
+            return
+        kind = JobKind(job.kind)
+        handler = self._handlers.get(kind)
+        if handler is None:
+            logger.error("job_no_handler", kind=kind, job_id=job.id)
+            await self._fail_job(job, f"no handler for kind={kind}")
+            return
+
+        try:
+            result = await self._execute_handler(handler, job)
+            # A lost lease (reclaimed or cancelled meanwhile) drops the
+            # result and requeues nothing: the newer claim owns the job.
+            await self._complete_job(job, result)
+        except DatabaseCommitOutcomeUnknownError as exc:
+            # The connection dropped while committing, so the write may
+            # have landed (for _complete_job: the job is already
+            # COMPLETED). Requeueing would run the job again, so the row is
+            # left as is: if the commit did not land it stays RUNNING and
+            # the visibility-timeout reclaim picks it up.
+            leaf = connection_loss_cause(exc)
+            logged_cause = leaf or exc.__cause__ or exc
+            logger.warning(
+                "job_commit_outcome_unknown",
+                job_id=job.id,
+                attempts=job.attempts,
+                error_type=type(logged_cause).__name__,
+                error=(
+                    describe_connection_loss(leaf)
+                    if leaf is not None
+                    else redact_sql(exc.detail)[:_ERROR_MAX_LEN]
+                ),
+            )
+        except Exception as exc:
+            cause = connection_loss_cause(exc)
+            if cause is not None:
+                # Infrastructure, not the job: no traceback, and only a
+                # generic reason is persisted (the raw error carries SQL).
                 logger.warning(
-                    "job_commit_outcome_unknown",
+                    "job_interrupted_db_connection_lost",
                     job_id=job.id,
                     attempts=job.attempts,
-                    error_type=type(logged_cause).__name__,
-                    error=(
-                        describe_connection_loss(leaf)
-                        if leaf is not None
-                        else redact_sql(exc.detail)[:_ERROR_MAX_LEN]
-                    ),
+                    error_type=type(cause).__name__,
+                    error=describe_connection_loss(cause),
                 )
-            except Exception as exc:
-                cause = connection_loss_cause(exc)
-                if cause is not None:
-                    # Infrastructure, not the job: no traceback, and only a
-                    # generic reason is persisted (the raw error carries SQL).
-                    logger.warning(
-                        "job_interrupted_db_connection_lost",
+                error = _DB_CONNECTION_LOST_ERROR
+            else:
+                error = redact_sql(str(exc)) or type(exc).__name__
+                if _carries_sql(exc):
+                    # A traceback would render the chained statement and
+                    # its bound parameters, so only type names and the
+                    # SQL-free detail are logged.
+                    logger.error(
+                        "job_failed",
                         job_id=job.id,
                         attempts=job.attempts,
-                        error_type=type(cause).__name__,
-                        error=describe_connection_loss(cause),
+                        error_type=type(exc).__name__,
+                        cause=type(exc.__cause__).__name__ if exc.__cause__ else None,
+                        error=error[:_ERROR_MAX_LEN],
                     )
-                    error = _DB_CONNECTION_LOST_ERROR
                 else:
-                    error = redact_sql(str(exc)) or type(exc).__name__
-                    if _carries_sql(exc):
-                        # A traceback would render the chained statement and
-                        # its bound parameters, so only type names and the
-                        # SQL-free detail are logged.
-                        logger.error(
-                            "job_failed",
-                            job_id=job.id,
-                            attempts=job.attempts,
-                            error_type=type(exc).__name__,
-                            cause=type(exc.__cause__).__name__ if exc.__cause__ else None,
-                            error=error[:_ERROR_MAX_LEN],
-                        )
-                    else:
-                        logger.exception("job_failed", job_id=job.id, attempts=job.attempts)
-                # Same retry contract as any failed attempt: requeue with
-                # backoff, dead-letter past the budget — fenced on the claim,
-                # so nothing is written once the lease is lost. If the database
-                # is still unreachable this raises a connection-loss error to
-                # run(), which owns the outage warning and backoff; the job
-                # stays RUNNING and is reclaimed after its visibility timeout.
-                await self._handle_failure(job, error)
-            return True
-        finally:
-            self._idle.set()
+                    logger.exception("job_failed", job_id=job.id, attempts=job.attempts)
+            # Same retry contract as any failed attempt: requeue with
+            # backoff, dead-letter past the budget — fenced on the claim,
+            # so nothing is written once the lease is lost. If the database is
+            # still unreachable this raises a connection-loss error to the
+            # caller (the run loop owns the outage warning and backoff); the
+            # job stays RUNNING and is reclaimed after its visibility timeout.
+            await self._handle_failure(job, error)
 
     async def _claim_next(self) -> Any:
         """Claim the oldest claimable job whose kind this worker can handle.
@@ -349,7 +499,11 @@ class WorkerLoop:
         ``RUNNING``, stamps a fresh visibility deadline, and increments
         ``attempts`` so a poison job's retry budget is enforced. The returned
         ``attempts`` is the claim's fencing token (see :func:`_claim_fence`).
-        ``SKIP LOCKED`` keeps concurrent workers from contending on the same row.
+        ``SKIP LOCKED`` keeps concurrent workers from contending on the same row;
+        on SQLite (no row locks) the claim runs in a ``BEGIN IMMEDIATE`` write
+        transaction, which serialises claimers. Either way a job is handed to
+        exactly one claimer, whether it is another slot of this loop or a loop
+        in another process.
 
         Deadlines are read and stamped on the database clock, so workers on
         hosts with skewed clocks agree on when a lease has lapsed.
@@ -767,27 +921,40 @@ class WorkerLoop:
             logger.exception("retention_sweep_failed")
 
     def stop(self) -> None:
-        """Signal the worker to stop."""
+        """Signal the worker to stop claiming; ``run`` returns once in-flight jobs finish."""
         self._running = False
+        self._wake.set()
 
     async def drain(self, timeout_s: float | None = None) -> bool:
-        """Stop claiming new jobs and wait for the in-flight job to finish.
+        """Stop claiming new jobs and wait for every in-flight job to finish.
 
-        Flips into draining mode so ``_tick`` stops claiming immediately, then
+        Flips into draining mode so the loop stops claiming immediately, then
         waits (bounded by ``timeout_s``, default ``WorkerConfig.drain_timeout_s``)
-        for any job already being processed to reach a terminal/requeued state.
+        for all jobs already being processed to reach a terminal/requeued state.
+        A claim already in flight when drain starts counts as busy: the job it
+        returns is started and waited for like any other in-flight job.
         Returns ``True`` if the worker is idle by the deadline. If the deadline
-        passes with a job still running, the caller stops the loop anyway — the
-        job stays ``RUNNING`` and is reclaimed via its visibility timeout after
-        restart, so no work is dropped (just delayed).
+        passes with jobs still running, the caller stops the loop anyway — those
+        jobs stay ``RUNNING`` and are reclaimed via their visibility timeout
+        after restart (an approved execution is failed on reclaim instead of
+        re-run), and their ids are logged with ``worker_drain_timeout``.
         """
         self._draining = True
+        self._wake.set()
         budget = self._config.drain_timeout_s if timeout_s is None else timeout_s
         try:
-            await asyncio.wait_for(self._idle.wait(), timeout=budget)
+            async with asyncio.timeout(budget):
+                await self._idle.wait()
             drained = True
         except TimeoutError:
-            logger.warning("worker_drain_timeout", timeout_s=budget)
+            logger.warning(
+                "worker_drain_timeout",
+                timeout_s=budget,
+                in_flight=len(self._in_flight),
+                job_tasks=sorted(task.get_name() for task in self._in_flight),
+                claim_in_flight=self._claiming,
+            )
             drained = False
         self._running = False
+        self._wake.set()
         return drained
