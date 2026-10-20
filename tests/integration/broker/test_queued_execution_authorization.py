@@ -1037,6 +1037,7 @@ async def _run_one_tick(ctx: Context) -> tuple[_RecordingExecutor, _RecordingInj
             executor=executor,
             credential_injector=injector,
             execution_authorizer=build_queued_execution_authorizer(ctx),
+            actor_status=ActorStatusResolver(ctx.admin_db),
         ),
     )
     assert await WorkerLoop(ctx.admin_db, registry, worker_config=WorkerConfig())._tick() is True

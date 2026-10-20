@@ -301,8 +301,7 @@ _Change = Callable[[Context, ActorType, str], Awaitable[None]]
 
 
 async def _soft_delete_user(ctx: Context, actor_type: ActorType, actor_id: str) -> None:
-    admin_id = await _seed_user(ctx, "deleter", permissions={ORG_ADMIN})
-    await UserService(ctx).delete(actor_id, identity=Identity(sub=admin_id))
+    await UserService(ctx).delete(actor_id, identity=await _admin(ctx))
 
 
 #: Lifecycle changes that cancel the actor's queued executions (the sync edge's 401).
