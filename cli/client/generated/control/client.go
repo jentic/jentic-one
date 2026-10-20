@@ -11327,6 +11327,8 @@ type ClientInterface interface {
 	//
 	// List notes with optional filters and cursor pagination.
 	//
+	// Returns the caller's own notes; a user also sees the notes of agents they own.
+	//
 	// Corresponds with GET /notes (the `ListNotes` operationId).
 	ListNotes(ctx context.Context, params *ListNotesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -11358,6 +11360,9 @@ type ClientInterface interface {
 	// GetNote Get Note
 	//
 	// Retrieve a single note by ID.
+	//
+	// A user can read the notes of agents they own, but only a note's author (or
+	// an org admin) can update or delete it.
 	//
 	// Corresponds with GET /notes/{note_id} (the `GetNote` operationId).
 	GetNote(ctx context.Context, noteId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -15581,6 +15586,8 @@ func (c *Client) GetUsageStats(ctx context.Context, params *GetUsageStatsParams,
 //
 // List notes with optional filters and cursor pagination.
 //
+// Returns the caller's own notes; a user also sees the notes of agents they own.
+//
 // Corresponds with GET /notes (the `ListNotes` operationId).
 func (c *Client) ListNotes(ctx context.Context, params *ListNotesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListNotesRequest(c.Server, params)
@@ -15652,6 +15659,9 @@ func (c *Client) DeleteNote(ctx context.Context, noteId string, params *DeleteNo
 // GetNote Get Note
 //
 // Retrieve a single note by ID.
+//
+// A user can read the notes of agents they own, but only a note's author (or
+// an org admin) can update or delete it.
 //
 // Corresponds with GET /notes/{note_id} (the `GetNote` operationId).
 func (c *Client) GetNote(ctx context.Context, noteId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -27889,6 +27899,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// List notes with optional filters and cursor pagination.
 	//
+	// Returns the caller's own notes; a user also sees the notes of agents they own.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /notes (the `ListNotes` operationId).
@@ -27924,6 +27936,9 @@ type ClientWithResponsesInterface interface {
 	// GetNoteWithResponse Get Note
 	//
 	// Retrieve a single note by ID.
+	//
+	// A user can read the notes of agents they own, but only a note's author (or
+	// an org admin) can update or delete it.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -46563,6 +46578,8 @@ func (c *ClientWithResponses) GetUsageStatsWithResponse(ctx context.Context, par
 //
 // List notes with optional filters and cursor pagination.
 //
+// Returns the caller's own notes; a user also sees the notes of agents they own.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /notes (the `ListNotes` operationId).
@@ -46622,6 +46639,9 @@ func (c *ClientWithResponses) DeleteNoteWithResponse(ctx context.Context, noteId
 // GetNoteWithResponse Get Note
 //
 // Retrieve a single note by ID.
+//
+// A user can read the notes of agents they own, but only a note's author (or
+// an org admin) can update or delete it.
 //
 // Returns a wrapper object for the known response body format(s).
 //

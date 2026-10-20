@@ -31,9 +31,11 @@ router = APIRouter(prefix="/notes")
 # by design: there is no ``notes:*`` scope in the
 # catalogue, and access is governed by ownership rather than a scope. Notes carry
 # ``created_by`` and the service layer scopes rows via ``build_access_filters``
-# (``registry/services/note_service.py``), so a caller only ever sees its own
-# notes. Adding a route-level scope here would gate on a permission that does not
-# exist; the ownership model in the service is the enforcement boundary.
+# (``registry/services/note_service.py``): a caller reads its own notes, and a
+# user also reads the notes of agents they own. Writes stay with the note's
+# author (and ``org:admin``). Adding a route-level scope here would gate on a
+# permission that does not exist; the ownership model in the service is the
+# enforcement boundary.
 
 
 def _parse_if_match(header: str | None, *, instance: str) -> int | None:
@@ -179,7 +181,10 @@ async def list_notes(
         openapi_examples=ex.example(ex.USER_ID),
     ),
 ) -> JSONResponse:
-    """List notes with optional filters and cursor pagination."""
+    """List notes with optional filters and cursor pagination.
+
+    Returns the caller's own notes; a user also sees the notes of agents they own.
+    """
     svc = NoteService(ctx)
     try:
         page = await svc.list_page(
@@ -213,7 +218,11 @@ async def get_note(
     identity: Identity = get_current_identity(),
     ctx: Context = Depends(get_ctx),
 ) -> Response:
-    """Retrieve a single note by ID."""
+    """Retrieve a single note by ID.
+
+    A user can read the notes of agents they own, but only a note's author (or
+    an org admin) can update or delete it.
+    """
     svc = NoteService(ctx)
     view = await svc.get(note_id, identity=identity)
 
