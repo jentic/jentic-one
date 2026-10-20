@@ -199,27 +199,14 @@ class CatalogSourceRepository:
             )
 
     @staticmethod
-    async def mark_sync_wanted(
-        session: AsyncSession, slugs: Iterable[str], *, healthy_only: bool = False
-    ) -> int:
-        """Set ``sync_wanted_at`` where it is not already set.
-
-        With ``healthy_only``, a source with ``consecutive_failures > 0`` is left
-        unflagged: the scanner syncs every wanted row at once, so flagging a
-        source in backoff would bypass it. ``is_due`` retries it when it is due.
-        """
+    async def mark_sync_wanted(session: AsyncSession, slugs: Iterable[str]) -> int:
+        """Set ``sync_wanted_at`` where it is not already set."""
         wanted = list(slugs)
         if not wanted:
             return 0
-        conditions: list[ColumnElement[bool]] = [
-            CatalogSourceRow.slug.in_(wanted),
-            CatalogSourceRow.sync_wanted_at.is_(None),
-        ]
-        if healthy_only:
-            conditions.append(CatalogSourceRow.consecutive_failures == 0)
         result = await session.execute(
             update(CatalogSourceRow)
-            .where(*conditions)
+            .where(CatalogSourceRow.slug.in_(wanted), CatalogSourceRow.sync_wanted_at.is_(None))
             .values(sync_wanted_at=utcnow())
             .execution_options(synchronize_session=False)
         )

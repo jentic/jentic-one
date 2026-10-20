@@ -1911,7 +1911,7 @@
             }
           ],
           "default": null,
-          "description": "Environment variable holding the secret (never the secret).",
+          "description": "Name of the environment variable holding the secret (never the secret itself); none takes no env.",
           "title": "Env"
         },
         "header": {
@@ -1924,7 +1924,7 @@
             }
           ],
           "default": null,
-          "description": "Header name the secret is sent in (header_from_env only).",
+          "description": "Request header the secret is sent in (header_from_env only).",
           "title": "Header"
         },
         "origins": {
@@ -1937,6 +1937,7 @@
         },
         "type": {
           "default": "none",
+          "description": "Auth resolver type; it must be registered. Built in: none, bearer_from_env and header_from_env; startup fails on an unknown type.",
           "title": "Type",
           "type": "string"
         }

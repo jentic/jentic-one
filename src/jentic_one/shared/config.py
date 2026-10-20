@@ -2166,12 +2166,23 @@ class SourceAuthConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    type: str = "none"
+    type: str = Field(
+        default="none",
+        description=(
+            "Auth resolver type; it must be registered. Built in: none, bearer_from_env "
+            "and header_from_env; startup fails on an unknown type."
+        ),
+    )
     env: str | None = Field(
-        default=None, description="Environment variable holding the secret (never the secret)."
+        default=None,
+        description=(
+            "Name of the environment variable holding the secret (never the secret "
+            "itself); none takes no env."
+        ),
     )
     header: str | None = Field(
-        default=None, description="Header name the secret is sent in (header_from_env only)."
+        default=None,
+        description="Request header the secret is sent in (header_from_env only).",
     )
     origins: list[str] = Field(
         default_factory=list,

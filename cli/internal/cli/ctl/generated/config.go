@@ -2966,10 +2966,11 @@ func (j *SigningKeyConfig) UnmarshalJSON(value []byte) error {
 // more. The secret itself never appears here: “env“ names the variable
 // holding it, read on every request.
 type SourceAuthConfig struct {
-	// Environment variable holding the secret (never the secret).
+	// Name of the environment variable holding the secret (never the secret itself);
+	// none takes no env.
 	Env interface{} `json:"env,omitempty,omitzero" yaml:"env,omitempty" mapstructure:"env,omitempty"`
 
-	// Header name the secret is sent in (header_from_env only).
+	// Request header the secret is sent in (header_from_env only).
 	Header interface{} `json:"header,omitempty,omitzero" yaml:"header,omitempty" mapstructure:"header,omitempty"`
 
 	// Extra origins (scheme://host[:port]) that may receive the credential. By
@@ -2978,7 +2979,8 @@ type SourceAuthConfig struct {
 	// host a listing points at.
 	Origins []string `json:"origins,omitempty,omitzero" yaml:"origins,omitempty" mapstructure:"origins,omitempty"`
 
-	// Type corresponds to the JSON schema field "type".
+	// Auth resolver type; it must be registered. Built in: none, bearer_from_env and
+	// header_from_env; startup fails on an unknown type.
 	Type string `json:"type,omitempty,omitzero" yaml:"type,omitempty" mapstructure:"type,omitempty"`
 }
 

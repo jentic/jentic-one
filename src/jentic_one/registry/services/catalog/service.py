@@ -203,11 +203,6 @@ def _entry_key(entry: CatalogEntry) -> str:
     return entry.entry_id
 
 
-def _outcome_codes(outcomes: list[SyncOutcome]) -> str:
-    """``slug: code`` for each outcome, for a refresh's error detail."""
-    return ", ".join(f"{o.slug}: {o.error_code or o.status}" for o in outcomes)
-
-
 def _effective(identity: Identity) -> frozenset[str]:
     return frozenset(compute_effective(set(identity.permissions)))
 
