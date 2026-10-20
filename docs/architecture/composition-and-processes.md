@@ -198,6 +198,48 @@ reachable: the broker is granted the registry DB for its synchronous resolve
 path, but it is not the registry surface, so it must not race the control
 plane for import jobs.
 
+### Job worker scheduling
+
+The `WorkerLoop` runs up to `worker.concurrency` jobs at once (default `1`,
+serial) and polls the jobs table every `worker.poll_interval_s` (default
+`2.0`, bounded `0.25`–`60`) while idle. It re-polls as soon as a running job
+frees a slot, and a job enqueued in the **same process** — the broker's
+`Prefer: respond-async` path, a registry import — wakes it the moment the
+enqueuing transaction commits, so in-process pickup does not wait out the
+interval. Jobs enqueued by another process are picked up on the next poll.
+Every poll is a write transaction, even against an empty queue (on SQLite it
+takes the database write lock), so a lower interval buys faster cross-process
+pickup and reclaim at a constant write cost per process.
+Between polls the loop also runs a retention sweep (lapsed approvals, expired
+job results, long-expired token rows) every `worker.sweep_interval_s` of wall
+time (default `120`).
+
+Every claim is one atomic `UPDATE … RETURNING` over a `FOR UPDATE SKIP LOCKED`
+subquery on Postgres (a `BEGIN IMMEDIATE` write transaction on SQLite), so any
+number of loops — several slots in one process, several uvicorn workers, or
+several replicas — can poll the same queue without double-claiming a job.
+Visibility-timeout reclaim and the retry/dead-letter budget apply per job
+unchanged.
+
+`worker.concurrency > 1` is Postgres-only. A job's handler runs in one admin
+transaction that spans its upstream call; on SQLite that transaction holds the
+database write lock, so a second concurrent job's claim or outcome write would
+wait past `busy_timeout` and fail. Config validation refuses
+`concurrency > 1` with a SQLite admin database (a loop built without validated
+config is clamped to `1` with a `worker_concurrency_clamped_sqlite` warning).
+On Postgres each in-flight job holds about **two** admin-DB connections at
+once — the handler transaction plus the run-time authorization or
+credential-audit session it opens — so validation requires
+`2 × worker.concurrency < databases.admin.pool_max`. Size `pool_max` above that
+with headroom for the HTTP requests and other background work sharing the
+admin pool in the same process.
+
+On shutdown the worker drains: it stops claiming and waits up to
+`worker.drain_timeout_s` for every in-flight job, including one whose claim was
+already under way when the drain began; jobs still running at the deadline are
+cancelled and left `RUNNING` for visibility-timeout reclaim (an approved
+execution is failed on reclaim rather than re-run).
+
 ## Related
 
 - [Broker execution](broker-execution.md) — what the broker process does

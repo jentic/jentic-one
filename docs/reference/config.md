@@ -102,7 +102,7 @@ Service-level settings (immutable after boot).
 
 ## `worker`
 
-Background job-worker durability knobs. The worker claims a job, sets a **visibility deadline** (`visibility_timeout_s` from claim), and processes it. A job left `RUNNING` past that deadline by a crashed worker/pod is reclaimed on a later poll. A handler failure requeues the job with capped exponential backoff up to `max_attempts` claims; beyond that it is dead-lettered (poison-message handling) rather than looped forever.
+Background job-worker durability knobs. The worker claims a job, sets a **visibility deadline** (`visibility_timeout_s` from claim), and processes it. A job left `RUNNING` past that deadline by a crashed worker/pod is reclaimed on a later poll. A handler failure requeues the job with capped exponential backoff up to `max_attempts` claims; beyond that it is dead-lettered (poison-message handling) rather than looped forever. Each claim is a single atomic `UPDATE` (`FOR UPDATE SKIP LOCKED` on Postgres, a serialised write transaction on SQLite), so any number of worker loops — across processes or replicas, each running up to `concurrency` jobs — can poll the same queue without double-claiming a job.
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
@@ -113,6 +113,9 @@ Background job-worker durability knobs. The worker claims a job, sets a **visibi
 | `worker.drain_timeout_s` | number | `25.0` | `JENTIC__WORKER__DRAIN_TIMEOUT_S` |  |
 | `worker.reconnect_backoff_base_s` | number (> 0, <= 300) | `2.0` | `JENTIC__WORKER__RECONNECT_BACKOFF_BASE_S` | First delay, in seconds, before the worker retries after losing its database connection. Doubles on each further failed attempt up to `reconnect_backoff_max_s`; each delay is then jittered into the upper half of its value so workers sharing a database do not retry in lockstep. |
 | `worker.reconnect_backoff_max_s` | number (> 0, <= 3600) | `30.0` | `JENTIC__WORKER__RECONNECT_BACKOFF_MAX_S` | Cap, in seconds, on the worker's reconnect delay while the database is unreachable — a recovered database is picked up within this long. |
+| `worker.poll_interval_s` | number (>= 0.25, <= 60.0) | `2.0` | `JENTIC__WORKER__POLL_INTERVAL_S` | Idle wait (seconds) between job-queue polls when nothing is claimable. A job enqueued in the same process wakes the worker immediately, so this mainly bounds pickup latency for jobs enqueued by another process and how quickly visibility-expired jobs are reclaimed. Every poll is a write transaction (the claim is an `UPDATE`) even when the queue is empty — on SQLite it takes the database write lock that request writes also wait on — so each process issues about `1 / poll_interval_s` of them per second while idle. |
+| `worker.concurrency` | integer (>= 1, <= 64) | `1` | `JENTIC__WORKER__CONCURRENCY` | Maximum jobs one worker process runs at once (1 = serial). Postgres only: SQLite requires 1, because a job's handler holds the database write lock across its upstream call, so a second concurrent job's writes would time out. Each in-flight job holds about 2 admin-DB connections at once (its handler transaction plus the run-time authorization or credential-audit session it opens), so `2 * concurrency` must stay below `databases.admin.pool_max`, leaving the remainder for HTTP requests and other background work in the same process. |
+| `worker.sweep_interval_s` | number (>= 1.0, <= 86400.0) | `120.0` | `JENTIC__WORKER__SWEEP_INTERVAL_S` | Seconds between the worker's retention sweeps, which expire lapsed execution approvals and delete expired job results and long-expired access/refresh token rows. Measured in wall time, independent of `poll_interval_s` and wake-ups. |
 
 ## `runtime`
 
