@@ -34358,6 +34358,23 @@
             },
             "description": "Forbidden"
           },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Catalog entry 'public/slack.com' has no spec to preview or import",
+                  "instance": "/catalog/public/slack.com:import",
+                  "status": 409,
+                  "title": "Conflict",
+                  "type": "catalog_entry_has_no_spec"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "`catalog_entry_has_no_spec`: the entry is card-only (lists no spec)."
+          },
           "410": {
             "content": {
               "application/problem+json": {
@@ -34565,6 +34582,23 @@
             },
             "description": "Forbidden"
           },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request conflicts with the current state of the resource.",
+                  "instance": "/example/path",
+                  "status": 409,
+                  "title": "Conflict",
+                  "type": "conflict"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "`catalog_entry_has_no_spec`: the entry is card-only (lists no spec)."
+          },
           "410": {
             "content": {
               "application/problem+json": {
@@ -34580,7 +34614,7 @@
                 }
               }
             },
-            "description": "`catalog_spec_gone`: the entry lists no spec to import."
+            "description": "`catalog_spec_gone`: the entry's source no longer has a spec for it."
           },
           "422": {
             "content": {

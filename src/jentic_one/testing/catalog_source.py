@@ -104,7 +104,7 @@ class FakeSourceHttp:
         url: str,
         *,
         validator: str | None = None,
-        lane: FetchLane = "interactive",
+        lane: FetchLane | None = None,
         authenticate: bool = True,
     ) -> SpecFetch:
         del lane

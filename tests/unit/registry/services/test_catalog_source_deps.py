@@ -377,3 +377,30 @@ async def test_kind_naming_no_urls_sends_credentials_only_to_explicit_origins(
 def test_auth_origins_must_be_http_origins(origin: str) -> None:
     with pytest.raises(ValueError):
         _source(auth=_auth(origins=[origin]))
+
+
+class _LaneRecorder(ProcessSourceLimits):
+    """Process limits that remember the lane of every slot taken."""
+
+    def __init__(self) -> None:
+        super().__init__("corp", concurrency=2, interactive_share=0.5)
+        self.lanes: list[str] = []
+
+    def slot(self, lane: Any) -> Any:
+        self.lanes.append(lane)
+        return super().slot(lane)
+
+
+@pytest.mark.asyncio
+async def test_spec_fetch_lane_defaults_to_interactive_and_follows_the_caller() -> None:
+    """Preview/import fetch on ``interactive``; the update sweep sets ``background``."""
+    limits = _LaneRecorder()
+    http = _http(lambda _req: httpx.Response(200, content=b"{}"), limits=limits)
+    await http.get_bytes(_URL)
+    token = spec_fetch_lane.set("background")
+    try:
+        await http.get_bytes(_URL)
+        await http.get_bytes(_URL, lane="interactive")
+    finally:
+        spec_fetch_lane.reset(token)
+    assert limits.lanes == ["interactive", "background", "interactive"]

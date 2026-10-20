@@ -319,7 +319,7 @@ class ForcedSyncForbiddenError(RegistryServiceError):
     """
 
     def __init__(self) -> None:
-        super().__init__("A forced catalog source sync requires the 'org:admin' permission.")
+        super().__init__("A forced catalog source sync requires the 'org:admin' permission")
 
 
 class SourceSwitchForbiddenError(RegistryServiceError):

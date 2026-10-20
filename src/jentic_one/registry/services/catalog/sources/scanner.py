@@ -162,7 +162,11 @@ class CatalogSourceSyncScanner:
         for row in rows:
             if row.slug in sync.sources and row.reresolve_wanted_at is not None:
                 await sync.reresolve_source(row.slug)
-        await sync.sweep_abandoned_staging(older_than=utcnow() - _ABANDONED_STAGING_AGE)
+        now = utcnow()
+        await sync.sweep_abandoned_staging(
+            older_than=now - _ABANDONED_STAGING_AGE,
+            runs_finished_before=now - _SYNC_RUN_RETENTION,
+        )
         # A requested sync is an explicit "check upstream now", so it also starts
         # the update-notify sweep (fire-and-forget), as the removed
         # ``POST /catalog:refresh`` did. Whatever the run's outcome: a spec can

@@ -82,6 +82,7 @@ __all__ = [
     "build_source_deps",
     "ensure_source_buckets",
     "source_ingest_config",
+    "spec_fetch_lane",
 ]
 
 #: The lane a spec fetch takes when its connector names none. The update sweep
@@ -98,8 +99,10 @@ _GONE_STATUSES = frozenset({404, 410})
 class SourceHttpClient(Protocol):
     """The only HTTP surface a connector may use.
 
-    ``lane`` picks the fetch-limit lane: listings default to ``background``,
-    spec fetches (preview, import, the update sweep) to ``interactive``.
+    ``lane`` picks the fetch-limit lane: listings default to ``background``.
+    A spec fetch with no explicit lane takes the caller's
+    :data:`spec_fetch_lane` (``interactive`` for preview and import,
+    ``background`` for the update sweep), so connectors need not thread it.
     ``authenticate=False`` sends the request without the source's credentials
     (a connector passes it for a URL outside the origins it trusts with them).
     """
@@ -115,7 +118,7 @@ class SourceHttpClient(Protocol):
         url: str,
         *,
         validator: str | None = None,
-        lane: FetchLane = "interactive",
+        lane: FetchLane | None = None,
         authenticate: bool = True,
     ) -> SpecFetch:
         """GET ``url``'s raw bytes, conditionally on ``validator`` (an ETag)."""
@@ -215,10 +218,10 @@ class GuardedSourceHttpClient:
         url: str,
         *,
         validator: str | None = None,
-        lane: FetchLane = "interactive",
+        lane: FetchLane | None = None,
         authenticate: bool = True,
     ) -> SpecFetch:
-        async with self._limits.slot(lane):
+        async with self._limits.slot(lane or spec_fetch_lane.get()):
             headers = await self._headers(url, authenticate)
             try:
                 result = await fetch_bytes_conditional(

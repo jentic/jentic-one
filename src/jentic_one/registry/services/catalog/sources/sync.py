@@ -868,7 +868,8 @@ class CatalogSourceSync:
         """Count imported APIs from ``slug`` that hold a curated-owned id they are not mapped to.
 
         Such an API keeps its ``catalog_api_id`` (re-keying it would orphan its
-        credentials), so each one is logged and counted, once per API row.
+        credentials), so each one is logged, and the source's conflict gauge is
+        set to the count (zero included, so a cleared conflict clears the gauge).
         """
         conflicts = await self._ownership_conflicts(session, slug, resolver)
         for conflict in conflicts:
@@ -881,8 +882,7 @@ class CatalogSourceSync:
                 api_name=conflict.name,
                 api_version=conflict.version,
             )
-        if conflicts:
-            metrics.record_ownership_conflicts(slug, len(conflicts))
+        metrics.record_ownership_conflicts(slug, len(conflicts))
         return len(conflicts)
 
     async def source_warnings(self) -> dict[str, list[SourceWarning]]:

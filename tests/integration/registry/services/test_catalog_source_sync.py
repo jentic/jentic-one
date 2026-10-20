@@ -33,6 +33,7 @@ from jentic_one.registry.services.catalog.entries import (
     exclude_unowned,
 )
 from jentic_one.registry.services.catalog.source_ops import CatalogSourceOps
+from jentic_one.registry.services.catalog.sources import metrics
 from jentic_one.registry.services.catalog.sources import sync as sync_module
 from jentic_one.registry.services.catalog.sources.protocol import Removed, Upserted
 from jentic_one.registry.services.catalog.sources.scanner import (

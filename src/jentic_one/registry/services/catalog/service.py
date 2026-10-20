@@ -465,15 +465,15 @@ class CatalogService:
         return max(0, int((utcnow() - min(synced)).total_seconds()))
 
     def trigger_update_notify_sweep(self) -> None:
-        """Fire-and-forget the update-notify sweep after an operator refresh.
+        """Fire-and-forget the update-notify sweep after a requested source sync.
 
-        Public entry point for both the lazy refresh-on-read (``_safe_refresh``) and
-        a requested sync (``POST /catalog/sources/{slug}:sync``, fired by the source
-        sync scanner once the run ends) — an intentional "check upstream now"
-        should sweep too.
+        Called for a requested sync (``POST /catalog/sources/{slug}:sync``, fired by
+        the source sync scanner once the run ends): an intentional "check upstream
+        now" should sweep too. Catalog reads never trigger it; the periodic sweep
+        is ``CatalogUpdateScanner``'s (:meth:`run_update_sweep`).
 
         The sweep issues up to N conditional GETs, so awaiting it inline would hold
-        the refresh response on the whole batch. We detach it into a background
+        the sync run on the whole batch. We detach it into a background
         task instead; failures are logged, never raised back to the caller. The
         task is parked in ``_SWEEP_TASKS`` so it isn't GC'd
         before it finishes (this service instance is per-request and short-lived).

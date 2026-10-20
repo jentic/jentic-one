@@ -53,7 +53,6 @@ from jentic_one.registry.web.schemas.catalog import (
     PreviewParameterResponse,
 )
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.auth.permission_catalog import ORG_ADMIN
 from jentic_one.shared.pagination import InvalidCursorError
 from jentic_one.shared.web import effective_permissions, get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
