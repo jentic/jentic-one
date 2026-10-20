@@ -373,7 +373,9 @@ async def load_specification(
                 follow_redirects=False,
                 transport=build_pinned_transport(cfg.egress),
             ) as client:
-                resp = await follow_redirects(
+                # Relative servers resolve against where the document was
+                # retrieved, so keep the URL the redirect chain ended on.
+                resp, validated_url = await follow_redirects(
                     client,
                     validated_url,
                     headers=None,

@@ -177,7 +177,7 @@ async def _open_following_redirects(
     client: httpx.AsyncClient, url: str, *, headers: dict[str, str], config: IngestConfig
 ) -> httpx.Response:
     """Open ``url`` via ``shared.bounded_read.follow_redirects`` with catalog errors."""
-    return await follow_redirects(
+    resp, _ = await follow_redirects(
         client,
         url,
         headers=headers,
@@ -186,3 +186,4 @@ async def _open_following_redirects(
         on_unsafe=lambda exc: CatalogFetchError(f"unsafe URL rejected: {exc}"),
         on_too_many=lambda: CatalogFetchError("too many redirects"),
     )
+    return resp

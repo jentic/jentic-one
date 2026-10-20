@@ -82,7 +82,7 @@ async def follow_redirects(
     max_redirects: int,
     on_unsafe: Callable[[ValueError], Exception],
     on_too_many: Callable[[], Exception],
-) -> httpx.Response:
+) -> tuple[httpx.Response, str]:
     """Open ``url`` as a stream, following up to ``max_redirects`` revalidated hops.
 
     Every ``Location`` is resolved against the current URL and re-checked by
@@ -90,8 +90,9 @@ async def follow_redirects(
     ``headers`` are re-sent on each hop. A rejected hop raises
     ``on_unsafe(exc)``, and a redirect still pending once the budget is spent
     raises ``on_too_many()``. Intermediate redirect responses are closed
-    unread. The returned final response's body is unread — the caller must
-    ``aclose()`` it.
+    unread. Returns the final response, its body unread (the caller must
+    ``aclose()`` it), and the validated URL it was requested from: the end of
+    the redirect chain, never the pinned address the transport connects to.
     """
     resp = await open_stream(client, url, headers=headers)
     try:
@@ -113,7 +114,7 @@ async def follow_redirects(
     except BaseException:
         await resp.aclose()
         raise
-    return resp
+    return resp, url
 
 
 class _CappedBuffer:
