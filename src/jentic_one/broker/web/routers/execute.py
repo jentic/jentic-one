@@ -51,6 +51,7 @@ from jentic_one.broker.core.headers import (
 )
 from jentic_one.broker.core.idempotency import fingerprint
 from jentic_one.broker.core.proxy_headers import (
+    PASSTHROUGH_CACHE_CONTROL,
     forward_headers,
     passthrough_response_headers,
     reconstruct_upstream_url,
@@ -888,8 +889,11 @@ def _replay_response(stored: StoredResponse) -> Response:
     status/headers with an empty body and a marker header so the caller knows the
     body wasn't cached (the no-duplicate-side-effect guarantee still held).
     """
-    headers = dict(stored.headers)
+    # A replay re-emits a passthrough body, so it carries the passthrough
+    # Cache-Control whatever the stored record holds (#1835).
+    headers = {k: v for k, v in stored.headers.items() if k.lower() != "cache-control"}
     headers[JenticHeader.IDEMPOTENT_REPLAYED.value] = "true"
+    headers["cache-control"] = PASSTHROUGH_CACHE_CONTROL
     if stored.body_omitted:
         headers[JenticHeader.IDEMPOTENCY_BODY_OMITTED.value] = "true"
         # The stored content-length described the original (uncached) body; drop

@@ -43,6 +43,7 @@ from jentic_one.shared.telemetry.sink import TelemetrySink, set_active_sink
 from jentic_one.shared.tracing import instrument_inbound_app
 from jentic_one.shared.web.agent_discovery import get_agent_discovery_router
 from jentic_one.shared.web.auth import API_KEY_HEADER
+from jentic_one.shared.web.cache_control import AuthenticatedResponseCacheMiddleware
 from jentic_one.shared.web.container import AppContainer, RouterSpec
 from jentic_one.shared.web.deps import TokenVerifier
 from jentic_one.shared.web.errors import (
@@ -764,6 +765,8 @@ def create_surface_app(
         app.include_router(
             catch_all_router, tags=list(catch_all_tags), responses=COMMON_ERROR_RESPONSES
         )
+    # Authenticated JSON is caller-specific: keep it out of shared caches (#1835).
+    app.add_middleware(AuthenticatedResponseCacheMiddleware)
     app.add_middleware(RequestIDMiddleware)
     app.add_exception_handler(ProblemDetailException, spa_aware_problem_detail_handler)  # type: ignore[arg-type]
     app.add_exception_handler(RequestValidationError, request_validation_error_handler)  # type: ignore[arg-type]
@@ -1019,6 +1022,8 @@ def create_combined_app(
     for installer in container.extra_installers:
         installer(root, ctx)
 
+    # Authenticated JSON is caller-specific: keep it out of shared caches (#1835).
+    root.add_middleware(AuthenticatedResponseCacheMiddleware)
     root.add_middleware(RequestIDMiddleware)
     attach_http_observability(root)
     install_openapi_metadata(root)
