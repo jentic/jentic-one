@@ -257,6 +257,12 @@ def build_default_container(ctx: Context) -> AppContainer:
     that hold that access without serving the catalog (the broker included);
     failing fast there too is deliberate. Downstream containers that start
     here inherit the check.
+
+    Combined shapes that serve admin and can read the control DB carry the
+    credential-creator lookup (:func:`install_credential_creator_lookup`), so
+    the actor lookup can label the creator of a credential the caller can read.
+    A standalone admin process builds no container and has no control DB, so
+    it does not carry it (see that function for the effect).
     """
     if ctx.is_db_allowed("registry"):
         validate_catalog_search_config(ctx.config)

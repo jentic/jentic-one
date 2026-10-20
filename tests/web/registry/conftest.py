@@ -10,7 +10,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy import delete, text
 
 from jentic_one.admin.services._support.tokens import issue_jwt
-from jentic_one.auth.web.app import install_on_app as install_auth_verifier
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.catalog_snapshots import CatalogSnapshot

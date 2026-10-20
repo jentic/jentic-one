@@ -121,6 +121,7 @@ _SAFE_DETAILS: dict[type[Exception], str] = {
     CatalogSearchUnavailableError: (
         "Catalog search is temporarily unavailable; retry or restart the search without a cursor"
     ),
+    **DB_UNAVAILABLE_SAFE_DETAILS,
 }
 
 #: Seconds a client should wait before retrying a 503 ``catalog_search_unavailable``.
