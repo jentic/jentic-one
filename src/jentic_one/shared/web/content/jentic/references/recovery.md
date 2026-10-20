@@ -185,7 +185,7 @@ the right ask, then retry once they confirm.
   it connects or ends, and returns at once for a human-entry `manual_*` /
   `awaiting_app` flow unless `--timeout` is set). You never open or approve
   the URL yourself.
-- `jentic catalog search "<query>"` / `jentic catalog import <vendor/name>`
+- `jentic catalog search "<query>"` / `jentic catalog import <entry_id>`
   — find and import APIs (import first; `search` only sees imported
   operations).
 - `jentic search "<query>"` → `jentic inspect <target>` →
@@ -252,7 +252,7 @@ re-send while pending).
 ## Verification — CLI session
 
 - `jentic doctor` shows a resolvable identity with a valid token.
-- After `jentic catalog import <vendor/name>`, `jentic search "<something
+- After `jentic catalog import <entry_id>`, `jentic search "<something
   in that API>"` returns at least one result.
 - A known-allowed `jentic execute …` (pointed at the right broker) returns
   a 2xx response body.

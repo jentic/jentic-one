@@ -115,13 +115,13 @@ type catPageMsg struct {
 }
 
 type catPreviewMsg struct {
-	apiID   string
+	entryID string
 	preview *catalogPreview
 	err     error
 }
 
 type catImportMsg struct {
-	apiID    string
+	entryID  string
 	result   *catalogImportResult
 	promoted map[string]string
 	err      error
@@ -159,31 +159,31 @@ func (m *catalogBrowser) refreshCache() tea.Cmd {
 	}
 }
 
-func (m *catalogBrowser) loadPreview(apiID string) tea.Cmd {
+func (m *catalogBrowser) loadPreview(entryID string) tea.Cmd {
 	ctx, client := m.ctx, m.client
 	return func() tea.Msg {
-		p, err := client.Preview(ctx, apiID, 0, catalogPreviewOps, "")
-		return catPreviewMsg{apiID: apiID, preview: p, err: err}
+		p, err := client.Preview(ctx, entryID, 0, catalogPreviewOps, "")
+		return catPreviewMsg{entryID: entryID, preview: p, err: err}
 	}
 }
 
-func (m *catalogBrowser) importEntry(apiID string) tea.Cmd {
+func (m *catalogBrowser) importEntry(entryID string) tea.Cmd {
 	ctx, client := m.ctx, m.client
 	return func() tea.Msg {
-		jobID, err := client.Import(ctx, apiID)
+		jobID, err := client.Import(ctx, entryID)
 		if err != nil {
-			return catImportMsg{apiID: apiID, err: err}
+			return catImportMsg{entryID: entryID, err: err}
 		}
 		job, err := pollImportJobProgress(ctx, client, jobID, 2*time.Minute, nil)
 		if err != nil {
-			return catImportMsg{apiID: apiID, err: err}
+			return catImportMsg{entryID: entryID, err: err}
 		}
 		if job.Status != catJobCompleted {
-			return catImportMsg{apiID: apiID, err: fmt.Errorf("%s: %s", job.Status, cmdcore.ValueOr(job.Error, "no detail"))}
+			return catImportMsg{entryID: entryID, err: fmt.Errorf("%s: %s", job.Status, cmdcore.ValueOr(job.Error, "no detail"))}
 		}
 		result, err := client.JobResult(ctx, jobID)
 		if err != nil {
-			return catImportMsg{apiID: apiID, err: err}
+			return catImportMsg{entryID: entryID, err: err}
 		}
 		promoted := map[string]string{}
 		for _, rev := range result.Revisions {
@@ -197,7 +197,7 @@ func (m *catalogBrowser) importEntry(apiID string) tea.Cmd {
 			}
 			promoted[rev.RevisionID] = "live"
 		}
-		return catImportMsg{apiID: apiID, result: result, promoted: promoted}
+		return catImportMsg{entryID: entryID, result: result, promoted: promoted}
 	}
 }
 
@@ -215,13 +215,13 @@ func (m *catalogBrowser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case catPageMsg:
 		return m.onPage(msg)
 	case catPreviewMsg:
-		if m.previewLoading == msg.apiID {
+		if m.previewLoading == msg.entryID {
 			m.previewLoading = ""
 		}
 		if msg.err != nil {
-			m.previewErr[msg.apiID] = msg.err.Error()
+			m.previewErr[msg.entryID] = msg.err.Error()
 		} else {
-			m.previews[msg.apiID] = msg.preview
+			m.previews[msg.entryID] = msg.preview
 		}
 		return m, nil
 	case catImportMsg:
@@ -268,30 +268,30 @@ func (m *catalogBrowser) onPage(msg catPageMsg) (tea.Model, tea.Cmd) {
 	}
 	m.total = res.CatalogTotal
 	m.registered = res.RegisteredCount
-	m.ageSeconds = res.ManifestAgeSeconds
+	m.ageSeconds = res.OldestSourceSyncAgeSeconds
 	m.hasMore = res.HasMore && res.NextCursor != ""
 	m.nextCursor = res.NextCursor
 	return m, nil
 }
 
 func (m *catalogBrowser) onImport(msg catImportMsg) (tea.Model, tea.Cmd) {
-	if m.importing == msg.apiID {
+	if m.importing == msg.entryID {
 		m.importing = ""
 	}
 	if msg.err != nil {
-		m.status = m.st.Warnf("import %s failed: %v", msg.apiID, msg.err)
+		m.status = m.st.Warnf("import %s failed: %v", msg.entryID, msg.err)
 		return m, nil
 	}
 	// Mark the entry as imported and bump the counter.
 	for i := range m.entries {
-		if m.entries[i].APIID == msg.apiID {
+		if m.entries[i].EntryID == msg.entryID {
 			if !m.entries[i].Registered {
 				m.registered++
 			}
 			m.entries[i].Registered = true
 		}
 	}
-	m.status = m.st.Successf("imported %s (%d revision(s))", msg.apiID, len(msg.result.Revisions))
+	m.status = m.st.Successf("imported %s (%d revision(s))", msg.entryID, len(msg.result.Revisions))
 	return m, nil
 }
 
@@ -350,9 +350,9 @@ func (m *catalogBrowser) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // is back at its base (no preview, no query, all entries).
 func (m *catalogBrowser) back() (tea.Model, tea.Cmd) {
 	if e, ok := m.current(); ok {
-		if _, shown := m.previews[e.APIID]; shown {
-			delete(m.previews, e.APIID)
-			delete(m.previewErr, e.APIID)
+		if _, shown := m.previews[e.EntryID]; shown {
+			delete(m.previews, e.EntryID)
+			delete(m.previewErr, e.EntryID)
 			m.status = ""
 			return m, nil
 		}
@@ -411,15 +411,15 @@ func (m *catalogBrowser) maybeLoadPreview() tea.Cmd {
 	if !ok {
 		return nil
 	}
-	if _, cached := m.previews[e.APIID]; cached {
+	if _, cached := m.previews[e.EntryID]; cached {
 		return nil
 	}
-	if m.previewLoading == e.APIID {
+	if m.previewLoading == e.EntryID {
 		return nil
 	}
-	delete(m.previewErr, e.APIID)
-	m.previewLoading = e.APIID
-	return m.loadPreview(e.APIID)
+	delete(m.previewErr, e.EntryID)
+	m.previewLoading = e.EntryID
+	return m.loadPreview(e.EntryID)
 }
 
 func (m *catalogBrowser) maybeImport() tea.Cmd {
@@ -428,12 +428,12 @@ func (m *catalogBrowser) maybeImport() tea.Cmd {
 		return nil
 	}
 	if e.Registered {
-		m.status = m.st.Dim.Render(e.APIID + " is already imported")
+		m.status = m.st.Dim.Render(e.EntryID + " is already imported")
 		return nil
 	}
-	m.importing = e.APIID
+	m.importing = e.EntryID
 	m.status = ""
-	return m.importEntry(e.APIID)
+	return m.importEntry(e.EntryID)
 }
 
 // ── view ─────────────────────────────────────────────────────────────────────
@@ -482,9 +482,9 @@ func (m *catalogBrowser) View() string {
 }
 
 func (m *catalogBrowser) headerStatus() string {
-	age := "age unknown"
+	age := "sources never synced"
 	if m.ageSeconds != nil {
-		age = "cache " + humanizeAge(*m.ageSeconds)
+		age = "oldest source sync " + humanizeAge(*m.ageSeconds)
 	}
 	return fmt.Sprintf("%d entries · %d imported · %s", m.total, m.registered, age)
 }
@@ -514,7 +514,7 @@ func (m *catalogBrowser) listRow(i int) string {
 	if e.Registered {
 		glyph = m.st.Success.Render(theme.SelectOn)
 	}
-	name := truncate(e.APIID, catalogListColumn-3)
+	name := truncate(e.EntryID, catalogListColumn-3)
 	if i == m.cursor {
 		return glyph + " " + m.st.Accent.Render(name)
 	}
@@ -537,29 +537,36 @@ func (m *catalogBrowser) detailBody() string {
 		return m.st.Dim.Render("no selection")
 	}
 	var b strings.Builder
-	b.WriteString(m.st.Heading.Render(e.APIID) + "\n")
-	if e.Vendor != "" && e.Vendor != e.APIID {
-		b.WriteString(m.st.Field("vendor", e.Vendor) + "\n")
+	b.WriteString(m.st.Heading.Render(e.EntryID) + "\n")
+	if title := deref(e.Title); title != "" {
+		b.WriteString(m.st.Field("title", truncate(title, m.detailWidth())) + "\n")
+	}
+	b.WriteString(m.st.Field("source", e.SourceSlug) + "\n")
+	if vendor := deref(e.DisplayVendor); vendor != "" {
+		b.WriteString(m.st.Field("vendor", vendor) + "\n")
 	}
 	status, dot := "not imported", m.st.DotDown()
 	if e.Registered {
 		status, dot = "imported", m.st.DotOK()
 	}
 	b.WriteString(dot + " " + m.st.Field("status", status) + "\n")
-	if e.SpecURL != "" {
-		b.WriteString(m.st.Field("spec", truncate(e.SpecURL, m.detailWidth())) + "\n")
+	if e.Alternates > 0 {
+		b.WriteString(m.st.Field("also listed by", otherSources(e.Alternates)) + "\n")
+	}
+	if e.Links.Human != "" {
+		b.WriteString(m.st.Field("source page", truncate(e.Links.Human, m.detailWidth())) + "\n")
 	}
 
 	b.WriteString("\n")
 	switch {
-	case m.importing == e.APIID:
+	case m.importing == e.EntryID:
 		b.WriteString(m.st.Infof("importing …"))
-	case m.previewLoading == e.APIID:
+	case m.previewLoading == e.EntryID:
 		b.WriteString(m.st.Dim.Render("loading operations …"))
-	case m.previewErr[e.APIID] != "":
-		b.WriteString(m.st.Warnf("preview unavailable: %s", m.previewErr[e.APIID]))
-	case m.previews[e.APIID] != nil:
-		b.WriteString(m.previewBlock(m.previews[e.APIID]))
+	case m.previewErr[e.EntryID] != "":
+		b.WriteString(m.st.Warnf("preview unavailable: %s", m.previewErr[e.EntryID]))
+	case m.previews[e.EntryID] != nil:
+		b.WriteString(m.previewBlock(m.previews[e.EntryID]))
 	default:
 		b.WriteString(m.st.Dim.Render("press o to preview operations · i to import"))
 	}

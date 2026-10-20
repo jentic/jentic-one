@@ -47,7 +47,7 @@ describe('catalogEntryToEntity', () => {
 		expect(entity.registered).toBe(true);
 		expect(entity.summary).toBe('stripe.com');
 		expect(entity.subtitle).toBe('stripe');
-		expect(entity.githubUrl).toBeUndefined();
+		expect(entity.humanUrl).toBeUndefined();
 	});
 
 	it('addresses the entry by entry_id and names it by catalog_api_id', () => {
@@ -81,7 +81,7 @@ describe('catalogEntryToEntity', () => {
 		const entity = catalogEntryToEntity(availableEntry);
 		expect(entity.registered).toBe(false);
 		expect(entity.apiId).toBe('slack.com');
-		expect(entity.githubUrl).toContain('slack.com.json');
+		expect(entity.humanUrl).toContain('slack.com.json');
 	});
 
 	it('falls back to catalog_api_id when the entry has no vendor', () => {
@@ -103,5 +103,43 @@ describe('catalogEntryToEntity', () => {
 		expect(entity.summary).toBe('Article Search');
 		expect(entity.subtitle).toBe('nytimes.com');
 		expect(entity.apiId).toBe('nytimes.com/article_search');
+	});
+
+	it('prefers the entry title over the name derived from catalog_api_id', () => {
+		const titled = catalogEntryToEntity(
+			catalogEntry('nytimes.com/article_search', {
+				vendor: 'nytimes.com',
+				title: 'NYT Article Search API',
+			}),
+		);
+		expect(titled.summary).toBe('NYT Article Search API');
+		// A blank title falls back to the derived name.
+		const blank = catalogEntryToEntity({ ...umbrellaSubApi, title: '  ' });
+		expect(blank.summary).toBe('Article Search');
+	});
+
+	it('groups a namespaced entry under its display_vendor, not its identity vendor', () => {
+		const entity = catalogEntryToEntity(
+			catalogEntry('aws-prod~stripe.com', {
+				entry_id: 'internal/aws-prod~stripe.com',
+				source_slug: 'internal',
+				vendor: 'aws-prod~stripe.com',
+				display_vendor: 'stripe.com',
+			}),
+		);
+		expect(entity.displayVendor).toBe('stripe.com');
+		expect(entity.vendor).toBe('stripe.com');
+		expect(entity.catalogVendor).toBe('aws-prod~stripe.com');
+		expect(entity.sourceSlug).toBe('internal');
+		expect(entity.browseKey).toBe('aws-prod~stripe.com');
+	});
+
+	it('carries alternates and has_spec', () => {
+		const entity = catalogEntryToEntity(
+			catalogEntry('stripe.com', { alternates: 2, has_spec: false }),
+		);
+		expect(entity.alternates).toBe(2);
+		expect(entity.hasSpec).toBe(false);
+		expect(catalogEntryToEntity(registeredEntry).alternates).toBe(0);
 	});
 });

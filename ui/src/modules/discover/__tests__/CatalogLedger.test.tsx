@@ -19,12 +19,17 @@ function api(apiId: string, extra: Partial<DiscoveryEntity> = {}): DiscoveryEnti
 		id: apiId,
 		entryId: `public/${apiId}`,
 		apiId,
+		sourceSlug: 'public',
+		browseKey: apiId,
+		displayVendor: apiId.split('/')[0],
+		alternates: 0,
+		hasSpec: true,
 		summary: sub ? sub.charAt(0).toUpperCase() + sub.slice(1) : apiId,
 		registered: false,
 		updateAvailable: false,
 		vendor: apiId.split('/')[0],
 		version: '1.0.0',
-		githubUrl: `https://github.com/jentic/x/${apiId}`,
+		humanUrl: `https://github.com/jentic/x/${apiId}`,
 		...extra,
 	};
 }
@@ -566,6 +571,30 @@ describe('CatalogLedger', () => {
 	it('has no critical a11y violations', async () => {
 		const { container } = renderWithProviders(<Harness />);
 		await checkA11y(container);
+	});
+
+	it('badges rows with their source and hides the rail only when sources are mixed', () => {
+		const { unmount } = renderWithProviders(<Harness />);
+		// One source (the usual install): no badges, the rail stays.
+		expect(screen.queryAllByTestId('catalog-row-source')).toEqual([]);
+		expect(screen.getByRole('toolbar', { name: 'Jump to letter' })).toBeInTheDocument();
+		unmount();
+
+		renderWithProviders(
+			<Harness
+				entities={[
+					...ENTITIES,
+					api('acme.com', { entryId: 'internal/acme.com', sourceSlug: 'internal' }),
+				]}
+			/>,
+		);
+		const badge = within(rowFor('acme.com')).getByTestId('catalog-row-source');
+		expect(badge).toHaveTextContent('internal');
+		expect(within(rowFor('zoom.us')).getByTestId('catalog-row-source')).toHaveTextContent(
+			'public',
+		);
+		// The feed runs source by source: a letter has no single place to land.
+		expect(screen.queryByRole('toolbar', { name: 'Jump to letter' })).toBeNull();
 	});
 
 	it('keeps the sr-only announcer inside the list, so the document never scrolls', () => {

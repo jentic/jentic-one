@@ -102,7 +102,7 @@ func TestAgentError_EnvelopeShape(t *testing.T) {
 	if got["error_code"] != CodeBrokerDenied {
 		t.Errorf("error_code = %v", got["error_code"])
 	}
-	if got["schema_version"] != "1" {
+	if got["schema_version"] != "2" {
 		t.Errorf("schema_version = %v", got["schema_version"])
 	}
 	// Details.api_key must be redacted even inside the error envelope.

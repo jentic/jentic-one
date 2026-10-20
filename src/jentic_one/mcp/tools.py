@@ -599,7 +599,15 @@ async def handle_search_catalog(
                     "operations": f"{self_link}/operations",
                     "import": f"{self_link}:import",
                     **({"human": view.human_url} if view.human_url else {}),
-                    "alternates": [f"{env.base_url}/catalog/{alt}" for alt in view.alternate_ids],
+                    **(
+                        {
+                            "alternates": [
+                                f"{env.base_url}/catalog/{alt}" for alt in view.alternate_ids
+                            ]
+                        }
+                        if view.alternates > 0
+                        else {}
+                    ),
                 },
             }
         )
@@ -620,7 +628,11 @@ async def handle_search_catalog(
 
 # ── import_api ────────────────────────────────────────────────────────────────
 
-_IMPORT_API_PARAMS = [ParamSpec("api_id", "string", ("id", "api"))]
+_IMPORT_API_PARAMS = [ParamSpec("entry_id", "string", ("api_id", "id", "api"))]
+
+#: The longest entry_id import_api accepts (Go: ``maxEntryIDLength``): a source
+#: slug, a "/", and an external id, with headroom.
+_MAX_ENTRY_ID_LENGTH = 320
 
 #: How long import_api tracks the import job in-process before handing the
 #: still-running job back to the model (Go: ``defaultImportWaitBudget``). The
@@ -684,25 +696,51 @@ _JOB_KIND_EXECUTION = "execution"
 _JOB_FAILED = "failed"
 
 
-def validate_api_id(api_id: str) -> None:
-    """Syntactic guard on the catalog entry id (Go: ``validateAPIID``).
+def entry_id_problem(entry_id: str) -> str | None:
+    """Why ``entry_id`` can't name a catalog entry, or ``None`` when it can.
+
+    The rule is the REST router's (which answers such ids as a missing entry):
+    at most 320 characters (code points), no character below U+0020 or U+007F,
+    no leading ``/``, no empty, ``.`` or ``..`` segment. Go: ``checkEntryID``.
+    """
+    if len(entry_id) > _MAX_ENTRY_ID_LENGTH:
+        return f"longer than {_MAX_ENTRY_ID_LENGTH} characters"
+    if any(ord(ch) < 0x20 or ch == "\x7f" for ch in entry_id):
+        return "control characters are not allowed"
+    if entry_id.startswith("/"):
+        return 'a leading "/" is not allowed'
+    if any(segment in ("", ".", "..") for segment in entry_id.split("/")):
+        return 'empty, ".", or ".." path segments are not allowed'
+    return None
+
+
+def safe_did_you_mean(suggestion: str | None) -> str | None:
+    """The server's ``did_you_mean`` when it is a well-formed entry_id, else ``None``.
+
+    A suggestion is relayed into an actionable retry, so one that couldn't
+    name an entry is dropped rather than handed to the model.
+    """
+    if not suggestion:
+        return None
+    suggestion = suggestion.strip()
+    return suggestion if suggestion and entry_id_problem(suggestion) is None else None
+
+
+def validate_entry_id(entry_id: str) -> None:
+    """Syntactic guard on the catalog entry id (Go: ``checkEntryID``).
 
     The Go client splices the id into the ``{entry_id:path}`` route verbatim,
-    so it rejects traversal shapes before the wire. In-process there is no
-    route to rewrite, but the error contract must not differ: the same shapes
-    are refused as the same correctable protocol error.
+    so it rejects traversal shapes, control characters and oversized ids
+    before the wire. In-process there is no route to rewrite, but the error
+    contract must not differ: the same shapes are refused as the same
+    correctable protocol error.
     """
-    if api_id.startswith("/"):
+    problem = entry_id_problem(entry_id)
+    if problem is not None:
         raise invalid_params(
-            f'invalid api_id {api_id!r}: a leading "/" is not allowed — pass the api_id '
-            "from a search_catalog hit verbatim"
+            f"invalid entry_id {entry_id!r}: {problem}"
+            " — pass the entry_id from a search_catalog hit verbatim"
         )
-    for segment in api_id.split("/"):
-        if segment in ("", ".", ".."):
-            raise invalid_params(
-                f'invalid api_id {api_id!r}: empty, ".", or ".." path segments are not '
-                "allowed — pass the api_id from a search_catalog hit verbatim"
-            )
 
 
 def _already_imported_payload(job_id: str) -> dict[str, Any]:
@@ -839,16 +877,16 @@ async def _promote_revisions(env: CallEnv, revisions: list[Any]) -> dict[str, st
 
 
 async def handle_import_api(env: CallEnv, arguments: dict[str, Any]) -> mcp_types.CallToolResult:
-    """POST /catalog/{api_id}:import + the track-and-promote loop, in-process
+    """POST /catalog/{entry_id}:import + the track-and-promote loop, in-process
     (Go: ``handleImportAPI`` + ``trackImportJob`` + ``promoteRevisions``)."""
     args = normalize_tool_args(arguments, _IMPORT_API_PARAMS)
-    api_id = args.get("api_id", "")
-    if not api_id:
+    entry_id = args.get("entry_id", "")
+    if not entry_id:
         raise invalid_params(
-            'import_api requires "api_id" (aliases: "id", "api"): the entry_id of a '
-            'search_catalog hit, e.g. "public/googleapis.com/sheets"'
+            'import_api requires "entry_id" (aliases: "api_id", "id", "api"): the '
+            'entry_id of a search_catalog hit, e.g. "public/googleapis.com/sheets"'
         )
-    validate_api_id(api_id)
+    validate_entry_id(entry_id)
     try:
         require_permissions(env.identity, ["catalog:import"])
     except ToolError as exc:
@@ -875,7 +913,7 @@ async def handle_import_api(env: CallEnv, arguments: dict[str, Any]) -> mcp_type
         # indefinitely. One ceiling over both bounds the whole request inside
         # typical MCP client tool timeouts.
         async with asyncio.timeout(_IMPORT_WAIT_BUDGET_SECONDS + _IMPORT_WAIT_GRACE_SECONDS):
-            job_id = await _file_import(env, api_id)
+            job_id = await _file_import(env, entry_id)
 
             try:
                 require_permissions(env.identity, ["jobs:read"])
@@ -892,7 +930,7 @@ async def handle_import_api(env: CallEnv, arguments: dict[str, Any]) -> mcp_type
                     {"schema_version": SCHEMA_VERSION, "job_id": job_id, "status": "queued"},
                 )
 
-            return await _finish_import(env, api_id, job_id)
+            return await _finish_import(env, entry_id, job_id)
     except TimeoutError as exc:
         if job_id is None:
             # The ceiling lapsed inside the FILING leg: whether the enqueue
@@ -903,9 +941,9 @@ async def handle_import_api(env: CallEnv, arguments: dict[str, Any]) -> mcp_type
             # lapse (Go's transportSoftError posture), never "stop, bug".
             raise ToolError(
                 CODE_TRANSPORT_ERROR,
-                f"filing the import of {api_id} timed out — the import may or may not "
+                f"filing the import of {entry_id} timed out — the import may or may not "
                 "have been filed",
-                actionable="Re-calling import_api with the same api_id is safe "
+                actionable="Re-calling import_api with the same entry_id is safe "
                 "(re-importing converges), or re-check the entry with search_catalog "
                 "first.",
                 next_tool="search_catalog",
@@ -916,33 +954,35 @@ async def handle_import_api(env: CallEnv, arguments: dict[str, Any]) -> mcp_type
         # clean "still running".
         raise ToolError(
             CODE_INTERNAL_ERROR,
-            f"import of {api_id} was filed as job {job_id}, but tracking it timed out mid-poll",
+            f"import of {entry_id} was filed as job {job_id}, but tracking it timed out mid-poll",
             actionable="The job's state is unknown — prefer polling this job with "
             "get_execution_result (using the job_id in this result) over re-importing "
-            "(a re-import of the same api_id converges, but files a fresh job).",
+            "(a re-import of the same entry_id converges, but files a fresh job).",
             next_tool="get_execution_result",
             extra={"job_id": job_id},
         ) from exc
 
 
-async def _file_import(env: CallEnv, api_id: str) -> str:
+async def _file_import(env: CallEnv, entry_id: str) -> str:
     """The filing leg: POST /catalog/{entry_id}:import in-process, error-mapped.
 
-    ``api_id`` carries an ``entry_id``. An entry hidden from the agent gets the
-    same answer as a missing one, and the import never switches an existing API
-    to another source. Runs under the caller's hard ceiling — ``import_entry``'s
-    catalog read can sync a never-synced source first, a fetch bounded only by
+    An entry hidden from the agent gets the same answer as a missing one (an
+    old-style ``catalog_api_id`` gets the visible entry as ``did_you_mean``),
+    and the import never switches an existing API to another source. Runs
+    under the caller's hard ceiling — ``import_entry``'s catalog read can
+    sync a never-synced source first, a fetch bounded only by
     ``ingest.fetch_timeout_s``.
     """
     try:
-        return await CatalogService(env.ctx).import_entry(api_id, env.identity)
+        return await CatalogService(env.ctx).import_entry(entry_id, env.identity)
     except CatalogEntryNotFoundError as exc:
         # Hidden and missing ids get the same text; the hint names only an
-        # entry the agent can see.
-        hint = f" — did you mean {exc.did_you_mean!r}?" if exc.did_you_mean else ""
+        # entry the agent can see, and only when it is a well-formed entry_id.
+        suggestion = safe_did_you_mean(exc.did_you_mean)
+        hint = f" — did you mean {suggestion!r}?" if suggestion else ""
         raise invalid_params(
-            f"catalog entry {api_id!r} not found{hint}; call search_catalog with a keyword "
-            "for the API you need and pass the entry_id of one of its hits as api_id"
+            f"catalog entry {entry_id!r} not found{hint}; call search_catalog with a keyword "
+            "for the API you need and pass the entry_id of one of its hits verbatim"
         ) from None
     except OverlaySupersedeForbiddenError as exc:
         # An arm Go never sees distinctly: re-importing would supersede an
@@ -957,13 +997,13 @@ async def _file_import(env: CallEnv, api_id: str) -> str:
         ) from None
     except CatalogEntryHasNoSpecError:
         raise invalid_params(
-            f"catalog entry {api_id!r} has no spec to import; pick another search_catalog hit"
+            f"catalog entry {entry_id!r} has no spec to import; pick another search_catalog hit"
         ) from None
     except CatalogUnavailableError as exc:
         raise ToolError(CODE_INTERNAL_ERROR, f"catalog not available: {exc}") from None
 
 
-async def _finish_import(env: CallEnv, api_id: str, job_id: str) -> mcp_types.CallToolResult:
+async def _finish_import(env: CallEnv, entry_id: str, job_id: str) -> mcp_types.CallToolResult:
     """The track-and-promote tail of import_api (runs under the hard ceiling)."""
     try:
         job, duplicate_content = await _track_import_job(env.ctx, job_id, identity=env.identity)
@@ -975,10 +1015,10 @@ async def _finish_import(env: CallEnv, api_id: str, job_id: str) -> mcp_types.Ca
         # THIS job instead of filing another.
         raise ToolError(
             CODE_INTERNAL_ERROR,
-            f"import of {api_id} was filed as job {job_id}, but polling the job failed: {exc}",
+            f"import of {entry_id} was filed as job {job_id}, but polling the job failed: {exc}",
             actionable="The job's state is unknown — prefer polling this job with "
             "get_execution_result (using the job_id in this result) over re-importing "
-            "(a re-import of the same api_id converges, but files a fresh job).",
+            "(a re-import of the same entry_id converges, but files a fresh job).",
             next_tool="get_execution_result",
             extra={"job_id": job_id},
         ) from exc
@@ -998,8 +1038,8 @@ async def _finish_import(env: CallEnv, api_id: str, job_id: str) -> mcp_types.Ca
     if job.status != _JOB_COMPLETED:
         raise ToolError(
             CODE_INTERNAL_ERROR,
-            f"import of {api_id} {job.status}: {job.error or 'no detail'}",
-            actionable="Re-check the api_id against a search_catalog hit and retry "
+            f"import of {entry_id} {job.status}: {job.error or 'no detail'}",
+            actionable="Re-check the entry_id against a search_catalog hit and retry "
             "import_api; if the import keeps failing, relay this error to your operator.",
             next_tool="search_catalog",
             extra={"job_id": job_id, "job_status": job.status},

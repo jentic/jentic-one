@@ -206,6 +206,39 @@ export async function deleteApi(key: ApiKey): Promise<void> {
 	}
 }
 
+/** Syntactic shape of an `entry_id` (the REST router's rule), so a hint is never followed blind. */
+function isEntryId(id: string): boolean {
+	if (id.length === 0 || [...id].length > 320) return false;
+	// eslint-disable-next-line no-control-regex
+	if (/[\u0000-\u001f\u007f]/.test(id)) return false;
+	return id.split('/').every((seg) => seg !== '' && seg !== '.' && seg !== '..');
+}
+
+/**
+ * The `entry_id` of the registered catalog entry for `catalogApiId`, read off
+ * `GET /catalog?registered_only=true` — only for a backend whose APIs response
+ * predates `catalog_entry_id`. `null` when no registered entry carries exactly
+ * that `catalog_api_id`. Two registered entries for it fail: either may be the
+ * one this API came from, and guessing would act on the other. Lookup errors
+ * (403, 5xx, network) propagate rather than fall back to a guess.
+ */
+async function registeredEntryIdFor(catalogApiId: string): Promise<string | null> {
+	const page = await CatalogService.listCatalog({
+		q: catalogApiId,
+		registeredOnly: true,
+		limit: 50,
+	});
+	const matches = page.data.filter((e) => e.catalog_api_id === catalogApiId);
+	if (matches.length > 1) {
+		throw new WorkspaceApiError(
+			`More than one registered catalog entry serves ${catalogApiId}, so this API's own entry can't be told apart.`,
+			409,
+			null,
+		);
+	}
+	return matches[0]?.entry_id ?? null;
+}
+
 /**
  * The catalog entry a workspace API's Update/Mute acts on: its own
  * `catalog_entry_id` from the APIs response (`null` when the backend withholds
@@ -222,8 +255,10 @@ export interface CatalogTarget {
  * goes straight to that entry — never to another entry sharing its
  * `catalog_api_id` — and a 404 (the entry is gone or its source hidden) is final.
  * A withheld entry (`null`) fails without a request: guessing would act on a
- * different entry. Only a backend that never sends the field (`undefined`) gets
- * the `catalog_api_id` call that follows the 404's `did_you_mean` once.
+ * different entry. Only a backend that never sends the field (`undefined`)
+ * resolves the registered entry for the `catalog_api_id`; failing that, the
+ * call goes out with the `catalog_api_id` and follows the 404's `did_you_mean`
+ * once, when that is a well-formed entry_id.
  */
 async function withCatalogEntry<T>(
 	target: CatalogTarget,
@@ -238,6 +273,8 @@ async function withCatalogEntry<T>(
 		);
 	}
 	const { catalogApiId } = target;
+	const registered = await registeredEntryIdFor(catalogApiId);
+	if (registered) return call(registered);
 	try {
 		return await call(catalogApiId);
 	} catch (error) {
@@ -245,7 +282,7 @@ async function withCatalogEntry<T>(
 			error instanceof ApiError && error.status === 404
 				? (error.body as { did_you_mean?: unknown } | null)?.did_you_mean
 				: undefined;
-		if (typeof hint === 'string' && hint && hint !== catalogApiId) {
+		if (typeof hint === 'string' && hint !== catalogApiId && isEntryId(hint)) {
 			return call(hint);
 		}
 		throw error;

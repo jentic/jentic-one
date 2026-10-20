@@ -13,12 +13,17 @@ const ENTITY: DiscoveryEntity = {
 	id: 'github.com',
 	entryId: 'public/github.com',
 	apiId: 'github.com',
+	sourceSlug: 'public',
+	browseKey: 'github.com',
+	displayVendor: 'github.com',
+	alternates: 0,
+	hasSpec: true,
 	summary: 'github.com',
 	registered: false,
 	updateAvailable: false,
 	vendor: 'github.com',
 	version: '1.1.4',
-	githubUrl: 'https://github.com/jentic/x/github.com',
+	humanUrl: 'https://github.com/jentic/x/github.com',
 };
 
 const CREDENTIAL = { credential_id: 'cred_1', name: 'GitHub PAT' } as Credential;
@@ -116,5 +121,47 @@ describe('CatalogApiRow — phones (stacked status)', () => {
 		renderRow({ pending: true, readyCredentials: null, stackStatus: true });
 		expect(screen.getByTestId('catalog-status-pending')).toHaveTextContent('Adding…');
 		expect(screen.queryByTestId('catalog-row-add')).not.toBeInTheDocument();
+	});
+});
+
+describe('CatalogApiRow — source meta and the source link', () => {
+	beforeEach(async () => {
+		await page.viewport(1280, 900);
+	});
+
+	it('shows the source badge only when asked (mixed sources)', () => {
+		const { unmount } = renderRow();
+		expect(screen.queryByTestId('catalog-row-source')).toBeNull();
+		unmount();
+		renderRow({ showSource: true, entity: { ...ENTITY, sourceSlug: 'internal' } });
+		const badge = screen.getByTestId('catalog-row-source');
+		expect(badge).toHaveTextContent('internal');
+		expect(badge).toHaveAttribute('title', 'From the internal catalog source');
+	});
+
+	it('labels collapsed alternates with a count and an explaining tooltip', () => {
+		const { unmount } = renderRow();
+		expect(screen.queryByTestId('catalog-row-alternates')).toBeNull();
+		unmount();
+		renderRow({ entity: { ...ENTITY, alternates: 2 } });
+		const note = screen.getByTestId('catalog-row-alternates');
+		expect(note).toHaveTextContent('+2 other sources');
+		expect(note).toHaveAttribute(
+			'title',
+			'2 other catalog sources list this API too; this entry is the one shown.',
+		);
+	});
+
+	it('links a GitHub human_url with the GitHub mark, any other with a generic source link', () => {
+		const { unmount } = renderRow();
+		expect(screen.getByTestId('catalog-row-github')).toHaveAttribute('href', ENTITY.humanUrl);
+		expect(screen.queryByTestId('catalog-row-human-link')).toBeNull();
+		unmount();
+
+		renderRow({ entity: { ...ENTITY, humanUrl: 'https://apis.internal.example/github' } });
+		const link = screen.getByTestId('catalog-row-human-link');
+		expect(link).toHaveAttribute('href', 'https://apis.internal.example/github');
+		expect(link).toHaveAccessibleName('View GitHub at its source');
+		expect(screen.queryByTestId('catalog-row-github')).toBeNull();
 	});
 });

@@ -3,9 +3,9 @@
  *
  * One nav area for everything you can give agents to use: APIs, in two views —
  *
- *   - the public **Catalog** (this page): browse/search the Jentic catalog
- *     (`GET /catalog`, keyset-paged), preview an entry's operations in a sheet,
- *     and import it (`POST /catalog/{id}:import`, async);
+ *   - the **Catalog** (this page): browse/search every catalog source you can
+ *     see (`GET /catalog`, keyset-paged), preview an entry's operations in a
+ *     sheet, and import it (`POST /catalog/{entry_id}:import`, async);
  *   - **Your workspace**: docked here on the right — what needs you, what's
  *     importing, every API you have (filterable by text and serving state,
  *     `?q=` / `?status=`), and what just changed. It is the whole workspace
@@ -44,6 +44,7 @@ import { DiscoverToolbar } from '@/modules/discover/components/DiscoverToolbar';
 import { CatalogLedger } from '@/modules/discover/components/CatalogLedger';
 import { useDragToAdd } from '@/modules/discover/lib/useDragToAdd';
 import { workspaceHrefFor, entityDisplay } from '@/modules/discover/lib/catalogRelations';
+import { spansSources } from '@/modules/discover/lib/catalogSpec';
 import { ApiDetailSheet } from '@/modules/discover/components/ApiDetailSheet';
 import { DiscoverStatusRow } from '@/modules/discover/components/DiscoverStatusRow';
 import {
@@ -115,17 +116,31 @@ export default function LibraryPage() {
 	// A–Z rail jump to a letter not loaded yet: a second keyset range that
 	// starts at the letter (one page instead of paging through the rest).
 	// Dropped whenever the query or filter changes.
-	const [jumpStart, setJumpStart] = useState<{ key: string; scope: string } | null>(null);
+	const [jumpStart, setJumpStart] = useState<{
+		key: string;
+		scope: string;
+		source: string;
+	} | null>(null);
 	const jumpScope = `${debouncedQuery}\u0000${filter}`;
-	const activeJumpKey = jumpStart?.scope === jumpScope ? jumpStart.key : null;
+	const activeJump = jumpStart?.scope === jumpScope ? jumpStart : null;
+	// The browse feed is in `entry_id` order, so a jump lands inside one
+	// source: the one the head feed is browsing when the letter is picked
+	// (the ledger hides the rail once the loaded rows span sources). Nothing
+	// loaded yet: no source to jump in, so no jump.
+	const headSource = catalog.entities[catalog.entities.length - 1]?.sourceSlug ?? null;
+	const jumpSource = activeJump?.source ?? null;
 	const jumpFeed = useCatalogJump({
-		startKey: debouncedQuery.length === 0 ? activeJumpKey : null,
+		startKey: debouncedQuery.length === 0 && jumpSource ? (activeJump?.key ?? null) : null,
+		sourceSlug: jumpSource ?? '',
 		filter,
 		pollWhilePending: hasPendingImports,
 	});
 	const handleJump = useCallback(
-		(letter: RailLetter) => setJumpStart({ key: jumpStartKey(letter), scope: jumpScope }),
-		[jumpScope],
+		(letter: RailLetter) => {
+			if (headSource == null) return;
+			setJumpStart({ key: jumpStartKey(letter), scope: jumpScope, source: headSource });
+		},
+		[jumpScope, headSource],
 	);
 	const { startKey: jumpRangeStart, loadEarlierFrom } = jumpFeed;
 	// Back one letter — or only back to where the head has loaded, so the
@@ -208,6 +223,7 @@ export default function LibraryPage() {
 		],
 		[catalog.entities, jumpFeed.entities, workspaceEntities, browsingAll],
 	);
+	const mixedSources = useMemo(() => spansSources(loadedEntities), [loadedEntities]);
 
 	// The count line's vendor figure: distinct vendors among the rows loaded so
 	// far (the catalog response carries no vendor total). Browsing only — a
@@ -384,7 +400,7 @@ export default function LibraryPage() {
 							// locally-imported spec.
 							workspaceCount={digest.complete ? digest.totals.apis : null}
 							outdatedCount={catalog.outdatedCount}
-							manifestAgeSeconds={catalog.manifestAgeSeconds}
+							oldestSourceSyncAgeSeconds={catalog.oldestSourceSyncAgeSeconds}
 							loading={catalog.isPending}
 							vendorsLoaded={vendorsLoaded}
 							vendorsComplete={vendorsComplete}
@@ -473,6 +489,7 @@ export default function LibraryPage() {
 				title={sheetDisplay?.title}
 				icon={sheetDisplay?.icon}
 				workspaceHref={sheetWorkspaceHref}
+				showSource={mixedSources}
 			/>
 
 			<ImportSpecDialog open={importOwnOpen} onClose={() => setImportOwnOpen(false)} />

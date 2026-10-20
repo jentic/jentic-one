@@ -148,10 +148,15 @@ paths, and the declared auth.
 
 ```
 jentic catalog search "spreadsheets"
-jentic catalog import googleapis.com/sheets
+jentic catalog import public/googleapis.com/sheets
 jentic search "get values from a spreadsheet range" --limit 10
 jentic apis operations googleapis-com/googleapis-com-sheets/v4
 ```
+
+Each catalog hit carries an `entry_id` (`{source}/{id}`, e.g.
+`public/googleapis.com/sheets`) — pass it to `catalog import` verbatim; never
+rebuild it from the `catalog_api_id`. If you pass an old-style id the error
+names the entry to use (`did you mean "public/…"?`): retry with exactly that.
 
 Re-importing an API that is already there is safe — the registry state
 converges — but this lane surfaces the duplicate as a **failed
@@ -167,7 +172,7 @@ to this agent in the dashboard. Once they confirm, run `jentic logout` so
 the next call mints a fresh token carrying the permission, then retry:
 
 ```
-jentic catalog import googleapis.com/sheets
+jentic catalog import public/googleapis.com/sheets
 ```
 
 To register an API that is **not** in the catalog, upload its OpenAPI spec
@@ -192,7 +197,7 @@ relevant is imported yet. Import and search again.
 `jentic catalog outdated` lists registered APIs whose upstream spec changed
 since import (also surfaced by `jenticctl status`). Re-importing promotes
 the new spec to **live**, changing behavior, so this is an **operator**
-decision: **suggest** the re-import (`jentic catalog import <vendor/name>`)
+decision: **suggest** the re-import (`jentic catalog import <entry_id>`)
 to the operator and let them run it — never silently re-import on your own.
 (`jentic catalog refresh` rebuilds the catalog manifest from upstream but
 requires `org:admin`, so it too is an operator action.)

@@ -331,8 +331,8 @@ API. The PR stays open — do not close it; this is not a fork.
 >   [overlay stacking contract](https://github.com/jentic/jentic-one/blob/main/docs/guides/overlays.md) before authoring overlapping fixes.
 
 The API must already exist in the local registry (import it from the catalog first if needed:
-`jentic catalog import <api_id>`, where `<api_id>` is the catalog entry id — the dotted
-`<vendor>/<api>` form, e.g. `posthog.com/posthog-api`). Then resolve the **registry** identity
+`jentic catalog import <entry_id>`, with the `{source}/{id}` entry_id from `jentic catalog search`,
+e.g. `public/posthog.com/posthog-api`; its `catalog_api_id` is `posthog.com/posthog-api`). Then resolve the **registry** identity
 (slugified — not the folder segments) and submit + confirm the overlay against the local control
 plane (default `http://127.0.0.1:8000`).
 
@@ -353,7 +353,7 @@ plane (default `http://127.0.0.1:8000`).
 # vendor/name from the spec's info block, so these differ from the jentic-public-apis folder
 # segments (posthog.com → posthog-com; name = slug of info.title). Match the imported API by
 # its catalog_api_id and read back the slugified (vendor, name, version) to use below.
-API_ID=<api_id>   # the dotted catalog id, e.g. posthog.com/posthog-api
+API_ID=<catalog_api_id>   # the dotted catalog id, e.g. posthog.com/posthog-api
 read V N VER SRC < <(jentic api GET /apis \
   | python3 -c "import json,sys; \
 apis=json.load(sys.stdin).get('data', []); \
@@ -391,7 +391,7 @@ replaces it.
 ### 10. Close the loop — react when upstream changes later
 
 The flywheel isn't "submit and forget". Once an overlay is materialized locally, the registry
-keeps watching the API's **upstream** spec (the catalog `spec_url`) and, when it changes,
+keeps watching the API's **upstream** spec (the spec URL it was imported from) and, when it changes,
 surfaces an actionable event so a human isn't lied to about state. Two outcomes, and they need
 **different** reactions — the platform tells you which via the event **type**:
 
@@ -444,7 +444,7 @@ re-import adopts the upstream spec and flips `update_available` to false. This n
 `catalog:import` (an `apis:write` permission implies it):
 
 ```
-jentic api POST "/catalog/<api_id>:import" -d '{}'
+jentic api POST "/catalog/<entry_id>:import" -d '{}'
 ```
 
 **Reacting to `catalog.update_conflicts_overlay`** (upstream diverged from your fix's base): this
@@ -469,7 +469,7 @@ is an operator call with two clean options — **never** hand-edit around it:
 # operator to run it if your agent identity lacks the permissions. The platform detects the live
 # overlay and supersedes it because you hold overlays:confirm; the same call by a
 # catalog:import-only identity returns 403.
-jentic api POST "/catalog/<api_id>:import" -d '{}'
+jentic api POST "/catalog/<entry_id>:import" -d '{}'
 ```
 
 If instead you decide the overlay was the right answer and want to **undo** a materialization you

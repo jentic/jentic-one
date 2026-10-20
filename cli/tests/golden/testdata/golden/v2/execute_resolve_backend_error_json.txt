@@ -2,4 +2,4 @@ exit: 2
 --- stdout ---
 
 --- stderr ---
-{"error":"resolve \"listPets\" failed: http 500: registry exploded","error_code":"RESOLVE_FAILED","schema_version":"1"}
+{"error":"resolve \"listPets\" failed: http 500: registry exploded","error_code":"RESOLVE_FAILED","schema_version":"2"}

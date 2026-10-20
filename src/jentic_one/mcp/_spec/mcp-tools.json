@@ -1,6 +1,6 @@
 {
   "$comment": "Generated from the Go stdio server's toolSpecs() — the phase-1 tool-surface source of truth (master §3.2). Regenerate with UPDATE_MCP_SPEC=1 go test ./internal/cli/api -run TestMCPToolSurfaceSpec. Consumed by the phase-3 /mcp mount (src/jentic_one/mcp) and its drift tests.",
-  "schema_version": "1",
+  "schema_version": "2",
   "tools": [
     {
       "name": "get_started",
@@ -184,8 +184,8 @@
     },
     {
       "name": "search_catalog",
-      "title": "Search the public API catalog",
-      "description": "Search the public API catalog for importable APIs by keyword. The registry that search_apis reads only sees IMPORTED APIs — when search_apis returns an empty data array, the API probably isn't imported yet: find it here, import it with import_api, then search_apis again (reading the registry and importing need no extra grant). Example: {\"query\": \"spreadsheets\", \"limit\": 10}. Returns one page as {data, catalog_total, registered_count, has_more, next_cursor}; each entry carries the api_id to pass to import_api and `registered` (true = already imported — skip the import). When has_more is true, pass next_cursor back as cursor.",
+      "title": "Search the API catalog",
+      "description": "Search the API catalog (the public catalog plus any other catalog sources this instance reads) for importable APIs by keyword. The registry that search_apis reads only sees IMPORTED APIs — when search_apis returns an empty data array, the API probably isn't imported yet: find it here, import it with import_api, then search_apis again (reading the registry and importing need no extra grant). Example: {\"query\": \"spreadsheets\", \"limit\": 10}. Returns one page as {data, catalog_total, registered_count, has_more, next_cursor}; each entry carries its entry_id (\"{source}/{id}\", e.g. \"public/googleapis.com/sheets\") — pass it to import_api verbatim, never rebuilt from catalog_api_id — its title, source_slug and `registered` (true = already imported — skip the import). When has_more is true, pass next_cursor back as cursor.",
       "input_schema": {
         "properties": {
           "cursor": {
@@ -210,16 +210,16 @@
     {
       "name": "import_api",
       "title": "Import a catalog API into the registry",
-      "description": "Import a catalog API into this instance's registry so its operations become searchable and executable. Example: {\"api_id\": \"googleapis.com/sheets\"} with an api_id from a search_catalog hit. The import runs as a job: this call tracks it briefly and, on completion, promotes the imported revisions live, returning {job_id, status, revisions, promoted}. If it returns a non-terminal status, call import_api again with the same api_id — re-importing converges (idempotent) and finishes the promotion. Requires the catalog:import permission (agents hold it by default); on a denial, ask your operator to grant it — do not guess other permissions. Importing makes an API discoverable but does NOT grant access to call it: check whoami for a credential binding serving it — never execute just to probe — and ask your operator to connect a credential and bind you if nothing serves it.",
+      "description": "Import a catalog API into this instance's registry so its operations become searchable and executable. Example: {\"entry_id\": \"public/googleapis.com/sheets\"} — pass the entry_id from a search_catalog hit verbatim. The import runs as a job: this call tracks it briefly and, on completion, promotes the imported revisions live, returning {job_id, status, revisions, promoted}. If it returns a non-terminal status, call import_api again with the same entry_id — re-importing converges (idempotent) and finishes the promotion. Requires the catalog:import permission (agents hold it by default); on a denial, ask your operator to grant it — do not guess other permissions. Importing makes an API discoverable but does NOT grant access to call it: check whoami for a credential binding serving it — never execute just to probe — and ask your operator to connect a credential and bind you if nothing serves it.",
       "input_schema": {
         "properties": {
-          "api_id": {
-            "description": "The catalog entry to import (required; \"id\" and \"api\" are accepted aliases): an api_id from a search_catalog hit, e.g. \"googleapis.com/sheets\".",
+          "entry_id": {
+            "description": "The catalog entry to import (required; \"api_id\", \"id\" and \"api\" are accepted aliases): pass the entry_id from a search_catalog hit verbatim, e.g. \"public/googleapis.com/sheets\".",
             "type": "string"
           }
         },
         "required": [
-          "api_id"
+          "entry_id"
         ],
         "type": "object"
       },

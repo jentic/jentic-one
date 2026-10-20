@@ -27,7 +27,7 @@ import (
 // can't reuse ux.List/Result, but they must still carry schema_version like
 // every sanctioned envelope (AGT-23). Mirrors ux.currentSchemaVersion; bump in
 // lockstep with the ux envelope contract.
-const apiEnvelopeSchemaVersion = "1"
+const apiEnvelopeSchemaVersion = "2"
 
 // operationInfo — the resolved {method, url|path} pair — moved to the UX-free
 // core as agentops.Operation (plan 0.2); resolveOperation below returns it.

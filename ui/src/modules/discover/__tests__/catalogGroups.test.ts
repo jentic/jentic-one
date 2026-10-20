@@ -21,6 +21,11 @@ function api(apiId: string, extra: Partial<DiscoveryEntity> = {}): DiscoveryEnti
 		id: apiId,
 		entryId: `public/${apiId}`,
 		apiId,
+		sourceSlug: 'public',
+		browseKey: apiId,
+		displayVendor: apiId.split('/')[0],
+		alternates: 0,
+		hasSpec: true,
 		summary: sub ? sub.charAt(0).toUpperCase() + sub.slice(1) : apiId,
 		registered: false,
 		updateAvailable: false,
@@ -44,6 +49,27 @@ describe('catalogGroups', () => {
 	it('derives the vendor domain from the api_id', () => {
 		expect(vendorOf(api('googleapis.com/gmail'))).toBe('googleapis.com');
 		expect(vendorOf(api('stripe.com'))).toBe('stripe.com');
+	});
+
+	it('groups namespaced entries by display_vendor, in browse order', () => {
+		const ns = (id: string) =>
+			api(id, {
+				entryId: `internal/${id}`,
+				sourceSlug: 'internal',
+				displayVendor: 'stripe.com',
+				vendor: 'stripe.com',
+			});
+		const rows = [ns('aws-prod~stripe.com'), ns('aws-prod~stripe.com/connect')];
+		expect(vendorOf(rows[0])).toBe('stripe.com');
+		const model = buildCatalogLedger(rows, { searching: false, hasNextPage: false });
+		// One stripe.com vendor holding both. The letter follows the browse key
+		// (the keyset order a rail jump lands in), not the display vendor.
+		expect(kinds(model.items)).toEqual([
+			'group:A',
+			'vendor:stripe.com',
+			'child:aws-prod~stripe.com',
+			'child:aws-prod~stripe.com/connect',
+		]);
 	});
 
 	it('files digits/symbols under # and letters under themselves', () => {

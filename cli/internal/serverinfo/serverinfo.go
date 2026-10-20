@@ -1,6 +1,7 @@
 // Package serverinfo probes a running jentic-one server for liveness and
 // version, used to decorate the help screen and install wizard with the
-// server's version alongside the CLI's own.
+// server's version alongside the CLI's own, and compares server versions for
+// the commands that need a minimum server release.
 package serverinfo
 
 import (
@@ -62,4 +63,67 @@ func Probe(baseURL string, timeout time.Duration) Info {
 	// Cap the read so a misbehaving endpoint can't stream unbounded data.
 	_ = json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&body)
 	return Info{Running: true, Version: body.Version}
+}
+
+// AtLeast reports whether a server-reported version is at or above minimum.
+// Both are compared on their leading MAJOR.MINOR.PATCH numbers; a suffix
+// (a PEP 440 pre-release such as "0.44.0rc1", a local "+…" segment) is
+// ignored, so a pre-release of the minimum release qualifies. An empty or
+// unparsable version is never at least anything: callers gating on a server
+// capability must fail closed when the server doesn't say what it runs.
+func AtLeast(version, minimum string) bool {
+	got, ok := parseRelease(version)
+	if !ok {
+		return false
+	}
+	want, ok := parseRelease(minimum)
+	if !ok {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return got[i] > want[i]
+		}
+	}
+	return true
+}
+
+// Parses reports whether v carries a MAJOR.MINOR[.PATCH] release AtLeast can
+// compare. A caller can tell "the server says it is older" (Parses and not
+// AtLeast) from "the server doesn't say" (not Parses).
+func Parses(v string) bool {
+	_, ok := parseRelease(v)
+	return ok
+}
+
+// parseRelease reads the leading MAJOR.MINOR.PATCH of v (a "v" prefix
+// allowed; a missing PATCH reads as 0). Each component is its leading digits.
+func parseRelease(v string) ([3]int, bool) {
+	var out [3]int
+	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	if v == "" {
+		return out, false
+	}
+	parts := strings.SplitN(v, ".", 3)
+	if len(parts) < 2 {
+		return out, false
+	}
+	for i, p := range parts {
+		n, digits := 0, 0
+		for _, r := range p {
+			if r < '0' || r > '9' {
+				break
+			}
+			n = n*10 + int(r-'0')
+			digits++
+			if digits > 9 {
+				return out, false
+			}
+		}
+		if digits == 0 {
+			return out, false
+		}
+		out[i] = n
+	}
+	return out, true
 }
