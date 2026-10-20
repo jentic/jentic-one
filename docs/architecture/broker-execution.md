@@ -174,6 +174,36 @@ one place a secret meets a request:
    secret back.
 4. **Audit** — every resolve/decrypt emits a `CREDENTIAL_ACCESSED` event.
 
+On the sync execute path, step 1 picks the credential from a short-lived,
+per-process cache of the vendor's **non-secret** credential headers
+([`shared/credential_selection_cache.py`](../../src/jentic_one/shared/credential_selection_cache.py),
+`broker.credential_cache_ttl_s`, default 3 s, at most 60 s, `0` disables it;
+`broker.credential_cache_max_headers` bounds its size). The cache is
+the same for every caller: the binding boundary, coverage and
+disambiguation run on each request, and the winner's secret material is read
+from the control DB every time, along with its current header, so a deleted or
+disabled credential's secret is never injected. The binding boundary is
+derived on each request, so a bound credential the cached headers lack (or
+hold as disabled or not `connected`) sends the call to a fresh read: a pin or
+sibling created or re-enabled elsewhere takes part in the selection on the
+next call. A selection that fails on cached headers (424, unknown
+`Jentic-Credential-Id` or name, 409) is re-run on a fresh read before it is
+returned, so "connect, then retry" works across processes. A credential write
+served by the same process clears the cache when its transaction ends. For a
+write served by another process, for up to the TTL:
+
+- an edit to a credential already cached as usable that changes the selection
+  without touching the cached winner (a sibling re-scoped to a more specific
+  pin, renamed, or given other `server_variables`) may not be seen yet;
+- a `NO_AUTH` winner, which has no material to read, keeps its cached header:
+  a re-type or `server_variables` edit (which drives host/region templating)
+  is not seen. A disable drops it from the binding boundary once the binding
+  cache (`broker.toolkit_cache_ttl_s`, 3 s by default) refreshes, so it is not
+  selected after that.
+
+Both select a credential the caller is bound to right now; neither injects a
+secret that is gone or disabled. Queued executions resolve without the cache.
+
 Before any of that, the binding deriver
 ([`broker/repos/credential_binding_resolver.py`](../../src/jentic_one/broker/repos/credential_binding_resolver.py), wrapped by the
 short-TTL cache in [`caching_credential_deriver.py`](../../src/jentic_one/broker/repos/caching_credential_deriver.py)) works out which

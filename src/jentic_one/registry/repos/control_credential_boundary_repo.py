@@ -22,6 +22,8 @@ from __future__ import annotations
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from jentic_one.shared.credential_selection_cache import mark_credentials_changed
+
 # Every credential stored for an exact ``(vendor, name, version)`` identity,
 # active or not. Deliberately NOT filtered on ``active``: an already-inactive
 # credential can be re-activated later, and its agent bindings must not come
@@ -83,6 +85,9 @@ class ControlCredentialBoundaryRepository:
         # "could not determine data type of parameter". Standard
         # ``CAST(x AS VARCHAR)`` (not Postgres-specific ``::text``) keeps the
         # same statement working on both Postgres and SQLite.
+        # Raw SQL is invisible to the ORM write events: drop the broker's
+        # credential-header cache explicitly when this transaction ends.
+        mark_credentials_changed(session)
         result = await session.execute(
             text(
                 "UPDATE credentials SET active = false "

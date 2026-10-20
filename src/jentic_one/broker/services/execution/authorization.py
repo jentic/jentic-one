@@ -411,6 +411,7 @@ async def authorize_execution(
     upstream_url: str | None = None,
     trace_id: str | None = None,
     operation_path: str | None = None,
+    use_credential_cache: bool = False,
 ) -> ExecutionAuthorization:
     """Authorize one execution for ``identity`` against the discovered ``api``.
 
@@ -430,7 +431,10 @@ async def authorize_execution(
     server base path (see :func:`_report_base_path_divergence`; never changes
     the verdict). ``trace_id`` correlates a denial event with the request;
     ``operation_path`` is the operation's spec path template (never the concrete
-    ``path``), recorded on the denial event.
+    ``path``), recorded on the denial event. ``use_credential_cache`` lets
+    credential selection read the vendor's non-secret credential headers from
+    the context's short-TTL cache; the binding boundary and the rules are
+    evaluated fresh either way.
 
     Raises a :class:`BrokerError` (``ActionDeniedError`` /
     ``CredentialIdentityMismatchError`` → 403, ``AmbiguousMatchError`` → 409,
@@ -453,7 +457,9 @@ async def authorize_execution(
     )
     allowed_credential_ids = [bc.credential_id for bc in derivation.credentials]
     rule_set_ids = {bc.credential_id: bc.rule_set_id for bc in derivation.credentials}
-    selected_credential = await CredentialService(ctx).select(
+    selected_credential = await CredentialService(
+        ctx, use_selection_cache=use_credential_cache
+    ).select(
         api_vendor=api.vendor,
         api_name=api.name,
         api_version=api.version,

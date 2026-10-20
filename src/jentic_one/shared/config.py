@@ -1972,6 +1972,36 @@ class BrokerConfig(BaseModel):
     # is one entry. Eviction is LRU by entry count (the TTL only bounds
     # staleness, never memory).
     rule_cache_max_entries: int = 5_000
+    credential_cache_ttl_s: float = Field(
+        default=3.0,
+        ge=0.0,
+        le=60.0,
+        description=(
+            "TTL (seconds, at most 60) of the per-process cache of a vendor's "
+            "non-secret credential headers that sync execute requests select "
+            "from. Secret material, the caller's bindings and the audit event are "
+            "never cached. A credential write served by this process clears the "
+            "cache when its transaction ends, and a bound credential missing "
+            "from the cached headers forces a fresh read. For a write served by "
+            "another process, for up to the TTL: an edit to an already-cached "
+            "credential that changes the selection without touching the cached "
+            "winner (re-scope, rename, server_variables), and a NO_AUTH "
+            "winner's re-type or server_variables edit, are not seen. A deleted, "
+            "disabled or edited secret-bearing winner is caught on the next "
+            "call. 0 disables the cache."
+        ),
+    )
+    credential_cache_max_headers: int = Field(
+        default=10_000,
+        ge=1,
+        description=(
+            "Upper bound on credential headers held by the per-process credential "
+            "header cache (broker.credential_cache_ttl_s), summed over vendors; an "
+            "empty vendor entry counts as one. Least-recently-used vendors are "
+            "evicted first, and a vendor with more credentials than the bound is "
+            "not cached."
+        ),
+    )
     # Absolute public base URL of the admin jobs API, used to build the 202
     # `_links.self` pointer for async executions (e.g. "https://api.example.com").
     # None keeps the legacy broker-relative `/jobs/{id}` link.

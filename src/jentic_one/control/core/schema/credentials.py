@@ -8,6 +8,7 @@ from sqlalchemy import Boolean, ForeignKey, Index, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
+from jentic_one.shared.credential_selection_cache import watch_credential_writes
 from jentic_one.shared.db.base import AuditableMixin, ControlBase
 from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.db.types import json_variant
@@ -130,3 +131,11 @@ class Credential(AuditableMixin, ControlBase):
         back_populates="credentials",
         lazy="raise",
     )
+
+
+# A unit-of-work write to a credential header drops this process's broker
+# credential-selection cache when its transaction ends (on commit, rollback or
+# close), so an edit, disable or delete takes effect on the next resolve here
+# rather than after the TTL. Bulk and raw-SQL writers call
+# ``mark_credentials_changed`` themselves.
+watch_credential_writes(Credential)

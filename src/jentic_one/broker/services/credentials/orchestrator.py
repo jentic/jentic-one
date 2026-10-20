@@ -79,11 +79,16 @@ class CredentialService:
         ctx: Context,
         *,
         connect_registrations: ConnectableRegistrationSourceProtocol | None = None,
+        use_selection_cache: bool = False,
     ) -> None:
         self._ctx = ctx
         # Shared OAuth-app registrations the 424 directive may suggest; ``None``
         # reads them from the control DB on the denial path.
         self._connect_registrations = connect_registrations
+        # Opt-in: resolve from the context's credential-header cache. Off by
+        # default so a caller that needs run-time-fresh state (the queued
+        # worker) reads the control DB on every resolve.
+        self._selection_cache = ctx.credential_selection_cache if use_selection_cache else None
 
     async def inject(
         self,
@@ -347,7 +352,7 @@ class CredentialService:
         (424/400/409).
         """
         try:
-            return await CredentialResolver(self._ctx).resolve(
+            return await CredentialResolver(self._ctx, cache=self._selection_cache).resolve(
                 api=api,
                 caller=identity.sub,
                 credential_name=credential_name,
