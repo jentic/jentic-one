@@ -231,6 +231,17 @@ class ActionDeniedError(BrokerError):
     """The request was denied by a permission rule on the caller's binding (403)."""
 
 
+class CliInvocationVendorMismatchError(BrokerError):
+    """The proxy route resolved a URL to an API of another vendor than the token's (403).
+
+    An invocation token is minted for one vendor; at the vendor-neutral proxy
+    route the URL decides the API, so a URL of any other vendor is refused
+    before any rule or credential is looked at.
+    """
+
+    default_type = "cli_invocation_vendor_mismatch"
+
+
 class GraphQLRequestRejectedError(BrokerError):
     """A request to a GraphQL endpoint whose operation cannot be inspected (400).
 
@@ -765,6 +776,19 @@ def direct_action_denied_directive() -> AgentDirective:
             "forbid this specific call — ask your operator to adjust the "
             "binding's permission rules. This is not something you can grant "
             "yourself."
+        ),
+    )
+
+
+def cli_invocation_vendor_mismatch_directive(*, token_vendor: str) -> AgentDirective:
+    """Directive for the ``cli_invocation_vendor_mismatch`` 403: wrong token for this API."""
+    return AgentDirective(
+        strategy="fatal",
+        parameters={"token_vendor": token_vendor},
+        human_readable_instruction=(
+            f"This command's Jentic invocation token is for {token_vendor} and can only "
+            "reach that vendor's APIs. Run the call through the matching vendor command "
+            "instead of reusing this token."
         ),
     )
 

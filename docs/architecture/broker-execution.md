@@ -294,6 +294,28 @@ the vendor's `public_address` when set, otherwise the broker URL
 Cloudflare credential variables removed), renews the token while `cf` runs,
 revokes it on exit and passes `cf`'s exit code through.
 
+### Proxy route
+
+`/_facade/proxy/<full upstream URL>` is the broker end of an egress proxy that
+relays a vendor CLI's calls with the command's invocation token. It takes the
+upstream URL from the raw path as the catch-all does (`%2F` and the query kept;
+a URL with a `.` or `..` segment answers 404) and runs the facade pipeline
+above, with three differences:
+
+- **Any served vendor's token.** A `cit_` token of any vendor is accepted
+  while that vendor's facade is switched on (else 404 `cli_facade_not_found`);
+  an `at_` token, API key or JWT answers 401.
+- **The URL must be the token's vendor's.** After discovery, the resolved
+  API's vendor must belong to the token's vendor (`github` covers
+  `github-com`, `cloudflare` covers `cloudflare-com`, `aws` covers
+  `amazonaws-com`; `PROXY_API_VENDORS` in
+  [`broker/core/facades.py`](../../src/jentic_one/broker/core/facades.py)).
+  Any other API answers 403 `cli_invocation_vendor_mismatch` before rules or
+  credentials are looked at; an unregistered URL answers 404.
+- **Problem Details.** Errors are standard RFC 9457 responses; the proxy
+  translates them for the CLI. Successful responses keep the facade header
+  allowlist.
+
 ### GraphQL top-level-field rules
 
 Every GitHub GraphQL operation travels as one `POST https://api.github.com/graphql`,

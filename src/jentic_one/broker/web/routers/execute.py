@@ -42,6 +42,7 @@ from jentic_one.broker.core.exceptions import (
     AgentDirective,
     ApprovalHoldUnavailableError,
     ApprovalPendingLimitError,
+    CliInvocationVendorMismatchError,
     ExecutionHeldError,
     GraphQLRequestRejectedError,
     IdempotencyConflictError,
@@ -51,11 +52,16 @@ from jentic_one.broker.core.exceptions import (
     UpgradeNotSupportedError,
     UpstreamUrlNotAllowedError,
     approval_pending_limit_directive,
+    cli_invocation_vendor_mismatch_directive,
     graphql_request_rejected_directive,
     switch_toolkit_directive,
 )
 from jentic_one.broker.core.execution import mint_execution_id
-from jentic_one.broker.core.facades import FACADE_HELD_INSTRUCTION, facade_request_headers
+from jentic_one.broker.core.facades import (
+    FACADE_HELD_INSTRUCTION,
+    api_vendor_matches,
+    facade_request_headers,
+)
 from jentic_one.broker.core.headers import (
     JENTIC_REVISION_HEADER,
     REGION_MISMATCH_HINT,
@@ -335,11 +341,19 @@ class FacadeCall:
     envelope as the operation's response), an unregistered URL is a plain 404
     (the unregistered-URL hook is not consulted), and inbound headers carrying
     an invocation token or trace context are never forwarded.
+
+    ``vendor`` is set by the proxy route, whose URL is not fixed to one
+    vendor: the resolved API must then belong to it
+    (:func:`~jentic_one.broker.core.facades.api_vendor_matches`), else the
+    call is refused with :class:`CliInvocationVendorMismatchError` before
+    authorization. A vendor facade leaves it unset: its fixed upstream base
+    already pins the vendor.
     """
 
     upstream_url: str
     trace_id: str
     credential_name: str | None = None
+    vendor: str | None = None
 
 
 def _credential_choice(request: Request, call: FacadeCall | None) -> tuple[str | None, str | None]:
@@ -348,6 +362,22 @@ def _credential_choice(request: Request, call: FacadeCall | None) -> tuple[str |
         return call.credential_name, None
     return request.headers.get("jentic-credential-name"), request.headers.get(
         "jentic-credential-id"
+    )
+
+
+def _require_api_vendor(request: Request, token_vendor: str, resolved: ResolveResult) -> None:
+    """Refuse a proxy-route call whose URL resolved to an API of another vendor."""
+    if api_vendor_matches(token_vendor, resolved.api.vendor):
+        return
+    logger.info(
+        "cli_invocation_api_vendor_mismatch",
+        token_vendor=token_vendor,
+        api_vendor=resolved.api.vendor,
+    )
+    raise CliInvocationVendorMismatchError(
+        f"This invocation token is for {token_vendor}; the URL belongs to another vendor's API.",
+        instance=request.url.path,
+        directive=cli_invocation_vendor_mismatch_directive(token_vendor=token_vendor),
     )
 
 
@@ -859,6 +889,9 @@ async def _handle(
                     revision_id
                 )
             }
+
+    if facade_call is not None and facade_call.vendor is not None:
+        _require_api_vendor(request, facade_call.vendor, resolved)
 
     ctx_req = _context_from_discovery(
         upstream_url=upstream_url,

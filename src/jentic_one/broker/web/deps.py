@@ -21,6 +21,7 @@ from jentic.problem_details import Forbidden, Unauthorized
 from jentic_one.broker.adapters.runners.base import UpstreamRunner
 from jentic_one.broker.adapters.runners.registry import RunnerRegistry
 from jentic_one.broker.core.exceptions import OperationNotFoundError, RateLimitExceededError
+from jentic_one.broker.core.facades import proxy_upstream_url
 from jentic_one.broker.core.proxy_headers import reconstruct_upstream_url
 from jentic_one.broker.core.token_validation import CachedCliInvocationValidator
 from jentic_one.broker.services.auth import CompositeTokenValidator
@@ -225,6 +226,18 @@ def require_cli_facade_served(vendor: str) -> Any:
     return Depends(_dependency)
 
 
+async def _authorize_cli_invocation(request: Request, invocation: CliInvocationIdentity) -> None:
+    """The broker execute permission (live, through the parent token) and one rate-limit unit."""
+    if BROKER_EXECUTE_PERMISSION not in invocation.identity.permissions:
+        _record_auth_failure(invocation.identity.sub, request)
+        raise Forbidden(
+            detail=f"Insufficient scope: '{BROKER_EXECUTE_PERMISSION}' required",
+            instance=request.url.path,
+            type="insufficient_scope",
+        )
+    await _enforce_rate_limit(request, invocation.identity)
+
+
 def require_cli_facade_invocation(vendor: str) -> Any:
     """Dependency factory: a valid invocation token minted for ``vendor``'s facade.
 
@@ -248,17 +261,33 @@ def require_cli_facade_invocation(vendor: str) -> Any:
                 facade_vendor=vendor,
             )
             raise _cli_invocation_unauthorized(request)
-        if BROKER_EXECUTE_PERMISSION not in invocation.identity.permissions:
-            _record_auth_failure(invocation.identity.sub, request)
-            raise Forbidden(
-                detail=f"Insufficient scope: '{BROKER_EXECUTE_PERMISSION}' required",
-                instance=request.url.path,
-                type="insufficient_scope",
-            )
-        await _enforce_rate_limit(request, invocation.identity)
+        await _authorize_cli_invocation(request, invocation)
         return invocation
 
     return Depends(_dependency)
+
+
+async def require_cli_proxy_invocation(
+    request: Request,
+    invocation: CliInvocationIdentity = Depends(require_cli_invocation),
+    ctx: Context = Depends(get_ctx),
+) -> CliInvocationIdentity:
+    """A valid invocation token at the vendor-neutral proxy route, for a served vendor.
+
+    The token may be for any vendor, but that vendor's facade must be switched
+    on right now (else 404, as at a switched-off facade), so switching a vendor
+    off stops its tokens here too. The route then requires the URL to resolve
+    to an API of the token's vendor. The execute permission and rate limit
+    apply as at a vendor facade.
+    """
+    if not ctx.config.cli_facades.vendor_enabled(invocation.claims.vendor):
+        raise OperationNotFoundError(
+            f"The {invocation.claims.vendor} CLI facade is not enabled on this deployment.",
+            type="cli_facade_not_found",
+            instance=request.url.path,
+        )
+    await _authorize_cli_invocation(request, invocation)
+    return invocation
 
 
 async def require_execute_permission(request: Request) -> Identity:
@@ -342,6 +371,24 @@ def get_cli_facade_runner(upstream_base: str) -> Any:
         return registry.select(upstream_base)
 
     return Depends(_dependency)
+
+
+def get_cli_proxy_runner(request: Request) -> UpstreamRunner:
+    """The upstream runner for a proxy-route call, chosen by its upstream URL's scheme.
+
+    Like :func:`get_http_runner`, with the URL read after the route's prefix
+    (:func:`~jentic_one.broker.core.facades.proxy_upstream_url`); a path with
+    no usable URL answers 404.
+    """
+    upstream_url = proxy_upstream_url(request.scope)
+    if upstream_url is None:
+        raise OperationNotFoundError(
+            "Operation not found: no upstream URL follows the proxy route's prefix.",
+            type="operation_not_found",
+            instance=request.url.path,
+        )
+    registry: RunnerRegistry = request.app.state.broker_runner_registry
+    return registry.select(upstream_url)
 
 
 def get_http_runner(request: Request) -> UpstreamRunner:

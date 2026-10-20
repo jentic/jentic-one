@@ -11,17 +11,21 @@ from __future__ import annotations
 
 import base64
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+from typing import Annotated
 
 import pytest
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, Depends, FastAPI
 from fastapi.testclient import TestClient
 from jentic.problem_details import ProblemDetailException, problem_detail_exception_handler
 
 from jentic_one.broker.core.token_validation import CachedCliInvocationValidator
-from jentic_one.broker.web.deps import require_cli_facade_invocation
+from jentic_one.broker.web.deps import require_cli_facade_invocation, require_cli_proxy_invocation
+from jentic_one.broker.web.errors import install_broker_error_handlers
 from jentic_one.shared.auth.cli_invocation import CliInvocationClaims, CliInvocationIdentity
 from jentic_one.shared.auth.errors import TokenValidationError
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.config import CliFacadesConfig
 from jentic_one.shared.models import ActorType
 
 _TOKEN = "cit_unit-test-token"  # pragma: allowlist secret
@@ -186,3 +190,88 @@ async def test_validator_evicts_past_max_entries() -> None:
 def test_validator_rejects_non_positive_max_entries() -> None:
     with pytest.raises(ValueError, match="max_entries"):
         CachedCliInvocationValidator(resolver=_FakeResolver(None), max_entries=0)
+
+
+# ── the proxy route's dependency ─────────────────────────────────────────────
+
+
+def _proxy_client(resolver: _FakeResolver, facades: CliFacadesConfig) -> TestClient:
+    router = APIRouter()
+
+    @router.get("/proxy")
+    async def proxy(
+        invocation: Annotated[CliInvocationIdentity, Depends(require_cli_proxy_invocation)],
+    ) -> dict[str, str]:
+        return {"vendor": invocation.claims.vendor}
+
+    app = FastAPI()
+    app.add_exception_handler(ProblemDetailException, problem_detail_exception_handler)  # type: ignore[arg-type]
+    install_broker_error_handlers(app)
+    app.include_router(router)
+    # A high threshold: an auth-failure event would need the admin database.
+    app.state.ctx = SimpleNamespace(
+        config=SimpleNamespace(
+            cli_facades=facades,
+            security=SimpleNamespace(auth_failure_event_threshold=1_000_000),
+        )
+    )
+    app.state.broker_cli_invocation_validator = CachedCliInvocationValidator(
+        resolver=resolver, cache_ttl_seconds=60.0
+    )
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def _facades(**vendors: bool) -> CliFacadesConfig:
+    return CliFacadesConfig.model_validate(
+        {
+            "enabled": True,
+            "vendors": {
+                "cloudflare": {"enabled": vendors.get("cloudflare", False)},
+                "github": {"enabled": vendors.get("github", False), "host": "gh.jentic.test"},
+            },
+        }
+    )
+
+
+@pytest.mark.parametrize("vendor", ["github", "cloudflare"])
+def test_proxy_dependency_accepts_a_token_of_any_served_vendor(vendor: str) -> None:
+    client = _proxy_client(
+        _FakeResolver(_resolution(vendor=vendor)), _facades(github=True, cloudflare=True)
+    )
+    resp = client.get("/proxy", headers={"Authorization": f"Bearer {_TOKEN}"})
+    assert resp.status_code == 200
+    assert resp.json() == {"vendor": vendor}
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {},
+        {"Authorization": "Bearer at_agent-access-token"},
+        {"Authorization": "Bearer jak_agent-api-key"},
+        {"x-jentic-api-key": _TOKEN},
+    ],
+)
+def test_proxy_dependency_refuses_anything_but_a_cit_token(headers: dict[str, str]) -> None:
+    resolver = _FakeResolver(_resolution())
+    resp = _proxy_client(resolver, _facades(github=True)).get("/proxy", headers=headers)
+    assert resp.status_code == 401
+    assert resolver.calls == []
+
+
+def test_proxy_dependency_answers_404_while_the_tokens_vendor_is_switched_off() -> None:
+    client = _proxy_client(_FakeResolver(_resolution(vendor="github")), _facades(cloudflare=True))
+    resp = client.get("/proxy", headers={"Authorization": f"Bearer {_TOKEN}"})
+    assert resp.status_code == 404
+    assert resp.json()["type"] == "cli_facade_not_found"
+
+
+def test_proxy_dependency_requires_the_execute_permission() -> None:
+    resolution = _resolution()
+    resolution = resolution.model_copy(
+        update={"identity": resolution.identity.model_copy(update={"permissions": []})}
+    )
+    client = _proxy_client(_FakeResolver(resolution), _facades(github=True))
+    resp = client.get("/proxy", headers={"Authorization": f"Bearer {_TOKEN}"})
+    assert resp.status_code == 403
+    assert resp.json()["type"] == "insufficient_scope"

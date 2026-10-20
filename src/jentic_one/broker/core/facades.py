@@ -15,6 +15,11 @@ Host-mode facades (GitHub) answer on a hostname of their own, in the layout a
 GitHub Enterprise Server uses (``/api/v3``, ``/api/graphql``,
 ``/api/uploads``), because ``gh`` only talks to a non-github.com host that way.
 
+The proxy route (:data:`PROXY_FACADE_PREFIX`) is vendor-neutral: it takes a
+full upstream URL, as the forward proxy does, for an egress proxy that relays
+a vendor CLI's calls with the command's invocation token. The URL must resolve
+to an API of the token's vendor (:func:`api_vendor_matches`).
+
 Pure module: no FastAPI, httpx or DB imports.
 """
 
@@ -23,10 +28,13 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
+from jentic_one.broker.core.proxy_headers import reconstruct_upstream_url
 from jentic_one.shared.cli_facades import FACADE_PATH_PREFIX, facade_path_prefix
+from jentic_one.shared.models.api_identity import slugify_api_field
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,7 +77,7 @@ def facade_upstream_url(scope: Mapping[str, Any], facade: PathFacade) -> str | N
     if not raw_path.startswith(lead):
         return None
     remainder = raw_path[len(lead) :]
-    if any(unquote(segment) in (".", "..") for segment in remainder.split("/")):
+    if _has_dot_segment(remainder):
         return None
     return _with_query(f"{facade.upstream_base}/{remainder}", scope)
 
@@ -82,6 +90,70 @@ def _raw_path(scope: Mapping[str, Any]) -> str:
 def _with_query(url: str, scope: Mapping[str, Any]) -> str:
     query_string = scope.get("query_string", b"").decode("latin-1")
     return f"{url}?{query_string}" if query_string else url
+
+
+def _has_dot_segment(path: str) -> bool:
+    """Whether ``path`` has a ``.`` or ``..`` segment, literal or percent-encoded."""
+    return any(unquote(segment) in (".", "..") for segment in path.split("/"))
+
+
+# ── Proxy route (full upstream URL) ──────────────────────────────────────────
+
+#: The vendor-neutral proxy route: ``/_facade/proxy/<full upstream URL>``.
+PROXY_FACADE_PREFIX = facade_path_prefix("proxy")
+
+#: The vendor domains each invocation-token vendor covers at the proxy route,
+#: compared with an API's vendor in the registry's slug form (``github.com``
+#: is stored as ``github-com``). A token vendor missing here reaches no API
+#: through it.
+PROXY_API_VENDORS: Mapping[str, frozenset[str]] = MappingProxyType(
+    {
+        "github": frozenset({"github.com"}),
+        "cloudflare": frozenset({"cloudflare.com"}),
+        "aws": frozenset({"amazonaws.com"}),
+    }
+)
+
+
+def proxy_upstream_url(scope: Mapping[str, Any]) -> str | None:
+    """The upstream URL of a proxy-route request, built from the raw ASGI path.
+
+    ``/_facade/proxy/<url>?<query>`` maps to ``<url>?<query>`` exactly as the
+    forward proxy maps ``/<url>?<query>`` (:func:`reconstruct_upstream_url`):
+    the raw path and query are kept byte for byte, a collapsed ``https:/``
+    gets its second slash back and a URL without a scheme is ``https``.
+
+    Returns ``None`` (the caller answers 404) when the raw path does not start
+    with the literal prefix, when nothing follows it, or when the URL has a
+    ``.`` or ``..`` segment, literal or encoded.
+    """
+    raw_path = _raw_path(scope)
+    lead = f"{PROXY_FACADE_PREFIX}/"
+    if not raw_path.startswith(lead):
+        return None
+    remainder = raw_path[len(lead) :]
+    if not remainder.strip("/") or _has_dot_segment(remainder):
+        return None
+    return reconstruct_upstream_url(
+        {
+            "raw_path": remainder.encode("latin-1"),
+            "query_string": scope.get("query_string", b""),
+        }
+    )
+
+
+def api_vendor_matches(token_vendor: str, api_vendor: str) -> bool:
+    """Whether an API of registry vendor ``api_vendor`` belongs to ``token_vendor``.
+
+    The registry names a vendor by the slug of its domain (``github-com``); an
+    invocation token names it by its CLI facade id (``github``). Both sides
+    are compared in slug form (:func:`slugify_api_field`), exactly: a
+    subdomain, lookalike or the facade id itself is another vendor. An
+    unknown token vendor never matches.
+    """
+    allowed = PROXY_API_VENDORS.get(token_vendor, frozenset())
+    slug = slugify_api_field(api_vendor)
+    return bool(slug) and slug in {slugify_api_field(domain) for domain in allowed}
 
 
 # ── GitHub (host mode) ───────────────────────────────────────────────────────
@@ -410,7 +482,10 @@ __all__ = [
     "GITHUB_RESPONSE_HEADERS",
     "GITHUB_REST_FACADE",
     "GITHUB_UPLOADS_FACADE",
+    "PROXY_API_VENDORS",
+    "PROXY_FACADE_PREFIX",
     "PathFacade",
+    "api_vendor_matches",
     "cloudflare_error_body",
     "facade_error_message",
     "facade_request_headers",
@@ -420,6 +495,7 @@ __all__ = [
     "is_facade_host",
     "is_facade_response_header",
     "is_github_response_header",
+    "proxy_upstream_url",
     "request_host",
     "rewrite_github_link_header",
     "rewrite_github_url",

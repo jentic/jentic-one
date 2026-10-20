@@ -16,6 +16,13 @@ hook re-renders the finished problem response in the vendor's error envelope
 with the same status. Successful responses keep only the facade response
 header allowlist.
 
+The proxy route (``/_facade/proxy/<full upstream URL>``) is not a vendor
+facade: it is the broker end of an egress proxy that relays a vendor CLI's
+calls with the command's invocation token, so it takes the full upstream URL
+as the forward-proxy catch-all does, requires the URL to resolve to an API of
+the token's vendor, and answers standard Problem Details (the proxy, not the
+broker, speaks the vendor's error shape).
+
 Paths under ``/_facade`` that no facade serves answer 404 and never reach the
 catch-all.
 
@@ -54,6 +61,7 @@ from jentic_one.broker.core.facades import (
     GITHUB_META_PATH,
     GITHUB_REST_FACADE,
     GITHUB_UPLOADS_FACADE,
+    PROXY_FACADE_PREFIX,
     cloudflare_error_body,
     facade_upstream_url,
     github_error_body,
@@ -61,6 +69,7 @@ from jentic_one.broker.core.facades import (
     is_facade_host,
     is_facade_response_header,
     is_github_response_header,
+    proxy_upstream_url,
     rewrite_github_link_header,
     rewrite_github_url,
 )
@@ -69,9 +78,11 @@ from jentic_one.broker.web.deps import (
     CredentialDeriver,
     IdempotencyStoreDep,
     get_cli_facade_runner,
+    get_cli_proxy_runner,
     require_cli_facade_invocation,
     require_cli_facade_served,
     require_cli_invocation,
+    require_cli_proxy_invocation,
 )
 from jentic_one.broker.web.routers.execute import FacadeCall, handle_facade_call
 from jentic_one.shared.auth.cli_invocation import CliInvocationIdentity
@@ -364,6 +375,62 @@ async def github_facade_not_found(
     )
 
 
+# ── Proxy route (full upstream URL) ──────────────────────────────────────────
+
+proxy_router = APIRouter()
+
+
+@proxy_router.api_route(
+    f"{PROXY_FACADE_PREFIX}/{{upstream_url:path}}",
+    methods=_FACADE_METHODS,
+    include_in_schema=False,
+)
+async def cli_proxy(
+    request: Request,
+    credential_deriver: CredentialDeriver,
+    agent_rule_evaluator: AgentRuleEvaluatorDep,
+    idempotency: IdempotencyStoreDep,
+    invocation: CliInvocationIdentity = Depends(require_cli_proxy_invocation),
+    runner: UpstreamRunner = Depends(get_cli_proxy_runner),
+    ctx: Context = Depends(get_ctx),
+) -> Response:
+    """Run a vendor CLI's call relayed by an egress proxy, with its invocation token.
+
+    ``/_facade/proxy/<url>?<query>`` runs as ``<url>?<query>``, read from the
+    raw path exactly as the forward proxy reads ``/<url>``. The URL must
+    resolve to a registered API of the token's vendor (else 404 for an
+    unregistered URL, 403 ``cli_invocation_vendor_mismatch`` for another
+    vendor's API); the call runs on the token's trace id and credential
+    choice, and the response keeps the facade header allowlist.
+    """
+    upstream_url = proxy_upstream_url(request.scope)
+    if upstream_url is None:
+        raise OperationNotFoundError(
+            "Operation not found: no upstream URL follows the proxy route's prefix.",
+            type="operation_not_found",
+            instance=request.url.path,
+        )
+    claims = invocation.claims
+    call = FacadeCall(
+        upstream_url=upstream_url,
+        trace_id=claims.trace_id,
+        credential_name=claims.credential_name,
+        vendor=claims.vendor,
+    )
+    with server_chosen_trace(claims.trace_id, "broker.cli_proxy"):
+        response = await handle_facade_call(
+            request,
+            ctx,
+            invocation.identity,
+            credential_deriver,
+            agent_rule_evaluator,
+            runner,
+            idempotency,
+            call,
+        )
+    return _restrict_response_headers(response)
+
+
 #: Paths under the reserved prefix that no facade serves. Registered after
 #: every facade router and before the catch-all, so they answer 404 instead
 #: of being read as a proxied URL.
@@ -395,5 +462,6 @@ __all__ = [
     "github_not_found_router",
     "github_router",
     "on_github_facade_host",
+    "proxy_router",
     "reserved_router",
 ]

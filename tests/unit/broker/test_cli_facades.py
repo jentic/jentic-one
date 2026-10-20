@@ -23,17 +23,22 @@ from starlette.requests import Request
 from jentic_one.broker.core.exceptions import (
     ActionDeniedError,
     AgentDirective,
+    CliInvocationVendorMismatchError,
     ExecutionHeldError,
     OperationNotFoundError,
     RateLimitExceededError,
 )
 from jentic_one.broker.core.facades import (
     CLOUDFLARE_FACADE,
+    PROXY_API_VENDORS,
+    PROXY_FACADE_PREFIX,
+    api_vendor_matches,
     cloudflare_error_body,
     facade_error_message,
     facade_request_headers,
     facade_upstream_url,
     is_facade_response_header,
+    proxy_upstream_url,
 )
 from jentic_one.broker.core.problem import STATUS_BY_ERROR
 from jentic_one.broker.web.app import _routers as broker_routers
@@ -118,6 +123,97 @@ def test_the_reserved_prefix_cannot_be_a_hostname() -> None:
     # underscore is not valid in a DNS hostname, so nothing is shadowed.
     first_segment = CLOUDFLARE_FACADE.prefix.strip("/").split("/")[0]
     assert first_segment.startswith("_")
+
+
+# ── proxy route ──────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("raw_path", "query", "expected"),
+    [
+        (
+            b"/_facade/proxy/https://api.github.com/repos/o/r/contents/a%2Fb",
+            b"ref=main&x=a%20b",
+            "https://api.github.com/repos/o/r/contents/a%2Fb?ref=main&x=a%20b",
+        ),
+        # Starlette collapses the scheme's doubled slash; it is put back.
+        (b"/_facade/proxy/https:/api.github.com/user", b"", "https://api.github.com/user"),
+        # No scheme means https, as at the forward proxy.
+        (b"/_facade/proxy/api.cloudflare.com/client/v4/zones", b"", None),
+    ],
+)
+def test_proxy_upstream_url_reads_the_full_url_from_the_raw_path(
+    raw_path: bytes, query: bytes, expected: str | None
+) -> None:
+    url = proxy_upstream_url(_scope(raw_path, query))
+    assert url == (expected or "https://api.cloudflare.com/client/v4/zones")
+
+
+@pytest.mark.parametrize(
+    "raw_path",
+    [
+        b"/_facade/proxy",
+        b"/_facade/proxy/",
+        b"/_facade/proxy//",
+        # The route matched only after decoding: the literal prefix is absent.
+        b"/_facade/pr%6fxy/https://api.github.com/user",
+        b"/_facade/proxy/https://api.github.com/repos/../user",
+        b"/_facade/proxy/https://api.github.com/repos/%2E%2E/user",
+        b"/_facade/proxy/https://api.github.com/./user",
+    ],
+)
+def test_proxy_upstream_url_refuses_paths_without_a_usable_url(raw_path: bytes) -> None:
+    assert proxy_upstream_url(_scope(raw_path)) is None
+
+
+def test_the_proxy_route_is_under_the_reserved_prefix() -> None:
+    assert PROXY_FACADE_PREFIX == "/_facade/proxy"
+    assert "proxy" not in SERVED_FACADE_CLIS
+
+
+def test_the_proxy_route_is_registered_before_the_reserved_prefix_404() -> None:
+    paths = [
+        getattr(route, "path", "")
+        for router, _prefix, _tags in broker_routers(readiness_saturation_threshold=1.0)
+        for route in router.routes
+    ]
+    proxy_index = paths.index(f"{PROXY_FACADE_PREFIX}/{{upstream_url:path}}")
+    assert proxy_index < paths.index("/_facade/{rest:path}")
+    assert proxy_index < paths.index("/{upstream_url:path}")
+
+
+@pytest.mark.parametrize(
+    ("token_vendor", "api_vendor", "matches"),
+    [
+        # The registry stores the slug; a raw domain compares the same way.
+        ("github", "github-com", True),
+        ("github", "github.com", True),
+        ("github", "GitHub.com", True),
+        ("cloudflare", "cloudflare-com", True),
+        ("aws", "amazonaws-com", True),
+        ("github", "cloudflare-com", False),
+        ("cloudflare", "github-com", False),
+        # A subdomain, lookalike or tenant of a shared suffix is another vendor.
+        ("github", "api-github-com", False),
+        ("github", "github-com-evil-example", False),
+        ("github", "acme-github-io", False),
+        # The facade id itself is not a registry vendor.
+        ("github", "github", False),
+        ("unknown", "github.com", False),
+        ("github", "", False),
+    ],
+)
+def test_api_vendor_matches(token_vendor: str, api_vendor: str, matches: bool) -> None:
+    assert api_vendor_matches(token_vendor, api_vendor) is matches
+
+
+def test_every_proxy_vendor_is_a_facade_vendor() -> None:
+    assert set(PROXY_API_VENDORS) <= set(CliFacadeVendorsConfig.model_fields)
+
+
+def test_vendor_mismatch_maps_to_403() -> None:
+    assert STATUS_BY_ERROR[CliInvocationVendorMismatchError] == 403
+    assert CliInvocationVendorMismatchError("x").type == "cli_invocation_vendor_mismatch"
 
 
 # ── request headers ──────────────────────────────────────────────────────────
