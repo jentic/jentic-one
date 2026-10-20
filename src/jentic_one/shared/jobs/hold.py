@@ -100,6 +100,11 @@ async def _agent_names(session: AsyncSession, agent_ids: set[str]) -> dict[str, 
     return {row[0]: row[1] for row in result.all()}
 
 
+async def agent_name(session: AsyncSession, agent_id: str) -> str | None:
+    """The agent's name, or ``None`` when the agent no longer exists."""
+    return (await _agent_names(session, {agent_id})).get(agent_id)
+
+
 class PendingApprovalLimitError(Exception):
     """The agent already holds ``limit`` pending approvals."""
 
@@ -551,7 +556,7 @@ async def withdraw_pending_for_agent(
         .execution_options(synchronize_session=False)
     )
     withdrawn = list(result.all())
-    agent_name = (await _agent_names(session, {agent_id})).get(agent_id) if withdrawn else None
+    filing_agent_name = await agent_name(session, agent_id) if withdrawn else None
     for approval_id, job_id, method, path, trace_id in withdrawn:
         await session.execute(
             update(Job)
@@ -577,7 +582,7 @@ async def withdraw_pending_for_agent(
             type=EventType.EXECUTION_APPROVAL_WITHDRAWN,
             severity=EventSeverity.INFO,
             summary=held_call_summary(
-                agent_name=agent_name,
+                agent_name=filing_agent_name,
                 agent_id=agent_id,
                 method=method,
                 path=path,

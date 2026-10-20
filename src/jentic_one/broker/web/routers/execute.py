@@ -120,6 +120,7 @@ from jentic_one.shared.jobs.hold import (
     file_hold,
     review_page_path,
 )
+from jentic_one.shared.jobs.hold import agent_name as held_agent_name
 from jentic_one.shared.jobs.protocols import InjectedAuth
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ExecutionStatus
@@ -1043,7 +1044,10 @@ async def _handle_hold(
             ) from exc
         review_url = _review_url(ctx, request, hold.approval_id)
         if not hold.joined:
-            agent = summary_label(identity.actor_name, identity.sub)
+            # An identity resolved from a JWT carries no name; read it from the
+            # agent row then, so every approval event names the agent alike.
+            name = identity.actor_name or await held_agent_name(session, identity.sub)
+            agent = summary_label(name, identity.sub)
             await emit_event_best_effort(
                 session,
                 type=EventType.EXECUTION_APPROVAL_REQUESTED,

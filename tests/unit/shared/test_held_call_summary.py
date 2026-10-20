@@ -26,5 +26,6 @@ def test_a_long_path_is_bounded() -> None:
         agent_name="a", agent_id="agnt_1", method="GET", path=path, outcome="approved"
     )
     assert path not in summary
-    assert len(summary) < MAX_EVENT_SUMMARY_FIELD_LEN * 3
+    assert "/" + "x" * (MAX_EVENT_SUMMARY_FIELD_LEN - 2) + "…" in summary
+    assert len(summary) <= 512
     assert summary.endswith("by agent 'a' approved")
