@@ -69,10 +69,11 @@ _BUILTIN_NAMESPACE_BUDGETS: dict[str, NamespaceBudget] = {
 # default holds about 18,600 live nonces and a 0.02 share about 370 per
 # client within the 5-minute nonce TTL. That is twice what the default
 # ``auth.oauth_rate_limit`` authorize limiter (burst 30 + 30/min, keyed per
-# IP) lets one IP mint in a TTL, so a large shared NAT or corporate egress IP
-# hits the rate limiter before its share, while a single host flooding the
-# page (including one rotating addresses inside its IPv6 /64) is refused
-# without filling the namespace for everyone else.
+# client network the same way) lets one network mint in a TTL, so a large
+# shared NAT or corporate egress IP hits the rate limiter before its share,
+# while a single host flooding the page (including one rotating addresses
+# inside its IPv6 /64) is refused without filling the namespace for everyone
+# else.
 LOGIN_CSRF_OWNER_SHARE = 0.02
 _BUILTIN_OWNER_SHARES: dict[str, float] = {"login-csrf": LOGIN_CSRF_OWNER_SHARE}
 
@@ -154,8 +155,8 @@ class MemoryBackendConfig(BaseModel):
             "CSRF nonces) uses max_entries_per_namespace / max_bytes_per_namespace "
             "with a 0.02 per-client share, about 370 live nonces per IPv4 address "
             "or IPv6 /64 at the defaults (about 900 bytes each, 5-minute TTL), "
-            "twice what the default authorize rate limit lets one IP request in "
-            "that time; every other namespace "
+            "twice what the default authorize rate limit lets one client network "
+            "request in that time; every other namespace "
             "uses max_entries_per_namespace / max_bytes_per_namespace. The "
             "sustained idempotent request rate idem can hold is min(max_entries, "
             "max_bytes / record_bytes) / broker.idempotency.ttl_s, where "

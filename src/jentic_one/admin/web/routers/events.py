@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import time
 from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Annotated
@@ -32,6 +33,11 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models.events import EventSeverity
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
+from jentic_one.shared.web.deps import (
+    CredentialRecheck,
+    CredentialRecheckResult,
+    get_credential_recheck,
+)
 from jentic_one.shared.web.links import build_link
 
 _LAST_EVENT_ID_RE = re.compile(r"^evt_[0-9a-f]{24}$")
@@ -157,11 +163,17 @@ async def list_events(
     )
 
 
+#: How often an open ``/events/stream`` re-verifies its credential — the
+#: stream's poll interval, so an idle stream re-checks on every heartbeat.
+_STREAM_RECHECK_SECONDS = 5.0
+
+
 @router.get("/events/stream")
 async def stream_events(
     request: Request,
     identity: Identity = get_current_identity(required_permissions=["events:read"]),
     stream_svc: EventStreamService = Depends(get_event_stream_service),
+    recheck_credential: CredentialRecheck = Depends(get_credential_recheck),
     since: datetime | None = Query(
         default=None,
         description=(
@@ -213,7 +225,11 @@ async def stream_events(
         openapi_examples=ex.example("agent"),
     ),
 ) -> StreamingResponse:
-    """Stream events as Server-Sent Events."""
+    """Stream events as Server-Sent Events.
+
+    The stream ends once the caller's credential stops verifying (expired,
+    revoked, or its user disabled or deleted); reconnecting then returns 401.
+    """
     if last_event_id is not None and not _LAST_EVENT_ID_RE.match(last_event_id):
         raise InvalidInputError("Last-Event-ID must match format evt_<24 hex chars>")
 
@@ -224,6 +240,7 @@ async def stream_events(
         # the pooled connection returned (#627). The ``finally`` only logs — it
         # must never touch the DB.
         log = structlog.get_logger(__name__)
+        last_verified = time.monotonic()
         try:
             async for item in stream_svc.stream(
                 identity=identity,
@@ -238,6 +255,23 @@ async def stream_events(
             ):
                 if await request.is_disconnected():
                     break
+                # The stream outlives the verification that opened it: re-check
+                # the credential at most once per interval, so a token that
+                # expires, or whose user is disabled or deleted, stops receiving
+                # events within one interval (#1139). The client's reconnect
+                # then meets the auth gate's 401 (or a 503 while the database
+                # cannot answer).
+                now = time.monotonic()
+                if now - last_verified >= _STREAM_RECHECK_SECONDS:
+                    outcome = await recheck_credential()
+                    if outcome is not CredentialRecheckResult.VALID:
+                        log.info(
+                            "sse_stream_credential_unverified",
+                            sub=identity.sub,
+                            reason=outcome.value,
+                        )
+                        break
+                    last_verified = now
                 if isinstance(item, Heartbeat):
                     yield f"event: heartbeat\ndata: {item.model_dump_json()}\n\n"
                 elif isinstance(item, EventView):

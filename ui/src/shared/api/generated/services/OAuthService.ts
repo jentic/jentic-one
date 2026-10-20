@@ -309,8 +309,8 @@ export class OAuthService {
      * page treats a 400 as terminal ("retry the connection") because the blob
      * shares the consent handle's lifetime — a retry re-enters the flow, which
      * re-parks on a fresh awaiting page while the agent stays pending. Shares
-     * the approval-status poll's own per-IP rate bucket (same cadence, same
-     * caller shape).
+     * the approval-status poll's own per-client-network rate bucket (same
+     * cadence, same caller shape).
      * @returns ConsentAgentStatusResponse Successful Response
      * @throws ApiError
      */
@@ -395,8 +395,9 @@ export class OAuthService {
      * die, so reconnecting requires fresh consent (deliberately beyond the
      * RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
      * is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-     * 64 KiB declared body length, and per-IP rate limited; its errors speak
-     * the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+     * 64 KiB declared body length, and rate limited per client network
+     * (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+     * (RFC 7009 §2.2.1), not Problem Details.
      * - **JSON** (any other content type — the pre-G11 contract, byte-identical
      * including 422 shapes): requires a platform bearer identity; revokes the
      * caller's own token (access → that token, refresh → its family). Used by
@@ -435,7 +436,7 @@ export class OAuthService {
                 404: `Form-encoded (RFC 7009) requests only: interactive OAuth for MCP is disabled (\`server.mcp.oauth.enabled=false\`), so the RFC 7009 arm answers the framework's plain route-not-found 404 (gate state unobservable — same posture as the anonymous DCR door). The bearer-authenticated JSON arm is not gated.`,
                 413: `Form-encoded (RFC 7009) requests only: declared Content-Length exceeds the 64 KiB raw-body cap (RFC 6749 §5.2 dialect).`,
                 422: `Unprocessable Entity`,
-                429: `Form-encoded (RFC 7009) requests only: per-IP rate limit exceeded (\`Retry-After\` header set; RFC 6749 §5.2 dialect body, \`error=slow_down\` per RFC 8628 §3.5).`,
+                429: `Form-encoded (RFC 7009) requests only: per-client-network rate limit exceeded (\`Retry-After\` header set; RFC 6749 §5.2 dialect body, \`error=slow_down\` per RFC 8628 §3.5).`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
             },
@@ -480,7 +481,7 @@ export class OAuthService {
             mediaType: 'application/json',
             errors: {
                 400: `RFC 6749 §5.2 error dialect (NOT platform Problem Details — this is a spec-facing endpoint real OAuth/MCP clients parse): \`{"error": "invalid_request" | "invalid_grant" | "invalid_client" | "unsupported_grant_type", "error_description": "..."}\`. \`invalid_request\` covers malformed/missing parameters; a revoked consent grant surfaces on the refresh arm as \`invalid_grant\` with \`error_description: "consent grant has been revoked"\` — clients should treat it as terminal and restart the authorization flow. A client whose authentication fails after attempting HTTP Basic (\`Authorization\` header, RFC 6749 §2.3.1) gets the same \`invalid_client\` dialect body with status 401 and a \`WWW-Authenticate: Basic\` challenge, per §5.2.`,
-                429: `Per-client+IP rate limit exceeded (\`Retry-After\` header set; RFC 6749 §5.2 dialect body, \`error=slow_down\` per RFC 8628 §3.5).`,
+                429: `Per-client_id + client-network rate limit exceeded (\`Retry-After\` header set; RFC 6749 §5.2 dialect body, \`error=slow_down\` per RFC 8628 §3.5).`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
             },

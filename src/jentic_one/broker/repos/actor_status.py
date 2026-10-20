@@ -13,13 +13,15 @@ same questions directly from the actor rows, in **one** round-trip per check:
   on their own status); holds a permission when the exact
   ``actor_permission_grants`` row exists (the grant set an agent's
   credentials resolve their permissions from);
-- ``user`` → active when ``users.active`` (disabled/deleted/missing →
-  inactive); holds a permission when the implication-expanded
-  (``compute_effective``) set of its live ``user_permission_grants`` contains
-  it — the same effective set a user's login token is minted with, so
-  ``org:admin`` implies the execute permission. Read live, a revocation after
-  enqueue applies to the queued job even while the user's token would still
-  carry the permission until it expires;
+- ``user`` → active when ``users.active`` and ``users.deleted_at IS NULL``
+  (disabled/deleted/missing → inactive) — the liveness alone is read through
+  the shared ``read_user_status`` the login-JWT verifier uses; holds a
+  permission when the implication-expanded (``compute_effective``) set of its
+  live ``user_permission_grants`` contains it — the same effective set a
+  user's login token is minted with, so ``org:admin`` implies the execute
+  permission. Read live, a revocation after enqueue applies to the queued job
+  even while the user's token would still carry the permission until it
+  expires;
 - anything else → neither. That covers the retired ``toolkit`` and
   ``service_account`` identities (theme 8 Phase 4 dropped the
   service-account tables; a job queued under one can never run).
@@ -40,6 +42,7 @@ from __future__ import annotations
 
 from sqlalchemy import Boolean, String, text
 
+from jentic_one.shared.auth.actor_status import read_user_status
 from jentic_one.shared.auth.owner_status import log_agent_owner_inactive
 from jentic_one.shared.auth.permission_catalog import compute_effective
 from jentic_one.shared.db import DatabaseSession
@@ -69,9 +72,10 @@ _AGENT_AUTHORITY = text(
     " AS granted"
     " FROM agents a WHERE a.id = :actor_id"
 ).columns(status=String, owner_id=String, granted=Boolean)
-_USER_ACTIVE = text("SELECT active FROM users WHERE id = :actor_id").columns(active=Boolean)
+# Liveness matches ``read_user_status(...).accepts_credentials``: a deleted row
+# is refused even if it reads active.
 _USER_AUTHORITY = text(
-    "SELECT u.active, g.permission FROM users u"
+    "SELECT (u.active AND u.deleted_at IS NULL) AS active, g.permission FROM users u"
     " LEFT JOIN user_permission_grants g ON g.user_id = u.id"
     " WHERE u.id = :actor_id"
 ).columns(active=Boolean, permission=String)
@@ -99,11 +103,8 @@ class ActorStatusResolver:
                 log_agent_owner_inactive(actor_id, row.owner_id)
             return bool(row.status == "active")
         if actor_type == ActorType.USER.value:
-            async with self._admin_db.session() as session:
-                active = (
-                    await session.execute(_USER_ACTIVE, {"actor_id": actor_id})
-                ).scalar_one_or_none()
-            return bool(active)
+            status = await read_user_status(self._admin_db, actor_id)
+            return status is not None and status.accepts_credentials
         return False
 
     async def authority(self, *, actor_id: str, actor_type: str, permission: str) -> ActorAuthority:
