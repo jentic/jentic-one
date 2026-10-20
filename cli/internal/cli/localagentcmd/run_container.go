@@ -19,10 +19,12 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/gofrs/flock"
@@ -102,6 +104,24 @@ func containerConflicts(cmd *cobra.Command) []string {
 // containerUnavailableErr codes a container session that cannot start. The
 // container is the confinement in this mode, so it shares
 // CONFINEMENT_UNAVAILABLE with an unconfinable agent-user launch.
+// containerSessionSignals cancel a container session on top of the root
+// context's SIGINT and SIGTERM. A closed terminal sends SIGHUP, whose default
+// action kills the process, skipping the deferred teardown and leaving the
+// session's containers, networks, volumes and invocation tokens behind until
+// the next run reaps them.
+var containerSessionSignals = []os.Signal{syscall.SIGHUP}
+
+// containerSessionContext is parent, also cancelled by containerSessionSignals.
+// The returned stop releases the signals; deferred first, it runs after the
+// teardown, so a hang-up during teardown can't kill the process either.
+// A nil parent (a command run outside Execute) is treated as Background.
+func containerSessionContext(parent context.Context) (context.Context, context.CancelFunc) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	return signal.NotifyContext(parent, containerSessionSignals...)
+}
+
 func containerUnavailableErr(msg, hint string) error {
 	if hint == "" {
 		hint = "Fix the Docker setup above, or run without --container to use the agent user."
@@ -110,7 +130,8 @@ func containerUnavailableErr(msg, hint string) error {
 }
 
 func (a *Cmd) runContainer(cmd *cobra.Command, opts *runOptions, agentID string, posArgs, agentArgs []string) error {
-	ctx := cmd.Context()
+	ctx, stopHangup := containerSessionContext(cmd.Context())
+	defer stopHangup()
 	if bad := containerConflicts(cmd); len(bad) > 0 {
 		return fmt.Errorf("--container cannot be combined with %s", strings.Join(bad, ", "))
 	}
