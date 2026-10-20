@@ -48,9 +48,16 @@ export {
 export type { RuleRequestTesterProps } from '@/shared/credentials/components/RuleRequestTester';
 export {
 	OperationImpactPreview,
+	operationCountsText,
 	useAllowedOperationCount,
 } from '@/shared/credentials/components/OperationImpactPreview';
-export type { OpsApiReference } from '@/shared/credentials/components/OperationImpactPreview';
+export type {
+	OperationCounts,
+	OpsApiReference,
+} from '@/shared/credentials/components/OperationImpactPreview';
+export { ActionList } from '@/shared/credentials/components/ActionList';
+export type { ActionListProps } from '@/shared/credentials/components/ActionList';
+export { useActionCatalog } from '@/shared/credentials/components/useActionCatalog';
 
 // Connect flow
 export { useConnectAfterCreate } from '@/shared/credentials/components/useConnectAfterCreate';

@@ -197,3 +197,121 @@ describe('examplePath / examplePathPrefix', () => {
 		expect(examplePath(undefined)).toBe('/resource');
 	});
 });
+
+describe('RuleListEditor — operation ids read as actions', () => {
+	const catalog = {
+		status: 'ready' as const,
+		operations: [
+			{
+				operation_id: 'op_cols',
+				method: 'GET',
+				path: '/v1/boardColumns',
+				name: 'List columns',
+			},
+			{ operation_id: 'op_tags', method: 'GET', path: '/v1/tags', name: 'List tags' },
+		],
+	};
+
+	it.each([
+		['allow', 'allow'],
+		['require-approval', 'ask'],
+		['deny', 'deny'],
+	] as const)(
+		'a %s action rule reads "%s · N actions", each action by method and path',
+		(effect, word) => {
+			render(
+				<RuleListEditor
+					rules={[
+						{ effect, methods: null, path: null, operations: ['op_tags', 'op_cols'] },
+					]}
+					onChange={() => undefined}
+					actionCatalog={catalog}
+				/>,
+			);
+			const rules = screen.getByRole('list', { name: 'Rules, in evaluation order' });
+			expect(rules).toHaveTextContent(`#1${word}2 actions`);
+			// Not the "any method /" a path rule with no conditions would read as.
+			expect(rules).not.toHaveTextContent('any method');
+			const actions = screen.getByRole('list', { name: 'Actions' });
+			expect(actions).toHaveTextContent('GET/v1/boardColumnsList columns');
+			expect(actions).toHaveTextContent('GET/v1/tagsList tags');
+			expect(rules).not.toHaveTextContent('op_tags');
+		},
+	);
+
+	it('a rule narrowed by method and path keeps them, its actions listed beneath', () => {
+		render(
+			<RuleListEditor
+				rules={[
+					{
+						effect: 'allow',
+						methods: ['GET'],
+						path: '/v1/boardColumns',
+						operations: ['op_cols'],
+					},
+				]}
+				onChange={() => undefined}
+				actionCatalog={catalog}
+			/>,
+		);
+		const rules = screen.getByRole('list', { name: 'Rules, in evaluation order' });
+		expect(rules).toHaveTextContent('GET/v1/boardColumns');
+		expect(screen.getByRole('list', { name: 'Actions' })).toHaveTextContent('List columns');
+		expect(rules).not.toHaveTextContent('op_cols');
+	});
+});
+
+describe('RuleListEditor — "no ops affected" judges every condition together', () => {
+	const catalog = {
+		status: 'ready' as const,
+		operations: [
+			{
+				operation_id: 'op_post',
+				method: 'POST',
+				path: '/v1/boardColumns',
+				name: 'Add a column',
+			},
+			{ operation_id: 'op_put', method: 'PUT', path: '/v1/boardColumns/{id}', name: 'Edit' },
+		],
+	};
+	const row = (rule: PermissionRule) => {
+		render(
+			<RuleListEditor rules={[rule]} onChange={() => undefined} actionCatalog={catalog} />,
+		);
+		return screen.queryByLabelText('No operations affected');
+	};
+
+	it('flags a GET on a path the API only has POST and PUT for', () => {
+		expect(
+			row({
+				effect: 'allow',
+				methods: ['GET'],
+				path: '/v1/boardColumns',
+				match_mode: 'prefix',
+			}),
+		).toBeInTheDocument();
+	});
+
+	it('flags a method + path added to an action rule that excludes its own actions', () => {
+		expect(
+			row({
+				effect: 'allow',
+				methods: ['GET'],
+				path: '/v1/boardColumns',
+				match_mode: 'prefix',
+				operations: ['op_post'],
+			}),
+		).toBeInTheDocument();
+	});
+
+	it('stays quiet for a rule that reaches an operation', () => {
+		expect(
+			row({
+				effect: 'allow',
+				methods: ['POST'],
+				path: '/v1/boardColumns',
+				match_mode: 'prefix',
+			}),
+		).toBeNull();
+	});
+});

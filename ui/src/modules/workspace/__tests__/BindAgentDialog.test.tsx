@@ -209,12 +209,26 @@ describe('BindAgentDialog — what the agent may call', () => {
 		}
 		expect(screen.getByTestId('bind-agent-confirm')).toBeDisabled();
 
-		await user.click(screen.getByRole('radio', { name: /Read only/ }));
+		await user.click(screen.getByRole('radio', { name: /^Read only$/ }));
 		await user.click(screen.getByTestId('bind-agent-confirm'));
 		await waitFor(() => expect(ruleCalls).toHaveLength(2));
 		expect(posted).toEqual(['agent_1', 'agent_2']);
 		for (const call of ruleCalls)
 			expect(call.body).toEqual([{ effect: 'allow', methods: ['GET'] }]);
+	});
+
+	it('"Read only, ask before anything else" writes the GET allow, then a catch-all Ask', async () => {
+		serveRules();
+		const user = userEvent.setup();
+		renderDialog();
+		await user.click(await screen.findByRole('checkbox', { name: 'agent_1' }));
+		await user.click(screen.getByRole('radio', { name: /ask before anything else/ }));
+		await user.click(screen.getByTestId('bind-agent-confirm'));
+		await waitFor(() => expect(ruleCalls).toHaveLength(1));
+		expect(ruleCalls[0].body).toEqual([
+			{ effect: 'allow', methods: ['GET'] },
+			{ effect: 'require-approval', path: '.*' },
+		]);
 	});
 
 	it('the shared access step: same question, same presets, Full access writes `.*`, no inline tester', async () => {
@@ -228,7 +242,8 @@ describe('BindAgentDialog — what the agent may call', () => {
 				.getAllByRole('radio')
 				.map((r) => r.textContent),
 		).toEqual([
-			expect.stringMatching(/^Read only/),
+			expect.stringMatching(/^Read onlyGET/),
+			expect.stringMatching(/^Read only, ask before anything else/),
 			expect.stringMatching(/^Full access/),
 			expect.stringMatching(/^Custom rules/),
 		]);
@@ -326,7 +341,11 @@ describe('BindAgentDialog — what the agent may call', () => {
 		const editor = screen.getByTestId('bind-agent-custom-editor');
 		await user.click(await within(editor).findByRole('button', { name: 'By action' }));
 		const ops = await within(editor).findByRole('list', { name: 'Operations' });
-		await user.click(within(ops).getByRole('checkbox', { name: /\/v1\/charges/ }));
+		await user.click(
+			within(
+				within(ops).getByRole('group', { name: 'Access for GET /v1/charges' }),
+			).getByRole('button', { name: 'Allow' }),
+		);
 		await user.click(screen.getByTestId('bind-agent-confirm'));
 		await waitFor(() => expect(ruleCalls).toHaveLength(1));
 		expect(ruleCalls[0].body).toEqual([{ effect: 'allow', operations: ['listCharges'] }]);
@@ -540,7 +559,7 @@ describe('BindAgentDialog — what Allow all reaches, and naming the credential'
 		const picked = within(select).getByRole('option', { selected: true }).textContent!;
 		expect(picked).toMatch(/^Shared key · /);
 		await user.click(await screen.findByRole('checkbox', { name: 'agent_1' }));
-		await user.click(screen.getByRole('radio', { name: /Read only/ }));
+		await user.click(screen.getByRole('radio', { name: /^Read only$/ }));
 		await user.click(screen.getByTestId('bind-agent-confirm'));
 		expect(
 			await screen.findByText(`Bound “${picked}” to agent_1, with access rules.`),

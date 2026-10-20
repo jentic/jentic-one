@@ -1,8 +1,9 @@
 /**
  * AccessRulesStep — "What can this agent call?": the access presets (Read only ·
- * Full access · Custom rules), the coverage caveat for a credential that reaches
- * beyond one pinned API, and under Custom rules a "By action" checklist (saved as
- * one operation-id allow rule) and a "By path" rule editor. Every rule that will
+ * Read only, ask before anything else · Full access · Custom rules), the coverage
+ * caveat for a credential that reaches beyond one pinned API, and under Custom
+ * rules a "By action" list (each action Allow, Ask or Off; saved as at most one
+ * operation-id Ask rule and one Allow rule) and a "By path" rule editor. Every rule that will
  * be saved stays on screen. Below sit "Effective access" and an inline "Try a
  * request" dry run with the broker's semantics.
  *
@@ -19,36 +20,45 @@ import {
 	ListChecks,
 	Loader2,
 	ScanEye,
+	ShieldCheck,
 	Trash2,
 } from 'lucide-react';
 import {
-	Badge,
 	Button,
-	Checkbox,
 	DetailsLine,
 	ExpandReveal,
 	MethodBadge,
 	RadioCardGroup,
 	SearchInput,
 	SegmentedToggle,
+	type SegmentedToggleOption,
 } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import { useVendorOperationsProgress } from '@/shared/credentials/api/vendors-hooks';
 import type { VendorOperation } from '@/shared/credentials/api/vendors-client';
 import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
 import { RuleListEditor } from '@/shared/credentials/components/RuleListEditor';
+import { ActionList } from '@/shared/credentials/components/ActionList';
+import { EFFECT_WORD, EffectBadge } from '@/shared/credentials/components/EffectBadge';
+import { useActionCatalog } from '@/shared/credentials/components/useActionCatalog';
 import { DraftRuleTester } from '@/shared/credentials/components/RuleRequestTester';
 import {
 	OperationImpactPreview,
+	operationCountsText,
 	useAllowedOperationCount,
 } from '@/shared/credentials/components/OperationImpactPreview';
 import {
-	actionRule,
+	actionsDecidedByPathRules,
+	describeActions,
+	type ActionCatalog,
+} from '@/shared/credentials/lib/actionRules';
+import {
 	coverageNote,
 	draftRulesForPreset,
 	joinCustomRules,
 	presetOptions,
 	splitCustomRules,
+	type ActionGroups,
 	type RulesPreset,
 	type ScopeReach,
 } from '@/shared/credentials/lib/accessPresets';
@@ -84,8 +94,13 @@ export interface AccessRulesStepProps {
 
 /** How the inline tester names the rule that decided, for a preset — whose
  * rules are never shown as numbered editor rows. */
-const PRESET_MATCH: Record<Exclude<RulesPreset, 'custom'>, () => string> = {
+const PRESET_MATCH: Record<Exclude<RulesPreset, 'custom'>, (index: number) => string> = {
 	read: () => '— allowed by “Read only”',
+	// Rule 0 is its GET allow; rule 1 is the catch-all Ask.
+	'read-ask': (index) =>
+		index === 0
+			? '— allowed by “Read only, ask before anything else”'
+			: '— held for approval by “Read only, ask before anything else”',
 	all: () => '— allowed by “Full access”',
 };
 
@@ -116,6 +131,11 @@ export function AccessRulesStep({
 	const opsQuery = opsLoad.query;
 	const ops = opsLoad.operations;
 	const opsComplete = opsLoad.complete;
+	// The same read, as the catalog that names the action rule's ids.
+	const actionCatalog = useActionCatalog(apiReference, {
+		enabled: wantsOps,
+		pending: operationsPending,
+	});
 	const pathSuggestions = useMemo<readonly string[]>(
 		() => Array.from(new Set(ops.map((op) => op.path))).sort(),
 		[ops],
@@ -140,17 +160,47 @@ export function AccessRulesStep({
 	const [build, setBuild] = useState<'action' | 'path'>('path');
 	const buildMode = actionsAvailable ? build : 'path';
 	const pathEditorOpen = buildMode === 'path';
-	const { pathRules, actionRules } = useMemo(() => splitCustomRules(customRules), [customRules]);
-	const chosenActions = useMemo(
-		() => actionRules.flatMap((r) => r.operations ?? []),
-		[actionRules],
+	const { pathRules, groups, denyMovesAhead } = useMemo(
+		() => splitCustomRules(customRules),
+		[customRules],
 	);
-	const setActions = (next: string[]): void =>
-		onCustomRulesChange(
-			joinCustomRules(pathRules, next.length === 0 ? [] : [actionRule(next)]),
-		);
+	const setGroups = (next: ActionGroups): void =>
+		onCustomRulesChange(joinCustomRules(pathRules, next));
 	const setPathRules = (next: PermissionRule[]): void =>
-		onCustomRulesChange(joinCustomRules(next, actionRules));
+		onCustomRulesChange(joinCustomRules(next, groups));
+	// The saved positions of the action rules: Deny ahead of the path rules,
+	// Ask and Allow after them (see `joinCustomRules`).
+	const hasDeny = groups.deny.length > 0;
+	const pathOffset = hasDeny ? 1 : 0;
+	// An Ask action an earlier path rule already allows runs without asking.
+	const askNeverFires = useMemo(
+		() => actionsDecidedByPathRules(groups.ask, pathRules, actionCatalog, 'allow'),
+		[groups.ask, pathRules, actionCatalog],
+	);
+	// An Allow or Ask action an earlier path deny blocks never runs.
+	const blockedByPathDeny = useMemo(
+		() =>
+			actionsDecidedByPathRules(
+				[...groups.ask, ...groups.allow],
+				pathRules,
+				actionCatalog,
+				'deny',
+			),
+		[groups.ask, groups.allow, pathRules, actionCatalog],
+	);
+	const actionRow = (g: keyof ActionGroups, index: number) => (
+		<ActionRuleRow
+			key={g}
+			operations={groups[g]}
+			effect={GROUP_EFFECT[g]}
+			catalog={actionCatalog}
+			index={index}
+			disabled={disabled}
+			onEdit={actionsAvailable ? (): void => setBuild('action') : undefined}
+			onRemove={(): void => setGroups({ ...groups, [g]: [] })}
+			testId={`${p}-action-rule${g === 'allow' ? '' : `-${g}`}`}
+		/>
+	);
 
 	return (
 		<div className="space-y-2" data-testid={`${p}-rules`} data-preset={preset ?? undefined}>
@@ -223,11 +273,26 @@ export function AccessRulesStep({
 								/>
 							)
 						)}
-						{/* Path rules first, in broker evaluation order (the action rule
-						    is saved last). Kept at the same tree position so a half-typed
-						    rule survives the loading → toggle swap. */}
+						{denyMovesAhead && (
+							<p
+								role="status"
+								className="text-foreground-sub flex items-start gap-1.5 text-xs"
+								data-testid={`${p}-deny-moves-ahead`}
+							>
+								<AlertTriangle className="text-caution mt-0.5 h-3.5 w-3.5 shrink-0" />
+								A Deny actions rule sits after the path rules. Saving moves it ahead
+								of them, so those actions are blocked even where a path rule allows
+								them.
+							</p>
+						)}
+						{/* In broker evaluation order: the Deny action rule, the path rules,
+						    then the Ask and Allow action rules. */}
+						{buildMode === 'path' && hasDeny && actionRow('deny', 0)}
+						{/* Kept at the same tree position so a half-typed rule survives the
+						    loading → toggle swap. */}
 						{(pathEditorOpen || pathRules.length > 0) && (
 							<RuleListEditor
+								indexOffset={pathOffset}
 								rules={pathRules}
 								onChange={setPathRules}
 								pathSuggestions={pathSuggestions}
@@ -235,6 +300,7 @@ export function AccessRulesStep({
 								opsLoaded={opsComplete && pathSuggestions.length > 0}
 								openWhenEmpty={pathEditorOpen}
 								hideAdd={!pathEditorOpen}
+								actionCatalog={actionCatalog}
 							/>
 						)}
 						{buildMode === 'action' ? (
@@ -242,36 +308,39 @@ export function AccessRulesStep({
 								ops={ops}
 								complete={opsComplete}
 								failed={!opsComplete && opsQuery.isError}
-								selected={chosenActions}
-								onChange={setActions}
+								groups={groups}
+								onChange={setGroups}
 								disabled={disabled}
 								testId={`${p}-actions`}
 							/>
 						) : (
-							chosenActions.length > 0 && (
-								<ActionRuleRow
-									operations={chosenActions}
-									index={pathRules.length}
-									disabled={disabled}
-									onEdit={
-										actionsAvailable
-											? (): void => setBuild('action')
-											: undefined
-									}
-									onRemove={(): void => setActions([])}
-									testId={`${p}-action-rule`}
-								/>
-							)
+							// After the path rules, in saved order: Ask, then Allow.
+							(['ask', 'allow'] as const)
+								.filter((g) => groups[g].length > 0)
+								.map((g, i) => actionRow(g, pathOffset + pathRules.length + i))
 						)}
-						{chosenActions.length > 0 && pathRules.some((r) => r.effect === 'deny') && (
+						{blockedByPathDeny > 0 && (
 							<p
 								role="status"
 								className="text-foreground-sub flex items-center gap-1.5 text-xs"
 								data-testid={`${p}-actions-shadowed`}
 							>
 								<AlertTriangle className="text-caution h-3.5 w-3.5 shrink-0" />
-								Path rules are evaluated first: a deny there can block these
-								actions.
+								{blockedByPathDeny === 1
+									? 'Path rules are evaluated first: a deny there blocks one Allow or Ask action.'
+									: `Path rules are evaluated first: a deny there blocks ${blockedByPathDeny.toLocaleString()} Allow or Ask actions.`}
+							</p>
+						)}
+						{askNeverFires > 0 && (
+							<p
+								role="status"
+								className="text-foreground-sub flex items-center gap-1.5 text-xs"
+								data-testid={`${p}-ask-never-fires`}
+							>
+								<AlertTriangle className="text-caution h-3.5 w-3.5 shrink-0" />
+								{askNeverFires === 1
+									? 'Path rules are evaluated first: one Ask action is already allowed there, so it will run without asking.'
+									: `Path rules are evaluated first: ${askNeverFires.toLocaleString()} Ask actions are already allowed there, so they will run without asking.`}
 							</p>
 						)}
 					</div>
@@ -293,8 +362,7 @@ export function AccessRulesStep({
 										{counted && (
 											<span className="text-foreground-faint font-normal tabular-nums">
 												{' '}
-												· {counted.allowed.toLocaleString()} of{' '}
-												{counted.total.toLocaleString()} allowed
+												· {operationCountsText(counted)}
 											</span>
 										)}
 									</>
@@ -389,12 +457,72 @@ function Disclosure({
 	);
 }
 
-/** Custom rules → By action: the API's operations, filterable, each ticked to allow it. */
+/** An action rule's effect by name, for its row's verbs. */
+const EFFECT_RULE_NAME: Record<string, string> = {
+	allow: 'Allow',
+	'require-approval': 'Ask',
+	deny: 'Deny',
+};
+
+/** The rule effect each By action choice saves as. */
+const GROUP_EFFECT: Record<keyof ActionGroups, PermissionRule['effect']> = {
+	allow: 'allow',
+	ask: 'require-approval',
+	deny: 'deny',
+};
+
+/** One action's access in the list: one of the three rules, or `null` — unset, in no rule. */
+type ActionAccess = keyof ActionGroups;
+
+/**
+ * The per-row choice, in the By path editor's colours: Allow the success tint,
+ * Ask the caution tint with its shield, Deny the danger tint. With nothing
+ * pressed all three are quiet.
+ */
+const ACCESS_OPTIONS: SegmentedToggleOption<ActionAccess>[] = [
+	{
+		value: 'allow',
+		label: 'Allow',
+		activeTint: { pill: 'bg-success/15', text: 'text-success' },
+	},
+	{
+		value: 'ask',
+		label: 'Ask',
+		icon: <ShieldCheck className="h-3 w-3" />,
+		activeTint: { pill: 'bg-warning/15', text: 'text-warning' },
+	},
+	{
+		value: 'deny',
+		label: 'Deny',
+		activeTint: { pill: 'bg-danger/15', text: 'text-danger' },
+	},
+];
+
+const BULK_LABEL: Record<ActionAccess, string> = { allow: 'Allow', ask: 'Ask', deny: 'Deny' };
+
+/** "2 allowed · 1 ask · 1 denied", only the parts that aren't zero; "None set" otherwise. */
+function accessSummary(groups: ActionGroups): string {
+	const parts = [
+		[groups.allow.length, 'allowed'],
+		[groups.ask.length, 'ask'],
+		[groups.deny.length, 'denied'],
+	]
+		.filter(([n]) => (n as number) > 0)
+		.map(([n, word]) => `${(n as number).toLocaleString()} ${word}`);
+	return parts.length > 0 ? parts.join(' · ') : 'None set';
+}
+
+/**
+ * Custom rules → By action: the API's operations, filterable, each set to
+ * Allow, Ask or Deny with a compact per-row choice — or left unset (the
+ * default), in no rule. Pressing the pressed choice, or Delete / Backspace on
+ * the row's control, unsets it. The filtered rows can be set together.
+ */
 function ActionChecklist({
 	ops,
 	complete,
 	failed,
-	selected,
+	groups,
 	onChange,
 	disabled,
 	testId,
@@ -403,14 +531,20 @@ function ActionChecklist({
 	complete: boolean;
 	/** The read stopped before the last page: `ops` is all there will be for now. */
 	failed: boolean;
-	selected: readonly string[];
-	onChange: (operations: string[]) => void;
+	groups: ActionGroups;
+	onChange: (groups: ActionGroups) => void;
 	disabled: boolean;
 	testId: string;
 }) {
 	const count = ops.length.toLocaleString();
 	const [q, setQ] = useState('');
-	const chosen = useMemo(() => new Set(selected), [selected]);
+	const access = useMemo(() => {
+		const map = new Map<string, ActionAccess>();
+		for (const id of groups.allow) map.set(id, 'allow');
+		for (const id of groups.ask) map.set(id, 'ask');
+		for (const id of groups.deny) map.set(id, 'deny');
+		return map;
+	}, [groups]);
 	const shown = useMemo(() => {
 		const needle = q.trim().toLowerCase();
 		const list = needle
@@ -422,12 +556,18 @@ function ActionChecklist({
 			: ops;
 		return [...list].sort((a, b) => a.path.localeCompare(b.path));
 	}, [ops, q]);
-	const set = (id: string, on: boolean) => {
-		const next = new Set(chosen);
-		if (on) next.add(id);
-		else next.delete(id);
-		onChange([...next]);
+	/** Set some actions' access (`null` = unset), keeping every other action's as it is. */
+	const setAccess = (ids: readonly string[], to: ActionAccess | null): void => {
+		const moving = new Set(ids);
+		const next: ActionGroups = {
+			allow: groups.allow.filter((x) => !moving.has(x)),
+			ask: groups.ask.filter((x) => !moving.has(x)),
+			deny: groups.deny.filter((x) => !moving.has(x)),
+		};
+		if (to) next[to].push(...ids);
+		onChange(next);
 	};
+	const filtered = q.trim().length > 0;
 	return (
 		<div
 			className="space-y-2"
@@ -448,20 +588,45 @@ function ActionChecklist({
 					aria-label="Filter operations"
 					className="min-w-0 flex-1"
 				/>
-				<span className="text-muted-foreground shrink-0 text-xs tabular-nums">
-					{selected.length} chosen
+				<span
+					className="text-muted-foreground shrink-0 text-xs tabular-nums"
+					data-testid={`${testId}-count`}
+				>
+					{accessSummary(groups)}
 				</span>
-				{selected.length > 0 && (
-					<Button
-						variant="ghost"
-						size="xs"
-						disabled={disabled}
-						onClick={() => onChange([])}
-					>
-						Clear
-					</Button>
-				)}
 			</div>
+			{shown.length > 0 && (
+				// The bulk verb acts on exactly the rows on screen — all of them, or
+				// the filter's matches.
+				<div
+					role="group"
+					aria-label={`Set the ${shown.length.toLocaleString()} ${filtered ? 'filtered' : 'listed'} operations`}
+					className="text-muted-foreground flex flex-wrap items-center gap-x-1 px-1.5 text-xs"
+					data-testid={`${testId}-bulk`}
+				>
+					<span>
+						Set {filtered ? 'the' : 'all'} {shown.length.toLocaleString()}
+						{filtered ? ' shown' : ''} to
+					</span>
+					{(['allow', 'ask', 'deny', null] as const).map((to) => (
+						<Button
+							key={to ?? 'clear'}
+							variant="ghost"
+							size="xs"
+							disabled={disabled}
+							onClick={() =>
+								setAccess(
+									shown.map((op) => op.operation_id),
+									to,
+								)
+							}
+							className="text-foreground-sub hover:text-foreground h-6 px-1.5 underline-offset-2 hover:underline"
+						>
+							{to ? BULK_LABEL[to] : 'Clear'}
+						</Button>
+					))}
+				</div>
+			)}
 			{!complete && (
 				<p
 					role="status"
@@ -492,29 +657,45 @@ function ActionChecklist({
 							: 'None of the operations loaded so far match.'}
 					</li>
 				)}
-				{shown.map((op) => (
-					<li key={op.operation_id}>
-						<Checkbox
-							size="sm"
-							checked={chosen.has(op.operation_id)}
-							onChange={(on) => set(op.operation_id, on)}
-							disabled={disabled}
-							className="hover:bg-tint-2 w-full rounded-md px-1.5 py-1 [&>span:last-child]:min-w-0 [&>span:last-child]:flex-1"
+				{shown.map((op) => {
+					const id = op.operation_id;
+					const value = access.get(id) ?? null;
+					const action = `${op.method.toUpperCase()} ${op.path}`;
+					return (
+						<li
+							key={id}
+							className="hover:bg-tint-2 flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1"
+							data-access={value ?? 'unset'}
 						>
-							<span className="flex min-w-0 flex-1 items-center gap-2 text-left">
-								<MethodBadge method={op.method} />
-								<span className="text-foreground min-w-0 truncate font-mono text-[11.5px]">
-									{op.path}
-								</span>
-								{op.name && (
-									<span className="text-muted-foreground ml-auto hidden min-w-0 truncate text-xs sm:inline">
-										{op.name}
-									</span>
+							<MethodBadge method={op.method} />
+							<span
+								className={cn(
+									'min-w-0 flex-1 truncate font-mono text-[11.5px]',
+									value === null ? 'text-foreground-sub' : 'text-foreground',
 								)}
+							>
+								{op.path}
 							</span>
-						</Checkbox>
-					</li>
-				))}
+							{op.name && (
+								<span className="text-muted-foreground hidden max-w-[45%] min-w-0 truncate text-xs sm:inline">
+									{op.name}
+								</span>
+							)}
+							<SegmentedToggle<ActionAccess>
+								as="choice"
+								size="xs"
+								tone="inset"
+								ariaLabel={`Access for ${action}`}
+								options={ACCESS_OPTIONS}
+								value={value}
+								onChange={(to) => setAccess([id], to)}
+								onClear={() => setAccess([id], null)}
+								disabled={disabled}
+								className="shrink-0"
+							/>
+						</li>
+					);
+				})}
 			</ul>
 		</div>
 	);
@@ -523,6 +704,8 @@ function ActionChecklist({
 /** The action rule as a read-only row; "Edit" returns to the checklist that owns its ids. */
 function ActionRuleRow({
 	operations,
+	effect,
+	catalog,
 	index,
 	disabled,
 	onEdit,
@@ -530,6 +713,9 @@ function ActionRuleRow({
 	testId,
 }: {
 	operations: readonly string[];
+	effect: PermissionRule['effect'];
+	/** The API's operation list, to name each action. */
+	catalog: ActionCatalog;
 	/** Its position in the saved list, so the row's number matches the dry run's. */
 	index: number;
 	disabled: boolean;
@@ -537,6 +723,7 @@ function ActionRuleRow({
 	onRemove: () => void;
 	testId: string;
 }) {
+	const description = useMemo(() => describeActions(operations, catalog), [operations, catalog]);
 	return (
 		<div
 			className="bg-surface-tonal flex flex-col gap-1.5 rounded-md px-2.5 py-2 text-xs"
@@ -549,9 +736,9 @@ function ActionRuleRow({
 				>
 					#{index + 1}
 				</span>
-				<Badge variant="success" className="shrink-0 rounded-[5px] font-semibold">
-					allow
-				</Badge>
+				<EffectBadge effect={effect} className="shrink-0 rounded-[5px] font-semibold">
+					{EFFECT_WORD[effect] ?? String(effect)}
+				</EffectBadge>
 				<span className="text-foreground inline-flex items-center gap-1.5">
 					<ListChecks className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
 					{operations.length} {operations.length === 1 ? 'action' : 'actions'}
@@ -571,7 +758,7 @@ function ActionRuleRow({
 					<Button
 						variant="ghost"
 						size="icon-xs"
-						aria-label="Remove the actions rule"
+						aria-label={`Remove the ${EFFECT_RULE_NAME[effect] ?? 'Allow'} actions rule`}
 						disabled={disabled}
 						onClick={onRemove}
 						className="text-foreground-sub hover:bg-danger/10 hover:text-danger"
@@ -580,20 +767,13 @@ function ActionRuleRow({
 					</Button>
 				</div>
 			</div>
-			{/* The ids themselves: an approver has to see exactly what is granted. */}
-			<div className="flex flex-wrap items-center gap-1">
-				<span className="text-foreground-sub text-[10px] tracking-wide uppercase">
-					operations
-				</span>
-				{operations.map((op) => (
-					<code
-						key={op}
-						className="bg-surface-sheet text-foreground rounded-sm px-1 py-0.5 font-mono text-[10px]"
-					>
-						{op}
-					</code>
-				))}
-			</div>
+			{/* What is granted, in the By action checklist's own row: method,
+			    path, summary. The ids stay reachable as each row's title. */}
+			<ActionList
+				description={description}
+				className="-mx-1"
+				data-testid={`${testId}-actions`}
+			/>
 		</div>
 	);
 }

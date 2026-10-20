@@ -55,6 +55,7 @@ import {
 	CredentialOptions,
 } from '@/shared/credentials/components';
 import {
+	presetForRules,
 	rulesForPreset,
 	type RulesPreset,
 	type ScopeReach,
@@ -649,7 +650,8 @@ export function ApiSetupQueue({
 				onClick={(): void => {
 					if (blocked || working) return;
 					if (chosen && rules && draft.preset)
-						void commit(current, chosen, rules, draft.preset);
+						// Custom rules that are exactly a preset's are recorded as that preset.
+						void commit(current, chosen, rules, presetForRules(rules) ?? draft.preset);
 				}}
 				data-testid="queue-add"
 			>

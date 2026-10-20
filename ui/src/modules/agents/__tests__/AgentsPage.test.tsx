@@ -1037,7 +1037,9 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(stripFigure('credentials')).toHaveTextContent('0');
 		await waitFor(() => expect(stripFigure('executions')).toHaveTextContent('0'));
 		expect(stripFigure('success-rate')).toHaveTextContent('—');
-		expect(stripFigure('last-activity')).toHaveTextContent('—');
+		// The execution feed resolves on its own request, so the last-activity
+		// clause settles independently of the rollup above it.
+		await waitFor(() => expect(stripFigure('last-activity')).toHaveTextContent('—'));
 	});
 
 	it('swaps the strip stats when the selection moves to another agent', async () => {
@@ -2143,7 +2145,7 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 	async function addWithAccess(
 		user: ReturnType<typeof userEvent.setup>,
 		label: string,
-		preset: RegExp = /Read only/,
+		preset: RegExp = /^Read only$/,
 	): Promise<void> {
 		const step = await screen.findByTestId('queue-access-step');
 		await waitFor(() => expect(step).toHaveAttribute('data-ready', 'true'));

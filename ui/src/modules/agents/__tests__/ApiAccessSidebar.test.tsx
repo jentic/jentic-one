@@ -399,6 +399,34 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		expect(verdict).not.toHaveTextContent('Denied');
 	});
 
+	it('names an Ask match it cannot point at as "an ask rule", never the raw effect', async () => {
+		worker.use(
+			http.post('/credentials/:cid/agents/:aid/permissions\\:test', () =>
+				HttpResponse.json({
+					allowed: false,
+					matched: true,
+					effect: 'require-approval',
+					// No saved rule at this index (the rules changed since): the
+					// verdict falls back to the effect's word.
+					rule_index: 9,
+					is_system: false,
+					credential_id: 'cred_slack_1',
+				}),
+			),
+		);
+		const user = userEvent.setup();
+		renderPage();
+		await screen.findByText('1 access rule');
+
+		const inDialog = within(await openSidebar('Slack'));
+		await user.type(inDialog.getByLabelText('Request path'), '/chat.postMessage');
+		await user.click(inDialog.getByRole('button', { name: 'Test' }));
+
+		const verdict = await inDialog.findByTestId('rule-verdict');
+		expect(verdict).toHaveTextContent('matched an ask rule on this binding');
+		expect(verdict).not.toHaveTextContent('require-approval');
+	});
+
 	it('opens from the keyboard and restores focus to the tile on close', async () => {
 		const user = userEvent.setup();
 		renderPage();

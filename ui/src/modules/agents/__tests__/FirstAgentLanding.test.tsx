@@ -1427,7 +1427,7 @@ describe('Agents page — zero agents', () => {
 		expect(await within(queue).findByRole('radio', { name: /GitHub PAT/ })).toBeChecked();
 		const step = within(queue).getByTestId('queue-access-step');
 		await waitFor(() => expect(step).toHaveAttribute('data-ready', 'true'));
-		expect(within(step).getByRole('radio', { name: /Read only/ })).toBeChecked();
+		expect(within(step).getByRole('radio', { name: /^Read only$/ })).toBeChecked();
 		await user.click(within(queue).getByTestId('queue-add'));
 		const row = await within(queue).findByTestId('queue-progress-row');
 		await waitFor(() => expect(row).toHaveAttribute('data-status', 'added'));

@@ -159,7 +159,7 @@ async function accessReady(): Promise<HTMLElement> {
 
 async function addWithAccess(
 	user: ReturnType<typeof userEvent.setup>,
-	preset: RegExp = /Read only/,
+	preset: RegExp = /^Read only$/,
 ): Promise<void> {
 	const step = await accessReady();
 	await user.click(within(step).getByRole('radio', { name: preset }));
@@ -262,7 +262,7 @@ describe('ApiSetupQueue — one pane per API: ① Credential, then ② Access', 
 
 		const step = await accessReady();
 		const group = within(step).getByRole('radiogroup', { name: 'What can Support bot call?' });
-		expect(within(group).getByRole('radio', { name: /Read only/ })).toBeChecked();
+		expect(within(group).getByRole('radio', { name: /^Read only$/ })).toBeChecked();
 		expect(addButton()).toHaveTextContent('Add stripe');
 		expect(calls).toHaveLength(0);
 
@@ -857,7 +857,7 @@ describe('ApiSetupQueue — one pane per API: ① Credential, then ② Access', 
 			return within(tester).findByTestId('rule-verdict');
 		}
 
-		it('three presets, Read only preselected; an empty Custom list holds the footer', async () => {
+		it('four presets, Read only preselected; an empty Custom list holds the footer', async () => {
 			const { calls } = watchBinds();
 			const user = userEvent.setup();
 			renderWithProviders(
@@ -873,11 +873,12 @@ describe('ApiSetupQueue — one pane per API: ① Credential, then ② Access', 
 					.map((r) => r.textContent),
 			).toEqual([
 				expect.stringContaining('Read only'),
+				expect.stringContaining('Read only, ask before anything else'),
 				expect.stringContaining('Full access'),
 				expect.stringContaining('Custom rules'),
 			]);
 			// Read only is preselected: the least access that still lets it work.
-			expect(within(group).getByRole('radio', { name: /Read only/ })).toBeChecked();
+			expect(within(group).getByRole('radio', { name: /^Read only$/ })).toBeChecked();
 
 			await user.click(within(group).getByRole('radio', { name: /Custom rules/ }));
 			const editor = within(step).getByTestId('queue-access-custom-editor');
@@ -893,7 +894,16 @@ describe('ApiSetupQueue — one pane per API: ① Credential, then ② Access', 
 
 		it.each([
 			[/Full access/, [{ effect: 'allow', path: '.*' }], 'Full access'],
-			[/Read only/, [{ effect: 'allow', methods: ['GET'] }], 'Read only'],
+			[/^Read only$/, [{ effect: 'allow', methods: ['GET'] }], 'Read only'],
+			[
+				/ask before anything else/,
+				[
+					{ effect: 'allow', methods: ['GET'] },
+					// `.*` with no mode: the backend's default `regex`, a catch-all.
+					{ effect: 'require-approval', path: '.*' },
+				],
+				'Read only, ask before anything else',
+			],
 		])('a preset writes its rules (%s)', async (preset, body, label) => {
 			const rules = watchRules();
 			const user = userEvent.setup();
@@ -926,6 +936,27 @@ describe('ApiSetupQueue — one pane per API: ① Credential, then ② Access', 
 			expect(await screen.findByTestId('queue-added-summary')).toHaveTextContent(
 				'1 custom rule',
 			);
+		});
+
+		it('custom rules that are exactly a preset are recorded as that preset', async () => {
+			const rules = watchRules();
+			const user = userEvent.setup();
+			renderWithProviders(
+				<QueueHarness items={[coveredItem('stripe.com', 'cred_stripe')]} />,
+			);
+			const step = await toAccess();
+			await user.click(within(step).getByRole('radio', { name: /Custom rules/ }));
+			await writeRule(user, step, 'GET');
+			await waitFor(() => expectAddReady());
+			await user.click(addButton());
+			await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
+			expect(rules.calls.map((c) => c.body)).toEqual([
+				[{ effect: 'allow', methods: ['GET'] }],
+			]);
+			await user.click(within(rowFor('stripe')).getByRole('button'));
+			const summary = await screen.findByTestId('queue-added-summary');
+			expect(summary).toHaveTextContent('Read only');
+			expect(summary).not.toHaveTextContent('custom rule');
 		});
 
 		it('"Try a request" answers from the rules being edited, unsaved, and follows each edit', async () => {
@@ -1243,7 +1274,7 @@ describe('ApiSetupQueue — one pane per API: ① Credential, then ② Access', 
 				<QueueHarness items={[coveredItem('stripe.com', 'cred_stripe')]} />,
 			);
 			const step = await accessReady();
-			await user.click(within(step).getByRole('radio', { name: /Read only/ }));
+			await user.click(within(step).getByRole('radio', { name: /^Read only$/ }));
 			// Both clicks land before the first bind resolves; `inFlight` drops the second (no 409).
 			const add = addButton();
 			await user.dblClick(add);
@@ -1267,7 +1298,7 @@ describe('ApiSetupQueue — one pane per API: ① Credential, then ② Access', 
 				<QueueHarness items={[coveredItem('stripe.com', 'cred_stripe')]} />,
 			);
 			const step = await accessReady();
-			await user.click(within(step).getByRole('radio', { name: /Read only/ }));
+			await user.click(within(step).getByRole('radio', { name: /^Read only$/ }));
 			await user.click(addButton());
 			await within(step).findByTestId('queue-rules-failed');
 			expect(addButton()).toHaveTextContent('Save rules');
@@ -1301,7 +1332,7 @@ describe('ApiSetupQueue — one pane per API: ① Credential, then ② Access', 
 				<QueueHarness items={[coveredItem('stripe.com', 'cred_stripe')]} />,
 			);
 			const step = await accessReady();
-			await user.click(within(step).getByRole('radio', { name: /Read only/ }));
+			await user.click(within(step).getByRole('radio', { name: /^Read only$/ }));
 			await user.click(addButton());
 			await within(step).findByTestId('queue-rules-failed');
 			expect(calls).toHaveLength(1);

@@ -81,7 +81,7 @@ function Verdict({
 	const outcome = verdictOutcome(result.effect);
 	const { anchor, summary } = resolveMatch(result, savedRules);
 	const effectWord =
-		outcome === 'allowed' ? 'allow' : outcome === 'approval' ? 'require-approval' : 'deny';
+		outcome === 'allowed' ? 'an allow' : outcome === 'approval' ? 'an ask' : 'a deny';
 	return (
 		<VerdictChip outcome={outcome}>
 			{result.is_system ? (
@@ -90,7 +90,7 @@ function Verdict({
 				<MatchedRuleText
 					anchor={anchor}
 					summary={summary}
-					fallback={<>— matched a {effectWord} rule on this binding</>}
+					fallback={<>— matched {effectWord} rule on this binding</>}
 				/>
 			)}
 		</VerdictChip>

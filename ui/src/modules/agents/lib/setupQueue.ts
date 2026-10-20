@@ -310,6 +310,7 @@ export const QUEUE_STATUS_LABELS: Record<QueueStatus, string> = {
 /** Row copy for what an added item's binding was given. */
 export const QUEUE_ACCESS_LABELS: Record<QueueAccess, string> = {
 	read: 'Read only',
+	'read-ask': 'Read only, ask before anything else',
 	all: 'Full access',
 	custom: 'Custom rules',
 	later: 'Blocked · no rules',

@@ -39,6 +39,32 @@ function gated(): { wait: Promise<void>; open: () => void } {
 	return { wait, open };
 }
 
+/** The Allow · Ask · Deny choice for one action, by its method and path. */
+function accessFor(scope: HTMLElement, action: string): HTMLElement {
+	return within(scope).getByRole('group', { name: `Access for ${action}` });
+}
+
+/** Which of the row's choices is pressed: 'Allow' / 'Ask' / 'Deny', or 'unset'. */
+function pressed(scope: HTMLElement, action: string): string {
+	const on = within(accessFor(scope, action))
+		.getAllByRole('button')
+		.filter((b) => b.getAttribute('aria-pressed') === 'true');
+	return on.length === 0 ? 'unset' : (on[0].textContent ?? '');
+}
+
+const accessGroups = (scope: HTMLElement) =>
+	within(scope).getAllByRole('group', { name: /^Access for / });
+
+/** Set one action's access by clicking its segment. */
+async function setAccess(
+	user: ReturnType<typeof userEvent.setup>,
+	scope: HTMLElement,
+	action: string,
+	to: 'Allow' | 'Ask' | 'Deny',
+): Promise<void> {
+	await user.click(within(accessFor(scope, action)).getByRole('button', { name: to }));
+}
+
 function stubOperations(): void {
 	worker.use(
 		http.get('/apis/acme.com/main/1.0.0/operations', () =>
@@ -119,11 +145,16 @@ describe('AccessRulesStep', () => {
 		setToken('test-token');
 	});
 
-	it('is one labelled radio group of three presets, least access first, nothing preselected', () => {
-		renderWithProviders(<Host />);
+	it('is one labelled radio group of four presets, least access first, nothing preselected', async () => {
+		const { container } = renderWithProviders(<Host />);
 		const group = screen.getByRole('radiogroup', { name: 'What can this agent call?' });
 		const radios = within(group).getAllByRole('radio');
-		const names = ['Read only', 'Full access', 'Custom rules'];
+		const names = [
+			'Read only',
+			'Read only, ask before anything else',
+			'Full access',
+			'Custom rules',
+		];
 		expect(radios).toHaveLength(names.length);
 		names.forEach((name, i) => expect(radios[i]).toHaveAccessibleName(name));
 		for (const radio of radios) expect(radio).not.toBeChecked();
@@ -131,9 +162,13 @@ describe('AccessRulesStep', () => {
 			'GET requests only',
 		);
 		expect(
+			within(group).getByRole('radio', { name: 'Read only, ask before anything else' }),
+		).toHaveAccessibleDescription('GET requests run; any other call waits for approval');
+		expect(
 			within(group).queryByRole('radio', { name: /Read and write|Choose actions/ }),
 		).toBeNull();
 		expect(screen.queryByRole('button', { name: /Rules by path/ })).toBeNull();
+		await checkA11y(container);
 	});
 
 	it('Custom rules with no rules opens straight onto the new-rule form, in the inset editor', async () => {
@@ -279,7 +314,7 @@ describe('AccessRulesStep', () => {
 		).toHaveTextContent('/v1/');
 		await waitFor(() =>
 			expect(screen.getByRole('button', { name: /Effective access/ })).toHaveTextContent(
-				'0 of 2 allowed',
+				'0 allowed · 0 ask · 2 denied',
 			),
 		);
 	});
@@ -358,7 +393,7 @@ describe('AccessRulesStep', () => {
 		await user.click(await within(editor).findByRole('button', { name: 'By action' }));
 		const checklist = within(editor).getByTestId('t-actions');
 		expect(checklist).toHaveAttribute('aria-busy', 'true');
-		expect(within(checklist).getAllByRole('checkbox')).toHaveLength(1);
+		expect(accessGroups(checklist)).toHaveLength(1);
 		expect(within(checklist).getByLabelText('Filter operations')).toHaveAttribute(
 			'placeholder',
 			'Filter the 1 loaded so far…',
@@ -369,8 +404,8 @@ describe('AccessRulesStep', () => {
 		await user.type(within(checklist).getByLabelText('Filter operations'), 'create');
 		expect(checklist).toHaveTextContent('None of the operations loaded so far match.');
 		await user.clear(within(checklist).getByLabelText('Filter operations'));
-		await user.click(within(checklist).getAllByRole('checkbox')[0]);
-		expect(within(checklist).getByText('1 chosen')).toBeInTheDocument();
+		await setAccess(user, checklist, 'GET /items', 'Allow');
+		expect(within(checklist).getByTestId('t-actions-count')).toHaveTextContent('1 allowed');
 		// Nothing is judged against a partial list.
 		expect(screen.getByRole('button', { name: /Effective access/ })).not.toHaveTextContent(
 			/allowed/,
@@ -381,7 +416,7 @@ describe('AccessRulesStep', () => {
 		page2.open();
 		await waitFor(() =>
 			expect(screen.getByRole('button', { name: /Effective access/ })).toHaveTextContent(
-				/of 2 allowed/,
+				/1 allowed · 0 ask · 1 denied/,
 			),
 		);
 		expect(within(editor).getByLabelText('No operations affected')).toBeInTheDocument();
@@ -389,12 +424,12 @@ describe('AccessRulesStep', () => {
 		const whole = within(editor).getByTestId('t-actions');
 		expect(whole).not.toHaveAttribute('aria-busy');
 		expect(within(whole).queryByTestId('t-actions-loading')).toBeNull();
-		expect(within(whole).getAllByRole('checkbox')).toHaveLength(2);
+		expect(accessGroups(whole)).toHaveLength(2);
 		expect(within(whole).getByLabelText('Filter operations')).toHaveAttribute(
 			'placeholder',
 			'Filter 2 operations…',
 		);
-		expect(within(whole).getByText('1 chosen')).toBeInTheDocument();
+		expect(within(whole).getByTestId('t-actions-count')).toHaveTextContent('1 allowed');
 	});
 
 	it('an action rule saved earlier still shows on an API with no actions — Remove, but no Edit', async () => {
@@ -421,20 +456,27 @@ describe('AccessRulesStep', () => {
 		const row = within(editor).getByTestId('t-action-rule');
 		expect(row).toHaveTextContent('#2');
 		expect(row).toHaveTextContent('2 actions');
-		expect(row).toHaveTextContent('listItems');
-		expect(row).toHaveTextContent('createItem');
+		// No list to name them from: said plainly, the ids only behind "Details".
+		expect(row).toHaveTextContent("this API's list of actions isn't available");
+		expect(within(row).queryByText('listItems')).toBeNull();
+		await user.click(within(row).getByRole('button', { name: 'Details' }));
+		const ids = await within(row).findByRole('list', { name: 'Operation ids' });
+		expect(ids).toHaveTextContent('listItems');
+		expect(ids).toHaveTextContent('createItem');
 		expect(
 			within(editor).getByRole('list', { name: 'Rules, in evaluation order' }),
 		).toHaveTextContent('/v1/');
 		expect(within(row).queryByRole('button', { name: 'Edit' })).toBeNull();
-		await user.click(within(row).getByRole('button', { name: 'Remove the actions rule' }));
+		await user.click(
+			within(row).getByRole('button', { name: 'Remove the Allow actions rule' }),
+		);
 		expect(onRules).toHaveBeenLastCalledWith([
 			{ effect: 'allow', methods: ['GET'], path: '/v1/', match_mode: 'prefix' },
 		]);
 		expect(within(editor).queryByTestId('t-action-rule')).toBeNull();
 	});
 
-	it('By action ticks operations into one operation-id rule in the same saved list', async () => {
+	it('By action sets operations to Allow into one operation-id rule in the same saved list', async () => {
 		stubOperations();
 		const onRules = vi.fn();
 		const user = userEvent.setup();
@@ -445,14 +487,18 @@ describe('AccessRulesStep', () => {
 
 		await user.click(byAction);
 		const list = await within(editor).findByRole('list', { name: 'Operations' });
-		await user.click(within(list).getByRole('checkbox', { name: /List items/ }));
-		await user.click(within(list).getByRole('checkbox', { name: /Create item/ }));
+		await setAccess(user, list, 'GET /items', 'Allow');
+		await setAccess(user, list, 'POST /items', 'Allow');
 		expect(onRules).toHaveBeenLastCalledWith([
 			{ effect: 'allow', methods: null, path: null, operations: ['listItems', 'createItem'] },
 		]);
-		expect(within(editor).getByText('2 chosen')).toBeInTheDocument();
+		expect(within(editor).getByTestId('t-actions-count')).toHaveTextContent('2 allowed');
 
-		await user.click(within(editor).getByRole('button', { name: 'Clear' }));
+		await user.click(
+			within(within(editor).getByTestId('t-actions-bulk')).getByRole('button', {
+				name: 'Clear',
+			}),
+		);
 		expect(onRules).toHaveBeenLastCalledWith([]);
 	});
 
@@ -473,18 +519,20 @@ describe('AccessRulesStep', () => {
 		const byAction = await within(editor).findByRole('button', { name: 'By action' });
 		await user.click(byAction);
 		const ops = await within(editor).findByRole('list', { name: 'Operations' });
-		await user.click(within(ops).getByRole('checkbox', { name: /List items/ }));
+		await setAccess(user, ops, 'GET /items', 'Allow');
 
 		// Nothing that will be saved is off-screen: the path rule shows under By action.
 		const pathList = within(editor).getByRole('list', { name: 'Rules, in evaluation order' });
 		expect(within(pathList).getAllByRole('listitem')).toHaveLength(1);
 		expect(pathList).toHaveTextContent('/v1/');
-		expect(within(editor).getByText('1 chosen')).toBeInTheDocument();
+		expect(within(editor).getByTestId('t-actions-count')).toHaveTextContent('1 allowed');
 
 		await user.click(within(editor).getByRole('button', { name: 'By path' }));
 		const actionRow = within(editor).getByTestId('t-action-rule');
 		expect(actionRow).toHaveTextContent('1 action');
-		expect(actionRow).toHaveTextContent('listItems');
+		const named = within(actionRow).getByRole('list', { name: 'Actions' });
+		expect(named).toHaveTextContent('GET/itemsList items');
+		expect(named).not.toHaveTextContent('listItems');
 		expect(
 			within(
 				within(editor).getByRole('list', { name: 'Rules, in evaluation order' }),
@@ -527,7 +575,67 @@ describe('AccessRulesStep', () => {
 			{ effect: 'allow', methods: ['GET', 'POST'], path: '/v1/', match_mode: 'prefix' },
 			{ effect: 'allow', methods: null, path: null, operations: ['listItems'] },
 		]);
-		expect(within(editor).getByTestId('t-action-rule')).toHaveTextContent('listItems');
+		expect(within(editor).getByTestId('t-action-rule')).toHaveTextContent('List items');
+	});
+
+	it('By path names each chosen action as the checklist does — method, path, summary', async () => {
+		stubOperations();
+		renderWithProviders(
+			<Host
+				initial="custom"
+				withApi
+				initialRules={[
+					{
+						effect: 'allow',
+						methods: null,
+						path: null,
+						operations: ['createItem', 'listItems', 'gone'],
+					},
+				]}
+			/>,
+		);
+		const row = await screen.findByTestId('t-action-rule');
+		const named = await within(row).findByRole('list', { name: 'Actions' });
+		const items = within(named).getAllByRole('listitem');
+		expect(items.map((li) => li.textContent)).toEqual([
+			'GET/itemsList items',
+			'POST/itemsCreate item',
+			'An action not in this version of the API',
+		]);
+		// The method badge carries its text; the id is only the row's title.
+		expect(within(items[0]).getByText('GET')).toHaveAttribute('data-method', 'GET');
+		expect(items[0]).toHaveAttribute('title', 'listItems');
+		expect(row).toHaveTextContent('One action is not in this version of the API.');
+		expect(row).not.toHaveTextContent('createItem');
+		expect(row).not.toHaveTextContent('gone');
+		await checkA11y(row);
+	});
+
+	it('while the actions load, the row shows a count and a pending line, not ids', async () => {
+		const gate = gated();
+		worker.use(
+			http.get('/apis/acme.com/main/1.0.0/operations', async () => {
+				await gate.wait;
+				return HttpResponse.json({ data: OPS, has_more: false, next_cursor: null });
+			}),
+		);
+		renderWithProviders(
+			<Host
+				initial="custom"
+				withApi
+				initialRules={[
+					{ effect: 'allow', methods: null, path: null, operations: ['listItems'] },
+				]}
+			/>,
+		);
+		const row = screen.getByTestId('t-action-rule');
+		expect(row).toHaveTextContent('1 action');
+		expect(within(row).getByRole('status')).toHaveTextContent(
+			"Reading this API's actions — 1 action…",
+		);
+		expect(row).not.toHaveTextContent('listItems');
+		gate.open();
+		expect(await within(row).findByText('List items')).toBeInTheDocument();
 	});
 
 	it('the action rule can be removed, and Edit takes the operator to the checklist', async () => {
@@ -552,15 +660,386 @@ describe('AccessRulesStep', () => {
 			}),
 		);
 		const ops = await within(editor).findByRole('list', { name: 'Operations' });
-		expect(within(ops).getByRole('checkbox', { name: /List items/ })).toBeChecked();
+		expect(pressed(ops, 'GET /items')).toBe('Allow');
+		expect(pressed(ops, 'POST /items')).toBe('unset');
 
 		await user.click(within(editor).getByRole('button', { name: 'By path' }));
 		await user.click(
 			within(within(editor).getByTestId('t-action-rule')).getByRole('button', {
-				name: 'Remove the actions rule',
+				name: 'Remove the Allow actions rule',
 			}),
 		);
 		expect(onRules).toHaveBeenLastCalledWith([]);
+	});
+
+	it('By action: each row is Allow · Ask · Deny, unset by default; clicking the pressed one unsets it', async () => {
+		stubOperations();
+		const onRules = vi.fn();
+		const user = userEvent.setup();
+		const { container } = renderWithProviders(
+			<Host initial="custom" withApi onRules={onRules} />,
+		);
+		const editor = screen.getByTestId('t-custom-editor');
+		await user.click(await within(editor).findByRole('button', { name: 'By action' }));
+		const list = await within(editor).findByRole('list', { name: 'Operations' });
+		// No "Off" option: unset is nothing pressed, the default for an action in no rule.
+		for (const action of ['GET /items', 'POST /items']) {
+			expect(
+				within(accessFor(list, action))
+					.getAllByRole('button')
+					.map((b) => b.textContent),
+			).toEqual(['Allow', 'Ask', 'Deny']);
+			expect(pressed(list, action)).toBe('unset');
+		}
+		expect(within(editor).getByTestId('t-actions-count')).toHaveTextContent('None set');
+
+		await setAccess(user, list, 'GET /items', 'Allow');
+		await setAccess(user, list, 'POST /items', 'Ask');
+		expect(onRules).toHaveBeenLastCalledWith([
+			{ effect: 'require-approval', methods: null, path: null, operations: ['createItem'] },
+			{ effect: 'allow', methods: null, path: null, operations: ['listItems'] },
+		]);
+		expect(within(editor).getByTestId('t-actions-count')).toHaveTextContent(
+			'1 allowed · 1 ask',
+		);
+		await checkA11y(container);
+
+		// Ask → Deny: Deny saves ahead of everything.
+		await setAccess(user, list, 'POST /items', 'Deny');
+		expect(onRules).toHaveBeenLastCalledWith([
+			{ effect: 'deny', methods: null, path: null, operations: ['createItem'] },
+			{ effect: 'allow', methods: null, path: null, operations: ['listItems'] },
+		]);
+		expect(within(editor).getByTestId('t-actions-count')).toHaveTextContent(
+			'1 allowed · 1 denied',
+		);
+		// Clicking the pressed choice unsets it — never into a Deny.
+		await setAccess(user, list, 'POST /items', 'Deny');
+		expect(pressed(list, 'POST /items')).toBe('unset');
+		await setAccess(user, list, 'GET /items', 'Allow');
+		expect(onRules).toHaveBeenLastCalledWith([]);
+	});
+
+	it('the row control is one tab stop; arrows move within it, Space sets, Delete unsets', async () => {
+		stubOperations();
+		const onRules = vi.fn();
+		const user = userEvent.setup();
+		renderWithProviders(<Host initial="custom" withApi onRules={onRules} />);
+		const editor = screen.getByTestId('t-custom-editor');
+		await user.click(await within(editor).findByRole('button', { name: 'By action' }));
+		const list = await within(editor).findByRole('list', { name: 'Operations' });
+		const [allow, ask] = within(accessFor(list, 'GET /items')).getAllByRole('button');
+		expect(allow).toHaveAttribute('tabindex', '0');
+		expect(ask).toHaveAttribute('tabindex', '-1');
+		allow.focus();
+		await user.keyboard('{ArrowRight}');
+		expect(ask).toHaveFocus();
+		expect(pressed(list, 'GET /items')).toBe('unset');
+		await user.keyboard(' ');
+		expect(pressed(list, 'GET /items')).toBe('Ask');
+		expect(onRules).toHaveBeenLastCalledWith([
+			{ effect: 'require-approval', methods: null, path: null, operations: ['listItems'] },
+		]);
+		await user.keyboard('{Backspace}');
+		expect(pressed(list, 'GET /items')).toBe('unset');
+		expect(onRules).toHaveBeenLastCalledWith([]);
+		// Tab leaves the row's control for the next row's.
+		await user.tab();
+		expect(
+			within(accessFor(list, 'POST /items')).getByRole('button', { name: 'Allow' }),
+		).toHaveFocus();
+	});
+
+	it('the filter narrows the rows, and "Set … to" acts on just the filtered ones — Clear unsets', async () => {
+		stubOperations();
+		const onRules = vi.fn();
+		const user = userEvent.setup();
+		renderWithProviders(
+			<Host
+				initial="custom"
+				withApi
+				onRules={onRules}
+				initialRules={[
+					{ effect: 'allow', methods: null, path: null, operations: ['listItems'] },
+				]}
+			/>,
+		);
+		const editor = screen.getByTestId('t-custom-editor');
+		await user.click(await within(editor).findByRole('button', { name: 'Edit' }));
+		const checklist = within(editor).getByTestId('t-actions');
+		const bulk = within(checklist).getByTestId('t-actions-bulk');
+		expect(bulk).toHaveTextContent('Set all 2 to');
+		expect(
+			within(bulk)
+				.getAllByRole('button')
+				.map((b) => b.textContent),
+		).toEqual(['Allow', 'Ask', 'Deny', 'Clear']);
+		await user.type(within(checklist).getByLabelText('Filter operations'), 'create');
+		expect(accessGroups(checklist)).toHaveLength(1);
+		expect(bulk).toHaveTextContent('Set the 1 shown to');
+		expect(bulk).toHaveAccessibleName('Set the 1 filtered operations');
+		await user.click(within(bulk).getByRole('button', { name: 'Deny' }));
+		// The hidden row keeps its Allow; only the filtered row moved.
+		expect(onRules).toHaveBeenLastCalledWith([
+			{ effect: 'deny', methods: null, path: null, operations: ['createItem'] },
+			{ effect: 'allow', methods: null, path: null, operations: ['listItems'] },
+		]);
+		await user.clear(within(checklist).getByLabelText('Filter operations'));
+		await user.click(within(bulk).getByRole('button', { name: 'Clear' }));
+		expect(onRules).toHaveBeenLastCalledWith([]);
+		expect(within(checklist).getByTestId('t-actions-count')).toHaveTextContent('None set');
+		await user.click(within(bulk).getByRole('button', { name: 'Allow' }));
+		expect(within(checklist).getByTestId('t-actions-count')).toHaveTextContent('2 allowed');
+	});
+
+	it('saved rules load onto the rows; an id in two rules shows the earlier rule (first match wins)', async () => {
+		stubOperations();
+		const user = userEvent.setup();
+		renderWithProviders(
+			<Host
+				initial="custom"
+				withApi
+				initialRules={[
+					// Hand-edited: createItem is in both; the Ask rule comes first.
+					{
+						effect: 'require-approval',
+						methods: null,
+						path: null,
+						operations: ['createItem'],
+					},
+					{
+						effect: 'allow',
+						methods: null,
+						path: null,
+						operations: ['listItems', 'createItem'],
+					},
+				]}
+			/>,
+		);
+		const editor = screen.getByTestId('t-custom-editor');
+		await user.click(
+			await within(within(editor).getByTestId('t-action-rule')).findByRole('button', {
+				name: 'Edit',
+			}),
+		);
+		const list = await within(editor).findByRole('list', { name: 'Operations' });
+		expect(pressed(list, 'GET /items')).toBe('Allow');
+		expect(pressed(list, 'POST /items')).toBe('Ask');
+	});
+
+	it('By path shows the Deny rule row above the path rules, Ask and Allow below, numbered as saved', async () => {
+		stubOperations();
+		const user = userEvent.setup();
+		renderWithProviders(
+			<Host
+				initial="custom"
+				withApi
+				initialRules={[
+					{ effect: 'deny', methods: null, path: null, operations: ['createItem'] },
+					{ effect: 'allow', methods: ['GET'], path: '/v1/', match_mode: 'prefix' },
+					{
+						effect: 'require-approval',
+						methods: null,
+						path: null,
+						operations: ['listItems'],
+					},
+				]}
+			/>,
+		);
+		const editor = screen.getByTestId('t-custom-editor');
+		const deny = await within(editor).findByTestId('t-action-rule-deny');
+		const pathList = within(editor).getByRole('list', { name: 'Rules, in evaluation order' });
+		const ask = within(editor).getByTestId('t-action-rule-ask');
+		expect(deny).toHaveTextContent('#1deny1 action');
+		expect(await within(deny).findByText('Create item')).toBeInTheDocument();
+		expect(pathList).toHaveTextContent('#2');
+		expect(ask).toHaveTextContent('#3ask1 action');
+		const follows = (a: Node, b: Node) =>
+			Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+		expect(follows(deny, pathList)).toBe(true);
+		expect(follows(pathList, ask)).toBe(true);
+		// Edit lands on By action with each row as saved.
+		await user.click(within(deny).getByRole('button', { name: 'Edit' }));
+		const list = await within(editor).findByRole('list', { name: 'Operations' });
+		expect(pressed(list, 'POST /items')).toBe('Deny');
+		expect(pressed(list, 'GET /items')).toBe('Ask');
+	});
+
+	it('a Deny action rule saved after the path rules loads as Deny, with a notice that saving moves it', async () => {
+		stubOperations();
+		const onRules = vi.fn();
+		const user = userEvent.setup();
+		renderWithProviders(
+			<Host
+				initial="custom"
+				withApi
+				onRules={onRules}
+				initialRules={[
+					{ effect: 'allow', methods: ['POST'], path: '/items', match_mode: 'prefix' },
+					{ effect: 'deny', methods: null, path: null, operations: ['createItem'] },
+				]}
+			/>,
+		);
+		const notice = screen.getByTestId('t-deny-moves-ahead');
+		expect(notice).toHaveAttribute('role', 'status');
+		expect(notice).toHaveTextContent(
+			'A Deny actions rule sits after the path rules. Saving moves it ahead of them',
+		);
+		expect(screen.getByTestId('t-action-rule-deny')).toHaveTextContent('#1deny');
+		// Any edit rewrites the list in saved order, and the notice goes with it.
+		await user.click(screen.getByRole('button', { name: 'Remove the Deny actions rule' }));
+		expect(onRules).toHaveBeenLastCalledWith([
+			{ effect: 'allow', methods: ['POST'], path: '/items', match_mode: 'prefix' },
+		]);
+		expect(screen.queryByTestId('t-deny-moves-ahead')).toBeNull();
+	});
+
+	it('a Deny action beats a path rule that allows it — in Effective access and in Try a request', async () => {
+		stubOperations();
+		const user = userEvent.setup();
+		renderWithProviders(
+			<Host
+				initial="custom"
+				withApi
+				tester
+				initialRules={[
+					{ effect: 'deny', methods: null, path: null, operations: ['createItem'] },
+					{ effect: 'allow', path: '/items', match_mode: 'prefix' },
+				]}
+			/>,
+		);
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: /Effective access/ })).toHaveTextContent(
+				'1 allowed · 0 ask · 1 denied',
+			),
+		);
+		await user.click(screen.getByRole('button', { name: /Try a request/ }));
+		const tester = screen.getByTestId('t-tester');
+		await user.selectOptions(within(tester).getByLabelText('HTTP method'), 'POST');
+		await user.type(within(tester).getByLabelText('Request path'), '/items');
+		await user.click(within(tester).getByRole('button', { name: /operation id/ }));
+		await user.type(within(tester).getByPlaceholderText('operationId'), 'createItem');
+		await user.click(within(tester).getByRole('button', { name: 'Test' }));
+		const verdict = await within(tester).findByTestId('rule-verdict');
+		expect(verdict).toHaveTextContent('Denied');
+		expect(verdict).toHaveTextContent('#1');
+	});
+
+	it('warns when a path deny ahead blocks an Allow action — the real conflict, not a vague hint', async () => {
+		stubOperations();
+		renderWithProviders(
+			<Host
+				initial="custom"
+				withApi
+				initialRules={[
+					{ effect: 'deny', methods: ['POST'], path: '/items', match_mode: 'prefix' },
+					{
+						effect: 'allow',
+						methods: null,
+						path: null,
+						operations: ['createItem', 'listItems'],
+					},
+				]}
+			/>,
+		);
+		const warning = await screen.findByTestId('t-actions-shadowed');
+		expect(warning).toHaveTextContent('a deny there blocks one Allow or Ask action.');
+	});
+
+	it('By path shows each effect as its own rule row, Ask first, with readable actions', async () => {
+		stubOperations();
+		const onRules = vi.fn();
+		const user = userEvent.setup();
+		renderWithProviders(
+			<Host
+				initial="custom"
+				withApi
+				onRules={onRules}
+				initialRules={[
+					{ effect: 'allow', methods: ['GET'], path: '/v1/', match_mode: 'prefix' },
+					{
+						effect: 'require-approval',
+						methods: null,
+						path: null,
+						operations: ['createItem'],
+					},
+					{ effect: 'allow', methods: null, path: null, operations: ['listItems'] },
+				]}
+			/>,
+		);
+		const ask = await screen.findByTestId('t-action-rule-ask');
+		const allow = screen.getByTestId('t-action-rule');
+		expect(ask).toHaveTextContent('#2ask1 action');
+		expect(await within(ask).findByText('Create item')).toBeInTheDocument();
+		expect(allow).toHaveTextContent('#3allow1 action');
+		expect(within(allow).getByText('List items')).toBeInTheDocument();
+		expect(ask.compareDocumentPosition(allow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		await user.click(within(ask).getByRole('button', { name: 'Remove the Ask actions rule' }));
+		expect(onRules).toHaveBeenLastCalledWith([
+			{ effect: 'allow', methods: ['GET'], path: '/v1/', match_mode: 'prefix' },
+			{ effect: 'allow', methods: null, path: null, operations: ['listItems'] },
+		]);
+	});
+
+	it('warns when an earlier path rule already allows an Ask action — it would never ask', async () => {
+		stubOperations();
+		renderWithProviders(
+			<Host
+				initial="custom"
+				withApi
+				initialRules={[
+					{ effect: 'allow', methods: ['POST'], path: '/items', match_mode: 'prefix' },
+					{
+						effect: 'require-approval',
+						methods: null,
+						path: null,
+						operations: ['createItem', 'listItems'],
+					},
+				]}
+			/>,
+		);
+		const warning = await screen.findByTestId('t-ask-never-fires');
+		expect(warning).toHaveAttribute('role', 'status');
+		// POST /items is allowed by rule #1; GET /items still asks.
+		expect(warning).toHaveTextContent(
+			'one Ask action is already allowed there, so it will run without asking.',
+		);
+	});
+
+	it('no never-fires warning when the path rules leave the Ask actions alone', async () => {
+		stubOperations();
+		renderWithProviders(
+			<Host
+				initial="custom"
+				withApi
+				initialRules={[
+					{ effect: 'allow', methods: ['GET'], path: '/other', match_mode: 'prefix' },
+					{
+						effect: 'require-approval',
+						methods: null,
+						path: null,
+						operations: ['createItem'],
+					},
+				]}
+			/>,
+		);
+		await screen.findByText('Create item');
+		expect(screen.queryByTestId('t-ask-never-fires')).toBeNull();
+	});
+
+	it('Effective access counts Ask apart from allowed', async () => {
+		stubOperations();
+		const user = userEvent.setup();
+		renderWithProviders(<Host initial="read-ask" withApi />);
+		await user.click(screen.getByRole('button', { name: /Effective access/ }));
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: /Effective access/ })).toHaveTextContent(
+				'1 allowed · 1 ask · 0 denied',
+			),
+		);
+		expect(await screen.findByTestId('op-impact-totals')).toHaveTextContent(
+			'1 allowed · 1 ask · 0 denied',
+		);
 	});
 
 	it('the presets are the shared radio-card group — Home and End jump its ends', async () => {
@@ -568,6 +1047,7 @@ describe('AccessRulesStep', () => {
 		renderWithProviders(<Host />);
 		const group = screen.getByTestId('t-rules-preset');
 		const radios = within(group).getAllByRole('radio');
+		const last = radios.length - 1;
 		radios[2].focus();
 
 		await user.keyboard('{Home}');
@@ -575,10 +1055,10 @@ describe('AccessRulesStep', () => {
 		expect(radios[0]).toHaveFocus();
 		// End lands on Custom rules (its editor then takes focus; the selection is what's pinned).
 		await user.keyboard('{End}');
-		expect(radios[2]).toBeChecked();
+		expect(radios[last]).toBeChecked();
 		radios[0].focus();
 		await user.keyboard('{ArrowUp}');
-		expect(radios[2]).toBeChecked();
+		expect(radios[last]).toBeChecked();
 	});
 
 	it('stays flat: no rule between the preset rows, and no fill the parent already gives', async () => {
@@ -654,7 +1134,7 @@ describe('AccessRulesStep', () => {
 		await waitFor(() =>
 			expect(
 				within(rows[0]).getByRole('button', { name: /Effective access/ }),
-			).toHaveTextContent('1 of 2 allowed'),
+			).toHaveTextContent('1 allowed · 0 ask · 1 denied'),
 		);
 		expect(within(rows[1]).getByTestId('t-tester')).toBeInTheDocument();
 		expect(within(rows[1]).getByRole('button', { name: /Try a request/ })).toHaveAttribute(
@@ -663,15 +1143,12 @@ describe('AccessRulesStep', () => {
 		);
 	});
 
-	it('warns when a path deny, evaluated first, can block the chosen actions', () => {
+	it('says nothing about path denies it cannot judge: no operation list, no warning', () => {
+		// The vague "a deny there can block these actions" hint is retired: the
+		// warning names a real conflict, and with no list there is none to name.
 		const deny: PermissionRule = { effect: 'deny', methods: ['DELETE'], path: '.*' };
-		const { unmount } = renderWithProviders(
-			<Host initial="custom" initialRules={[deny, actionRule(['repos/delete'])]} />,
-		);
-		expect(screen.getByTestId('t-actions-shadowed')).toHaveTextContent(/evaluated first/);
-		unmount();
 		renderWithProviders(
-			<Host initial="custom" initialRules={[actionRule(['repos/delete'])]} />,
+			<Host initial="custom" initialRules={[deny, actionRule(['repos/delete'])]} />,
 		);
 		expect(screen.queryByTestId('t-actions-shadowed')).toBeNull();
 	});
@@ -716,7 +1193,7 @@ describe('AccessRulesStep', () => {
 				'Allowed POST /items — allowed by “Full access”',
 			),
 		);
-		await user.click(screen.getByRole('radio', { name: /Read only/ }));
+		await user.click(screen.getByRole('radio', { name: /^Read only$/ }));
 		await waitFor(() =>
 			expect(within(tester).getByTestId('rule-verdict')).toHaveTextContent(/^Denied/),
 		);

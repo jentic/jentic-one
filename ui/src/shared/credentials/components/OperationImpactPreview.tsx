@@ -95,10 +95,43 @@ function firstPathSegment(path: string): string {
 	return `/${nextSlash === -1 ? rest : rest.slice(0, nextSlash)}`;
 }
 
+/** An API's operations by what a rule set does with them. */
+export interface OperationCounts {
+	/** Run without asking (`allow`, or `partial` with an allowed slice). */
+	allowed: number;
+	/** Held for approval first (`require-approval`, or `partial` whose only way in is held). */
+	ask: number;
+	/** Never run. */
+	denied: number;
+	total: number;
+}
+
+/** Tally operations into the preview's own header buckets. */
+export function countOperations(
+	rules: readonly PermissionRule[],
+	items: readonly VendorOperation[],
+): OperationCounts {
+	const counts: OperationCounts = { allowed: 0, ask: 0, denied: 0, total: items.length };
+	for (const op of items) {
+		const bucket = headerBucket(
+			classifyOpCoverage(rules, {
+				method: op.method,
+				path: op.path,
+				operation_id: op.operation_id,
+			}),
+		);
+		if (bucket === 'allowed') counts.allowed += 1;
+		else if (bucket === 'approval') counts.ask += 1;
+		else counts.denied += 1;
+	}
+	return counts;
+}
+
 /**
- * How many of an API's operations a binding's rules let through (`allow` or
- * `partial`, as the preview's group counts read), over the operation list —
- * the same client-side matcher the preview runs.
+ * How a binding's rules treat an API's operations — allowed, ask, denied, as
+ * the preview's group headers count them — over the operation list, with the
+ * same client-side matcher the preview runs. An Ask operation is never counted
+ * as allowed: it runs only once someone approves it.
  *
  * - `undefined` while the first read is in flight, or while `rules` is unknown.
  * - `null` when there is nothing to judge: the reference names no single
@@ -110,24 +143,24 @@ export function useAllowedOperationCount(
 	api: OpsApiReference | null,
 	rules: readonly PermissionRule[] | undefined,
 	opts: { enabled?: boolean } = {},
-): { allowed: number; total: number } | null | undefined {
+): OperationCounts | null | undefined {
 	const ready = !!api && !!api.name && !!api.version;
 	const ops = useVendorOperations(api ?? undefined, { enabled: (opts.enabled ?? true) && ready });
 	const unavailable = ops.isError || (ops.isFetched && ops.data === null);
 	return useMemo(() => {
 		if (!ready || unavailable) return null;
 		if (ops.data == null || rules === undefined) return undefined;
-		const items = ops.data.data;
-		const allowed = items.filter(
-			(op) =>
-				classifyOpCoverage(rules, {
-					method: op.method,
-					path: op.path,
-					operation_id: op.operation_id,
-				}).verdict !== 'deny',
-		).length;
-		return { allowed, total: items.length };
+		return countOperations(rules, ops.data.data);
 	}, [ready, unavailable, ops.data, rules]);
+}
+
+/** "3 allowed · 1 ask · 12 denied" — always all three, so an Ask is never folded into allowed. */
+export function operationCountsText(counts: OperationCounts): string {
+	return [
+		`${counts.allowed.toLocaleString()} allowed`,
+		`${counts.ask.toLocaleString()} ask`,
+		`${counts.denied.toLocaleString()} denied`,
+	].join(' · ');
 }
 
 export function OperationImpactPreview({
@@ -198,9 +231,33 @@ export function OperationImpactPreview({
 		return out;
 	}, [items, rules]);
 
+	const totals = useMemo(
+		() =>
+			groups.reduce(
+				(t, g) => ({
+					allowed: t.allowed + g.allowedCount,
+					ask: t.ask + g.approvalCount,
+					denied: t.denied + g.deniedCount,
+					total: t.total + g.ops.length,
+				}),
+				{ allowed: 0, ask: 0, denied: 0, total: 0 },
+			),
+		[groups],
+	);
+
 	return (
 		<div className="space-y-2">
-			<Label>{label}</Label>
+			<div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+				<Label>{label}</Label>
+				{groups.length > 0 && (
+					<span
+						className="text-foreground-sub text-xs tabular-nums"
+						data-testid="op-impact-totals"
+					>
+						{operationCountsText(totals)}
+					</span>
+				)}
+			</div>
 			{importing ? (
 				<div className="bg-field rounded-lg px-3 py-6 text-center">
 					<Loader2 className="text-muted-foreground mx-auto h-4 w-4 animate-spin" />

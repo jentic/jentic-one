@@ -19,7 +19,11 @@ import {
 	toDisplayRule,
 	toEditorRule,
 } from '@/modules/agents/components/detail/shared';
-import { RuleListEditor, type OpsApiReference } from '@/shared/credentials/components';
+import {
+	RuleListEditor,
+	useActionCatalog,
+	type OpsApiReference,
+} from '@/shared/credentials/components';
 import { useVendorOperations } from '@/shared/credentials/api/vendors-hooks';
 import type { PermissionRule as EditorRule } from '@/shared/credentials/api/vendors-types';
 
@@ -161,6 +165,8 @@ export function AgentBindingPermissionsEditor({
 		if (!rows) return [];
 		return Array.from(new Set(rows.map((op) => op.path))).sort();
 	}, [opsQuery.data]);
+	// The same read, naming a rule's operation ids as the actions they are.
+	const actionCatalog = useActionCatalog(apiReference, { enabled: !!apiReference });
 
 	// Drop empty conditions so the wire body (and the diff) never carries noise.
 	const clean = rules.map(cleanPermissionRule);
@@ -267,6 +273,7 @@ export function AgentBindingPermissionsEditor({
 					pathSuggestions={pathSuggestions}
 					opTemplates={pathSuggestions}
 					opsLoaded={pathSuggestions.length > 0}
+					actionCatalog={actionCatalog}
 					addActions={
 						// The catch-all shortcut sits beside "Add rule" — reachable with
 						// rules already present, since broadening a narrow grant is a
