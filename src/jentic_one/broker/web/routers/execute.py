@@ -107,9 +107,10 @@ from jentic_one.shared.broker.protocols import (
 from jentic_one.shared.config import UpstreamClientConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import (
-    MAX_EVENT_SUMMARY_FIELD_LEN,
     emit_event_best_effort,
     mint_trace_id,
+    summary_label,
+    summary_text,
     valid_trace_id_or_none,
 )
 from jentic_one.shared.jobs.enqueue import enqueue_job
@@ -120,6 +121,7 @@ from jentic_one.shared.jobs.hold import (
     file_hold,
     review_page_path,
 )
+from jentic_one.shared.jobs.hold import agent_name as held_agent_name
 from jentic_one.shared.jobs.protocols import InjectedAuth
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ExecutionStatus
@@ -1046,12 +1048,15 @@ async def _handle_hold(
             ) from exc
         review_url = _review_url(ctx, request, hold.approval_id)
         if not hold.joined:
-            summary_path = path[:MAX_EVENT_SUMMARY_FIELD_LEN]
+            # An identity resolved from a JWT carries no name; read it from the
+            # agent row then, so every approval event names the agent alike.
+            name = identity.actor_name or await held_agent_name(session, identity.sub)
+            agent = summary_label(name, identity.sub)
             await emit_event_best_effort(
                 session,
                 type=EventType.EXECUTION_APPROVAL_REQUESTED,
                 severity=EventSeverity.WARNING,
-                summary=f"Agent {identity.sub} wants to {ctx_req.method} {summary_path}",
+                summary=f"Agent {agent} wants to {ctx_req.method} {summary_text(path)}",
                 requires_action=True,
                 trace_id=valid_trace_id_or_none(ctx_req.trace_id),
                 execution_id=execution_id,
