@@ -50,8 +50,10 @@ from jentic_one.broker.web.routers import execute as execute_router
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
+from jentic_one.shared.db.errors import DatabaseUnavailableError
 from jentic_one.shared.models import ActorType, ExecutionStatus
 from jentic_one.shared.schemas import OperationInfo
+from jentic_one.shared.state.backend import StateBackendCapacityError
 from jentic_one.shared.web import background_tasks as background_tasks_module
 from jentic_one.shared.web.background_tasks import install_background_tasks
 from tests.unit.fake_tx import SessionScope
@@ -276,7 +278,21 @@ def test_broker_app_handler_set_is_the_one_the_classifier_was_checked_against(
         WebSocketRequestValidationError,
         BrokerError,
         ProblemDetailException,
+        DatabaseUnavailableError,
+        StateBackendCapacityError,
     }
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [DatabaseUnavailableError("db down"), StateBackendCapacityError("idem", retry_after_s=1)],
+)
+def test_broker_apps_503_handlers_never_classify_as_server_errors(
+    broker_app: FastAPI, exc: Exception
+) -> None:
+    # Both dedicated handlers answer 503, and neither exception carries a
+    # ``status_code`` the classifier could misread as 500.
+    assert execute_router._server_error_classifier(broker_app)(exc) is False
 
 
 @pytest.mark.parametrize(

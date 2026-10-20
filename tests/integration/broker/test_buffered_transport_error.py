@@ -153,7 +153,7 @@ async def test_mid_body_disconnect_answers_502_and_records_failure(
     assert body["error_origin"] == "broker"
 
     assert record.status == ExecutionStatus.FAILED
-    assert record.error == "Upstream transport error (RemoteProtocolError)"
+    assert record.error == "upstream_transport_error"
     # No upstream answer exists, so no upstream status is recorded.
     assert record.http_status is None
 
@@ -170,7 +170,7 @@ async def test_refused_connection_answers_502_and_records_failure(
     assert body["error_origin"] == "broker"
 
     assert record.status == ExecutionStatus.FAILED
-    assert record.error == "The upstream connection could not be established."
+    assert record.error == "upstream_connect_failed"
     assert record.http_status is None
 
 
@@ -196,5 +196,5 @@ async def test_unresolvable_host_under_dns_pinning_answers_502_and_records_failu
     assert "upstream-vanished" not in json.dumps(body)
 
     assert record.status == ExecutionStatus.FAILED
-    assert record.error == "The upstream connection could not be established."
+    assert record.error == "upstream_connect_failed"
     assert record.http_status is None
