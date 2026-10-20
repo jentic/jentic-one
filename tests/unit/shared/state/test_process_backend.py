@@ -22,6 +22,7 @@ from jentic_one.shared.state import (
     register_state_backend,
 )
 from jentic_one.shared.state.factory import unregister_state_backend
+from jentic_one.shared.web import app_factory
 from jentic_one.shared.web.app_factory import create_combined_app, create_surface_app
 
 
@@ -145,6 +146,9 @@ async def test_the_surface_lifespan_closes_the_backend_after_its_extra_lifespan(
     )
     monkeypatch.setattr(ctx, "startup", _noop)
     monkeypatch.setattr(ctx, "shutdown", _noop)
+    # The stubbed startup connects no database, so skip instrumenting the
+    # engines (a no-op only once an earlier test has instrumented the process).
+    monkeypatch.setattr(app_factory, "instrument_databases", lambda _ctx: None)
     async with app.router.lifespan_context(app):
         pass
     (backend,) = counting
