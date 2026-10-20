@@ -835,12 +835,18 @@ class OAuthRateLimitConfig(BaseModel):
     authorize_rpm: int = Field(
         default=30,
         description=(
-            "Sustained requests/minute allowed on the unauthenticated "
-            "``/authorize`` endpoints, keyed per ``client_id``+IP — except "
-            "the local-login routes, whose ``client_id`` rides inside the signed "
-            "login state and which are always keyed by bare IP. Behind a proxy, set "
+            "Sustained requests/minute allowed per client network (IPv4 "
+            "address or IPv6 /64) across the unauthenticated authorization "
+            "flow: ``/authorize``, the IdP callback, the consent page, its "
+            "submit and inline agent create, and the local-login form share "
+            "one bucket, whatever "
+            "``client_id`` they name. A sign-in spends two to six requests "
+            "(more after a mistyped password), so the defaults admit at "
+            "least five back-to-back sign-ins and then at least five a minute "
+            "per network; raise both for a large shared NAT or egress IP. "
+            "Behind a proxy, set "
             "``auth.oauth_rate_limit.trusted_proxies`` or every client "
-            "shares the proxy's IP bucket."
+            "shares the proxy's bucket."
         ),
     )
     authorize_burst: int = Field(
@@ -850,8 +856,9 @@ class OAuthRateLimitConfig(BaseModel):
     exchange_rpm: int = Field(
         default=60,
         description=(
-            "Sustained requests/minute allowed per ``client_id``+IP on the "
-            "token endpoint (also reused per-IP for token revocation)."
+            "Sustained requests/minute allowed per ``client_id`` + client "
+            "network (IPv4 address or IPv6 /64) on the token endpoint (also "
+            "reused per client network for token revocation)."
         ),
     )
     exchange_burst: int = Field(
@@ -861,8 +868,9 @@ class OAuthRateLimitConfig(BaseModel):
     registration_rpm: int = Field(
         default=10,
         description=(
-            "Sustained requests/minute allowed per IP on anonymous dynamic "
-            "client registration (``POST /oauth-clients``)."
+            "Sustained requests/minute allowed per client network (IPv4 "
+            "address or IPv6 /64) on anonymous dynamic client registration "
+            "(``POST /oauth-clients``)."
         ),
     )
     registration_burst: int = Field(
