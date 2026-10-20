@@ -43,7 +43,7 @@ func TestProxyEgressAgentSide(t *testing.T) {
 		"SSL_CERT_FILE=/run/jentic-ca/bundle.pem", "REQUESTS_CA_BUNDLE=/run/jentic-ca/bundle.pem",
 		"NODE_EXTRA_CA_CERTS=/run/jentic-ca/bundle.pem", "GIT_SSL_CAINFO=/run/jentic-ca/bundle.pem",
 		"AWS_CA_BUNDLE=/run/jentic-ca/bundle.pem", "CURL_CA_BUNDLE=/run/jentic-ca/bundle.pem",
-		"GH_TOKEN=" + ghPlaceholderToken,
+		"GH_TOKEN=" + ghPlaceholderToken, "GIT_TERMINAL_PROMPT=0", "GIT_HTTP_PROXY_AUTHMETHOD=basic",
 	} {
 		if !slices.Contains(p.Agent.Env, want) {
 			t.Errorf("agent env lacks %s", want)

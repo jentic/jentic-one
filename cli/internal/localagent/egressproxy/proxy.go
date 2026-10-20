@@ -355,34 +355,53 @@ func (s *Server) govern(conn net.Conn, br *bufio.Reader, d Decision, token, sour
 }
 
 // relayHandler relays a governed connection's requests to the broker's proxy
-// route with the connection's invocation token.
+// route with the connection's invocation token. git smart HTTP to github.com
+// takes the same route (the broker serves it through its governed git
+// pipeline); a broker 401 to git is answered as 403 (gitResponse), so git
+// never prompts for a credential the session does not hold.
 func (s *Server) relayHandler(d Decision, token, source string) http.Handler {
 	broker := s.cfg.BrokerURL
 	base := strings.TrimRight(broker.Path, "/") + ProxyFacadePrefix + "https://" + d.Host
-	rp := &httputil.ReverseProxy{
-		Transport:     s.cfg.BrokerTransport,
-		FlushInterval: -1,
-		Rewrite: func(pr *httputil.ProxyRequest) {
-			path, query, _ := strings.Cut(pr.In.RequestURI, "?")
-			pr.Out.URL = &url.URL{Scheme: broker.Scheme, Host: broker.Host, Opaque: base + path, RawQuery: query}
-			pr.Out.Host = ""
-			sanitizeUpstreamHeaders(pr.Out.Header)
-			pr.Out.Header.Set("Authorization", "Bearer "+token)
-		},
-		ModifyResponse: func(resp *http.Response) error {
-			s.log.Info("egress governed request", "host", d.Host, "vendor", d.Vendor, "method", resp.Request.Method,
-				"path", strings.TrimPrefix(resp.Request.URL.Opaque, base), "status", resp.StatusCode, "token", source)
-			return nil
-		},
-		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			s.log.Error("egress broker relay failed", "host", d.Host, "vendor", d.Vendor, "method", r.Method, "error", err.Error())
-			if errors.Is(err, context.Canceled) {
-				return
-			}
-			writeVendorError(w, d.Vendor, http.StatusBadGateway, "the Jentic broker could not be reached from the session's egress proxy.")
-		},
-		ErrorLog: slog.NewLogLogger(s.log.Handler(), slog.LevelDebug),
+	// The request and response bodies stream both ways (FlushInterval -1, a
+	// chunked request body stays chunked), so a clone's pack or a push of any
+	// size passes through without being buffered here; the broker applies
+	// its own limits.
+	newRelay := func(git bool) *httputil.ReverseProxy {
+		return &httputil.ReverseProxy{
+			Transport:     s.cfg.BrokerTransport,
+			FlushInterval: -1,
+			Rewrite: func(pr *httputil.ProxyRequest) {
+				path, query, _ := strings.Cut(pr.In.RequestURI, "?")
+				pr.Out.URL = &url.URL{Scheme: broker.Scheme, Host: broker.Host, Opaque: base + path, RawQuery: query}
+				pr.Out.Host = ""
+				sanitizeUpstreamHeaders(pr.Out.Header)
+				pr.Out.Header.Set("Authorization", "Bearer "+token)
+			},
+			ModifyResponse: func(resp *http.Response) error {
+				s.log.Info("egress governed request", "host", d.Host, "vendor", d.Vendor, "method", resp.Request.Method,
+					"path", strings.TrimPrefix(resp.Request.URL.Opaque, base), "status", resp.StatusCode, "token", source,
+					"git", git)
+				if git {
+					gitResponse(resp)
+				}
+				return nil
+			},
+			ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+				s.log.Error("egress broker relay failed", "host", d.Host, "vendor", d.Vendor, "method", r.Method, "error", err.Error())
+				if errors.Is(err, context.Canceled) {
+					return
+				}
+				const msg = "the Jentic broker could not be reached from the session's egress proxy."
+				if git {
+					writeGitText(w, http.StatusBadGateway, "Jentic: "+msg+"\n")
+					return
+				}
+				writeVendorError(w, d.Vendor, http.StatusBadGateway, msg)
+			},
+			ErrorLog: slog.NewLogLogger(s.log.Handler(), slog.LevelDebug),
+		}
 	}
+	rp, gitRP := newRelay(false), newRelay(true)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if h, ok := NormalizeHost(hostOnly(r.Host)); !ok || h != d.Host || !defaultHTTPSPort(r.Host) {
 			writeVendorError(w, d.Vendor, http.StatusMisdirectedRequest,
@@ -397,13 +416,24 @@ func (s *Server) relayHandler(d Decision, token, source string) http.Handler {
 			writeVendorError(w, d.Vendor, http.StatusNotImplemented, "protocol upgrades are not relayed.")
 			return
 		}
-		if isGitSmartHTTP(r.URL.Path) {
+		switch classifyGit(d.Host, r.Method, r.URL) {
+		case gitRelay:
+			// A Go server may stop reading the request body once the
+			// response has started; git's own exchanges are half duplex,
+			// but the broker's answer must never cut a push short.
+			_ = http.NewResponseController(w).EnableFullDuplex()
+			gitRP.ServeHTTP(w, r)
+		case gitRefuse:
 			s.log.Warn("egress refused", "host", d.Host, "vendor", d.Vendor, "method", r.Method,
-				"path", r.URL.Path, "reason", "git over HTTPS is not governed")
-			writeGitUnsupported(w)
-			return
+				"path", r.URL.Path, "reason", "git request Jentic does not serve")
+			writeGitText(w, http.StatusForbidden, gitRefusedMessage)
+		case webRefuse:
+			s.log.Warn("egress refused", "host", d.Host, "vendor", d.Vendor, "method", r.Method,
+				"path", r.URL.Path, "reason", "not git on "+gitHost)
+			writeGitText(w, http.StatusForbidden, webRefusedMessage)
+		default:
+			rp.ServeHTTP(w, r)
 		}
-		rp.ServeHTTP(w, r)
 	})
 }
 

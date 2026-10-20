@@ -36,6 +36,7 @@ type recorded struct {
 	Header                   http.Header
 	BodySHA                  string
 	BodyLen                  int64
+	TransferEncoding         []string
 }
 
 type brokerRecorder struct {
@@ -57,10 +58,13 @@ type harness struct {
 }
 
 type harnessOpts struct {
-	vendors    []string
-	tunnel     []string
-	tokens     fakeTokens
-	broker     http.HandlerFunc
+	vendors []string
+	tunnel  []string
+	tokens  fakeTokens
+	broker  http.HandlerFunc
+	// rawBroker, when set, serves the broker without the recorder reading
+	// the request body first (for streaming tests).
+	rawBroker  http.HandlerFunc
 	tunnelDial func(ctx context.Context, network, addr string) (net.Conn, error)
 	brokerDown bool
 }
@@ -82,12 +86,16 @@ func newHarness(t *testing.T, o harnessOpts) *harness {
 		}
 	}
 	broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if o.rawBroker != nil {
+			o.rawBroker(w, r)
+			return
+		}
 		h := sha256.New()
 		n, _ := io.Copy(h, r.Body)
 		rec.mu.Lock()
 		rec.reqs = append(rec.reqs, recorded{
 			Method: r.Method, RequestURI: r.RequestURI, Host: r.Host, Header: r.Header.Clone(),
-			BodySHA: hex.EncodeToString(h.Sum(nil)), BodyLen: n,
+			BodySHA: hex.EncodeToString(h.Sum(nil)), BodyLen: n, TransferEncoding: r.TransferEncoding,
 		})
 		rec.mu.Unlock()
 		handler(w, r)
@@ -358,38 +366,6 @@ func TestRefusals(t *testing.T) {
 	}
 	if len(h.broker.all()) != 0 {
 		t.Error("a refused request must never reach the broker")
-	}
-}
-
-func TestGitSmartHTTPGetsAClearError(t *testing.T) {
-	h := newHarness(t, harnessOpts{})
-	client := h.client(t, "")
-	for _, u := range []string{
-		"https://github.com/o/r.git/info/refs?service=git-receive-pack",
-		"https://github.com/o/r/info/refs?service=git-upload-pack",
-		"https://github.com/o/r.git/info/refs?service=git%2Dreceive-pack",
-	} {
-		resp, err := client.Get(u)
-		if err != nil {
-			t.Fatal(err)
-		}
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusForbidden || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/plain") ||
-			!strings.Contains(string(body), "not supported yet") {
-			t.Errorf("%s: %d %q %q", u, resp.StatusCode, resp.Header.Get("Content-Type"), body)
-		}
-	}
-	resp, err := client.Post("https://github.com/o/r.git/git-receive-pack", "application/x-git-receive-pack-request", strings.NewReader("0000"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusForbidden {
-		t.Errorf("git-receive-pack = %d, want 403", resp.StatusCode)
-	}
-	if len(h.broker.all()) != 0 {
-		t.Error("git smart HTTP must never be forwarded")
 	}
 }
 

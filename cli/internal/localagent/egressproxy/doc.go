@@ -11,7 +11,11 @@
 //     per-session CA, and each HTTP request on it is relayed to the broker's
 //     `/_facade/proxy/https://<host><path>?<query>` route with an invocation
 //     token as its bearer: the vendor credential is injected by the broker,
-//     under the agent's rules, and never reaches the session;
+//     under the agent's rules, and never reaches the session. On github.com
+//     itself only git smart HTTP (clone, fetch, push) is relayed, to the
+//     broker's governed git pipeline, which checks the agent's git rules per
+//     repository and ref; every other github.com request (web pages, Git
+//     LFS, dumb HTTP) is refused with a message git or curl prints;
 //   - everything else, plain-HTTP proxying included, is refused with 403 and
 //     logged.
 //

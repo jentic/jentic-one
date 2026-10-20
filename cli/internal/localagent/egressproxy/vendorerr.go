@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
-	"strings"
 )
 
 // The broker answers a relayed call's errors in the vendor's own shape
@@ -35,36 +34,4 @@ func writeVendorError(w http.ResponseWriter, vendor string, status int, message 
 	h.Set("Content-Length", strconv.Itoa(len(data)))
 	w.WriteHeader(status)
 	_, _ = w.Write(data)
-}
-
-// gitUnsupportedMessage is what git prints (as "remote: …" lines) when it
-// reaches a governed host's smart-HTTP endpoints.
-const gitUnsupportedMessage = "Jentic: git fetch, clone and push over HTTPS through Jentic are not supported yet.\n" +
-	"This session cannot reach the remote's git endpoints; vendor API calls (gh, curl to the API) still work.\n"
-
-// isGitSmartHTTP reports whether a request path and query are a git HTTP
-// exchange: ref discovery (`…/info/refs`, with or without
-// `?service=git-…`) or a pack RPC (`…/git-upload-pack`, `…/git-receive-pack`,
-// `…/git-upload-archive`).
-func isGitSmartHTTP(path string) bool {
-	switch {
-	case strings.HasSuffix(path, "/info/refs"):
-		return true
-	case strings.HasSuffix(path, "/git-upload-pack"),
-		strings.HasSuffix(path, "/git-receive-pack"),
-		strings.HasSuffix(path, "/git-upload-archive"):
-		return true
-	}
-	return false
-}
-
-// writeGitUnsupported answers a git smart-HTTP request with 403 and a
-// text/plain body, which git shows to the user before it gives up.
-func writeGitUnsupported(w http.ResponseWriter) {
-	h := w.Header()
-	h.Set("Content-Type", "text/plain; charset=utf-8")
-	h.Set("Content-Length", strconv.Itoa(len(gitUnsupportedMessage)))
-	h.Set("Cache-Control", "no-cache")
-	w.WriteHeader(http.StatusForbidden)
-	_, _ = w.Write([]byte(gitUnsupportedMessage))
 }

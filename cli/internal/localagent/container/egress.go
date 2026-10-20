@@ -132,6 +132,14 @@ var caBundleEnv = []string{
 	"SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS", "GIT_SSL_CAINFO", "AWS_CA_BUNDLE", "CURL_CA_BUNDLE",
 }
 
+// gitEnv lets git talk to https://github.com/... through the proxy with no
+// credential helper or URL rewrite: the proxy relays its smart HTTP to the
+// broker with the session's (or the command's) invocation token, so git never
+// needs a credential and must never prompt for one, and it sends per-command
+// proxy credentials (HTTPS_PROXY=http://cit_…:x@…) up front instead of
+// waiting for a challenge the proxy answers with the session token.
+var gitEnv = []string{"GIT_TERMINAL_PROMPT=0", "GIT_HTTP_PROXY_AUTHMETHOD=basic"}
+
 // ProxyEgress is the "proxy" egress: a sidecar running jentic-egress-proxy on
 // the session's internal network and on a per-session egress network of its
 // own (the agent joins only the internal one). It tunnels the agent's
@@ -257,6 +265,7 @@ func (e *ProxyEgress) AgentEnv(p *Plan) []string {
 	for _, v := range e.Vendors {
 		if v == "github" {
 			env = append(env, "GH_TOKEN="+ghPlaceholderToken)
+			env = append(env, gitEnv...)
 		}
 	}
 	return env
