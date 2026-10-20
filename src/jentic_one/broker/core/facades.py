@@ -18,7 +18,10 @@ GitHub Enterprise Server uses (``/api/v3``, ``/api/graphql``,
 The proxy route (:data:`PROXY_FACADE_PREFIX`) is vendor-neutral: it takes a
 full upstream URL, as the forward proxy does, for an egress proxy that relays
 a vendor CLI's calls with the command's invocation token. The URL must resolve
-to an API of the token's vendor (:func:`api_vendor_matches`).
+to an API of the token's vendor (:func:`api_vendor_matches`). Its errors take
+the shape of the vendor the URL's host belongs to
+(:func:`proxy_error_vendor`), since the CLI behind the egress proxy believes
+it is talking to that vendor.
 
 Pure module: no FastAPI, httpx or DB imports.
 """
@@ -140,6 +143,37 @@ def proxy_upstream_url(scope: Mapping[str, Any]) -> str | None:
             "query_string": scope.get("query_string", b""),
         }
     )
+
+
+#: The hosts whose proxy-route errors take a vendor's error shape: the domain
+#: and every host below it. A host under none keeps RFC 9457 Problem Details.
+PROXY_ERROR_SHAPE_DOMAINS: Mapping[str, str] = MappingProxyType(
+    {"github.com": "github", "cloudflare.com": "cloudflare"}
+)
+
+
+def proxy_error_vendor(scope: Mapping[str, Any]) -> str | None:
+    """The vendor whose error shape a proxy-route request's errors take, or ``None``.
+
+    Keyed on the host of the upstream URL the client called
+    (:func:`proxy_upstream_url`), not on the invocation token, so an error
+    raised before the token is read (a missing or invalid token) has the same
+    shape as one raised after.
+    """
+    url = proxy_upstream_url(scope)
+    if url is None:
+        return None
+    try:
+        host = urlsplit(url).hostname
+    except ValueError:
+        return None
+    if not host:
+        return None
+    host = host.rstrip(".")
+    for domain, vendor in PROXY_ERROR_SHAPE_DOMAINS.items():
+        if host == domain or host.endswith(f".{domain}"):
+            return vendor
+    return None
 
 
 def api_vendor_matches(token_vendor: str, api_vendor: str) -> bool:
@@ -483,6 +517,7 @@ __all__ = [
     "GITHUB_REST_FACADE",
     "GITHUB_UPLOADS_FACADE",
     "PROXY_API_VENDORS",
+    "PROXY_ERROR_SHAPE_DOMAINS",
     "PROXY_FACADE_PREFIX",
     "PathFacade",
     "api_vendor_matches",
@@ -495,6 +530,7 @@ __all__ = [
     "is_facade_host",
     "is_facade_response_header",
     "is_github_response_header",
+    "proxy_error_vendor",
     "proxy_upstream_url",
     "request_host",
     "rewrite_github_link_header",

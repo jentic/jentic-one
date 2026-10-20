@@ -19,9 +19,12 @@ header allowlist.
 The proxy route (``/_facade/proxy/<full upstream URL>``) is not a vendor
 facade: it is the broker end of an egress proxy that relays a vendor CLI's
 calls with the command's invocation token, so it takes the full upstream URL
-as the forward-proxy catch-all does, requires the URL to resolve to an API of
-the token's vendor, and answers standard Problem Details (the proxy, not the
-broker, speaks the vendor's error shape).
+as the forward-proxy catch-all does and requires the URL to resolve to an API
+of the token's vendor. The CLI behind the egress proxy believes it is talking
+to the vendor, so the route's errors take the shape of the vendor the URL's
+host belongs to (:class:`ProxyFacadeRoute`): GitHub's for ``*.github.com``,
+Cloudflare's for ``*.cloudflare.com``, standard Problem Details for any other
+host.
 
 Paths under ``/_facade`` that no facade serves answer 404 and never reach the
 catch-all.
@@ -69,6 +72,7 @@ from jentic_one.broker.core.facades import (
     is_facade_host,
     is_facade_response_header,
     is_github_response_header,
+    proxy_error_vendor,
     proxy_upstream_url,
     rewrite_github_link_header,
     rewrite_github_url,
@@ -377,7 +381,29 @@ async def github_facade_not_found(
 
 # ── Proxy route (full upstream URL) ──────────────────────────────────────────
 
-proxy_router = APIRouter()
+
+def proxy_error_response(request: Request, response: Response) -> Response:
+    """Re-render a proxy-route error in the shape of the upstream URL's vendor.
+
+    GitHub's for a ``*.github.com`` URL, Cloudflare's for ``*.cloudflare.com``
+    (:func:`~jentic_one.broker.core.facades.proxy_error_vendor`); any other
+    URL, or none, keeps the central handler's Problem Details.
+    """
+    vendor = proxy_error_vendor(request.scope)
+    if vendor == "github":
+        return github_error_response(request, response)
+    if vendor == "cloudflare":
+        return cloudflare_error_response(request, response)
+    return response
+
+
+class ProxyFacadeRoute(APIRoute):
+    """The proxy route: errors in the shape of the upstream URL's vendor."""
+
+    error_response_hook = staticmethod(proxy_error_response)
+
+
+proxy_router = APIRouter(route_class=ProxyFacadeRoute)
 
 
 @proxy_router.api_route(
@@ -401,7 +427,9 @@ async def cli_proxy(
     resolve to a registered API of the token's vendor (else 404 for an
     unregistered URL, 403 ``cli_invocation_vendor_mismatch`` for another
     vendor's API); the call runs on the token's trace id and credential
-    choice, and the response keeps the facade header allowlist.
+    choice. The response keeps the facade header allowlist, or GitHub's for a
+    GitHub URL (``Link`` pagination, ``X-GitHub-*``), unchanged: the egress
+    proxy's client addresses the vendor's own host.
     """
     upstream_url = proxy_upstream_url(request.scope)
     if upstream_url is None:
@@ -428,6 +456,8 @@ async def cli_proxy(
             idempotency,
             call,
         )
+    if proxy_error_vendor(request.scope) == "github":
+        return _restrict_response_headers(response, is_github_response_header)
     return _restrict_response_headers(response)
 
 
@@ -456,12 +486,14 @@ async def unknown_facade(
 __all__ = [
     "CloudflareFacadeRoute",
     "GitHubFacadeRoute",
+    "ProxyFacadeRoute",
     "cloudflare_error_response",
     "cloudflare_router",
     "github_error_response",
     "github_not_found_router",
     "github_router",
     "on_github_facade_host",
+    "proxy_error_response",
     "proxy_router",
     "reserved_router",
 ]

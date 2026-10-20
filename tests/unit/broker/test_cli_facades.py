@@ -38,6 +38,7 @@ from jentic_one.broker.core.facades import (
     facade_request_headers,
     facade_upstream_url,
     is_facade_response_header,
+    proxy_error_vendor,
     proxy_upstream_url,
 )
 from jentic_one.broker.core.problem import STATUS_BY_ERROR
@@ -46,6 +47,7 @@ from jentic_one.broker.web.errors import install_broker_error_handlers
 from jentic_one.broker.web.routers.facades import (
     CloudflareFacadeRoute,
     GitHubFacadeRoute,
+    ProxyFacadeRoute,
     _restrict_response_headers,
     cloudflare_error_response,
 )
@@ -164,6 +166,27 @@ def test_proxy_upstream_url_reads_the_full_url_from_the_raw_path(
 )
 def test_proxy_upstream_url_refuses_paths_without_a_usable_url(raw_path: bytes) -> None:
     assert proxy_upstream_url(_scope(raw_path)) is None
+
+
+@pytest.mark.parametrize(
+    ("raw_path", "vendor"),
+    [
+        (b"/_facade/proxy/https://api.github.com/user", "github"),
+        (b"/_facade/proxy/https://github.com/o/r", "github"),
+        (b"/_facade/proxy/https://uploads.github.com/x", "github"),
+        (b"/_facade/proxy/https://API.GitHub.com./user", "github"),
+        (b"/_facade/proxy/https://api.cloudflare.com/client/v4/zones", "cloudflare"),
+        (b"/_facade/proxy/https://sts.amazonaws.com/", None),
+        # Lookalikes are not the vendor.
+        (b"/_facade/proxy/https://github.com.evil.example/x", None),
+        (b"/_facade/proxy/https://notgithub.com/x", None),
+        (b"/_facade/proxy/", None),
+    ],
+)
+def test_proxy_error_vendor_is_keyed_on_the_upstream_host(
+    raw_path: bytes, vendor: str | None
+) -> None:
+    assert proxy_error_vendor(_scope(raw_path)) == vendor
 
 
 def test_the_proxy_route_is_under_the_reserved_prefix() -> None:
@@ -368,6 +391,7 @@ def _app() -> FastAPI:
     install_broker_error_handlers(app)
 
     facade = APIRouter(route_class=CloudflareFacadeRoute)
+    proxy = APIRouter(route_class=ProxyFacadeRoute)
     plain = APIRouter()
 
     def _raise(kind: str) -> None:
@@ -392,12 +416,18 @@ def _app() -> FastAPI:
         _raise(kind)
         return {}
 
+    @proxy.get("/_facade/proxy/{upstream_url:path}")
+    async def _proxy_route(upstream_url: str) -> dict[str, str]:
+        _raise(upstream_url.rsplit("/", 1)[-1])
+        return {}
+
     @plain.get("/plain/{kind}")
     async def _plain_route(kind: str) -> dict[str, str]:
         _raise(kind)
         return {}
 
     app.include_router(facade)
+    app.include_router(proxy)
     app.include_router(plain)
     return app
 
@@ -433,6 +463,26 @@ def test_facade_route_errors_reach_the_client_as_cloudflare_errors(
     }
     if kind == "limited":
         assert response.headers["retry-after"] == "3"
+
+
+@pytest.mark.parametrize("kind", ["denied", "missing", "unauthorized", "limited", "crash"])
+def test_proxy_route_errors_take_the_upstream_vendors_shape(kind: str) -> None:
+    client = TestClient(_app(), raise_server_exceptions=False)
+
+    github = client.get(f"/_facade/proxy/https://api.github.com/{kind}")
+    cloudflare = client.get(f"/_facade/proxy/https://api.cloudflare.com/client/v4/{kind}")
+    other = client.get(f"/_facade/proxy/https://sts.amazonaws.com/{kind}")
+
+    assert github.headers["content-type"] == "application/json"
+    gh_body = github.json()
+    assert gh_body["message"].startswith("Jentic: ")
+    assert gh_body["status"] == str(github.status_code)
+    assert cloudflare.json()["success"] is False
+    assert cloudflare.json()["errors"][0]["code"] == cloudflare.status_code
+    assert other.headers["content-type"] == "application/problem+json"
+    assert github.status_code == cloudflare.status_code == other.status_code
+    if kind == "limited":
+        assert github.headers["retry-after"] == "3"
 
 
 @pytest.mark.parametrize("kind", ["denied", "missing", "unauthorized", "crash"])

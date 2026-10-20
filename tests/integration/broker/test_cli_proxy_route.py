@@ -9,12 +9,14 @@ allow rule, and mints invocation tokens through the real
 an ``httpx`` ``MockTransport`` that records what the vendor would receive.
 
 Covers: the stored credential injected and never the ``cit_``/``at_`` token;
-the raw path encoding and query kept; calls recorded under the token's trace
+the raw path encoding and query kept; GitHub's response headers (``Link``,
+``X-GitHub-*``) kept for a GitHub URL; calls recorded under the token's trace
 id (and grouped by ``GET /executions?trace_id=``) even with a client
 ``traceparent``; the token's credential name choosing the credential; and the
-refusals, all in standard Problem Details: an ``at_`` token (401), a URL of
-another vendor's API (403), an unregistered URL (404) and a switched-off
-vendor (404).
+refusals, each in the error shape of the URL's vendor (GitHub's for
+``*.github.com``, Cloudflare's for ``*.cloudflare.com``, standard Problem
+Details otherwise): an ``at_`` token (401), a URL of another vendor's API
+(403), an unregistered URL (404) and a switched-off vendor (404).
 """
 
 from __future__ import annotations
@@ -153,6 +155,8 @@ class _Upstream:
                 "Content-Type": "application/json",
                 "Set-Cookie": "_gh_sess=upstream-session; Domain=.github.com",
                 "X-RateLimit-Remaining": "4999",
+                "Link": '<https://api.github.com/user/repos?page=2>; rel="next"',
+                "X-GitHub-Request-Id": "ABCD:1234",
             },
         )
 
@@ -399,6 +403,29 @@ def _problem(response: httpx.Response, status: int) -> dict[str, Any]:
     return body
 
 
+def _github_error(response: httpx.Response, status: int) -> str:
+    """Assert a GitHub REST error body; returns its message."""
+    assert response.status_code == status, response.text
+    assert response.headers["content-type"].startswith("application/json")
+    body: dict[str, Any] = response.json()
+    assert body["status"] == str(status)
+    message: str = body["message"]
+    assert message.startswith("Jentic: ")
+    return message
+
+
+def _cloudflare_error(response: httpx.Response, status: int) -> str:
+    """Assert a Cloudflare API v4 error envelope; returns its message."""
+    assert response.status_code == status, response.text
+    body: dict[str, Any] = response.json()
+    assert body["success"] is False
+    assert body["result"] is None
+    (error,) = body["errors"]
+    assert error["code"] == status
+    message: str = error["message"]
+    return message
+
+
 def _assert_no_jentic_token_upstream(request: httpx.Request, *tokens: str) -> None:
     for name, value in request.headers.items():
         assert "cit_" not in value, name
@@ -444,6 +471,8 @@ async def test_call_reaches_the_vendor_with_the_stored_credential(env: _Env) -> 
     assert fetched.headers["jentic-credential-id"] == env.main_credential_id
     assert "set-cookie" not in fetched.headers
     assert fetched.headers["x-ratelimit-remaining"] == "4999"
+    assert fetched.headers["link"] == '<https://api.github.com/user/repos?page=2>; rel="next"'
+    assert fetched.headers["x-github-request-id"] == "ABCD:1234"
 
     records = await _records(env.ctx, trace_id)
     assert sorted((r.operation_method, r.http_status) for r in records) == [
@@ -501,13 +530,13 @@ async def test_credential_name_chooses_between_two_credentials(env: _Env) -> Non
         headers={"Jentic-Credential-Name": "gh-main"},
     )
 
-    _problem(ambiguous, 409)
+    _github_error(ambiguous, 409)
     assert other.status_code == 200, other.text
     (request,) = env.upstream.requests
     assert request.headers["authorization"] == f"Bearer {_OTHER_SECRET}"
 
 
-# ── refusals, in standard Problem Details ────────────────────────────────────
+# ── refusals, in the error shape of the URL's vendor ─────────────────────────
 
 
 async def test_access_token_is_refused(env: _Env) -> None:
@@ -515,7 +544,7 @@ async def test_access_token_is_refused(env: _Env) -> None:
 
     response = await _call(env, "GET", "https://api.github.com/user", access)
 
-    _problem(response, 401)
+    _github_error(response, 401)
     assert env.upstream.requests == []
 
 
@@ -524,23 +553,24 @@ async def test_url_of_another_vendors_api_is_refused(env: _Env) -> None:
 
     response = await _call(env, "GET", "https://api.cloudflare.com/client/v4/zones", token)
 
-    body = _problem(response, 403)
-    assert body["type"] == "cli_invocation_vendor_mismatch"
-    assert body["agent_directive"]["strategy"] == "fatal"
+    message = _cloudflare_error(response, 403)
+    assert message.startswith("Jentic: ")
     assert env.upstream.requests == []
 
 
-@pytest.mark.parametrize(
-    "url",
-    [
-        "https://api.github.com/not/registered",
-        "https://unregistered.jentic.test/anything",
-    ],
-)
-async def test_unregistered_url_is_a_404(env: _Env, url: str) -> None:
+async def test_unregistered_github_url_is_githubs_404(env: _Env) -> None:
     _access, token, _trace_id = await _mint(env)
 
-    response = await _call(env, "GET", url, token)
+    response = await _call(env, "GET", "https://api.github.com/not/registered", token)
+
+    _github_error(response, 404)
+    assert env.upstream.requests == []
+
+
+async def test_unregistered_url_of_no_shaped_vendor_is_a_problem_404(env: _Env) -> None:
+    _access, token, _trace_id = await _mint(env)
+
+    response = await _call(env, "GET", "https://unregistered.jentic.test/anything", token)
 
     body = _problem(response, 404)
     assert body["type"] == "operation_not_found"
@@ -553,8 +583,8 @@ async def test_switched_off_vendor_is_a_404(env: _Env) -> None:
 
     response = await _call(env, "GET", "https://api.github.com/user", token)
 
-    body = _problem(response, 404)
-    assert body["type"] == "cli_facade_not_found"
+    message = _github_error(response, 404)
+    assert "not enabled" in message
     assert env.upstream.requests == []
 
 

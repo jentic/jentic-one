@@ -312,9 +312,16 @@ above, with three differences:
   [`broker/core/facades.py`](../../src/jentic_one/broker/core/facades.py)).
   Any other API answers 403 `cli_invocation_vendor_mismatch` before rules or
   credentials are looked at; an unregistered URL answers 404.
-- **Problem Details.** Errors are standard RFC 9457 responses; the proxy
-  translates them for the CLI. Successful responses keep the facade header
-  allowlist.
+- **Errors in the URL's vendor's shape.** The CLI behind the egress proxy
+  believes it talks to the vendor, so errors take the shape of the vendor the
+  URL's host belongs to: GitHub's REST error for `*.github.com`, Cloudflare's
+  v4 envelope for `*.cloudflare.com` (the same bodies as the GitHub and
+  Cloudflare facades), standard RFC 9457 Problem Details for any other host.
+  Keyed on the URL rather than the token, so a missing or invalid token gets
+  the same shape. Successful responses keep the facade header allowlist, or
+  the GitHub facade's for a GitHub URL (`Link`, `X-GitHub-*`), unrewritten.
+  The egress proxy of `jentic run --container` is this route's client (see
+  [Local agent isolation](../security/same-host/local-agent-isolation.md)).
 
 ### GraphQL top-level-field rules
 
