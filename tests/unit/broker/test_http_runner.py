@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 
 import httpx
 import pytest
@@ -14,6 +15,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 
 import jentic_one.broker.adapters.runners.http as http_runner_mod
 from jentic_one.broker.adapters.runners.base import RunnerRequest
+from jentic_one.broker.adapters.runners.dispatch import track_dispatch
 from jentic_one.broker.adapters.runners.http import HttpRunner, _HostBulkhead
 from jentic_one.broker.core.exceptions import (
     BrokerError,
@@ -131,6 +133,60 @@ async def test_connect_error_maps_to_upstream_connect_failed_502() -> None:
     # A refused connect is a 502 gateway failure, connect phase (#1706).
     assert excinfo.value.type == "upstream_connect_failed"
     assert excinfo.value.pre_send is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "exc", [httpx.ConnectError("refused"), httpx.ConnectTimeout("slow")], ids=["refused", "timeout"]
+)
+async def test_connect_phase_failure_of_send_rules_out_the_send(exc: Exception) -> None:
+    """Pins #1710: a connect that never completes reports nothing sent, timeout included."""
+
+    def handle(_req: httpx.Request) -> httpx.Response:
+        raise exc
+
+    async with _mock_client(httpx.MockTransport(handle)) as client:
+        runner = HttpRunner(client)
+        with track_dispatch() as probe, pytest.raises(BrokerError) as excinfo:
+            await runner.run(RunnerRequest(method="POST", url="https://api.example.com/x"))
+    assert excinfo.value.type == "upstream_connect_failed"
+    assert excinfo.value.pre_send is True
+    assert probe.nothing_sent() is True
+
+
+class _BodyRaises(httpx.AsyncByteStream):
+    """A response body that fails with ``exc`` after the upstream has answered."""
+
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield b"partial"
+        raise self._exc
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("exc", "expected_type"),
+    [
+        (httpx.ConnectError("reset"), "upstream_transport_error"),
+        (httpx.ConnectTimeout("slow"), "upstream_timeout"),
+    ],
+)
+async def test_connect_error_while_reading_the_body_is_not_pre_send(
+    exc: Exception, expected_type: str
+) -> None:
+    """Pins #1710: once the upstream answered, a connect-class error can't mean nothing was sent."""
+
+    def handle(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=_BodyRaises(exc))
+
+    async with _mock_client(httpx.MockTransport(handle)) as client:
+        runner = HttpRunner(client)
+        with pytest.raises(BrokerError) as excinfo:
+            await runner.run(RunnerRequest(method="POST", url="https://api.example.com/x"))
+    assert excinfo.value.type == expected_type
+    assert excinfo.value.pre_send is False
 
 
 _INJECTED_SECRET = "SECRET_TRAILING_NL"

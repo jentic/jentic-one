@@ -15,6 +15,14 @@ the central handler maps to ``problem+json``.
 
 ``deadline_s <= 0`` disables the budget (the call runs unbounded) so an operator
 can opt out without removing the decorator from the chain.
+
+A buffered call's deadline error is ``pre_send`` (nothing reached the upstream)
+only when the transport reported, through the call's
+:class:`~jentic_one.broker.adapters.runners.dispatch.DispatchProbe`, that every
+send it started was ruled out — e.g. the budget ran out while the call queued
+for a per-host permit or slept between connect-failed retry attempts. A deadline
+that cuts off a send in progress may follow request bytes on the wire, so it
+stays "the upstream may have acted".
 """
 
 from __future__ import annotations
@@ -31,6 +39,7 @@ from jentic_one.broker.adapters.runners.base import (
     StreamingUpstreamRunner,
     UpstreamRunner,
 )
+from jentic_one.broker.adapters.runners.dispatch import track_dispatch
 from jentic_one.broker.core.exceptions import (
     AgentDirective,
     BrokerError,
@@ -72,11 +81,12 @@ class DeadlineRunner:
     async def run(self, request: RunnerRequest) -> RunnerResult:
         if self._deadline_s <= 0:
             return await self._inner.run(request)
-        try:
-            async with asyncio.timeout(self._deadline_s):
-                return await self._inner.run(request)
-        except TimeoutError as exc:
-            self._raise_deadline(exc)
+        with track_dispatch() as probe:
+            try:
+                async with asyncio.timeout(self._deadline_s):
+                    return await self._inner.run(request)
+            except TimeoutError as exc:
+                self._raise_deadline(exc, pre_send=probe.nothing_sent())
 
     @asynccontextmanager
     async def stream(self, request: RunnerRequest) -> AsyncIterator[StreamingResult]:
@@ -108,12 +118,13 @@ class DeadlineRunner:
         finally:
             await cm.__aexit__(None, None, None)
 
-    def _raise_deadline(self, exc: BaseException) -> NoReturn:
+    def _raise_deadline(self, exc: BaseException, *, pre_send: bool = False) -> NoReturn:
         _deadline_exceeded_total.add(1)
         raise DeadlineExceededError(
             detail=(f"The request exceeded the broker's {self._deadline_s:g}s overall deadline."),
             type="deadline_exceeded",
             directive=_deadline_directive(self._deadline_s),
+            pre_send=pre_send,
         ) from exc
 
 

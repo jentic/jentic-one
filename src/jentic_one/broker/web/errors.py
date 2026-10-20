@@ -65,8 +65,8 @@ def problem_response(
     return JSONResponse(body, status_code=status, media_type=_PROBLEM_JSON, headers=hdrs)
 
 
-async def handle_broker_error(_request: Request, exc: BrokerError) -> JSONResponse:
-    """Map any ``BrokerError`` to problem+json via the status table."""
+def broker_error_response(exc: BrokerError) -> JSONResponse:
+    """The problem+json response a ``BrokerError`` renders to (status from the table)."""
     status = status_for_broker_error(exc)
     return problem_response(
         status,
@@ -78,6 +78,11 @@ async def handle_broker_error(_request: Request, exc: BrokerError) -> JSONRespon
         headers=exc.headers or None,
         instance=exc.instance,
     )
+
+
+async def handle_broker_error(_request: Request, exc: BrokerError) -> JSONResponse:
+    """Map any ``BrokerError`` to problem+json via the status table."""
+    return broker_error_response(exc)
 
 
 async def handle_validation(_request: Request, exc: RequestValidationError) -> JSONResponse:

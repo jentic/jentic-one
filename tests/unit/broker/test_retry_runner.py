@@ -11,7 +11,7 @@ an ``Idempotency-Key``. Backoff is exponential + full jitter, an upstream
 from __future__ import annotations
 
 import contextlib
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 
 import pytest
 
@@ -23,7 +23,16 @@ from jentic_one.broker.adapters.runners.base import (
 )
 from jentic_one.broker.adapters.runners.deadline import DeadlineRunner
 from jentic_one.broker.adapters.runners.retry import RetryRunner, _is_idempotent
-from jentic_one.broker.core.exceptions import ErrorOrigin, UpstreamTimeoutError
+from jentic_one.broker.core.exceptions import (
+    BrokerError,
+    CircuitOpenError,
+    DeadlineExceededError,
+    ErrorOrigin,
+    RunnerUnavailableError,
+    UpstreamResponseTooLargeError,
+    UpstreamTimeoutError,
+    upstream_contact_ruled_out,
+)
 from jentic_one.broker.services.execution.pipeline import build_runner
 from jentic_one.shared.config import RetryConfig
 
@@ -168,6 +177,68 @@ async def test_error_propagates_after_exhausting_attempts() -> None:
     with pytest.raises(UpstreamTimeoutError):
         await runner.run(_post())
     assert inner.calls == 3
+
+
+# --- prior-attempt tracking (#1710) ----------------------------------------------
+
+
+def _circuit_open() -> CircuitOpenError:
+    return CircuitOpenError(detail="open", type="circuit_open")
+
+
+def _connect_failed() -> UpstreamTimeoutError:
+    return UpstreamTimeoutError(detail="connect", type="upstream_connect_failed", pre_send=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "first",
+    [
+        UpstreamTimeoutError(detail="read", type="upstream_timeout"),
+        _ok(503),
+    ],
+    ids=["read_timeout", "upstream_503"],
+)
+@pytest.mark.parametrize("last", [_circuit_open, _connect_failed], ids=["circuit", "connect"])
+async def test_final_pre_send_error_after_a_sent_attempt_is_flagged(
+    first: RunnerResult | Exception, last: Callable[[], BrokerError]
+) -> None:
+    """A keyed POST whose first attempt reached the upstream never reads as "nothing sent"."""
+    final = last()
+    inner = _ScriptedRunner([first, final])
+    runner = RetryRunner(inner, max_attempts=2, base_backoff_s=0.0)
+
+    with pytest.raises(BrokerError) as caught:
+        await runner.run(_post(keyed=True))
+
+    assert caught.value is final
+    assert caught.value.prior_attempt_sent is True
+    assert not upstream_contact_ruled_out(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_all_attempts_pre_send_stays_ruled_out() -> None:
+    """Every attempt failed before sending: the error still proves no upstream contact."""
+    inner = _ScriptedRunner([_connect_failed(), _circuit_open()])
+    runner = RetryRunner(inner, max_attempts=2, base_backoff_s=0.0)
+
+    with pytest.raises(CircuitOpenError) as caught:
+        await runner.run(_post(keyed=True))
+
+    assert caught.value.prior_attempt_sent is False
+    assert upstream_contact_ruled_out(caught.value)
+
+
+def test_upstream_contact_ruled_out_classification() -> None:
+    """Only pre-dispatch / connect-phase broker errors rule out upstream contact."""
+    assert upstream_contact_ruled_out(_connect_failed())
+    assert upstream_contact_ruled_out(_circuit_open())
+    assert upstream_contact_ruled_out(RunnerUnavailableError(detail="down"))
+    assert not upstream_contact_ruled_out(UpstreamTimeoutError(detail="read"))
+    assert not upstream_contact_ruled_out(BrokerError(detail="x", type="upstream_transport_error"))
+    assert not upstream_contact_ruled_out(DeadlineExceededError(detail="late"))
+    assert not upstream_contact_ruled_out(UpstreamResponseTooLargeError(detail="big"))
+    assert not upstream_contact_ruled_out(RuntimeError("bug"))
 
 
 # --- status-code retry decisions ------------------------------------------------
