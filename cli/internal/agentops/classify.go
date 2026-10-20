@@ -180,7 +180,16 @@ const (
 	// idempotency key, egress-blocked URL, request validation) — fix the request
 	// against the operation's contract.
 	RecoverContract BrokerErrorRecovery = "contract"
+	// RecoverEgress means the upstream host resolves into an allowlisted private
+	// subnet but broker.egress.allowed_internal_domains does not cover it
+	// (private_name_not_in_allowed_domains) — an operator config change, not
+	// something the request can fix.
+	RecoverEgress BrokerErrorRecovery = "egress"
 )
+
+// brokerEgressAllowlistProblemType is the wire type of a refusal only an
+// operator's broker.egress.allowed_internal_domains entry can fix.
+const brokerEgressAllowlistProblemType = "private_name_not_in_allowed_domains"
 
 // brokerCredentialProblemTypes are the wire types the broker emits when a
 // Jentic-Credential-Id/Name header names a credential it cannot resolve for the
@@ -194,15 +203,17 @@ var brokerCredentialProblemTypes = map[string]bool{
 
 // BrokerErrorRecoveryFor routes a broker resolve failure by status and exact
 // problem type: a 404 or operation_not_found is a discovery problem, a known
-// credential-resolution type is a header problem, and everything else is a
-// contract problem (never a bare identity check, which cannot fix a malformed
-// request).
+// credential-resolution type is a header problem, the egress allowlist gap is
+// an operator problem, and everything else is a contract problem (never a bare
+// identity check, which cannot fix a malformed request).
 func BrokerErrorRecoveryFor(status int, problemType string) BrokerErrorRecovery {
 	switch {
 	case status == http.StatusNotFound || problemType == "operation_not_found":
 		return RecoverOperation
 	case brokerCredentialProblemTypes[problemType]:
 		return RecoverCredential
+	case problemType == brokerEgressAllowlistProblemType:
+		return RecoverEgress
 	default:
 		return RecoverContract
 	}
@@ -326,6 +337,20 @@ func candidateLabels(candidates []any) []string {
 	return labels
 }
 
+// brokerEgressAllowlistHint is the recovery prose for RecoverEgress, shared by
+// the CLI and MCP lanes: no command or tool can fix it. It never advises
+// widening the allowlist — the suffix list is what keeps a public name out of
+// the operator's private subnet, so whether a host belongs on it is the
+// operator's call, made from the broker's upstream_egress_refused log. Kept
+// identical to the Python MCP twin via testdata/broker_egress_allowlist_hint.txt.
+const brokerEgressAllowlistHint = "The broker's egress policy refused the upstream host: it resolves into an " +
+	"allowed private subnet but broker.egress.allowed_internal_domains does not cover it. Only an operator " +
+	"can review that policy, and the broker has logged the refusal for them. Report it to your operator; " +
+	"do not retry, and do not ask for the allowlist to be widened."
+
+// BrokerEgressAllowlistHint returns the shared RecoverEgress recovery prose.
+func BrokerEgressAllowlistHint() string { return brokerEgressAllowlistHint }
+
 // brokerErrorActionable is the CLI recovery prose for each BrokerErrorRecovery,
 // so the advice is never noise for the other cases. A credential failure names
 // the relayed candidates inline: the root error reporter renders Actionable as
@@ -344,6 +369,8 @@ func brokerErrorActionable(rec BrokerErrorRecovery, candidates []any) string {
 			return hint + " Candidates: " + strings.Join(labels, ", ") + "."
 		}
 		return hint + " List your bound credentials with `jentic creds list`."
+	case RecoverEgress:
+		return brokerEgressAllowlistHint
 	default:
 		return "The broker rejected the request before it reached the upstream API. Re-check the " +
 			"operation's contract (`jentic apis inspect`) — the method, revision pin, payload size, " +

@@ -1,0 +1,1 @@
+The broker's egress policy refused the upstream host: it resolves into an allowed private subnet but broker.egress.allowed_internal_domains does not cover it. Only an operator can review that policy, and the broker has logged the refusal for them. Report it to your operator; do not retry, and do not ask for the allowlist to be widened.

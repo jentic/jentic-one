@@ -2,6 +2,8 @@ package agentops
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -166,6 +168,7 @@ func TestBrokerErrorRecoveryForMatchesExactTypes(t *testing.T) {
 		{400, "credential_id_not_found", RecoverCredential},
 		{400, "credential_name_not_found", RecoverCredential},
 		{400, "invalid_upstream_url", RecoverContract},
+		{400, "private_name_not_in_allowed_domains", RecoverEgress},
 		{422, "unknown_revision_pin", RecoverContract},
 		{422, "about:blank#validation", RecoverContract},
 		{428, "mutation_requires_idempotency_key", RecoverContract},
@@ -209,6 +212,15 @@ func TestBrokerErrorActionableBranches(t *testing.T) {
 			[]string{"apis inspect"},
 			[]string{"creds list", "jentic search"},
 		},
+		{
+			// #1722: an internal host outside allowed_internal_domains is an
+			// operator policy decision, never a request-contract fix, and the
+			// hint must never coach the caller into getting the list widened.
+			"egress allowlist gap", 400,
+			`{"type":"private_name_not_in_allowed_domains","title":"not covered"}`,
+			[]string{"operator", "broker.egress.allowed_internal_domains", "do not retry", "do not ask for the allowlist to be widened"},
+			[]string{"apis inspect", "creds list", "jentic search", "add a suffix", "then retry"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -227,5 +239,18 @@ func TestBrokerErrorActionableBranches(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestBrokerEgressAllowlistHintMatchesSharedText pins the Go hint to the bytes
+// the Python MCP twin (src/jentic_one/mcp/execute.py) is also tested against,
+// so the two lanes can't drift (#1722).
+func TestBrokerEgressAllowlistHintMatchesSharedText(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "broker_egress_allowlist_hint.txt"))
+	if err != nil {
+		t.Fatalf("read shared hint: %v", err)
+	}
+	if want := strings.TrimSuffix(string(raw), "\n"); BrokerEgressAllowlistHint() != want {
+		t.Fatalf("hint drifted from testdata:\n got %q\nwant %q", BrokerEgressAllowlistHint(), want)
 	}
 }

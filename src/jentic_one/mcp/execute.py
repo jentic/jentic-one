@@ -255,26 +255,48 @@ _BROKER_CREDENTIAL_PROBLEM_TYPES = frozenset(
     {"credential_id_not_found", "credential_name_not_found"}
 )
 
+#: The wire type of a refusal only an operator's
+#: ``broker.egress.allowed_internal_domains`` entry can fix (Go:
+#: ``brokerEgressAllowlistProblemType``, routed to ``RecoverEgress``).
+_BROKER_EGRESS_ALLOWLIST_PROBLEM_TYPE = "private_name_not_in_allowed_domains"
+
+#: Recovery prose for the egress allowlist gap, kept identical to the Go
+#: ``brokerEgressAllowlistHint`` (both are tested against
+#: ``cli/internal/agentops/testdata/broker_egress_allowlist_hint.txt``). It never
+#: advises widening the allowlist: that is the operator's call.
+_BROKER_EGRESS_ALLOWLIST_HINT = (
+    "The broker's egress policy refused the upstream host: it resolves into an allowed "
+    "private subnet but broker.egress.allowed_internal_domains does not cover it. Only an "
+    "operator can review that policy, and the broker has logged the refusal for them. Report "
+    "it to your operator; do not retry, and do not ask for the allowlist to be widened."
+)
+
 
 def _broker_error_next_tool(status: int, problem_type: str) -> str:
     """Recovery pointer for a broker resolve failure (Go: ``brokerErrorNextTool``
     over ``agentops.BrokerErrorRecoveryFor``).
 
     A 404 or ``operation_not_found`` needs search_apis; a known
-    credential-resolution type gets whoami; any other broker 4xx — a contract or
-    payload error — points at inspect_operation, never an identity-check loop
-    that cannot fix a malformed request.
+    credential-resolution type gets whoami; the egress allowlist gap gets whoami
+    as a placeholder (only an operator can act on it and no tool can; the
+    pointer an operator-only ``action_denied`` gets); any other broker 4xx — a
+    contract or payload error — points at inspect_operation, never an
+    identity-check loop that cannot fix a malformed request.
     """
     if status == 404 or problem_type == "operation_not_found":
         return "search_apis"
     if problem_type in _BROKER_CREDENTIAL_PROBLEM_TYPES:
         return "whoami"
+    if problem_type == _BROKER_EGRESS_ALLOWLIST_PROBLEM_TYPE:
+        return "whoami"
     return "inspect_operation"
 
 
-def _broker_error_actionable(next_tool: str) -> str:
-    """MCP-lane recovery prose for a broker resolve failure, keyed on next_tool
-    (Go: ``brokerErrorToolHint``) so the two never disagree."""
+def _broker_error_actionable(next_tool: str, problem_type: str) -> str:
+    """MCP-lane recovery prose for a broker resolve failure, keyed on the same
+    routing as next_tool (Go: ``brokerErrorToolHint``) so the two never disagree."""
+    if problem_type == _BROKER_EGRESS_ALLOWLIST_PROBLEM_TYPE:
+        return _BROKER_EGRESS_ALLOWLIST_HINT
     if next_tool == "search_apis":
         return (
             "The broker has no such operation registered. Call search_apis to find the right "
@@ -338,7 +360,7 @@ def classify_broker_error(status: int, headers: httpx.Headers, body: bytes) -> T
         CODE_RESOLVE_FAILED,
         "the broker could not resolve this call, so it never reached the upstream API "
         f"(HTTP {status}): {reason}",
-        actionable=_broker_error_actionable(next_tool),
+        actionable=_broker_error_actionable(next_tool, problem_type),
         details=details,
         next_tool=next_tool,
         extra={"retryable": False},

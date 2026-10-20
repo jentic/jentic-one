@@ -944,18 +944,24 @@ _ALLOWED = [
     pytest.param(_ALLOWLIST, None, id="inherited-from-broker"),
     pytest.param(None, _ALLOWLIST, id="control-override"),
 ]
-# ... and under which it is still refused.
+_BLOCKED = "blocked address range"
+_NO_DOMAIN = "matches no allowed internal domain suffix"
+# ... and under which it is still refused, with the reason the refusal names:
+# an address in an allowed subnet whose name matches no allowed suffix is the
+# domain gap, anything else a blocked address.
 _REFUSED = [
-    pytest.param(None, None, id="no-allowlist"),
-    pytest.param(_ALLOWLIST, _STRICT, id="control-override-stricter-than-broker"),
+    pytest.param(None, None, _BLOCKED, id="no-allowlist"),
+    pytest.param(_ALLOWLIST, _STRICT, _BLOCKED, id="control-override-stricter-than-broker"),
     pytest.param(
         None,
         {**_ALLOWLIST, "allowed_internal_domains": [".other.internal"]},
+        _NO_DOMAIN,
         id="host-not-allowlisted",
     ),
     pytest.param(
         None,
         {**_ALLOWLIST, "allowed_private_subnets": ["10.60.0.0/16"]},
+        _BLOCKED,
         id="subnet-not-allowlisted",
     ),
 ]
@@ -980,18 +986,19 @@ async def test_create_oauth2_accepts_allowlisted_internal_token_url(
     assert redacted.details.token_url == _INTERNAL_TOKEN_URL
 
 
-@pytest.mark.parametrize(("broker", "control"), _REFUSED)
+@pytest.mark.parametrize(("broker", "control", "reason"), _REFUSED)
 async def test_create_oauth2_refuses_internal_token_url_outside_allowlist(
     integration_config: AppConfig,
     clean_credentials: None,
     broker: dict[str, Any] | None,
     control: dict[str, Any] | None,
+    reason: str,
 ) -> None:
     config = _egress_config(integration_config, broker=broker, control=control)
     async with _context(config) as ctx:
         with (
             _internal_dns(_INTERNAL_IP),
-            pytest.raises(InvalidCredentialInputError, match="blocked address range"),
+            pytest.raises(InvalidCredentialInputError, match=reason),
         ):
             await CredentialService(ctx).create(
                 _oauth2_create(_INTERNAL_TOKEN_URL), identity=_ADMIN_IDENTITY
@@ -1065,12 +1072,13 @@ async def test_refresh_posts_to_allowlisted_internal_token_url(
     assert sent[0].extensions["sni_hostname"] == _INTERNAL_HOST
 
 
-@pytest.mark.parametrize(("broker", "control"), _REFUSED)
+@pytest.mark.parametrize(("broker", "control", "reason"), _REFUSED)
 async def test_refresh_refuses_internal_token_url_outside_allowlist(
     integration_config: AppConfig,
     clean_credentials: None,
     broker: dict[str, Any] | None,
     control: dict[str, Any] | None,
+    reason: str,
 ) -> None:
     config = _egress_config(integration_config, broker=broker, control=control)
     async with _context(config) as ctx:
@@ -1083,7 +1091,7 @@ async def test_refresh_refuses_internal_token_url_outside_allowlist(
             await _refresh(ctx, credential_id)
     assert exc_info.value.status == 0
     assert "unsafe upstream URL" in exc_info.value.body
-    assert "blocked address range" in exc_info.value.body
+    assert reason in exc_info.value.body
     assert sent == []
 
 

@@ -18,6 +18,8 @@ permission rules still allow),
 evaluated at run time rather than trusted from enqueue time. A denied job
 completes with a ``failed`` result carrying the problem body the sync route
 would have returned; no credential is injected and no upstream call is made.
+An upstream URL the egress policy refuses completes the job the same way, with
+the problem the sync route gives an authorized caller — never a requeue.
 
 ``shared/jobs/`` must not import ``broker/`` (arch boundary): the
 ``ExecutionAuthorizer``, ``CredentialInjector`` and ``UpstreamExecutor`` are
@@ -35,6 +37,12 @@ from urllib.parse import urlencode, urlparse, urlunparse
 import structlog
 
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.broker.egress_refusal import (
+    egress_refusal,
+    egress_refusal_problem,
+    log_egress_refusal,
+    upstream_host,
+)
 from jentic_one.shared.config import SecurityConfig
 from jentic_one.shared.crypto.encryption import EncryptionService
 from jentic_one.shared.db.connectivity import involves_database_error, redact_sql
@@ -222,7 +230,14 @@ class ExecutionHandler:
         if body_b64:
             body = base64.b64decode(body_b64)
 
-        upstream_url = await validate_upstream_url_async(upstream_url, self._egress)
+        # An egress refusal is deterministic: it fails the job terminally (no
+        # requeue) once the re-authorization below has decided whether the
+        # caller may see a domain-suffix gap's distinct type.
+        egress_refusal_exc: ValueError | None = None
+        try:
+            upstream_url = await validate_upstream_url_async(upstream_url, self._egress)
+        except ValueError as exc:
+            egress_refusal_exc = exc
 
         # Run-time re-authorization (before any credential is touched). The
         # enqueue-time selection rides along only as the disambiguation input;
@@ -262,6 +277,18 @@ class ExecutionHandler:
                 )
             allowed = verdict.allowed_credential_ids
             pinned_credential_id = verdict.credential_id
+        if egress_refusal_exc is not None:
+            return await self._refuse_egress(
+                db,
+                egress_refusal_exc,
+                job_id=job_id,
+                execution_id=execution_id,
+                trace_id=trace_id,
+                upstream_url=upstream_url,
+                created_by=created_by,
+                actor_type=actor_type,
+                payload=payload,
+            )
 
         # The request headers the broker kept for the run (Content-Type and
         # friends); injected credentials are applied over them.
@@ -292,7 +319,20 @@ class ExecutionHandler:
             credential_name = injection.credential_name
             signing = injection.signing
             if injection.server_variables or server_variable_defaults:
-                upstream_url = await validate_upstream_url_async(upstream_url, self._egress)
+                try:
+                    upstream_url = await validate_upstream_url_async(upstream_url, self._egress)
+                except ValueError as exc:
+                    return await self._refuse_egress(
+                        db,
+                        exc,
+                        job_id=job_id,
+                        execution_id=execution_id,
+                        trace_id=trace_id,
+                        upstream_url=upstream_url,
+                        created_by=created_by,
+                        actor_type=actor_type,
+                        payload=payload,
+                    )
 
         status = ExecutionStatus.COMPLETED
         http_status: int | None = None
@@ -414,6 +454,42 @@ class ExecutionHandler:
 
         return JobResultPayload(body=result_body, content_type=content_type)
 
+    async def _refuse_egress(
+        self,
+        db: TransactionalDatabase,
+        exc: ValueError,
+        *,
+        job_id: str,
+        execution_id: str,
+        trace_id: str,
+        upstream_url: str,
+        created_by: str,
+        actor_type: str,
+        payload: dict[str, Any],
+    ) -> JobResultPayload:
+        """Fail a job whose upstream URL the egress policy refuses, terminally.
+
+        The job has passed run-time re-authorization (when an authorizer is
+        wired), so the caller gets the same problem the sync route gives an
+        authorized caller. A ``failed`` result completes the job: a retry would
+        meet the same policy, so it is never requeued.
+        """
+        problem = egress_refusal_problem(egress_refusal(exc, authorized=True))
+        log_egress_refusal(
+            exc, host=upstream_host(upstream_url), stage="queued", problem_type=problem["type"]
+        )
+        return await self._fail_with_problem(
+            db,
+            job_id=job_id,
+            execution_id=execution_id,
+            trace_id=trace_id,
+            problem=problem,
+            error_msg=f"Egress refused ({problem['type']})",
+            created_by=created_by,
+            actor_type=actor_type,
+            payload=payload,
+        )
+
     async def _deny(
         self,
         db: TransactionalDatabase,
@@ -426,22 +502,48 @@ class ExecutionHandler:
         actor_type: str,
         payload: dict[str, Any],
     ) -> JobResultPayload:
-        """Record a run-time authorization denial like any other failed execution.
+        """Record a run-time authorization denial like any other failed execution."""
+        problem_type = str(problem.get("type") or "about:blank")
+        logger.info("queued_execution_denied", job_id=job_id, problem_type=problem_type)
+        return await self._fail_with_problem(
+            db,
+            job_id=job_id,
+            execution_id=execution_id,
+            trace_id=trace_id,
+            problem=problem,
+            error_msg=f"Authorization denied ({problem_type})",
+            created_by=created_by,
+            actor_type=actor_type,
+            payload=payload,
+        )
+
+    async def _fail_with_problem(
+        self,
+        db: TransactionalDatabase,
+        *,
+        job_id: str,
+        execution_id: str,
+        trace_id: str,
+        problem: dict[str, Any],
+        error_msg: str,
+        created_by: str,
+        actor_type: str,
+        payload: dict[str, Any],
+    ) -> JobResultPayload:
+        """Complete a job that never reached the upstream as a failed execution.
 
         Same outcome shape as an upstream/pipeline failure — ``EXECUTION_FAILED``
         lifecycle event (+ the repeated-failure check) and a ``failed`` job
         result — plus the ``problem`` body the sync route would have returned,
         so a polling caller gets the same ``type``/``status``/directive.
         """
-        problem_type = str(problem.get("type") or "about:blank")
-        logger.info("queued_execution_denied", job_id=job_id, problem_type=problem_type)
         await self._write_lifecycle(
             db,
             job_id=job_id,
             execution_id=execution_id,
             trace_id=trace_id,
             status=ExecutionStatus.FAILED,
-            error_msg=f"Authorization denied ({problem_type})",
+            error_msg=error_msg,
             created_by=created_by,
             actor_type=actor_type,
             toolkit_id=payload.get("toolkit_id"),

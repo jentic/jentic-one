@@ -32,6 +32,7 @@ from jentic_one.broker.adapters.runners.base import (
 from jentic_one.broker.core.exceptions import (
     ApprovalHoldUnavailableError,
     ApprovalPendingLimitError,
+    BrokerError,
     IdempotencyConflictError,
     IdempotencyInProgressError,
     OperationNotFoundError,
@@ -40,6 +41,7 @@ from jentic_one.broker.core.exceptions import (
     UpstreamUrlNotAllowedError,
     approval_pending_limit_directive,
     switch_toolkit_directive,
+    upstream_url_not_allowed,
 )
 from jentic_one.broker.core.execution import mint_execution_id
 from jentic_one.broker.core.headers import (
@@ -96,6 +98,7 @@ from jentic_one.broker.web.deps import (
 from jentic_one.broker.web.streaming import StreamingOutcome
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.broker import Broker
+from jentic_one.shared.broker.egress_refusal import log_egress_refusal, upstream_host
 from jentic_one.shared.broker.protocols import (
     AgentRuleEvaluatorProtocol,
     CredentialDeriverProtocol,
@@ -131,7 +134,11 @@ from jentic_one.shared.tracing import (
     pack_jentic_tracestate,
 )
 from jentic_one.shared.url import apply_server_variables, has_host_server_variable
-from jentic_one.shared.url_validation import validate_upstream_url_async
+from jentic_one.shared.url_validation import (
+    EgressPolicyError,
+    normalise_upstream_url,
+    validate_upstream_url_async,
+)
 from jentic_one.shared.web.deps import get_ctx
 from jentic_one.shared.web.links import build_link
 from jentic_one.shared.web.protocols import UnregisteredUrlHandler
@@ -497,6 +504,35 @@ async def _handle_unregistered_url(
     return response
 
 
+def _refuse_upstream_url(
+    exc: ValueError, *, url: str, stage: str, authorized: bool
+) -> UpstreamUrlNotAllowedError:
+    """Map an egress refusal to the caller's 400 and log the real reason for operators."""
+    refusal = upstream_url_not_allowed(exc, authorized=authorized)
+    log_egress_refusal(exc, host=upstream_host(url), stage=stage, problem_type=refusal.type)
+    return refusal
+
+
+async def _preflight_egress(raw_url: str, ctx: Context) -> tuple[str, EgressPolicyError | None]:
+    """Validate the caller's raw URL; return ``(url, withheld egress-policy refusal)``.
+
+    A malformed URL (a plain ``ValueError``) raises here. Every refusal of a
+    target (:class:`EgressPolicyError`: a blocked name, a blocked resolved
+    address, a domain-suffix gap) is returned instead, so ``_handle`` raises it
+    after discovery and authorization. Every target refusal thus does the same
+    registry and authorization work and leaves the same events and counters,
+    whatever its reason, so neither the body nor the work done tells an
+    unprivileged caller which names resolve into the operator's trusted subnet.
+    Only an authorized caller sees the distinct domain-gap type.
+    """
+    try:
+        return await validate_upstream_url_async(raw_url, ctx.config.broker.egress), None
+    except EgressPolicyError as exc:
+        return normalise_upstream_url(raw_url), exc
+    except ValueError as exc:
+        raise _refuse_upstream_url(exc, url=raw_url, stage="preflight", authorized=False) from exc
+
+
 async def _handle(
     request: Request,
     method: str,
@@ -515,97 +551,119 @@ async def _handle(
         )
 
     raw_url = reconstruct_upstream_url(request.scope)
+    # An egress-policy refusal is withheld (see _preflight_egress): nothing
+    # below makes an outbound call, and the refusal is raised once
+    # authorization has settled who may see its reason.
+    upstream_url, withheld_refusal = await _preflight_egress(raw_url, ctx)
+
     try:
-        upstream_url = await validate_upstream_url_async(raw_url, ctx.config.broker.egress)
-    except ValueError as exc:
-        raise UpstreamUrlNotAllowedError(detail=str(exc), type="invalid_upstream_url") from exc
+        resolver: RegistryResolverProtocol = request.app.state.broker_registry_resolver
 
-    resolver: RegistryResolverProtocol = request.app.state.broker_registry_resolver
+        # Parse the multi-valued Jentic-Revision header at the edge. A malformed
+        # value raises InvalidRevisionPinError (→ 422) here, before any registry
+        # lookup — never an uncaught 500 mid-discovery.
+        pins = parse_revisions(_revision_header(request))
 
-    # Parse the multi-valued Jentic-Revision header at the edge. A malformed
-    # value raises InvalidRevisionPinError (→ 422) here, before any registry
-    # lookup — never an uncaught 500 mid-discovery.
-    pins = parse_revisions(_revision_header(request))
-
-    resolved = await discover(resolver, method=method, url=upstream_url)
-    pinned_revisions: dict[str, str] | None = None
-    if resolved is None and pins:
-        # No live revision serves this URL; a pinned (e.g. never-promoted draft)
-        # revision still may.
-        via_pin = await discover_via_pins(
-            resolver, method=method, url=upstream_url, pins=pins, identity=identity
-        )
-        if via_pin is not None:
-            resolved, pinned_revision_id = via_pin
-            pinned_revisions = {
-                f"{resolved.api.vendor}:{resolved.api.name}:{resolved.api.version}": str(
-                    pinned_revision_id
-                )
-            }
-    if resolved is None:
-        handled = await _handle_unregistered_url(
-            request, method=method, upstream_url=upstream_url, identity=identity
-        )
-        if handled is not None:
-            return handled
-        raise OperationNotFoundError(
-            detail="Operation not found — unregistered upstream URL.",
-            type="operation_not_found",
-        )
-
-    # If a pin applies to the discovered API, translate it to a revision_id
-    # in-process (no control-plane HTTP) and re-resolve against the pinned spec.
-    if pins and pinned_revisions is None:
-        revision_id = await resolve_pin_for_api(
-            resolver, api=resolved.api, pins=pins, identity=identity
-        )
-        if revision_id is not None:
-            pinned = await discover(
-                resolver, method=method, url=upstream_url, revision_id=revision_id
+        resolved = await discover(resolver, method=method, url=upstream_url)
+        pinned_revisions: dict[str, str] | None = None
+        if resolved is None and pins:
+            # No live revision serves this URL; a pinned (e.g. never-promoted draft)
+            # revision still may.
+            via_pin = await discover_via_pins(
+                resolver, method=method, url=upstream_url, pins=pins, identity=identity
             )
-            if pinned is None:
-                raise OperationNotFoundError(
-                    detail="Operation not found in the pinned revision.",
-                    type="operation_not_found",
+            if via_pin is not None:
+                resolved, pinned_revision_id = via_pin
+                pinned_revisions = {
+                    f"{resolved.api.vendor}:{resolved.api.name}:{resolved.api.version}": str(
+                        pinned_revision_id
+                    )
+                }
+        if resolved is None:
+            # The unregistered-URL hook only ever sees an egress-approved URL;
+            # a withheld refusal falls to the 404, which the except below turns
+            # into the generic refusal.
+            handled = (
+                await _handle_unregistered_url(
+                    request, method=method, upstream_url=upstream_url, identity=identity
                 )
-            resolved = pinned
-            pinned_revisions = {
-                f"{resolved.api.vendor}:{resolved.api.name}:{resolved.api.version}": str(
-                    revision_id
-                )
-            }
+                if withheld_refusal is None
+                else None
+            )
+            if handled is not None:
+                return handled
+            raise OperationNotFoundError(
+                detail="Operation not found — unregistered upstream URL.",
+                type="operation_not_found",
+            )
 
-    ctx_req = _context_from_discovery(
-        upstream_url=upstream_url, method=method, request=request, resolved=resolved
-    )
-    ctx_req.pinned_revisions = pinned_revisions
-    # Capture whether the spec's host is templated (server variable) *before*
-    # credential injection substitutes it — this is the signal that drives the
-    # region-mismatch hint on an upstream 401/403 (#638).
-    ctx_req.has_server_variable = has_host_server_variable(upstream_url)
-    # Direct agent→credential bindings (theme-5): every caller kind rides this
-    # path — retired toolkit keys resolve as successor agents. The legacy
-    # toolkit-derivation path was deleted in Phase 6b.
-    authorization = await authorize_execution(
-        ctx=ctx,
-        identity=identity,
-        api=resolved.api,
-        operation_id=resolved.operation.id,
-        method=method,
-        path=rule_request_path(
-            resolved.operation.relative_path, upstream_url, operation_id=resolved.operation.id
-        ),
-        upstream_url=upstream_url,
-        instance=request.url.path,
-        credential_deriver=credential_deriver,
-        agent_rule_evaluator=agent_rule_evaluator,
-        credential_name=request.headers.get("jentic-credential-name"),
-        credential_id=request.headers.get("jentic-credential-id"),
-        request_server_variables=ctx_req.server_variables,
-        server_variables_unresolved=ctx_req.server_variables_unresolved,
-        trace_id=ctx_req.trace_id,
-        operation_path=resolved.operation.path,
-    )
+        # If a pin applies to the discovered API, translate it to a revision_id
+        # in-process (no control-plane HTTP) and re-resolve against the pinned spec.
+        if pins and pinned_revisions is None:
+            revision_id = await resolve_pin_for_api(
+                resolver, api=resolved.api, pins=pins, identity=identity
+            )
+            if revision_id is not None:
+                pinned = await discover(
+                    resolver, method=method, url=upstream_url, revision_id=revision_id
+                )
+                if pinned is None:
+                    raise OperationNotFoundError(
+                        detail="Operation not found in the pinned revision.",
+                        type="operation_not_found",
+                    )
+                resolved = pinned
+                pinned_revisions = {
+                    f"{resolved.api.vendor}:{resolved.api.name}:{resolved.api.version}": str(
+                        revision_id
+                    )
+                }
+
+        ctx_req = _context_from_discovery(
+            upstream_url=upstream_url, method=method, request=request, resolved=resolved
+        )
+        ctx_req.pinned_revisions = pinned_revisions
+        # Capture whether the spec's host is templated (server variable) *before*
+        # credential injection substitutes it — this is the signal that drives the
+        # region-mismatch hint on an upstream 401/403 (#638).
+        ctx_req.has_server_variable = has_host_server_variable(upstream_url)
+        # Direct agent→credential bindings (theme-5): every caller kind rides this
+        # path — retired toolkit keys resolve as successor agents. The legacy
+        # toolkit-derivation path was deleted in Phase 6b.
+        authorization = await authorize_execution(
+            ctx=ctx,
+            identity=identity,
+            api=resolved.api,
+            operation_id=resolved.operation.id,
+            method=method,
+            path=rule_request_path(
+                resolved.operation.relative_path, upstream_url, operation_id=resolved.operation.id
+            ),
+            upstream_url=upstream_url,
+            instance=request.url.path,
+            credential_deriver=credential_deriver,
+            agent_rule_evaluator=agent_rule_evaluator,
+            credential_name=request.headers.get("jentic-credential-name"),
+            credential_id=request.headers.get("jentic-credential-id"),
+            request_server_variables=ctx_req.server_variables,
+            server_variables_unresolved=ctx_req.server_variables_unresolved,
+            trace_id=ctx_req.trace_id,
+            operation_path=resolved.operation.path,
+        )
+    except BrokerError:
+        if withheld_refusal is None:
+            raise
+        # The caller is not authorized for a registered operation, so any
+        # withheld refusal gets the generic body: its reason (e.g. a
+        # domain-suffix gap) would tell it which names resolve into the subnet.
+        raise _refuse_upstream_url(
+            withheld_refusal, url=upstream_url, stage="preflight", authorized=False
+        ) from withheld_refusal
+    if withheld_refusal is not None:
+        raise _refuse_upstream_url(
+            withheld_refusal, url=upstream_url, stage="preflight", authorized=True
+        ) from withheld_refusal
+
     selected_credential = authorization.selected_credential
     allowed_credential_ids = authorization.allowed_credential_ids
     if selected_credential is not None:
@@ -749,7 +807,10 @@ async def _execute_buffered(
         try:
             await validate_upstream_url_async(ctx_req.upstream_url, ctx.config.broker.egress)
         except ValueError as exc:
-            raise UpstreamUrlNotAllowedError(detail=str(exc), type="invalid_upstream_url") from exc
+            # Re-validated after authorization (server variables substituted).
+            raise _refuse_upstream_url(
+                exc, url=ctx_req.upstream_url, stage="preflight", authorized=True
+            ) from exc
     forwarded = forward_headers(request.headers, auth_headers)
 
     broker = _resolve_broker(request, runner)
@@ -811,7 +872,10 @@ async def _handle_streaming(
         try:
             await validate_upstream_url_async(ctx_req.upstream_url, ctx.config.broker.egress)
         except ValueError as exc:
-            raise UpstreamUrlNotAllowedError(detail=str(exc), type="invalid_upstream_url") from exc
+            # Re-validated after authorization (server variables substituted).
+            raise _refuse_upstream_url(
+                exc, url=ctx_req.upstream_url, stage="preflight", authorized=True
+            ) from exc
     forwarded = forward_headers(request.headers, auth_headers)
 
     execution_id = mint_execution_id()
