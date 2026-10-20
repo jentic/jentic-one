@@ -160,6 +160,21 @@ def test_unknown_auth_type_fails_validation() -> None:
     assert "unknown auth type 'bearer_from_env'" in _errors(_cfg(sources=[src]))
 
 
+def test_registered_credentialed_auth_type_is_still_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Source requests send no auth headers, so a registered non-``none`` type
+    fails startup instead of fetching unauthenticated."""
+    monkeypatch.setitem(auth_module._RESOLVERS, "token", lambda _cfg: auth_module.NoAuthResolver())
+    src = {
+        "slug": "public",
+        "kind": "git-manifest",
+        "settings": {"url": "https://x/a.json"},
+        "auth": {"type": "token"},
+    }
+    assert "'token' is not supported" in _errors(_cfg(sources=[src]))
+
+
 def test_invalid_slug_is_rejected_at_load() -> None:
     with pytest.raises(ValueError, match="must match"):
         _cfg(sources=[{"slug": "Bad_Slug", "kind": "git-manifest"}])

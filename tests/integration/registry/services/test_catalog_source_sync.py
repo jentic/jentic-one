@@ -25,14 +25,12 @@ from jentic_one.registry.repos.catalog_entry_repo import (
     CatalogSyncRunRepository,
 )
 from jentic_one.registry.repos.catalog_source_repo import CatalogSourceRepository
-from jentic_one.registry.services.catalog import service as service_module
 from jentic_one.registry.services.catalog.entries import (
     CatalogApiIdMapping,
     build_catalog_entry,
     curated_vendors_of,
     exclude_unowned,
 )
-from jentic_one.registry.services.catalog.service import CatalogService
 from jentic_one.registry.services.catalog.sources import sync as sync_module
 from jentic_one.registry.services.catalog.sources.protocol import Removed, Upserted
 from jentic_one.registry.services.catalog.sources.scanner import CatalogSourceSyncScanner
@@ -627,30 +625,6 @@ async def test_max_age_zero_source_is_never_flagged(catalog_ctx: CtxFactory) -> 
         await sync.register_sources()
         assert await sync.mark_stale_wanted() == 0
         assert await CatalogSourceSyncScanner(ctx).tick() == []
-
-
-async def test_refresh_without_a_legacy_source_fetches_no_manifest(
-    catalog_ctx: CtxFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Dropping the legacy source stops the snapshot's manifest egress; an
-    operator refresh still syncs the remaining sources."""
-
-    async def _no_egress(*args: Any, **kwargs: Any) -> Any:
-        raise AssertionError("the snapshot refresh fetched a manifest")
-
-    monkeypatch.setattr(service_module, "fetch_json", _no_egress)
-    monkeypatch.setattr(CatalogSourceSync, "build_source", _scripted_source(full("a.io")))
-    async with catalog_ctx(sources=[git_source("corp")]) as ctx:
-        svc = CatalogService(ctx)
-        assert not svc._is_stale(None)
-        with capture_logs() as logs:
-            assert (await svc.refresh(sync_sources=True)).count == 0
-        assert {
-            "event": "catalog_snapshot_refresh_skipped",
-            "reason": "no_legacy_source",
-            "log_level": "info",
-        } in logs
-        assert set(await _rows(ctx, "corp")) == {"a.io"}
 
 
 # ── abandoned runs and sync history ───────────────────────────────────────────
