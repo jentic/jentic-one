@@ -26,6 +26,7 @@ from jentic_one.shared.db.connectivity import (
 )
 from jentic_one.shared.db.errors import DatabaseCommitOutcomeUnknownError
 from jentic_one.shared.events import emit_event
+from jentic_one.shared.jobs.errors import RetryLaterJobError, TerminalJobError
 from jentic_one.shared.jobs.handlers import JobHandlerRegistry, JobResultPayload
 from jentic_one.shared.jobs.hold import (
     PROBLEM_CONTENT_TYPE,
@@ -296,12 +297,25 @@ class WorkerLoop:
                         )
                     else:
                         logger.exception("job_failed", job_id=job.id, attempts=job.attempts)
+                    if isinstance(exc, TerminalJobError):
+                        # The handler knows no retry can succeed: fail now
+                        # rather than spend the retry budget.
+                        prefix = "Import failed" if kind == JobKind.IMPORT else "Job failed"
+                        await self._terminal_job(
+                            job.id, JobStatus.FAILED, error, event_summary_prefix=prefix
+                        )
+                        return True
                 # Same retry contract as any failed attempt: requeue with
                 # backoff, dead-letter past the budget. If the database is
                 # still unreachable this raises a connection-loss error to
                 # run(), which owns the outage warning and backoff; the job
                 # stays RUNNING and is reclaimed after its visibility timeout.
-                await self._handle_failure(job, error)
+                min_delay_s = (
+                    exc.retry_after_s
+                    if cause is None and isinstance(exc, RetryLaterJobError)
+                    else None
+                )
+                await self._handle_failure(job, error, min_delay_s=min_delay_s)
             return True
         finally:
             self._idle.set()
@@ -459,7 +473,9 @@ class WorkerLoop:
             except Exception:
                 logger.warning("emit_event_failed", job_id=job_id)
 
-    async def _handle_failure(self, job: Any, error: str) -> None:
+    async def _handle_failure(
+        self, job: Any, error: str, *, min_delay_s: float | None = None
+    ) -> None:
         """Requeue a failed job with backoff, or dead-letter it past the budget.
 
         ``attempts`` was incremented at claim time, so it is the count of claims
@@ -505,6 +521,9 @@ class WorkerLoop:
             return
 
         delay_s = _backoff_s(attempts, self._config)
+        if min_delay_s is not None:
+            # The failure said how long to wait (a source's Retry-After).
+            delay_s = max(delay_s, min_delay_s)
         requeue_at = datetime.now(UTC) + timedelta(seconds=delay_s)
         async with self._db.transaction() as session:
             result = await session.execute(

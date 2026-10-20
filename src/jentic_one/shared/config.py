@@ -2146,15 +2146,22 @@ class SourceAuthConfig(BaseModel):
     type: str = Field(
         default="none",
         description=(
-            "Only none is accepted (startup fails on any other type); credentialed "
-            "source auth is not supported yet."
+            "Auth resolver type; it must be registered. Only none is built in; "
+            "startup fails on an unknown type."
         ),
     )
     env: str | None = Field(
-        default=None, description="Reserved for credentialed source auth; not used yet."
+        default=None,
+        description=(
+            "Name of the environment variable holding the secret, for a credentialed "
+            "resolver to read; ignored by none."
+        ),
     )
     header: str | None = Field(
-        default=None, description="Reserved for credentialed source auth; not used yet."
+        default=None,
+        description=(
+            "Request header a credentialed resolver sends the secret in; ignored by none."
+        ),
     )
 
 
@@ -2228,6 +2235,38 @@ class CatalogSourceConfig(BaseModel):
         default=60,
         ge=3,
         description="Cross-process sync lease, renewed every third of it.",
+    )
+    fetch_concurrency: int = Field(
+        default=4,
+        ge=1,
+        le=64,
+        description=(
+            "Most in-flight requests to this source per process (listing and spec "
+            "fetches together)."
+        ),
+    )
+    requests_per_second: float | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Request rate shared by every process (a database-backed token bucket). "
+            "null limits concurrency only, with no bucket and no database round trip."
+        ),
+    )
+    burst: int = Field(
+        default=4,
+        ge=1,
+        description="Token bucket capacity; only used with requests_per_second.",
+    )
+    interactive_share: float = Field(
+        default=0.5,
+        ge=0.0,
+        lt=1.0,
+        description=(
+            "Share of the concurrency slots and of the burst kept for interactive "
+            "preview and import, so background work (listings, the update sweep) "
+            "never takes the last of them."
+        ),
     )
     auth: SourceAuthConfig = Field(default_factory=SourceAuthConfig)
     readers: SourceReadersConfig | None = Field(

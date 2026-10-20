@@ -1,8 +1,9 @@
 """CatalogService — browse, preview and import over the configured catalog sources.
 
 Layering: this service coordinates I/O — the process-local snapshot of
-``catalog_entries`` (``snapshot.py``), the spec fetches (``fetch.py``), the
-source syncs (``sources/sync.py``) and the import job queue (``enqueue_job``).
+``catalog_entries`` (``snapshot.py``), the spec fetches through each entry's
+source (``spec_fetch.py``), the source syncs (``sources/sync.py``) and the import
+job queue (``enqueue_job``).
 Parsing and projection stay in the pure ``manifest_builder`` lib.
 
 Reads key on ``entry_id`` (``{source_slug}/{external_id}``). Every read first
@@ -12,8 +13,8 @@ first, then source precedence, then ``entry_id``). An entry the caller cannot
 see is answered exactly like one that does not exist.
 
 Imports:
-- resolve to a plain url ``IngestSource`` carrying the entry's
-  ``catalog_api_id`` and ``catalog_entry_id``;
+- enqueue a ``CatalogRefSource`` naming only the entry; the job fetches the
+  spec through the entry's source, so no source credential enters a payload;
 - land on the API already imported from the same entry, else on a fresh
   identity; an entry whose ``catalog_api_id`` another entry's API already holds
   takes a distinct name unless the caller asks to switch that API's source;
@@ -31,6 +32,7 @@ from typing import Any
 
 import structlog
 
+from jentic_one.registry.core.schema.catalog_entries import CatalogEntryRow
 from jentic_one.registry.core.schema.catalog_sources import (
     SOURCE_STATUS_NEVER_SYNCED,
     CatalogSourceRow,
@@ -40,6 +42,8 @@ from jentic_one.registry.core.schema.catalog_sync_runs import (
     RUN_STATUS_SUPERSEDED,
     RUN_STATUS_SUSPECT_EMPTY,
 )
+from jentic_one.registry.ingest.exc import IngestStageError
+from jentic_one.registry.ingest.fetch import CatalogRefSource, parse_spec_content
 from jentic_one.registry.ingest.host_change_guard import may_approve_host_change
 from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.registry.repos.catalog_entry_repo import CatalogEntryRepository
@@ -52,11 +56,6 @@ from jentic_one.registry.services.catalog.entries import (
     CatalogApiIdMapping,
     CatalogEntry,
     resolver_inputs_digest,
-)
-from jentic_one.registry.services.catalog.fetch import (
-    CatalogFetchError,
-    fetch_bytes_conditional,
-    fetch_json,
 )
 from jentic_one.registry.services.catalog.flow3_metrics import (
     record_reimport_from_catalog,
@@ -72,6 +71,8 @@ from jentic_one.registry.services.catalog.snapshot import (
     store_snapshot,
 )
 from jentic_one.registry.services.catalog.sources import digests
+from jentic_one.registry.services.catalog.sources.deps import spec_fetch_lane
+from jentic_one.registry.services.catalog.sources.protocol import NotModified
 from jentic_one.registry.services.catalog.sources.sync import (
     OUTCOME_BUSY,
     OUTCOME_DISABLED,
@@ -80,6 +81,7 @@ from jentic_one.registry.services.catalog.sources.sync import (
     SyncOutcome,
     is_due,
 )
+from jentic_one.registry.services.catalog.spec_fetch import CatalogSpecFetcher
 from jentic_one.registry.services.errors import (
     CatalogEntryHasNoSpecError,
     CatalogEntryNotFoundError,
@@ -137,24 +139,6 @@ def _config_digests(cfg: CatalogConfig) -> dict[str, str]:
 #: Registry-DB advisory-lock key that single-flights the update-notify sweep across
 #: processes (scanner and request-triggered sweeps on every replica/worker).
 UPDATE_SWEEP_LOCK_KEY = advisory_lock_key("jentic_one.registry.catalog_update_sweep")
-
-
-def _is_upstream_tracked(spec: RegisteredSpec, manifest_urls: set[str]) -> bool:
-    """Whether the update-notify sweep should probe this candidate.
-
-    - ``catalog``-origin revisions are always tracked (imported straight from a source).
-    - ``overlay``-origin revisions are tracked when their ``source_url`` still points at a
-      catalog spec — overlay materialization propagates the base revision's ``source_url``
-      (#904), so a confirmed overlay over a catalog API stays upstream-tracked.
-    - manual imports (``origin is None``) are tracked only if their ``source_url`` now
-      matches a catalog entry's spec (a "you could switch to the catalog source" nudge).
-    - any other manual import is skipped: we have no upstream-of-record to compare against.
-    """
-    if spec.origin == ORIGIN_CATALOG:
-        return True
-    if spec.origin in (ORIGIN_OVERLAY, None):
-        return spec.source_url in manifest_urls
-    return False
 
 
 @dataclass(frozen=True)
@@ -237,7 +221,7 @@ class _ReadState:
     rows: Mapping[str, CatalogSourceRow]
     allowed: frozenset[str]
     registered: frozenset[str]
-    outdated_urls: set[str]
+    outdated_ids: set[str]
     view: CollapsedView
 
 
@@ -438,7 +422,7 @@ class CatalogService:
         snapshot = await self._load_snapshot(rows)
         async with self._ctx.registry_db.session() as session:
             registered = await ApiRepository.registered_catalog_entry_ids(session)
-            outdated_urls = await CatalogUpdateCheckRepository.outdated_spec_urls(
+            outdated_ids = await CatalogUpdateCheckRepository.outdated_entry_ids(
                 session, now=utcnow(), include_snoozed=include_snoozed
             )
         view = snapshot.collapse(allowed, registered, include_alternates=include_alternates)
@@ -447,14 +431,13 @@ class CatalogService:
             rows=rows,
             allowed=allowed,
             registered=registered,
-            outdated_urls=outdated_urls,
+            outdated_ids=outdated_ids,
             view=view,
         )
 
     @staticmethod
     def _to_view(state: _ReadState, entry: CatalogEntry) -> CatalogEntryView:
         registered = entry.entry_id in state.registered
-        spec_url = state.snapshot.spec_urls.get(entry.entry_id)
         return CatalogEntryView(
             entry_id=entry.entry_id,
             source_slug=entry.source_slug,
@@ -467,9 +450,7 @@ class CatalogService:
             human_url=entry.human_url,
             has_spec=entry.has_spec,
             registered=registered,
-            update_available=registered
-            and spec_url is not None
-            and spec_url in state.outdated_urls,
+            update_available=registered and entry.entry_id in state.outdated_ids,
             alternate_ids=state.view.alternates.get(entry.entry_id, ()),
         )
 
@@ -530,11 +511,12 @@ class CatalogService:
     async def _run_update_notify_sweep(self) -> None:
         """Probe registered specs for upstream changes; emit an event on change.
 
-        Run by the scanner on its cadence and after an operator refresh. For each
-        registered API with a spec URL, sends a conditional ``GET``
-        (``If-None-Match`` with the last-seen ETag) at most once per
-        ``update_check_interval_seconds``; a ``304`` or an unchanged digest is a
-        no-op, a changed digest emits ``catalog.update_available`` once (deduped on
+        For each API imported from a still-listed catalog entry, at most once per
+        ``update_check_interval_seconds``: an entry whose listing ``content_hint``
+        equals the one last probed is unchanged and is not fetched; otherwise the
+        spec is fetched through the entry's source with the last-seen validator. A
+        "not modified" answer or an unchanged digest is a no-op, a changed digest
+        emits ``catalog.update_available`` once (deduped on
         ``last_notified_digest``). Upstream/DB failures are swallowed per API so a
         flaky host never breaks the refresh or the rest of the batch. A ``0``
         interval disables the sweep entirely (air-gapped kill switch).
@@ -577,50 +559,54 @@ class CatalogService:
         """Sweep body — always called under both single-flight locks."""
         async with self._ctx.registry_db.session() as session:
             candidates = await ApiRevisionRepository.registered_specs_for_notify(session)
-            # The manifest coverage set is only needed to admit overlay/manual specs
-            # whose source_url still points at a catalog spec; skip the query when the
-            # candidate set has no such rows (pure-catalog installs, the common case).
-            needs_manifest = any(spec.origin != ORIGIN_CATALOG for spec in candidates)
-        manifest_urls = (
-            set((await self._snapshot()).spec_urls.values()) if needs_manifest else set()
-        )
-        candidates = [spec for spec in candidates if _is_upstream_tracked(spec, manifest_urls)]
-        if not candidates:
+            entries = await CatalogEntryRepository.live_entries(
+                session, {spec.catalog_entry_id for spec in candidates}
+            )
+        # Tracked: the API's entry is still listed by an enabled source.
+        enabled = {s.slug for s in self._enabled()}
+        tracked = [
+            (spec, row)
+            for spec in candidates
+            if (row := entries.get(spec.catalog_entry_id)) is not None
+            and row.source_slug in enabled
+        ]
+        if not tracked:
             return
+        fetcher = CatalogSpecFetcher(self._ctx)
 
         now = utcnow()
         sem = asyncio.Semaphore(max(1, self._cfg.update_sweep_max_concurrency))
         stats = {"probed": 0, "failed": 0}
 
-        async def _guarded(spec: RegisteredSpec) -> None:
+        async def _guarded(spec: RegisteredSpec, row: CatalogEntryRow) -> None:
             async with sem:
                 try:
-                    await self._probe_one(spec, now=now, interval=interval)
+                    await self._probe_one(spec, row, fetcher, now=now, interval=interval)
                     stats["probed"] += 1
                 except Exception:  # best-effort per API, never break the sweep
                     stats["failed"] += 1
                     logger.warning(
                         "catalog_update_probe_failed",
                         api_id=str(spec.api_id),
-                        spec_url=spec.source_url,
+                        catalog_entry_id=spec.catalog_entry_id,
                         exc_info=True,
                     )
 
         started = asyncio.get_running_loop().time()
         try:
             await asyncio.wait_for(
-                asyncio.gather(*(_guarded(spec) for spec in candidates)),
+                asyncio.gather(*(_guarded(spec, row) for spec, row in tracked)),
                 timeout=self._cfg.update_sweep_deadline_seconds,
             )
         except TimeoutError:
             logger.warning(
                 "catalog_update_sweep_deadline_hit",
-                candidates=len(candidates),
+                candidates=len(tracked),
                 probed=stats["probed"],
             )
         logger.info(
             "catalog_update_sweep_complete",
-            candidates=len(candidates),
+            candidates=len(tracked),
             probed=stats["probed"],
             failed=stats["failed"],
             duration_ms=int((asyncio.get_running_loop().time() - started) * 1000),
@@ -685,8 +671,47 @@ class CatalogService:
             )
         return f"Upstream spec updated for {who}"
 
-    async def _probe_one(self, spec: RegisteredSpec, *, now: datetime, interval: int) -> None:
-        """Conditionally fetch one registered spec and emit on a fresh change."""
+    def _unnotified(self, spec: RegisteredSpec, check: Any) -> bool:
+        """True if ``check`` recorded an upstream change that was never notified."""
+        seen = check.last_seen_digest
+        if seen is None or seen == spec.spec_digest:
+            return False
+        return (seen, self._classify_update(spec, seen)) != (
+            check.last_notified_digest,
+            check.last_notified_event_class,
+        )
+
+    async def _record_unchanged(
+        self, spec: RegisteredSpec, *, now: datetime, validator: str | None, hint: str | None
+    ) -> None:
+        """Record a probe that found the entry's spec unchanged since the last one."""
+        async with self._ctx.registry_db.transaction() as session:
+            await CatalogUpdateCheckRepository.upsert(
+                session,
+                local_api_id=spec.api_id,
+                catalog_entry_id=spec.catalog_entry_id,
+                validator=validator,
+                digest=None,
+                checked_at=now,
+                content_hint=hint,
+            )
+
+    async def _probe_one(
+        self,
+        spec: RegisteredSpec,
+        entry: CatalogEntryRow,
+        fetcher: CatalogSpecFetcher,
+        *,
+        now: datetime,
+        interval: int,
+    ) -> None:
+        """Probe one API's catalog entry and emit on a fresh change.
+
+        Unchanged without a fetch when the entry still lists the (non-null)
+        ``content_hint`` last probed; otherwise fetched through the entry's source,
+        conditionally on the validator last seen for the same entry. Either way, a
+        change an earlier probe recorded but never notified is re-decided.
+        """
         async with self._ctx.registry_db.session() as session:
             check = await CatalogUpdateCheckRepository.get(session, spec.api_id)
 
@@ -695,24 +720,49 @@ class CatalogService:
             if age < interval:
                 return
 
-        prior_etag = check.last_seen_etag if check is not None else None
-        result = await fetch_bytes_conditional(
-            spec.source_url, config=self._ingest_cfg, etag=prior_etag
+        same_entry = check is not None and check.catalog_entry_id == spec.catalog_entry_id
+        hint = entry.content_hint
+        # A change seen by an earlier probe whose notification never went out
+        # (the emit failed after the probe was recorded). An unchanged hint or a
+        # not-modified answer must still re-run the notify decision for it,
+        # otherwise the update would never be announced.
+        pending = (
+            check.last_seen_digest
+            if same_entry and check is not None and self._unnotified(spec, check)
+            else None
         )
+        validator: str | None
+        if (
+            same_entry
+            and hint is not None
+            and check is not None
+            and check.last_seen_content_hint == hint
+        ):
+            if pending is None:
+                await self._record_unchanged(spec, now=now, validator=None, hint=hint)
+                return
+            upstream_digest, validator = pending, check.last_seen_validator
+        else:
+            prior_validator = (
+                check.last_seen_validator if same_entry and check is not None else None
+            )
+            # A bulk probe: the background lane, so it never takes the slots and
+            # tokens a user's preview or import waits on.
+            lane = spec_fetch_lane.set("background")
+            try:
+                result = await fetcher.fetch_row(entry, validator=prior_validator)
+            finally:
+                spec_fetch_lane.reset(lane)
+            if isinstance(result, NotModified):
+                if pending is None:
+                    await self._record_unchanged(
+                        spec, now=now, validator=result.validator, hint=hint
+                    )
+                    return
+                upstream_digest, validator = pending, result.validator
+            else:
+                upstream_digest, validator = result.digest, result.validator
 
-        if result.not_modified or result.digest is None:
-            async with self._ctx.registry_db.transaction() as session:
-                await CatalogUpdateCheckRepository.upsert(
-                    session,
-                    local_api_id=spec.api_id,
-                    spec_url=spec.source_url,
-                    etag=result.etag,
-                    digest=None,
-                    checked_at=now,
-                )
-            return
-
-        upstream_digest = result.digest
         last_notified = check.last_notified_digest if check is not None else None
         last_notified_class = check.last_notified_event_class if check is not None else None
         # A change worth notifying: the upstream bytes differ from what backs the
@@ -733,10 +783,11 @@ class CatalogService:
             await CatalogUpdateCheckRepository.upsert(
                 session,
                 local_api_id=spec.api_id,
-                spec_url=spec.source_url,
-                etag=result.etag,
+                catalog_entry_id=spec.catalog_entry_id,
+                validator=validator,
                 digest=upstream_digest,
                 checked_at=now,
+                content_hint=hint,
                 # Deliberately NOT stamping notified_digest/class here: the event is
                 # emitted below in a *separate* (admin-DB) transaction, so marking notified
                 # before the emit could permanently suppress the notification if the process
@@ -827,6 +878,7 @@ class CatalogService:
                     "version": spec.version,
                     "current_digest": spec.spec_digest,
                     "upstream_digest": upstream_digest,
+                    "catalog_entry_id": spec.catalog_entry_id,
                     "spec_url": spec.source_url,
                     "event_class": event_class,
                     "overlay_base_digest": spec.overlay_base_digest,
@@ -924,12 +976,7 @@ class CatalogService:
         # The registered set is small next to the catalog: count from its side.
         # A registered entry collapsed into a winner is still the caller's API.
         visible_registered = registered & (state.view.ids | state.view.winner_of.keys())
-        outdated = {
-            entry_id
-            for entry_id in visible_registered
-            if (url := state.snapshot.spec_urls.get(entry_id)) is not None
-            and url in state.outdated_urls
-        }
+        outdated = visible_registered & state.outdated_ids
         registered_count = len(visible_registered)
 
         after_id, after_score = decode_catalog_cursor(cursor) if cursor else (None, None)
@@ -1039,11 +1086,10 @@ class CatalogService:
     # ── preview ──────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _spec_url(state: _ReadState, entry: CatalogEntry) -> str:
-        url = state.snapshot.spec_urls.get(entry.entry_id)
-        if url is None:
+    def _require_spec(entry: CatalogEntry) -> None:
+        """A card-only entry (no ``spec_ref``) has nothing to preview or import."""
+        if not entry.has_spec:
             raise CatalogEntryHasNoSpecError(entry.entry_id)
-        return url
 
     async def preview(
         self,
@@ -1062,14 +1108,23 @@ class CatalogService:
         windowing, so the search box / tag chips in the UI cover every operation
         in the spec — not just the loaded page — and ``total`` reflects the
         filtered count the "Load more" affordance pages through.
+
+        The spec is fetched through the entry's source after the visibility
+        check, so a hidden entry still answers 404. Raises
+        ``CatalogSpecGoneError`` when the source says the spec is gone and
+        ``CatalogSourceUnavailableError`` when the source is throttled or down.
         """
-        state, entry = await self._visible_entry(
+        _state, entry = await self._visible_entry(
             entry_id, permissions=permissions, actor_id=actor_id
         )
-        spec_url = self._spec_url(state, entry)
+        self._require_spec(entry)
+        _row, body = await CatalogSpecFetcher(self._ctx).fetch_body(entry.entry_id)
         try:
-            doc = await fetch_json(spec_url, config=self._ingest_cfg)
-        except CatalogFetchError as exc:
+            doc = parse_spec_content(
+                body.content.decode("utf-8-sig"),
+                filename="openapi.json" if body.media_type == "application/json" else None,
+            )
+        except (UnicodeDecodeError, IngestStageError) as exc:
             raise CatalogUnavailableError(f"catalog spec unavailable: {exc}") from exc
 
         projection = mb.project_preview(doc, tag=tag, q=q)
@@ -1093,15 +1148,17 @@ class CatalogService:
     @staticmethod
     def _to_import_source(
         entry: CatalogEntry,
-        spec_url: str,
         identity: Identity,
         *,
         vendor: str | None,
         name: str,
-    ) -> dict[str, str]:
-        """Build a plain url IngestSource payload — never a catalog-shaped one.
+        switch_source: bool,
+    ) -> dict[str, Any]:
+        """Build the ``CatalogRefSource`` payload: the entry's id, never its spec location.
 
-        The entry's identity vendor and an ``api_name`` seed are passed as
+        The job fetches the spec through the entry's source, so neither the
+        source's credentials nor its ``spec_ref`` enter the job payload. The
+        entry's identity vendor and an ``api_name`` seed are passed as
         overrides, because many catalog specs omit ``x-vendor``/``contact.name``
         and identity (and re-import dedup) must follow the catalog, not the
         upstream ``info`` block. ``vendor``/``name`` default to the entry's;
@@ -1109,23 +1166,21 @@ class CatalogService:
         on that API's ``(vendor, name, version)`` even when the derivation has
         since changed, keeping the credentials and permission rules keyed on it.
 
-        ``catalog_api_id`` and ``catalog_entry_id`` are persisted verbatim on the
-        Api row; ``submitted_by`` attributes the revision to the caller.
+        ``catalog_api_id`` and the entry id are persisted verbatim on the Api
+        row; ``submitted_by`` attributes the revision to the caller.
         """
-        source: dict[str, str] = {
-            "type": "url",
-            "url": spec_url,
-            "origin": ORIGIN_CATALOG,
-            "api_name": name,
-            "catalog_api_id": entry.catalog_api_id,
-            "catalog_entry_id": entry.entry_id,
-        }
-        if identity.sub:
-            source["submitted_by"] = identity.sub
         resolved_vendor = vendor or entry.vendor
-        if resolved_vendor:
-            source["vendor"] = resolved_vendor
-        return source
+        source = CatalogRefSource(
+            type="catalog",
+            catalog_entry_id=entry.entry_id,
+            catalog_api_id=entry.catalog_api_id,
+            origin=ORIGIN_CATALOG,
+            api_name=name,
+            vendor=resolved_vendor or None,
+            submitted_by=identity.sub or None,
+            switch_source=switch_source,
+        )
+        return source.model_dump(mode="json", exclude_none=True)
 
     async def _import_target(
         self,
@@ -1179,7 +1234,7 @@ class CatalogService:
         return None, f"{entry.source_slug}{NAMESPACE_SEPARATOR}{derived}"
 
     async def _authorize_overlay_supersede(
-        self, entry: CatalogEntry, spec_url: str, identity: Identity
+        self, entry: CatalogEntry, identity: Identity
     ) -> str | None:
         """Gate a re-import that would supersede a live confirmed overlay.
 
@@ -1190,12 +1245,14 @@ class CatalogService:
         caller lacks ``overlays:confirm`` — re-emitting an operator-facing conflict event
         so the fix is not silently discarded.
 
-        The check keys on the entry's spec URL (the upstream provenance) to find the
-        locally served current revision and asks whether that revision *is* a confirmed
+        The check keys on the entry (the API imported from it) to find the locally
+        served current revision and asks whether that revision *is* a confirmed
         overlay's materialization. Only that case is a supersede.
         """
         async with self._ctx.registry_db.session() as session:
-            current = await ApiRevisionRepository.current_revision_for_source_url(session, spec_url)
+            current = await ApiRevisionRepository.current_revision_for_catalog_entry_id(
+                session, entry.entry_id
+            )
             if current is None:
                 return None
             api_id, current_revision_id = current
@@ -1236,7 +1293,7 @@ class CatalogService:
                 data={
                     "api_id": str(api_id),
                     "overlay_id": overlay.id,
-                    "spec_url": spec_url,
+                    "catalog_entry_id": entry.entry_id,
                     "event_class": EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY,
                 },
             )
@@ -1250,7 +1307,7 @@ class CatalogService:
         switch_source: bool = False,
         permissions: frozenset[str] | None = None,
     ) -> str:
-        """Enqueue an async url-import for a visible catalog entry; return the job id.
+        """Enqueue an async import of a visible catalog entry; return the job id.
 
         ``permissions`` is the visibility set (the caller's effective permissions
         by default). ``switch_source`` lets the import supersede an API imported
@@ -1277,22 +1334,24 @@ class CatalogService:
             permissions=effective if permissions is None else permissions,
             actor_id=identity.sub or None,
         )
-        spec_url = self._spec_url(state, entry)
-        supersede_overlay_id = await self._authorize_overlay_supersede(entry, spec_url, identity)
+        self._require_spec(entry)
+        supersede_overlay_id = await self._authorize_overlay_supersede(entry, identity)
         vendor, name = await self._import_target(
             entry,
             catalog_ids={e.catalog_api_id for e in state.snapshot.entries},
             switch_source=switch_source,
         )
-        source = self._to_import_source(entry, spec_url, identity, vendor=vendor, name=name)
+        source = self._to_import_source(
+            entry, identity, vendor=vendor, name=name, switch_source=switch_source
+        )
         if supersede_overlay_id is not None:
-            source["supersede_active"] = "true"
+            source["supersede_active"] = True
         if may_approve_host_change(identity.permissions):
             # Server-host change guard: an operator (``credentials:write``) may let a
             # re-import that changes the API's server hosts become current even when
             # the API has bound credentials. Everyone else gets such a revision held
             # as a draft for review. Server-set only; client schemas cannot carry it.
-            source["host_change_approved"] = "true"
+            source["host_change_approved"] = True
         payload: dict[str, Any] = {"sources": [source]}
         if supersede_overlay_id is not None:
             payload["supersede_overlay_id"] = supersede_overlay_id
@@ -1317,7 +1376,7 @@ class CatalogService:
         Operator action: quiet the "update available" badge for a known-and-accepted
         upstream change without adopting it. Requires ``events:write`` — a
         low-privilege agent must not be able to hide a real upstream drift. Resolves
-        the entry's spec URL to the local API via the served revision, pins the snooze
+        the entry to the local API imported from it, pins the snooze
         to the digest the sweep last notified for (so a genuinely newer change
         re-lights the badge), and audits it.
 
@@ -1325,11 +1384,11 @@ class CatalogService:
         a time-boxed snooze.
         """
         self._require_snooze_permission(identity)
-        state, entry = await self._visible_entry(
+        _state, entry = await self._visible_entry(
             entry_id, permissions=_effective(identity), actor_id=identity.sub or None
         )
         async with self._ctx.registry_db.transaction() as session:
-            resolved = await self._resolve_local_api(session, state, entry)
+            resolved = await self._resolve_local_api(session, entry)
             if resolved is None:
                 raise CatalogEntryNotFoundError(entry_id)
             local_api_id, check = resolved
@@ -1357,11 +1416,11 @@ class CatalogService:
     async def unsnooze_entry(self, entry_id: str, identity: Identity) -> None:
         """Clear a snooze for a visible catalog entry. Operator-gated (``events:write``)."""
         self._require_snooze_permission(identity)
-        state, entry = await self._visible_entry(
+        _state, entry = await self._visible_entry(
             entry_id, permissions=_effective(identity), actor_id=identity.sub or None
         )
         async with self._ctx.registry_db.transaction() as session:
-            resolved = await self._resolve_local_api(session, state, entry)
+            resolved = await self._resolve_local_api(session, entry)
             if resolved is None:
                 raise CatalogEntryNotFoundError(entry_id)
             local_api_id, _ = resolved
@@ -1383,35 +1442,18 @@ class CatalogService:
         if not has_effective_permission(identity.permissions, "events:write"):
             raise SnoozeForbiddenError()
 
-    async def _resolve_local_api(
-        self, session: Any, state: _ReadState, entry: CatalogEntry
-    ) -> tuple[uuid.UUID, Any] | None:
-        """Resolve an entry to its local ``(api_id, check_row)``.
+    @staticmethod
+    async def _resolve_local_api(session: Any, entry: CatalogEntry) -> tuple[uuid.UUID, Any] | None:
+        """Resolve an entry to its local ``(api_id, check_row)``: the API imported from it.
 
-        The API recorded as imported from this entry wins, so two entries that
-        share a ``catalog_api_id`` or a spec URL never act on each other's API.
-        An API with no recorded entry (imported from the legacy source before
-        entry ids were recorded) is found via its served spec URL, for a
-        legacy-source entry only, as import adopts it. ``None`` when neither
-        matches — the caller maps that to a 404.
+        ``None`` when no API with a current revision records the entry — the
+        caller maps that to a 404.
         """
-        local_api_id = await ApiRepository.live_api_id_for_catalog_entry_id(session, entry.entry_id)
-        if local_api_id is None:
-            spec_url = state.snapshot.spec_urls.get(entry.entry_id)
-            if spec_url is None:
-                return None
-            current = await ApiRevisionRepository.current_revision_for_source_url(session, spec_url)
-            if current is None:
-                return None
-            local_api_id, _revision_id = current
-            api = await ApiRepository.get_by_id(session, local_api_id)
-            unrecorded_ok = entry.source_slug == self._cfg.legacy_source_slug
-            if api is None or (
-                api.catalog_entry_id != entry.entry_id
-                and not (api.catalog_entry_id is None and unrecorded_ok)
-            ):
-                # That spec URL is served by an API imported from another entry,
-                # or by an unrecorded one this (non-legacy) entry can't adopt.
-                return None
+        current = await ApiRevisionRepository.current_revision_for_catalog_entry_id(
+            session, entry.entry_id
+        )
+        if current is None:
+            return None
+        local_api_id, _revision_id = current
         check = await CatalogUpdateCheckRepository.get(session, local_api_id)
         return local_api_id, check

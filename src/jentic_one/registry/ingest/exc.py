@@ -2,6 +2,8 @@
 
 from enum import StrEnum
 
+from jentic_one.shared.jobs.errors import RetryLaterJobError, TerminalJobError
+
 
 class BaseIngestError(Exception):
     """Base for all ingest errors."""
@@ -21,6 +23,38 @@ class IngestStageError(BaseIngestError):
 
 class IngestJobError(BaseIngestError):
     """Raised when an ingest job fails."""
+
+
+class TerminalIngestJobError(IngestJobError, TerminalJobError):
+    """An ingest job failure no retry can fix (the worker fails it at once)."""
+
+
+class RetryLaterIngestJobError(IngestJobError, RetryLaterJobError):
+    """A transient ingest job failure with a known wait (requeued after it)."""
+
+    def __init__(self, message: str, *, retry_after_s: float | None = None) -> None:
+        IngestJobError.__init__(self, message)
+        self.retry_after_s = retry_after_s
+
+
+class CatalogSpecUnavailableIngestError(IngestStageError):
+    """A catalog entry's spec can't be fetched, and retrying won't change that.
+
+    The entry is no longer listed by an enabled source, lists no spec, or its
+    source says the spec is gone. The import job fails without retrying.
+    """
+
+
+class CatalogSourceBusyIngestError(IngestStageError):
+    """A catalog entry's source is throttled, down or timed out (transient).
+
+    ``retry_after_s`` is the wait the source asked for, when it gave one; the
+    import job is requeued no sooner than that.
+    """
+
+    def __init__(self, message: str, *, retry_after_s: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after_s = retry_after_s
 
 
 class CatalogIdentityConflictError(IngestStageError):

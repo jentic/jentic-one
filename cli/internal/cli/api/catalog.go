@@ -281,6 +281,9 @@ func (a *app) catalogShow(ctx context.Context, o *catalogShowOptions, entryID st
 		limit = 200
 	}
 	preview, perr := client.Preview(ctx, entryID, 0, limit, o.tag)
+	if perr != nil {
+		perr = catalogEntryErr(perr, entryID, "show")
+	}
 
 	if o.json {
 		out := map[string]any{"schema_version": apiEnvelopeSchemaVersion, "entry": entry}
@@ -479,28 +482,53 @@ func catalogListErr(err error) error {
 	return err
 }
 
-// catalogEntryErr maps a 404 to a RESOLVE_FAILED "entry not found". A hidden
-// entry and a missing one get the same 404 from the server; when the id isn't
-// in entry_id form (an old-style "stripe.com"), the 404 body's did_you_mean
-// names the caller's visible entry for it, and the hint re-runs the same
-// subcommand with that entry_id. The CLI never guesses a source prefix itself.
+// catalogEntryErr maps a 404 to a RESOLVE_FAILED "entry not found", and a
+// catalog source's 410 / 503 to the coded errors the MCP import_api tool uses
+// (not retryable / retryable after the source's Retry-After). A hidden entry
+// and a missing one get the same 404 from the server; when the id isn't in
+// entry_id form (an old-style "stripe.com"), the 404 body's did_you_mean names
+// the caller's visible entry for it, and the hint re-runs the same subcommand
+// with that entry_id. The CLI never guesses a source prefix itself.
 func catalogEntryErr(err error, entryID, subcommand string) error {
 	var he *HTTPError
-	if !errors.As(err, &he) || he.StatusCode != http.StatusNotFound {
+	if !errors.As(err, &he) {
 		return err
 	}
-	suggestion := didYouMean(he)
-	coded := &ux.CodedError{
-		Code:       ux.CodeResolveFailed,
-		Msg:        fmt.Sprintf("catalog entry %q not found", entryID),
-		Actionable: "Find the entry with `jentic catalog search <keyword>` and pass its entry_id verbatim.",
+	switch he.StatusCode {
+	case http.StatusNotFound:
+		suggestion := didYouMean(he)
+		coded := &ux.CodedError{
+			Code:       ux.CodeResolveFailed,
+			Msg:        fmt.Sprintf("catalog entry %q not found", entryID),
+			Actionable: "Find the entry with `jentic catalog search <keyword>` and pass its entry_id verbatim.",
+		}
+		if suggestion != "" {
+			coded.Msg += fmt.Sprintf(" — did you mean %q?", suggestion)
+			coded.Actionable = fmt.Sprintf("jentic catalog %s %s", subcommand, shellQuote(suggestion))
+			coded.Details = map[string]any{"did_you_mean": suggestion}
+		}
+		return coded
+	case http.StatusGone:
+		return &ux.CodedError{
+			Code:       ux.CodeResolveFailed,
+			Msg:        valueOr(problemDetail([]byte(he.Body)), fmt.Sprintf("The source of catalog entry '%s' no longer has its spec.", entryID)),
+			Actionable: "Pick another catalog entry for this API; this one has no importable spec.",
+			Cause:      err,
+		}
+	case http.StatusServiceUnavailable:
+		if catalogProblemType(he) == "catalog_source_unavailable" {
+			wait := retryAfterSeconds(he.RetryAfter)
+			msg := valueOr(problemDetail([]byte(he.Body)), fmt.Sprintf("The catalog source of '%s' is unavailable; retry later.", entryID))
+			return &ux.CodedError{
+				Code:       ux.CodeTransportError,
+				Msg:        fmt.Sprintf("%s Retry in %d seconds.", msg, wait),
+				Actionable: fmt.Sprintf("Wait %d seconds, then retry.", wait),
+				Details:    map[string]any{"retryable": true, "retry_after_s": wait},
+				Cause:      err,
+			}
+		}
 	}
-	if suggestion != "" {
-		coded.Msg += fmt.Sprintf(" — did you mean %q?", suggestion)
-		coded.Actionable = fmt.Sprintf("jentic catalog %s %s", subcommand, shellQuote(suggestion))
-		coded.Details = map[string]any{"did_you_mean": suggestion}
-	}
-	return coded
+	return err
 }
 
 // didYouMean reads the catalog 404 body's did_you_mean (the visible entry_id

@@ -90,6 +90,33 @@ class CatalogEntryRepository:
         return found
 
     @staticmethod
+    async def live_entry(session: AsyncSession, entry_id: str) -> CatalogEntryRow | None:
+        """The live row ``entry_id``, or ``None`` when it is missing or tombstoned."""
+        result = await session.execute(
+            select(CatalogEntryRow).where(
+                CatalogEntryRow.entry_id == entry_id, CatalogEntryRow.removed_at.is_(None)
+            )
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def live_entries(
+        session: AsyncSession, entry_ids: Iterable[str]
+    ) -> dict[str, CatalogEntryRow]:
+        """The live rows among ``entry_ids``, keyed by ``entry_id``."""
+        wanted = list(entry_ids)
+        found: dict[str, CatalogEntryRow] = {}
+        for start in range(0, len(wanted), 500):
+            chunk = wanted[start : start + 500]
+            result = await session.execute(
+                select(CatalogEntryRow).where(
+                    CatalogEntryRow.entry_id.in_(chunk), CatalogEntryRow.removed_at.is_(None)
+                )
+            )
+            found.update((row.entry_id, row) for row in result.scalars().all())
+        return found
+
+    @staticmethod
     def add(session: AsyncSession, row: CatalogEntryRow) -> None:
         session.add(row)
 

@@ -105,19 +105,6 @@ class ApiRepository:
         return (row.vendor, row.name) if row is not None else None
 
     @staticmethod
-    async def live_api_id_for_catalog_entry_id(
-        session: AsyncSession, catalog_entry_id: str
-    ) -> uuid.UUID | None:
-        """The newest API imported from ``catalog_entry_id`` that serves a revision."""
-        result = await session.execute(
-            select(Api.id)
-            .where(Api.catalog_entry_id == catalog_entry_id, Api.current_revision_id.is_not(None))
-            .order_by(Api.created_at.desc(), Api.id.desc())
-            .limit(1)
-        )
-        return result.scalar_one_or_none()
-
-    @staticmethod
     async def catalog_holders(session: AsyncSession, catalog_api_id: str) -> list[CatalogHolder]:
         """The APIs holding ``catalog_api_id``, newest first."""
         result = await session.execute(

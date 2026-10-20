@@ -14,7 +14,15 @@ import structlog
 from pydantic import TypeAdapter, ValidationError
 from structlog.contextvars import bind_contextvars, unbind_contextvars
 
-from jentic_one.registry.ingest.exc import BaseIngestError, DuplicateRevisionError, IngestJobError
+from jentic_one.registry.ingest.exc import (
+    BaseIngestError,
+    CatalogSourceBusyIngestError,
+    CatalogSpecUnavailableIngestError,
+    DuplicateRevisionError,
+    IngestJobError,
+    RetryLaterIngestJobError,
+    TerminalIngestJobError,
+)
 from jentic_one.registry.ingest.fetch import IngestSource, load_specification
 from jentic_one.registry.ingest.ingestor import Ingestor
 from jentic_one.registry.repos.api_repo import ApiRepository
@@ -26,6 +34,7 @@ from jentic_one.registry.repos.revision_repo import (
 from jentic_one.registry.services.catalog.flow3_metrics import (
     record_overlay_auto_deprecated,
 )
+from jentic_one.registry.services.catalog.spec_fetch import CatalogRefResolver
 from jentic_one.registry.services.errors import RegistryServiceError
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.context import Context
@@ -58,6 +67,23 @@ _UNEXPECTED_SOURCE_ERROR = "import failed unexpectedly"
 # the duplicate fragment past the truncation point in production.
 SOURCE_FAILURE_PREFIX_TEMPLATE = "source[{index}]: "
 ALL_SOURCES_FAILED_PREFIX_TEMPLATE = "all {count} import source(s) failed: "
+
+
+def _all_sources_failed(message: str, errors: list[Exception]) -> IngestJobError:
+    """The job error for an import whose every source failed.
+
+    A catalog source that is only busy makes the whole job wait for it (the
+    longest wait any source asked for). When every failure is a catalog spec
+    that can't come back by retrying, the job fails at once. Anything else is
+    an ordinary failure, retried with the worker's backoff.
+    """
+    busy = [e for e in errors if isinstance(e, CatalogSourceBusyIngestError)]
+    if busy:
+        waits = [e.retry_after_s for e in busy if e.retry_after_s is not None]
+        return RetryLaterIngestJobError(message, retry_after_s=max(waits) if waits else None)
+    if errors and all(isinstance(e, CatalogSpecUnavailableIngestError) for e in errors):
+        return TerminalIngestJobError(message)
+    return IngestJobError(message)
 
 
 def _readable_source_error(exc: Exception) -> str:
@@ -113,14 +139,18 @@ class ImportHandler:
             resolved_actor_type: str = actor_type or ActorType.USER.value
             revisions: list[dict[str, Any]] = []
             failures: list[str] = []
+            failure_errors: list[Exception] = []
             recovered_overlay_link = False
 
             logger.info("import_handler_start", source_count=len(sources), job_id=job_id)
+            catalog = CatalogRefResolver(self._ctx)
 
             for idx, src in enumerate(sources):
                 try:
                     source = _source_adapter.validate_python(src)
-                    spec = await load_specification(source, config=self._ctx.config.ingest)
+                    spec = await load_specification(
+                        source, config=self._ctx.config.ingest, catalog=catalog
+                    )
                     result = await Ingestor(self._ctx).ingest(spec, created_by=created_by)
                     revisions.append(
                         {
@@ -165,6 +195,7 @@ class ImportHandler:
                     )
                 except Exception as exc:
                     logger.exception("import_source_failed", source_index=idx, job_id=job_id)
+                    failure_errors.append(exc)
                     failures.append(
                         SOURCE_FAILURE_PREFIX_TEMPLATE.format(index=idx)
                         + _readable_source_error(exc)
@@ -270,9 +301,10 @@ class ImportHandler:
                 and not recovered_overlay_link
                 and not recovered_supersede
             ):
-                raise IngestJobError(
+                raise _all_sources_failed(
                     ALL_SOURCES_FAILED_PREFIX_TEMPLATE.format(count=len(sources))
-                    + "; ".join(failures)
+                    + "; ".join(failures),
+                    failure_errors,
                 )
 
             return JobResultPayload(
@@ -567,20 +599,28 @@ class ImportHandler:
         step. Returns ``None`` for a genuine failure (served revision is still the overlay,
         or identity can't be resolved).
 
-        Identity is resolved by the source's upstream ``url`` (the catalog ``spec_url``),
-        *not* the (vendor, name, version) triple: the production supersede source is a
-        ``type:"url"`` payload built by ``CatalogService._to_import_source`` that has no
-        ``version`` key (the version isn't known until the spec is fetched). Keying on the
-        served revision's ``source_url`` — the same provenance the enqueue-time gate uses
-        (``current_revision_for_source_url``) — is what lets this fire on the real path.
+        Identity is resolved by the source's catalog entry (``catalog_entry_id``) for a
+        ``type:"catalog"`` source, else by its upstream ``url``, *not* the
+        (vendor, name, version) triple: the supersede source built by
+        ``CatalogService.import_entry`` has no ``version`` key (the version isn't
+        known until the spec is fetched). Keying on the same provenance the
+        enqueue-time gate uses is what lets this fire on the real path.
         """
         src = source if isinstance(source, dict) else {}
+        entry_id = src.get("catalog_entry_id") if src.get("type") == "catalog" else None
         url = src.get("url")
-        if not isinstance(url, str):
-            return None
         try:
             async with self._ctx.registry_db.session() as session:
-                current = await ApiRevisionRepository.current_revision_for_source_url(session, url)
+                if isinstance(entry_id, str):
+                    current = await ApiRevisionRepository.current_revision_for_catalog_entry_id(
+                        session, entry_id
+                    )
+                elif isinstance(url, str):
+                    current = await ApiRevisionRepository.current_revision_for_source_url(
+                        session, url
+                    )
+                else:
+                    return None
                 if current is None:
                     return None
                 api_id, current_revision_id = current

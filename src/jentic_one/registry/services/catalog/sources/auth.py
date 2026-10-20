@@ -1,10 +1,8 @@
 """Request credentials for catalog sources.
 
 A ``SourceAuthResolver`` returns the headers one source's requests carry. Only
-``none`` is built in, and startup validation accepts only ``none``: the source
-HTTP client sends no resolver headers. Secrets are read by a resolver at request
-time (from an environment variable or a secret store) and never reach the
-database or logs.
+``none`` is built in. Secrets are read by a resolver at request time (from an
+environment variable or a secret store) and never reach the database or logs.
 """
 
 from __future__ import annotations

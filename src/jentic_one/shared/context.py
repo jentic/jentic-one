@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from types import TracebackType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import structlog
 
@@ -20,7 +21,7 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-logger = structlog.get_logger(__name__)
+_T = TypeVar("_T")
 
 ALL_DB_NAMES: frozenset[str] = frozenset(("registry", "admin", "control"))
 
@@ -67,6 +68,8 @@ class Context:
         # telemetry is enabled; both stay None otherwise (the single consent gate).
         self._instance_id: str | None = None
         self._telemetry: TelemetrySink | None = None
+        self._resources: dict[str, Any] = {}
+        self._shutdown_callbacks: list[Callable[[], Awaitable[None]]] = []
 
     def _is_allowed(self, name: str) -> bool:
         return self._allowed_dbs is None or name in self._allowed_dbs
@@ -231,6 +234,21 @@ class Context:
             self._update_sweep_lock = asyncio.Lock()
         return self._update_sweep_lock
 
+    def resource(self, key: str, factory: Callable[[], _T]) -> _T:
+        """The process-wide object a slice keeps under ``key``, built on first use.
+
+        For long-lived per-process state a slice owns (pooled HTTP clients,
+        in-process limiters) that ``shared`` must not know the type of. Pair it
+        with :meth:`on_shutdown` when the object holds resources to release.
+        """
+        if key not in self._resources:
+            self._resources[key] = factory()
+        return self._resources[key]  # type: ignore[no-any-return]
+
+    def on_shutdown(self, callback: Callable[[], Awaitable[None]]) -> None:
+        """Run ``callback`` in :meth:`shutdown`, before the databases close."""
+        self._shutdown_callbacks.append(callback)
+
     @property
     def release_checker(self) -> ReleaseChecker:
         """Process-wide cache for the "latest jentic-one release" lookup.
@@ -284,7 +302,14 @@ class Context:
                 logger.warning("provider_refresh_on_boot_failed", error=str(exc))
 
     async def shutdown(self) -> None:
-        """Close all connected databases."""
+        """Run the shutdown callbacks (newest first), then close all connected databases."""
+        callbacks, self._shutdown_callbacks = self._shutdown_callbacks, []
+        for callback in reversed(callbacks):
+            try:
+                await callback()
+            except Exception as exc:
+                logger.warning("context_shutdown_callback_failed", error=str(exc))
+        self._resources.clear()
         for db in (self._control_db, self._admin_db, self._registry_db):
             if db is not None:
                 await db.close()

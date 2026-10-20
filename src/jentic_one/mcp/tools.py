@@ -97,6 +97,8 @@ from jentic_one.registry.services.errors import (
     ArchivedRevisionPinError,
     CatalogEntryHasNoSpecError,
     CatalogEntryNotFoundError,
+    CatalogSourceUnavailableError,
+    CatalogSpecGoneError,
     CatalogUnavailableError,
     InvalidApiFilterError,
     OperationNotFoundError,
@@ -995,9 +997,24 @@ async def _file_import(env: CallEnv, entry_id: str) -> str:
             "overlay is an operator decision (overlays:confirm), not a permission an agent "
             "should request for itself.",
         ) from None
-    except CatalogEntryHasNoSpecError:
-        raise invalid_params(
-            f"catalog entry {entry_id!r} has no spec to import; pick another search_catalog hit"
+    except (CatalogSpecGoneError, CatalogEntryHasNoSpecError) as exc:
+        # The entry is listed but its source has no spec for it (gone upstream,
+        # or a card-only entry): retrying the same entry cannot help.
+        raise ToolError(
+            CODE_RESOLVE_FAILED,
+            str(exc),
+            actionable="Pick another search_catalog hit for this API; this entry has no "
+            "importable spec.",
+            next_tool="search_catalog",
+            extra={"retryable": False},
+        ) from None
+    except CatalogSourceUnavailableError as exc:
+        raise ToolError(
+            CODE_TRANSPORT_ERROR,
+            f"{exc} Retry in {exc.retry_after_s} seconds.",
+            actionable=f"Wait {exc.retry_after_s} seconds, then call import_api again with "
+            "the same entry_id.",
+            extra={"retryable": True, "retry_after_s": exc.retry_after_s},
         ) from None
     except CatalogUnavailableError as exc:
         raise ToolError(CODE_INTERNAL_ERROR, f"catalog not available: {exc}") from None

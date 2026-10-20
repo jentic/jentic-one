@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -239,7 +240,7 @@ func (c *catalogClient) List(ctx context.Context, p catalogListParams) (*catalog
 
 func (c *catalogClient) Get(ctx context.Context, entryID string) (*catalogEntry, error) {
 	resp, err := c.sdk.GetCatalogEntryWithResponse(ctx, entryID, rawPathEditor)
-	if err := apiErrorFor(resp, err); err != nil {
+	if err := withRetryAfter(apiErrorFor(resp, err), resp); err != nil {
 		return nil, err
 	}
 	if resp.JSON200 == nil {
@@ -266,7 +267,7 @@ func (c *catalogClient) Preview(ctx context.Context, entryID string, offset, lim
 		params.Tag = ptr(tag)
 	}
 	resp, err := c.sdk.PreviewCatalogOperationsWithResponse(ctx, entryID, params, rawPathEditor)
-	if err := apiErrorFor(resp, err); err != nil {
+	if err := withRetryAfter(apiErrorFor(resp, err), resp); err != nil {
 		return nil, err
 	}
 	if resp.JSON200 == nil {
@@ -277,7 +278,7 @@ func (c *catalogClient) Preview(ctx context.Context, entryID string, offset, lim
 
 func (c *catalogClient) Import(ctx context.Context, entryID string) (string, error) {
 	resp, err := c.sdk.ImportCatalogEntryWithResponse(ctx, entryID, nil, rawPathEditor)
-	if err := apiErrorFor(resp, err); err != nil {
+	if err := withRetryAfter(apiErrorFor(resp, err), resp); err != nil {
 		return "", err
 	}
 	if resp.JSON202 == nil {
@@ -430,4 +431,38 @@ func toCatalogPreview(p *control.OperationPreviewListResponse) *catalogPreview {
 		})
 	}
 	return out
+}
+
+// withRetryAfter records a failed catalog response's Retry-After header on its
+// *HTTPError, so a 503 catalog_source_unavailable can tell the caller how long
+// to wait. Other errors pass through unchanged.
+func withRetryAfter(err error, resp interface{ StatusCode() int }) error {
+	var he *HTTPError
+	if err == nil || !errors.As(err, &he) {
+		return err
+	}
+	he.RetryAfter = retryAfterHeader(resp)
+	return err
+}
+
+// retryAfterHeader reads the Retry-After header of a generated SDK response.
+// The SDK has already read and closed the body (it is in the response's Body
+// field); only the header is read here.
+func retryAfterHeader(resp any) string {
+	var header http.Header
+	switch r := resp.(type) {
+	case *control.GetCatalogEntryHTTPResp:
+		if r != nil && r.HTTPResponse != nil {
+			header = r.HTTPResponse.Header
+		}
+	case *control.PreviewCatalogOperationsHTTPResp:
+		if r != nil && r.HTTPResponse != nil {
+			header = r.HTTPResponse.Header
+		}
+	case *control.ImportCatalogEntryHTTPResp:
+		if r != nil && r.HTTPResponse != nil {
+			header = r.HTTPResponse.Header
+		}
+	}
+	return header.Get("Retry-After")
 }

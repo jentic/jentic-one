@@ -12,7 +12,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -364,22 +366,81 @@ func pyRepr(s string) string {
 }
 
 // importAPIError maps the remaining import-specific failures (a 404 is
-// importAPINotFound's): a control-plane 403 on THIS route is a missing
-// catalog:import permission, and the recovery is asking the operator to grant
-// the permission (skill wording), not get_started.
+// importAPINotFound's): a catalog source's 410 / 409 card-only / 503 get the
+// coded errors the HTTP mount uses (tools.py), and a control-plane 403 on THIS
+// route is a missing catalog:import permission, whose recovery is asking the
+// operator to grant the permission (skill wording), not get_started.
 func (s *mcpServer) importAPIError(ctx context.Context, entryID string, err error) *mcp.CallToolResult {
 	s.logger.Warn("import_api failed", "entry_id", entryID, "error", redactedErr(err))
 	var he *HTTPError
-	if errors.As(err, &he) && he.StatusCode == http.StatusForbidden {
-		return s.softError(ctx, &ux.CodedError{
-			Code: ux.CodeBrokerDenied,
-			Msg:  fmt.Sprintf("importing a cataloged API requires the catalog:import permission: %v", err),
-			Actionable: "Ask your human operator to grant this agent the catalog:import permission " +
-				"in the dashboard. Once they confirm, run `jentic logout` (clears only the cached token) " +
-				"so the next call mints a token carrying the permission, then retry import_api.",
-		})
+	if errors.As(err, &he) {
+		switch he.StatusCode {
+		case http.StatusGone:
+			// The entry is listed but its source has no spec for it: retrying
+			// the same entry cannot help (the HTTP mount's mapping, tools.py).
+			return s.softErrorExtra(ctx, &ux.CodedError{
+				Code: ux.CodeResolveFailed,
+				Msg:  valueOr(problemDetail([]byte(he.Body)), fmt.Sprintf("The source of catalog entry '%s' no longer has its spec.", entryID)),
+				Actionable: "Pick another search_catalog hit for this API; this entry has no " +
+					"importable spec.",
+			}, "search_catalog", map[string]any{"retryable": false})
+		case http.StatusConflict:
+			// A card-only entry: listed, but its source gives no spec to import.
+			if catalogProblemType(he) == "catalog_entry_has_no_spec" {
+				return s.softErrorExtra(ctx, &ux.CodedError{
+					Code: ux.CodeResolveFailed,
+					Msg:  valueOr(problemDetail([]byte(he.Body)), fmt.Sprintf("Catalog entry '%s' has no spec to preview or import", entryID)),
+					Actionable: "Pick another search_catalog hit for this API; this entry has no " +
+						"importable spec.",
+				}, "search_catalog", map[string]any{"retryable": false})
+			}
+		case http.StatusServiceUnavailable:
+			if catalogProblemType(he) == "catalog_source_unavailable" {
+				wait := retryAfterSeconds(he.RetryAfter)
+				msg := valueOr(problemDetail([]byte(he.Body)), fmt.Sprintf("The catalog source of '%s' is unavailable; retry later.", entryID))
+				return s.softErrorExtra(ctx, &ux.CodedError{
+					Code: ux.CodeTransportError,
+					Msg:  fmt.Sprintf("%s Retry in %d seconds.", msg, wait),
+					Actionable: fmt.Sprintf("Wait %d seconds, then call import_api again with "+
+						"the same entry_id.", wait),
+				}, "", map[string]any{"retryable": true, "retry_after_s": wait})
+			}
+		case http.StatusForbidden:
+			return s.softError(ctx, &ux.CodedError{
+				Code: ux.CodeBrokerDenied,
+				Msg:  fmt.Sprintf("importing a cataloged API requires the catalog:import permission: %v", err),
+				Actionable: "Ask your human operator to grant this agent the catalog:import permission " +
+					"in the dashboard. Once they confirm, run `jentic logout` (clears only the cached token) " +
+					"so the next call mints a token carrying the permission, then retry import_api.",
+			})
+		}
 	}
 	return s.transportSoftError(ctx, err, nil)
+}
+
+// defaultCatalogRetryAfter is the wait suggested when a 503
+// catalog_source_unavailable carries no usable Retry-After (the server's own
+// default).
+const defaultCatalogRetryAfter = 5
+
+// retryAfterSeconds parses a delta-seconds Retry-After into whole seconds
+// (at least 1), falling back to defaultCatalogRetryAfter.
+func retryAfterSeconds(raw string) int {
+	n, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil || math.IsNaN(n) || math.IsInf(n, 0) || n < 0 {
+		return defaultCatalogRetryAfter
+	}
+	return max(1, int(math.Ceil(n)))
+}
+
+// catalogProblemType is the registry error slug of a problem body: the last
+// path segment of its "type" member.
+func catalogProblemType(he *HTTPError) string {
+	v, _ := he.Fields()["type"].(string)
+	if i := strings.LastIndex(v, "/"); i >= 0 {
+		v = v[i+1:]
+	}
+	return v
 }
 
 // maxEntryIDLength mirrors the server's entry_id width: a longer id can't name

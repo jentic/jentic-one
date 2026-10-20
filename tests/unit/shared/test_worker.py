@@ -359,7 +359,9 @@ class _MidJobWorker(WorkerLoop):
     async def _execute_handler(self, handler: Any, job: Any) -> JobResultPayload:
         raise self._exc
 
-    async def _handle_failure(self, job: Any, error: str) -> None:
+    async def _handle_failure(
+        self, job: Any, error: str, *, min_delay_s: float | None = None
+    ) -> None:
         if self._requeue_exc is not None:
             raise self._requeue_exc
         self.persisted.append(error)

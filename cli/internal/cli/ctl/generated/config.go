@@ -492,8 +492,20 @@ type CatalogSourceConfig struct {
 	// Auth corresponds to the JSON schema field "auth".
 	Auth *SourceAuthConfig `json:"auth,omitempty,omitzero" yaml:"auth,omitempty" mapstructure:"auth,omitempty"`
 
+	// Token bucket capacity; only used with requests_per_second.
+	Burst int `json:"burst,omitempty,omitzero" yaml:"burst,omitempty" mapstructure:"burst,omitempty"`
+
 	// Disabled sources are never synced (kill switch for this source).
 	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`
+
+	// Most in-flight requests to this source per process (listing and spec fetches
+	// together).
+	FetchConcurrency int `json:"fetch_concurrency,omitempty,omitzero" yaml:"fetch_concurrency,omitempty" mapstructure:"fetch_concurrency,omitempty"`
+
+	// Share of the concurrency slots and of the burst kept for interactive preview
+	// and import, so background work (listings, the update sweep) never takes the
+	// last of them.
+	InteractiveShare float64 `json:"interactive_share,omitempty,omitzero" yaml:"interactive_share,omitempty" mapstructure:"interactive_share,omitempty"`
 
 	// Registered source kind, e.g. git-manifest.
 	Kind string `json:"kind" yaml:"kind" mapstructure:"kind"`
@@ -514,6 +526,10 @@ type CatalogSourceConfig struct {
 
 	// Reader ACL; required for restricted sources only.
 	Readers *CatalogSourceConfigReaders `json:"readers,omitempty,omitzero" yaml:"readers,omitempty" mapstructure:"readers,omitempty"`
+
+	// Request rate shared by every process (a database-backed token bucket). null
+	// limits concurrency only, with no bucket and no database round trip.
+	RequestsPerSecond interface{} `json:"requests_per_second,omitempty,omitzero" yaml:"requests_per_second,omitempty" mapstructure:"requests_per_second,omitempty"`
 
 	// Kind-specific settings.
 	Settings CatalogSourceConfigSettings `json:"settings,omitempty,omitzero" yaml:"settings,omitempty" mapstructure:"settings,omitempty"`
@@ -563,6 +579,8 @@ func (j *CatalogSourceConfigReaders) UnmarshalJSON(value []byte) error {
 	*j = CatalogSourceConfigReaders(plain)
 	return nil
 }
+
+type CatalogSourceConfigRequestsPerSecond_0 *float64
 
 // Kind-specific settings.
 type CatalogSourceConfigSettings map[string]interface{}
@@ -648,8 +666,32 @@ func (j *CatalogSourceConfig) UnmarshalJSON(value []byte) error {
 	if err := json.Unmarshal(value, &plain); err != nil {
 		return err
 	}
+	if v, ok := raw["burst"]; !ok || v == nil {
+		plain.Burst = 4
+	}
+	if 1 > plain.Burst {
+		return fmt.Errorf("field %s: must be >= %v", "burst", 1)
+	}
 	if v, ok := raw["enabled"]; !ok || v == nil {
 		plain.Enabled = true
+	}
+	if v, ok := raw["fetch_concurrency"]; !ok || v == nil {
+		plain.FetchConcurrency = 4
+	}
+	if 64 < plain.FetchConcurrency {
+		return fmt.Errorf("field %s: must be <= %v", "fetch_concurrency", 64)
+	}
+	if 1 > plain.FetchConcurrency {
+		return fmt.Errorf("field %s: must be >= %v", "fetch_concurrency", 1)
+	}
+	if v, ok := raw["interactive_share"]; !ok || v == nil {
+		plain.InteractiveShare = 0.5
+	}
+	if 1 <= plain.InteractiveShare {
+		return fmt.Errorf("field %s: must be < %v", "interactive_share", 1)
+	}
+	if 0 > plain.InteractiveShare {
+		return fmt.Errorf("field %s: must be >= %v", "interactive_share", 0)
 	}
 	if v, ok := raw["max_age_seconds"]; !ok || v == nil {
 		plain.MaxAgeSeconds = 86400
@@ -2897,14 +2939,15 @@ func (j *SigningKeyConfig) UnmarshalJSON(value []byte) error {
 // Only “none“ is built in; other resolver types are registered by extensions.
 // The secret itself never appears here: “env“ names the variable holding it.
 type SourceAuthConfig struct {
-	// Reserved for credentialed source auth; not used yet.
+	// Name of the environment variable holding the secret, for a credentialed
+	// resolver to read; ignored by none.
 	Env interface{} `json:"env,omitempty,omitzero" yaml:"env,omitempty" mapstructure:"env,omitempty"`
 
-	// Reserved for credentialed source auth; not used yet.
+	// Request header a credentialed resolver sends the secret in; ignored by none.
 	Header interface{} `json:"header,omitempty,omitzero" yaml:"header,omitempty" mapstructure:"header,omitempty"`
 
-	// Only none is accepted (startup fails on any other type); credentialed source
-	// auth is not supported yet.
+	// Auth resolver type; it must be registered. Only none is built in; startup fails
+	// on an unknown type.
 	Type string `json:"type,omitempty,omitzero" yaml:"type,omitempty" mapstructure:"type,omitempty"`
 }
 

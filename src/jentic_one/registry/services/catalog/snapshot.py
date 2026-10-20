@@ -79,7 +79,6 @@ class CatalogSnapshot:
     key: tuple[str, str]
     entries: tuple[CatalogEntry, ...]
     by_id: Mapping[str, CatalogEntry]
-    spec_urls: Mapping[str, str]
     #: ``entry_id`` -> its id's scorer tokens, token set and space-joined tokens.
     tokens: Mapping[str, tuple[tuple[str, ...], frozenset[str], str]]
     precedence: Mapping[str, int]
@@ -184,7 +183,6 @@ def build_snapshot(
 ) -> CatalogSnapshot:
     """Build a snapshot from live ``catalog_entries`` rows of enabled sources."""
     built: list[CatalogEntry] = []
-    spec_refs: dict[str, Any] = {}
     for row in rows:
         entry = build_catalog_entry(
             source_slug=row.source_slug,
@@ -199,7 +197,6 @@ def build_snapshot(
             content_hint=row.content_hint,
         )
         built.append(entry)
-        spec_refs[entry.entry_id] = row.spec_ref
     curated = frozenset(s.slug for s in sources.values() if s.enabled and s.trust == "curated")
     curated_ids = {e.catalog_api_id for e in built if e.source_slug in curated}
     kept = exclude_unowned(
@@ -231,14 +228,10 @@ def build_snapshot(
             tok = (names, frozenset(names), " ".join(names))
             by_api[entry.catalog_api_id] = tok
         tokens[entry.entry_id] = tok
-    spec_urls = {
-        e.entry_id: url for e in kept if (url := spec_url_of(spec_refs.get(e.entry_id))) is not None
-    }
     return CatalogSnapshot(
         key=key,
         entries=tuple(kept),
         by_id={e.entry_id: e for e in kept},
-        spec_urls=spec_urls,
         tokens=tokens,
         precedence=precedence,
         groups=groups,

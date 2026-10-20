@@ -51,7 +51,7 @@ from jentic_one.shared.pagination import InvalidCursorError
 from jentic_one.shared.web import effective_permissions, get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.links import build_link
-from jentic_one.shared.web.openapi_responses import conflict
+from jentic_one.shared.web.openapi_responses import conflict, gone, problem
 
 router = APIRouter()
 
@@ -72,7 +72,7 @@ EntryIdPath = Annotated[
 def _card_only_conflict(path: str) -> dict[int | str, dict[str, Any]]:
     """The 409 a card-only entry (listed without a spec) answers on ``path``."""
     return conflict(
-        "The catalog entry has no spec (card-only; type `catalog_entry_has_no_spec`).",
+        "`catalog_entry_has_no_spec`: the entry is card-only (lists no spec).",
         example={
             "type": "catalog_entry_has_no_spec",
             "title": "Conflict",
@@ -241,7 +241,14 @@ async def list_catalog(
     "/catalog/{entry_id:path}/operations",
     response_model=OperationPreviewListResponse,
     response_model_by_alias=True,
-    responses=_card_only_conflict("/catalog/public/slack.com/operations"),
+    responses={
+        **_card_only_conflict("/catalog/public/slack.com/operations"),
+        **gone("`catalog_spec_gone`: the entry's source no longer has a spec for it."),
+        503: problem(
+            "`catalog_source_unavailable`: the entry's source is throttled or down; "
+            "retry after the `Retry-After` header."
+        ),
+    },
 )
 async def preview_catalog_operations(
     entry_id: EntryIdPath,
@@ -398,7 +405,10 @@ async def refresh_catalog(
     status_code=202,
     response_model=ApiImportResponse,
     response_model_by_alias=True,
-    responses=_card_only_conflict("/catalog/public/slack.com:import"),
+    responses={
+        **_card_only_conflict("/catalog/public/slack.com:import"),
+        **gone("`catalog_spec_gone`: the entry's source no longer has a spec for it."),
+    },
 )
 async def import_catalog_entry(
     request: Request,

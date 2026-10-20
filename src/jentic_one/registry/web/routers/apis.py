@@ -300,7 +300,12 @@ def _build_api_response(
 def _build_revision_source(
     item: RevisionPageItem | RevisionView,
 ) -> ApiRevisionSourceUrlResponse | ApiRevisionSourceInlineResponse | None:
-    if item.source_type == ApiRevisionSourceType.URL:
+    # A catalog import fetched by URL reads as a URL source; one fetched some
+    # other way has no client-facing source shape.
+    by_url = item.source_type == ApiRevisionSourceType.URL or (
+        item.source_type == ApiRevisionSourceType.CATALOG and item.source_url
+    )
+    if by_url:
         return ApiRevisionSourceUrlResponse(
             type="url",
             url=item.source_url or "",

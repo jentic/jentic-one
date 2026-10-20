@@ -35166,6 +35166,8 @@ type PreviewCatalogOperationsHTTPResp struct {
 	ApplicationproblemJSON403 *ProblemDetail
 	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
 	ApplicationproblemJSON409 *ProblemDetail
+	// ApplicationproblemJSON410 the response for an HTTP 410 `application/problem+json` response
+	ApplicationproblemJSON410 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -35199,6 +35201,11 @@ func (r PreviewCatalogOperationsHTTPResp) GetApplicationproblemJSON403() *Proble
 // GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
 func (r PreviewCatalogOperationsHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
 	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON410 returns the response for an HTTP 410 `application/problem+json` response
+func (r PreviewCatalogOperationsHTTPResp) GetApplicationproblemJSON410() *ProblemDetail {
+	return r.ApplicationproblemJSON410
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -35263,6 +35270,8 @@ type ImportCatalogEntryHTTPResp struct {
 	ApplicationproblemJSON403 *ProblemDetail
 	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
 	ApplicationproblemJSON409 *ProblemDetail
+	// ApplicationproblemJSON410 the response for an HTTP 410 `application/problem+json` response
+	ApplicationproblemJSON410 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -35296,6 +35305,11 @@ func (r ImportCatalogEntryHTTPResp) GetApplicationproblemJSON403() *ProblemDetai
 // GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
 func (r ImportCatalogEntryHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
 	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON410 returns the response for an HTTP 410 `application/problem+json` response
+func (r ImportCatalogEntryHTTPResp) GetApplicationproblemJSON410() *ProblemDetail {
+	return r.ApplicationproblemJSON410
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -53317,6 +53331,13 @@ func ParsePreviewCatalogOperationsHTTPResp(rsp *http.Response) (*PreviewCatalogO
 		}
 		response.ApplicationproblemJSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON410 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -53398,6 +53419,13 @@ func ParseImportCatalogEntryHTTPResp(rsp *http.Response) (*ImportCatalogEntryHTT
 			return nil, err
 		}
 		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON410 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail

@@ -181,6 +181,18 @@ the CLI's agent-mode machine contract — so read this before rolling it out.
   only.
 
 
+## Upgrading to the multi-source catalog release (0.44.0): update tracking
+
+Part of the same breaking release as the `entry_id` catalog changes above (the
+multi-source storage and the read cutover); it ships with them, never on its own.
+
+- **Rollback drops update-check state.** The update checks are re-keyed from
+  spec URL to catalog entry. Downgrading below the backfill revision
+  (`c2d3e4f5a6b9`) deletes every `catalog_update_checks` row: update snoozes
+  and the "already notified" state are lost, so after the rollback the next
+  sweep re-notifies outstanding updates once and operators re-snooze them.
+
+
 ## Upgrading to the first theme-5 release
 
 Operator-facing changes shipped by the theme-5 (toolkit removal) release —

@@ -1,12 +1,14 @@
-"""Fetch layer — loads an IngestSpecification from a URL or inline content."""
+"""Fetch layer — loads an IngestSpecification from a URL, inline content or a catalog entry."""
 
 import hashlib
 import json
 import math
-from typing import Annotated, Any, Literal
+from dataclasses import dataclass
+from typing import Annotated, Any, Literal, Protocol
 from urllib.parse import urljoin, urlparse
 
 import httpx
+import structlog
 import yaml
 from pydantic import BaseModel, Field
 
@@ -17,6 +19,8 @@ from jentic_one.shared.config import IngestConfig
 from jentic_one.shared.egress import build_pinned_transport
 from jentic_one.shared.models import ApiRevisionSourceType
 from jentic_one.shared.url_validation import validate_upstream_url_async
+
+logger = structlog.get_logger(__name__)
 
 
 class InlineSource(BaseModel):
@@ -90,7 +94,54 @@ class UrlSource(BaseModel):
     host_change_approved: bool = False
 
 
-IngestSource = Annotated[UrlSource | InlineSource, Field(discriminator="type")]
+class CatalogRefSource(BaseModel):
+    """A catalog entry, fetched through its source inside the import job.
+
+    Carries only the entry's id: the job looks the entry up and asks its source
+    for the spec, so a source's credentials never sit in a job payload. Built
+    server-side by ``CatalogService.import_entry`` only; no client ingest schema
+    accepts it.
+    """
+
+    type: Literal["catalog"]
+    catalog_entry_id: str
+    catalog_api_id: str
+    vendor: str | None = None
+    api_name: str | None = None
+    version: str | None = None
+    submitted_by: str | None = None
+    origin: str | None = None
+    #: See ``UrlSource.supersede_active``.
+    supersede_active: bool = False
+    #: See ``UrlSource.host_change_approved``.
+    host_change_approved: bool = False
+    #: The caller asked to switch an API imported from another entry onto this
+    #: one (and held ``credentials:write``). The target identity is already in
+    #: ``vendor``/``api_name``; kept so the job payload records the decision.
+    switch_source: bool = False
+
+
+IngestSource = Annotated[UrlSource | InlineSource | CatalogRefSource, Field(discriminator="type")]
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogSpec:
+    """A spec a catalog source returned for one entry."""
+
+    content: bytes
+    #: ``sha256`` of ``content``.
+    digest: str
+    media_type: str
+    #: The URL the source fetched it from, when its ref has one (provenance only).
+    source_url: str | None = None
+
+
+class CatalogSpecResolver(Protocol):
+    """Fetches a catalog entry's spec through the entry's source."""
+
+    async def resolve(self, source: CatalogRefSource) -> CatalogSpec:
+        """The spec of ``source.catalog_entry_id``; raises ``IngestStageError`` when it can't."""
+        ...
 
 
 #: Upper bound on the fully alias-expanded node count of a YAML spec. Stripe's
@@ -337,17 +388,56 @@ def parse_spec_content(raw: str, *, filename: str | None = None) -> dict[str, An
 _DEFAULT_INGEST_CONFIG = IngestConfig()
 
 
+def spec_digest(content: bytes) -> str:
+    """The SHA-256 hex digest a revision records for spec bytes."""
+    return hashlib.sha256(content).hexdigest()
+
+
+def _decode_spec(content: bytes) -> str:
+    try:
+        return content.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise IngestStageError("spec content is not valid UTF-8") from exc
+
+
 async def load_specification(
-    source: UrlSource | InlineSource,
+    source: UrlSource | InlineSource | CatalogRefSource,
     *,
     config: IngestConfig | None = None,
+    catalog: CatalogSpecResolver | None = None,
 ) -> IngestSpecification:
-    """Load and parse a spec from a URL or inline content into an IngestSpecification."""
+    """Load and parse a spec from a URL, inline content or a catalog entry.
+
+    A ``CatalogRefSource`` needs ``catalog``, the resolver that fetches the
+    entry's spec through its source.
+    """
     cfg = config or _DEFAULT_INGEST_CONFIG
     max_bytes = cfg.max_spec_bytes
     size_limit_label = f"{max_bytes / (1024 * 1024):.1f} MB"
 
-    if isinstance(source, InlineSource):
+    if isinstance(source, CatalogRefSource):
+        if catalog is None:
+            raise IngestStageError("catalog imports are not available in this process")
+        fetched = await catalog.resolve(source)
+        if len(fetched.content) > max_bytes:
+            raise IngestStageError(f"response exceeds {size_limit_label} size limit")
+        filename = "openapi.json" if fetched.media_type == "application/json" else "openapi.yaml"
+        content = parse_spec_content(_decode_spec(fetched.content), filename=filename)
+        # The revision digest is always ours, over the bytes we got: the sweep
+        # compares it with the upstream digest it computes the same way, so a
+        # connector's own digest (another algorithm, a bug) can't skew it.
+        sha = spec_digest(fetched.content)
+        if fetched.digest != sha:
+            logger.warning(
+                "catalog_spec_digest_mismatch",
+                catalog_entry_id=source.catalog_entry_id,
+                source_digest=fetched.digest,
+            )
+        source_type = ApiRevisionSourceType.CATALOG
+        source_url = fetched.source_url
+        retrieval_url: str | None = None
+        source_filename: str | None = None
+    elif isinstance(source, InlineSource):
         # Inline content bypasses the URL-fetch size checks below, so enforce the
         # same cap here — otherwise an oversized inline import (e.g. a materialized
         # overlay whose document blew up the spec) can exhaust memory and produce
@@ -358,8 +448,8 @@ async def load_specification(
         sha = hashlib.sha256(source.content.encode()).hexdigest()
         source_type = ApiRevisionSourceType.INLINE
         source_url = source.source_url
-        retrieval_url: str | None = None
-        source_filename: str | None = source.filename
+        retrieval_url = None
+        source_filename = source.filename
     else:
         try:
             validated_url = await validate_upstream_url_async(source.url, cfg.egress)

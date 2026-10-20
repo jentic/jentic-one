@@ -6,6 +6,7 @@ from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.catalog_entries import CatalogEntryRow
 from jentic_one.registry.core.schema.catalog_snapshots import CatalogSnapshot
+from jentic_one.registry.core.schema.catalog_source_buckets import CatalogSourceBucket
 from jentic_one.registry.core.schema.catalog_sources import CatalogSourceRow
 from jentic_one.registry.core.schema.catalog_staged_entries import CatalogStagedEntry
 from jentic_one.registry.core.schema.catalog_sync_runs import CatalogSyncRun
@@ -24,6 +25,7 @@ __all__ = [
     "ApiRevision",
     "CatalogEntryRow",
     "CatalogSnapshot",
+    "CatalogSourceBucket",
     "CatalogSourceRow",
     "CatalogStagedEntry",
     "CatalogSyncRun",

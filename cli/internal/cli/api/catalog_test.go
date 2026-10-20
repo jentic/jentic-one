@@ -679,3 +679,23 @@ func TestToCatalogPreview_CarriesServerVariablesAndOAuthFlows(t *testing.T) {
 		}
 	}
 }
+
+func TestCatalogEntryErr_MapsSourceErrors(t *testing.T) {
+	gone := catalogEntryErr(&HTTPError{StatusCode: http.StatusGone, Body: `{"type":"catalog_spec_gone","detail":"gone"}`}, "corp/x", "show")
+	var coded *ux.CodedError
+	if !errors.As(gone, &coded) || coded.Code != ux.CodeResolveFailed || coded.Msg != "gone" {
+		t.Fatalf("410 = %#v, want RESOLVE_FAILED with the server's detail", gone)
+	}
+	busy := catalogEntryErr(&HTTPError{
+		StatusCode: http.StatusServiceUnavailable,
+		Body:       `{"type":"catalog_source_unavailable","detail":"busy."}`,
+		RetryAfter: "7",
+	}, "corp/x", "show")
+	if !errors.As(busy, &coded) || coded.Code != ux.CodeTransportError || coded.Details["retry_after_s"] != 7 {
+		t.Fatalf("503 = %#v, want TRANSPORT_ERROR with retry_after_s 7", busy)
+	}
+	other := &HTTPError{StatusCode: http.StatusServiceUnavailable, Body: `{"type":"governed_hosts_unavailable"}`}
+	if got := catalogEntryErr(other, "corp/x", "show"); !errors.Is(got, other) {
+		t.Fatalf("an unrelated 503 must pass through, got %#v", got)
+	}
+}
