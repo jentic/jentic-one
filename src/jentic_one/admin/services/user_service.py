@@ -389,8 +389,14 @@ class UserService:
 
         Idempotent: a user already deleted keeps its original ``deleted_at``
         and no second ``DELETE`` audit entry is written — including when two
-        deletes race, since ``mark_deleted`` only marks an unmarked row.
+        deletes race, since ``mark_deleted`` only marks an unmarked row. The
+        user-deleted hooks still run on every successful delete, a repeat one
+        included: that is how an operator re-runs a hook that failed.
         """
+        await self._delete_in_transaction(user_id, identity=identity)
+        await run_user_deleted_hooks(self._ctx, user_id, identity=identity)
+
+    async def _delete_in_transaction(self, user_id: str, *, identity: Identity) -> None:
         async with self._ctx.admin_db.transaction() as session:
             user = await self._load_manageable(session, user_id, identity)
             if user.deleted_at is not None:
@@ -424,7 +430,6 @@ class UserService:
             audit_events_counter.add(
                 1, {"action": AuditAction.DELETE, "target_type": AuditTargetType.USER}
             )
-        await run_user_deleted_hooks(self._ctx, user_id, identity=identity)
 
     async def disable(self, user_id: str, *, identity: Identity) -> bool:
         async with self._ctx.admin_db.transaction() as session:
