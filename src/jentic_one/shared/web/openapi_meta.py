@@ -627,6 +627,14 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         ),
     },
     {
+        "name": "CLI Facades",
+        "description": (
+            "The Broker's vendor CLI facades this deployment serves, and the address each "
+            "vendor CLI is pointed at. `jentic cf` and `jentic cli list` read it, so no "
+            "agent hard-codes a facade address."
+        ),
+    },
+    {
         "name": "Agent Registration",
         "description": (
             "Dynamic agent registration (RFC 7591-style) — register a new agent client, poll "
@@ -761,6 +769,7 @@ X_TAG_GROUPS: list[dict[str, Any]] = [
             "Agents",
             "OAuth",
             "CLI Invocations",
+            "CLI Facades",
             "Agent Registration",
             "Discovery",
         ],
@@ -1061,6 +1070,7 @@ _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     # Platform-actor surfaces (superset, not in the original reference).
     (re.compile(r"^/agents"), "Agents"),
     (re.compile(r"^/cli-invocations"), "CLI Invocations"),
+    (re.compile(r"^/cli-facades"), "CLI Facades"),
     (re.compile(r"^/oauth"), "OAuth"),
     (re.compile(r"^/authorize"), "OAuth"),
     (re.compile(r"^/error"), "OAuth"),

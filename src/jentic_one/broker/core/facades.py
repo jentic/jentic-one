@@ -23,8 +23,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import unquote
 
-#: The reserved path prefix every path-mode facade is served under.
-FACADE_PATH_PREFIX = "/_facade"
+from jentic_one.shared.cli_facades import FACADE_PATH_PREFIX, facade_path_prefix
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,7 +42,7 @@ class PathFacade:
 #: Cloudflare (``cf``): ``CLOUDFLARE_API_BASE_URL=<broker>/_facade/cloudflare``.
 CLOUDFLARE_FACADE = PathFacade(
     vendor="cloudflare",
-    prefix=f"{FACADE_PATH_PREFIX}/cloudflare",
+    prefix=facade_path_prefix("cloudflare"),
     upstream_base="https://api.cloudflare.com/client/v4",
 )
 

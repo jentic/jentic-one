@@ -46,6 +46,7 @@ _ALLOWLIST: dict[str, str] = {
     "AuthorizeService.list_consentable_agents": (
         "consent flow: keyed on the authenticated consenting user's id, lists only their agents"
     ),
+    "CliFacadeService.list_served": "deployment-wide CLI facade addresses from config, no rows",
     "CredentialService.list_providers": "static credential-provider metadata, no rows",
     "CredentialService.list_rule_sets": (
         "shared permission rule sets carry policy, not secrets, and are visible to every "

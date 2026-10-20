@@ -95,6 +95,9 @@ _ALLOWLIST: dict[str, str] = {
     "auth/registration.update_registration_endpoint": "always 403: client update unsupported",
     "auth/registration.delete_registration_endpoint": "always 403: client deletion unsupported",
     # --- control ---
+    "control/cli_facades.list_cli_facades": (
+        "deployment-wide CLI facade addresses read from config, no rows"
+    ),
     "control/credentials.list_providers": "static credential-provider metadata, no rows",
     "control/mcp.report_mcp_config_registration": (
         "fire-and-forget telemetry report attributed to identity.sub; reads nothing per-caller"

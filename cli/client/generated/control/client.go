@@ -324,6 +324,24 @@ func (e BearerTokenUpdateRequestType) Valid() bool {
 	}
 }
 
+// Defines values for CliFacadeResponseMode.
+const (
+	Host CliFacadeResponseMode = "host"
+	Path CliFacadeResponseMode = "path"
+)
+
+// Valid indicates whether the value is a known member of the CliFacadeResponseMode enum.
+func (e CliFacadeResponseMode) Valid() bool {
+	switch e {
+	case Host:
+		return true
+	case Path:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ConnectSessionSummaryResponseState.
 const (
 	ConnectSessionSummaryResponseStateAwaitingApp ConnectSessionSummaryResponseState = "awaiting_app"
@@ -2657,6 +2675,46 @@ type ClaimRequest struct {
 	// Examples: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
 	Token string `json:"token"`
 }
+
+// CliFacadeListResponse The vendor CLI facades this deployment serves.
+//
+// Examples: {"data":[{"address":"https://broker.jentic.example.com/_facade/cloudflare","cli":"cf","mode":"path","vendor":"cloudflare"}]}
+type CliFacadeListResponse struct {
+	// Data Served facades, one per vendor; empty when none is enabled.
+	//
+	// Examples: [{"address":"https://broker.jentic.example.com/_facade/cloudflare","cli":"cf","mode":"path","vendor":"cloudflare"}]
+	Data []CliFacadeResponse `json:"data"`
+}
+
+// CliFacadeResponse One vendor CLI facade an agent's CLI can be pointed at.
+//
+// Examples: {"address":"https://broker.jentic.example.com/_facade/cloudflare","cli":"cf","mode":"path","vendor":"cloudflare"}
+type CliFacadeResponse struct {
+	// Address Base URL to point the CLI at (e.g. `CLOUDFLARE_API_BASE_URL`). Null when the deployment cannot advertise one: a `remote` backend whose Broker URL is a loopback address and no `public_address` set for the vendor.
+	//
+	// Examples: https://broker.jentic.example.com/_facade/cloudflare
+	Address *string `json:"address,omitempty"`
+
+	// Cli The vendor CLI the facade speaks to, e.g. `cf` for `jentic cf`.
+	//
+	// Examples: cf
+	Cli string `json:"cli"`
+
+	// Mode How the facade is addressed: `host` on a hostname of its own, `path` under a path prefix on the Broker's own address.
+	//
+	// Examples: path
+	Mode CliFacadeResponseMode `json:"mode"`
+
+	// Vendor Vendor the facade serves, as passed to `POST /cli-invocations`.
+	//
+	// Examples: cloudflare
+	Vendor string `json:"vendor"`
+}
+
+// CliFacadeResponseMode How the facade is addressed: `host` on a hostname of its own, `path` under a path prefix on the Broker's own address.
+//
+// Examples: path
+type CliFacadeResponseMode string
 
 // CliInvocationCreateRequest Request body for minting a CLI invocation token.
 //
@@ -10876,6 +10934,20 @@ type ClientInterface interface {
 	// Corresponds with POST /catalog:refresh (the `RefreshCatalog` operationId).
 	RefreshCatalog(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListCliFacades List vendor CLI facades
+	//
+	// The vendor CLI facades this deployment serves, and the address of each.
+	//
+	// `jentic cf` (and `jentic cli list`) read this to learn where to point the
+	// vendor's own CLI, so no agent hard-codes a facade address. Lists only
+	// facades that are switched on (`cli_facades.enabled` and the vendor's
+	// `enabled`) and implemented by the Broker. Whether the caller holds a
+	// credential for the vendor is not checked here: a call without one fails
+	// at the facade with the usual Broker problem.
+	//
+	// Corresponds with GET /cli-facades (the `ListCliFacades` operationId).
+	ListCliFacades(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// CreateCliInvocationWithBody Mint a CLI invocation token
 	//
 	// Mint a short-lived invocation token for one vendor CLI command.
@@ -14690,6 +14762,30 @@ func (c *Client) UnsnoozeCatalogEntry(ctx context.Context, apiId string, reqEdit
 // Corresponds with POST /catalog:refresh (the `RefreshCatalog` operationId).
 func (c *Client) RefreshCatalog(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRefreshCatalogRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListCliFacades List vendor CLI facades
+//
+// The vendor CLI facades this deployment serves, and the address of each.
+//
+// `jentic cf` (and `jentic cli list`) read this to learn where to point the
+// vendor's own CLI, so no agent hard-codes a facade address. Lists only
+// facades that are switched on (`cli_facades.enabled` and the vendor's
+// `enabled`) and implemented by the Broker. Whether the caller holds a
+// credential for the vendor is not checked here: a call without one fails
+// at the facade with the usual Broker problem.
+//
+// Corresponds with GET /cli-facades (the `ListCliFacades` operationId).
+func (c *Client) ListCliFacades(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListCliFacadesRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -21659,6 +21755,33 @@ func NewRefreshCatalogRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewListCliFacadesRequest constructs an http.Request for the ListCliFacades method
+func NewListCliFacadesRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/cli-facades")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewCreateCliInvocationRequest calls the generic CreateCliInvocation builder with application/json body
 func NewCreateCliInvocationRequest(server string, body CreateCliInvocationJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -27759,6 +27882,22 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /catalog:refresh (the `RefreshCatalog` operationId).
 	RefreshCatalogWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RefreshCatalogHTTPResp, error)
+
+	// ListCliFacadesWithResponse List vendor CLI facades
+	//
+	// The vendor CLI facades this deployment serves, and the address of each.
+	//
+	// `jentic cf` (and `jentic cli list`) read this to learn where to point the
+	// vendor's own CLI, so no agent hard-codes a facade address. Lists only
+	// facades that are switched on (`cli_facades.enabled` and the vendor's
+	// `enabled`) and implemented by the Broker. Whether the caller holds a
+	// credential for the vendor is not checked here: a call without one fails
+	// at the facade with the usual Broker problem.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /cli-facades (the `ListCliFacades` operationId).
+	ListCliFacadesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListCliFacadesHTTPResp, error)
 
 	// CreateCliInvocationWithBodyWithResponse Mint a CLI invocation token
 	//
@@ -36114,6 +36253,96 @@ func (r RefreshCatalogHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RefreshCatalogHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListCliFacadesHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CliFacadeListResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListCliFacadesHTTPResp) GetJSON200() *CliFacadeListResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListCliFacadesHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListCliFacadesHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListCliFacadesHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ListCliFacadesHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ListCliFacadesHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListCliFacadesHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListCliFacadesHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListCliFacadesHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListCliFacadesHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListCliFacadesHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListCliFacadesHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -46526,6 +46755,28 @@ func (c *ClientWithResponses) RefreshCatalogWithResponse(ctx context.Context, re
 	return ParseRefreshCatalogHTTPResp(rsp)
 }
 
+// ListCliFacadesWithResponse List vendor CLI facades
+//
+// The vendor CLI facades this deployment serves, and the address of each.
+//
+// `jentic cf` (and `jentic cli list`) read this to learn where to point the
+// vendor's own CLI, so no agent hard-codes a facade address. Lists only
+// facades that are switched on (`cli_facades.enabled` and the vendor's
+// `enabled`) and implemented by the Broker. Whether the caller holds a
+// credential for the vendor is not checked here: a call without one fails
+// at the facade with the usual Broker problem.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /cli-facades (the `ListCliFacades` operationId).
+func (c *ClientWithResponses) ListCliFacadesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListCliFacadesHTTPResp, error) {
+	rsp, err := c.ListCliFacades(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListCliFacadesHTTPResp(rsp)
+}
+
 // CreateCliInvocationWithBodyWithResponse Mint a CLI invocation token
 //
 // Mint a short-lived invocation token for one vendor CLI command.
@@ -54577,6 +54828,81 @@ func ParseRefreshCatalogHTTPResp(rsp *http.Response) (*RefreshCatalogHTTPResp, e
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest CatalogRefreshResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListCliFacadesHTTPResp parses an HTTP response from a ListCliFacadesWithResponse call
+func ParseListCliFacadesHTTPResp(rsp *http.Response) (*ListCliFacadesHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListCliFacadesHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CliFacadeListResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

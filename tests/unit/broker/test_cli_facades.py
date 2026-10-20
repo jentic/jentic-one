@@ -36,12 +36,14 @@ from jentic_one.broker.core.facades import (
     is_facade_response_header,
 )
 from jentic_one.broker.core.problem import STATUS_BY_ERROR
+from jentic_one.broker.web.app import _routers as broker_routers
 from jentic_one.broker.web.errors import install_broker_error_handlers
 from jentic_one.broker.web.routers.facades import (
     CloudflareFacadeRoute,
     _restrict_response_headers,
     cloudflare_error_response,
 )
+from jentic_one.shared.cli_facades import SERVED_FACADE_CLIS, facade_path_prefix
 from jentic_one.shared.tracing import current_trace_id, server_chosen_trace
 from jentic_one.shared.web.app_factory import spa_aware_problem_detail_handler
 from jentic_one.shared.web.errors import (
@@ -57,6 +59,19 @@ def _scope(raw_path: bytes, query: bytes = b"") -> dict[str, Any]:
 
 
 # ── addressing ───────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("vendor", sorted(SERVED_FACADE_CLIS))
+def test_every_advertised_facade_has_a_broker_route(vendor: str) -> None:
+    # Control advertises SERVED_FACADE_CLIS to agents' CLI wrappers; each one
+    # must be a route the broker actually serves under the shared prefix.
+    prefix = facade_path_prefix(vendor)
+    paths = [
+        getattr(route, "path", "")
+        for router, _prefix, _tags in broker_routers(readiness_saturation_threshold=1.0)
+        for route in router.routes
+    ]
+    assert any(path.startswith(f"{prefix}/") for path in paths)
 
 
 def test_upstream_url_keeps_the_raw_path_and_query() -> None:

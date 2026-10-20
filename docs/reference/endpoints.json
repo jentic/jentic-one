@@ -1645,6 +1645,28 @@
     },
     {
       "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Agent-facing (typically an agent)",
+      "implied_permissions": {
+        "capabilities:read": []
+      },
+      "method": "GET",
+      "operation_id": "listCliFacades",
+      "path": "/cli-facades",
+      "public": false,
+      "required_permissions": [
+        "capabilities:read"
+      ],
+      "summary": "List vendor CLI facades",
+      "surface": "cli-facades",
+      "typical_caller": "agent"
+    },
+    {
+      "actor_types": [
         "agent"
       ],
       "auth_note": null,
@@ -4810,5 +4832,5 @@
     "total": 27
   },
   "schema": "jentic.endpoint-permission-tree/v1",
-  "total": 173
+  "total": 174
 }
