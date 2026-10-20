@@ -20,7 +20,7 @@ from jentic.problem_details import Forbidden, Unauthorized
 
 from jentic_one.broker.adapters.runners.base import UpstreamRunner
 from jentic_one.broker.adapters.runners.registry import RunnerRegistry
-from jentic_one.broker.core.exceptions import RateLimitExceededError
+from jentic_one.broker.core.exceptions import OperationNotFoundError, RateLimitExceededError
 from jentic_one.broker.core.proxy_headers import reconstruct_upstream_url
 from jentic_one.broker.core.token_validation import CachedCliInvocationValidator
 from jentic_one.broker.services.auth import CompositeTokenValidator
@@ -47,7 +47,7 @@ from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.resilience import RateLimiter
 from jentic_one.shared.web.auth import extract_credential
-from jentic_one.shared.web.deps import derive_origin
+from jentic_one.shared.web.deps import derive_origin, get_ctx
 
 _logger = structlog.get_logger(__name__)
 
@@ -205,13 +205,34 @@ async def require_cli_invocation(request: Request) -> CliInvocationIdentity:
     return resolved
 
 
+def require_cli_facade_served(vendor: str) -> Any:
+    """Dependency factory: 404 unless ``vendor``'s facade is switched on right now.
+
+    Read per request from ``cli_facades.enabled`` and the vendor's own
+    ``enabled``, so switching a facade off stops it without a restart (and an
+    invocation token minted before the switch stops working with it). Listed
+    before the token dependency, so a disabled facade answers 404 to everyone.
+    """
+
+    async def _dependency(request: Request, ctx: Context = Depends(get_ctx)) -> None:
+        if not ctx.config.cli_facades.vendor_enabled(vendor):
+            raise OperationNotFoundError(
+                f"The {vendor} CLI facade is not enabled on this deployment.",
+                type="cli_facade_not_found",
+                instance=request.url.path,
+            )
+
+    return Depends(_dependency)
+
+
 def require_cli_facade_invocation(vendor: str) -> Any:
     """Dependency factory: a valid invocation token minted for ``vendor``'s facade.
 
     A token minted for another vendor answers the same 401 as an invalid one,
     so a token leaked to one facade cannot be replayed at another. The agent
     must still hold the broker execute permission (live, through the parent
-    token), the same gate ``/execute`` applies.
+    token), the same gate ``/execute`` applies, and each call spends the
+    agent's broker rate limit as a proxied call does.
     """
 
     async def _dependency(
@@ -234,6 +255,7 @@ def require_cli_facade_invocation(vendor: str) -> Any:
                 instance=request.url.path,
                 type="insufficient_scope",
             )
+        await _enforce_rate_limit(request, invocation.identity)
         return invocation
 
     return Depends(_dependency)
@@ -285,10 +307,15 @@ async def require_execute_within_rate_limit(request: Request) -> Identity:
     ``429`` carrying ``RateLimit-*`` + ``Retry-After`` (we are at the web edge).
     """
     resolved = await require_execute_permission(request)
+    await _enforce_rate_limit(request, resolved)
+    return resolved
 
+
+async def _enforce_rate_limit(request: Request, resolved: Identity) -> None:
+    """Spend one unit of ``resolved.sub``'s rate limit, or raise 429 when it is exhausted."""
     limiter: RateLimiter | None = getattr(request.app.state, "broker_rate_limiter", None)
     if limiter is None:
-        return resolved
+        return
 
     outcome = await limiter.acquire(resolved.sub)
     if not outcome.allowed:
@@ -300,7 +327,21 @@ async def require_execute_within_rate_limit(request: Request) -> Identity:
             type="rate_limit_exceeded",
             headers=headers,
         )
-    return resolved
+
+
+def get_cli_facade_runner(upstream_base: str) -> Any:
+    """Dependency factory: the upstream runner for a facade forwarding to ``upstream_base``.
+
+    The facade's own path is not an upstream URL, so the runner is selected
+    by the scheme of the facade's fixed upstream base, through the same
+    :class:`RunnerRegistry` as :func:`get_http_runner`.
+    """
+
+    def _dependency(request: Request) -> UpstreamRunner:
+        registry: RunnerRegistry = request.app.state.broker_runner_registry
+        return registry.select(upstream_base)
+
+    return Depends(_dependency)
 
 
 def get_http_runner(request: Request) -> UpstreamRunner:

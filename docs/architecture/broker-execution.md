@@ -5,6 +5,8 @@ response. The broker ([`src/jentic_one/broker/`](../../src/jentic_one/broker/)) 
 forward proxy with essentially one route: a catch-all
 `/{upstream_url:path}` that accepts every HTTP method
 ([`broker/web/routers/execute.py`](../../src/jentic_one/broker/web/routers/execute.py)).
+The vendor CLI facades, registered ahead of it, run the same pipeline for a
+vendor's own CLI ([Vendor CLI facades](#vendor-cli-facades)).
 
 ## A brokered call, end to end
 
@@ -238,6 +240,48 @@ propagation is bounded by the configured TTLs above (default `30` s; set the
 respective TTL to `0` to disable caching). Queued async executions bypass these
 caches and re-authorize against live database state when the worker claims the
 job (`build_queued_execution_authorizer`).
+
+## Vendor CLI facades
+
+A facade lets a vendor's own CLI, pointed at the broker with its base-URL
+override, run through this pipeline
+([`broker/web/routers/facades.py`](../../src/jentic_one/broker/web/routers/facades.py),
+[`broker/core/facades.py`](../../src/jentic_one/broker/core/facades.py)). Each facade is a
+real route registered before the catch-all, under the reserved `/_facade`
+prefix: its first segment starts with an underscore, which no hostname can
+contain, so it never shadows a URL the catch-all would proxy. Any other path
+under `/_facade` answers 404. Facades are off unless `cli_facades.enabled`
+and the vendor's own `enabled` are both set, checked on every request.
+
+The Cloudflare facade (`cf`, `CLOUDFLARE_API_BASE_URL=<broker>/_facade/cloudflare`)
+maps `/_facade/cloudflare/<path>?<query>` to
+`https://api.cloudflare.com/client/v4/<path>?<query>`, with the path and query
+kept exactly as the client encoded them. A call differs from a proxied one in
+these ways:
+
+- **Authentication.** Only a `cit_` CLI invocation token minted for the
+  vendor is accepted ([identity and authorization](identity-and-authorization.md)).
+  The call spends the agent's rate limit as a proxied call does.
+- **Trace and credential.** The call is recorded under the token's
+  server-chosen trace id, so a command's calls group together, and runs in a
+  span on that trace whatever `traceparent` the client sent. The token's
+  credential name takes the place of the `Jentic-Credential-Name` header in
+  credential selection; the `Jentic-Credential-*` request headers are not read.
+- **Headers.** Inbound headers carrying an invocation token, and inbound
+  trace context, are never forwarded. Response headers go through an
+  allowlist, so an upstream `Set-Cookie`, `Location` or `WWW-Authenticate`
+  never lands on the broker's origin.
+- **Errors.** The CLI cannot read Problem Details, so the facade's route class
+  sets an error-response hook that the central exception handlers apply to
+  the response they built (`apply_route_error_response_hook` in
+  [`shared/web/errors.py`](../../src/jentic_one/shared/web/errors.py)): the error keeps its status and is
+  rendered as Cloudflare's envelope,
+  `{"success": false, "errors": [{"code": <status>, "message": "Jentic: …"}], "messages": [], "result": null}`,
+  with the problem's detail and agent directive in the message.
+- **Holds.** A call a rule holds for approval is filed as usual and answered
+  with a 409 error naming the held execution, its review URL and its result
+  link, instead of the 202 held envelope, which a CLI would misread as the
+  operation's response. A facade call always runs synchronously.
 
 ## What gets recorded
 

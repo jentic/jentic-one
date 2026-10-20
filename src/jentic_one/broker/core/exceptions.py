@@ -235,6 +235,18 @@ class ApprovalPendingLimitError(BrokerError):
     """The agent already holds the configured maximum of pending approvals (403)."""
 
 
+class ExecutionHeldError(BrokerError):
+    """A CLI facade call was held for human approval (409).
+
+    The plain proxy answers a hold with the 202 held envelope. A vendor CLI
+    would misread that as the operation's own response, so a facade answers
+    the hold as an error instead: the hold is already filed, ``extra`` carries
+    the held execution's id and links, and the CLI fails without retrying.
+    """
+
+    default_type = "execution_held"
+
+
 class ApprovalHoldUnavailableError(BrokerError):
     """A require-approval rule matched but this deployment cannot hold the call (503).
 

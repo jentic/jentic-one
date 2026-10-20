@@ -9,6 +9,11 @@ the shared ``BrokerExecutionPipeline``** → adapt the result to a ``Response``
 No resilience/credential/post-processing logic is inlined here — those are
 pipeline stages / runner decorators (``services/execution/pipeline.py``,
 ``adapters/runners/``).
+
+The vendor CLI facades (``routers/facades.py``) run the same adapter through
+:func:`handle_facade_call` with a :class:`FacadeCall`: the facade fixes the
+upstream URL, the trace id and the credential choice instead of reading them
+from the request.
 """
 
 from __future__ import annotations
@@ -17,6 +22,7 @@ import asyncio
 import base64
 import json
 import weakref
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -33,8 +39,10 @@ from jentic_one.broker.adapters.runners.base import (
     UpstreamRunner,
 )
 from jentic_one.broker.core.exceptions import (
+    AgentDirective,
     ApprovalHoldUnavailableError,
     ApprovalPendingLimitError,
+    ExecutionHeldError,
     IdempotencyConflictError,
     IdempotencyInProgressError,
     OperationNotFoundError,
@@ -45,6 +53,7 @@ from jentic_one.broker.core.exceptions import (
     switch_toolkit_directive,
 )
 from jentic_one.broker.core.execution import mint_execution_id
+from jentic_one.broker.core.facades import FACADE_HELD_INSTRUCTION, facade_request_headers
 from jentic_one.broker.core.headers import (
     JENTIC_REVISION_HEADER,
     REGION_MISMATCH_HINT,
@@ -302,6 +311,45 @@ async def _acquire_persist_slot(
     return True
 
 
+@dataclass(frozen=True, slots=True)
+class FacadeCall:
+    """What a CLI facade fixes for one call instead of reading it from the request.
+
+    ``upstream_url`` replaces the URL the forward proxy rebuilds from the raw
+    path; ``trace_id`` (the invocation token's, chosen by the server at mint)
+    replaces the derived trace id; ``credential_name`` (the token's) takes the
+    place of the ``Jentic-Credential-Name`` header in credential selection,
+    and ``Jentic-Credential-Id`` is not read.
+
+    A facade call also differs from a proxied one in what it answers: it runs
+    synchronously whatever ``Prefer`` says, a hold is answered as an
+    :class:`ExecutionHeldError` (a vendor CLI would misread the 202 held
+    envelope as the operation's response), an unregistered URL is a plain 404
+    (the unregistered-URL hook is not consulted), and inbound headers carrying
+    an invocation token or trace context are never forwarded.
+    """
+
+    upstream_url: str
+    trace_id: str
+    credential_name: str | None = None
+
+
+def _credential_choice(request: Request, call: FacadeCall | None) -> tuple[str | None, str | None]:
+    """The caller's ``(credential_name, credential_id)`` selection inputs."""
+    if call is not None:
+        return call.credential_name, None
+    return request.headers.get("jentic-credential-name"), request.headers.get(
+        "jentic-credential-id"
+    )
+
+
+def _forwardable_headers(request: Request, call: FacadeCall | None) -> Mapping[str, str]:
+    """The inbound headers ``forward_headers`` filters for the upstream request."""
+    if call is not None:
+        return facade_request_headers(request.headers)
+    return request.headers
+
+
 async def _persist_streaming_outcome(
     outcome: StreamingOutcome,
     ctx: Context,
@@ -485,13 +533,23 @@ def _derive_trace_id(headers: Headers) -> str:
 
 
 def _context_from_discovery(
-    *, upstream_url: str, method: str, request: Request, resolved: ResolveResult
+    *,
+    upstream_url: str,
+    method: str,
+    request: Request,
+    resolved: ResolveResult,
+    trace_id: str | None = None,
 ) -> ExecuteRequestContext:
+    """The request context for a discovered operation.
+
+    ``trace_id`` is used as given when set (a facade call's server-chosen
+    trace); otherwise it is derived from the request (:func:`_derive_trace_id`).
+    """
     headers = request.headers
     return ExecuteRequestContext(
         upstream_url=upstream_url,
         method=method,
-        trace_id=_derive_trace_id(headers),
+        trace_id=trace_id if trace_id is not None else _derive_trace_id(headers),
         # toolkit_id is nullable-legacy: nothing sets it since theme-5 Phase 6b
         # deleted toolkit derivation; it survives on the schema so historical
         # execution rows keep their attribution shape.
@@ -672,15 +730,25 @@ async def _handle(
     agent_rule_evaluator: AgentRuleEvaluatorProtocol,
     runner: UpstreamRunner,
     idempotency: SharedStateIdempotencyStore | None,
+    *,
+    facade_call: FacadeCall | None = None,
 ) -> Response:
-    """Thin web-edge adapter — see module docstring."""
+    """Thin web-edge adapter — see module docstring.
+
+    ``facade_call`` is set by a CLI facade (see :class:`FacadeCall`); the
+    forward proxy leaves it unset and the URL is rebuilt from the raw path.
+    """
     if request.headers.get("upgrade"):
         raise UpgradeNotSupportedError(
             detail="Protocol upgrade not supported by the broker.",
             type="upgrade_not_supported",
         )
 
-    raw_url = reconstruct_upstream_url(request.scope)
+    raw_url = (
+        facade_call.upstream_url
+        if facade_call is not None
+        else reconstruct_upstream_url(request.scope)
+    )
     try:
         upstream_url = await validate_upstream_url_async(raw_url, ctx.config.broker.egress)
     except ValueError as exc:
@@ -709,11 +777,12 @@ async def _handle(
                 )
             }
     if resolved is None:
-        handled = await _handle_unregistered_url(
-            request, method=method, upstream_url=upstream_url, identity=identity
-        )
-        if handled is not None:
-            return handled
+        if facade_call is None:
+            handled = await _handle_unregistered_url(
+                request, method=method, upstream_url=upstream_url, identity=identity
+            )
+            if handled is not None:
+                return handled
         raise OperationNotFoundError(
             detail="Operation not found — unregistered upstream URL.",
             type="operation_not_found",
@@ -742,7 +811,11 @@ async def _handle(
             }
 
     ctx_req = _context_from_discovery(
-        upstream_url=upstream_url, method=method, request=request, resolved=resolved
+        upstream_url=upstream_url,
+        method=method,
+        request=request,
+        resolved=resolved,
+        trace_id=facade_call.trace_id if facade_call is not None else None,
     )
     ctx_req.pinned_revisions = pinned_revisions
     # Capture whether the spec's host is templated (server variable) *before*
@@ -752,6 +825,7 @@ async def _handle(
     # Direct agent→credential bindings (theme-5): every caller kind rides this
     # path — retired toolkit keys resolve as successor agents. The legacy
     # toolkit-derivation path was deleted in Phase 6b.
+    credential_name, credential_id = _credential_choice(request, facade_call)
     authorization = await authorize_execution(
         ctx=ctx,
         identity=identity,
@@ -765,8 +839,8 @@ async def _handle(
         instance=request.url.path,
         credential_deriver=credential_deriver,
         agent_rule_evaluator=agent_rule_evaluator,
-        credential_name=request.headers.get("jentic-credential-name"),
-        credential_id=request.headers.get("jentic-credential-id"),
+        credential_name=credential_name,
+        credential_id=credential_id,
         request_server_variables=ctx_req.server_variables,
         server_variables_unresolved=ctx_req.server_variables_unresolved,
         trace_id=ctx_req.trace_id,
@@ -785,9 +859,11 @@ async def _handle(
     # call. Both the async and sync request paths enter the hold path (async
     # preference makes no difference: the result is always a 202 held envelope).
     if authorization.verdict == RuleVerdict.REQUIRE_APPROVAL:
-        return await _handle_hold(request, ctx_req, ctx, identity, authorization)
+        return await _handle_hold(
+            request, ctx_req, ctx, identity, authorization, as_error=facade_call is not None
+        )
 
-    if _should_async(ctx_req.prefer):
+    if facade_call is None and _should_async(ctx_req.prefer):
         return await _handle_async(
             request,
             ctx_req,
@@ -818,6 +894,7 @@ async def _handle(
             upstream_cfg,
             preresolved=selected_credential,
             allowed_credential_ids=allowed_credential_ids,
+            facade_call=facade_call,
         )
 
     # Buffer the body once (needed for the idempotency fingerprint and the call).
@@ -860,6 +937,7 @@ async def _handle(
         body,
         selected_credential=selected_credential,
         allowed_credential_ids=allowed_credential_ids,
+        facade_call=facade_call,
     )
 
     response = _assemble_response(outcome, ctx_req)
@@ -885,6 +963,7 @@ async def _execute_buffered(
     *,
     selected_credential: ResolvedCredential | None = None,
     allowed_credential_ids: list[str] | None = None,
+    facade_call: FacadeCall | None = None,
 ) -> ExecutionOutcome:
     """Inject credentials, run the buffered upstream call, and persist its record.
 
@@ -894,7 +973,7 @@ async def _execute_buffered(
     after the call returns or raises, so a slow upstream never pins an admin
     connection (or, on SQLite, the database write lock).
     """
-    credential_name = request.headers.get("jentic-credential-name")
+    credential_name, credential_id = _credential_choice(request, facade_call)
     injection = await _resolve_credentials(
         ctx_req,
         ctx,
@@ -902,7 +981,7 @@ async def _execute_buffered(
         credential_name,
         preresolved=selected_credential,
         allowed_credential_ids=allowed_credential_ids,
-        credential_id=request.headers.get("jentic-credential-id"),
+        credential_id=credential_id,
     )
     ctx_req.upstream_url, auth_headers = _apply_injection(
         ctx_req.upstream_url, injection, request, ctx_req.server_variable_defaults
@@ -914,7 +993,7 @@ async def _execute_buffered(
             await validate_upstream_url_async(ctx_req.upstream_url, ctx.config.broker.egress)
         except ValueError as exc:
             raise UpstreamUrlNotAllowedError(detail=str(exc), type="invalid_upstream_url") from exc
-    forwarded = forward_headers(request.headers, auth_headers)
+    forwarded = forward_headers(_forwardable_headers(request, facade_call), auth_headers)
 
     broker = _resolve_broker(request, runner)
     return await run_execution(
@@ -942,6 +1021,7 @@ async def _handle_streaming(
     *,
     preresolved: ResolvedCredential | None = None,
     allowed_credential_ids: list[str] | None = None,
+    facade_call: FacadeCall | None = None,
 ) -> Response:
     """Sync, non-idempotent streaming passthrough.
 
@@ -959,7 +1039,7 @@ async def _handle_streaming(
     cancellation is logged + counted and never affects the already-sent response.
     """
     body = await _read_request_body(request, ctx_req.method, ctx)
-    credential_name = request.headers.get("jentic-credential-name")
+    credential_name, credential_id = _credential_choice(request, facade_call)
     injection = await _resolve_credentials(
         ctx_req,
         ctx,
@@ -967,7 +1047,7 @@ async def _handle_streaming(
         credential_name,
         preresolved=preresolved,
         allowed_credential_ids=allowed_credential_ids,
-        credential_id=request.headers.get("jentic-credential-id"),
+        credential_id=credential_id,
     )
     ctx_req.upstream_url, auth_headers = _apply_injection(
         ctx_req.upstream_url, injection, request, ctx_req.server_variable_defaults
@@ -979,7 +1059,7 @@ async def _handle_streaming(
             await validate_upstream_url_async(ctx_req.upstream_url, ctx.config.broker.egress)
         except ValueError as exc:
             raise UpstreamUrlNotAllowedError(detail=str(exc), type="invalid_upstream_url") from exc
-    forwarded = forward_headers(request.headers, auth_headers)
+    forwarded = forward_headers(_forwardable_headers(request, facade_call), auth_headers)
 
     execution_id = mint_execution_id()
     started_at = datetime.now(UTC)
@@ -1157,8 +1237,15 @@ async def _handle_hold(
     ctx: Context,
     identity: Identity,
     authorization: ExecutionAuthorization,
+    *,
+    as_error: bool = False,
 ) -> Response:
     """File (or join) a require-approval hold and answer the 202 held envelope.
+
+    With ``as_error`` (a CLI facade call) the hold is filed the same way but
+    answered by raising :class:`ExecutionHeldError` (409) carrying the held
+    execution's id, review URL and links, so a vendor CLI fails cleanly
+    instead of reading the envelope as the operation's response.
 
     The held job's payload is the async-job payload encrypted with the platform
     key — it can sit for the whole approval TTL — and the worker decrypts it on
@@ -1264,14 +1351,33 @@ async def _handle_hold(
     )
     base = ctx.config.broker.jobs_api_base_url or ""
     held = f"{base}/executions/holds/{hold.approval_id}"
+    links = HeldExecutionAcceptedLinks(
+        self_link=held, result=f"{held}/result", withdraw=f"{held}:withdraw"
+    )
+    if as_error:
+        raise ExecutionHeldError(
+            f"This call is held for human approval as held execution {hold.approval_id}. "
+            f"Review it at {review_url}; its result will be at {links.result}.",
+            extra={
+                "held_execution_id": hold.approval_id,
+                "review_url": review_url,
+                "expires_at": hold.expires_at.isoformat(),
+                "_links": links.model_dump(by_alias=True),
+            },
+            directive=AgentDirective(
+                strategy="prompt_human",
+                parameters={"held_execution_id": hold.approval_id, "review_url": review_url},
+                human_readable_instruction=FACADE_HELD_INSTRUCTION,
+            ),
+            headers=_metadata_headers(ctx_req, hold.execution_id or execution_id),
+            instance=request.url.path,
+        )
     resp_body = HeldExecutionAcceptedResponse(
         held_execution_id=hold.approval_id,
         review_url=review_url,
         expires_at=hold.expires_at,
         agent_directive=HELD_AGENT_DIRECTIVE,
-        links=HeldExecutionAcceptedLinks(
-            self_link=held, result=f"{held}/result", withdraw=f"{held}:withdraw"
-        ),
+        links=links,
     )
     return Response(
         content=resp_body.model_dump_json(by_alias=True),
@@ -1339,6 +1445,30 @@ async def _handle_async(
     )
 
 
+async def handle_facade_call(
+    request: Request,
+    ctx: Context,
+    identity: Identity,
+    credential_deriver: CredentialDeriverProtocol,
+    agent_rule_evaluator: AgentRuleEvaluatorProtocol,
+    runner: UpstreamRunner,
+    idempotency: SharedStateIdempotencyStore | None,
+    call: FacadeCall,
+) -> Response:
+    """Run one CLI facade call through the execute pipeline (see :class:`FacadeCall`)."""
+    return await _handle(
+        request,
+        request.method,
+        ctx,
+        identity,
+        credential_deriver,
+        agent_rule_evaluator,
+        runner,
+        idempotency,
+        facade_call=call,
+    )
+
+
 @router.api_route(
     "/{upstream_url:path}",
     methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
@@ -1369,4 +1499,4 @@ async def proxy(
 
 # ``switch_toolkit_directive`` is re-exported here for callers that already
 # import this router module.
-__all__ = ["router", "switch_toolkit_directive"]
+__all__ = ["FacadeCall", "handle_facade_call", "router", "switch_toolkit_directive"]

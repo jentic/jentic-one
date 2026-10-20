@@ -31,7 +31,7 @@ from jentic_one.broker.services.idempotency import SharedStateIdempotencyStore
 from jentic_one.broker.web.errors import install_broker_error_handlers
 from jentic_one.broker.web.middleware import AdmissionControlMiddleware, _AdmissionGate
 from jentic_one.broker.web.readiness import make_readiness_router
-from jentic_one.broker.web.routers import execute
+from jentic_one.broker.web.routers import execute, facades
 from jentic_one.shared.broker.execution import UpstreamRunner
 from jentic_one.shared.context import Context
 from jentic_one.shared.metrics import get_meter
@@ -45,7 +45,8 @@ from jentic_one.shared.web.health import make_health_router
 def _routers(*, readiness_saturation_threshold: float) -> list[tuple[APIRouter, str, list[str]]]:
     # Order matters: the health router (and the /metrics mount + /docs added by
     # create_surface_app) must be registered before the catch-all so a request to
-    # /health is never swallowed by /{upstream_url:path}.
+    # /health is never swallowed by /{upstream_url:path}. The CLI facades come
+    # before it too, each vendor's router ahead of the reserved-prefix 404 router.
     return [
         (make_health_router("broker"), "", ["broker"]),
         (
@@ -53,6 +54,8 @@ def _routers(*, readiness_saturation_threshold: float) -> list[tuple[APIRouter, 
             "",
             ["broker"],
         ),
+        (facades.cloudflare_router, "", ["broker"]),
+        (facades.reserved_router, "", ["broker"]),
         (execute.router, "", ["broker"]),
     ]
 
