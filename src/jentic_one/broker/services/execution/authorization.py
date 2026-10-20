@@ -46,7 +46,7 @@ from jentic_one.shared.broker.protocols import (
     RuleVerdict,
 )
 from jentic_one.shared.context import Context
-from jentic_one.shared.events import emit_event_best_effort
+from jentic_one.shared.events import emit_event_best_effort, valid_trace_id_or_none
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.permissions.evaluation import PathDivergence
@@ -141,7 +141,7 @@ def _empty_credential_derivation_denial(
 
 
 async def _emit_credential_binding_unserved(
-    ctx: Context, *, api: APIReference, identity: Identity
+    ctx: Context, *, api: APIReference, identity: Identity, trace_id: str | None = None
 ) -> None:
     """Emit ``CREDENTIAL_BINDING_UNSERVED`` best-effort (direct-path twin).
 
@@ -160,6 +160,7 @@ async def _emit_credential_binding_unserved(
                 type=EventType.CREDENTIAL_BINDING_UNSERVED,
                 severity=EventSeverity.WARNING,
                 summary=summary,
+                trace_id=valid_trace_id_or_none(trace_id),
                 created_by=identity.sub,
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
@@ -188,6 +189,7 @@ async def derive_credential_bindings(
     ctx: Context,
     method: str = "",
     path: str = "",
+    trace_id: str | None = None,
     connect_registrations: ConnectableRegistrationSourceProtocol | None = None,
 ) -> CredentialDerivation:
     """Derive the caller's credential-binding candidates for this execution.
@@ -231,7 +233,9 @@ async def derive_credential_bindings(
         # no-binding + nothing-serves case — an identity mismatch already has
         # its own actionable diagnostic.
         if not derivation.api_served and isinstance(denial, ActionDeniedError):
-            await _emit_credential_binding_unserved(ctx, api=api, identity=identity)
+            await _emit_credential_binding_unserved(
+                ctx, api=api, identity=identity, trace_id=trace_id
+            )
         raise denial
     return derivation
 
@@ -338,8 +342,18 @@ async def _deny(
     reason: DenialReason,
     summary: str,
     detail: str,
+    trace_id: str | None = None,
+    operation_id: str | None = None,
+    operation_method: str | None = None,
+    operation_path: str | None = None,
 ) -> NoReturn:
-    """Count, record (``PBAC_DENIED``) and raise a rule-level ``action_denied``."""
+    """Count, record (``PBAC_DENIED``) and raise a rule-level ``action_denied``.
+
+    The event names what was denied by resolved identity only: the API and the
+    operation's id, method and spec path *template* (``/repos/{owner}/{repo}``).
+    The concrete request path and query are never recorded — they can carry
+    identifiers or secrets.
+    """
     _authz_denied.add(
         1,
         {"reason": reason.value, "mode": "direct", "vendor": api.vendor},
@@ -351,10 +365,23 @@ async def _deny(
                 type=EventType.PBAC_DENIED,
                 severity=EventSeverity.WARNING,
                 summary=summary,
+                trace_id=valid_trace_id_or_none(trace_id),
                 created_by=identity.sub,
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
-                data={"reason": reason.value, "mode": "direct"},
+                # Flat keys, matching the other broker events that name an API
+                # or operation (``credential.accessed``,
+                # ``broker.execution_repeated_failure``).
+                data={
+                    "reason": reason.value,
+                    "mode": "direct",
+                    "api_vendor": api.vendor,
+                    "api_name": api.name,
+                    "api_version": api.version,
+                    "operation_id": operation_id,
+                    "operation_method": operation_method,
+                    "operation_path": operation_path,
+                },
             )
     except Exception:
         logger.warning("telemetry_emit_failed", event_type=EventType.PBAC_DENIED, exc_info=True)
@@ -382,6 +409,8 @@ async def authorize_execution(
     request_server_variables: Mapping[str, str] | None = None,
     server_variables_unresolved: bool = False,
     upstream_url: str | None = None,
+    trace_id: str | None = None,
+    operation_path: str | None = None,
 ) -> ExecutionAuthorization:
     """Authorize one execution for ``identity`` against the discovered ``api``.
 
@@ -399,7 +428,9 @@ async def authorize_execution(
     the upstream stack — see ``shared.url_path.has_ambiguous_traversal``), and
     its normalized full path lets the rules flag one still written with the
     server base path (see :func:`_report_base_path_divergence`; never changes
-    the verdict).
+    the verdict). ``trace_id`` correlates a denial event with the request;
+    ``operation_path`` is the operation's spec path template (never the concrete
+    ``path``), recorded on the denial event.
 
     Raises a :class:`BrokerError` (``ActionDeniedError`` /
     ``CredentialIdentityMismatchError`` → 403, ``AmbiguousMatchError`` → 409,
@@ -418,6 +449,7 @@ async def authorize_execution(
         ctx=ctx,
         method=method,
         path=path,
+        trace_id=trace_id,
     )
     allowed_credential_ids = [bc.credential_id for bc in derivation.credentials]
     rule_set_ids = {bc.credential_id: bc.rule_set_id for bc in derivation.credentials}
@@ -445,6 +477,10 @@ async def authorize_execution(
             identity=identity,
             api=api,
             instance=instance,
+            trace_id=trace_id,
+            operation_id=operation_id,
+            operation_method=method,
+            operation_path=operation_path,
             reason=DenialReason.AMBIGUOUS_PATH,
             summary="Operation denied: the request path spells a dot segment ambiguously",
             detail=(
@@ -497,6 +533,10 @@ async def authorize_execution(
             identity=identity,
             api=api,
             instance=instance,
+            trace_id=trace_id,
+            operation_id=operation_id,
+            operation_method=method,
+            operation_path=operation_path,
             reason=reason,
             summary=(
                 "Operation denied by credential-binding permission rules (no rules "

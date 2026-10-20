@@ -234,6 +234,22 @@ jobs:
               --load .
           done
 
+      # Each shipped arch must carry exactly the `uv export --locked --no-dev`
+      # set the test suite ran against (#1819). The guard runs the export in
+      # the builder's own pinned Python + uv images via `docker run` (no
+      # environment passed in, repo mounted read-only), so this job installs
+      # no uv action alongside its id-token grant and can't drift from the
+      # image's uv version.
+      - name: Check image packages match uv.lock (per arch)
+        env:
+          IMAGE: ${{ steps.build.outputs.image }}
+          VERSION: ${{ steps.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            make check-image-lock IMAGE="${IMAGE}:${VERSION}-${arch}" PLATFORM="linux/${arch}"
+          done
+
       # CVE gate before anything is pushed — for EVERY shipped arch, not just
       # amd64 (an index scan doesn't reliably cover each arch). Same policy as
       # the ci.yml image-scan job: fixable HIGH/CRITICAL fail, overrides live in

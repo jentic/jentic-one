@@ -21,7 +21,7 @@ import structlog
 
 from jentic_one.shared.config import EgressConfig
 from jentic_one.shared.egress import build_always_pinned_transport
-from jentic_one.shared.url_validation import validate_upstream_url
+from jentic_one.shared.url_validation import validate_upstream_url_async
 
 _logger = structlog.get_logger(__name__)
 
@@ -105,7 +105,7 @@ async def begin_device_authorization(
     # operator config, but a config error or compromised entry could point at a
     # private / metadata target the operator has not allowlisted.
     try:
-        safe_url = validate_upstream_url(authorization_endpoint, egress)
+        safe_url = await validate_upstream_url_async(authorization_endpoint, egress)
     except ValueError as exc:
         raise DeviceAuthorizationUpstreamError(0, f"unsafe upstream URL: {exc}") from exc
 
@@ -184,7 +184,7 @@ async def poll_device_authorization(
     # ``prepare`` time from operator config; validate every poll in case
     # the DB row is tampered with post-vault.
     try:
-        safe_url = validate_upstream_url(token_endpoint, egress)
+        safe_url = await validate_upstream_url_async(token_endpoint, egress)
     except ValueError as exc:
         raise DeviceAuthorizationUpstreamError(0, f"unsafe upstream URL: {exc}") from exc
 

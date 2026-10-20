@@ -15,6 +15,7 @@ from __future__ import annotations
 import base64
 import os
 import socket
+import threading
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import parse_qs, urlparse
@@ -400,6 +401,7 @@ async def test_complete_from_callback_refuses_unsafe_token_url() -> None:
 
 
 @pytest.mark.asyncio()
+@pytest.mark.usefixtures("uncached_dns")
 async def test_complete_from_callback_refuses_token_host_rebinding_at_connect() -> None:
     # Pre-flight validation sees a public address; the connect-time resolution
     # answers with a blocked one. The pinned transport refuses before sending.
@@ -416,6 +418,51 @@ async def test_complete_from_callback_refuses_token_host_rebinding_at_connect() 
     ):
         await handler.complete_from_callback(_row(), code="c")
     sent.assert_not_awaited()
+
+
+@pytest.mark.asyncio()
+@pytest.mark.parametrize(
+    ("ip", "refused"),
+    [
+        pytest.param("93.184.216.34", False, id="public"),
+        pytest.param("10.0.0.1", True, id="blocked"),
+    ],
+)
+async def test_complete_from_callback_resolves_token_host_off_the_event_loop(
+    ip: str, refused: bool
+) -> None:
+    # Pins #1734: the token host lookup runs in a worker thread, never on the
+    # event-loop thread. A blocked answer is refused before any request; a
+    # public one is resolved once, shared by the pre-flight check and the pin.
+    ctx = _make_context()
+    handler = AuthCodeFlowHandler(ctx)
+    occ = _occ_for(ctx, "https://idp.example.com/token")
+    loop_thread = threading.get_ident()
+    lookup_threads: list[int] = []
+    seen: list[httpx.Request] = []
+
+    def _resolve(*_a: object, **_k: object) -> list[tuple[object, ...]]:
+        lookup_threads.append(threading.get_ident())
+        return _addrinfo(ip)
+
+    async def _send(_self: httpx.AsyncHTTPTransport, request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"access_token": "at_ok"}, request=request)
+
+    with (
+        patch(_GET_BY_CREDENTIAL, new_callable=AsyncMock, return_value=occ),
+        patch.object(socket, "getaddrinfo", side_effect=_resolve),
+        patch.object(httpx.AsyncHTTPTransport, "handle_async_request", _send),
+    ):
+        if refused:
+            with pytest.raises(AuthCodeExchangeError, match="unsafe upstream URL"):
+                await handler.complete_from_callback(_row(), code="c")
+        else:
+            await handler.complete_from_callback(_row(), code="c")
+
+    assert len(lookup_threads) == 1
+    assert loop_thread not in lookup_threads
+    assert len(seen) == (0 if refused else 1)
 
 
 @pytest.mark.asyncio()

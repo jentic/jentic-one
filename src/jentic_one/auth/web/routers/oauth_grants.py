@@ -84,8 +84,8 @@ async def list_agent_oauth_grants(
     granted scopes, the consenting user, its `status`, created and last-used
     timestamps, and `can_revoke` for the caller. Filter by `status`
     (`active` or `revoked`); results are cursor-paginated. Allowed for the
-    agent's owner or an admin. An agent the caller cannot see answers 404,
-    the same as one that does not exist. Revoke a grant with
+    agent's owner or an admin; any other caller gets 404, the same as for an
+    agent that does not exist. Revoke a grant with
     `POST /oauth-grants/{grant_id}:revoke`.
     """
     page = await grant_svc.list_grants_for_agent(
@@ -114,7 +114,10 @@ async def revoke_oauth_grant(
 ) -> Response:
     """Revoke a consent→agent grant — one of the three revocation kill radii.
 
-    Allowed for the grant's owner (the consenting user) or an admin. Marks
+    Allowed for the grant's owner (the consenting user) or an admin. A grant
+    the caller cannot see answers 404, the same as one that does not exist;
+    a caller who can see it but may not revoke it (the bound agent, or the
+    agent's owner when someone else consented) gets 403. Marks
     the grant ``revoked`` and revokes every outstanding access/refresh token
     minted under it in the same transaction; the live resolvers also re-check
     grant status on every verdict (belt + braces). The client's next token

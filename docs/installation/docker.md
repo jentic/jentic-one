@@ -140,6 +140,31 @@ the app and broker containers open all three pools — the example above holds
 your instance's `max_connections` (managed-PG entry tiers are often ~100) or
 front Postgres with a pooler like pgbouncer.
 
+**Connection health checks:** by default every pool checkout pings the
+connection (`pool_pre_ping: true`) and transparently replaces one that died
+while idle, pooled connections are recycled once they are 30 minutes old
+(`pool_recycle_s: 1800`), and TCP keepalive is enabled on every connection.
+On asyncpg the ping costs three round trips (`BEGIN`, `;`, `ROLLBACK`) per
+checkout. Latency-sensitive deployments can set `pool_pre_ping: false` per
+database to save them; keep `pool_recycle_s` below the shortest idle timeout
+on the path (Postgres `idle_session_timeout`, pgbouncer/proxy, cloud NAT or
+load balancer) so connections are retired before anything in between drops
+them, lowering it from the default if any of those cut off sooner.
+`pool_recycle_s: 0` disables recycling. Both are ignored for SQLite.
+
+Recycling and keepalive do **not** cover a Postgres restart or failover
+(including managed-Postgres maintenance), a pgbouncer/proxy restart, or a
+backend terminated with `pg_terminate_backend`: every pooled connection is
+dead until it is next used. Without pre-ping, the first request on each pool
+in each process after such an event can fail with an HTTP `503`
+(`database_unavailable`); work that runs through the retrying transaction
+helper is re-run on a fresh connection instead, unless the connection drops
+while the commit is in flight, when the outcome is unknown and the `503` is
+returned without a re-run. Each server process holds its own pools, so the
+count scales with the number of processes. Only disable pre-ping where those
+events are rare and that error is acceptable. See
+[`databases.*.pool_pre_ping`](../reference/config.md#databases).
+
 Secrets go in an env file, `/etc/jentic/prod.env` (`chmod 600`, values
 unquoted — `docker --env-file` takes them literally):
 
@@ -242,6 +267,17 @@ auth:
 > chart's 512Mi memory limit holds. The broker always runs as its own
 > process; the combined app holds one such backend each for the auth and
 > control surfaces.
+>
+> The local login page stores one CSRF nonce per page load in `login-csrf`
+> (16 MiB, about 18,600 nonces of about 900 bytes for their 5-minute TTL).
+> Each client, an IPv4 address or an IPv6 /64, may hold 2% of it, about 370
+> nonces: twice what the default authorize rate limit lets one client network
+> request in that time. A client flooding the page gets 503 with `Retry-After` while
+> other clients still sign in; a flood spread over about 50 or more networks
+> at once (one IPv6 /56 alone holds 256 /64s) can still fill it, which the
+> redis backend or a larger budget absorbs. Behind a reverse proxy, list it in
+> `auth.oauth_rate_limit.trusted_proxies`, or every client shares the
+> proxy's address and its share.
 >
 > To raise it: raise `broker.resilience.backend.memory.namespaces.idem`
 > (and its `max_owner_share`) together with `max_total_bytes`, or lower

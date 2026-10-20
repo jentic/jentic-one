@@ -173,6 +173,8 @@ class QueuedExecutionAuthorizer:
                 credential_id=request.credential_id,
                 request_server_variables=request.server_variables,
                 server_variables_unresolved=request.server_variables_unresolved,
+                trace_id=request.trace_id,
+                operation_path=request.operation_path,
             )
         except BrokerError as exc:
             logger.info(

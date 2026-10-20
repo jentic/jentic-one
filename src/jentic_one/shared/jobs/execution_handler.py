@@ -241,6 +241,8 @@ class ExecutionHandler:
                     api_version=api_version or "",
                     operation_id=operation.id if operation else None,
                     relative_path=operation.relative_path if operation else None,
+                    operation_path=operation.path if operation else None,
+                    trace_id=trace_id,
                     credential_id=payload.get("credential_id"),
                     server_variables=server_variables,
                     server_variables_unresolved=server_variables_unresolved,
