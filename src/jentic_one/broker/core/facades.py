@@ -1,16 +1,19 @@
-"""Vendor CLI facades: path-mode addressing, header policy and vendor error bodies.
+"""Vendor CLI facades: addressing, header policy and vendor error bodies.
 
 A facade is a broker endpoint that speaks one vendor's API shape, so the
-vendor's own CLI (``cf``, ``aws``) can be pointed at it with a base-URL
-override and authenticated with a ``cit_`` invocation token. Each call is
-mapped to the vendor's real upstream URL and run through the same execute
-pipeline as the forward proxy (registry match, rules, credential injection,
-execution record).
+vendor's own CLI (``gh``, ``cf``, ``aws``) can be pointed at it and
+authenticated with a ``cit_`` invocation token. Each call is mapped to the
+vendor's real upstream URL and run through the same execute pipeline as the
+forward proxy (registry match, rules, credential injection, execution record).
 
 Path-mode facades live under :data:`FACADE_PATH_PREFIX`. Its first segment
 starts with an underscore, which no DNS hostname can contain, so the reserved
 prefix never shadows a URL the forward-proxy catch-all could otherwise serve
 (the catch-all reads the first path segment as the upstream host).
+
+Host-mode facades (GitHub) answer on a hostname of their own, in the layout a
+GitHub Enterprise Server uses (``/api/v3``, ``/api/graphql``,
+``/api/uploads``), because ``gh`` only talks to a non-github.com host that way.
 
 Pure module: no FastAPI, httpx or DB imports.
 """
@@ -21,17 +24,18 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 
 from jentic_one.shared.cli_facades import FACADE_PATH_PREFIX, facade_path_prefix
 
 
 @dataclass(frozen=True, slots=True)
 class PathFacade:
-    """A facade served under ``prefix`` that forwards to ``upstream_base``.
+    """A facade path prefix that forwards to ``upstream_base``.
 
-    ``/_facade/<vendor>/<rest>?<query>`` maps to ``<upstream_base>/<rest>?<query>``
-    with ``rest`` and ``query`` kept exactly as the client encoded them.
+    ``<prefix>/<rest>?<query>`` (e.g. ``/_facade/cloudflare/zones``) maps to
+    ``<upstream_base>/<rest>?<query>`` with ``rest`` and ``query`` kept exactly
+    as the client encoded them.
     """
 
     vendor: str
@@ -60,19 +64,186 @@ def facade_upstream_url(scope: Mapping[str, Any], facade: PathFacade) -> str | N
     ``..`` segment, literal or encoded, which could step outside the vendor's
     API base path.
     """
-    raw_path_bytes = scope.get("raw_path") or scope.get("path", "").encode("latin-1")
-    raw_path = raw_path_bytes.decode("latin-1")
+    raw_path = _raw_path(scope)
     lead = f"{facade.prefix}/"
     if not raw_path.startswith(lead):
         return None
     remainder = raw_path[len(lead) :]
     if any(unquote(segment) in (".", "..") for segment in remainder.split("/")):
         return None
-    url = f"{facade.upstream_base}/{remainder}"
+    return _with_query(f"{facade.upstream_base}/{remainder}", scope)
+
+
+def _raw_path(scope: Mapping[str, Any]) -> str:
+    raw_path_bytes = scope.get("raw_path") or scope.get("path", "").encode("latin-1")
+    return str(raw_path_bytes.decode("latin-1"))
+
+
+def _with_query(url: str, scope: Mapping[str, Any]) -> str:
     query_string = scope.get("query_string", b"").decode("latin-1")
-    if query_string:
-        url = f"{url}?{query_string}"
+    return f"{url}?{query_string}" if query_string else url
+
+
+# ── GitHub (host mode) ───────────────────────────────────────────────────────
+
+#: The GitHub REST API: ``https://<facade host>/api/v3/<rest>``.
+GITHUB_REST_FACADE = PathFacade(
+    vendor="github", prefix="/api/v3", upstream_base="https://api.github.com"
+)
+
+#: Release asset uploads: ``https://<facade host>/api/uploads/<rest>``.
+GITHUB_UPLOADS_FACADE = PathFacade(
+    vendor="github", prefix="/api/uploads", upstream_base="https://uploads.github.com"
+)
+
+#: The GitHub GraphQL endpoint, served at exactly :data:`GITHUB_GRAPHQL_PATH`.
+GITHUB_GRAPHQL_PATH = "/api/graphql"
+GITHUB_GRAPHQL_UPSTREAM = "https://api.github.com/graphql"
+
+#: ``GET /api/v3/meta``, which ``gh`` reads to detect the Enterprise Server
+#: version. The facade answers it itself (see :data:`GITHUB_META_BODY`).
+GITHUB_META_PATH = "/api/v3/meta"
+
+#: The ``meta`` body the facade answers. ``gh`` reads only ``installed_version``
+#: from it, to decide which Enterprise Server-only fallbacks to use; a version
+#: above every Enterprise Server release makes it take the github.com code
+#: paths, which match the API the facade forwards to.
+GITHUB_META_BODY: Mapping[str, Any] = {
+    "installed_version": "3.99.0",
+    "verifiable_password_authentication": False,
+}
+
+
+def github_upstream_url(scope: Mapping[str, Any]) -> str | None:
+    """The github.com URL for a request on the GitHub facade host, or ``None``.
+
+    ``/api/v3/<rest>`` maps to ``https://api.github.com/<rest>``,
+    ``/api/graphql`` to ``https://api.github.com/graphql`` and
+    ``/api/uploads/<rest>`` to ``https://uploads.github.com/<rest>``, with the
+    query kept. Built from the raw path with the same rules as
+    :func:`facade_upstream_url`; any other path is ``None`` (the caller
+    answers 404).
+    """
+    raw_path = _raw_path(scope)
+    if raw_path == GITHUB_GRAPHQL_PATH:
+        return _with_query(GITHUB_GRAPHQL_UPSTREAM, scope)
+    for facade in (GITHUB_REST_FACADE, GITHUB_UPLOADS_FACADE):
+        if raw_path.startswith(f"{facade.prefix}/"):
+            return facade_upstream_url(scope, facade)
+    return None
+
+
+def request_host(host_header: str | None) -> str | None:
+    """The hostname a request was sent to: lowercased, port and trailing dot removed.
+
+    Read from the ``Host`` header only. The broker trusts no forwarded-host
+    header (``X-Forwarded-Host``, ``Forwarded``), so a client cannot claim a
+    facade host it did not connect to by name.
+    """
+    if not host_header:
+        return None
+    host = host_header.strip().lower()
+    name, separator, port = host.rpartition(":")
+    if separator and port.isdigit() and not name.endswith(":"):
+        host = name
+    host = host.removesuffix(".")
+    return host or None
+
+
+def is_facade_host(host_header: str | None, facade_host: str | None) -> bool:
+    """Whether a request's ``Host`` header names ``facade_host`` (exact, case-insensitive)."""
+    if not facade_host:
+        return False
+    return request_host(host_header) == facade_host.lower()
+
+
+_GITHUB_ORIGINS: tuple[tuple[str, str], ...] = (
+    ("api.github.com", GITHUB_REST_FACADE.prefix),
+    ("uploads.github.com", GITHUB_UPLOADS_FACADE.prefix),
+)
+
+
+def rewrite_github_url(url: str, facade_base: str) -> str:
+    """Point a github.com API URL at the facade; leave every other URL unchanged.
+
+    Only ``https://api.github.com/<rest>`` (to ``<facade_base>/api/v3/<rest>``)
+    and ``https://uploads.github.com/<rest>`` (to
+    ``<facade_base>/api/uploads/<rest>``) are rewritten, with path, query and
+    fragment kept. Anything else (another origin such as a presigned
+    blob-storage redirect, a relative or malformed URL, user info or a
+    non-default port) is returned as given.
+    """
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return url
+    if parts.scheme != "https" or parts.username is not None or port not in (None, 443):
+        return url
+    hostname = parts.hostname
+    for origin, prefix in _GITHUB_ORIGINS:
+        if hostname == origin:
+            rewritten = f"{facade_base.rstrip('/')}{prefix}{parts.path}"
+            if parts.query:
+                rewritten = f"{rewritten}?{parts.query}"
+            if parts.fragment:
+                rewritten = f"{rewritten}#{parts.fragment}"
+            return rewritten
     return url
+
+
+# One RFC 8288 link-value target: ``<URI-Reference>``.
+_LINK_TARGET_RE = re.compile(r"<([^<>]*)>")
+
+
+_REPO_PATH_RE = re.compile(r"^/repos/([^/]+)/([^/]+)(/.*)?$")
+_REPOSITORY_ID_PATH_RE = re.compile(r"^/repositories/[0-9]+(/.*)?$")
+
+
+def _repo_named(url: str, upstream_url: str | None) -> str:
+    """A ``/repositories/<id>/<rest>`` link target, in the call's ``/repos/<owner>/<repo>`` form.
+
+    GitHub's pagination links for a repository list name the repository by id
+    even when the call named it ``/repos/<owner>/<repo>``. The id form is a
+    path no rule or registered operation is written against, so when the
+    link's ``<rest>`` is the same endpoint the call was made to, the target
+    takes the call's own ``/repos/<owner>/<repo>`` prefix (GitHub serves both
+    the same). Anything else is returned unchanged.
+    """
+    if upstream_url is None:
+        return url
+    try:
+        link = urlsplit(url)
+        call = urlsplit(upstream_url)
+    except ValueError:
+        return url
+    if link.hostname != "api.github.com" or call.hostname != "api.github.com":
+        return url
+    link_match = _REPOSITORY_ID_PATH_RE.match(link.path)
+    call_match = _REPO_PATH_RE.match(call.path)
+    if link_match is None or call_match is None or link_match.group(1) != call_match.group(3):
+        return url
+    owner, repo, rest = call_match.group(1), call_match.group(2), call_match.group(3) or ""
+    return link._replace(path=f"/repos/{owner}/{repo}{rest}").geturl()
+
+
+def rewrite_github_link_header(
+    value: str, facade_base: str, upstream_url: str | None = None
+) -> str:
+    """Rewrite every github.com target in a ``Link`` header (see :func:`rewrite_github_url`).
+
+    Only the ``<…>`` targets change; link parameters (``rel="next"``) and any
+    target on another origin are kept byte for byte. A value with no
+    ``<…>`` target is returned unchanged. With ``upstream_url`` (the call's
+    github.com URL), a target naming the called repository by id is first put
+    back in the call's ``/repos/<owner>/<repo>`` form (:func:`_repo_named`).
+    """
+    return _LINK_TARGET_RE.sub(
+        lambda match: (
+            f"<{rewrite_github_url(_repo_named(match.group(1), upstream_url), facade_base)}>"
+        ),
+        value,
+    )
 
 
 # A ``cit_`` invocation token as minted (``cit_`` + 43 URL-safe base64 chars),
@@ -136,6 +307,41 @@ def is_facade_response_header(name: str) -> bool:
     return key in FACADE_RESPONSE_HEADERS or key.startswith("jentic-")
 
 
+#: Response headers the GitHub facade passes on beyond :data:`FACADE_RESPONSE_HEADERS`.
+#: ``Link`` and ``Location`` are rewritten first (:func:`rewrite_github_url`).
+#: ``X-Accepted-OAuth-Scopes`` and ``X-Accepted-GitHub-Permissions`` describe
+#: the endpoint. ``X-OAuth-Scopes`` is not passed on: it lists what the stored
+#: credential could do beyond the agent's rules, and ``gh`` only uses it to
+#: suggest ``gh auth refresh``, which does not apply to a Jentic-held credential.
+GITHUB_RESPONSE_HEADERS: frozenset[str] = frozenset(
+    {
+        "link",
+        "location",
+        "deprecation",
+        "sunset",
+        "x-accepted-oauth-scopes",
+        "x-accepted-github-permissions",
+        "x-poll-interval",
+        "x-ratelimit-used",
+        "x-ratelimit-resource",
+    }
+)
+
+
+def is_github_response_header(name: str) -> bool:
+    """Whether the GitHub facade passes response header ``name`` on.
+
+    The common facade allowlist, :data:`GITHUB_RESPONSE_HEADERS` and every
+    ``X-GitHub-*`` header (request id, media type, API version, SSO).
+    """
+    key = name.lower()
+    return (
+        is_facade_response_header(key)
+        or key in GITHUB_RESPONSE_HEADERS
+        or key.startswith("x-github-")
+    )
+
+
 #: The instruction a facade's held-call error carries: the CLI has already
 #: failed, and the broker runs the call itself once a reviewer approves it.
 FACADE_HELD_INSTRUCTION = (
@@ -176,15 +382,45 @@ def cloudflare_error_body(status: int, problem: Mapping[str, Any]) -> dict[str, 
     }
 
 
+def github_error_body(status: int, problem: Mapping[str, Any]) -> dict[str, Any]:
+    """A GitHub REST error body for a broker problem (``message``, ``documentation_url``).
+
+    ``gh`` prints ``message``, so it carries the problem's detail and agent
+    directive (:func:`facade_error_message`). ``documentation_url`` is the
+    review link of a held call and is left out when the problem has none.
+    ``status`` is the HTTP status as a string, as GitHub sends it.
+    """
+    body: dict[str, Any] = {"message": facade_error_message(problem)}
+    review_url = problem.get("review_url")
+    if isinstance(review_url, str) and review_url:
+        body["documentation_url"] = review_url
+    body["status"] = str(status)
+    return body
+
+
 __all__ = [
     "CLOUDFLARE_FACADE",
     "FACADE_HELD_INSTRUCTION",
     "FACADE_PATH_PREFIX",
     "FACADE_RESPONSE_HEADERS",
+    "GITHUB_GRAPHQL_PATH",
+    "GITHUB_GRAPHQL_UPSTREAM",
+    "GITHUB_META_BODY",
+    "GITHUB_META_PATH",
+    "GITHUB_RESPONSE_HEADERS",
+    "GITHUB_REST_FACADE",
+    "GITHUB_UPLOADS_FACADE",
     "PathFacade",
     "cloudflare_error_body",
     "facade_error_message",
     "facade_request_headers",
     "facade_upstream_url",
+    "github_error_body",
+    "github_upstream_url",
+    "is_facade_host",
     "is_facade_response_header",
+    "is_github_response_header",
+    "request_host",
+    "rewrite_github_link_header",
+    "rewrite_github_url",
 ]

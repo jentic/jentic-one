@@ -47,6 +47,9 @@ def _routers(*, readiness_saturation_threshold: float) -> list[tuple[APIRouter, 
     # create_surface_app) must be registered before the catch-all so a request to
     # /health is never swallowed by /{upstream_url:path}. The CLI facades come
     # before it too, each vendor's router ahead of the reserved-prefix 404 router.
+    # The GitHub facade's host-wide 404 router is a root catch-all, so the app
+    # factory includes it last, with the forward proxy; listing it first keeps it
+    # ahead of the proxy.
     return [
         (make_health_router("broker"), "", ["broker"]),
         (
@@ -54,8 +57,10 @@ def _routers(*, readiness_saturation_threshold: float) -> list[tuple[APIRouter, 
             "",
             ["broker"],
         ),
+        (facades.github_router, "", ["broker"]),
         (facades.cloudflare_router, "", ["broker"]),
         (facades.reserved_router, "", ["broker"]),
+        (facades.github_not_found_router, "", ["broker"]),
         (execute.router, "", ["broker"]),
     ]
 

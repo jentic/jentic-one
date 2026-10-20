@@ -40,10 +40,12 @@ from jentic_one.broker.web.app import _routers as broker_routers
 from jentic_one.broker.web.errors import install_broker_error_handlers
 from jentic_one.broker.web.routers.facades import (
     CloudflareFacadeRoute,
+    GitHubFacadeRoute,
     _restrict_response_headers,
     cloudflare_error_response,
 )
 from jentic_one.shared.cli_facades import SERVED_FACADE_CLIS, facade_path_prefix
+from jentic_one.shared.config import CliFacadeVendorsConfig
 from jentic_one.shared.tracing import current_trace_id, server_chosen_trace
 from jentic_one.shared.web.app_factory import spa_aware_problem_detail_handler
 from jentic_one.shared.web.errors import (
@@ -64,14 +66,20 @@ def _scope(raw_path: bytes, query: bytes = b"") -> dict[str, Any]:
 @pytest.mark.parametrize("vendor", sorted(SERVED_FACADE_CLIS))
 def test_every_advertised_facade_has_a_broker_route(vendor: str) -> None:
     # Control advertises SERVED_FACADE_CLIS to agents' CLI wrappers; each one
-    # must be a route the broker actually serves under the shared prefix.
-    prefix = facade_path_prefix(vendor)
-    paths = [
-        getattr(route, "path", "")
+    # must be a route the broker actually serves: under the shared prefix in
+    # path mode, on the facade host (the GitHub route class) in host mode.
+    routes = [
+        route
         for router, _prefix, _tags in broker_routers(readiness_saturation_threshold=1.0)
         for route in router.routes
     ]
-    assert any(path.startswith(f"{prefix}/") for path in paths)
+    settings = CliFacadeVendorsConfig().get(vendor)
+    assert settings is not None
+    if settings.mode == "host":
+        assert any(isinstance(route, GitHubFacadeRoute) for route in routes)
+    else:
+        prefix = facade_path_prefix(vendor)
+        assert any(getattr(route, "path", "").startswith(f"{prefix}/") for route in routes)
 
 
 def test_upstream_url_keeps_the_raw_path_and_query() -> None:
