@@ -137,7 +137,7 @@ export interface PermissionRule {
 	effect: 'allow' | 'deny' | 'require-approval';
 	methods?: string[] | null;
 	path?: string | null;
-	match_mode?: 'regex' | 'prefix' | 'exact' | 'graphql';
+	match_mode?: 'regex' | 'prefix' | 'exact' | 'graphql' | 'git';
 	operations?: string[] | null;
 	comment?: string | null;
 }

@@ -16,6 +16,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from jentic_one.shared.permissions.git_rules import GIT_MATCH_MODE
 from jentic_one.shared.permissions.matching import MatchMode, validate_path
 from jentic_one.shared.web import openapi_examples as ex
 
@@ -46,7 +47,10 @@ class BasePermissionRuleSchema(BaseModel):
             "`prefix` and `exact` are literal. None matches all paths. With "
             "`match_mode` `graphql`, `path` is required and is a GraphQL selector "
             "instead: `query`, `mutation`, or `mutation:createPullRequest,addComment` "
-            "(top-level field names, never aliases)."
+            "(top-level field names, never aliases). With `match_mode` `git`, `path` "
+            "is required and is a git selector: `<fetch|push|force>:<owner>/<repo>` "
+            "with an optional `:refs/heads/<glob>` or `:refs/tags/<glob>` on push "
+            "and force (e.g. `push:octo-org/app:refs/heads/agent/*`)."
         ),
     )
     match_mode: MatchMode = Field(
@@ -57,7 +61,10 @@ class BasePermissionRuleSchema(BaseModel):
             "(string prefix), or `exact` (equality). Defaults to `regex` for "
             "backwards compatibility. `graphql` makes the rule match the top-level "
             "fields of a GraphQL request (the GitHub GraphQL endpoint) by operation "
-            "type and field name, one field at a time; it matches no other request."
+            "type and field name, one field at a time; it matches no other request. "
+            "`git` makes the rule match git clones, fetches and pushes to github.com "
+            "through Jentic by repository and, for pushes, by ref; it matches no other "
+            "request, and only `allow` and `deny` are accepted."
         ),
     )
     operations: list[str] | None = Field(
@@ -75,6 +82,16 @@ class BasePermissionRuleSchema(BaseModel):
         err = validate_path(self.path, self.match_mode)
         if err is not None:
             raise ValueError(err.reason)
+        return self
+
+    @model_validator(mode="after")
+    def _reject_held_git_rule(self) -> BasePermissionRuleSchema:
+        # A held git push would block git with no output past an agent's tool
+        # timeout, so git rules allow or deny only (``shared.permissions.git_rules``).
+        if self.match_mode == GIT_MATCH_MODE and getattr(self, "effect", None) == (
+            "require-approval"
+        ):
+            raise ValueError("A 'git' rule's effect must be 'allow' or 'deny'")
         return self
 
     @model_validator(mode="after")
@@ -130,15 +147,17 @@ class PermissionRuleReadSchema(BaseModel):
         examples=["/v1/charges"],
         description=(
             "Path pattern relative to the API's server URL, interpreted per `match_mode`; "
-            "null matches all paths. A GraphQL selector when `match_mode` is `graphql`."
+            "null matches all paths. A GraphQL selector when `match_mode` is `graphql`, "
+            "a git selector when it is `git`."
         ),
     )
     match_mode: MatchMode = Field(
         default="regex",
         examples=["prefix"],
         description=(
-            "How `path` is interpreted: `regex` (full-match), `prefix`, `exact`, or "
-            "`graphql` (a GraphQL top-level-field selector)."
+            "How `path` is interpreted: `regex` (full-match), `prefix`, `exact`, "
+            "`graphql` (a GraphQL top-level-field selector) or `git` (a git "
+            "repository/ref selector)."
         ),
     )
     operations: list[str] | None = Field(

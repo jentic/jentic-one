@@ -34,7 +34,7 @@ def test_graphql_mode_requires_a_selector() -> None:
         assert isinstance(err, PathValidationError)
         assert err.code == "invalid_graphql_selector"
     assert validate_path("mutation:addComment", "graphql") is None
-    assert set(MATCH_MODES) == {*PATH_MATCH_MODES, "graphql"}
+    assert set(MATCH_MODES) == {*PATH_MATCH_MODES, "graphql", "git"}
 
 
 def test_empty_path_is_rejected_in_every_mode() -> None:

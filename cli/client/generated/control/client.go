@@ -987,6 +987,7 @@ func (e PermissionRuleReadSchemaEffect) Valid() bool {
 // Defines values for PermissionRuleReadSchemaMatchMode.
 const (
 	PermissionRuleReadSchemaMatchModeExact   PermissionRuleReadSchemaMatchMode = "exact"
+	PermissionRuleReadSchemaMatchModeGit     PermissionRuleReadSchemaMatchMode = "git"
 	PermissionRuleReadSchemaMatchModeGraphql PermissionRuleReadSchemaMatchMode = "graphql"
 	PermissionRuleReadSchemaMatchModePrefix  PermissionRuleReadSchemaMatchMode = "prefix"
 	PermissionRuleReadSchemaMatchModeRegex   PermissionRuleReadSchemaMatchMode = "regex"
@@ -996,6 +997,8 @@ const (
 func (e PermissionRuleReadSchemaMatchMode) Valid() bool {
 	switch e {
 	case PermissionRuleReadSchemaMatchModeExact:
+		return true
+	case PermissionRuleReadSchemaMatchModeGit:
 		return true
 	case PermissionRuleReadSchemaMatchModeGraphql:
 		return true
@@ -1032,6 +1035,7 @@ func (e PermissionRuleSchemaEffect) Valid() bool {
 // Defines values for PermissionRuleSchemaMatchMode.
 const (
 	PermissionRuleSchemaMatchModeExact   PermissionRuleSchemaMatchMode = "exact"
+	PermissionRuleSchemaMatchModeGit     PermissionRuleSchemaMatchMode = "git"
 	PermissionRuleSchemaMatchModeGraphql PermissionRuleSchemaMatchMode = "graphql"
 	PermissionRuleSchemaMatchModePrefix  PermissionRuleSchemaMatchMode = "prefix"
 	PermissionRuleSchemaMatchModeRegex   PermissionRuleSchemaMatchMode = "regex"
@@ -1041,6 +1045,8 @@ const (
 func (e PermissionRuleSchemaMatchMode) Valid() bool {
 	switch e {
 	case PermissionRuleSchemaMatchModeExact:
+		return true
+	case PermissionRuleSchemaMatchModeGit:
 		return true
 	case PermissionRuleSchemaMatchModeGraphql:
 		return true
@@ -6327,7 +6333,7 @@ type PermissionRuleReadSchema struct {
 	// Examples: allow
 	Effect PermissionRuleReadSchemaEffect `json:"effect"`
 
-	// MatchMode How `path` is interpreted: `regex` (full-match), `prefix`, `exact`, or `graphql` (a GraphQL top-level-field selector).
+	// MatchMode How `path` is interpreted: `regex` (full-match), `prefix`, `exact`, `graphql` (a GraphQL top-level-field selector) or `git` (a git repository/ref selector).
 	//
 	// Examples: prefix
 	MatchMode *PermissionRuleReadSchemaMatchMode `json:"match_mode,omitempty"`
@@ -6342,7 +6348,7 @@ type PermissionRuleReadSchema struct {
 	// Examples: ["listCharges"]
 	Operations *[]string `json:"operations,omitempty"`
 
-	// Path Path pattern relative to the API's server URL, interpreted per `match_mode`; null matches all paths. A GraphQL selector when `match_mode` is `graphql`.
+	// Path Path pattern relative to the API's server URL, interpreted per `match_mode`; null matches all paths. A GraphQL selector when `match_mode` is `graphql`, a git selector when it is `git`.
 	//
 	// Examples: /v1/charges
 	Path *string `json:"path,omitempty"`
@@ -6353,7 +6359,7 @@ type PermissionRuleReadSchema struct {
 // Examples: allow
 type PermissionRuleReadSchemaEffect string
 
-// PermissionRuleReadSchemaMatchMode How `path` is interpreted: `regex` (full-match), `prefix`, `exact`, or `graphql` (a GraphQL top-level-field selector).
+// PermissionRuleReadSchemaMatchMode How `path` is interpreted: `regex` (full-match), `prefix`, `exact`, `graphql` (a GraphQL top-level-field selector) or `git` (a git repository/ref selector).
 //
 // Examples: prefix
 type PermissionRuleReadSchemaMatchMode string
@@ -6371,7 +6377,7 @@ type PermissionRuleSchema struct {
 	// Examples: allow
 	Effect PermissionRuleSchemaEffect `json:"effect"`
 
-	// MatchMode How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility. `graphql` makes the rule match the top-level fields of a GraphQL request (the GitHub GraphQL endpoint) by operation type and field name, one field at a time; it matches no other request.
+	// MatchMode How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility. `graphql` makes the rule match the top-level fields of a GraphQL request (the GitHub GraphQL endpoint) by operation type and field name, one field at a time; it matches no other request. `git` makes the rule match git clones, fetches and pushes to github.com through Jentic by repository and, for pushes, by ref; it matches no other request, and only `allow` and `deny` are accepted.
 	//
 	// Examples: prefix
 	MatchMode *PermissionRuleSchemaMatchMode `json:"match_mode,omitempty"`
@@ -6386,7 +6392,7 @@ type PermissionRuleSchema struct {
 	// Examples: ["listCharges"]
 	Operations *[]string `json:"operations,omitempty"`
 
-	// Path Path pattern to match, relative to the API's server URL — the spec's path (`/widgets`), never the full upstream path with the server's base path (`/eu/widgets` for a server `https://host/{region}`). Interpreted per `match_mode`: `regex` uses full-match semantics (the pattern must describe the whole path); `prefix` and `exact` are literal. None matches all paths. With `match_mode` `graphql`, `path` is required and is a GraphQL selector instead: `query`, `mutation`, or `mutation:createPullRequest,addComment` (top-level field names, never aliases).
+	// Path Path pattern to match, relative to the API's server URL — the spec's path (`/widgets`), never the full upstream path with the server's base path (`/eu/widgets` for a server `https://host/{region}`). Interpreted per `match_mode`: `regex` uses full-match semantics (the pattern must describe the whole path); `prefix` and `exact` are literal. None matches all paths. With `match_mode` `graphql`, `path` is required and is a GraphQL selector instead: `query`, `mutation`, or `mutation:createPullRequest,addComment` (top-level field names, never aliases). With `match_mode` `git`, `path` is required and is a git selector: `<fetch|push|force>:<owner>/<repo>` with an optional `:refs/heads/<glob>` or `:refs/tags/<glob>` on push and force (e.g. `push:octo-org/app:refs/heads/agent/*`).
 	//
 	// Examples: /v1/charges
 	Path *string `json:"path,omitempty"`
@@ -6397,7 +6403,7 @@ type PermissionRuleSchema struct {
 // Examples: allow
 type PermissionRuleSchemaEffect string
 
-// PermissionRuleSchemaMatchMode How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility. `graphql` makes the rule match the top-level fields of a GraphQL request (the GitHub GraphQL endpoint) by operation type and field name, one field at a time; it matches no other request.
+// PermissionRuleSchemaMatchMode How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility. `graphql` makes the rule match the top-level fields of a GraphQL request (the GitHub GraphQL endpoint) by operation type and field name, one field at a time; it matches no other request. `git` makes the rule match git clones, fetches and pushes to github.com through Jentic by repository and, for pushes, by ref; it matches no other request, and only `allow` and `deny` are accepted.
 //
 // Examples: prefix
 type PermissionRuleSchemaMatchMode string
