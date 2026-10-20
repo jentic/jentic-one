@@ -30,10 +30,11 @@ _DISCONNECT_PREFIX: Final = b"partial-body-before-disconnect:"
 
 # Maps an X-Mock-Test-Id to the next index to consume from its status sequence.
 # Module-level so state survives across requests within a single test process;
-# tests clear it via ``reset_sequences()``. Bounded LRU: load runs (tests/perf)
-# mint a fresh test id per logical request, so an unbounded dict would grow for
-# the life of the process. Evicting the least-recently-used cursor only resets
-# an id nobody has touched in the last ``_MAX_SEQUENCE_CURSORS`` requests.
+# tests clear it via ``reset_sequences()``. Bounded LRU: load runs against the
+# harness mint a fresh test id per logical request, so an unbounded dict would
+# grow for the life of the process. Evicting the least-recently-used cursor
+# only resets an id nobody has touched in the last ``_MAX_SEQUENCE_CURSORS``
+# requests.
 _MAX_SEQUENCE_CURSORS: Final = 10_000
 _sequence_cursors: OrderedDict[str, int] = OrderedDict()
 

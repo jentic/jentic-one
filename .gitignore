@@ -117,7 +117,3 @@ cli/AGENTS.md
 # runtime by the arch tests (or point elsewhere via JENTIC_RULES_DIR); it is
 # never committed. Without it, the vendored subset under tests/arch is used.
 .rules/
-
-# Broker perf suite output (result JSON, Locust CSV, report.html, provisioned
-# tokens in .perf-env.json). Local artefacts only — never committed.
-/tests/perf/results/
