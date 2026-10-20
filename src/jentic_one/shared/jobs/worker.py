@@ -283,6 +283,20 @@ class WorkerLoop:
                     error = _DB_CONNECTION_LOST_ERROR
                 else:
                     error = redact_sql(str(exc)) or type(exc).__name__
+                    if _carries_sql(exc):
+                        # A traceback would render the chained statement and
+                        # its bound parameters, so only type names and the
+                        # SQL-free detail are logged.
+                        logger.error(
+                            "job_failed",
+                            job_id=job.id,
+                            attempts=job.attempts,
+                            error_type=type(exc).__name__,
+                            cause=type(exc.__cause__).__name__ if exc.__cause__ else None,
+                            error=error[:_ERROR_MAX_LEN],
+                        )
+                    else:
+                        logger.exception("job_failed", job_id=job.id, attempts=job.attempts)
                     if isinstance(exc, TerminalJobError):
                         # The handler knows no retry can succeed: fail now
                         # rather than spend the retry budget.
