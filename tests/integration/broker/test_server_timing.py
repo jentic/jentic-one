@@ -749,7 +749,8 @@ async def test_failed_upstream_records_no_overhead(
         )
         resp = await _execute(app, refused_port)
 
-    assert resp.status_code == 504, resp.text
+    # A refused connect is a 502 on the buffered path and a 504 on stream open.
+    assert resp.status_code == (504 if streaming else 502), resp.text
     assert resp.json()["type"] == "upstream_connect_failed"
     assert await _statuses(ctx) == [ExecutionStatus.FAILED]
     assert histogram_points(overhead_reader, _OVERHEAD) == []
