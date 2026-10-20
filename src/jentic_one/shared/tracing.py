@@ -29,6 +29,7 @@ import functools
 import linecache
 import os
 import re
+import secrets
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
@@ -711,3 +712,48 @@ def jentic_tracestate(member_value: str) -> Iterator[None]:
         yield
     finally:
         otel_context.detach(token)
+
+
+# ---------------------------------------------------------------------------
+# Server-chosen trace
+# ---------------------------------------------------------------------------
+
+_SERVER_TRACE_TRACER = "jentic_one.tracing"
+
+
+@contextmanager
+def server_chosen_trace(trace_id: str, span_name: str) -> Iterator[None]:
+    """Run the enclosed block in a span on ``trace_id``, whatever the inbound trace.
+
+    For a request whose trace the server chose ahead of time (a CLI facade
+    call carries the trace id minted with its invocation token): the inbound
+    instrumentation has already joined any client-supplied ``traceparent``,
+    so the block runs in a new span whose parent is a remote span on
+    ``trace_id``. Inside it :func:`current_trace_id` returns ``trace_id`` and
+    outbound requests propagate it; the client's span is kept only as a span
+    link. The sampling flag is inherited from the inbound span, so tracing
+    stays as on or off as it was. ``trace_id`` must be 32 hex chars, not all
+    zeros.
+    """
+    trace_id_int = int(trace_id, 16)
+    if not 0 < trace_id_int < 2**128:
+        raise ValueError("trace_id must be a non-zero 128-bit hex id")
+    inbound = trace.get_current_span().get_span_context()
+    flags = inbound.trace_flags if inbound.is_valid else trace.TraceFlags(trace.TraceFlags.DEFAULT)
+    parent = trace.NonRecordingSpan(
+        trace.SpanContext(
+            trace_id=trace_id_int,
+            span_id=secrets.randbits(64) or 1,
+            is_remote=True,
+            trace_flags=flags,
+        )
+    )
+    links = [trace.Link(inbound)] if inbound.is_valid else None
+    tracer = trace.get_tracer(_SERVER_TRACE_TRACER)
+    with tracer.start_as_current_span(
+        span_name,
+        context=trace.set_span_in_context(parent),
+        kind=trace.SpanKind.INTERNAL,
+        links=links,
+    ):
+        yield
