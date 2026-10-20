@@ -342,6 +342,27 @@ func (e CliFacadeResponseMode) Valid() bool {
 	}
 }
 
+// Defines values for CliFacadeResponseProtocols.
+const (
+	CliFacadeResponseProtocolsGit     CliFacadeResponseProtocols = "git"
+	CliFacadeResponseProtocolsGraphql CliFacadeResponseProtocols = "graphql"
+	CliFacadeResponseProtocolsRest    CliFacadeResponseProtocols = "rest"
+)
+
+// Valid indicates whether the value is a known member of the CliFacadeResponseProtocols enum.
+func (e CliFacadeResponseProtocols) Valid() bool {
+	switch e {
+	case CliFacadeResponseProtocolsGit:
+		return true
+	case CliFacadeResponseProtocolsGraphql:
+		return true
+	case CliFacadeResponseProtocolsRest:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ConnectSessionSummaryResponseState.
 const (
 	ConnectSessionSummaryResponseStateAwaitingApp ConnectSessionSummaryResponseState = "awaiting_app"
@@ -2690,17 +2711,17 @@ type ClaimRequest struct {
 
 // CliFacadeListResponse The vendor CLI facades this deployment serves.
 //
-// Examples: {"data":[{"address":"https://broker.jentic.example.com/_facade/cloudflare","cli":"cf","mode":"path","vendor":"cloudflare"}]}
+// Examples: {"data":[{"address":"https://broker.jentic.example.com/_facade/cloudflare","cli":"cf","mode":"path","protocols":["rest"],"vendor":"cloudflare"}]}
 type CliFacadeListResponse struct {
 	// Data Served facades, one per vendor; empty when none is enabled.
 	//
-	// Examples: [{"address":"https://broker.jentic.example.com/_facade/cloudflare","cli":"cf","mode":"path","vendor":"cloudflare"}]
+	// Examples: [{"address":"https://broker.jentic.example.com/_facade/cloudflare","cli":"cf","mode":"path","protocols":["rest"],"vendor":"cloudflare"}]
 	Data []CliFacadeResponse `json:"data"`
 }
 
 // CliFacadeResponse One vendor CLI facade an agent's CLI can be pointed at.
 //
-// Examples: {"address":"https://broker.jentic.example.com/_facade/cloudflare","cli":"cf","mode":"path","vendor":"cloudflare"}
+// Examples: {"address":"https://broker.jentic.example.com/_facade/cloudflare","cli":"cf","mode":"path","protocols":["rest"],"vendor":"cloudflare"}
 type CliFacadeResponse struct {
 	// Address Base URL to point the CLI at (e.g. `CLOUDFLARE_API_BASE_URL`). Null when the deployment cannot advertise one: a `remote` backend whose Broker URL is a loopback address and no `public_address` set for the vendor.
 	//
@@ -2717,6 +2738,11 @@ type CliFacadeResponse struct {
 	// Examples: path
 	Mode CliFacadeResponseMode `json:"mode"`
 
+	// Protocols What the vendor's tools reach through Jentic: `rest` (the vendor's REST API), `graphql` (GitHub's GraphQL endpoint, governed by GraphQL rules) and `git` (git clone, fetch and push to github.com, governed by git rules; listed only while the governed git pipeline is on).
+	//
+	// Examples: ["rest"]
+	Protocols []CliFacadeResponseProtocols `json:"protocols"`
+
 	// Vendor Vendor the facade serves, as passed to `POST /cli-invocations`.
 	//
 	// Examples: cloudflare
@@ -2727,6 +2753,9 @@ type CliFacadeResponse struct {
 //
 // Examples: path
 type CliFacadeResponseMode string
+
+// CliFacadeResponseProtocols defines model for CliFacadeResponse.Protocols.
+type CliFacadeResponseProtocols string
 
 // CliInvocationCreateRequest Request body for minting a CLI invocation token.
 //

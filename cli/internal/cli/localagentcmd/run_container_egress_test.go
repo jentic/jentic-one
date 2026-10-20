@@ -34,8 +34,9 @@ func (f *fakeControl) handler(t *testing.T) http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/cli-facades":
-			_, _ = w.Write([]byte(`{"data":[{"vendor":"github","cli":"gh","mode":"host"},` +
-				`{"vendor":"cloudflare","cli":"cf","mode":"path"},{"vendor":"gitlab","cli":"glab","mode":"path"}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"vendor":"github","cli":"gh","mode":"host","protocols":["rest","graphql","git"]},` +
+				`{"vendor":"cloudflare","cli":"cf","mode":"path","protocols":["rest"]},` +
+				`{"vendor":"gitlab","cli":"glab","mode":"path","protocols":["rest"]}]}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/cli-invocations":
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
@@ -84,12 +85,22 @@ func testIssuer(t *testing.T) (*controlIssuer, *fakeControl) {
 
 func TestGovernedVendorsAreTheServedFacadesTheProxyCanGovern(t *testing.T) {
 	issuer, _ := testIssuer(t)
-	got, err := governedVendors(context.Background(), issuer.client)
+	got, protocols, err := governedVendors(context.Background(), issuer.client)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(got, []string{"cloudflare", "github"}) {
 		t.Errorf("governed vendors = %v", got)
+	}
+	if summary := governedSummary(got, protocols); summary != "cloudflare (REST), github (REST, GraphQL, git)" {
+		t.Errorf("summary = %q", summary)
+	}
+}
+
+func TestGovernedSummaryNamesAVendorWithoutProtocolsAlone(t *testing.T) {
+	got := governedSummary([]string{"aws", "github"}, map[string][]string{"github": {"rest", "graphql", "future"}})
+	if got != "aws, github (REST, GraphQL)" {
+		t.Errorf("summary = %q", got)
 	}
 }
 

@@ -54,6 +54,7 @@ def test_list_cli_facades_wire_shape() -> None:
                 "cli": "cf",
                 "mode": "path",
                 "address": "http://127.0.0.1:8100/_facade/cloudflare",
+                "protocols": ["rest"],
             }
         ]
     }

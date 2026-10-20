@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from jentic_one.shared.cli_facades import FacadeProtocol
+
 
 class CliFacadeResponse(BaseModel):
     """One vendor CLI facade an agent's CLI can be pointed at."""
@@ -33,6 +35,15 @@ class CliFacadeResponse(BaseModel):
             "loopback address and no `public_address` set for the vendor."
         ),
         examples=["https://broker.jentic.example.com/_facade/cloudflare"],
+    )
+    protocols: list[FacadeProtocol] = Field(
+        description=(
+            "What the vendor's tools reach through Jentic: `rest` (the vendor's REST API), "
+            "`graphql` (GitHub's GraphQL endpoint, governed by GraphQL rules) and `git` "
+            "(git clone, fetch and push to github.com, governed by git rules; listed only "
+            "while the governed git pipeline is on)."
+        ),
+        examples=[["rest"]],
     )
 
 

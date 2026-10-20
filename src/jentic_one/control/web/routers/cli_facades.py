@@ -35,7 +35,13 @@ async def list_cli_facades(
     """
     return CliFacadeListResponse(
         data=[
-            CliFacadeResponse(vendor=v.vendor, cli=v.cli, mode=v.mode, address=v.address)
+            CliFacadeResponse(
+                vendor=v.vendor,
+                cli=v.cli,
+                mode=v.mode,
+                address=v.address,
+                protocols=list(v.protocols),
+            )
             for v in svc.list_served()
         ]
     )

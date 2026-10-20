@@ -2368,7 +2368,7 @@
               "path": "jentic cli list",
               "use": "list",
               "short": "List the vendor CLIs this deployment serves, and their facade addresses",
-              "long": "list answers with the vendor CLI facades the Broker serves (GET /cli-facades):\nfor each vendor, the CLI, its addressing mode and the address the wrapper points\nthe CLI at. A vendor missing here cannot be run through Jentic on this\ndeployment. Whether you hold a credential for it is checked per call.",
+              "long": "list answers with the vendor CLI facades the Broker serves (GET /cli-facades):\nfor each vendor, the CLI, its addressing mode, the address the wrapper points\nthe CLI at, and what the vendor's tools reach through Jentic (protocols: rest,\ngraphql, and git for git clone/fetch/push to github.com from `jentic run\n--container`). A vendor missing here cannot be run through Jentic on this\ndeployment. Whether you hold a credential for it is checked per call.",
               "flags": [
                 {
                   "name": "context",

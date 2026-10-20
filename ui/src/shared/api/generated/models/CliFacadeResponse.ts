@@ -19,6 +19,10 @@ export type CliFacadeResponse = {
      */
     mode: CliFacadeResponse.mode;
     /**
+     * What the vendor's tools reach through Jentic: `rest` (the vendor's REST API), `graphql` (GitHub's GraphQL endpoint, governed by GraphQL rules) and `git` (git clone, fetch and push to github.com, governed by git rules; listed only while the governed git pipeline is on).
+     */
+    protocols: Array<'rest' | 'graphql' | 'git'>;
+    /**
      * Vendor the facade serves, as passed to `POST /cli-invocations`.
      */
     vendor: string;

@@ -10,6 +10,10 @@ Pure module: no FastAPI, httpx or DB imports.
 from __future__ import annotations
 
 from types import MappingProxyType
+from typing import Literal
+
+#: Something a vendor's tools reach through Jentic.
+FacadeProtocol = Literal["rest", "graphql", "git"]
 
 #: The reserved path prefix every path-mode facade is served under. Its first
 #: segment starts with an underscore, which no DNS hostname can contain, so it
@@ -24,9 +28,28 @@ SERVED_FACADE_CLIS: MappingProxyType[str, str] = MappingProxyType(
 )
 
 
+#: What each served facade's vendor CLI reaches through Jentic, besides the
+#: facade itself: its REST API, GitHub's GraphQL endpoint (with its own
+#: top-level-field rules) and, when the governed git pipeline is on
+#: (``cli_facades.git``), git smart HTTP to github.com.
+FACADE_PROTOCOLS: MappingProxyType[str, tuple[FacadeProtocol, ...]] = MappingProxyType(
+    {"github": ("rest", "graphql", "git"), "cloudflare": ("rest",)}
+)
+
+#: The protocol served only while ``cli_facades.git`` is on.
+GIT_PROTOCOL: FacadeProtocol = "git"
+
+
 def facade_path_prefix(vendor: str) -> str:
     """The path prefix ``vendor``'s path-mode facade is served under."""
     return f"{FACADE_PATH_PREFIX}/{vendor}"
 
 
-__all__ = ["FACADE_PATH_PREFIX", "SERVED_FACADE_CLIS", "facade_path_prefix"]
+__all__ = [
+    "FACADE_PATH_PREFIX",
+    "FACADE_PROTOCOLS",
+    "GIT_PROTOCOL",
+    "SERVED_FACADE_CLIS",
+    "FacadeProtocol",
+    "facade_path_prefix",
+]

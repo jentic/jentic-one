@@ -31,25 +31,55 @@ import (
 const sessionCommandTitle = "session"
 
 // governedVendors are the vendors whose CLI facade the deployment serves and
-// the proxy can govern, sorted.
-func governedVendors(ctx context.Context, client *control.ClientWithResponses) ([]string, error) {
+// the proxy can govern, sorted, and what each one's tools reach through
+// Jentic (GET /cli-facades `protocols`: rest, graphql, git).
+func governedVendors(ctx context.Context, client *control.ClientWithResponses) ([]string, map[string][]string, error) {
 	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	resp, err := client.ListCliFacadesWithResponse(callCtx)
 	if err != nil {
-		return nil, fmt.Errorf("list the CLI facades: %w", err)
+		return nil, nil, fmt.Errorf("list the CLI facades: %w", err)
 	}
 	if resp.JSON200 == nil {
-		return nil, fmt.Errorf("list the CLI facades: %s", problemSummary(resp.StatusCode(), resp.Body))
+		return nil, nil, fmt.Errorf("list the CLI facades: %s", problemSummary(resp.StatusCode(), resp.Body))
 	}
 	var vendors []string
+	protocols := map[string][]string{}
 	for _, f := range resp.JSON200.Data {
 		if slices.Contains(container.GovernableVendors(), f.Vendor) && !slices.Contains(vendors, f.Vendor) {
 			vendors = append(vendors, f.Vendor)
+			for _, p := range f.Protocols {
+				protocols[f.Vendor] = append(protocols[f.Vendor], string(p))
+			}
 		}
 	}
 	sort.Strings(vendors)
-	return vendors, nil
+	return vendors, protocols, nil
+}
+
+// protocolLabels are how the egress summary names what a vendor's tools
+// reach through Jentic.
+var protocolLabels = map[string]string{"rest": "REST", "graphql": "GraphQL", "git": "git"}
+
+// governedSummary names each governed vendor with what its tools reach
+// through Jentic: "github (REST, GraphQL, git), cloudflare (REST)". A vendor
+// the deployment lists no protocols for is named alone.
+func governedSummary(vendors []string, protocols map[string][]string) string {
+	parts := make([]string, 0, len(vendors))
+	for _, v := range vendors {
+		labels := make([]string, 0, len(protocols[v]))
+		for _, p := range protocols[v] {
+			if label, ok := protocolLabels[p]; ok {
+				labels = append(labels, label)
+			}
+		}
+		if len(labels) == 0 {
+			parts = append(parts, v)
+			continue
+		}
+		parts = append(parts, v+" ("+strings.Join(labels, ", ")+")")
+	}
+	return strings.Join(parts, ", ")
 }
 
 // containerTunnelHosts is the agent's tunnel allowlist for a session: its
@@ -200,6 +230,8 @@ func problemSummary(status int, body []byte) string {
 type proxyEgressSetup struct {
 	egress *container.ProxyEgress
 	keeper *container.TokenKeeper
+	// protocols is what each governed vendor's tools reach through Jentic.
+	protocols map[string][]string
 }
 
 // Close revokes the session's tokens.
@@ -232,13 +264,13 @@ func setUpProxyEgress(ctx context.Context, st *clictx.ActiveState, desc localage
 	if err != nil {
 		return nil, err
 	}
-	vendors, err := governedVendors(ctx, issuer.client)
+	vendors, protocols, err := governedVendors(ctx, issuer.client)
 	if err != nil {
 		return nil, containerUnavailableErr(
 			fmt.Sprintf("could not learn which vendor CLIs this Jentic governs: %v", err),
 			"Check that Jentic is reachable (jentic doctor), or run with --container-egress none.")
 	}
-	setup := &proxyEgressSetup{}
+	setup := &proxyEgressSetup{protocols: protocols}
 	tokens := func() map[string]string { return map[string]string{} }
 	if len(vendors) > 0 {
 		keeper, err := container.MintSessionTokens(ctx, issuer, vendors)

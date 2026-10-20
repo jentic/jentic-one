@@ -32,6 +32,7 @@ def test_path_mode_address_is_the_advertised_broker_url_plus_the_facade_prefix()
             cli="cf",
             mode="path",
             address="https://broker.example.com/_facade/cloudflare",
+            protocols=("rest",),
         )
     ]
 
@@ -76,9 +77,25 @@ def test_host_mode_address_is_https_on_the_facade_host() -> None:
     )
     assert svc.list_served() == [
         CliFacadeView(
-            vendor="github", cli="gh", mode="host", address="https://github.jentic.example.com"
+            vendor="github",
+            cli="gh",
+            mode="host",
+            address="https://github.jentic.example.com",
+            protocols=("rest", "graphql", "git"),
         )
     ]
+
+
+def test_git_is_listed_only_while_the_git_pipeline_is_on() -> None:
+    svc = _service(
+        cli_facades={
+            "enabled": True,
+            "vendors": {"github": {"enabled": True, "host": "github.jentic.example.com"}},
+            "git": {"enabled": False},
+        }
+    )
+    (view,) = svc.list_served()
+    assert view.protocols == ("rest", "graphql")
 
 
 def test_remote_backend_with_a_loopback_broker_url_has_no_address() -> None:

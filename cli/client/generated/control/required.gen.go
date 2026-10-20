@@ -88,9 +88,11 @@ func (CatalogRefreshResponse) RequiredFields() []string { return []string{"count
 func (ChangePasswordRequest) RequiredFields() []string {
 	return []string{"current_password", "new_password"}
 }
-func (ClaimRequest) RequiredFields() []string               { return []string{"token"} }
-func (CliFacadeListResponse) RequiredFields() []string      { return []string{"data"} }
-func (CliFacadeResponse) RequiredFields() []string          { return []string{"cli", "mode", "vendor"} }
+func (ClaimRequest) RequiredFields() []string          { return []string{"token"} }
+func (CliFacadeListResponse) RequiredFields() []string { return []string{"data"} }
+func (CliFacadeResponse) RequiredFields() []string {
+	return []string{"cli", "mode", "protocols", "vendor"}
+}
 func (CliInvocationCreateRequest) RequiredFields() []string { return []string{"vendor"} }
 func (CliInvocationCreatedResponse) RequiredFields() []string {
 	return []string{"expires_at", "hard_expires_at", "id", "token", "trace_id", "vendor"}

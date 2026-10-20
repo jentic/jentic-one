@@ -4282,6 +4282,9 @@
                 "address": "https://broker.jentic.example.com/_facade/cloudflare",
                 "cli": "cf",
                 "mode": "path",
+                "protocols": [
+                  "rest"
+                ],
                 "vendor": "cloudflare"
               }
             ]
@@ -4296,6 +4299,9 @@
                   "address": "https://broker.jentic.example.com/_facade/cloudflare",
                   "cli": "cf",
                   "mode": "path",
+                  "protocols": [
+                    "rest"
+                  ],
                   "vendor": "cloudflare"
                 }
               ]
@@ -4320,6 +4326,9 @@
             "address": "https://broker.jentic.example.com/_facade/cloudflare",
             "cli": "cf",
             "mode": "path",
+            "protocols": [
+              "rest"
+            ],
             "vendor": "cloudflare"
           }
         ],
@@ -4359,6 +4368,24 @@
             "title": "Mode",
             "type": "string"
           },
+          "protocols": {
+            "description": "What the vendor's tools reach through Jentic: `rest` (the vendor's REST API), `graphql` (GitHub's GraphQL endpoint, governed by GraphQL rules) and `git` (git clone, fetch and push to github.com, governed by git rules; listed only while the governed git pipeline is on).",
+            "examples": [
+              [
+                "rest"
+              ]
+            ],
+            "items": {
+              "enum": [
+                "rest",
+                "graphql",
+                "git"
+              ],
+              "type": "string"
+            },
+            "title": "Protocols",
+            "type": "array"
+          },
           "vendor": {
             "description": "Vendor the facade serves, as passed to `POST /cli-invocations`.",
             "examples": [
@@ -4371,7 +4398,8 @@
         "required": [
           "vendor",
           "cli",
-          "mode"
+          "mode",
+          "protocols"
         ],
         "title": "CliFacadeResponse",
         "type": "object"
@@ -34470,6 +34498,9 @@
                       "address": "https://broker.jentic.example.com/_facade/cloudflare",
                       "cli": "cf",
                       "mode": "path",
+                      "protocols": [
+                        "rest"
+                      ],
                       "vendor": "cloudflare"
                     }
                   ]

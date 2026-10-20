@@ -13,7 +13,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from jentic_one.shared.cli_facades import SERVED_FACADE_CLIS, facade_path_prefix
+from jentic_one.shared.cli_facades import (
+    FACADE_PROTOCOLS,
+    GIT_PROTOCOL,
+    SERVED_FACADE_CLIS,
+    FacadeProtocol,
+    facade_path_prefix,
+)
 from jentic_one.shared.config import CLI_FACADE_VENDORS
 from jentic_one.shared.context import Context
 from jentic_one.shared.web.instance_identity import advertised_broker_url
@@ -21,12 +27,15 @@ from jentic_one.shared.web.instance_identity import advertised_broker_url
 
 @dataclass(frozen=True, slots=True)
 class CliFacadeView:
-    """One served facade: the vendor, its CLI, the addressing mode and the address."""
+    """One served facade: the vendor, its CLI, the addressing mode, the address
+    and what the vendor's CLIs reach through Jentic (``rest``, ``graphql``,
+    ``git``)."""
 
     vendor: str
     cli: str
     mode: Literal["host", "path"]
     address: str | None
+    protocols: tuple[FacadeProtocol, ...]
 
 
 class CliFacadeService:
@@ -42,7 +51,8 @@ class CliFacadeService:
         is ``https://<host>`` in ``host`` mode, and in ``path`` mode the
         broker's advertised address plus the facade prefix; ``None`` when the
         deployment cannot honestly advertise a broker address (a ``remote``
-        backend whose broker URL is loopback).
+        backend whose broker URL is loopback). ``protocols`` lists ``git``
+        only while the governed git pipeline is on (``cli_facades.git``).
         """
         facades = self._config.cli_facades
         broker_url = advertised_broker_url(self._config)
@@ -61,5 +71,18 @@ class CliFacadeService:
                 address = broker_url.rstrip("/") + facade_path_prefix(vendor)
             else:
                 address = None
-            views.append(CliFacadeView(vendor=vendor, cli=cli, mode=settings.mode, address=address))
+            protocols = tuple(
+                p
+                for p in FACADE_PROTOCOLS.get(vendor, ("rest",))
+                if p != GIT_PROTOCOL or facades.git_enabled()
+            )
+            views.append(
+                CliFacadeView(
+                    vendor=vendor,
+                    cli=cli,
+                    mode=settings.mode,
+                    address=address,
+                    protocols=protocols,
+                )
+            )
         return views

@@ -31,8 +31,10 @@ func newCLIListCmd(_ *app) *cobra.Command {
 		Use:   "list",
 		Short: "List the vendor CLIs this deployment serves, and their facade addresses",
 		Long: "list answers with the vendor CLI facades the Broker serves (GET /cli-facades):\n" +
-			"for each vendor, the CLI, its addressing mode and the address the wrapper points\n" +
-			"the CLI at. A vendor missing here cannot be run through Jentic on this\n" +
+			"for each vendor, the CLI, its addressing mode, the address the wrapper points\n" +
+			"the CLI at, and what the vendor's tools reach through Jentic (protocols: rest,\n" +
+			"graphql, and git for git clone/fetch/push to github.com from `jentic run\n" +
+			"--container`). A vendor missing here cannot be run through Jentic on this\n" +
 			"deployment. Whether you hold a credential for it is checked per call.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {

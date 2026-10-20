@@ -348,7 +348,7 @@ func printEgressSummary(a *Cmd, mode string, proxy *proxyEgressSetup) {
 	}
 	governed := "none"
 	if len(proxy.egress.Vendors) > 0 {
-		governed = strings.Join(proxy.egress.Vendors, ", ")
+		governed = governedSummary(proxy.egress.Vendors, proxy.protocols)
 	}
 	tunnel := "none"
 	if len(proxy.egress.Tunnel) > 0 {
