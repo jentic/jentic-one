@@ -47,6 +47,8 @@ _EVENTS_CREATED_BY_ACTOR_HEAD = "a1c3e5f7b9d2"  # pragma: allowlist secret
 _USER_SESSION_HEAD = "eb3688e956fc"  # pragma: allowlist secret
 #: Drop of ``ix_execution_records_toolkit_started``, stacked on user login sessions.
 _DROP_TOOLKIT_STARTED_INDEX_HEAD = "d4b8e2f6a901"  # pragma: allowlist secret
+#: External identities ``issuer`` column and ``(issuer, external_subject)`` unique key.
+_EXTERNAL_IDENTITIES_ISSUER_HEAD = "e5c9f3a7b802"  # pragma: allowlist secret
 
 
 def _create_tables(op: Operations, *, pg: bool) -> None:
@@ -218,6 +220,7 @@ def restore_pre_sa_drop_admin(integration_config: AppConfig) -> None:
         [_EVENTS_CREATED_BY_ACTOR_HEAD],
         [_USER_SESSION_HEAD],
         [_DROP_TOOLKIT_STARTED_INDEX_HEAD],
+        [_EXTERNAL_IDENTITIES_ISSUER_HEAD],
     ), f"extend restore_pre_sa_drop_admin for new heads {heads}"
     if not asyncio.run(_has_service_account_tables(db_config)):
         command.downgrade(cfg, _SA_DROP)

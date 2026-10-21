@@ -125,18 +125,37 @@ class AuthorizeService:
     def _get_idp_adapter(self) -> IdpAdapter | None:
         return build_idp_adapter(self._auth_config.idp)
 
+    def _effective_idp_issuer(self, claims: IdpClaims) -> str:
+        """Resolve the canonical IdP issuer for external-identity keying."""
+        if claims.issuer:
+            return claims.issuer.rstrip("/")
+        adapter = self._get_idp_adapter()
+        if adapter is not None and adapter.issuer:
+            return adapter.issuer
+        if self._auth_config.idp.issuer:
+            return self._auth_config.idp.issuer.rstrip("/")
+        if self._auth_config.idp.provider == "google":
+            return "https://accounts.google.com"
+        return self._auth_config.idp.provider
+
     def get_authorize_redirect_url(
         self,
         *,
         state: str,
         nonce: str,
         redirect_uri: str,
+        code_challenge: str | None = None,
     ) -> str | None:
         """Get the upstream IdP authorization URL, or None if local-only."""
         adapter = self._get_idp_adapter()
         if adapter is None:
             return None
-        return adapter.authorize_url(state=state, nonce=nonce, redirect_uri=redirect_uri)
+        return adapter.authorize_url(
+            state=state,
+            nonce=nonce,
+            redirect_uri=redirect_uri,
+            code_challenge=code_challenge,
+        )
 
     async def handle_idp_callback(
         self,
@@ -148,6 +167,8 @@ class AuthorizeService:
         code_challenge: str,
         scopes: str,
         nonce: str | None,
+        idp_code_verifier: str | None = None,
+        idp_nonce: str | None = None,
     ) -> str:
         """Handle IdP callback: exchange upstream code, map identity, issue auth code.
 
@@ -161,6 +182,8 @@ class AuthorizeService:
             code_challenge=code_challenge,
             scopes=scopes,
             nonce=nonce,
+            idp_code_verifier=idp_code_verifier,
+            idp_nonce=idp_nonce,
         )
         return platform_code
 
@@ -174,6 +197,8 @@ class AuthorizeService:
         code_challenge: str,
         scopes: str,
         nonce: str | None,
+        idp_code_verifier: str | None = None,
+        idp_nonce: str | None = None,
     ) -> tuple[str, str]:
         """Handle IdP callback and return both platform code and user email.
 
@@ -184,7 +209,12 @@ class AuthorizeService:
         if adapter is None:
             raise InvalidGrantError("No external IdP configured")
 
-        userinfo = await adapter.exchange_code(code, redirect_uri=redirect_uri)
+        userinfo = await adapter.exchange_code(
+            code,
+            redirect_uri=redirect_uri,
+            code_verifier=idp_code_verifier,
+            nonce=idp_nonce,
+        )
         claims = adapter.map_claims(userinfo)
         user_id = await self._resolve_or_create_user(claims)
 
@@ -203,6 +233,8 @@ class AuthorizeService:
         *,
         code: str,
         redirect_uri: str,
+        idp_code_verifier: str | None = None,
+        idp_nonce: str | None = None,
     ) -> tuple[str, str]:
         """Exchange an upstream IdP code and resolve the local user.
 
@@ -213,7 +245,12 @@ class AuthorizeService:
         if adapter is None:
             raise InvalidGrantError("No external IdP configured")
 
-        userinfo = await adapter.exchange_code(code, redirect_uri=redirect_uri)
+        userinfo = await adapter.exchange_code(
+            code,
+            redirect_uri=redirect_uri,
+            code_verifier=idp_code_verifier,
+            nonce=idp_nonce,
+        )
         claims = adapter.map_claims(userinfo)
         user_id = await self._resolve_or_create_user(claims)
         return user_id, claims.email
@@ -223,6 +260,8 @@ class AuthorizeService:
         *,
         code: str,
         redirect_uri: str,
+        idp_code_verifier: str | None = None,
+        idp_nonce: str | None = None,
     ) -> IdpClaims:
         """Exchange an upstream IdP code and return the claims *without* provisioning.
 
@@ -237,7 +276,12 @@ class AuthorizeService:
         if adapter is None:
             raise InvalidGrantError("No external IdP configured")
 
-        userinfo = await adapter.exchange_code(code, redirect_uri=redirect_uri)
+        userinfo = await adapter.exchange_code(
+            code,
+            redirect_uri=redirect_uri,
+            code_verifier=idp_code_verifier,
+            nonce=idp_nonce,
+        )
         return adapter.map_claims(userinfo)
 
     async def provision_from_claims(self, claims: IdpClaims) -> str:
@@ -254,10 +298,10 @@ class AuthorizeService:
         email match only when the IdP asserts ``email_verified`` (an
         unverified email must not expose another account's agent list).
         """
-        provider = self._auth_config.idp.provider
+        issuer = self._effective_idp_issuer(claims)
         async with self._ctx.admin_db.session() as session:
-            ext_id = await ExternalIdentityRepository.get_by_provider_subject(
-                session, provider, claims.external_subject
+            ext_id = await ExternalIdentityRepository.get_by_issuer_subject(
+                session, issuer, claims.external_subject
             )
             if ext_id is not None:
                 return ext_id.user_id
@@ -683,14 +727,15 @@ class AuthorizeService:
 
         Handles the race condition where concurrent callbacks for the same
         external_subject both pass the initial lookup — the UniqueConstraint
-        on (provider, external_subject) rejects the second insert, which is
+        on (issuer, external_subject) rejects the second insert, which is
         caught and retried as a lookup.
         """
         provider = self._auth_config.idp.provider
+        issuer = self._effective_idp_issuer(claims)
 
         async with self._ctx.admin_db.transaction() as session:
-            ext_id = await ExternalIdentityRepository.get_by_provider_subject(
-                session, provider, claims.external_subject
+            ext_id = await ExternalIdentityRepository.get_by_issuer_subject(
+                session, issuer, claims.external_subject
             )
             if ext_id is not None:
                 return ext_id.user_id
@@ -707,6 +752,7 @@ class AuthorizeService:
                     await ExternalIdentityRepository.create(
                         session,
                         provider=provider,
+                        issuer=issuer,
                         external_subject=claims.external_subject,
                         user_id=existing_user.id,
                         email=claims.email,
@@ -751,6 +797,7 @@ class AuthorizeService:
                 await ExternalIdentityRepository.create(
                     session,
                     provider=provider,
+                    issuer=issuer,
                     external_subject=claims.external_subject,
                     user_id=new_user.id,
                     email=claims.email,
@@ -790,8 +837,8 @@ class AuthorizeService:
             pass
 
         async with self._ctx.admin_db.transaction() as session:
-            ext_id = await ExternalIdentityRepository.get_by_provider_subject(
-                session, provider, claims.external_subject
+            ext_id = await ExternalIdentityRepository.get_by_issuer_subject(
+                session, issuer, claims.external_subject
             )
             if ext_id is not None:
                 return ext_id.user_id

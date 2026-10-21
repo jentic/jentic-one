@@ -11,15 +11,17 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+import time
 from base64 import urlsafe_b64encode
 from collections.abc import AsyncGenerator, Iterator
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import jwt
 import pytest
 import respx
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from cryptography.hazmat.primitives.serialization import (
     Encoding,
     NoEncryption,
@@ -33,7 +35,7 @@ from httpx import Response
 # SDK depends on it): upstream-mock responses stay httpx.Response (the app's
 # own client), while TestClient calls answer httpx2 responses.
 from httpx2 import Response as ClientResponse
-from jwt.algorithms import ECAlgorithm
+from jwt.algorithms import ECAlgorithm, RSAAlgorithm
 from sqlalchemy import delete, select
 
 from jentic_one.admin.core.schema.authorization_codes import AuthorizationCode
@@ -61,7 +63,20 @@ pytestmark = pytest.mark.integration
 FAKE_IDP_ISSUER = "https://fake-idp.test"
 FAKE_IDP_TOKEN = f"{FAKE_IDP_ISSUER}/oauth/token"
 FAKE_IDP_USERINFO = f"{FAKE_IDP_ISSUER}/userinfo"
+FAKE_IDP_DISCOVERY = f"{FAKE_IDP_ISSUER}/.well-known/openid-configuration"
+FAKE_IDP_JWKS = f"{FAKE_IDP_ISSUER}/.well-known/jwks.json"
 FAKE_PROVIDER = "fake-google"
+UPSTREAM_CLIENT_ID = "upstream-client"
+
+_UPSTREAM_RSA_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+_UPSTREAM_JWK: dict[str, Any] = {
+    **jwt.api_jwk.PyJWK.from_json(RSAAlgorithm.to_jwk(_UPSTREAM_RSA_KEY.public_key()))._jwk_data,
+    "kid": "upstream-rs256-kid",
+    "use": "sig",
+    "alg": "RS256",
+}
+_LAST_UPSTREAM_NONCE: dict[str, str] = {"value": ""}
+_LAST_UPSTREAM_CODE_CHALLENGE: dict[str, str] = {"value": ""}
 
 # The platform OAuth client (e.g. the web app).
 CLIENT_ID = "jentic-web"
@@ -143,12 +158,54 @@ async def _cleanup(oidc_context: Context) -> AsyncGenerator[None, None]:
         await session.execute(delete(User).where(User.auth_provider == FAKE_PROVIDER))
 
 
-def _stub_idp(*, sub: str, email: str, email_verified: bool) -> None:
-    """Install respx mocks for the upstream IdP token + userinfo endpoints."""
-    respx.post(FAKE_IDP_TOKEN).mock(
-        return_value=Response(200, json={"access_token": "upstream-access-token"})
+def _stub_idp(
+    *,
+    sub: str,
+    email: str,
+    email_verified: bool,
+    issuer: str = FAKE_IDP_ISSUER,
+    token_url: str = FAKE_IDP_TOKEN,
+    userinfo_url: str = FAKE_IDP_USERINFO,
+) -> None:
+    """Install respx mocks for the upstream IdP discovery, JWKS, token, and userinfo endpoints."""
+    discovery_url = f"{issuer.rstrip('/')}/.well-known/openid-configuration"
+    jwks_url = f"{issuer.rstrip('/')}/.well-known/jwks.json"
+    respx.get(discovery_url).mock(
+        return_value=Response(200, json={"issuer": issuer, "jwks_uri": jwks_url})
     )
-    respx.get(FAKE_IDP_USERINFO).mock(
+    respx.get(jwks_url).mock(return_value=Response(200, json={"keys": [_UPSTREAM_JWK]}))
+
+    def _token_handler(request: Any) -> Response:
+        form = parse_qs(request.content.decode())
+        code_verifier = form.get("code_verifier", [""])[0]
+        expected_challenge = _LAST_UPSTREAM_CODE_CHALLENGE["value"]
+        if expected_challenge:
+            computed = (
+                urlsafe_b64encode(hashlib.sha256(code_verifier.encode()).digest())
+                .rstrip(b"=")
+                .decode()
+            )
+            assert computed == expected_challenge, "upstream PKCE verifier mismatch"
+        id_token = jwt.encode(
+            {
+                "iss": issuer,
+                "sub": sub,
+                "aud": UPSTREAM_CLIENT_ID,
+                "nonce": _LAST_UPSTREAM_NONCE["value"],
+                "iat": int(time.time()),
+                "exp": int(time.time()) + 300,
+            },
+            _UPSTREAM_RSA_KEY,
+            algorithm="RS256",
+            headers={"kid": "upstream-rs256-kid"},
+        )
+        return Response(
+            200,
+            json={"access_token": "upstream-access-token", "id_token": id_token},
+        )
+
+    respx.post(token_url).mock(side_effect=_token_handler)
+    respx.get(userinfo_url).mock(
         return_value=Response(
             200,
             json={
@@ -168,7 +225,13 @@ class AuthorizeStart:
     code_verifier: str
 
 
-def _begin_authorize(client: TestClient, *, state: str, nonce: str) -> AuthorizeStart:
+def _begin_authorize(
+    client: TestClient,
+    *,
+    state: str,
+    nonce: str,
+    expected_issuer: str = FAKE_IDP_ISSUER,
+) -> AuthorizeStart:
     """Hit /authorize and capture the signed internal state + PKCE verifier."""
     verifier, challenge = _pkce_pair()
     resp = client.get(
@@ -186,8 +249,12 @@ def _begin_authorize(client: TestClient, *, state: str, nonce: str) -> Authorize
     )
     assert resp.status_code == 302, resp.text
     parsed = urlparse(resp.headers["location"])
-    assert f"{parsed.scheme}://{parsed.netloc}" == FAKE_IDP_ISSUER, resp.headers["location"]
-    signed_state = str(parse_qs(parsed.query)["state"][0])
+    assert f"{parsed.scheme}://{parsed.netloc}" == expected_issuer, resp.headers["location"]
+    query = parse_qs(parsed.query)
+    signed_state = str(query["state"][0])
+    _LAST_UPSTREAM_NONCE["value"] = str(query["nonce"][0])
+    assert query.get("code_challenge_method") == ["S256"]
+    _LAST_UPSTREAM_CODE_CHALLENGE["value"] = str(query["code_challenge"][0])
     return AuthorizeStart(signed_state=signed_state, code_verifier=verifier)
 
 
@@ -420,6 +487,69 @@ async def test_new_user_defaults_to_no_grants(
 
 
 SHARED_EMAIL = "victim@example.com"
+
+
+@respx.mock
+async def test_shared_provider_different_issuer_does_not_reuse_external_identity(
+    oidc_context: Context, _cleanup: None
+) -> None:
+    """Two OIDC issuers sharing the same provider label must not share external identities."""
+    issuer_a = "https://idp-a.test"
+    issuer_b = "https://idp-b.test"
+    shared_sub = "shared-subject-42"
+
+    oidc_context.config.auth.idp = IdpConfig(
+        enabled=True,
+        provider=FAKE_PROVIDER,
+        issuer=issuer_a,
+        client_id=UPSTREAM_CLIENT_ID,
+        client_secret="upstream-secret",  # type: ignore[arg-type]
+        scopes=["openid", "email", "profile"],
+    )
+    _stub_idp(
+        sub=shared_sub,
+        email="alice@idp-a.test",
+        email_verified=True,
+        issuer=issuer_a,
+        token_url=f"{issuer_a}/oauth/token",
+        userinfo_url=f"{issuer_a}/userinfo",
+    )
+
+    with TestClient(_build_app(oidc_context), follow_redirects=False) as client_a:
+        start_a = _begin_authorize(client_a, state="s1", nonce="n1", expected_issuer=issuer_a)
+        code_a = _callback(client_a, signed_state=start_a.signed_state)
+        resp_a = _exchange(client_a, code=code_a, code_verifier=start_a.code_verifier)
+        assert resp_a.status_code == 200, resp_a.text
+        claims_a = _verify_id_token(client_a, resp_a.json()["id_token"], expected_nonce="n1")
+
+    # Switch to a different OIDC issuer while keeping the same provider name ("fake-google").
+    oidc_context.config.auth.idp = IdpConfig(
+        enabled=True,
+        provider=FAKE_PROVIDER,
+        issuer=issuer_b,
+        client_id=UPSTREAM_CLIENT_ID,
+        client_secret="upstream-secret",  # type: ignore[arg-type]
+        scopes=["openid", "email", "profile"],
+    )
+    _stub_idp(
+        sub=shared_sub,
+        email="bob@idp-b.test",
+        email_verified=True,
+        issuer=issuer_b,
+        token_url=f"{issuer_b}/oauth/token",
+        userinfo_url=f"{issuer_b}/userinfo",
+    )
+
+    with TestClient(_build_app(oidc_context), follow_redirects=False) as client_b:
+        start_b = _begin_authorize(client_b, state="s2", nonce="n2", expected_issuer=issuer_b)
+        code_b = _callback(client_b, signed_state=start_b.signed_state)
+        resp_b = _exchange(client_b, code=code_b, code_verifier=start_b.code_verifier)
+        assert resp_b.status_code == 200, resp_b.text
+        claims_b = _verify_id_token(client_b, resp_b.json()["id_token"], expected_nonce="n2")
+
+    assert claims_a["sub"] != claims_b["sub"]
+    assert claims_a["email"] == "alice@idp-a.test"
+    assert claims_b["email"] == "bob@idp-b.test"
 
 
 @pytest.fixture()
