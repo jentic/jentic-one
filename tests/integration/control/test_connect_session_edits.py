@@ -689,25 +689,27 @@ async def test_an_open_edit_the_human_change_breaks_is_conflicted_until_resolved
     assert review.revision_id == amended.revision_id
 
 
-async def test_the_reviewer_resolves_a_conflict_with_their_own_rules(
+async def test_a_full_replacement_follows_the_binding_without_a_conflict(
     integration_context: Context, binding: str
 ) -> None:
     ctx = integration_context
     svc = ConnectSessionService(ctx)
     created = await _begin(ctx, binding, EditRequest(set_rules=[_SEND]))
-    # A full replacement of rules that changed since can't merge.
+    # The rules change under it: the request still applies, so it just rebases.
     await _apply(ctx, binding, EditRequest(add=[RuleAdd(_READ | {"path": "/v2/"})]))
     review = await svc.get_review_data(created.session_id, poll_token=None, identity=_OWNER)
-    assert review.edit is not None
-    assert review.edit.conflicts == [{"kind": "rules_changed"}]
+    assert review.edit is not None and review.edit.conflicts == []
+    assert review.edit.revision_id != created.revision_id
+    # The diff is against today's rules, which the replacement drops.
+    assert [r["path"] for r in review.edit.current["rules"]] == ["/v1/", "/v2/"]
+    assert [r["path"] for r in review.edit.result["rules"]] == ["/v1/send"]
 
     await svc.confirm_edit(
         created.session_id,
         poll_token=None,
         identity=_OWNER,
         revision_id=review.edit.revision_id,
-        permission_rules=[_READ | {"path": "/v2/"}, _SEND],
+        permission_rules=[_SEND],
         resume=False,
-        resolve_conflicts=True,
     )
-    assert await _rules(ctx, binding) == [("allow", "/v2/"), ("allow", "/v1/send")]
+    assert await _rules(ctx, binding) == [("allow", "/v1/send")]

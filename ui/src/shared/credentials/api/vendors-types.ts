@@ -155,11 +155,10 @@ export interface ReviewEdit {
 	conflicts?: EditConflict[];
 }
 
-/** One part of an edit request a change to the binding since has broken. */
+/** A part of an edit request the binding no longer fits: a rule it names is gone. */
 export interface EditConflict {
-	kind: 'missing_rule' | 'rules_changed' | 'rule_set_changed';
-	/** The rule it names that is gone, for ``missing_rule``. */
-	rule_id?: string | null;
+	kind: 'missing_rule';
+	rule_id: string;
 }
 
 /** One version of what a session asks for (``GET /connect-sessions/{id}/revisions``). */

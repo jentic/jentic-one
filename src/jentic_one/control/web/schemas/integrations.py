@@ -621,19 +621,13 @@ class ReviewSchemeResponse(BaseModel):
 
 
 class EditConflict(BaseModel):
-    """One part of an edit request the binding's change since has broken."""
+    """A part of an edit request the binding no longer fits."""
 
-    kind: Literal["missing_rule", "rules_changed", "rule_set_changed"] = Field(
-        description=(
-            "`missing_rule`: a rule the request removes or adds before is gone. "
-            "`rules_changed`: the request replaces rules that changed since. "
-            "`rule_set_changed`: a shared rule set was attached or detached since."
-        ),
+    kind: Literal["missing_rule"] = Field(
+        description="`missing_rule`: a rule the request removes, or adds before, is gone.",
         examples=["missing_rule"],
     )
-    rule_id: str | None = Field(
-        default=None, description="The missing rule, for `missing_rule`.", examples=["apr_1"]
-    )
+    rule_id: str = Field(description="The missing rule.", examples=["apr_1"])
 
 
 class EditAgentRef(BaseModel):

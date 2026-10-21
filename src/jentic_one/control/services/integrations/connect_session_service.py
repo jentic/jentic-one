@@ -612,24 +612,12 @@ _EDIT_AMEND_FIELDS = frozenset({"rules", "resume", "scopes"})
 EDIT_FLOW = "edit"
 
 
-def _edit_conflicts(
-    before: Mapping[str, Any],
-    live: Mapping[str, Any],
-    request: EditRequest,
-    dropped: list[str],
-) -> list[dict[str, str]]:
-    """What an edit's request can't follow after its binding moved from ``before`` to ``live``."""
-    conflicts = [{"kind": "missing_rule", "rule_id": rule_id} for rule_id in dict.fromkeys(dropped)]
-    before_set = (before.get("rule_set") or {}).get("id")
-    live_set = (live.get("rule_set") or {}).get("id")
-    if before_set != live_set:
-        conflicts.append({"kind": "rule_set_changed"})
-    elif request.set_rules is not None:
-        was = [rule_content(r) for r in target_rules(before)[1]]
-        now = [rule_content(r) for r in target_rules(live)[1]]
-        if was != now:
-            conflicts.append({"kind": "rules_changed"})
-    return conflicts
+def _edit_conflicts(dropped: list[str]) -> list[dict[str, str]]:
+    """What an edit's request can't follow on its binding now: the rules it names that are gone.
+
+    Everything else in it applies to the binding as it is, whatever moved since.
+    """
+    return [{"kind": "missing_rule", "rule_id": rule_id} for rule_id in dict.fromkeys(dropped)]
 
 
 def _rules_moved(before: Mapping[str, Any], live: Mapping[str, Any]) -> bool:
@@ -2630,11 +2618,9 @@ class ConnectSessionService:
 
         The live binding becomes the baseline and the current revision's
         proposal is resolved against it as a new revision. What follows
-        cleanly merges without anyone acting. What can't is listed in the
-        proposal's ``conflicts``: a rule it names (to remove, or to add
-        before) that no longer exists, a full replacement of rules that
-        changed since, or a shared rule set attached or detached since.
-        Returns the new current revision id.
+        cleanly merges without anyone acting. A rule it names (to remove, or
+        to add before) that no longer exists is listed in the proposal's
+        ``conflicts``. Returns the new current revision id.
         """
         async with self._ctx.control_db.transaction() as session:
             current = await ConnectSessionRevisionRepository.get_by_id(
@@ -2648,7 +2634,7 @@ class ConnectSessionService:
                 **request.as_proposal(),
                 "rebased_from": current.number,
                 "dropped": dropped,
-                "conflicts": _edit_conflicts(row.baseline or {}, live, request, dropped),
+                "conflicts": _edit_conflicts(dropped),
             }
             revision = await ConnectSessionRevisionRepository.append(
                 session,

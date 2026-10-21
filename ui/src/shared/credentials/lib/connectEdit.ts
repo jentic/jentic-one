@@ -121,12 +121,5 @@ export function describeRuleMatch(rule: PermissionRule): string {
 
 /** One conflict in words, for the review. */
 export function describeConflict(conflict: EditConflict): string {
-	switch (conflict.kind) {
-		case 'missing_rule':
-			return `A rule it names (${conflict.rule_id ?? 'unknown'}) was removed since it asked.`;
-		case 'rules_changed':
-			return 'It replaces the rules, and they changed since it asked.';
-		case 'rule_set_changed':
-			return 'A shared rule set was attached or detached since it asked.';
-	}
+	return `A rule it names (${conflict.rule_id}) was removed since it asked.`;
 }
