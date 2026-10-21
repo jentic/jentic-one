@@ -123,24 +123,24 @@ class InviteService:
             if token is None:
                 raise InviteTokenNotFoundError("unknown")
 
+            # The user row is locked before the token is written, the same
+            # order disable and delete take them (users, then invite_tokens),
+            # so a concurrent disable or delete either commits first and is
+            # seen here, or waits until this redeem commits.
+            user = await UserRepository.get_by_id_for_update(session, token.user_id)
+            if user is None:
+                raise UserNotFoundError(token.user_id)
+            if not user.active or user.deleted_at is not None:
+                # An inactive or deleted user cannot redeem an invite. Answer
+                # like an unknown token so the reply does not distinguish a
+                # deactivated or deleted invitee from a missing token.
+                raise InviteTokenNotFoundError("unknown")
+
             if token.redeemed_at is not None:
                 raise InviteTokenAlreadyRedeemedError(token.id)
 
             if token.expires_at < datetime.now(UTC):
                 raise InviteTokenExpiredError(token.id)
-
-            # The user row is locked before the token is written, the same
-            # order delete takes them (users, then invite_tokens), so a
-            # concurrent delete either commits first and is seen here, or
-            # waits until this redeem commits.
-            user = await UserRepository.get_by_id_for_update(session, token.user_id)
-            if user is None:
-                raise UserNotFoundError(token.user_id)
-            if user.deleted_at is not None:
-                # Delete is terminal: no password or ENABLE audit on the
-                # retained row. Answer like an unknown token so the reply
-                # tells the token holder nothing about the account's state.
-                raise InviteTokenNotFoundError("unknown")
 
             if not await InviteTokenRepository.redeem(session, token.id):
                 # Redeemed, reissued or cancelled since the read above.
