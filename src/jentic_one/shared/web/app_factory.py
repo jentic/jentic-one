@@ -245,7 +245,10 @@ def instrument_databases(ctx: Context) -> None:
         if ctx.has_db(name)
     ]
     if engines:
-        SQLAlchemyInstrumentor().instrument(engines=engines)
+        # skip_dep_check keeps DB tracing active when SQLAlchemy 2.1 is installed
+        # alongside opentelemetry-instrumentation-sqlalchemy releases whose
+        # metadata upper-bounds sqlalchemy at <2.1.0.
+        SQLAlchemyInstrumentor().instrument(engines=engines, skip_dep_check=True)
 
 
 def _start_worker(
