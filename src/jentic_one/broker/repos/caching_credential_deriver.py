@@ -6,21 +6,24 @@ the toolkit path): the cross-DB
 covering credentials) runs on every direct-path request — two DB hits per
 request. Bindings change infrequently, so this wraps the authoritative resolver
 in a short-TTL LRU keyed on ``(agent_id, vendor, name, version) →
-CredentialDerivation``, invalidated on TTL only, and single-flighted so
-concurrent misses for one key collapse to a single Admin+Control lookup.
+CredentialDerivation``, single-flighted so concurrent misses for one key
+collapse to a single Admin+Control lookup.
 
 This is a pure latency optimization layered *over* the authoritative DB lookup —
 authorization correctness never depends on the cache, only its staleness is
-bounded by the TTL. In a cluster the LRU is **per instance**, so a binding
-granted/revoked/suspended via the binding API only becomes consistent after the
-TTL lapses on each node (acceptable for the read-mostly default; keep the TTL
-short).
+bounded by the TTL. The LRU is **per instance**; on PostgreSQL the
+``InvalidationBus`` drops an agent's entries when its bindings change and the
+whole cache when a credential changes, so a binding granted/revoked/suspended
+via the binding API reaches every node without waiting for the TTL. Without the
+bus (SQLite, a lost LISTEN connection) the TTL bounds staleness, so keep it
+short.
 """
 
 from __future__ import annotations
 
 import time
 from collections import OrderedDict
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 import structlog
@@ -83,6 +86,8 @@ class CachingCredentialDeriver:
         self._max_entries = max_entries
         self._cache: OrderedDict[str, _CacheEntry] = OrderedDict()
         self._single_flight: SingleFlight[CredentialDerivation] = SingleFlight()
+        # Bumped by every invalidation; see ``derive_credentials``.
+        self._generation = 0
 
     async def derive_credentials(
         self, *, agent_id: str, vendor: str, name: str, version: str
@@ -97,16 +102,23 @@ class CachingCredentialDeriver:
             _cache_hits.add(1)
             return cached.value
 
+        generation = self._generation
+
         async def _load() -> CredentialDerivation:
             result = await self._inner.derive_credentials(
                 agent_id=agent_id, vendor=vendor, name=name, version=version
             )
-            self._store(key, _CacheEntry(value=result, cached_at=time.monotonic()))
+            # Skip caching a read that an invalidation overtook: it may
+            # predate the change the invalidation announced.
+            if generation == self._generation:
+                self._store(key, _CacheEntry(value=result, cached_at=time.monotonic()))
             _cache_misses.add(1)
             logger.debug("credential_binding_cache_miss", agent_id=agent_id, vendor=vendor)
             return result
 
-        return await self._single_flight.do(key, _load)
+        # Generation in the flight key: a caller arriving after an
+        # invalidation never shares a read that began before it.
+        return await self._single_flight.do(f"{key}\x00{generation}", _load)
 
     def _store(self, key: str, entry: _CacheEntry) -> None:
         self._cache[key] = entry
@@ -121,10 +133,7 @@ class CachingCredentialDeriver:
 
     def invalidate_agent(self, agent_id: str) -> None:
         """Evict all cached derivations for ``agent_id`` (#1837)."""
-        prefix = f"{agent_id}\x00"
-        stale = [k for k in self._cache if k.startswith(prefix)]
-        for k in stale:
-            self._cache.pop(k, None)
+        self.invalidate_agents((agent_id,))
 
     def invalidate_credential(self, credential_id: str) -> None:
         """Evict cached derivations when a credential is deleted or changed (#1837).
@@ -133,8 +142,18 @@ class CachingCredentialDeriver:
         depend on any covering credential even when ``credential_id`` is not in
         ``entry.value.credentials``, so a credential mutation clears the cache.
         """
-        self._cache.clear()
+        self.clear()
 
     def clear(self) -> None:
         """Drop all cached entries (useful for tests/operational invalidation)."""
+        self._generation += 1
         self._cache.clear()
+
+    def invalidate_agents(self, agent_ids: Iterable[str]) -> None:
+        """Drop every cached derivation for these agents (any API)."""
+        self._generation += 1
+        prefixes = tuple(f"{agent_id}\x00" for agent_id in agent_ids)
+        if not prefixes:
+            return
+        for key in [k for k in self._cache if k.startswith(prefixes)]:
+            del self._cache[key]

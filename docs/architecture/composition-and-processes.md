@@ -169,18 +169,72 @@ load-bearing:
 
 1. **Startup:** `ctx.startup()` → DB instrumentation → telemetry → the
    surface's own `extra_lifespan` (the broker opens its shared outbound
-   `httpx.AsyncClient` here) → container-injected lifespans (the `/mcp`
-   session manager) → background workers.
+   `httpx.AsyncClient` here) → the invalidation bus starts (below) →
+   container-injected lifespans (the `/mcp` session manager) → background
+   workers.
 2. **Shutdown**, with a drain step first: the broker's admission gate
    reports unready (so the load balancer deregisters the instance) →
    scanners stop → the job worker drains → telemetry flushes →
    `ctx.shutdown()` → container-injected lifespans exit in reverse → the
-   surface lifespan closes the shared HTTP client. Draining the worker
+   invalidation bus stops → the surface lifespan closes the shared HTTP
+   client. Draining the worker
    *before* closing the client matters: an async execution mid-flight must
    finish over a live connection pool. Between the telemetry flush and
    `ctx.shutdown()` the lifespan also runs the shutdown handlers that surface
    installers registered on the app; they close the auth and control
    surfaces' shared-state backends.
+
+## Cross-process cache invalidation
+
+The broker caches authorization state in-process — opaque-token and API-key
+verdicts, permission-rule lists, credential-binding derivations — under short
+TTLs. With several processes (a broker fleet, a separate control plane), a
+change committed by one process must reach the others' caches. The
+`InvalidationBus` seam
+([`shared/invalidation/`](../../src/jentic_one/shared/invalidation/protocol.py))
+carries that signal:
+
+```mermaid
+flowchart LR
+    CP["control plane: revoke token"] -->|"UPDATE access_tokens (commit)"| PG[("PostgreSQL")]
+    PG -->|"trigger: pg_notify on commit"| PG
+    PG -->|"LISTEN jentic_one_invalidation"| B1["broker A: drop entry"]
+    PG -->|"LISTEN jentic_one_invalidation"| B2["broker B: drop entry"]
+```
+
+- **Publishing is transactional and lives in the database.** `AFTER` row
+  triggers on the admin tables (`access_tokens`, `agent_credentials`,
+  `agents`, `users`, `actor_permission_grants`, `oauth_clients`,
+  `oauth_client_grants`, `agent_credential_bindings`) and control tables
+  (`agent_permission_rules`, `permission_rule_set_rules`, `credentials`) call
+  `pg_notify` with a small JSON payload naming the table and the changed key
+  values. `NOTIFY` is delivered only on commit, so a rolled-back change never
+  invalidates anything, and every writer — any surface, any process, a manual
+  `psql` session — publishes without application code. A payload that would
+  exceed the `NOTIFY` size limit, and every `TRUNCATE`, sends a "flush this
+  table" message instead; an `UPDATE` that changes only the `updated_at` /
+  `last_used_at` bookkeeping timestamps sends nothing.
+- **Listening is one dedicated connection per database server per process**,
+  opened directly with asyncpg outside the SQLAlchemy pool (a `LISTEN` is
+  session state). The bus opens it only when something subscribed — the broker
+  does; control-plane processes cache nothing and open nothing. It is visible
+  in `pg_stat_activity` as `application_name = 'jentic-one-invalidation'`.
+- **A lost connection degrades to TTLs, never to stale forever.** The bus
+  probes the connection, reconnects with capped exponential backoff
+  (`invalidation.reconnect_backoff_*`), and after reconnecting flushes every
+  subscribed cache, because notifications sent while it was down are gone.
+  Startup waits a bounded time for the first `LISTEN`; a database that is
+  slower than that does not hold up boot, and when its `LISTEN` lands later
+  the bus flushes too (requests may have been cached in between).
+- **SQLite runs a no-op bus**: there is no notification channel, and a
+  single-file database has no second writer process. The TTLs apply. Set
+  `invalidation.enabled: false` where `LISTEN` cannot work (a transaction-mode
+  connection pooler) to get the same TTL-only behaviour on PostgreSQL.
+- **Pluggable.** `AppContainer.invalidation_bus` replaces the default
+  (`build_invalidation_bus(ctx)`); the app factory stashes the chosen bus on
+  `app.state.invalidation_bus` before installers run, so caches subscribe at
+  build time, and starts and stops it in the lifespan. An alternative
+  transport proves itself with `jentic_one.testing.BaseInvalidationBusContract`.
 
 ## Background work
 

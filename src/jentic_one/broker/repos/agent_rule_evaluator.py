@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import time
 from collections import OrderedDict
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 import structlog
@@ -157,6 +158,8 @@ class AgentRuleEvaluator:
         self._max_entries = max_entries
         self._cache: OrderedDict[str, _CacheEntry] = OrderedDict()
         self._single_flight: SingleFlight[list[PermissionRule]] = SingleFlight()
+        # Bumped by every invalidation; see ``_get_rules``.
+        self._generation = 0
 
     async def evaluate(
         self,
@@ -218,9 +221,9 @@ class AgentRuleEvaluator:
         # NUL-joined so component boundaries are unambiguous; the "set" prefix
         # keeps a rule-set key from ever colliding with a binding key.
         cache_key = (
-            f"set\x00{rule_set_id}"
+            _rule_set_key(rule_set_id)
             if rule_set_id is not None
-            else f"binding\x00{agent_id}\x00{credential_id}"
+            else _binding_key(agent_id, credential_id)
         )
         now = time.monotonic()
         cached = self._cache.get(cache_key)
@@ -228,14 +231,21 @@ class AgentRuleEvaluator:
             self._cache.move_to_end(cache_key)
             return cached.rules
 
+        generation = self._generation
+
         async def _load() -> list[PermissionRule]:
             rules = await self._fetch_rules(
                 agent_id=agent_id, credential_id=credential_id, rule_set_id=rule_set_id
             )
-            self._store(cache_key, _CacheEntry(rules=rules, cached_at=time.monotonic()))
+            # Skip caching a read that an invalidation overtook (see
+            # CachedTokenValidator: the read may predate the change).
+            if generation == self._generation:
+                self._store(cache_key, _CacheEntry(rules=rules, cached_at=time.monotonic()))
             return rules
 
-        return await self._single_flight.do(cache_key, _load)
+        # Generation in the flight key: a caller arriving after an
+        # invalidation never shares a read that began before it.
+        return await self._single_flight.do(f"{cache_key}\x00{generation}", _load)
 
     async def _fetch_rules(
         self, *, agent_id: str, credential_id: str, rule_set_id: str | None
@@ -272,10 +282,11 @@ class AgentRuleEvaluator:
 
     def invalidate_binding(self, *, agent_id: str, credential_id: str) -> None:
         """Evict cached inline rules for ``(agent_id, credential_id)`` (#1837)."""
-        self._cache.pop(f"binding\x00{agent_id}\x00{credential_id}", None)
+        self.invalidate_bindings((agent_id,), (credential_id,))
 
     def invalidate_agent(self, agent_id: str) -> None:
         """Evict all cached inline rules for ``agent_id`` (#1837)."""
+        self._generation += 1
         prefix = f"binding\x00{agent_id}\x00"
         stale = [k for k in self._cache if k.startswith(prefix)]
         for k in stale:
@@ -283,6 +294,7 @@ class AgentRuleEvaluator:
 
     def invalidate_credential(self, credential_id: str) -> None:
         """Evict all cached inline rules for ``credential_id`` (#1837)."""
+        self._generation += 1
         suffix = f"\x00{credential_id}"
         stale = [k for k in self._cache if k.startswith("binding\x00") and k.endswith(suffix)]
         for k in stale:
@@ -290,8 +302,31 @@ class AgentRuleEvaluator:
 
     def invalidate_rule_set(self, rule_set_id: str) -> None:
         """Evict cached shared rule-set rules for ``rule_set_id`` (#1837)."""
-        self._cache.pop(f"set\x00{rule_set_id}", None)
+        self.invalidate_rule_sets((rule_set_id,))
 
     def clear(self) -> None:
         """Drop all cached entries."""
+        self._generation += 1
         self._cache.clear()
+
+    def invalidate_bindings(self, agent_ids: Iterable[str], credential_ids: Iterable[str]) -> None:
+        """Drop the inline-rule entries for every ``(agent, credential)`` pair given."""
+        self._generation += 1
+        credentials = tuple(credential_ids)
+        for agent_id in agent_ids:
+            for credential_id in credentials:
+                self._cache.pop(_binding_key(agent_id, credential_id), None)
+
+    def invalidate_rule_sets(self, rule_set_ids: Iterable[str]) -> None:
+        """Drop the entries for these shared rule sets."""
+        self._generation += 1
+        for rule_set_id in rule_set_ids:
+            self._cache.pop(_rule_set_key(rule_set_id), None)
+
+
+def _binding_key(agent_id: str, credential_id: str) -> str:
+    return f"binding\x00{agent_id}\x00{credential_id}"
+
+
+def _rule_set_key(rule_set_id: str) -> str:
+    return f"set\x00{rule_set_id}"

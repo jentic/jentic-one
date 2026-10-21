@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from fastapi import FastAPI, Request
 
+from jentic_one.broker.core.cache_invalidation import subscribe_broker_caches
 from jentic_one.broker.core.token_validation import CachedActorStatus, CachedTokenValidator
 from jentic_one.broker.repos import (
     ActorStatusResolver,
@@ -29,6 +30,7 @@ from jentic_one.shared.auth.jwt_verification import TrustedIssuerVerifier
 from jentic_one.shared.broker.protocols import CredentialDeriverProtocol
 from jentic_one.shared.config import BrokerConfig
 from jentic_one.shared.context import Context
+from jentic_one.shared.invalidation import InvalidationBus, NoopInvalidationBus
 
 
 def build_jwt_verifier(broker: BrokerConfig) -> TokenVerifier | None:
@@ -89,7 +91,13 @@ class BrokerCacheInvalidator:
 
 
 def install_broker_auth(app: FastAPI, ctx: Context) -> None:
-    """Wire token validation and credential-binding enforcement onto app state."""
+    """Wire token validation and credential-binding enforcement onto app state.
+
+    The token, API-key, rule and binding caches subscribe to the app's
+    ``InvalidationBus`` (``app.state.invalidation_bus``, set by
+    ``create_surface_app``), so a change committed by another process drops the
+    affected entries before their TTL lapses.
+    """
     resolver = InProcessTokenResolver(ctx.admin_db)
     opaque = CachedTokenValidator(
         resolver=resolver,
@@ -155,6 +163,15 @@ def install_broker_auth(app: FastAPI, ctx: Context) -> None:
     )
     app.state.broker_cache_invalidator = invalidator
     ctx.register_broker_cache_invalidator(invalidator)
+
+    bus: InvalidationBus | None = getattr(app.state, "invalidation_bus", None)
+    subscribe_broker_caches(
+        bus if bus is not None else NoopInvalidationBus(),
+        access_tokens=opaque,
+        api_keys=api_key_cached,
+        rules=rule_evaluator,
+        bindings=caching_deriver,
+    )
 
     async def _verify_token(token: str, request: Request) -> Identity:
         return await triple.validate(token)

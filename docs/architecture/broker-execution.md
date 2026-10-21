@@ -232,11 +232,18 @@ token/actor-status cache entries with zero wait for the TTL.
 
 In **multi-process deployments** (where the broker runs in its own process or
 across multiple stateless replicas), each broker instance holds its own
-in-memory LRU caches and does not share the control plane's `Context`. Cross-process
-propagation is bounded by the configured TTLs above (default `30` s; set the
-respective TTL to `0` to disable caching). Queued async executions bypass these
-caches and re-authorize against live database state when the worker claims the
-job (`build_queued_execution_authorizer`).
+in-memory LRU caches and does not share the control plane's `Context`. On
+PostgreSQL with `invalidation.enabled` (default `true`), `install_broker_auth`
+also subscribes those caches to the process's `InvalidationBus`
+([`shared/invalidation/`](../../src/jentic_one/shared/invalidation/protocol.py)),
+which listens for `pg_notify` messages emitted by triggers on the admin and
+control source tables and drops affected entries across processes as soon as a
+mutation commits (see [Cross-process cache invalidation](composition-and-processes.md#cross-process-cache-invalidation)).
+When the bus is disabled or unavailable (SQLite, `invalidation.enabled: false`,
+or a lost `LISTEN` connection), propagation is bounded by the configured TTLs
+above (default `30` s; set the respective TTL to `0` to disable caching). Queued
+async executions bypass these caches and re-authorize against live database
+state when the worker claims the job (`build_queued_execution_authorizer`).
 
 ## What gets recorded
 

@@ -592,6 +592,9 @@ type ConfigSchemaJson struct {
 	// Ingest corresponds to the JSON schema field "ingest".
 	Ingest *IngestConfig `json:"ingest,omitempty,omitzero" yaml:"ingest,omitempty" mapstructure:"ingest,omitempty"`
 
+	// Invalidation corresponds to the JSON schema field "invalidation".
+	Invalidation *InvalidationConfig `json:"invalidation,omitempty,omitzero" yaml:"invalidation,omitempty" mapstructure:"invalidation,omitempty"`
+
 	// Logging corresponds to the JSON schema field "logging".
 	Logging *LoggingConfig `json:"logging,omitempty,omitzero" yaml:"logging,omitempty" mapstructure:"logging,omitempty"`
 
@@ -1581,6 +1584,74 @@ func (j *IngestConfig) UnmarshalJSON(value []byte) error {
 		plain.MaxSpecBytes = 26214400
 	}
 	*j = IngestConfig(plain)
+	return nil
+}
+
+// Cross-process cache invalidation (the “InvalidationBus“).
+//
+// On PostgreSQL, triggers on the admin and control source tables (tokens,
+// API keys, actors, grants, permission rules, bindings, credentials) send a
+// “NOTIFY“ when a change commits, and a process that caches authorization
+// state — the broker — holds one dedicated “LISTEN“ connection per database
+// server and drops the affected cache entries on receipt. A revoke made
+// through one process therefore takes effect on every broker before the
+// cache TTLs lapse. A process with nothing to invalidate opens no connection.
+//
+// SQLite has no notification channel: the bus is a no-op there and the cache
+// TTLs bound staleness. Disable it (“enabled: false“) when the database is
+// reached through a pooler that cannot hold a session-level “LISTEN“ — for
+// example PgBouncer in transaction pooling mode — and the TTLs apply as on
+// SQLite.
+type InvalidationConfig struct {
+	// Listen for cross-process invalidation notifications on PostgreSQL. No effect on
+	// SQLite.
+	Enabled bool `json:"enabled" yaml:"enabled" mapstructure:"enabled"`
+
+	// How often the LISTEN connection is probed. A probe that fails or does not
+	// answer within this interval counts as a lost connection.
+	HealthCheckIntervalS float64 `json:"health_check_interval_s" yaml:"health_check_interval_s" mapstructure:"health_check_interval_s"`
+
+	// First delay before re-opening a lost LISTEN connection; doubles per failed
+	// attempt up to reconnect_backoff_max_s.
+	ReconnectBackoffBaseS float64 `json:"reconnect_backoff_base_s" yaml:"reconnect_backoff_base_s" mapstructure:"reconnect_backoff_base_s"`
+
+	// Ceiling on the delay between LISTEN reconnect attempts.
+	ReconnectBackoffMaxS float64 `json:"reconnect_backoff_max_s" yaml:"reconnect_backoff_max_s" mapstructure:"reconnect_backoff_max_s"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *InvalidationConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain InvalidationConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["enabled"]; !ok || v == nil {
+		plain.Enabled = true
+	}
+	if v, ok := raw["health_check_interval_s"]; !ok || v == nil {
+		plain.HealthCheckIntervalS = 15.0
+	}
+	if 0 >= plain.HealthCheckIntervalS {
+		return fmt.Errorf("field %s: must be > %v", "health_check_interval_s", 0)
+	}
+	if v, ok := raw["reconnect_backoff_base_s"]; !ok || v == nil {
+		plain.ReconnectBackoffBaseS = 0.5
+	}
+	if 0 >= plain.ReconnectBackoffBaseS {
+		return fmt.Errorf("field %s: must be > %v", "reconnect_backoff_base_s", 0)
+	}
+	if v, ok := raw["reconnect_backoff_max_s"]; !ok || v == nil {
+		plain.ReconnectBackoffMaxS = 30.0
+	}
+	if 0 >= plain.ReconnectBackoffMaxS {
+		return fmt.Errorf("field %s: must be > %v", "reconnect_backoff_max_s", 0)
+	}
+	*j = InvalidationConfig(plain)
 	return nil
 }
 
