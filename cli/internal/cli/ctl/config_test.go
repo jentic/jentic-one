@@ -1,8 +1,13 @@
 package ctl
 
 import (
+	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/jentic/jentic-one/cli/internal/cli/ctl/generated"
+	"gopkg.in/yaml.v3"
 )
 
 func TestResolveSettings_PopulatesNestedSectionLeaves(t *testing.T) {
@@ -148,5 +153,192 @@ func TestHeuristicClassifiedEntriesStillExist(t *testing.T) {
 		if !hitSet[path] {
 			t.Errorf("heuristicClassified[%q] is stale — the leaf was removed or gained a schema marker; delete the entry", path)
 		}
+	}
+}
+
+// TestBackendConfig_ExplicitZeroValuesSurviveRoundTrip pins #1832: fields whose
+// schema default is non-zero must not carry omitempty/omitzero, so an explicit
+// zero value (0.0 float, 0 int, false bool) survives a JSON or YAML marshal +
+// unmarshal round-trip instead of reverting to its non-zero schema default.
+func TestBackendConfig_ExplicitZeroValuesSurviveRoundTrip(t *testing.T) {
+	const inputJSON = `{
+		"databases": {
+			"admin": {"name": "jentic", "pool_pre_ping": false, "pool_recycle_s": 0},
+			"control": {"name": "jentic"},
+			"registry": {"name": "jentic"}
+		},
+		"observability": {
+			"tracing": {"sample_ratio": 0.0}
+		},
+		"admin": {
+			"auth": {"failed_login_lockout_seconds": 0}
+		},
+		"control": {
+			"connect": {"manual_flows_enabled": false, "rejection_cooldown_hours": 0}
+		}
+	}`
+
+	var initial generated.BackendConfig
+	if err := json.Unmarshal([]byte(inputJSON), &initial); err != nil {
+		t.Fatalf("initial json.Unmarshal: %v", err)
+	}
+
+	assertZeroOverrides := func(t *testing.T, label string, cfg generated.BackendConfig) {
+		t.Helper()
+		if cfg.Observability == nil || cfg.Observability.Tracing == nil {
+			t.Fatalf("%s: observability.tracing is nil", label)
+		}
+		if got := cfg.Observability.Tracing.SampleRatio; got != 0.0 {
+			t.Errorf("%s: observability.tracing.sample_ratio = %v, want 0.0 (reverted to default?)", label, got)
+		}
+		if cfg.Admin == nil || cfg.Admin.Auth == nil {
+			t.Fatalf("%s: admin.auth is nil", label)
+		}
+		if got := cfg.Admin.Auth.FailedLoginLockoutSeconds; got != 0 {
+			t.Errorf("%s: admin.auth.failed_login_lockout_seconds = %v, want 0 (reverted to default?)", label, got)
+		}
+		if cfg.Control == nil || cfg.Control.Connect == nil {
+			t.Fatalf("%s: control.connect is nil", label)
+		}
+		if cfg.Control.Connect.ManualFlowsEnabled {
+			t.Errorf("%s: control.connect.manual_flows_enabled = true, want false (reverted to default?)", label)
+		}
+		if got := cfg.Control.Connect.RejectionCooldownHours; got != 0 {
+			t.Errorf("%s: control.connect.rejection_cooldown_hours = %v, want 0 (reverted to default?)", label, got)
+		}
+		if cfg.Databases.Admin.PoolPrePing {
+			t.Errorf("%s: databases.admin.pool_pre_ping = true, want false (reverted to default?)", label)
+		}
+		if got := cfg.Databases.Admin.PoolRecycleS; got != 0 {
+			t.Errorf("%s: databases.admin.pool_recycle_s = %v, want 0 (reverted to default?)", label, got)
+		}
+	}
+
+	assertZeroOverrides(t, "initial unmarshal", initial)
+
+	// JSON round-trip: marshal BackendConfig -> unmarshal into fresh BackendConfig.
+	marshalledJSON, err := json.Marshal(&initial)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	var afterJSON generated.BackendConfig
+	if err := json.Unmarshal(marshalledJSON, &afterJSON); err != nil {
+		t.Fatalf("round-trip json.Unmarshal: %v", err)
+	}
+	assertZeroOverrides(t, "JSON round-trip", afterJSON)
+
+	// YAML round-trip: marshal BackendConfig to YAML, decode YAML to a generic
+	// map and re-encode to JSON so UnmarshalJSON's default-filling logic runs,
+	// AND unmarshal YAML directly into BackendConfig.
+	marshalledYAML, err := yaml.Marshal(&initial)
+	if err != nil {
+		t.Fatalf("yaml.Marshal: %v", err)
+	}
+	var yamlMap map[string]any
+	if err := yaml.Unmarshal(marshalledYAML, &yamlMap); err != nil {
+		t.Fatalf("yaml.Unmarshal to map: %v", err)
+	}
+	yamlAsJSON, err := json.Marshal(yamlMap)
+	if err != nil {
+		t.Fatalf("json.Marshal of YAML map: %v", err)
+	}
+	var afterYAMLudo generated.BackendConfig
+	if err := json.Unmarshal(yamlAsJSON, &afterYAMLudo); err != nil {
+		t.Fatalf("round-trip YAML->JSON Unmarshal: %v", err)
+	}
+	assertZeroOverrides(t, "YAML->UnmarshalJSON round-trip", afterYAMLudo)
+
+	var afterYAMLDirect generated.BackendConfig
+	if err := yaml.Unmarshal(marshalledYAML, &afterYAMLDirect); err != nil {
+		t.Fatalf("direct yaml.Unmarshal: %v", err)
+	}
+	assertZeroOverrides(t, "direct YAML round-trip", afterYAMLDirect)
+
+	// Also verify a positive-constrained int field with a non-zero default
+	// (jwt_ttl_seconds, default 3600, exclusiveMinimum 0) emits 0 when set to 0
+	// rather than dropping the field and silently reloading as 3600.
+	initial.Admin.Auth.JwtTtlSeconds = 0
+	withZeroJWT, err := json.Marshal(&initial)
+	if err != nil {
+		t.Fatalf("json.Marshal with jwt_ttl_seconds=0: %v", err)
+	}
+	var rejected generated.BackendConfig
+	if err := json.Unmarshal(withZeroJWT, &rejected); err == nil {
+		t.Errorf("expected jwt_ttl_seconds=0 to be preserved in JSON and fail >0 validation on reload, but unmarshal succeeded with jwt_ttl_seconds=%d",
+			rejected.Admin.Auth.JwtTtlSeconds)
+	}
+}
+
+// TestBackendConfig_NonZeroDefaultFieldsHaveNoOmitTags verifies across every
+// reachable struct in generated.BackendConfig that no field with a non-zero
+// schema default carries omitempty or omitzero on its json/yaml/mapstructure tags.
+func TestBackendConfig_NonZeroDefaultFieldsHaveNoOmitTags(t *testing.T) {
+	defaults, err := defaultSettings()
+	if err != nil {
+		t.Fatalf("defaultSettings: %v", err)
+	}
+
+	var walk func(rt reflect.Type, defMap map[string]any, prefix string)
+	walk = func(rt reflect.Type, defMap map[string]any, prefix string) {
+		if rt.Kind() == reflect.Pointer {
+			rt = rt.Elem()
+		}
+		if rt.Kind() != reflect.Struct {
+			return
+		}
+		for i := range rt.NumField() {
+			field := rt.Field(i)
+			jsonTag := field.Tag.Get("json")
+			name := strings.Split(jsonTag, ",")[0]
+			if name == "" || name == "-" {
+				continue
+			}
+			path := name
+			if prefix != "" {
+				path = prefix + "." + name
+			}
+			ft := field.Type
+			if ft.Kind() == reflect.Pointer {
+				ft = ft.Elem()
+			}
+			if ft.Kind() == reflect.Struct {
+				subMap, _ := asSettings(defMap[name])
+				walk(ft, subMap, path)
+				continue
+			}
+			defVal, hasDef := defMap[name]
+			if !hasDef || isZeroDefaultValue(defVal) {
+				continue
+			}
+			for _, tagKey := range []string{"json", "yaml", "mapstructure"} {
+				tagVal := field.Tag.Get(tagKey)
+				if strings.Contains(tagVal, "omitempty") || strings.Contains(tagVal, "omitzero") {
+					t.Errorf("field %s (%s.%s, default=%v) has %s:%q containing omitempty/omitzero",
+						path, rt.Name(), field.Name, defVal, tagKey, tagVal)
+				}
+			}
+		}
+	}
+
+	walk(reflect.TypeOf(generated.BackendConfig{}), defaults, "")
+}
+
+func isZeroDefaultValue(v any) bool {
+	if v == nil {
+		return true
+	}
+	switch val := v.(type) {
+	case bool:
+		return !val
+	case float64:
+		return val == 0
+	case string:
+		return val == ""
+	case []any:
+		return len(val) == 0
+	case map[string]any:
+		return len(val) == 0
+	default:
+		return false
 	}
 }
