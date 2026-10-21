@@ -12,7 +12,6 @@ export type { ActorLookupEntryResponse } from './models/ActorLookupEntryResponse
 export type { ActorLookupResponse } from './models/ActorLookupResponse';
 export type { ActorSummaryResponse } from './models/ActorSummaryResponse';
 export { ActorType } from './models/ActorType';
-export { AddableScopeSchema } from './models/AddableScopeSchema';
 export type { AgentCreateRequest } from './models/AgentCreateRequest';
 export type { AgentListResponse } from './models/AgentListResponse';
 export type { AgentPatchRequest } from './models/AgentPatchRequest';
@@ -200,6 +199,7 @@ export type { RuleSetResponse } from './models/RuleSetResponse';
 export type { RuleSetSummaryResponse } from './models/RuleSetSummaryResponse';
 export type { RuleSetUpdateRequest } from './models/RuleSetUpdateRequest';
 export type { RuntimeConfig } from './models/RuntimeConfig';
+export { ScopeOptionSchema } from './models/ScopeOptionSchema';
 export type { SearchLinksResponse } from './models/SearchLinksResponse';
 export type { SearchRequest } from './models/SearchRequest';
 export type { SearchResponse } from './models/SearchResponse';

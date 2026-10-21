@@ -36,27 +36,6 @@ func (e ActorType) Valid() bool {
 	}
 }
 
-// Defines values for AddableScopeSchemaClassification.
-const (
-	Admin AddableScopeSchemaClassification = "admin"
-	Read  AddableScopeSchemaClassification = "read"
-	Write AddableScopeSchemaClassification = "write"
-)
-
-// Valid indicates whether the value is a known member of the AddableScopeSchemaClassification enum.
-func (e AddableScopeSchemaClassification) Valid() bool {
-	switch e {
-	case Admin:
-		return true
-	case Read:
-		return true
-	case Write:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for ApiKeyConfirmSessionRequestKind.
 const (
 	ApiKeyConfirmSessionRequestKindApiKey ApiKeyConfirmSessionRequestKind = "api_key"
@@ -1068,6 +1047,27 @@ func (e PermissionRuleSchemaMatchMode) Valid() bool {
 	}
 }
 
+// Defines values for ScopeOptionSchemaClassification.
+const (
+	Admin ScopeOptionSchemaClassification = "admin"
+	Read  ScopeOptionSchemaClassification = "read"
+	Write ScopeOptionSchemaClassification = "write"
+)
+
+// Valid indicates whether the value is a known member of the ScopeOptionSchemaClassification enum.
+func (e ScopeOptionSchemaClassification) Valid() bool {
+	switch e {
+	case Admin:
+		return true
+	case Read:
+		return true
+	case Write:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for Sigv4CreateRequestType.
 const (
 	Sigv4CreateRequestTypeSigv4 Sigv4CreateRequestType = "sigv4"
@@ -1334,31 +1334,6 @@ type ActorSummaryResponse struct {
 // Historical records may carry older actor-type values that are no longer
 // issued; treat unrecognised values as opaque labels.
 type ActorType string
-
-// AddableScopeSchema One scope the credential's vendor offers, which an edit can add.
-//
-// Examples: {"classification":"write","description":"Send email as the user.","name":"gmail.send"}
-type AddableScopeSchema struct {
-	// Classification What the scope lets a holder do.
-	//
-	// Examples: write
-	Classification AddableScopeSchemaClassification `json:"classification"`
-
-	// Description What the scope grants, in words.
-	//
-	// Examples: Send email as the user.
-	Description string `json:"description"`
-
-	// Name The scope as the vendor names it.
-	//
-	// Examples: gmail.send
-	Name string `json:"name"`
-}
-
-// AddableScopeSchemaClassification What the scope lets a holder do.
-//
-// Examples: write
-type AddableScopeSchemaClassification string
 
 // AgentCreateRequest Request body for creating an agent manually.
 //
@@ -2582,7 +2557,7 @@ type BearerTokenUpdateRequestType string
 
 // BindingAccessResponse A binding's permission rules plus the rest of what it grants.
 //
-// Examples: {"data":[{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"granted_scopes":["repo","read:user"],"rule_set":{"curated":false,"id":"prs_6968b3987c22b63e87e79f05","name":"Stripe read-only","rules":[{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]},"scope_catalog":[{"classification":"write","description":"Send email as the user.","name":"gmail.send"}],"scopes_addable":true,"suspended":false}
+// Examples: {"data":[{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"granted_scopes":["repo","read:user"],"rule_set":{"curated":false,"id":"prs_6968b3987c22b63e87e79f05","name":"Stripe read-only","rules":[{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]},"scope_catalog":[{"classification":"write","description":"Send email as the user.","name":"gmail.send"}],"scopes_editable":true,"suspended":false}
 type BindingAccessResponse struct {
 	// Data The binding's permission rules, in evaluation order.
 	//
@@ -2602,12 +2577,12 @@ type BindingAccessResponse struct {
 	// ScopeCatalog The scopes the credential's vendor offers; an edit can add only these. Null when its client has no catalog, in which case a scope is passed to the vendor as named.
 	//
 	// Examples: [{"classification":"write","description":"Send email as the user.","name":"gmail.send"}]
-	ScopeCatalog *[]AddableScopeSchema `json:"scope_catalog,omitempty"`
+	ScopeCatalog *[]ScopeOptionSchema `json:"scope_catalog,omitempty"`
 
-	// ScopesAddable True when an edit can add OAuth scopes to the credential; the approver signs in to the vendor again to grant them.
+	// ScopesEditable True when an edit can change the credential's OAuth scopes (add or remove); the approver signs in to the vendor again for the new set.
 	//
 	// Examples: true
-	ScopesAddable *bool `json:"scopes_addable,omitempty"`
+	ScopesEditable *bool `json:"scopes_editable,omitempty"`
 
 	// Suspended True when the binding is suspended and the agent cannot use it.
 	//
@@ -7161,6 +7136,31 @@ type RuntimeConfig struct {
 	// Examples: {"locale":"en-GB"}
 	QueryParams *map[string]string `json:"query_params,omitempty"`
 }
+
+// ScopeOptionSchema One scope the credential's vendor offers, which an edit can add or remove.
+//
+// Examples: {"classification":"write","description":"Send email as the user.","name":"gmail.send"}
+type ScopeOptionSchema struct {
+	// Classification What the scope lets a holder do.
+	//
+	// Examples: write
+	Classification ScopeOptionSchemaClassification `json:"classification"`
+
+	// Description What the scope grants, in words.
+	//
+	// Examples: Send email as the user.
+	Description string `json:"description"`
+
+	// Name The scope as the vendor names it.
+	//
+	// Examples: gmail.send
+	Name string `json:"name"`
+}
+
+// ScopeOptionSchemaClassification What the scope lets a holder do.
+//
+// Examples: write
+type ScopeOptionSchemaClassification string
 
 // SearchLinksResponse Hypermedia links for a search result row.
 //

@@ -3,13 +3,13 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One scope the credential's vendor offers, which an edit can add.
+ * One scope the credential's vendor offers, which an edit can add or remove.
  */
-export type AddableScopeSchema = {
+export type ScopeOptionSchema = {
     /**
      * What the scope lets a holder do.
      */
-    classification: AddableScopeSchema.classification;
+    classification: ScopeOptionSchema.classification;
     /**
      * What the scope grants, in words.
      */
@@ -19,7 +19,7 @@ export type AddableScopeSchema = {
      */
     name: string;
 };
-export namespace AddableScopeSchema {
+export namespace ScopeOptionSchema {
     /**
      * What the scope lets a holder do.
      */

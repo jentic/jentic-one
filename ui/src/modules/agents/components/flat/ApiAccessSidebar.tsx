@@ -524,7 +524,7 @@ export function ApiAccessSidebar({
 										<SharedWithYouBadge />
 									) : credentialLocked ? null : (
 										<div className="flex shrink-0 items-center gap-1.5">
-											{access.data?.scopes_addable && (
+											{access.data?.scopes_editable && (
 												<Button
 													size="xs"
 													variant="tonal"

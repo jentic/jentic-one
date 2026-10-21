@@ -19,9 +19,6 @@ func (ActorLookupResponse) RequiredFields() []string { return []string{"data"} }
 func (ActorSummaryResponse) RequiredFields() []string {
 	return []string{"active", "actor_type", "created_at", "id", "name"}
 }
-func (AddableScopeSchema) RequiredFields() []string {
-	return []string{"classification", "description", "name"}
-}
 func (AgentCreateRequest) RequiredFields() []string       { return []string{"name"} }
 func (AgentListResponse) RequiredFields() []string        { return []string{"data", "has_more"} }
 func (AgentPermissionsRequest) RequiredFields() []string  { return []string{"permissions"} }
@@ -296,6 +293,9 @@ func (RuleSetResponse) RequiredFields() []string {
 }
 func (RuleSetSummaryResponse) RequiredFields() []string {
 	return []string{"created_at", "curated", "name", "rule_count", "rule_set_id"}
+}
+func (ScopeOptionSchema) RequiredFields() []string {
+	return []string{"classification", "description", "name"}
 }
 func (SearchLinksResponse) RequiredFields() []string        { return []string{"inspect"} }
 func (SearchRequest) RequiredFields() []string              { return []string{"query"} }

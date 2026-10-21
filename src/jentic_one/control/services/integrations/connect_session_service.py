@@ -124,9 +124,9 @@ from jentic_one.control.services.integrations.errors import (
     RuleSetConfirmForbiddenError,
     RulesRequiredError,
     SchemeChangedError,
+    ScopeChangeForbiddenError,
     ScopesNotSupportedError,
     ScopeValidationError,
-    ScopeWideningForbiddenError,
     SecuritySchemesLookupUnavailableError,
     ServersChangedError,
     SessionClosedError,
@@ -258,10 +258,10 @@ class CreatedSession:
 
 
 @dataclass(slots=True, frozen=True)
-class AddableScopes:
-    """Which scopes an edit can add to a credential.
+class ScopeOptions:
+    """How an edit can change a credential's scopes.
 
-    ``supported`` is False when the credential can't take more scopes here.
+    ``supported`` is False when the credential's scopes can't change here.
     ``catalog`` is the vendor's scope list when its client has one; ``None``
     means any scope name is passed to the vendor as asked.
     """
@@ -2247,7 +2247,7 @@ class ConnectSessionService:
             unknown = self._vendors.validate_scopes(consent.entry, change["scopes"])
             if unknown:
                 raise ScopeValidationError(unknown)
-        await self._require_scope_widening_allowed(credential, row.agent_id, identity)
+        await self._require_scope_change_allowed(credential, row.agent_id, identity)
 
         async with self._ctx.control_db.transaction() as session:
             won = await ConnectSessionRepository.transition_edit(
@@ -2335,7 +2335,7 @@ class ConnectSessionService:
             )
         return AuthCodeConfirmResult(authorize_url=challenge.authorize_url)
 
-    async def _require_scope_widening_allowed(
+    async def _require_scope_change_allowed(
         self, credential: Credential, agent_id: str, identity: Identity
     ) -> None:
         """Changing a credential other agents use is its owner's or an org admin's call."""
@@ -2343,7 +2343,7 @@ class ConnectSessionService:
         if not others or ORG_ADMIN in identity.permissions:
             return
         if credential.created_by != identity.sub:
-            raise ScopeWideningForbiddenError(credential.id)
+            raise ScopeChangeForbiddenError(credential.id)
 
     def _require_scope_change(
         self,
@@ -2361,14 +2361,14 @@ class ConnectSessionService:
             if unknown:
                 raise ScopeValidationError(unknown)
 
-    async def addable_scopes(self, credential_id: str) -> AddableScopes:
-        """Which scopes an edit of a binding to ``credential_id`` can add."""
+    async def scope_options(self, credential_id: str) -> ScopeOptions:
+        """How an edit of a binding to ``credential_id`` can change its scopes."""
         async with self._ctx.control_db.session() as session:
             credential = await CredentialRepository.get_by_id(session, credential_id)
         consent = await self._consent_source(credential) if credential is not None else None
         if consent is None:
-            return AddableScopes(supported=False, catalog=None)
-        return AddableScopes(
+            return ScopeOptions(supported=False, catalog=None)
+        return ScopeOptions(
             supported=True,
             catalog=list(consent.entry.scopes) if consent.entry is not None else None,
         )
@@ -3958,7 +3958,7 @@ class ConnectSessionService:
             unknown = self._vendors.validate_scopes(consent.entry, scopes)
             if unknown:
                 raise ScopeValidationError(unknown)
-        await self._require_scope_widening_allowed(credential, agent_id, identity)
+        await self._require_scope_change_allowed(credential, agent_id, identity)
         change: dict[str, Any] = {
             "rules": [rule_to_write(r) for r in variant.checks.permission_rules],
             "rule_set_id": None,

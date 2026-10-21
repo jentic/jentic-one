@@ -2226,7 +2226,7 @@ function EditScopesFlow({
 				subtitle={`Change the OAuth scopes on ${credentialName}.`}
 			/>
 
-			{!data.scopes_addable ? (
+			{!data.scopes_editable ? (
 				<p className="text-muted-foreground text-sm">
 					This credential’s scopes can’t be changed here.
 				</p>

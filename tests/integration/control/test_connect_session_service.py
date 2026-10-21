@@ -87,9 +87,9 @@ from jentic_one.control.services.integrations.errors import (
     OAuthAppChangedError,
     RevisionChangedError,
     RevisionRequiredError,
+    ScopeChangeForbiddenError,
     ScopesNotSupportedError,
     ScopeValidationError,
-    ScopeWideningForbiddenError,
     SecuritySchemesLookupUnavailableError,
 )
 from jentic_one.control.services.integrations.flow_handlers.base import StatusReport, SuccessTokens
@@ -2987,7 +2987,7 @@ async def test_adding_scopes_to_a_credential_other_agents_use_needs_its_owner(
     review = await svc.get_review_data(edit.session_id, poll_token=None, identity=_USER_IDENTITY)
     assert review.edit is not None
     assert [a.agent_id for a in review.edit.other_bound_agents] == ["agnt_other_bound"]
-    with pytest.raises(ScopeWideningForbiddenError):
+    with pytest.raises(ScopeChangeForbiddenError):
         await svc.confirm_edit(
             edit.session_id,
             poll_token=None,
@@ -3036,7 +3036,7 @@ async def test_scopes_cannot_be_added_to_a_static_credential(
             identity=_AGENT_IDENTITY,
             request=EditRequest(add_scopes=["repo"]),
         )
-    addable = await ConnectSessionService(ctx).addable_scopes(created.credential_id)
+    addable = await ConnectSessionService(ctx).scope_options(created.credential_id)
     assert (addable.supported, addable.catalog) == (False, None)
 
 
@@ -3051,7 +3051,7 @@ async def test_an_edit_adds_only_scopes_the_vendor_offers(
     svc = ConnectSessionService(ctx)
     credential_id = await _connected_device_credential(ctx, svc)
 
-    addable = await svc.addable_scopes(credential_id)
+    addable = await svc.scope_options(credential_id)
     assert addable.supported and addable.catalog is not None
     assert "repo" in {scope.name for scope in addable.catalog}
 

@@ -200,8 +200,8 @@ class BindingRuleSetSchema(BaseModel):
     )
 
 
-class AddableScopeSchema(BaseModel):
-    """One scope the credential's vendor offers, which an edit can add."""
+class ScopeOptionSchema(BaseModel):
+    """One scope the credential's vendor offers, which an edit can add or remove."""
 
     name: str = Field(description="The scope as the vendor names it.", examples=["gmail.send"])
     classification: Literal["read", "write", "admin"] = Field(
@@ -231,15 +231,15 @@ class BindingAccessResponse(PermissionRuleListResponse):
         description="True when the binding is suspended and the agent cannot use it.",
         examples=[False],
     )
-    scopes_addable: bool = Field(
+    scopes_editable: bool = Field(
         default=False,
         description=(
-            "True when an edit can add OAuth scopes to the credential; the approver "
-            "signs in to the vendor again to grant them."
+            "True when an edit can change the credential's OAuth scopes (add or remove); "
+            "the approver signs in to the vendor again for the new set."
         ),
         examples=[True],
     )
-    scope_catalog: list[AddableScopeSchema] | None = Field(
+    scope_catalog: list[ScopeOptionSchema] | None = Field(
         default=None,
         description=(
             "The scopes the credential's vendor offers; an edit can add only these. Null when "

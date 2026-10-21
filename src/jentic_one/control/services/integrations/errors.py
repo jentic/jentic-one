@@ -451,12 +451,12 @@ class ScopesNotSupportedError(ConnectSessionServiceError):
         )
 
 
-class ScopeWideningForbiddenError(ConnectSessionServiceError):
-    """Adding scopes would widen a credential other agents use; the caller may not."""
+class ScopeChangeForbiddenError(ConnectSessionServiceError):
+    """Changing the scopes of a credential other agents use; the caller may not."""
 
     def __init__(self, credential_id: str) -> None:
         super().__init__(
-            f"adding scopes to credential {credential_id!r} widens it for other bound agents; "
-            "only its owner or an org admin may confirm that"
+            f"changing the scopes of credential {credential_id!r} changes them for other bound "
+            "agents; only its owner or an org admin may confirm that"
         )
         self.credential_id = credential_id

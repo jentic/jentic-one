@@ -41,8 +41,8 @@ from jentic_one.control.services.credentials.state import (
     decode_state,
 )
 from jentic_one.control.services.integrations.connect_session_service import (
-    AddableScopes,
     ConnectSessionService,
+    ScopeOptions,
 )
 from jentic_one.control.web.deps import (
     get_connect_service,
@@ -72,7 +72,6 @@ from jentic_one.control.web.schemas.credentials import (
     RuleSetUpdateRequest,
 )
 from jentic_one.control.web.schemas.permission_rules import (
-    AddableScopeSchema,
     BindingAccessResponse,
     BindingRuleSetSchema,
     PermissionRuleListResponse,
@@ -81,6 +80,7 @@ from jentic_one.control.web.schemas.permission_rules import (
     PermissionsPatchRequest,
     PermissionTestRequest,
     PermissionTestResponse,
+    ScopeOptionSchema,
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
@@ -522,7 +522,7 @@ def _to_permission_rule(
 
 
 def binding_access_response(
-    access: BindingAccess, scopes: AddableScopes | None = None
+    access: BindingAccess, scopes: ScopeOptions | None = None
 ) -> BindingAccessResponse:
     """Project a binding's access onto the wire shape (shared with the MCP mount)."""
     rule_set = None
@@ -538,10 +538,10 @@ def binding_access_response(
         rule_set=rule_set,
         granted_scopes=access.granted_scopes,
         suspended=access.suspended,
-        scopes_addable=scopes.supported if scopes is not None else False,
+        scopes_editable=scopes.supported if scopes is not None else False,
         scope_catalog=(
             [
-                AddableScopeSchema(
+                ScopeOptionSchema(
                     name=scope.name,
                     classification=scope.classification,
                     description=scope.description,
@@ -586,7 +586,7 @@ async def list_agent_permissions(
     suspended. The bound agent can read its own binding.
     """
     access = await svc.get_binding_access(credential_id, agent_id, identity=identity)
-    return binding_access_response(access, await sessions.addable_scopes(credential_id))
+    return binding_access_response(access, await sessions.scope_options(credential_id))
 
 
 @router.put(

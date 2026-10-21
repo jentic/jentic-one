@@ -509,7 +509,7 @@ def test_agent_permissions_lifecycle(
         "rule_set": None,
         "granted_scopes": None,
         "suspended": False,
-        "scopes_addable": False,
+        "scopes_editable": False,
         "scope_catalog": None,
     }
 

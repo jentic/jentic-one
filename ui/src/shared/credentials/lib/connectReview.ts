@@ -182,11 +182,11 @@ export function describeConfirmError(error: unknown): ConfirmErrorCopy {
 				message:
 					"This credential's scopes can't be widened here. Approve the rules without new scopes, or connect a new credential.",
 			};
-		case 'scope_widening_forbidden':
+		case 'scope_change_forbidden':
 			return {
 				action: 'reload',
 				message:
-					'That credential is used by other agents, and only its owner or an admin can widen it. Connect a new credential instead.',
+					'That credential is used by other agents, and only its owner or an admin can change its scopes. Connect a new credential instead.',
 			};
 		case 'existing_credential_not_found':
 			return {

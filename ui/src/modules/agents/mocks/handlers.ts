@@ -2025,7 +2025,7 @@ export const agentsHandlers = [
 			granted_scopes: row.granted_scopes ?? null,
 			suspended: row.suspended,
 			// An OAuth credential (one with a grant) takes more scopes.
-			scopes_addable: row.granted_scopes != null,
+			scopes_editable: row.granted_scopes != null,
 			scope_catalog: row.scope_catalog ?? null,
 		});
 	}),

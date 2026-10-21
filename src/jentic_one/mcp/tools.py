@@ -1979,7 +1979,7 @@ async def handle_show_access(env: CallEnv, arguments: dict[str, Any]) -> mcp_typ
             "credential ids; a suspended binding is hidden until your operator resumes it",
             next_tool="whoami",
         ) from None
-    addable = await ConnectSessionService(env.ctx).addable_scopes(credential_id)
+    addable = await ConnectSessionService(env.ctx).scope_options(credential_id)
     payload = binding_access_response(access, addable).model_dump(mode="json", by_alias=True)
     payload["schema_version"] = SCHEMA_VERSION
     return tool_result(env.ctx, payload)
