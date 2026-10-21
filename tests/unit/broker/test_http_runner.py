@@ -156,7 +156,7 @@ async def test_transport_error_detail_and_span_omit_exception_message(
             await runner.run(RunnerRequest(method="GET", url="https://api.example.com/x"))
 
     assert excinfo.value.detail == "Upstream transport error (LocalProtocolError)"
-    assert excinfo.value.type == "upstream_transport_error"
+    assert excinfo.value.type == "upstream_request_invalid"
     assert excinfo.value.origin is ErrorOrigin.BROKER
     assert _INJECTED_SECRET not in repr(logs)
     assert excinfo.value.__cause__ is None
@@ -180,6 +180,7 @@ async def test_stream_transport_error_detail_omits_exception_message() -> None:
                 pass  # pragma: no cover - the stream never opens
 
     assert excinfo.value.detail == "Upstream transport error (LocalProtocolError)"
+    assert excinfo.value.type == "upstream_request_invalid"
     assert _INJECTED_SECRET not in repr(logs)
     assert [e["error_type"] for e in logs] == ["LocalProtocolError"]
 

@@ -54,6 +54,8 @@ class RewriteRuleControlRepository:
             .order_by(AgentPermissionRule.id)
         )
         for rule_id, agent_id, credential_id, path, mode in inline.all():
+            if path is None:
+                continue
             rows.append(
                 RuleRow(
                     rule_id,
@@ -76,6 +78,8 @@ class RewriteRuleControlRepository:
             .order_by(PermissionRuleSetRule.id)
         )
         for rule_id, rule_set_id, path, mode in shared.all():
+            if path is None:
+                continue
             rows.append(RuleRow(rule_id, "rule_set", rule_set_id, path, mode or "regex"))
         return rows
 

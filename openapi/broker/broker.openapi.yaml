@@ -1569,9 +1569,11 @@ components:
     ServerError:
       description: |
         Unexpected broker-side failure — a bug, a panic, or an outbound
-        request the broker itself built and could not send. Should be
-        rare; report with the `traceparent` header for triage. Body is
-        RFC 9457 `application/problem+json`.
+        request the broker itself built and could not send
+        (`upstream_request_invalid`, e.g. an injected credential header
+        with an illegal byte; fix the stored credential rather than
+        retrying). Should be rare; report with the `traceparent` header
+        for triage. Body is RFC 9457 `application/problem+json`.
       content:
         application/problem+json:
           schema:
@@ -1584,6 +1586,18 @@ components:
                 title: Internal Server Error
                 status: 500
                 detail: An unexpected error occurred.
+                instance: /api.example.com/v1/users
+            upstream_request_invalid:
+              summary: >-
+                The broker built an outbound request its HTTP client refused to send
+                (e.g. an injected credential header carrying an illegal byte); fix the
+                stored credential rather than retrying.
+              value:
+                type: upstream_request_invalid
+                title: Upstream transport error (LocalProtocolError)
+                status: 500
+                detail: Upstream transport error (LocalProtocolError)
+                error_origin: broker
                 instance: /api.example.com/v1/users
     ServiceUnavailable:
       description: |
