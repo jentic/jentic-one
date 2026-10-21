@@ -1334,7 +1334,7 @@ async def test_reject_ends_the_session_and_starts_the_cooldown(env: Context) -> 
     by_owner = await _svc(env).create_session(
         vendor_key="",
         agent_id=_AGENT_ID,
-        initiator_actor_id=_OWNER_ID,
+        identity=_OWNER,
         api_target=_TARGET,
         requested_permission_rules=_RULES,
     )

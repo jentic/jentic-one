@@ -1985,7 +1985,7 @@ class ConnectSessionService:
         new_scopes = added_scopes(baseline, result)
         self._require_addable_scopes(consent, new_scopes)
         if apply:
-            await self._require_agent_binding_allowed(agent_id, identity)
+            await self._require_agent_binding_allowed(agent_id, identity, late_bound=False)
             if not new_scopes:
                 return await self._apply_edit_now(
                     credential=credential,
@@ -2000,7 +2000,9 @@ class ConnectSessionService:
                     or credential.name,
                 )
 
-        cap_scope = await self._check_open_session_caps(agent_id, identity.sub)
+        async with self._ctx.admin_db.session() as admin_session:
+            agent = await EffectsRepository.get_agent_owner(admin_session, agent_id)
+        cap_scope = await self._check_open_session_caps(agent_id, identity, agent)
         poll_token = secrets.token_urlsafe(32)
         async with self._ctx.control_db.transaction() as session:
             await self._enforce_open_session_caps(session, cap_scope)
@@ -2187,7 +2189,7 @@ class ConnectSessionService:
             raise ConfirmationForbiddenError("edit sessions are confirmed by a human")
         _require_state(row, expected="created", action="confirm")
         assert row.agent_id is not None and row.baseline is not None
-        await self._require_agent_binding_allowed(row.agent_id, identity)
+        await self._require_agent_binding_allowed(row.agent_id, identity, late_bound=False)
         if row.current_revision_id != revision_id:
             raise RevisionChangedError(row.id, row.current_revision_id)
 
@@ -4661,7 +4663,9 @@ class ConnectSessionService:
             # Identity echo — outside the DB transaction (external HTTP).
             try:
                 echo = await identity_echo.echo_identity(
-                    probe=consent.entry.identity_probe, access_token=tokens.access_token
+                    probe=consent.entry.identity_probe,
+                    access_token=tokens.access_token,
+                    egress=resolved_control_egress(self._ctx.config),
                 )
                 connected_as = echo.display
             except identity_echo.IdentityEchoError as exc:

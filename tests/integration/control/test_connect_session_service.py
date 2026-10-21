@@ -386,6 +386,7 @@ async def test_create_session_writes_revision_one_as_the_current_revision(
     integration_context: Context,
     seed_test_vendors: None,
     clean_session_tables: None,
+    seed_agent: None,
 ) -> None:
     ctx = integration_context
     svc = ConnectSessionService(ctx)
@@ -396,7 +397,7 @@ async def test_create_session_writes_revision_one_as_the_current_revision(
     created = await svc.create_session(
         vendor_key="testdev",
         agent_id=_AGENT_ID,
-        initiator_actor_id=_USER_ID,
+        identity=_USER_IDENTITY,
         requested_scopes=["repo", "read:user"],
         requested_permission_rules=requested,
         reason="Needs to read repos",
@@ -2419,7 +2420,7 @@ async def test_amending_a_create_session_replaces_its_ask(
     created = await svc.create_session(
         vendor_key="testauth",
         agent_id=_AGENT_ID,
-        initiator_actor_id=_AGENT_ID,
+        identity=_AGENT_IDENTITY,
         requested_scopes=["repo"],
         reason="read issues",
     )
@@ -2448,7 +2449,7 @@ async def test_amending_a_create_session_replaces_its_ask(
         await svc.create_session(
             vendor_key="testauth",
             agent_id=_AGENT_ID,
-            initiator_actor_id=_AGENT_ID,
+            identity=_AGENT_IDENTITY,
             requested_scopes=["repo", "read:user"],
         )
     with pytest.raises(RevisionChangedError):
@@ -2518,7 +2519,7 @@ def _success(scopes: list[str]) -> StatusReport:
 async def _connected_device_credential(ctx: Context, svc: ConnectSessionService) -> str:
     """A device-flow credential the agent is bound to, granted ``read:user``."""
     created = await svc.create_session(
-        vendor_key="testdev", agent_id=_AGENT_ID, initiator_actor_id=_USER_ID
+        vendor_key="testdev", agent_id=_AGENT_ID, identity=_USER_IDENTITY
     )
     with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)):
         await svc.confirm(
@@ -3017,7 +3018,7 @@ async def test_an_edit_adding_scopes_lands_with_the_auth_code_grant_of_the_same_
     )
     svc = ConnectSessionService(ctx)
     created = await svc.create_session(
-        vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_USER_ID
+        vendor_key="testauth", agent_id=_AGENT_ID, identity=_USER_IDENTITY
     )
     confirmed = await svc.confirm(
         created.session_id,

@@ -74,6 +74,7 @@ async def _confirm(
         "key": _CANARY,
         "permission_rules": RULES,
         "digest": review.digest,
+        "revision_id": review.revision_id,
     }
     if agent_id is not None:
         body["agent_id"] = agent_id

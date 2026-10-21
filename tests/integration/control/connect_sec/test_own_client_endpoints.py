@@ -271,7 +271,10 @@ async def test_allowlisted_in_network_idp_works_end_to_end_for_the_approvers_cli
             authorize_url="https://10.1.2.3/authorize",
             token_url="https://10.1.2.3/token",
             confirmed_scopes=["read"],
-            checks=checks(await digest(env, created.session_id)),
+            checks=checks(
+                await digest(env, created.session_id),
+                revision_id=await revision(env, created.session_id),
+            ),
         ),
         identity=OWNER,
     )

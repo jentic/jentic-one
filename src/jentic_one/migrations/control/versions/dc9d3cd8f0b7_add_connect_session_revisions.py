@@ -6,12 +6,11 @@ revision 1, each amend appends the next, and ``current_revision_id`` names
 the live one. An edit snapshots the binding it started from in ``baseline``,
 and holds what its approver confirmed in ``approved_change`` while a vendor
 consent for added scopes is in flight.
-One open edit per (agent, credential) is enforced by a partial unique index.
 
 Schema only; ``d9305dcd765e`` backfills revision 1 for open sessions.
 
 Revision ID: dc9d3cd8f0b7
-Revises: 70ff607085b4
+Revises: dd4e5f6a7b8c
 Create Date: 2026-10-16
 
 """
@@ -23,7 +22,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "dc9d3cd8f0b7"  # pragma: allowlist secret
-down_revision: str | None = "70ff607085b4"  # pragma: allowlist secret
+down_revision: str | None = "dd4e5f6a7b8c"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
