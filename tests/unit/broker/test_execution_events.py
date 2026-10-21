@@ -669,6 +669,16 @@ async def test_run_execution_skips_lifecycle_event_when_emit_lifecycle_false() -
             actor_type="agent",
             emit_lifecycle=False,
         )
+        await run_execution(
+            _ctx_req(),
+            body=None,
+            headers=None,
+            admin_db=scope,
+            broker=default_broker(_StatusRunner(401)),
+            actor_id="agt_abc",
+            actor_type="agent",
+            emit_lifecycle=False,
+        )
         with pytest.raises(BrokerError):
             await run_execution(
                 _ctx_req(),
@@ -681,5 +691,5 @@ async def test_run_execution_skips_lifecycle_event_when_emit_lifecycle_false() -
                 emit_lifecycle=False,
             )
 
-    assert mock_record.await_count == 2
+    assert mock_record.await_count == 3
     mock_emit.assert_not_awaited()

@@ -78,7 +78,12 @@ from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ActorType as ActorTypeEnum
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.actors import origin_or_none
-from jentic_one.shared.models.events import ErrorSource, EventSeverity, EventTag, EventType
+from jentic_one.shared.models.events import (
+    EventSeverity,
+    EventTag,
+    EventType,
+    thirdparty_auth_error_tag,
+)
 from jentic_one.shared.schemas import OperationInfo
 from jentic_one.shared.url import apply_server_variables
 from jentic_one.shared.url_validation import validate_upstream_url_async
@@ -90,12 +95,6 @@ logger = structlog.get_logger(__name__)
 
 #: Suffix that marks a job result whose ``executions`` record was not written.
 _RECORD_NOT_PERSISTED = "execution record not persisted"
-
-#: Upstream auth-rejection status → third-party ``auth_failure`` tag (401/403).
-_THIRDPARTY_AUTH_TAGS: dict[int, ErrorSource] = {
-    401: ErrorSource.AUTH_THIRDPARTY_UNAUTHORIZED,
-    403: ErrorSource.AUTH_THIRDPARTY_FORBIDDEN,
-}
 
 # Created once on first increment, so the instrument identity is stable.
 _write_failures: Counter | None = None
@@ -440,11 +439,7 @@ class ExecutionHandler:
             status = ExecutionStatus.FAILED
             error_msg = safe_error[:MAX_EVENT_SUMMARY_FIELD_LEN]
 
-        thirdparty_tag = (
-            _THIRDPARTY_AUTH_TAGS.get(http_status)
-            if http_status is not None and api_vendor
-            else None
-        )
+        thirdparty_tag = thirdparty_auth_error_tag(http_status, api_vendor)
         error_tags: set[EventTag] | None = {thirdparty_tag} if thirdparty_tag is not None else None
 
         await self._write_lifecycle(

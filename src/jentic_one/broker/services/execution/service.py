@@ -41,7 +41,12 @@ from jentic_one.shared.executions import record_execution
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.actors import origin_or_none
-from jentic_one.shared.models.events import ErrorSource, EventSeverity, EventTag, EventType
+from jentic_one.shared.models.events import (
+    EventSeverity,
+    EventTag,
+    EventType,
+    thirdparty_auth_error_tag,
+)
 from jentic_one.shared.schemas import APIReference, OperationInfo
 from jentic_one.shared.tracing import jentic_tracestate, pack_jentic_tracestate
 
@@ -60,14 +65,6 @@ _execution_duration = _meter.create_histogram(
 )
 
 _circuit_event_last_emitted: dict[str, datetime] = {}
-
-#: Upstream auth-rejection status → third-party ``auth_failure`` tag. 401 is an
-#: RFC-tight authentication rejection; 403 mixes auth + authorization (kept as a
-#: distinct, lower-precision tag so the funnel can separate them downstream).
-_THIRDPARTY_AUTH_TAGS: dict[int, ErrorSource] = {
-    401: ErrorSource.AUTH_THIRDPARTY_UNAUTHORIZED,
-    403: ErrorSource.AUTH_THIRDPARTY_FORBIDDEN,
-}
 
 
 def _should_emit_circuit_event(host: str, cooldown_s: int = 15) -> bool:
@@ -300,9 +297,9 @@ async def run_execution(
             # payload carries no per-request correlation id, so two events sharing a
             # timestamp are indistinguishable from two concurrent requests downstream —
             # a separate event would permanently skew the funnel (see #446 review).
-            thirdparty_tag = _THIRDPARTY_AUTH_TAGS.get(result.status_code)
+            thirdparty_tag = thirdparty_auth_error_tag(result.status_code, ctx_req.api_vendor)
             error_tags: set[EventTag] | None = (
-                {thirdparty_tag} if thirdparty_tag is not None and ctx_req.api_vendor else None
+                {thirdparty_tag} if thirdparty_tag is not None else None
             )
 
             await _emit_execution_lifecycle(
@@ -385,10 +382,8 @@ async def persist_streaming_execution(
     # credential path attempted (api_vendor set) means the auth the user configured
     # was rejected upstream. Folded into EXECUTION_FAILED as a tag, not a separate
     # ``auth_failure`` event, to keep the correlation-id-free funnel un-skewed.
-    thirdparty_tag = _THIRDPARTY_AUTH_TAGS.get(http_status) if http_status is not None else None
-    error_tags: set[EventTag] | None = (
-        {thirdparty_tag} if thirdparty_tag is not None and ctx_req.api_vendor else None
-    )
+    thirdparty_tag = thirdparty_auth_error_tag(http_status, ctx_req.api_vendor)
+    error_tags: set[EventTag] | None = {thirdparty_tag} if thirdparty_tag is not None else None
 
     await _emit_execution_lifecycle(
         session,
