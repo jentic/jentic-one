@@ -2482,7 +2482,7 @@ class ConnectSessionService:
             session,
             row=row,
             outcome=change["outcome"],
-            error_code=None,
+            error_code=change.get("error_code"),
             ended_at=datetime.now(UTC),
             credential_id=row.credential_id,
         )
@@ -4330,7 +4330,12 @@ class ConnectSessionService:
         if not token_ok and not await self._is_approver_for_agent(outcome.agent_id, identity):
             raise InvalidPollTokenError("invalid poll_token")
         if outcome.outcome == OUTCOME_APPLIED:
-            return StatusResult(status=OUTCOME_APPLIED, credential_id=outcome.credential_id)
+            # ``scopes_not_removed``: applied, but the vendor kept a removed scope.
+            return StatusResult(
+                status=OUTCOME_APPLIED,
+                credential_id=outcome.credential_id,
+                error_code=outcome.error_code,
+            )
         if outcome.outcome == OUTCOME_CONNECTED:
             bound: list[str] | None = None
             if outcome.credential_id is not None:
@@ -4695,22 +4700,38 @@ class ConnectSessionService:
             return StatusResult(status="failed", error_code="account_changed")
         # Some vendors carry earlier scopes into a new grant. One that kept a
         # scope the change removes isn't written: the credential keeps its
-        # token, and the scope has to be revoked at the vendor.
+        # token, and the scope has to be revoked at the vendor. The rest of
+        # the change (rules, resume) still lands, flagged ``scopes_not_removed``;
+        # with nothing else in it, the change fails.
         kept = sorted(set(tokens.granted_scopes or []) - set(change["scopes"]))
-        if row.baseline is not None and kept:
+        scopes_kept = row.baseline is not None and bool(kept)
+        if scopes_kept:
+            assert row.baseline is not None
             _logger.warning(
                 "connect_session.edit_scopes_not_removed",
                 session_id=row.id,
                 credential_id=row.credential_id,
                 kept=kept,
             )
-            await self._mark_terminal(
-                row.id,
-                "failed",
-                f"the vendor kept scopes the change removes: {', '.join(kept)}",
-                error_code="scopes_not_removed",
+            _, before = target_rules(row.baseline)
+            only_scopes = (
+                change["rules"] == [rule_to_write(r) for r in before]
+                and not change["resume"]
+                and not change["detach_rule_set"]
             )
-            return StatusResult(status="failed", error_code="scopes_not_removed")
+            if only_scopes:
+                await self._mark_terminal(
+                    row.id,
+                    "failed",
+                    f"the vendor kept scopes the change removes: {', '.join(kept)}",
+                    error_code="scopes_not_removed",
+                )
+                return StatusResult(status="failed", error_code="scopes_not_removed")
+            change = {
+                **change,
+                "scopes": sorted(row.baseline.get("granted_scopes") or []),
+                "error_code": "scopes_not_removed",
+            }
 
         # The rules were approved against the binding as it was. If they moved
         # while the grant was out, writing them would undo that change: the
@@ -4723,14 +4744,15 @@ class ConnectSessionService:
                 reopen = change["rules"] != [rule_to_write(r) for r in before]
                 change = {**change, "keep_rules": True, "detach_rule_set": False}
 
-        await self._write_finalise(
-            credential_id=row.credential_id,
-            handler=handler,
-            tokens=tokens,
-            connected_as=connected_as,
-            created_by=change["approved_by"],
-            close_session_id=None,
-        )
+        if not scopes_kept:
+            await self._write_finalise(
+                credential_id=row.credential_id,
+                handler=handler,
+                tokens=tokens,
+                connected_as=connected_as,
+                created_by=change["approved_by"],
+                close_session_id=None,
+            )
         if reopen:
             return await self._reopen_edit(row, change)
         async with self._ctx.control_db.transaction() as session:
@@ -4747,13 +4769,15 @@ class ConnectSessionService:
             status=change["outcome"],
             connected_as=connected_as,
             credential_id=row.credential_id,
-            bound_scopes=tokens.granted_scopes,
+            bound_scopes=change["scopes"] if scopes_kept else tokens.granted_scopes,
+            error_code=change.get("error_code"),
         )
 
     async def _reopen_edit(self, row: ConnectSession, change: dict[str, Any]) -> StatusResult:
         """The grant landed but the rules moved since approval: reopen the rule change.
 
-        The scopes are in, and so is a resume. The request is rebased onto the
+        The scopes are in (unless the vendor kept one the change removes), and
+        so is a resume. The request is rebased onto the
         binding as it is now and waits on its review again, without a vendor
         step this time.
         """

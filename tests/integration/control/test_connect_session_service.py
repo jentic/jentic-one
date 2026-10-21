@@ -2869,6 +2869,37 @@ async def test_a_grant_that_keeps_a_removed_scope_changes_nothing(
     assert (status.status, status.error_code) == ("failed", "scopes_not_removed")
 
 
+async def test_rules_in_a_change_still_land_when_the_vendor_keeps_a_removed_scope(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    credential_id = await _connected_device_credential(ctx, svc)
+    rules_before = await _paths(ctx, credential_id)
+    with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)):
+        applied = await svc.create_edit_session(
+            credential_id=credential_id,
+            agent_id=_AGENT_ID,
+            identity=_USER_IDENTITY,
+            request=EditRequest(add=[RuleAdd(_WRITE_RULE)], set_scopes=["repo"]),
+            apply=True,
+        )
+    # The vendor carries the earlier scope into the new grant.
+    await _land_grant(svc, credential_id)
+
+    # The rules land; only the scope change is reverted.
+    assert await _paths(ctx, credential_id) == [*rules_before, "/repos"]
+    assert await _token_scope(ctx, credential_id) == "read:user"
+    status = await svc.get_status(
+        applied.session_id, poll_token=applied.poll_token, identity=_USER_IDENTITY
+    )
+    assert (status.status, status.error_code) == ("applied", "scopes_not_removed")
+
+
 async def test_a_failed_consent_leaves_the_credential_as_it_was(
     integration_context: Context,
     seed_test_vendors: None,
