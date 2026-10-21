@@ -1253,6 +1253,11 @@ def test_rule_set_attach_requires_creator_admin_or_curated(
     assert (
         other_writer_client.get(f"/permission-rule-sets/{others_id}").json()["binding_count"] == 0
     )
+    patched = other_writer_client.patch(
+        f"/permission-rule-sets/{others_id}", json={"description": "updated"}
+    )
+    assert patched.status_code == 200
+    assert patched.json()["binding_count"] == 0
     assert (
         plain_writer_client.get(f"/permission-rule-sets/{others_id}").json()["binding_count"] == 1
     )
@@ -1260,6 +1265,10 @@ def test_rule_set_attach_requires_creator_admin_or_curated(
     delete_resp = other_writer_client.delete(f"/permission-rule-sets/{others_id}")
     assert delete_resp.status_code == 409
     assert delete_resp.json()["type"] == "rule_set_in_use"
+    assert (
+        delete_resp.json()["detail"]
+        == "Permission rule set is still referenced by one or more bindings; detach them first"
+    )
     assert plain_writer_client.delete(attach).status_code == 204
 
 

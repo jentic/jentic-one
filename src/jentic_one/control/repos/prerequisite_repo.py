@@ -290,25 +290,27 @@ class PrerequisiteRepository:
         and ``agent_visible_count`` applies to credentials visible through any
         other read grant (where only agents matching ``visible_to`` are visible).
         """
+        owner_match = (
+            "a.id = :self_id OR a.owner_id IN :owner_ids"
+            if visible_to.owner_ids
+            else "a.id = :self_id"
+        )
         stmt = text(
             "SELECT b.credential_id, COUNT(*), "
-            "COALESCE("
-            "SUM(CASE WHEN a.id = :self_id OR a.owner_id IN :owner_ids THEN 1 ELSE 0 END), "
-            "0"
-            ") "
+            f"COALESCE(SUM(CASE WHEN {owner_match} THEN 1 ELSE 0 END), 0) "
             "FROM agent_credential_bindings b "
-            "LEFT JOIN agents a ON a.id = b.agent_id "
+            "JOIN agents a ON a.id = b.agent_id "
             "WHERE b.rule_set_id = :rule_set_id "
             "GROUP BY b.credential_id"
-        ).bindparams(bindparam("owner_ids", expanding=True))
-        result = await session.execute(
-            stmt,
-            {
-                "rule_set_id": rule_set_id,
-                "self_id": visible_to.self_id,
-                "owner_ids": list(visible_to.owner_ids),
-            },
         )
+        params: dict[str, object] = {
+            "rule_set_id": rule_set_id,
+            "self_id": visible_to.self_id,
+        }
+        if visible_to.owner_ids:
+            stmt = stmt.bindparams(bindparam("owner_ids", expanding=True))
+            params["owner_ids"] = list(visible_to.owner_ids)
+        result = await session.execute(stmt, params)
         return {str(row[0]): (int(row[1]), int(row[2])) for row in result.fetchall()}
 
     @staticmethod

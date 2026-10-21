@@ -146,10 +146,15 @@ class CredentialService:
         An agent must be able to read a credential it is actively bound to
         even when it owns nothing (issues #665/#682). Suspended bindings
         grant no visibility — a cut-off cuts reads of the credential too, while
-        the binding row itself stays visible in ``/me``. ``org:admin`` is
-        unrestricted already, so skip the lookup.
+        the binding row itself stays visible in ``/me``. Only agents hold
+        bindings and ``org:admin`` is unrestricted already, so both skip the
+        lookup.
         """
-        if ORG_ADMIN in identity.permissions or not identity.sub:
+        if (
+            ORG_ADMIN in identity.permissions
+            or identity.actor_type != ActorType.AGENT
+            or not identity.sub
+        ):
             return []
         async with self._ctx.admin_db.session() as session:
             return await PrerequisiteRepository.list_credential_ids_for_agent(
@@ -1018,14 +1023,26 @@ class CredentialService:
                 rule_set_id,
                 visible_to=self._agent_visibility_for(identity),
             )
-        if not counts_by_cred:
-            return 0
+            if not counts_by_cred:
+                return 0
+            bound_credential_ids = (
+                await PrerequisiteRepository.list_credential_ids_for_agent(
+                    session, agent_id=identity.sub
+                )
+                if identity.actor_type == ActorType.AGENT and identity.sub
+                else []
+            )
+            owned_agent_ids = (
+                await PrerequisiteRepository.list_agent_ids_owned_by(session, owner_id=identity.sub)
+                if identity.actor_type == ActorType.USER and identity.sub
+                else []
+            )
 
         access_filters = build_access_filters(
             identity,
             Credential,
-            bound_credential_ids=await self._bound_credential_ids(identity),
-            owned_agent_ids=await self._owned_agent_ids(identity),
+            bound_credential_ids=bound_credential_ids,
+            owned_agent_ids=owned_agent_ids,
             include_shared=True,
         )
         async with self._ctx.control_db.session() as session:

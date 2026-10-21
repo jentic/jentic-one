@@ -37,7 +37,10 @@ from jentic_one.control.services.credentials.schemas.credentials import Credenti
 from jentic_one.control.services.credentials.schemas.provision import APIReference
 from jentic_one.control.services.credentials.service import CredentialService
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.auth.permission_catalog import OWNER_AGENTS_READ
+from jentic_one.shared.auth.permission_catalog import (
+    OWNER_AGENTS_READ,
+    OWNER_CREDENTIALS_READ,
+)
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.credentials import CredentialType
@@ -392,3 +395,30 @@ async def test_bound_agent_with_owner_agents_read_sees_owner_agents_in_rule_set_
         attached_rule_set, identity=identity
     )
     assert count == 2
+
+
+async def test_delegated_unbound_agent_sees_only_visible_agents_on_owners_credential(
+    integration_context: Context, attached_rule_set: str
+) -> None:
+    """An unbound agent of the credential creator that reads the credential via
+    ``owner:credentials:read`` is not the credential creator, so it counts only
+    agents it can see itself (0 without ``owner:agents:read``, 1 with it)."""
+    without_agents_read = Identity(
+        sub="agnt_cla_unbound_owner_child",
+        email="unbound@test.local",
+        permissions=[OWNER_CREDENTIALS_READ],
+        actor_type=ActorType.AGENT,
+        parent_actor_id=_OWNER_SUB,
+    )
+    with_agents_read = Identity(
+        sub="agnt_cla_unbound_owner_child",
+        email="unbound@test.local",
+        permissions=[OWNER_CREDENTIALS_READ, OWNER_AGENTS_READ],
+        actor_type=ActorType.AGENT,
+        parent_actor_id=_OWNER_SUB,
+    )
+    svc = CredentialService(integration_context)
+    _, _, count_without = await svc.get_rule_set(attached_rule_set, identity=without_agents_read)
+    _, _, count_with = await svc.get_rule_set(attached_rule_set, identity=with_agents_read)
+    assert count_without == 0
+    assert count_with == 1

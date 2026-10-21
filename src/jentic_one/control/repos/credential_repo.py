@@ -45,6 +45,11 @@ _MATERIAL_RELATIONSHIP: Mapping[str, str] = {
 }
 
 
+# Upper bound on IDs bound into one IN (...) clause, well under SQLite's and
+# Postgres's host-parameter limits.
+_ID_BATCH_SIZE = 500
+
+
 class CredentialRepository:
     """Data access layer for Credential entities — flush-only, never commits."""
 
@@ -227,12 +232,17 @@ class CredentialRepository:
         """Batch-resolve credential IDs to their ``created_by`` (missing/filtered ids omitted)."""
         if not ids:
             return {}
-        stmt = select(Credential.id, Credential.created_by).where(Credential.id.in_(ids))
-        if filters is not None:
-            for f in filters:
-                stmt = stmt.where(f)
-        result = await session.execute(stmt)
-        return {row.id: row.created_by for row in result}
+        creators: dict[str, str | None] = {}
+        for i in range(0, len(ids), _ID_BATCH_SIZE):
+            batch = ids[i : i + _ID_BATCH_SIZE]
+            stmt = select(Credential.id, Credential.created_by).where(Credential.id.in_(batch))
+            if filters is not None:
+                for f in filters:
+                    stmt = stmt.where(f)
+            result = await session.execute(stmt)
+            for row in result:
+                creators[row.id] = row.created_by
+        return creators
 
     @staticmethod
     async def get_creators_among(
