@@ -2321,8 +2321,9 @@ func (j *ReleaseCheckConfig) UnmarshalJSON(value []byte) error {
 // The “RetryRunner“ decorator retries a failed attempt **only** when it is
 // safe to do so: a connect-phase failure (no bytes on the wire) is retryable
 // for any method, while a post-send failure (read timeout, mirrored “429“/
-// “503“) is retried only for idempotent methods or when an
-// “Idempotency-Key“ is present — a blind “POST“ retry is a double-spend.
+// “503“) is retried only for idempotent HTTP methods — “Idempotency-Key“
+// is broker-consumed and stripped from outbound headers, so a post-send
+// “POST“ or “PATCH“ retry would double-spend (#1799).
 // Each attempt still flows through the circuit breaker (retry *outside*,
 // breaker *inside*); the whole loop is bounded by the request deadline.
 type RetryConfig struct {

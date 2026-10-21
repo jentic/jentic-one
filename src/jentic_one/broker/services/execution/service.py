@@ -179,7 +179,6 @@ async def run_execution(
         body=body,
         timeout_s=timeout,
         signing=signing,
-        has_idempotency_key=has_idempotency_key,
     )
     exec_context = ExecutionContext(
         execution_id=execution_id,
