@@ -1753,7 +1753,15 @@ function EditApproveFlow({
 				credentialId={null}
 				boundAgentId={shown.binding.agent_id}
 				onDone={onDone}
-			/>
+			>
+				{!failure && polling.data?.error_code === 'scopes_not_removed' && (
+					<p role="status" className="text-warning text-sm">
+						The rest of the change applied, but the vendor kept scopes it removes, so
+						the scopes didn’t change. Revoke the app’s access at the vendor to drop
+						them, then edit the scopes again.
+					</p>
+				)}
+			</TerminalStep>
 		);
 	}
 	if (phase === 'awaiting' && challenge) {

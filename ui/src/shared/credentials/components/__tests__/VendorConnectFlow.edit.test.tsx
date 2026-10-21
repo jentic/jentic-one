@@ -192,7 +192,16 @@ describe('VendorConnectFlow approve — edit sessions', () => {
 				confirmed_scopes: ['gmail.readonly'],
 			}),
 		);
-	});
+
+		// The vendor kept the removed scope: the rest applied, and it says so.
+		const [session] = getMockConnectSessions();
+		session.status = { ...session.status, status: 'applied', error_code: 'scopes_not_removed' };
+		expect(
+			await screen.findByText(/the vendor kept scopes it removes/, undefined, {
+				timeout: 10_000,
+			}),
+		).toBeInTheDocument();
+	}, 20_000);
 
 	it('pauses Approve when the request changes under the reviewer', async () => {
 		const seeded = seedEdit(editBlock());
