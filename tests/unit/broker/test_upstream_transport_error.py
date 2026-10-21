@@ -147,12 +147,22 @@ async def test_buffered_read_timeout_is_504() -> None:
 
 
 @pytest.mark.asyncio
-async def test_buffered_local_protocol_error_is_500() -> None:
+@pytest.mark.parametrize(
+    "exc_type",
+    [httpx.LocalProtocolError, httpx.UnsupportedProtocol],
+    ids=lambda t: t.__name__,
+)
+async def test_buffered_local_protocol_error_is_500(exc_type: type[httpx.HTTPError]) -> None:
     """A malformed outbound request is the broker's own failure, not the upstream's."""
-    exc = await _buffered_error(_raises(httpx.LocalProtocolError))
+    exc = await _buffered_error(_raises(exc_type))
 
-    assert status_for_broker_error(exc) == 500
-    assert exc.type == "upstream_transport_error"
+    status, body, _ = await _rendered(exc)
+    assert status == 500
+    assert body["type"] == "upstream_request_invalid"
+    assert body["detail"] == f"Upstream transport error ({exc_type.__name__})"
+    assert body["error_origin"] == "broker"
+    assert _MARKER not in json.dumps(body)
+    assert exc.pre_send is False
 
 
 # --- streaming path (failure before the response starts) --------------------
@@ -195,11 +205,17 @@ async def test_streaming_connect_timeout_matches_buffered() -> None:
 
 
 @pytest.mark.asyncio
-async def test_streaming_local_protocol_error_is_500() -> None:
-    exc = await _streaming_error(_raises(httpx.LocalProtocolError))
+@pytest.mark.parametrize(
+    "exc_type",
+    [httpx.LocalProtocolError, httpx.UnsupportedProtocol],
+    ids=lambda t: t.__name__,
+)
+async def test_streaming_local_protocol_error_is_500(exc_type: type[httpx.HTTPError]) -> None:
+    exc = await _streaming_error(_raises(exc_type))
 
     assert status_for_broker_error(exc) == 500
-    assert exc.type == "upstream_transport_error"
+    assert exc.type == "upstream_request_invalid"
+    assert exc.pre_send is False
 
 
 # --- connect-time DNS failure under the DNS-pinning transport ---------------
@@ -333,6 +349,28 @@ async def test_retry_gate_by_send_phase(
     assert status_for_broker_error(excinfo.value) == 502
 
 
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_no_sleep")
+@pytest.mark.parametrize("method", ["GET", "POST"])
+@pytest.mark.parametrize(
+    "exc_type",
+    [httpx.LocalProtocolError, httpx.UnsupportedProtocol],
+    ids=lambda t: t.__name__,
+)
+async def test_retry_never_retries_local_protocol_error(
+    exc_type: type[httpx.HTTPError], method: str
+) -> None:
+    """A broker-side invalid request fails deterministically, so even GET is not retried."""
+    transport = _CountingTransport(exc_type)
+    async with httpx.AsyncClient(transport=transport) as client:
+        runner = RetryRunner(HttpRunner(client), max_attempts=3, base_backoff_s=0.0)
+        with pytest.raises(BrokerError) as excinfo:
+            await runner.run(RunnerRequest(method=method, url=_URL))
+    assert transport.calls == 1
+    assert status_for_broker_error(excinfo.value) == 500
+    assert excinfo.value.type == "upstream_request_invalid"
+
+
 def _breaker() -> CircuitBreaker:
     return CircuitBreaker(
         MemoryStateBackend(), failure_ratio=0.5, min_calls=2, window_s=30, cooldown_s=15
@@ -375,3 +413,43 @@ async def test_circuit_counts_streaming_open_failure(exc_type: type[httpx.HTTPEr
         with pytest.raises(CircuitOpenError):
             async with runner.stream(RunnerRequest(method="GET", url=_URL)):
                 pass  # pragma: no cover - the circuit is open
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "exc_type",
+    [httpx.LocalProtocolError, httpx.UnsupportedProtocol],
+    ids=lambda t: t.__name__,
+)
+async def test_circuit_ignores_local_protocol_error(exc_type: type[httpx.HTTPError]) -> None:
+    """A malformed outbound request never reached the upstream, so the host breaker stays closed."""
+    transport = _CountingTransport(exc_type)
+    async with httpx.AsyncClient(transport=transport) as client:
+        runner = CircuitBreakerRunner(HttpRunner(client), _breaker())
+        for _ in range(3):
+            with pytest.raises(BrokerError) as excinfo:
+                await runner.run(RunnerRequest(method="GET", url=_URL))
+            assert status_for_broker_error(excinfo.value) == 500
+            assert excinfo.value.type == "upstream_request_invalid"
+    assert transport.calls == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "exc_type",
+    [httpx.LocalProtocolError, httpx.UnsupportedProtocol],
+    ids=lambda t: t.__name__,
+)
+async def test_circuit_ignores_streaming_local_protocol_error(
+    exc_type: type[httpx.HTTPError],
+) -> None:
+    transport = _CountingTransport(exc_type)
+    async with httpx.AsyncClient(transport=transport) as client:
+        runner = CircuitBreakerRunner(HttpRunner(client), _breaker())
+        for _ in range(3):
+            with pytest.raises(BrokerError) as excinfo:
+                async with runner.stream(RunnerRequest(method="GET", url=_URL)):
+                    pass  # pragma: no cover - the stream never opens
+            assert status_for_broker_error(excinfo.value) == 500
+            assert excinfo.value.type == "upstream_request_invalid"
+    assert transport.calls == 3

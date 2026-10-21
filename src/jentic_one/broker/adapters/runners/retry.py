@@ -42,7 +42,11 @@ from jentic_one.broker.adapters.runners.base import (
     StreamingUpstreamRunner,
     UpstreamRunner,
 )
-from jentic_one.broker.core.exceptions import BrokerError
+from jentic_one.broker.core.exceptions import (
+    BrokerError,
+    UpstreamTimeoutError,
+    UpstreamTransportError,
+)
 from jentic_one.broker.core.retry_after import parse_retry_after_seconds
 from jentic_one.shared.metrics import get_meter
 
@@ -138,7 +142,9 @@ class RetryRunner:
             yield result
 
     def _should_retry_error(self, exc: BrokerError, *, idempotent: bool) -> bool:
-        """A connect-phase error retries for any method; post-send only if idempotent."""
+        """An upstream transport/timeout error retries pre-send or when idempotent."""
+        if not isinstance(exc, UpstreamTimeoutError | UpstreamTransportError):
+            return False
         return bool(exc.pre_send) or idempotent
 
     def _should_retry_status(self, status_code: int, *, idempotent: bool) -> bool:
