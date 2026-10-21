@@ -10,6 +10,7 @@
  */
 import { Loader2 } from 'lucide-react';
 import { DetailsLine, MethodBadge } from '@/shared/ui';
+import { PlainText } from '@/shared/credentials/components/PlainText';
 import { cn } from '@/shared/lib/utils';
 import {
 	actionCount,
@@ -52,8 +53,23 @@ export function ActionList({ description, className, 'data-testid': testId }: Ac
 										{entry.path}
 									</span>
 									{entry.summary && (
-										<span className="text-muted-foreground ml-auto hidden min-w-0 truncate text-xs sm:inline">
-											{entry.summary}
+										<PlainText
+											value={{
+												text: entry.summary,
+												generated: !!entry.generated,
+											}}
+											className="ml-auto"
+										/>
+									)}
+									{entry.api && (
+										<span
+											className={cn(
+												'text-foreground-sub shrink-0 text-xs',
+												!entry.summary && 'ml-auto',
+											)}
+											data-testid="action-api"
+										>
+											— on {entry.api.title}
 										</span>
 									)}
 								</>

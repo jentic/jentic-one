@@ -201,7 +201,7 @@ function seedComposedStores() {
 			credential_id: 'cred_github_1',
 			name: 'GitHub PAT',
 			type: CredentialType.BEARER_TOKEN,
-			api: { vendor: 'github.com', name: 'default', version: '1.0.0' },
+			api: { vendor: 'github', name: 'default', version: '1.0.0' },
 		}),
 	]);
 	resetApisStore([
@@ -577,7 +577,7 @@ describe('AgentsPage — flat agents surface', () => {
 				credential_id: 'cred_github_1',
 				name: 'GitHub PAT',
 				type: CredentialType.BEARER_TOKEN,
-				api: { vendor: 'github.com', name: 'default', version: '1.0.0' },
+				api: { vendor: 'github', name: 'default', version: '1.0.0' },
 			}),
 			// Interactive OAuth whose consent round-trip has not completed —
 			// the one not-usable case the credential state can prove.
@@ -1681,7 +1681,7 @@ describe('AgentsPage — flat agents surface', () => {
 								credential_id: 'cred_github_1',
 								name: 'GitHub PAT',
 								type: CredentialType.BEARER_TOKEN,
-								api: { vendor: 'github.com', name: 'default', version: '1.0.0' },
+								api: { vendor: 'github', name: 'default', version: '1.0.0' },
 							}),
 						],
 						has_more: true,
@@ -1766,7 +1766,7 @@ describe('AgentsPage — flat agents surface', () => {
 							credential_id: 'cred_github_1',
 							name: 'GitHub PAT',
 							type: CredentialType.BEARER_TOKEN,
-							api: { vendor: 'github.com', name: 'default', version: '1.0.0' },
+							api: { vendor: 'github', name: 'default', version: '1.0.0' },
 						}),
 					],
 					has_more: false,
@@ -2422,6 +2422,10 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 						.closest('[data-testid="api-tile"]') as HTMLElement,
 				).getByTestId('row-manage-access'),
 			);
+			// One quiet line; Details holds the explanation and the header.
+			const line = await screen.findByTestId('multi-account-line', {}, { timeout: 3000 });
+			expect(line).toHaveTextContent('1 of 2 credentials for Stripe · how calls pick one');
+			await user.click(within(line).getByRole('button', { name: /Details/ }));
 			expect(await screen.findByTestId('multi-account-note')).toHaveTextContent(
 				"This agent has 2 credentials for Stripe. A narrower one (for example, pinned to a version) is used automatically; otherwise each call must name one with the Jentic-Credential-Id header — copy this credential's ID or header below — or it is refused and lists the options. These rules apply only when this credential is the one chosen.",
 			);
@@ -2431,9 +2435,11 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 			expect(credentialId).toMatch(/^cred_stripe_[12]$/);
 			await user.click(within(idRow).getByRole('button', { name: 'Copy the credential ID' }));
 			expect(await navigator.clipboard.readText()).toBe(credentialId);
-			expect(
-				within(sidebar).getByText(`Jentic-Credential-Id: ${credentialId}`),
-			).toBeVisible();
+			await waitFor(() =>
+				expect(
+					within(sidebar).getByText(`Jentic-Credential-Id: ${credentialId}`),
+				).toBeVisible(),
+			);
 			await user.click(
 				within(sidebar).getByRole('button', {
 					name: 'Copy the Jentic-Credential-Id header',

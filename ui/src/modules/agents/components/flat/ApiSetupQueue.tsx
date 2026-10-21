@@ -53,6 +53,8 @@ import {
 	CreateCredentialFlow,
 	type CreatedCredentialInfo,
 	CredentialOptions,
+	useUnappliedChoices,
+	type UnappliedChoices,
 } from '@/shared/credentials/components';
 import {
 	presetForRules,
@@ -341,10 +343,13 @@ export function ApiSetupQueue({
 			? null
 			: chosenFromExisting(entry, choiceFor(entry), createdReach));
 
+	// ② By action's staged choices: settled (applied or discarded) before
+	// anything moves on, never dropped silently.
+	const unapplied = useUnappliedChoices();
 	/** Leave a typed-in draft only once it is confirmed away. */
 	const guardDraft = (then: () => void): void => {
 		if (creatingDirty) setDiscard({ then });
-		else then();
+		else unapplied.settle('before you leave this API', () => then());
 	};
 	const closeForm = (): void => {
 		setCreatingKey(null);
@@ -579,7 +584,7 @@ export function ApiSetupQueue({
 	};
 	// The form's own dialogs sit above the sheet; a typed draft is confirmed first.
 	const guardedClose = (): void => {
-		if (busy || discard) return;
+		if (busy || discard || unapplied.settling) return;
 		guardDraft(close);
 	};
 
@@ -632,7 +637,7 @@ export function ApiSetupQueue({
 				: 'Choose a credential first'
 			: reachUnknown
 				? 'Reading what this credential covers — the access wording depends on it'
-				: rules == null
+				: rules == null && unapplied.staged === 0
 					? 'Add at least one rule'
 					: null;
 		const blocked = reason != null;
@@ -649,9 +654,18 @@ export function ApiSetupQueue({
 				)}
 				onClick={(): void => {
 					if (blocked || working) return;
-					if (chosen && rules && draft.preset)
-						// Custom rules that are exactly a preset's are recorded as that preset.
-						void commit(current, chosen, rules, presetForRules(rules) ?? draft.preset);
+					unapplied.settle(`before adding ${current.api.label}`, (applied) => {
+						// Applying staged choices changes the rules this add saves.
+						const toSave = applied ? rulesForPreset(draft.preset, applied) : rules;
+						if (chosen && toSave && draft.preset)
+							// Custom rules that are exactly a preset's are recorded as that preset.
+							void commit(
+								current,
+								chosen,
+								toSave,
+								presetForRules(toSave) ?? draft.preset,
+							);
+					});
 				}}
 				data-testid="queue-add"
 			>
@@ -819,10 +833,14 @@ export function ApiSetupQueue({
 											onDraftChange={(patch): void =>
 												setDraft(current.key, patch)
 											}
-											rulesIncomplete={rules == null}
+											rulesIncomplete={
+												rules == null && unapplied.staged === 0
+											}
 											reach={reach}
 											reachUnknown={reachUnknown}
 											sectionRef={accessRef}
+											stagedRef={unapplied.stagedRef}
+											onStagedChange={unapplied.onStagedChange}
 											onLater={(): void => later(current)}
 											importJobId={importJobs[current.key]}
 										/>
@@ -883,6 +901,7 @@ export function ApiSetupQueue({
 				}}
 				onClose={(): void => setDiscard(null)}
 			/>
+			{unapplied.dialog}
 			{deviceDialog}
 		</SheetPrimitive>
 	);
@@ -1296,9 +1315,14 @@ function AccessSection({
 	reach,
 	reachUnknown,
 	sectionRef,
+	stagedRef,
+	onStagedChange,
 	importJobId,
 }: {
 	sectionRef: React.RefObject<HTMLDivElement | null>;
+	/** By action's staged choices, for the queue to settle before it moves on. */
+	stagedRef: React.MutableRefObject<UnappliedChoices | null>;
+	onStagedChange: (count: number) => void;
 	/** The catalog import the new credential queued on save, if any. */
 	importJobId?: string;
 	entry: QueueEntry;
@@ -1365,6 +1389,8 @@ function AccessSection({
 							</span>
 						}
 						tester
+						stagedRef={stagedRef}
+						onStagedChange={onStagedChange}
 						testIdPrefix="queue-access"
 						extraTools={
 							!entry.bound ? (

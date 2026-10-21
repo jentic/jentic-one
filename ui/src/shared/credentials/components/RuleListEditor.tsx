@@ -29,6 +29,8 @@ import { EffectBadge } from '@/shared/credentials/components/EffectBadge';
 import { ActionList } from '@/shared/credentials/components/ActionList';
 import {
 	actionCount,
+	catalogComplete,
+	catalogOperations,
 	describeActions,
 	type ActionCatalog,
 } from '@/shared/credentials/lib/actionRules';
@@ -102,6 +104,9 @@ export function RuleListEditor({
 	hideAdd = false,
 	actionCatalog,
 	indexOffset = 0,
+	addLabel = 'Add rule',
+	addFirst = false,
+	decided,
 	className,
 }: {
 	rules: readonly PermissionRule[];
@@ -141,6 +146,13 @@ export function RuleListEditor({
 	 * number is its position in the whole saved list, as the dry run cites it.
 	 */
 	indexOffset?: number;
+	/** The add verb's label (e.g. "Add path rule"). */
+	addLabel?: string;
+	/** Put the add verb (and its form, when open) above the rows, not below. */
+	addFirst?: boolean;
+	/** Operation ids already decided before these rules (By action's choices):
+	 * a row whose every match is one of them decides nothing, and says so. */
+	decided?: ReadonlySet<string>;
 	className?: string;
 }) {
 	const [editingIndex, setEditingIndex] = useState<number | null>(null);
@@ -192,16 +204,31 @@ export function RuleListEditor({
 				data-rule-add=""
 			>
 				<Plus className="h-4 w-4" aria-hidden="true" />
-				Add rule
+				{addLabel}
 			</Button>
 			{addActions}
 		</div>
 	);
 	const isEmpty = rules.length === 0;
 	const defaultEmpty = isEmpty && emptyStateContent == null;
+	const addArea = adding ? (
+		<RuleForm
+			commitLabel="Add"
+			onCommit={(rule): void => {
+				onChange([...rules, rule]);
+				closeAdd();
+			}}
+			onCancel={closeAdd}
+			pathSuggestions={pathSuggestions}
+			actionCatalog={actionCatalog}
+		/>
+	) : (
+		!defaultEmpty && actionRow
+	);
 
 	return (
 		<div ref={rootRef} className={cn('edged-controls space-y-2', className)}>
+			{addFirst && addArea}
 			{isEmpty ? (
 				defaultEmpty ? (
 					!adding && <EmptyRulesPanel actions={actionRow} />
@@ -233,6 +260,7 @@ export function RuleListEditor({
 									opTemplates={opTemplates}
 									opsLoaded={opsLoaded}
 									actionCatalog={actionCatalog}
+									decided={decided}
 									locked={formOpen}
 									onEdit={(): void => setEditingIndex(i)}
 									onDelete={(): void => onChange(rules.filter((_, j) => j !== i))}
@@ -252,20 +280,7 @@ export function RuleListEditor({
 					))}
 				</ol>
 			)}
-			{adding ? (
-				<RuleForm
-					commitLabel="Add"
-					onCommit={(rule): void => {
-						onChange([...rules, rule]);
-						closeAdd();
-					}}
-					onCancel={closeAdd}
-					pathSuggestions={pathSuggestions}
-					actionCatalog={actionCatalog}
-				/>
-			) : (
-				!defaultEmpty && actionRow
-			)}
+			{!addFirst && addArea}
 		</div>
 	);
 }
@@ -356,6 +371,7 @@ function RulePreviewRow({
 	onDelete,
 	onMoveUp,
 	onMoveDown,
+	decided,
 }: {
 	index: number;
 	/** The row's place in the whole saved list (its displayed number). */
@@ -371,6 +387,7 @@ function RulePreviewRow({
 	onDelete?: () => void;
 	onMoveUp?: () => void;
 	onMoveDown?: () => void;
+	decided?: ReadonlySet<string>;
 }) {
 	const methodsLabel =
 		rule.methods && rule.methods.length > 0 ? rule.methods.join(', ') : 'any method';
@@ -383,23 +400,27 @@ function RulePreviewRow({
 	// conditions — method, path and operation ids together, as the broker ANDs
 	// them — so `GET /v1/boardColumns` on a path that only has POST and PUT, or
 	// a method + path added to an action rule that excludes its own actions, is
-	// caught. Without it, only the path can be judged.
-	const catalogOps =
-		actionCatalog?.status === 'ready' && actionCatalog.operations.length > 0
-			? actionCatalog.operations
-			: null;
+	// caught. Without it, only the path can be judged. A rule list shared by
+	// several APIs is judged against all of them: a rule that reaches an
+	// action on another API is not "touching nothing".
+	const catalogOps = useMemo(
+		() =>
+			actionCatalog && catalogComplete(actionCatalog)
+				? catalogOperations(actionCatalog)
+				: null,
+		[actionCatalog],
+	);
+	const hits = useMemo(
+		() =>
+			catalogOps?.filter((op) => evaluateTemplateOp([rule], op).matchingRule !== null) ?? [],
+		[catalogOps, rule],
+	);
 	const affectsNothing = Boolean(
 		!warningLabel &&
-		(catalogOps
-			? !catalogOps.some(
-					(op) =>
-						evaluateTemplateOp([rule], {
-							method: op.method,
-							path: op.path,
-							operation_id: op.operation_id,
-						}).matchingRule !== null,
-				)
+		(catalogOps && catalogOps.length > 0
+			? hits.length === 0
 			: opsLoaded &&
+				!actionCatalog?.elsewhere?.length &&
 				opTemplates &&
 				opTemplates.length > 0 &&
 				!opTemplates.some((tpl) => ruleAppliesToTemplate(rule, tpl))),
@@ -468,7 +489,13 @@ function RulePreviewRow({
 					</Tooltip>
 				)}
 				{affectsNothing && (
-					<Tooltip content="This rule doesn't match any of this API's operations — check its method, path and actions together: a call must match all of them.">
+					<Tooltip
+						content={
+							actionCatalog?.elsewhere?.length
+								? "This rule doesn't match any operation of the APIs these rules govern — check its method, path and actions together: a call must match all of them."
+								: "This rule doesn't match any of this API's operations — check its method, path and actions together: a call must match all of them."
+						}
+					>
 						<span
 							className="text-foreground-sub inline-flex items-center gap-1 font-mono text-[10px] uppercase"
 							role="status"
@@ -479,6 +506,22 @@ function RulePreviewRow({
 						</span>
 					</Tooltip>
 				)}
+				{/* Every call it matches is already decided by an action choice. */}
+				{!warningLabel &&
+					decided &&
+					hits.length > 0 &&
+					hits.every((op) => decided.has(op.operation_id)) && (
+						<Tooltip content="Every call this rule matches is already set by action, and action choices are checked first — so this rule decides nothing.">
+							<span
+								className="text-foreground-sub inline-flex items-center gap-1 font-mono text-[10px] uppercase"
+								role="status"
+								aria-label="Covered by action choices"
+							>
+								<AlertTriangle className="text-caution h-3 w-3 shrink-0" />
+								set by action
+							</span>
+						</Tooltip>
+					)}
 				{isRequested && (
 					<Badge variant="default" className="shrink-0">
 						requested by agent

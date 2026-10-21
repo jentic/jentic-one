@@ -10,6 +10,7 @@ import {
 	draftForRules,
 	draftRulesForPreset,
 	isActionRule,
+	actionRuleCount,
 	joinCustomRules,
 	presetForRules,
 	presetOptions,
@@ -124,11 +125,11 @@ describe('splitCustomRules / joinCustomRules — the two editors, one saved list
 		expect(isActionRule({ ...ACTION, operations: [] })).toBe(false);
 		expect(isActionRule(GET_REPOS)).toBe(false);
 
-		expect(splitCustomRules([GET_REPOS, ACTION])).toEqual({
+		expect(splitCustomRules([ACTION, GET_REPOS])).toEqual({
 			pathRules: [GET_REPOS],
 			actionRules: [ACTION],
 			groups: { allow: ['repos/get'], ask: [], deny: [] },
-			denyMovesAhead: false,
+			actionsMoveAhead: false,
 		});
 	});
 
@@ -143,21 +144,21 @@ describe('splitCustomRules / joinCustomRules — the two editors, one saved list
 
 	const ONLY_ALLOW = { allow: ['repos/get'], ask: [], deny: [] };
 
-	it('re-joins with the Allow action rule after the path rules, which keep their order', () => {
-		expect(joinCustomRules([GET_REPOS], ONLY_ALLOW)).toEqual([GET_REPOS, ACTION]);
+	it('re-joins with the action rule ahead of the path rules, which keep their order', () => {
+		expect(joinCustomRules([GET_REPOS], ONLY_ALLOW)).toEqual([ACTION, GET_REPOS]);
 		const rules = [GET_REPOS, ACTION, { effect: 'deny' as const, path: '/admin' }];
 		const { pathRules, groups } = splitCustomRules(rules);
 		expect(joinCustomRules(pathRules, groups)).toEqual([
+			ACTION,
 			GET_REPOS,
 			{ effect: 'deny', path: '/admin' },
-			ACTION,
 		]);
 	});
 
 	it('an action rule is never the "empty allow" that holds Custom incomplete', () => {
 		expect(rulesForPreset('custom', joinCustomRules([GET_REPOS], ONLY_ALLOW))).toEqual([
-			{ effect: 'allow', methods: ['GET'], path: '/repos' },
 			{ effect: 'allow', operations: ['repos/get'] },
+			{ effect: 'allow', methods: ['GET'], path: '/repos' },
 		]);
 		expect(
 			rulesForPreset('custom', joinCustomRules([{ effect: 'allow' }], ONLY_ALLOW)),
@@ -221,15 +222,15 @@ describe('By action — each action Allow, Ask, Deny or unset', () => {
 	const none = { allow: [], ask: [], deny: [] };
 	const DENY_ALL: PermissionRule = { effect: 'deny', path: '/admin', match_mode: 'prefix' };
 
-	it('saves Deny first, then the path rules, then Ask, then Allow', () => {
+	it('saves every action rule first — Deny, Ask, Allow — then the path rules in order', () => {
 		expect(
 			joinCustomRules([GET_REPOS, DENY_ALL], { allow: ['a', 'b'], ask: ['c'], deny: ['d'] }),
 		).toEqual([
 			{ effect: 'deny', methods: null, path: null, operations: ['d'] },
-			GET_REPOS,
-			DENY_ALL,
 			{ effect: 'require-approval', methods: null, path: null, operations: ['c'] },
 			{ effect: 'allow', methods: null, path: null, operations: ['a', 'b'] },
+			GET_REPOS,
+			DENY_ALL,
 		]);
 		expect(actionRule(['c'], 'require-approval').effect).toBe('require-approval');
 		expect(actionRule(['d'], 'deny').effect).toBe('deny');
@@ -259,14 +260,14 @@ describe('By action — each action Allow, Ask, Deny or unset', () => {
 	it('round-trips: split a saved list and join it back unchanged', () => {
 		const rules: PermissionRule[] = [
 			actionRule(['d'], 'deny'),
-			GET_REPOS,
 			actionRule(['c'], 'require-approval'),
 			actionRule(['a', 'b']),
+			GET_REPOS,
 		];
-		const { pathRules, groups, denyMovesAhead } = splitCustomRules(rules);
+		const { pathRules, groups, actionsMoveAhead } = splitCustomRules(rules);
 		expect(pathRules).toEqual([GET_REPOS]);
 		expect(groups).toEqual({ allow: ['a', 'b'], ask: ['c'], deny: ['d'] });
-		expect(denyMovesAhead).toBe(false);
+		expect(actionsMoveAhead).toBe(false);
 		expect(joinCustomRules(pathRules, groups)).toEqual(rules);
 	});
 
@@ -297,14 +298,64 @@ describe('By action — each action Allow, Ask, Deny or unset', () => {
 		).toEqual({ allow: [], ask: [], deny: ['b'] });
 	});
 
-	it('a Deny action rule AFTER the path rules loads as Deny, flagged: saving moves it ahead', () => {
-		const late = [GET_REPOS, actionRule(['x'], 'deny')];
-		const { groups, denyMovesAhead, pathRules } = splitCustomRules(late);
-		expect(groups.deny).toEqual(['x']);
-		expect(denyMovesAhead).toBe(true);
-		expect(joinCustomRules(pathRules, groups)).toEqual([actionRule(['x'], 'deny'), GET_REPOS]);
-		// With no path rule ahead of it, nothing moves.
-		expect(splitCustomRules([actionRule(['x'], 'deny'), GET_REPOS]).denyMovesAhead).toBe(false);
+	it('older rules with action rules AFTER the path rules load as they are, flagged', () => {
+		// The order saved before action choices always won: Deny ahead, Ask and Allow after.
+		const older = [
+			actionRule(['x'], 'deny'),
+			GET_REPOS,
+			actionRule(['y'], 'require-approval'),
+			actionRule(['z']),
+		];
+		const { groups, actionsMoveAhead, pathRules } = splitCustomRules(older);
+		expect(groups).toEqual({ allow: ['z'], ask: ['y'], deny: ['x'] });
+		expect(actionsMoveAhead).toBe(true);
+		// Saving moves every action choice ahead of the path rules.
+		expect(joinCustomRules(pathRules, groups)).toEqual([
+			actionRule(['x'], 'deny'),
+			actionRule(['y'], 'require-approval'),
+			actionRule(['z']),
+			GET_REPOS,
+		]);
+		// Already in the new order: nothing moves, no notice.
+		expect(splitCustomRules([actionRule(['x'], 'deny'), GET_REPOS]).actionsMoveAhead).toBe(
+			false,
+		);
+	});
+
+	it('an action Allow beats a path Deny, and an action Ask beats a path Allow', () => {
+		const rules = draftRulesForPreset(
+			'custom',
+			joinCustomRules(
+				[
+					{ effect: 'deny', path: '/admin', match_mode: 'prefix' },
+					{ effect: 'allow', path: '/repos', match_mode: 'prefix' },
+				],
+				{ allow: ['admin/stats'], ask: ['repos/delete'], deny: [] },
+			),
+		);
+		expect(
+			explainRules(rules, {
+				method: 'GET',
+				path: '/admin/stats',
+				operation_id: 'admin/stats',
+			}),
+		).toMatchObject({ allowed: true, effect: 'allow', ruleIndex: 1 });
+		expect(
+			explainRules(rules, {
+				method: 'DELETE',
+				path: '/repos/x',
+				operation_id: 'repos/delete',
+			}),
+		).toMatchObject({ allowed: false, effect: 'require-approval', ruleIndex: 0 });
+		// Everything not set by action falls to the path rules.
+		expect(
+			explainRules(rules, {
+				method: 'GET',
+				path: '/admin/users',
+				operation_id: 'admin/users',
+			}),
+		).toMatchObject({ effect: 'deny', ruleIndex: 2 });
+		expect(actionRuleCount({ allow: ['a'], ask: ['b'], deny: [] })).toBe(2);
 	});
 
 	it('a deny that also names a method or path stays with the path rules', () => {

@@ -129,6 +129,7 @@ import {
 } from '@/modules/agents/lib/apiRowActivity';
 import { isBlockedStatus, deriveTileStatus } from '@/modules/agents/lib/tileStatus';
 import { ApiAccessSidebar } from '@/modules/agents/components/flat/ApiAccessSidebar';
+import { siblingTiles } from '@/modules/agents/lib/sharedRules';
 import { AgentNameText } from '@/modules/agents/components/AgentNameText';
 import { PendingApprovalBanner } from '@/modules/agents/components/flat/PendingApprovalBanner';
 import { ApprovalGrantNote } from '@/modules/agents/components/ApprovalGrantNote';
@@ -1111,13 +1112,8 @@ function SelectedAgentPanel({
 		}
 	}, [openTileKey, bindings, tiles, onCloseTile]);
 	// Blast radius: the OTHER tiles this credential's binding fans out to.
-	const siblingApiTitles = useMemo(
-		() =>
-			openTile
-				? tiles
-						.filter((t) => t.bindingId === openTile.bindingId && t.key !== openTile.key)
-						.map((t) => t.title)
-				: [],
+	const openSiblingTiles = useMemo(
+		() => (openTile ? siblingTiles(openTile, tiles) : []),
 		[openTile, tiles],
 	);
 
@@ -1733,7 +1729,8 @@ function SelectedAgentPanel({
 			<ApiAccessSidebar
 				agent={agent}
 				tile={openTile}
-				siblingApiTitles={siblingApiTitles}
+				siblingTiles={openSiblingTiles}
+				onOpenTile={openSheetFor}
 				accountCount={openTile ? (multiAccount.get(tileApiKey(openTile))?.count ?? 1) : 1}
 				open={openTileKey != null}
 				onClose={() => {

@@ -50,6 +50,9 @@ export interface ApiTileModel {
 	awaitingConsent: boolean;
 	/** The registry has an upstream spec update this API hasn't adopted. */
 	updateAvailable: boolean;
+	/** The binding's served reference — the credential's own scope. Its
+	 * wildcards say how far the binding's rules reach (see `apiScopeReach`). */
+	scope: ServedApiEntity;
 }
 
 /** Human labels for the credential auth types shown on a tile. */
@@ -195,6 +198,7 @@ export function composeApiTiles(
 			awaitingConsent: credentialAwaitsConsent(credential),
 			authLabel: credential ? (AUTH_TILE_LABEL[credential.type] ?? null) : null,
 			authType: credential?.type ?? null,
+			scope: served,
 		};
 
 		if (api == null) {

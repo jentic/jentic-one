@@ -45,6 +45,7 @@ function makeTile(over: Partial<ApiTileModel> = {}): ApiTileModel {
 		suspendedReason: null,
 		awaitingConsent: false,
 		updateAvailable: false,
+		scope: { vendor: 'slack.com', name: 'default', version: '1.0.0' },
 		...over,
 	};
 }

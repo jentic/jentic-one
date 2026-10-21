@@ -288,8 +288,12 @@ for (const theme of THEMES) {
 				.first()
 				.click();
 			await expect(page.getByTestId('sheet-primitive')).toBeVisible();
-			await page.getByRole('button', { name: 'Add rule' }).first().click();
+			await page.getByRole('button', { name: /Edit access/ }).click();
+			await page.getByRole('radio', { name: /^Custom rules/ }).click();
+			await page.getByRole('button', { name: 'By path' }).click();
+			await page.getByRole('button', { name: 'Add path rule' }).first().click();
 			await capture(page, theme, 'agents-rule-editor');
+			await page.getByRole('button', { name: 'Cancel' }).click();
 			await page.getByRole('button', { name: 'Edit credential' }).click();
 			await expect(
 				page.getByRole('heading', { name: /Edit credential/i }).first(),

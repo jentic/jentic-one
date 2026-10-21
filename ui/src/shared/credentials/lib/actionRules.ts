@@ -9,8 +9,6 @@
  * Display only: nothing here decides what a rule matches.
  */
 import type { VendorOperation } from '@/shared/credentials/api/vendors-client';
-import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
-import { classifyOpCoverage, evaluateTemplateOp } from '@/shared/credentials/lib/template-matcher';
 
 /**
  * The API's operation list as far as it is known.
@@ -23,6 +21,22 @@ import { classifyOpCoverage, evaluateTemplateOp } from '@/shared/credentials/lib
 export interface ActionCatalog {
 	status: 'loading' | 'ready' | 'unavailable';
 	operations: readonly VendorOperation[];
+	/**
+	 * The other APIs the same rule list governs. Rules belong to the binding
+	 * (agent × credential), and a credential that reaches several APIs shares
+	 * one list across them, so an id absent here may name an action there.
+	 */
+	elsewhere?: readonly SiblingActionCatalog[];
+}
+
+/** Another API's operation list, for naming ids that belong to it. */
+export interface SiblingActionCatalog {
+	/** Stable key for the API (the host's tile key). */
+	key: string;
+	/** How the API reads to a person ("Archive"). */
+	title: string;
+	status: ActionCatalog['status'];
+	operations: readonly VendorOperation[];
 }
 
 /** One operation id of a rule, resolved as far as the catalog allows. */
@@ -32,8 +46,12 @@ export type ActionEntry =
 			id: string;
 			method: string;
 			path: string;
-			/** The operation's summary (`name`), when the spec gives one. */
+			/** What it does in plain English (see {@link operationText}). */
 			summary: string | null;
+			/** `summary` was described from the method and path, not by the API. */
+			generated?: boolean;
+			/** The other API the action belongs to; absent for this API's own. */
+			api?: { key: string; title: string };
 	  }
 	/** The list is complete and this id isn't in it: the API changed under the rule. */
 	| { kind: 'missing'; id: string }
@@ -53,30 +71,62 @@ export interface ActionsDescription {
 
 const ENTRY_ORDER: Record<ActionEntry['kind'], number> = { found: 0, missing: 1, unresolved: 2 };
 
-/** Resolve a rule's operation ids against the API's operation list. */
+/** Every list the catalog can read is complete — only then is an id provably gone. */
+export function catalogComplete(catalog: ActionCatalog): boolean {
+	return (
+		catalog.status === 'ready' && (catalog.elsewhere ?? []).every((s) => s.status === 'ready')
+	);
+}
+
+/** Every operation the catalog knows: this API's, then each other API's. */
+export function catalogOperations(catalog: ActionCatalog): readonly VendorOperation[] {
+	return [...catalog.operations, ...(catalog.elsewhere ?? []).flatMap((s) => s.operations)];
+}
+
+/**
+ * Resolve a rule's operation ids against the API's operation list, then
+ * against the other APIs the rule list governs. An id is `missing` only when
+ * every list is complete and none has it.
+ */
 export function describeActions(
 	operationIds: readonly string[],
 	catalog: ActionCatalog,
 ): ActionsDescription {
 	const byId = new Map(catalog.operations.map((op) => [op.operation_id, op]));
+	const elsewhere = catalog.elsewhere ?? [];
+	const siblingById = elsewhere.map((s) => ({
+		s,
+		byId: new Map(s.operations.map((op) => [op.operation_id, op])),
+	}));
+	const complete = catalogComplete(catalog);
 	const ids = [...new Set(operationIds)];
 	const entries: ActionEntry[] = ids.map((id) => {
-		const op = byId.get(id);
+		const own = byId.get(id);
+		const sib = own ? undefined : siblingById.find(({ byId: m }) => m.has(id));
+		const op = own ?? sib?.byId.get(id);
 		if (op) {
+			const plain = operationText(op);
 			return {
 				kind: 'found',
 				id,
 				method: op.method.toUpperCase(),
 				path: op.path,
-				summary: op.name?.trim() || null,
+				summary: plain.text,
+				...(plain.generated && { generated: true }),
+				...(sib && { api: { key: sib.s.key, title: sib.s.title } }),
 			};
 		}
-		return catalog.status === 'ready' ? { kind: 'missing', id } : { kind: 'unresolved', id };
+		return complete ? { kind: 'missing', id } : { kind: 'unresolved', id };
 	});
 	entries.sort((a, b) => {
 		const byKind = ENTRY_ORDER[a.kind] - ENTRY_ORDER[b.kind];
 		if (byKind !== 0) return byKind;
 		if (a.kind === 'found' && b.kind === 'found') {
+			// This API's own actions first, then each other API's.
+			const byApi =
+				(a.api ? 1 : 0) - (b.api ? 1 : 0) ||
+				(a.api?.title ?? '').localeCompare(b.api?.title ?? '');
+			if (byApi !== 0) return byApi;
 			return a.path.localeCompare(b.path) || a.method.localeCompare(b.method);
 		}
 		return 0;
@@ -84,13 +134,29 @@ export function describeActions(
 	const tally = (kind: ActionEntry['kind']): number =>
 		entries.filter((e) => e.kind === kind).length;
 	return {
-		status: catalog.status,
+		status: complete
+			? 'ready'
+			: [catalog, ...elsewhere].some((c) => c.status === 'loading')
+				? 'loading'
+				: 'unavailable',
 		count: ids.length,
 		entries,
 		found: tally('found'),
 		missing: tally('missing'),
 		unresolved: tally('unresolved'),
 	};
+}
+
+/**
+ * Whose a resolved id is, from this API's panel: its own, another API's that
+ * the same list governs, or gone from every list. Once this API's own list is
+ * whole, an id it lacks that no other list names yet (one still loading, or
+ * unreadable) can only be another API's.
+ */
+export function actionOwner(entry: ActionEntry, catalog: ActionCatalog): 'own' | 'other' | 'gone' {
+	if (entry.kind === 'found') return entry.api ? 'other' : 'own';
+	if (entry.kind === 'unresolved') return catalog.status === 'ready' ? 'other' : 'own';
+	return 'gone';
 }
 
 /** "1 action" / "5 actions". */
@@ -112,10 +178,12 @@ export function actionsSummary(description: ActionsDescription): string {
 /** One action as a line of text: `GET /v1/boardColumns · List board columns`. */
 export function actionLine(entry: ActionEntry): string {
 	switch (entry.kind) {
-		case 'found':
-			return entry.summary
+		case 'found': {
+			const line = entry.summary
 				? `${entry.method} ${entry.path} · ${entry.summary}`
 				: `${entry.method} ${entry.path}`;
+			return entry.api ? `${line} — on ${entry.api.title}` : line;
+		}
 		case 'missing':
 			return 'An action not in this version of the API';
 		default:
@@ -157,40 +225,217 @@ export function actionTooltipLines(description: ActionsDescription, limit = 5): 
 }
 
 /**
- * How many of these actions an earlier path rule already decides — for the
- * By action list's warnings:
- *
- * - `'allow'`: a path rule allows the call (wholly, or for some of its paths),
- *   so an Ask action runs without asking.
- * - `'deny'`: a path deny can match the call first, so an Allow or Ask action
- *   is blocked there.
- *
- * Only actions the catalog can name are judged; the rest can't be.
+ * The chosen actions that belong to OTHER APIs the rule list governs, per API
+ * and effect — what the By action list can't show (it lists this API's
+ * actions only) but must keep exactly as they are on save.
  */
-export function actionsDecidedByPathRules(
-	ids: readonly string[],
-	pathRules: readonly PermissionRule[],
+export interface SiblingActions {
+	key: string;
+	title: string;
+	allow: number;
+	ask: number;
+	deny: number;
+}
+
+export function siblingActions(
+	groups: { allow: readonly string[]; ask: readonly string[]; deny: readonly string[] },
 	catalog: ActionCatalog,
-	decidedAs: 'allow' | 'deny',
-): number {
-	if (ids.length === 0 || pathRules.length === 0) return 0;
-	const byId = new Map(catalog.operations.map((op) => [op.operation_id, op]));
-	let count = 0;
-	for (const id of new Set(ids)) {
-		const op = byId.get(id);
-		if (!op) continue;
-		const target = { method: op.method, path: op.path, operation_id: op.operation_id };
-		if (decidedAs === 'deny') {
-			if (evaluateTemplateOp(pathRules, target).matchingRule?.effect === 'deny') count += 1;
-			continue;
-		}
-		const coverage = classifyOpCoverage(pathRules, target);
-		if (
-			coverage.verdict === 'allow' ||
-			(coverage.verdict === 'partial' && coverage.allowedSamples.length > 0)
-		) {
-			count += 1;
-		}
+): SiblingActions[] {
+	const own = new Set(catalog.operations.map((op) => op.operation_id));
+	const out: SiblingActions[] = [];
+	for (const s of catalog.elsewhere ?? []) {
+		const theirs = new Set(s.operations.map((op) => op.operation_id));
+		const count = (ids: readonly string[]): number =>
+			new Set(ids.filter((id) => !own.has(id) && theirs.has(id))).size;
+		const row = {
+			key: s.key,
+			title: s.title,
+			allow: count(groups.allow),
+			ask: count(groups.ask),
+			deny: count(groups.deny),
+		};
+		if (row.allow + row.ask + row.deny > 0) out.push(row);
 	}
-	return count;
+	return out;
+}
+
+/** "Archive, Top Stories and Search". */
+export function joinAnd(parts: readonly string[]): string {
+	if (parts.length <= 1) return parts.join('');
+	return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+}
+
+/** "Also allows 1 action and asks before 2 on Archive". */
+export function siblingActionsLine(row: SiblingActions): string {
+	const parts = [
+		row.allow > 0 && `allows ${actionCount(row.allow)}`,
+		row.ask > 0 && `asks before ${actionCount(row.ask)}`,
+		row.deny > 0 && `denies ${actionCount(row.deny)}`,
+	].filter(Boolean) as string[];
+	return `Also ${joinAnd(parts)} on ${row.title}`;
+}
+
+/** Acronyms kept uppercase when a path segment is humanised. */
+const ACRONYMS = new Set([
+	'api',
+	'b2b',
+	'csv',
+	'dns',
+	'fcm',
+	'hlr',
+	'http',
+	'id',
+	'ids',
+	'ip',
+	'json',
+	'mfa',
+	'otp',
+	'pdf',
+	'seo',
+	'sms',
+	'ssl',
+	'url',
+	'uuid',
+]);
+
+/** Letters whose spoken name starts with a vowel sound ("an FCM", "an HLR"). */
+const VOWEL_LETTER_NAMES = new Set(['a', 'e', 'f', 'h', 'i', 'l', 'm', 'n', 'o', 'r', 's', 'x']);
+
+/** A path segment as words: camelCase, kebab-, snake_ and dot.case split. */
+function words(segment: string): string[] {
+	return segment
+		.replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+		.split(/[\s\-_.]+/)
+		.filter(Boolean)
+		.map((w) => w.toLowerCase());
+}
+
+function singular(word: string): string {
+	if (ACRONYMS.has(word)) return word === 'ids' ? 'id' : word;
+	if (/ies$/.test(word)) return word.replace(/ies$/, 'y');
+	if (/(ss|us|is)$/.test(word)) return word;
+	if (/(xes|ches|shes|sses)$/.test(word)) return word.replace(/es$/, '');
+	return word.replace(/s$/, '');
+}
+
+function phrase(ws: readonly string[]): string {
+	return ws.map((w) => (ACRONYMS.has(w) ? w.toUpperCase() : w)).join(' ');
+}
+
+function article(ws: readonly string[]): string {
+	const first = ws[0] ?? '';
+	if (ACRONYMS.has(first)) return VOWEL_LETTER_NAMES.has(first[0]) ? 'an' : 'a';
+	return /^[aeiou]/.test(first) ? 'an' : 'a';
+}
+
+/** Path segments that are themselves the operation's verb. */
+const PATH_VERBS = new Set([
+	'activate',
+	'approve',
+	'cancel',
+	'complete',
+	'deactivate',
+	'export',
+	'import',
+	'publish',
+	'read',
+	'refresh',
+	'register',
+	'resubmit',
+	'retry',
+	'search',
+	'send',
+	'sync',
+	'validate',
+	'verify',
+]);
+
+const isParam = (segment: string): boolean => /^\{.*\}$/.test(segment) || segment.startsWith(':');
+/** Version and mount segments that name no resource. */
+const isNoise = (segment: string): boolean => /^v\d+(\.\d+)*$/i.test(segment) || segment === 'api';
+
+/**
+ * A plain-English phrase for an operation the spec doesn't describe, built
+ * only from its method and path: GET a collection → "List board columns", GET
+ * one item → "Get a board column", POST → "Create a board column", PUT/PATCH →
+ * "Update a custom event", DELETE → "Delete an FCM device token". The last
+ * resource segment names it (singular after a `{param}`, or for one-item
+ * verbs); a trailing `…Id` segment reads "… by external ID".
+ */
+export function describeFromMethodAndPath(method: string, path: string): string {
+	const m = method.toUpperCase();
+	const segs = path.split('/').filter((s) => s && !isNoise(s));
+	const last = segs.length - 1;
+	let i = last;
+	while (i >= 0 && isParam(segs[i])) i -= 1;
+	if (i < 0) return `${m.charAt(0)}${m.slice(1).toLowerCase()} the root resource`;
+	const endsWithParam = i < last;
+	let noun = words(segs[i]);
+	let suffix = '';
+	// `/customEvents/externalId/{externalId}` is a custom event, found by its external id.
+	const prev = segs
+		.slice(0, i)
+		.filter((s) => !isParam(s))
+		.pop();
+	// `/promotions/{id}/activate`, `/instagram/verifyAccount`: the path names
+	// the verb itself.
+	const head = noun[0] ?? '';
+	if (PATH_VERBS.has(head)) {
+		const rest = noun.slice(1);
+		const owner = prev ? words(prev).map(singular) : [];
+		const object = rest.length > 0 ? rest : owner;
+		const lead = `${head.charAt(0).toUpperCase()}${head.slice(1)}`;
+		return object.length > 0 ? `${lead} ${article(object)} ${phrase(object)}` : lead;
+	}
+	if (prev && /id$/i.test(segs[i]) && endsWithParam) {
+		suffix = ` by ${phrase(noun)}`;
+		noun = words(prev);
+	} else if (prev && !endsWithParam && !/s$/.test(noun[noun.length - 1] ?? '') && m === 'GET') {
+		// `/notifications/count` reads as the notifications' count.
+		noun = [...words(prev).map(singular), ...noun];
+	}
+	// `/listings/{id}/images`: a part of one listing, named with it.
+	if (prev && i > 0 && isParam(segs[i - 1])) noun = [...words(prev).map(singular), ...noun];
+	const verb =
+		m === 'GET'
+			? endsWithParam || !/s$/.test(noun[noun.length - 1] ?? '')
+				? 'Get'
+				: 'List'
+			: m === 'POST'
+				? 'Create'
+				: m === 'PUT' || m === 'PATCH'
+					? 'Update'
+					: m === 'DELETE'
+						? 'Delete'
+						: `${m.charAt(0)}${m.slice(1).toLowerCase()}`;
+	if (verb === 'List') return `List ${phrase(noun)}${suffix}`;
+	const one = [...noun.slice(0, -1), singular(noun[noun.length - 1] ?? '')];
+	return `${verb} ${article(one)} ${phrase(one)}${suffix}`;
+}
+
+/** The first sentence of a description, trimmed to one readable line. */
+function firstSentence(text: string): string | null {
+	const flat = text.replace(/\s+/g, ' ').trim();
+	if (!flat) return null;
+	const end = flat.search(/[.!?](\s|$)/);
+	const sentence = (end === -1 ? flat : flat.slice(0, end)).trim();
+	return sentence.length > 0 && sentence.length <= 140 ? sentence : null;
+}
+
+/**
+ * What an operation does, in plain English: the spec's summary, else the
+ * first sentence of its description, else a phrase described from its method
+ * and path (`generated`, so hosts can style it apart from the API's own words).
+ */
+export function operationText(op: {
+	method: string;
+	path: string;
+	name?: string | null;
+	description?: string | null;
+}): { text: string; generated: boolean } {
+	const summary = op.name?.trim();
+	if (summary) return { text: summary, generated: false };
+	const described = op.description ? firstSentence(op.description) : null;
+	if (described) return { text: described, generated: false };
+	return { text: describeFromMethodAndPath(op.method, op.path), generated: true };
 }

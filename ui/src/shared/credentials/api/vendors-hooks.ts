@@ -242,6 +242,51 @@ export function useVendorOperations(
 	});
 }
 
+/** One API's whole operation list, as {@link useVendorOperationsMany} reports it. */
+export interface VendorOperationsResult {
+	status: 'loading' | 'ready' | 'unavailable';
+	operations: VendorOperation[];
+}
+
+/**
+ * {@link useVendorOperations} for a list of APIs at once — the same cache
+ * slices, so a list another surface already read costs nothing. Results are in
+ * `apis` order. An API with no list (404 or a failed read) is `unavailable`.
+ */
+export function useVendorOperationsMany(
+	apis: ReadonlyArray<{ vendor: string; name: string | null; version: string | null }>,
+	opts: { enabled?: boolean } = {},
+): VendorOperationsResult[] {
+	const enabled = opts.enabled ?? true;
+	return useQueries({
+		queries: apis.map((api) => ({
+			queryKey: vendorOperationsKey(api),
+			queryFn: () =>
+				listAllVendorOperations(api.vendor, api.name as string, api.version as string),
+			enabled: enabled && !!api.name && !!api.version,
+			staleTime: 30_000,
+		})),
+		combine: combineOperations,
+	});
+}
+
+/** Module-level, so `useQueries` sees one `combine` and keeps its result stable. */
+function combineOperations(
+	results: ReadonlyArray<{
+		data?: VendorOperationsPage | null;
+		isError: boolean;
+		isFetched: boolean;
+	}>,
+): VendorOperationsResult[] {
+	return results.map((r): VendorOperationsResult => {
+		if (r.data) return { status: 'ready', operations: r.data.data };
+		if (r.isError || (r.isFetched && r.data === null)) {
+			return { status: 'unavailable', operations: [] };
+		}
+		return { status: 'loading', operations: [] };
+	});
+}
+
 export interface VendorOperationsLoad {
 	query: ReturnType<typeof useVendorOperations>;
 	/** Every operation read so far (the whole list once `complete`). */

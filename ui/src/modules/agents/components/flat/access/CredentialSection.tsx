@@ -6,8 +6,8 @@
  * rules. Editing stacks the shared edit sheet (secrets stay
  * write-only there).
  */
-import { Info, Pencil } from 'lucide-react';
-import { Button, CodeSnippet, CopyButton, Tooltip, UserText } from '@/shared/ui';
+import { Info, Layers, Pencil } from 'lucide-react';
+import { Button, CodeSnippet, CopyButton, DetailsLine, Tooltip, UserText } from '@/shared/ui';
 import { formatTimestamp, timeAgo } from '@/shared/lib/utils';
 import { SharedWithYouBadge } from '@/shared/credentials/components';
 import { credentialTypeIcon } from '@/shared/credentials/lib/authTypeIcons';
@@ -30,8 +30,9 @@ export interface CredentialSectionProps {
 	onEdit: () => void;
 	/** How many of the agent's bindings serve this API. */
 	accountCount: number;
-	/** The other APIs these rules govern, by title. */
-	siblingApiTitles: string[];
+	/** The agent's other API rows these rules govern today, as a phrase; null
+	 * when only this one. */
+	otherApisPhrase: string | null;
 }
 
 export function CredentialSection({
@@ -42,7 +43,7 @@ export function CredentialSection({
 	canEdit,
 	onEdit,
 	accountCount,
-	siblingApiTitles,
+	otherApisPhrase,
 }: CredentialSectionProps) {
 	const AuthIcon = tile.authType ? credentialTypeIcon(tile.authType) : null;
 	// The credential's last update when one happened, else its creation.
@@ -105,31 +106,36 @@ export function CredentialSection({
 						toastMessage="Credential ID copied"
 					/>
 				</div>
+				{/* Several credentials for this API: one quiet line; Details holds
+				    how a call picks one and the header that names this credential. */}
 				{accountCount > 1 && (
-					<>
+					<DetailsLine
+						data-testid="multi-account-line"
+						icon={<Layers className="h-3.5 w-3.5" />}
+						summary={`1 of ${accountCount} credentials for ${tile.title} · how calls pick one`}
+					>
 						<MultiCredentialNote apiTitle={tile.title} count={accountCount} />
 						<CodeSnippet
 							label="Header that picks this credential"
 							code={credentialIdHeader(tile.credentialId)}
 							copyAriaLabel="Copy the Jentic-Credential-Id header"
 						/>
-					</>
+					</DetailsLine>
 				)}
 			</section>
 
-			{/* Blast radius: rules are keyed by (credential, agent) — one
-			    credential can serve several APIs. */}
-			{siblingApiTitles.length > 0 && (
+			{/* Blast radius: rules are keyed by (credential, agent), so every API
+			    row the credential serves for this agent shares them. */}
+			{otherApisPhrase && (
 				<p
 					data-testid="blast-radius-note"
 					className="bg-surface-inset text-foreground-lighter flex items-start gap-2 rounded-lg px-3.5 py-2.5 text-xs leading-relaxed"
 				>
 					<Info className="text-caution mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
 					<span>
-						This credential also serves <strong>{siblingApiTitles.join(', ')}</strong>{' '}
-						for <AgentNameText name={agentName} />. The rules below are shared —
-						changing them changes access to{' '}
-						{siblingApiTitles.length === 1 ? 'that API' : 'those APIs'} too.
+						<AgentNameText name={agentName} /> also uses this credential for{' '}
+						<strong>{otherApisPhrase}</strong>, under these same rules. Changing them
+						here changes that access too.
 					</span>
 				</p>
 			)}

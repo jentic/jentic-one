@@ -1358,7 +1358,16 @@ describe('Agents page — zero agents', () => {
 		const { queryClient } = renderPage();
 		await landing();
 		// Registered with GitHub already bound (from another tab, say): the pick
-		// adds a second GitHub account rather than dead-ending.
+		// adds a second GitHub account rather than dead-ending. The binding serves
+		// its credential's own scope, as the backend returns it.
+		resetCredentialsStore([
+			makeMockCredential({
+				credential_id: 'cred_github_1',
+				name: 'GitHub PAT',
+				type: CredentialType.BEARER_TOKEN,
+				api: { vendor: 'github-com', name: '', version: '' },
+			}),
+		]);
 		const id = selfRegisterAgent('my-first-agent');
 		seedCredentialBindings([
 			{

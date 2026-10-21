@@ -980,12 +980,12 @@ describe('ApiSetupQueue — one pane per API: ① Credential, then ② Access', 
 				'Denied POST /v1/charges — no rule matched (default deny)',
 			);
 
-			// Custom: a rule written here answers before it is saved, by its row number.
+			// Custom: a rule written here answers before it is saved, by its path-rule number.
 			await user.click(within(step).getByRole('radio', { name: /Custom rules/ }));
 			await writeRule(user, step, 'POST');
 			await waitFor(() =>
 				expect(within(step).getByTestId('rule-verdict')).toHaveTextContent(
-					/^Allowed POST \/v1\/charges — matched rule #1/,
+					/^Allowed POST \/v1\/charges — matched path rule #1/,
 				),
 			);
 			// Nothing was bound, and the broker's dry run was never asked.
@@ -1537,6 +1537,80 @@ describe('ApiSetupQueue — ② reads the API’s actions for a catalog pick too
 		await waitFor(() => expect(byAction).toBeVisible());
 		expect(reads[0]).toBe('/apis/7shifts-com/7shifts-com/2.1.0/operations');
 		expect(within(step).queryByTestId('queue-access-actions-pending')).toBeNull();
+	});
+
+	it('By action: plain English on every row (generated when the spec has none), and Add settles staged choices', async () => {
+		resetApisStore([
+			makeMockApi({
+				vendor: '7shifts-com',
+				name: '7shifts-com',
+				version: '2.1.0',
+				catalogApiId: '7shifts.com',
+			}),
+		]);
+		// One operation the spec names, one it doesn't (adhook.io's common case).
+		serveOperations(() =>
+			HttpResponse.json({
+				data: [
+					OPS.data[0],
+					{
+						operation_id: 'newColumn',
+						method: 'POST',
+						path: '/v1/boardColumns',
+						name: null,
+					},
+				],
+				has_more: false,
+				next_cursor: null,
+			}),
+		);
+		const ruleCalls: unknown[] = [];
+		worker.use(
+			http.put('/credentials/:cid/agents/:aid/permissions', async ({ request }) => {
+				ruleCalls.push(await request.json());
+				return HttpResponse.json([]);
+			}),
+		);
+		const covering = [
+			makeCredential({
+				credential_id: 'cred_7s',
+				name: '7shifts key',
+				catalog_api_id: '7shifts.com',
+				api: { vendor: '7shifts-com', name: '7shifts-com', version: '' },
+			}),
+		];
+		const user = userEvent.setup();
+		renderWithProviders(
+			<QueueHarness
+				items={[makeItem('7shifts.com', 'choose', { api: CATALOG_PICK, covering })]}
+			/>,
+		);
+		const step = await openCustomRules(user);
+		await user.click(await within(step).findByRole('button', { name: 'By action' }));
+		const list = await within(step).findByRole('list', { name: 'Operations' });
+		expect(list).toHaveTextContent('List shifts');
+		const generated = within(list).getByText('Create a board column');
+		expect(generated).toHaveAttribute('data-generated', 'true');
+		expect(generated).toHaveClass('italic');
+		// The filter searches the plain-English text too, generated included.
+		await user.type(within(step).getByLabelText('Filter operations'), 'board column');
+		expect(within(list).getAllByRole('group', { name: /^Access for/ })).toHaveLength(1);
+		await user.clear(within(step).getByLabelText('Filter operations'));
+
+		// Stage one choice, then Add: asked to apply it first, never dropped.
+		await user.click(
+			within(
+				within(list).getByRole('group', { name: 'Access for POST /v1/boardColumns' }),
+			).getByRole('button', { name: 'Allow' }),
+		);
+		await user.click(addButton());
+		const guard = await screen.findByRole('dialog', { name: 'Apply 1 change by action?' });
+		expect(guard).toHaveTextContent('apply them before adding 7shifts');
+		await checkA11y(document.body, { modal: true });
+		expect(ruleCalls).toHaveLength(0);
+		await user.click(within(guard).getByRole('button', { name: 'Apply' }));
+		await waitFor(() => expect(ruleCalls).toHaveLength(1));
+		expect(ruleCalls[0]).toEqual([{ effect: 'allow', operations: ['newColumn'] }]);
 	});
 
 	it('a catalog pick imported on save reads the actions of the API its import registered', async () => {

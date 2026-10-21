@@ -94,6 +94,15 @@ export interface ActionGroups {
 	deny: string[];
 }
 
+/** Each id's access in a set of groups (Deny, then Ask, then Allow; an id in none is unset). */
+export function accessMap(groups: ActionGroups): Map<string, keyof ActionGroups> {
+	const map = new Map<string, keyof ActionGroups>();
+	for (const g of ['deny', 'ask', 'allow'] as const) {
+		for (const id of groups[g]) if (!map.has(id)) map.set(id, g);
+	}
+	return map;
+}
+
 const GROUP_OF: Record<ActionEffect, keyof ActionGroups> = {
 	allow: 'allow',
 	'require-approval': 'ask',
@@ -108,27 +117,27 @@ const GROUP_OF: Record<ActionEffect, keyof ActionGroups> = {
  * actions to Allow, several rules of one effect merge, and an id in more than
  * one action rule takes the effect of the earliest (first match wins).
  *
- * `denyMovesAhead` flags a Deny action rule found AFTER a path rule (only
- * possible from manual edits or the API): it loads as Deny, but saving moves it
- * ahead of the path rules, where it blocks those actions even when a path rule
- * allows them — a change of meaning the editor tells the operator about.
+ * `actionsMoveAhead` flags an action rule found AFTER a path rule (an older
+ * saved order, or a manual edit): it loads as it is, but saving moves every
+ * action rule ahead of the path rules — a choice on a specific action always
+ * wins — which can change what those actions resolve to, so the editor says so.
  */
 export function splitCustomRules(rules: readonly PermissionRule[]): {
 	pathRules: PermissionRule[];
 	actionRules: PermissionRule[];
 	groups: ActionGroups;
-	denyMovesAhead: boolean;
+	actionsMoveAhead: boolean;
 } {
 	const seen = new Set<string>();
 	const groups: ActionGroups = { allow: [], ask: [], deny: [] };
 	let pathSeen = false;
-	let denyMovesAhead = false;
+	let actionsMoveAhead = false;
 	for (const r of rules) {
 		if (!isActionRule(r)) {
 			pathSeen = true;
 			continue;
 		}
-		if (r.effect === 'deny' && pathSeen) denyMovesAhead = true;
+		if (pathSeen) actionsMoveAhead = true;
 		for (const id of r.operations ?? []) {
 			if (seen.has(id)) continue;
 			seen.add(id);
@@ -139,20 +148,20 @@ export function splitCustomRules(rules: readonly PermissionRule[]): {
 		pathRules: rules.filter((r) => !isActionRule(r)),
 		actionRules: rules.filter(isActionRule),
 		groups,
-		denyMovesAhead,
+		actionsMoveAhead,
 	};
 }
 
 /**
- * The By action choices as the rules they save, around the path rules:
+ * The By action choices as the rules they save, ahead of the path rules:
  *
- *   Deny action rule → the path rules → Ask action rule → Allow action rule
+ *   Deny action rule → Ask action rule → Allow action rule → the path rules
  *
- * Deny goes first so denying an action blocks it even where a path rule allows
- * it. Ask and Allow go after, so the path rules keep deciding first (and the
- * dry run's numbers stay put); Ask before Allow is a safeguard — the sets are
- * disjoint. An effect with no actions saves no rule, and an id is kept in one
- * set only (Deny, then Ask, then Allow).
+ * A choice on a specific action always wins; the path rules, in the operator's
+ * order, cover everything not set by action. An id is in one set only (Deny,
+ * then Ask, then Allow), so the three action rules never overlap and their
+ * order among themselves is only for stability. An effect with no actions
+ * saves no rule.
  */
 export function joinCustomRules(
 	pathRules: readonly PermissionRule[],
@@ -166,10 +175,15 @@ export function joinCustomRules(
 	const allow = pick(groups.allow);
 	return [
 		...(deny.length ? [actionRule(deny, 'deny')] : []),
-		...pathRules,
 		...(ask.length ? [actionRule(ask, 'require-approval')] : []),
 		...(allow.length ? [actionRule(allow, 'allow')] : []),
+		...pathRules,
 	];
+}
+
+/** How many action rules {@link joinCustomRules} puts ahead of the path rules. */
+export function actionRuleCount(groups: ActionGroups): number {
+	return (['deny', 'ask', 'allow'] as const).filter((g) => groups[g].length > 0).length;
 }
 
 /** The read-only preset: any path, GET only. */
@@ -208,8 +222,9 @@ function presetRules(preset: Exclude<RulesPreset, 'custom'>): PermissionRuleInpu
 
 const FIXED_PRESETS: readonly Exclude<RulesPreset, 'custom'>[] = ['read', 'read-ask', 'all'];
 
-/** A rule's conditions, normalised so a saved rule compares equal to a preset's. */
-function ruleKey(rule: PermissionRuleInput | PermissionRule): string {
+/** A rule's conditions, normalised so a saved rule compares equal to a preset's
+ * (order-insensitive within a rule). */
+export function ruleKey(rule: PermissionRuleInput | PermissionRule): string {
 	const r = cleanPermissionRule(rule as unknown as PermissionRuleInput);
 	const mode = r.match_mode ?? 'regex';
 	return JSON.stringify({

@@ -43,7 +43,7 @@ describe('useAllowedOperationCount', () => {
 		);
 		expect(result.current).toBeUndefined();
 		await waitFor(() =>
-			expect(result.current).toEqual({ allowed: 2, ask: 0, denied: 1, total: 3 }),
+			expect(result.current).toEqual({ allowed: 2, ask: 0, denied: 1, notSet: 1, total: 3 }),
 		);
 	});
 
@@ -66,7 +66,7 @@ describe('useAllowedOperationCount', () => {
 			{ wrapper },
 		);
 		await waitFor(() =>
-			expect(result.current).toEqual({ allowed: 1, ask: 1, denied: 1, total: 3 }),
+			expect(result.current).toEqual({ allowed: 1, ask: 1, denied: 1, notSet: 1, total: 3 }),
 		);
 	});
 

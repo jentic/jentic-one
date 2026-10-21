@@ -346,7 +346,12 @@ describe('BindAgentDialog — what the agent may call', () => {
 				within(ops).getByRole('group', { name: 'Access for GET /v1/charges' }),
 			).getByRole('button', { name: 'Allow' }),
 		);
+		// The choice is staged: binding asks to apply it first.
 		await user.click(screen.getByTestId('bind-agent-confirm'));
+		const guard = await screen.findByRole('dialog', { name: 'Apply 1 change by action?' });
+		expect(guard).toHaveTextContent('apply them before binding');
+		expect(ruleCalls).toHaveLength(0);
+		await user.click(within(guard).getByRole('button', { name: 'Apply' }));
 		await waitFor(() => expect(ruleCalls).toHaveLength(1));
 		expect(ruleCalls[0].body).toEqual([{ effect: 'allow', operations: ['listCharges'] }]);
 		unmount();

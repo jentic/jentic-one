@@ -18,14 +18,20 @@
  * * fetch returned data → the grouped preview below.
  */
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
 import { Badge, Label, MethodBadge } from '@/shared/ui';
 import { EffectBadge, effectBadgeProps } from '@/shared/credentials/components/EffectBadge';
 import { useVendorOperations } from '@/shared/credentials/api/vendors-hooks';
 import type { VendorOperation } from '@/shared/credentials/api/vendors-client';
 import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
-import { classifyOpCoverage, type OpCoverage } from '@/shared/credentials/lib/template-matcher';
+import { operationText } from '@/shared/credentials/lib/actionRules';
+import { PlainText } from '@/shared/credentials/components/PlainText';
+import {
+	classifyOpCoverage,
+	evaluateTemplateOp,
+	type OpCoverage,
+} from '@/shared/credentials/lib/template-matcher';
 
 export interface OpsApiReference {
 	vendor: string;
@@ -103,6 +109,8 @@ export interface OperationCounts {
 	ask: number;
 	/** Never run. */
 	denied: number;
+	/** Of `denied`: matched by no rule at all — not set, so denied by default. */
+	notSet: number;
 	total: number;
 }
 
@@ -111,18 +119,21 @@ export function countOperations(
 	rules: readonly PermissionRule[],
 	items: readonly VendorOperation[],
 ): OperationCounts {
-	const counts: OperationCounts = { allowed: 0, ask: 0, denied: 0, total: items.length };
+	const counts: OperationCounts = {
+		allowed: 0,
+		ask: 0,
+		denied: 0,
+		notSet: 0,
+		total: items.length,
+	};
 	for (const op of items) {
-		const bucket = headerBucket(
-			classifyOpCoverage(rules, {
-				method: op.method,
-				path: op.path,
-				operation_id: op.operation_id,
-			}),
-		);
+		const bucket = headerBucket(classifyOpCoverage(rules, op));
 		if (bucket === 'allowed') counts.allowed += 1;
 		else if (bucket === 'approval') counts.ask += 1;
-		else counts.denied += 1;
+		else {
+			counts.denied += 1;
+			if (evaluateTemplateOp(rules, op).matchingRule === null) counts.notSet += 1;
+		}
 	}
 	return counts;
 }
@@ -154,12 +165,25 @@ export function useAllowedOperationCount(
 	}, [ready, unavailable, ops.data, rules]);
 }
 
-/** "3 allowed · 1 ask · 12 denied" — always all three, so an Ask is never folded into allowed. */
+/**
+ * "12 denied (4 chosen, 8 not set)" — denied outcomes, split when some are
+ * denied only because no rule matches them, so the number never reads as
+ * the count of Deny choices.
+ */
+export function deniedText(counts: Pick<OperationCounts, 'denied' | 'notSet'>): string {
+	const n = counts.denied.toLocaleString();
+	if (counts.notSet === 0 || counts.denied === 0) return `${n} denied`;
+	if (counts.notSet === counts.denied) return `${n} denied (not set)`;
+	return `${n} denied (${(counts.denied - counts.notSet).toLocaleString()} chosen, ${counts.notSet.toLocaleString()} not set)`;
+}
+
+/** "3 allowed · 1 ask · 12 denied (4 chosen, 8 not set)" — always all three, so
+ * an Ask is never folded into allowed. */
 export function operationCountsText(counts: OperationCounts): string {
 	return [
 		`${counts.allowed.toLocaleString()} allowed`,
 		`${counts.ask.toLocaleString()} ask`,
-		`${counts.denied.toLocaleString()} denied`,
+		deniedText(counts),
 	].join(' · ');
 }
 
@@ -167,6 +191,7 @@ export function OperationImpactPreview({
 	api,
 	rules,
 	label = 'What this credential lets an agent do',
+	showTotals = true,
 }: {
 	api: OpsApiReference | null;
 	rules: readonly PermissionRule[];
@@ -176,7 +201,9 @@ export function OperationImpactPreview({
 	 * uses "Effective access for this binding" instead of the
 	 * connect-flow's copy).
 	 */
-	label?: string;
+	label?: ReactNode;
+	/** The totals beside the label; off where a bar above already states them. */
+	showTotals?: boolean;
 }) {
 	const ops = useVendorOperations(api ?? undefined, { enabled: !!api });
 	const items = useMemo(() => ops.data?.data ?? [], [ops.data]);
@@ -231,25 +258,18 @@ export function OperationImpactPreview({
 		return out;
 	}, [items, rules]);
 
+	// Only where they're shown: a host with its own bar would pay a second
+	// pass over every operation for nothing.
 	const totals = useMemo(
-		() =>
-			groups.reduce(
-				(t, g) => ({
-					allowed: t.allowed + g.allowedCount,
-					ask: t.ask + g.approvalCount,
-					denied: t.denied + g.deniedCount,
-					total: t.total + g.ops.length,
-				}),
-				{ allowed: 0, ask: 0, denied: 0, total: 0 },
-			),
-		[groups],
+		() => (showTotals ? countOperations(rules, items) : null),
+		[showTotals, rules, items],
 	);
 
 	return (
 		<div className="space-y-2">
 			<div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
 				<Label>{label}</Label>
-				{groups.length > 0 && (
+				{totals && groups.length > 0 && (
 					<span
 						className="text-foreground-sub text-xs tabular-nums"
 						data-testid="op-impact-totals"
@@ -381,11 +401,7 @@ function OperationImpactLeafRow({ op, coverage }: { op: VendorOperation; coverag
 				<span className="text-foreground-name truncate font-mono text-[11px]">
 					{op.path}
 				</span>
-				{op.name && (
-					<span className="text-muted-foreground ml-auto truncate text-[10px]">
-						{op.name}
-					</span>
-				)}
+				<PlainText value={operationText(op)} className="ml-auto text-[10px]" />
 			</div>
 			{expanded && canExpand && (
 				<div className="mt-0.5 space-y-0.5 pl-6 font-mono text-[10px]">

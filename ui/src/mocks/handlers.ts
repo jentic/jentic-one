@@ -6,7 +6,11 @@ import {
 	installDevFleet,
 } from '@/modules/agents/mocks/handlers';
 import { discoverHandlers } from '@/modules/discover/mocks/handlers';
-import { workspaceHandlers } from '@/modules/workspace/mocks/handlers';
+import {
+	installDevAdhookApi,
+	installDevNytApis,
+	workspaceHandlers,
+} from '@/modules/workspace/mocks/handlers';
 import { credentialsHandlers, credentialsE2eHooks } from '@/shared/credentials/mocks/handlers';
 import { railEventsHandlers } from '@/shared/app/rail/mocks/handlers';
 import { monitorHandlers } from '@/modules/monitor/mocks/handlers';
@@ -261,6 +265,8 @@ export function installE2eTestHooks(target: Record<string, unknown>): void {
  * module-agnostic. The caller owns the env gate.
  */
 export function installDevSeed(): void {
+	installDevNytApis();
+	installDevAdhookApi();
 	installDevFleet();
 	// `localStorage.setItem('agents.devBigFleet', '1')`, then reload.
 	if (readLocalPreference('agents.devBigFleet') === '1') installDevBigFleet();

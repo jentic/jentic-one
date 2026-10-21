@@ -34,8 +34,10 @@ describe('describeActions', () => {
 		expect(d.entries.map(actionLine)).toEqual([
 			'GET /v1/boardColumns · List board columns',
 			'POST /v1/boardColumns · Create a column',
-			'GET /v1/tags',
+			// No summary in the spec: described from its method and path.
+			'GET /v1/tags · List tags',
 		]);
+		expect(d.entries[2]).toMatchObject({ generated: true });
 		expect(actionsNote(d)).toBeNull();
 	});
 

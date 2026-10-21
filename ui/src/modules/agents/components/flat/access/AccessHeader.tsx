@@ -1,9 +1,10 @@
 /**
  * Manage access header: the API, its status, host · auth type, the
  * not-serving / API-deleted state, Pause / Resume (the reversible cut-off,
- * `agents:write`), and close.
+ * `agents:write`), close — and, while an OAuth sign-in is unfinished, the way
+ * to finish it.
  */
-import { PauseCircle, PlayCircle, X } from 'lucide-react';
+import { ExternalLink, LogIn, PauseCircle, PlayCircle, X } from 'lucide-react';
 import {
 	Button,
 	SheetHeader,
@@ -13,6 +14,7 @@ import {
 	VendorIcon,
 } from '@/shared/ui';
 import { vendorIconPropsFor } from '@/shared/lib';
+import { credentialTypeIcon } from '@/shared/credentials/lib/authTypeIcons';
 import { TileStatusChip } from '@/modules/agents/components/flat/TileStatusMarker';
 import type { ApiTileModel } from '@/modules/agents/lib/apiTiles';
 import type { TileStatus } from '@/modules/agents/lib/tileStatus';
@@ -29,6 +31,10 @@ export interface AccessHeaderProps {
 	onPause: () => void;
 	onResume: () => void;
 	onClose: () => void;
+	/** Finish connecting offered (`credentials:write`). */
+	canConnect: boolean;
+	connecting: boolean;
+	onConnect: () => void;
 }
 
 export function AccessHeader({
@@ -42,12 +48,16 @@ export function AccessHeader({
 	onPause,
 	onResume,
 	onClose,
+	canConnect,
+	connecting,
+	onConnect,
 }: AccessHeaderProps) {
+	const AuthIcon = tile.authType ? credentialTypeIcon(tile.authType) : null;
 	return (
 		<SheetHeader className="justify-between">
 			<div className="flex min-w-0 items-start gap-3">
 				<VendorIcon {...vendorIconPropsFor(tile)} size="sm" />
-				<div className="min-w-0">
+				<div className="min-w-0 space-y-0.5">
 					<div className="flex min-w-0 items-center gap-2">
 						<h2
 							id={headingId}
@@ -59,20 +69,48 @@ export function AccessHeader({
 						<TileStatusChip status={status} className="shrink-0" />
 					</div>
 					<p className="text-muted-foreground truncate text-xs">
-						<UserText>
-							{tile.host}
-							{tile.authLabel ? ` · ${tile.authLabel}` : ''}
-						</UserText>{' '}
+						<UserText>{tile.host}</UserText>
+						{tile.authLabel && (
+							<>
+								{' · '}
+								{AuthIcon && (
+									<AuthIcon
+										aria-hidden="true"
+										className="mr-0.5 inline-block h-3 w-3 align-[-2px]"
+									/>
+								)}
+								{tile.authLabel}
+							</>
+						)}{' '}
 						— access for <UserText>{agentName}</UserText>
 						{tile.suspended ? ' · not serving calls' : ''}
 						{tile.suspended && tile.suspendedReason === 'api_deleted'
 							? ' because its API was deleted — review the rules before resuming'
 							: ''}
 					</p>
+					{tile.awaitingConsent && (
+						<div
+							data-testid="sidebar-connect-affordance"
+							className="flex flex-wrap items-center gap-x-3 gap-y-1.5 pt-1"
+						>
+							<p className="text-foreground flex items-center gap-1.5 text-xs">
+								<LogIn
+									className="text-warning h-3.5 w-3.5 shrink-0"
+									aria-hidden="true"
+								/>
+								Waiting for a sign-in at {tile.vendor}. Calls fail until it
+								completes.
+							</p>
+							{canConnect && (
+								<Button size="xs" loading={connecting} onClick={onConnect}>
+									<ExternalLink className="h-3.5 w-3.5" />
+									Finish connecting
+								</Button>
+							)}
+						</div>
+					)}
 				</div>
 			</div>
-			{/* Suspend/resume lives HERE, not in the danger zone: pausing is safe (rules
-			    survive, resume restores access), so it sits with the status line. */}
 			<div className="flex shrink-0 items-center gap-1.5">
 				{canPause &&
 					(tile.suspended ? (

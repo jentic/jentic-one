@@ -2,47 +2,68 @@
  * AccessRulesStep — "What can this agent call?": the access presets (Read only ·
  * Read only, ask before anything else · Full access · Custom rules), the coverage
  * caveat for a credential that reaches beyond one pinned API, and under Custom
- * rules a "By action" list (each action Allow, Ask or Off; saved as at most one
- * operation-id Ask rule and one Allow rule) and a "By path" rule editor. Every rule that will
- * be saved stays on screen. Below sit "Effective access" and an inline "Try a
- * request" dry run with the broker's semantics.
+ * rules two editors of one saved list:
+ *
+ * - By action: each action Allow, Ask or Deny (or unset). Choices are staged
+ *   until Apply turns them into at most one Deny, one Ask and one Allow rule.
+ * - By path: the whole list in evaluation order — the action rules first
+ *   (fixed: a choice on a specific action always wins), then the path rules,
+ *   which cover everything not set by action and can be reordered.
+ *
+ * Below sit "Effective access" (every call and its outcome) and an inline
+ * "Try a request" dry run with the broker's semantics.
  *
  * Controlled: the host owns the preset and the custom rules, and turns them
- * into the rules to save with `rulesForPreset`. The workspace bind dialog and
- * the Agents tab's Add-APIs queue both render it, so the choice reads the same
- * wherever a binding is made.
+ * into the rules to save with `rulesForPreset`. The workspace bind dialog, the
+ * Agents tab's Add-APIs queue and Manage access all render it, so the choice
+ * reads the same wherever a binding is made or changed.
  */
-import { useId, useMemo, useState, type ReactNode } from 'react';
 import {
-	AlertTriangle,
-	ChevronRight,
-	FlaskConical,
-	ListChecks,
-	Loader2,
-	ScanEye,
-	Trash2,
-} from 'lucide-react';
-import { Button, DetailsLine, ExpandReveal, RadioCardGroup, SegmentedToggle } from '@/shared/ui';
+	useEffect,
+	useId,
+	useMemo,
+	useRef,
+	useState,
+	type MutableRefObject,
+	type ReactNode,
+} from 'react';
+import { ChevronRight, FlaskConical, ListChecks, Loader2, ScanEye, Trash2 } from 'lucide-react';
+import {
+	Button,
+	DetailsLine,
+	ExpandReveal,
+	InlineAction,
+	RadioCardGroup,
+	SegmentedToggle,
+} from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import { useVendorOperationsProgress } from '@/shared/credentials/api/vendors-hooks';
 import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
 import { RuleListEditor } from '@/shared/credentials/components/RuleListEditor';
 import { ActionList } from '@/shared/credentials/components/ActionList';
-import { ActionChecklist } from '@/shared/credentials/components/ActionChecklist';
+import { ActionChecklist, changedChoices } from '@/shared/credentials/components/ActionChecklist';
+import {
+	UnappliedChoicesDialog,
+	type UnappliedChoices,
+} from '@/shared/credentials/components/UnappliedChoicesDialog';
 import { EFFECT_WORD, EffectBadge } from '@/shared/credentials/components/EffectBadge';
-import { useActionCatalog } from '@/shared/credentials/components/useActionCatalog';
+import { AccessRulesHelp } from '@/shared/credentials/components/AccessRulesHelp';
+import {
+	useActionCatalog,
+	type SiblingApiReference,
+} from '@/shared/credentials/components/useActionCatalog';
 import { DraftRuleTester } from '@/shared/credentials/components/RuleRequestTester';
+import { ruleSummary, type PermissionRule as DisplayRule } from '@/shared/lib';
+import { OperationImpactPreview } from '@/shared/credentials/components/OperationImpactPreview';
 import {
-	OperationImpactPreview,
-	operationCountsText,
-	useAllowedOperationCount,
-} from '@/shared/credentials/components/OperationImpactPreview';
-import {
-	actionsDecidedByPathRules,
 	describeActions,
+	siblingActions,
+	siblingActionsLine,
 	type ActionCatalog,
+	type SiblingActions,
 } from '@/shared/credentials/lib/actionRules';
 import {
+	actionRuleCount,
 	coverageNote,
 	draftRulesForPreset,
 	joinCustomRules,
@@ -76,9 +97,33 @@ export interface AccessRulesStepProps {
 	tester?: boolean;
 	/** A host-owned last row for the tools list (e.g. "Add without rules…"). */
 	extraTools?: ReactNode;
+	/**
+	 * The other APIs these rules govern (one rule list shared across them). Their
+	 * actions are named, never listed for editing: By action shows this API's
+	 * actions only, and keeps the others' exactly as they are.
+	 */
+	siblings?: readonly SiblingApiReference[];
+	/** Open another API's access panel, from the line that names its actions. */
+	onOpenSibling?: (key: string) => void;
+	/** The Custom rules editor to open on. Default: By path. */
+	initialBuild?: 'action' | 'path';
+	/** Leave out the coverage caveat (the host names the other APIs itself). */
+	hideCoverageNote?: boolean;
+	/**
+	 * By action's choices are staged until Apply. The host reads this ref to
+	 * settle them (apply or discard) before it saves or closes.
+	 */
+	stagedRef?: MutableRefObject<UnappliedChoices | null>;
+	/** How many By action choices are staged, as it changes. */
+	onStagedChange?: (count: number) => void;
+	/**
+	 * Offer the Effective access tool. Off where the host shows the preview
+	 * itself (Manage access, always visible below the editor).
+	 */
+	effectiveTool?: boolean;
 	/** Prefix for the step's `data-testid`s (`<prefix>-rules`, `<prefix>-rules-preset`,
 	 * `<prefix>-coverage-note`, `<prefix>-tester`, `<prefix>-advanced`,
-	 * `<prefix>-effective`, `<prefix>-actions`). */
+	 * `<prefix>-effective`, `<prefix>-actions`, `<prefix>-rules-help`). */
 	testIdPrefix?: string;
 }
 
@@ -107,6 +152,13 @@ export function AccessRulesStep({
 	heading = 'What can this agent call?',
 	tester = false,
 	extraTools,
+	siblings,
+	onOpenSibling,
+	initialBuild = 'path',
+	hideCoverageNote = false,
+	effectiveTool = true,
+	stagedRef,
+	onStagedChange,
 	testIdPrefix: p = 'access',
 }: AccessRulesStepProps) {
 	const headingId = useId();
@@ -125,72 +177,181 @@ export function AccessRulesStep({
 	const actionCatalog = useActionCatalog(apiReference, {
 		enabled: wantsOps,
 		pending: operationsPending,
+		siblings,
 	});
 	const pathSuggestions = useMemo<readonly string[]>(
 		() => Array.from(new Set(ops.map((op) => op.path))).sort(),
 		[ops],
 	);
 	const options = useMemo(() => presetOptions(reach), [reach]);
-	const note = coverageNote(reach);
+	const note = hideCoverageNote ? null : coverageNote(reach);
 
 	const draftRules = useMemo(
 		() => draftRulesForPreset(preset, customRules),
 		[preset, customRules],
 	);
-	const describeMatch = preset && preset !== 'custom' ? PRESET_MATCH[preset] : undefined;
-	const counted = useAllowedOperationCount(apiReference ?? null, draftRules, {
-		enabled: wantsOps,
-	});
+	const { pathRules, groups } = useMemo(() => splitCustomRules(customRules), [customRules]);
+	// In Custom rules the dry run names a rule as By path numbers it: path
+	// rule N among the path rules, or the By action choice that decided.
+	const customActionRules = preset === 'custom' ? actionRuleCount(groups) : 0;
+	const describeMatch =
+		preset && preset !== 'custom'
+			? PRESET_MATCH[preset]
+			: preset === 'custom'
+				? (index: number): ReactNode => {
+						const rule = draftRules[index];
+						if (index < customActionRules && rule) {
+							return `— set by action (${EFFECT_RULE_NAME[rule.effect] ?? 'Allow'})`;
+						}
+						const summary = rule
+							? ruleSummary([rule as DisplayRule]).replace(/\.$/, '')
+							: null;
+						return (
+							<>
+								— matched path rule{' '}
+								<span className="text-foreground font-mono font-semibold">
+									#{index - customActionRules + 1}
+								</span>
+								{summary ? <> · {summary}</> : null}
+							</>
+						);
+					}
+				: undefined;
 
-	// The toggle picks the editor, not a filter: both halves of the one saved list
-	// stay on screen. It appears once the first page of operations lands.
+	// The toggle picks the editor; both halves of the one saved list stay
+	// reachable. It appears once the first page of operations lands.
 	const actionsAvailable = ops.length > 0;
 	const opsLoading = opsQuery.isLoading || operationsPending;
 	const actionsPending = !actionsAvailable && opsLoading;
-	const [build, setBuild] = useState<'action' | 'path'>('path');
+	const [build, setBuild] = useState<'action' | 'path'>(initialBuild);
 	const buildMode = actionsAvailable ? build : 'path';
-	const pathEditorOpen = buildMode === 'path';
-	const { pathRules, groups, denyMovesAhead } = useMemo(
-		() => splitCustomRules(customRules),
-		[customRules],
-	);
-	const setGroups = (next: ActionGroups): void =>
-		onCustomRulesChange(joinCustomRules(pathRules, next));
 	const setPathRules = (next: PermissionRule[]): void =>
 		onCustomRulesChange(joinCustomRules(next, groups));
-	// The saved positions of the action rules: Deny ahead of the path rules,
-	// Ask and Allow after them (see `joinCustomRules`).
-	const hasDeny = groups.deny.length > 0;
-	const pathOffset = hasDeny ? 1 : 0;
-	// An Ask action an earlier path rule already allows runs without asking.
-	const askNeverFires = useMemo(
-		() => actionsDecidedByPathRules(groups.ask, pathRules, actionCatalog, 'allow'),
-		[groups.ask, pathRules, actionCatalog],
+
+	// By action is STAGED: choices land in `staged` and become rules on Apply.
+	const [staged, setStaged] = useState<ActionGroups | null>(null);
+	const shownGroups = staged ?? groups;
+	const unapplied = staged ? changedChoices(staged, groups) : 0;
+	const [appliedNote, setAppliedNote] = useState<number | null>(null);
+	/** Editing one action rule: By action filtered to its ids. */
+	const [editing, setEditing] = useState<keyof ActionGroups | null>(null);
+	const editingIds = useMemo(
+		() => (editing ? new Set(groups[editing]) : null),
+		[editing, groups],
 	);
-	// An Allow or Ask action an earlier path deny blocks never runs.
-	const blockedByPathDeny = useMemo(
-		() =>
-			actionsDecidedByPathRules(
-				[...groups.ask, ...groups.allow],
-				pathRules,
-				actionCatalog,
-				'deny',
-			),
-		[groups.ask, groups.allow, pathRules, actionCatalog],
+	const apply = (): PermissionRule[] => {
+		const next = staged ? joinCustomRules(pathRules, staged) : customRules;
+		if (staged) {
+			onCustomRulesChange(next);
+			setAppliedNote(actionRuleCount(staged));
+		}
+		setStaged(null);
+		return next;
+	};
+	const discard = (): void => setStaged(null);
+	// The host settles staged choices before it moves on (adding the API,
+	// closing the panel) — never silently dropping them.
+	const unappliedState = useMemo<UnappliedChoices | null>(
+		() => (unapplied > 0 ? { count: unapplied, apply, discard } : null),
+		// `apply` closes over the current draft, captured with `staged`.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+		[unapplied, staged, customRules],
 	);
-	const actionRow = (g: keyof ActionGroups, index: number) => (
-		<ActionRuleRow
-			key={g}
-			operations={groups[g]}
-			effect={GROUP_EFFECT[g]}
-			catalog={actionCatalog}
-			index={index}
-			disabled={disabled}
-			onEdit={actionsAvailable ? (): void => setBuild('action') : undefined}
-			onRemove={(): void => setGroups({ ...groups, [g]: [] })}
-			testId={`${p}-action-rule${g === 'allow' ? '' : `-${g}`}`}
-		/>
+	if (stagedRef) stagedRef.current = unappliedState;
+	const onStagedChangeRef = useRef(onStagedChange);
+	useEffect(() => {
+		onStagedChangeRef.current = onStagedChange;
+	});
+	useEffect(() => {
+		onStagedChangeRef.current?.(unapplied);
+	}, [unapplied]);
+	// Unmounted, nothing is staged any more: the host must not settle choices
+	// that left with this step.
+	useEffect(
+		() => () => {
+			if (stagedRef) stagedRef.current = null;
+			onStagedChangeRef.current?.(0);
+		},
+		[stagedRef],
 	);
+	const [guard, setGuard] = useState<null | { then: () => void; context: string }>(null);
+	/** Leave By action (or this rule's edit): settle staged choices first. */
+	const leaveActions = (then: () => void, context: string): void => {
+		if (unapplied > 0) setGuard({ then, context });
+		else {
+			setStaged(null);
+			then();
+		}
+	};
+	const switchBuild = (to: 'action' | 'path'): void => {
+		if (to === buildMode) return;
+		if (to === 'path')
+			leaveActions(() => (setEditing(null), setBuild('path')), 'before switching to By path');
+		else {
+			setAppliedNote(null);
+			setBuild('action');
+		}
+	};
+	const editActionRule = (g: keyof ActionGroups): void => {
+		setAppliedNote(null);
+		setEditing(g);
+		setBuild('action');
+	};
+
+	// Action choices are checked first, so a path rule whose every match (on
+	// any API the list governs) is one of them decides nothing.
+	const decided = useMemo(
+		() => new Set([...groups.allow, ...groups.ask, ...groups.deny]),
+		[groups],
+	);
+
+	// Only judged once this API's list is whole: until then an id of its own
+	// could still read as another API's.
+	const siblingRows = useMemo(
+		() => (actionCatalog.status === 'ready' ? siblingActions(groups, actionCatalog) : []),
+		[groups, actionCatalog],
+	);
+	const actionRows = (['deny', 'ask', 'allow'] as const)
+		.filter((g) => groups[g].length > 0)
+		.map((g) => (
+			<ActionRuleRow
+				key={g}
+				operations={groups[g]}
+				effect={GROUP_EFFECT[g]}
+				catalog={actionCatalog}
+				disabled={disabled}
+				onEdit={actionsAvailable ? (): void => editActionRule(g) : undefined}
+				onRemove={(): void =>
+					onCustomRulesChange(joinCustomRules(pathRules, { ...groups, [g]: [] }))
+				}
+				testId={`${p}-action-rule${g === 'allow' ? '' : `-${g}`}`}
+			/>
+		));
+	const editingHeader =
+		editing && editingIds ? (
+			<div
+				className="flex flex-wrap items-center gap-2 text-xs"
+				data-testid={`${p}-editing-rule`}
+			>
+				<span className="text-foreground font-medium">
+					Editing the {EFFECT_RULE_NAME[GROUP_EFFECT[editing]]} actions ·{' '}
+					{editingIds.size} {editingIds.size === 1 ? 'action' : 'actions'}
+				</span>
+				<Button
+					variant="secondary"
+					size="xs"
+					className="ml-auto"
+					onClick={(): void =>
+						leaveActions(
+							() => (setEditing(null), setBuild('path')),
+							'before returning to By path',
+						)
+					}
+				>
+					Done
+				</Button>
+			</div>
+		) : null;
 
 	return (
 		<div className="space-y-2" data-testid={`${p}-rules`} data-preset={preset ?? undefined}>
@@ -234,129 +395,156 @@ export function AccessRulesStep({
 						data-testid={`${p}-custom-editor`}
 						data-build={buildMode}
 					>
-						{actionsPending ? (
-							// Holds the toggle's exact row height while operations load.
-							<p
-								role="status"
-								className="text-muted-foreground flex min-h-[30px] items-center gap-1.5 text-xs"
-								data-testid={`${p}-actions-pending`}
-							>
-								<Loader2
-									aria-hidden="true"
-									className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none"
-								/>
-								{"Reading this API's actions…"}
-							</p>
+						{(actionsPending || actionsAvailable) && (
+							// The help line sits under the loading line too, so the
+							// toggle replaces only that line and nothing below moves.
+							<div className="space-y-1.5">
+								{actionsPending ? (
+									// Holds the toggle's exact row height while operations load.
+									<p
+										role="status"
+										className="text-muted-foreground flex min-h-[30px] items-center gap-1.5 text-xs"
+										data-testid={`${p}-actions-pending`}
+									>
+										<Loader2
+											aria-hidden="true"
+											className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none"
+										/>
+										{"Reading this API's actions…"}
+									</p>
+								) : (
+									<SegmentedToggle
+										tone="inset"
+										ariaLabel="Build rules"
+										className="w-fit"
+										value={buildMode}
+										onChange={switchBuild}
+										disabled={disabled}
+										options={[
+											{ value: 'action', label: 'By action' },
+											{ value: 'path', label: 'By path' },
+										]}
+									/>
+								)}
+								<AccessRulesHelp testId={`${p}-rules-help`} />
+							</div>
+						)}
+						{buildMode === 'path' ? (
+							<div className="space-y-3" data-testid={`${p}-ordered-rules`}>
+								<section aria-label="Path rules" className="space-y-1.5">
+									{actionRows.length > 0 && (
+										<p className="text-foreground-sub text-[11px] font-medium">
+											Path rules
+										</p>
+									)}
+									<RuleListEditor
+										rules={pathRules}
+										onChange={setPathRules}
+										pathSuggestions={pathSuggestions}
+										opTemplates={opsComplete ? pathSuggestions : undefined}
+										opsLoaded={opsComplete && pathSuggestions.length > 0}
+										// Open on the form only when there are no rules at all.
+										openWhenEmpty={customRules.length === 0}
+										addLabel="Add path rule"
+										addFirst
+										decided={decided}
+										actionCatalog={actionCatalog}
+									/>
+								</section>
+								{actionRows.length > 0 && (
+									<section
+										aria-label="Set by action"
+										className="space-y-1.5"
+										data-testid={`${p}-action-rules`}
+									>
+										<p className="text-foreground-sub text-[11px] font-medium">
+											Set by action
+										</p>
+										{actionRows}
+									</section>
+								)}
+							</div>
 						) : (
-							actionsAvailable && (
-								<SegmentedToggle
-									tone="inset"
-									ariaLabel="Build rules"
-									className="w-fit"
-									value={buildMode}
-									onChange={setBuild}
+							<>
+								{/* No line about the path rules here: what decides an
+								    action left unset is in the Details under the toggle. */}
+								<ActionChecklist
+									ops={ops}
+									complete={opsComplete}
+									failed={!opsComplete && opsQuery.isError}
+									value={shownGroups}
+									applied={groups}
+									onChange={(next): void => {
+										setAppliedNote(null);
+										setStaged(next);
+									}}
 									disabled={disabled}
-									options={[
-										{ value: 'action', label: 'By action' },
-										{ value: 'path', label: 'By path' },
-									]}
+									testId={`${p}-actions`}
+									only={editingIds}
+									header={editingHeader}
 								/>
-							)
-						)}
-						{denyMovesAhead && (
-							<p
-								role="status"
-								className="text-foreground-sub flex items-start gap-1.5 text-xs"
-								data-testid={`${p}-deny-moves-ahead`}
-							>
-								<AlertTriangle className="text-caution mt-0.5 h-3.5 w-3.5 shrink-0" />
-								A Deny actions rule sits after the path rules. Saving moves it ahead
-								of them, so those actions are blocked even where a path rule allows
-								them.
-							</p>
-						)}
-						{/* In broker evaluation order: the Deny action rule, the path rules,
-						    then the Ask and Allow action rules. */}
-						{buildMode === 'path' && hasDeny && actionRow('deny', 0)}
-						{/* Kept at the same tree position so a half-typed rule survives the
-						    loading → toggle swap. */}
-						{(pathEditorOpen || pathRules.length > 0) && (
-							<RuleListEditor
-								indexOffset={pathOffset}
-								rules={pathRules}
-								onChange={setPathRules}
-								pathSuggestions={pathSuggestions}
-								opTemplates={opsComplete ? pathSuggestions : undefined}
-								opsLoaded={opsComplete && pathSuggestions.length > 0}
-								openWhenEmpty={pathEditorOpen}
-								hideAdd={!pathEditorOpen}
-								actionCatalog={actionCatalog}
-							/>
-						)}
-						{buildMode === 'action' ? (
-							<ActionChecklist
-								ops={ops}
-								complete={opsComplete}
-								failed={!opsComplete && opsQuery.isError}
-								groups={groups}
-								onChange={setGroups}
-								disabled={disabled}
-								testId={`${p}-actions`}
-							/>
-						) : (
-							// After the path rules, in saved order: Ask, then Allow.
-							(['ask', 'allow'] as const)
-								.filter((g) => groups[g].length > 0)
-								.map((g, i) => actionRow(g, pathOffset + pathRules.length + i))
-						)}
-						{blockedByPathDeny > 0 && (
-							<p
-								role="status"
-								className="text-foreground-sub flex items-center gap-1.5 text-xs"
-								data-testid={`${p}-actions-shadowed`}
-							>
-								<AlertTriangle className="text-caution h-3.5 w-3.5 shrink-0" />
-								{blockedByPathDeny === 1
-									? 'Path rules are evaluated first: a deny there blocks one Allow or Ask action.'
-									: `Path rules are evaluated first: a deny there blocks ${blockedByPathDeny.toLocaleString()} Allow or Ask actions.`}
-							</p>
-						)}
-						{askNeverFires > 0 && (
-							<p
-								role="status"
-								className="text-foreground-sub flex items-center gap-1.5 text-xs"
-								data-testid={`${p}-ask-never-fires`}
-							>
-								<AlertTriangle className="text-caution h-3.5 w-3.5 shrink-0" />
-								{askNeverFires === 1
-									? 'Path rules are evaluated first: one Ask action is already allowed there, so it will run without asking.'
-									: `Path rules are evaluated first: ${askNeverFires.toLocaleString()} Ask actions are already allowed there, so they will run without asking.`}
-							</p>
+								<SiblingActionsNote
+									rows={siblingRows}
+									onOpen={onOpenSibling}
+									testId={`${p}-sibling-actions`}
+								/>
+								<div
+									className="flex flex-wrap items-center gap-2"
+									data-testid={`${p}-apply-row`}
+								>
+									<p
+										className="text-foreground-sub min-w-0 flex-1 text-xs"
+										aria-live="polite"
+										data-testid={`${p}-apply-status`}
+									>
+										{unapplied > 0 ? (
+											<span className="text-foreground inline-flex items-center gap-1.5 font-medium">
+												<span
+													aria-hidden="true"
+													className="bg-caution h-1.5 w-1.5 rounded-full"
+												/>
+												{unapplied.toLocaleString()}{' '}
+												{unapplied === 1 ? 'change' : 'changes'} not applied
+											</span>
+										) : appliedNote != null ? (
+											`Applied — these choices make ${appliedNote.toLocaleString()} ${appliedNote === 1 ? 'rule' : 'rules'}.`
+										) : null}
+									</p>
+									<Button
+										variant="ghost"
+										size="sm"
+										disabled={disabled || unapplied === 0}
+										onClick={discard}
+									>
+										Reset
+									</Button>
+									<Button
+										variant="secondary"
+										size="sm"
+										disabled={disabled || unapplied === 0}
+										onClick={(): void => void apply()}
+										data-testid={`${p}-apply`}
+									>
+										Apply
+									</Button>
+								</div>
+							</>
 						)}
 					</div>
 				</div>
 			</ExpandReveal>
 
-			{(tester || apiReference || extraTools) && (
+			{(tester || (apiReference && effectiveTool) || extraTools) && (
 				// Fixed order: Effective access, Try a request, extraTools.
 				<ul className="-ml-2 space-y-0.5 pt-1" data-testid={`${p}-tools`}>
-					{apiReference && (
+					{apiReference && effectiveTool && (
 						<li>
 							<Disclosure
 								open={open === 'effective'}
 								onToggle={() => toggle('effective')}
 								icon={<ScanEye className="h-3.5 w-3.5" />}
-								label={
-									<>
-										Effective access
-										{counted && (
-											<span className="text-foreground-faint font-normal tabular-nums">
-												{' '}
-												· {operationCountsText(counted)}
-											</span>
-										)}
-									</>
-								}
+								// The counts live in the preview it opens, stated once.
+								label="Effective access"
 								controls={`${p}-effective`}
 							/>
 							<ExpandReveal
@@ -402,6 +590,24 @@ export function AccessRulesStep({
 					{extraTools && <li>{extraTools}</li>}
 				</ul>
 			)}
+			<UnappliedChoicesDialog
+				open={guard != null}
+				count={unapplied}
+				context={guard?.context}
+				onApply={(): void => {
+					const then = guard?.then;
+					setGuard(null);
+					apply();
+					then?.();
+				}}
+				onDiscard={(): void => {
+					const then = guard?.then;
+					setGuard(null);
+					discard();
+					then?.();
+				}}
+				onClose={(): void => setGuard(null)}
+			/>
 		</div>
 	);
 }
@@ -461,12 +667,55 @@ const GROUP_EFFECT: Record<keyof ActionGroups, PermissionRule['effect']> = {
 	deny: 'deny',
 };
 
-/** The action rule as a read-only row; "Edit" returns to the checklist that owns its ids. */
+/**
+ * The chosen actions that belong to other APIs these rules govern: one quiet,
+ * read-only line per API, with a way to that API's own access panel. They are
+ * kept exactly as they are on save.
+ */
+function SiblingActionsNote({
+	rows,
+	onOpen,
+	testId,
+}: {
+	rows: readonly SiblingActions[];
+	onOpen?: (key: string) => void;
+	testId: string;
+}) {
+	if (rows.length === 0) return null;
+	return (
+		<ul className="space-y-1" data-testid={testId}>
+			{rows.map((row) => (
+				<li
+					key={row.key}
+					className="text-foreground-sub flex flex-wrap items-center gap-x-1.5 px-1 text-xs"
+				>
+					<span>
+						{siblingActionsLine(row)} — edit{' '}
+						{row.allow + row.ask + row.deny === 1 ? 'it' : 'them'} from {row.title}
+						&apos;s access.
+					</span>
+					{onOpen && (
+						<InlineAction
+							className="text-foreground px-1.5 underline underline-offset-2"
+							onClick={() => onOpen(row.key)}
+						>
+							Open {row.title}
+						</InlineAction>
+					)}
+				</li>
+			))}
+		</ul>
+	);
+}
+
+/**
+ * An action rule as a read-only row, unnumbered (it is checked before every
+ * path rule). "Edit" opens By action filtered to its ids.
+ */
 function ActionRuleRow({
 	operations,
 	effect,
 	catalog,
-	index,
 	disabled,
 	onEdit,
 	onRemove,
@@ -476,8 +725,6 @@ function ActionRuleRow({
 	effect: PermissionRule['effect'];
 	/** The API's operation list, to name each action. */
 	catalog: ActionCatalog;
-	/** Its position in the saved list, so the row's number matches the dry run's. */
-	index: number;
 	disabled: boolean;
 	onEdit?: () => void;
 	onRemove: () => void;
@@ -490,12 +737,6 @@ function ActionRuleRow({
 			data-testid={testId}
 		>
 			<div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
-				<span
-					className="bg-surface-sheet text-foreground-sub inline-flex h-5 min-w-6 shrink-0 items-center justify-center rounded-[5px] px-1 font-mono text-[11px] font-semibold"
-					title={`Evaluated #${index + 1}`}
-				>
-					#{index + 1}
-				</span>
 				<EffectBadge effect={effect} className="shrink-0 rounded-[5px] font-semibold">
 					{EFFECT_WORD[effect] ?? String(effect)}
 				</EffectBadge>

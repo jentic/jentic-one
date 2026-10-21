@@ -163,6 +163,18 @@ export function seedCredentialBindings(
 	for (const over of rows) credentialBindings.push(seedBinding(over));
 }
 
+/** Test-only: replace one seeded binding's rules. */
+export function setBindingPermissions(
+	agentId: string,
+	credentialId: string,
+	rules: BindingRule[],
+): void {
+	const row = credentialBindings.find(
+		(b) => b.agent_id === agentId && b.credential_id === credentialId,
+	);
+	if (row) row.permissions = rules;
+}
+
 /** One shared permission rule set (`RuleSetResponse` minus `binding_count`,
  * which is derived from the binding store on read). */
 interface RuleSetRow {
@@ -228,10 +240,31 @@ function bindingWriteRefusal(credentialId: string) {
 	return problemJson(404, 'credential_not_found', `Credential ${credentialId} not found.`);
 }
 
-/** Wire projection of a binding row (strips the mock-internal rule list). */
+/**
+ * Wire projection of a binding row (strips the mock-internal rule list): a
+ * binding as `GET /agents/{id}/credentials` returns it. The backend enriches
+ * every binding from its credential: the credential's name, and exactly ONE
+ * served entry — the credential's own stored scope (a wildcard axis is null).
+ * The UI fans that one entry out to a tile per covered API. A row whose
+ * credential isn't in the store keeps its seeded `serves`.
+ */
 function bindingJson(row: CredentialBindingRow) {
 	const { permissions: _permissions, ...wire } = row;
-	return wire;
+	// A row seeded with nothing served is the unenriched shape a surface that
+	// can't reach the control DB returns; it stays as seeded.
+	const credential = row.serves.length > 0 ? findMockCredential(row.credential_id) : undefined;
+	if (!credential) return wire;
+	return {
+		...wire,
+		name: credential.name,
+		serves: [
+			{
+				api_vendor: credential.api.vendor,
+				api_name: credential.api.name || null,
+				api_version: credential.api.version || null,
+			},
+		],
+	};
 }
 
 /**
@@ -683,7 +716,7 @@ export function installDevFleet(): void {
 			credential_id: 'cred_slack_2',
 			name: 'Slack notify token',
 			type: CredentialType.BEARER_TOKEN,
-			api: { vendor: 'slack.com', name: 'default', version: '1.0.0' },
+			api: { vendor: 'slack.com', name: 'web-api', version: '1.0.0' },
 			catalog_api_id: 'slack.com',
 			details: { hint: '••••xoxb2' },
 			created_at: now(-150),
@@ -899,7 +932,7 @@ export function installDevFleet(): void {
 			credential_id: 'cred_github_2',
 			name: 'GitHub',
 			type: CredentialType.BEARER_TOKEN,
-			api: { vendor: 'github', name: 'github-api', version: '1.0.0' },
+			api: { vendor: 'github', name: 'github-api', version: '' },
 			details: { hint: '••••ghp2' },
 			created_at: now(-103),
 		},
@@ -957,6 +990,65 @@ export function installDevFleet(): void {
 		serves: [{ api_vendor: 'github', api_name: null, api_version: null }],
 		permissions: [],
 	});
+
+	// 21 — one VENDOR-WIDE credential (no API name) serving two imported APIs of
+	// one vendor: Archive and Article Search. Its one rule list is shared by
+	// both; the rule names an Archive action, so Article Search's panel must name
+	// it as Archive's, not as missing. The two APIs come from the workspace
+	// module's dev seed (`installDevNytApis`).
+	seedMockCredentials([
+		{
+			...staticCred,
+			credential_id: 'cred_nyt_vendor',
+			name: 'NY Times key',
+			type: CredentialType.API_KEY,
+			api: { vendor: 'nytimes-com', name: '', version: '' },
+			details: { location: 'query', field_name: 'api-key', hint: '••••a1b2' },
+			created_at: now(-60),
+		},
+	]);
+	bind({
+		credential_id: 'cred_nyt_vendor',
+		name: 'NY Times key',
+		serves: [{ api_vendor: 'nytimes-com', api_name: null, api_version: null }],
+		permissions: [{ effect: 'require-approval', operations: ['archive'] }],
+	});
+
+	// An adhook.io key not bound yet, so Add APIs → adhook.io goes straight to
+	// ② Access (its operations mostly lack summaries: see `installDevAdhookApi`).
+	seedMockCredentials([
+		{
+			...staticCred,
+			credential_id: 'cred_adhook_1',
+			name: 'adhook.io key',
+			type: CredentialType.BEARER_TOKEN,
+			api: { vendor: 'adhook-io', name: 'main', version: '' },
+			details: { hint: '••••adhk' },
+			created_at: now(-50),
+		},
+	]);
+
+	// An archived agent that still holds a binding: its Manage access is view only.
+	const ARCHIVED_ID = 'agnt_fleet_retired';
+	agents.push(
+		seedAgent({
+			id: ARCHIVED_ID,
+			name: 'retired-ops-agent',
+			description: 'Archived; its bindings stay readable.',
+			status: 'archived',
+			created_at: now(-400),
+		}),
+	);
+	credentialBindings.push(
+		seedBinding({
+			agent_id: ARCHIVED_ID,
+			credential_id: 'cred_slack_1',
+			name: 'Slack bot token',
+			bound_at: now(-380),
+			serves: [{ api_vendor: 'slack.com', api_name: 'web-api', api_version: '1.0.0' }],
+			permissions: [allow('/chat.')],
+		}),
+	);
 }
 
 /**
