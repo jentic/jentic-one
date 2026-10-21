@@ -26,11 +26,15 @@ from tests.harness.postgres import alembic_config_for
 
 pytestmark = pytest.mark.integration
 
+_REVISION = "c00de2f5d777"  # pragma: allowlist secret
 _PARENT_REV = "3306fb9172f1"  # pragma: allowlist secret
+_DROP_TOOLKIT_STARTED_PARENT_REV = "eb3688e956fc"  # pragma: allowlist secret
 _NEW_INDEX = "ix_execution_records_repeated_failure_credential_scan"
 _OLD_INDEX = "ix_execution_records_repeated_failure_scan"
+_TOOLKIT_STARTED_INDEX = "ix_execution_records_toolkit_started"
 _NEW_COLUMNS = ("actor_id", "credential_id", "operation_id", "started_at")
 _OLD_COLUMNS = ("actor_id", "toolkit_id", "operation_id", "started_at")
+_TOOLKIT_STARTED_COLUMNS = ("toolkit_id", "started_at")
 
 
 def _admin_cfg(integration_config: AppConfig) -> AlembicConfig:
@@ -93,12 +97,37 @@ async def test_repeated_failure_credential_index_round_trips(
     assert tuple(c.name for c in orm_indexes[_NEW_INDEX].columns) == _NEW_COLUMNS
     assert _OLD_INDEX not in orm_indexes
 
+    await asyncio.to_thread(command.downgrade, cfg, _REVISION)
+    at_rev = await _index_defs(admin_db)
+
     await asyncio.to_thread(command.downgrade, cfg, _PARENT_REV)
     downgraded = await _index_defs(admin_db)
     assert _NEW_INDEX not in downgraded
     assert _column_list(downgraded[_OLD_INDEX]) == _OLD_COLUMNS
     # The sibling indexes on the table are untouched by the migration.
-    assert set(at_head) - {_NEW_INDEX} == set(downgraded) - {_OLD_INDEX}
+    assert set(at_rev) - {_NEW_INDEX} == set(downgraded) - {_OLD_INDEX}
+
+    await asyncio.to_thread(command.upgrade, cfg, "head")
+    assert await _index_defs(admin_db) == at_head
+
+
+async def test_drop_toolkit_started_index_round_trips(
+    integration_config: AppConfig,
+    admin_db: DatabaseSession,
+    restore_admin_head: None,
+) -> None:
+    cfg = _admin_cfg(integration_config)
+    await asyncio.to_thread(command.upgrade, cfg, "head")
+
+    at_head = await _index_defs(admin_db)
+    assert _TOOLKIT_STARTED_INDEX not in at_head
+    orm_indexes = {str(i.name): i for i in cast(Table, ExecutionRecord.__table__).indexes}
+    assert _TOOLKIT_STARTED_INDEX not in orm_indexes
+
+    await asyncio.to_thread(command.downgrade, cfg, _DROP_TOOLKIT_STARTED_PARENT_REV)
+    downgraded = await _index_defs(admin_db)
+    assert _column_list(downgraded[_TOOLKIT_STARTED_INDEX]) == _TOOLKIT_STARTED_COLUMNS
+    assert set(downgraded) - {_TOOLKIT_STARTED_INDEX} == set(at_head)
 
     await asyncio.to_thread(command.upgrade, cfg, "head")
     assert await _index_defs(admin_db) == at_head

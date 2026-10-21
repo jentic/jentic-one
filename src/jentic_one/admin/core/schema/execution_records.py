@@ -20,7 +20,6 @@ class ExecutionRecord(AuditableMixin, AdminBase):
     __table_args__ = (
         Index("ix_execution_records_started_at", "started_at"),
         Index("ix_execution_records_trace_id", "trace_id"),
-        Index("ix_execution_records_toolkit_started", "toolkit_id", "started_at"),
         Index("ix_execution_records_status", "status"),
         Index("ix_execution_records_actor", "actor_id", "actor_type"),
         Index("ix_execution_records_credential_id", "credential_id"),
