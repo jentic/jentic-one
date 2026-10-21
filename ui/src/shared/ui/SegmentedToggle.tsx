@@ -190,7 +190,9 @@ export function SegmentedToggle<T extends string = string>({
 				setPill(null);
 				return;
 			}
-			setPill({ left: btn.offsetLeft, width: btn.offsetWidth });
+			const { offsetLeft: left, offsetWidth: width } = btn;
+			// Unchanged geometry keeps the same state: no re-render per observer tick.
+			setPill((p) => (p?.left === left && p.width === width ? p : { left, width }));
 		}
 		measure();
 		const ro = new ResizeObserver(measure);
