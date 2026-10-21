@@ -62,6 +62,7 @@ class AgentAuthService:
                 origin=identity.origin.value,
             )
 
+        self._ctx.invalidate_broker_caches(agent_id=agent_id)
         return key
 
     async def revoke_api_key(self, agent_id: str, *, identity: Identity) -> None:
@@ -81,6 +82,7 @@ class AgentAuthService:
                 reason=AuditReason.API_KEY_REVOKED,
                 origin=identity.origin.value,
             )
+        self._ctx.invalidate_broker_caches(agent_id=agent_id)
 
     async def get_api_key_info(self, agent_id: str, *, identity: Identity) -> ApiKeyInfo | None:
         """Return API key metadata for an agent, or None if no key was ever generated."""

@@ -209,6 +209,35 @@ Authorization is direct-only: the retired toolkit path and its
 `broker.direct_bindings_enabled` fallback were removed with the phase-6b
 table drops (setting the flag to `false` now fails config validation).
 
+### Cache invalidation and staleness bounds
+
+The broker's hot path caches three kinds of authorization lookups in memory per
+process:
+
+- **Token and actor-status verdicts** ([`broker/core/token_validation.py`](../../src/jentic_one/broker/core/token_validation.py),
+  bounded by `broker.resolve_cache_ttl_seconds`, default `30` s).
+- **Direct credential-binding derivations** ([`broker/repos/caching_credential_deriver.py`](../../src/jentic_one/broker/repos/caching_credential_deriver.py),
+  bounded by `broker.toolkit_cache_ttl_s`, default `30` s).
+- **Permission-rule lists** ([`broker/repos/agent_rule_evaluator.py`](../../src/jentic_one/broker/repos/agent_rule_evaluator.py),
+  bounded by `broker.rule_cache_ttl_s`, default `30` s).
+
+`install_broker_auth` ([`broker/core/setup.py`](../../src/jentic_one/broker/core/setup.py)) registers a
+`BrokerCacheInvalidator` on the shared `Context` (`ctx.invalidate_broker_caches(...)`).
+When an agent's credential binding is bound/unbound/resumed, an agent is
+disabled/enabled/archived/purged, an API key or OAuth token is rotated or
+revoked, or a credential or permission rule set is updated/deactivated/deleted
+in the **same process** (e.g. single-process harnesses and in-process tests),
+the hook immediately evicts the affected deriver, rule-evaluator, and
+token/actor-status cache entries with zero wait for the TTL.
+
+In **multi-process deployments** (where the broker runs in its own process or
+across multiple stateless replicas), each broker instance holds its own
+in-memory LRU caches and does not share the control plane's `Context`. Cross-process
+propagation is bounded by the configured TTLs above (default `30` s; set the
+respective TTL to `0` to disable caching). Queued async executions bypass these
+caches and re-authorize against live database state when the worker claims the
+job (`build_queued_execution_authorizer`).
+
 ## What gets recorded
 
 Executions land as append-only `ExecutionRecord` rows in the admin DB

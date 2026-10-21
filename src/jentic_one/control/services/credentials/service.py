@@ -765,6 +765,7 @@ class CredentialService:
         await self._record_rules_change(
             credential_id, agent_id, binding, identity=identity, reason="replace permission rules"
         )
+        self._ctx.invalidate_broker_caches(agent_id=agent_id, credential_id=credential_id)
         return result
 
     async def patch_agent_permissions(
@@ -787,6 +788,7 @@ class CredentialService:
         await self._record_rules_change(
             credential_id, agent_id, binding, identity=identity, reason="patch permission rules"
         )
+        self._ctx.invalidate_broker_caches(agent_id=agent_id, credential_id=credential_id)
         return result
 
     async def test_agent_permissions(
@@ -917,6 +919,7 @@ class CredentialService:
             identity=identity,
             reason=f"attach rule set {rule_set_id}",
         )
+        self._ctx.invalidate_broker_caches(agent_id=agent_id, credential_id=credential_id)
 
     async def detach_binding_rule_set(
         self, credential_id: str, agent_id: str, *, identity: Identity
@@ -942,6 +945,7 @@ class CredentialService:
             identity=identity,
             reason=f"detach rule set {binding.rule_set_id}",
         )
+        self._ctx.invalidate_broker_caches(agent_id=agent_id, credential_id=credential_id)
 
     @staticmethod
     def _may_mutate_rule_set(rule_set: PermissionRuleSet, identity: Identity) -> bool:
@@ -1144,6 +1148,7 @@ class CredentialService:
         await self._record_rule_set_change(
             rule_set_id, identity=identity, reason="replace rule set rules"
         )
+        self._ctx.invalidate_broker_caches(rule_set_id=rule_set_id)
         return result
 
     async def delete_rule_set(self, rule_set_id: str, *, identity: Identity) -> None:
@@ -1170,6 +1175,7 @@ class CredentialService:
         if not deleted:
             raise RuleSetNotFoundError(rule_set_id)
         await self._record_rule_set_change(rule_set_id, identity=identity, reason="delete rule set")
+        self._ctx.invalidate_broker_caches(rule_set_id=rule_set_id)
 
     async def _record_rule_set_change(
         self, rule_set_id: str, *, identity: Identity, reason: str
@@ -1439,6 +1445,7 @@ class CredentialService:
         # A PATCH that persisted nothing (e.g. only echoed field_name/location)
         # is a no-op — no timestamp bump and no audit noise.
         if changed:
+            self._ctx.invalidate_broker_caches(credential_id=credential_id)
             action = AuditAction.UPDATE
             if payload.active is not None and before_state["active"] != payload.active:
                 action = AuditAction.ENABLE if payload.active else AuditAction.DISABLE
@@ -1468,6 +1475,7 @@ class CredentialService:
             if not deleted:
                 raise CredentialNotFoundError(credential_id)
 
+        self._ctx.invalidate_broker_caches(credential_id=credential_id)
         await record_audit_best_effort(
             self._ctx,
             action=AuditAction.DELETE,
