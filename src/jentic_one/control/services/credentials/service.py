@@ -30,6 +30,7 @@ from jentic_one.control.repos import (
 from jentic_one.control.repos.device_authorization_credential_repo import (
     DeviceAuthorizationCredentialRepository,
 )
+from jentic_one.control.repos.effects_repo import EffectsRepository
 from jentic_one.control.repos.pending_import_lookup_repo import PendingImportLookupRepository
 from jentic_one.control.repos.prerequisite_repo import (
     AgentCredentialBindingRow,
@@ -81,7 +82,12 @@ from jentic_one.control.services.credentials.typed_secrets import (
     write_bearer_token_secret,
     write_sigv4_secret,
 )
-from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
+from jentic_one.shared.audit import (
+    AuditAction,
+    AuditTargetType,
+    record_audit,
+    record_audit_best_effort,
+)
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import ORG_ADMIN, OWNER_AGENTS_READ
 from jentic_one.shared.config import DirectOAuth2ProviderConfig, resolved_control_egress
@@ -1456,7 +1462,7 @@ class CredentialService:
         return view
 
     async def delete(self, credential_id: str, *, identity: Identity) -> None:
-        """Delete a credential by ID (cascade removes siblings)."""
+        """Delete a credential by ID (cascade removes siblings) and its agent bindings."""
         access_filters = build_access_filters(identity, Credential, for_write=True)
         async with self._ctx.control_db.transaction() as session:
             existing = await CredentialRepository.get_by_id(
@@ -1464,9 +1470,15 @@ class CredentialService:
             )
             if existing is None:
                 raise CredentialNotFoundError(credential_id)
+            credential_name = existing.name
+            before_state = {"name": existing.name, "active": existing.active}
             deleted = await CredentialRepository.delete(session, credential_id)
             if not deleted:
                 raise CredentialNotFoundError(credential_id)
+
+        removed_bindings = await self._remove_agent_bindings(
+            credential_id, credential_name=credential_name, identity=identity
+        )
 
         await record_audit_best_effort(
             self._ctx,
@@ -1475,9 +1487,78 @@ class CredentialService:
             target_id=credential_id,
             actor_type=identity.actor_type,
             actor_id=identity.sub,
-            before={"name": existing.name, "active": existing.active},
+            before=before_state,
+            after={"removed_bindings": removed_bindings},
             origin=identity.origin.value,
         )
+
+    async def _remove_agent_bindings(
+        self,
+        credential_id: str,
+        *,
+        credential_name: str,
+        identity: Identity,
+    ) -> int:
+        """Purge admin-DB agent bindings to a deleted credential (#1426).
+
+        The ``agent_credential_bindings`` table lives in the admin DB without a
+        cross-DB foreign key to ``control.credentials``, so deleting a
+        credential control-side must sweep its bindings explicitly or orphan
+        bindings stay active and keep any attached ``rule_set_id`` undeletable.
+        Best-effort after the control delete commits (no 2PC across databases).
+        """
+        if not self._ctx.is_db_allowed("admin"):
+            logger.warning(
+                "credential_delete_binding_cleanup_skipped",
+                reason="admin_db_not_allowed",
+                credential_id=credential_id,
+            )
+            return 0
+        try:
+            async with self._ctx.admin_db.transaction() as session:
+                removed = await EffectsRepository.delete_bindings_for_credential(
+                    session, credential_id=credential_id
+                )
+                cred_label = summary_label(credential_name, credential_id)
+                for binding in removed:
+                    await record_audit(
+                        session,
+                        action=AuditAction.REVOKE,
+                        target_type=AuditTargetType.CREDENTIAL_BINDING,
+                        target_id=credential_id,
+                        actor_type=identity.actor_type,
+                        actor_id=identity.sub,
+                        target_parent_id=binding.agent_id,
+                        reason="credential_deleted",
+                        origin=identity.origin.value,
+                    )
+                    agent_label = summary_label(binding.agent_name, binding.agent_id)
+                    async with session.begin_nested():
+                        await emit_event_best_effort(
+                            session,
+                            type=EventType.CREDENTIAL_UNBOUND_FROM_AGENT,
+                            severity=EventSeverity.INFO,
+                            summary=(
+                                f"Credential {cred_label} unbound from agent {agent_label} "
+                                "because the credential was deleted"
+                            ),
+                            data={
+                                "agent_id": binding.agent_id,
+                                "credential_id": credential_id,
+                            },
+                            # Subject is the agent, so its owner sees the removal.
+                            created_by=binding.agent_id,
+                            actor_id=identity.sub,
+                            actor_type=identity.actor_type.value,
+                        )
+                return len(removed)
+        except Exception:
+            logger.warning(
+                "credential_delete_binding_cleanup_failed",
+                credential_id=credential_id,
+                exc_info=True,
+            )
+            return 0
 
     def _to_redacted(
         self, credential: Any, *, registration_names: dict[str, str]
