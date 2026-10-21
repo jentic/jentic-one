@@ -8,7 +8,8 @@ not the ``500`` that reads as a broker bug. A connect or read *timeout* is
 broker's own problem+json handler, on the buffered (``run``) and streaming
 (``stream``) paths alike. The retry gate retries a post-send failure only for an
 idempotent call and a connect-phase failure for any method; the circuit breaker
-counts every transport failure.
+counts every upstream transport failure while excluding broker-local pool
+exhaustion (``PoolTimeout``).
 """
 
 from __future__ import annotations
@@ -149,8 +150,13 @@ async def test_buffered_connect_timeout_is_504() -> None:
 async def test_buffered_pool_timeout_is_504_pre_send_and_local_only() -> None:
     exc = await _buffered_error(_raises(httpx.PoolTimeout))
 
-    assert status_for_broker_error(exc) == 504
-    assert exc.type == "upstream_connect_failed"
+    status, body, headers = await _rendered(exc)
+    assert status == 504
+    assert body["type"] == "upstream_connect_failed"
+    assert body["detail"] == "The broker's upstream connection pool had no free connection in time."
+    assert body["error_origin"] == "broker"
+    assert headers["jentic-error-origin"] == "broker"
+    assert _MARKER not in json.dumps(body)
     assert exc.pre_send is True
     assert exc.local_only is True
 
@@ -224,8 +230,13 @@ async def test_streaming_connect_timeout_matches_buffered() -> None:
 async def test_streaming_pool_timeout_matches_buffered() -> None:
     exc = await _streaming_error(_raises(httpx.PoolTimeout))
 
-    assert status_for_broker_error(exc) == 504
-    assert exc.type == "upstream_connect_failed"
+    status, body, headers = await _rendered(exc)
+    assert status == 504
+    assert body["type"] == "upstream_connect_failed"
+    assert body["detail"] == "The broker's upstream connection pool had no free connection in time."
+    assert body["error_origin"] == "broker"
+    assert headers["jentic-error-origin"] == "broker"
+    assert _MARKER not in json.dumps(body)
     assert exc.pre_send is True
     assert exc.local_only is True
 

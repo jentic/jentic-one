@@ -14,7 +14,7 @@ from jentic_one.broker.adapters.runners.base import RunnerRequest, RunnerResult
 from jentic_one.broker.adapters.runners.circuit import _NO_HOST_KEY, CircuitBreakerRunner
 from jentic_one.broker.core.exceptions import CircuitOpenError, UpstreamTimeoutError
 from jentic_one.shared.resilience import CircuitBreaker
-from jentic_one.shared.resilience.circuit import _OPEN_PREFIX
+from jentic_one.shared.resilience.circuit import _FAIL_PREFIX, _OPEN_PREFIX, _TOTAL_PREFIX
 from jentic_one.shared.state.backend import MemoryStateBackend
 
 
@@ -146,8 +146,30 @@ async def test_local_only_error_excluded_from_per_host_breaker_accounting() -> N
         with pytest.raises(UpstreamTimeoutError):
             await runner.run(_request())
 
+    # Neither total nor failure counters are touched for local_only errors, so
+    # pool exhaustion neither charges the host nor dilutes its failure ratio.
+    assert await backend.get(f"{_TOTAL_PREFIX}api.example.com") is None
+    assert await backend.get(f"{_FAIL_PREFIX}api.example.com") is None
+
     # The waiting host's circuit stays closed once a pool slot is free again.
     inner.raises = None
     inner.status = 200
     result = await runner.run(_request())
     assert result.status_code == 200
+
+    # Two subsequent upstream failures still trip the circuit at min_calls=2
+    # (confirming local_only errors did not inflate the total-calls denominator).
+    backend_fresh = MemoryStateBackend()
+    inner_fresh = _FakeRunner(raises=pool_err)
+    runner_fresh = CircuitBreakerRunner(
+        inner_fresh, _breaker(backend_fresh), enforcement_mode="blocking"
+    )
+    for _ in range(5):
+        with pytest.raises(UpstreamTimeoutError):
+            await runner_fresh.run(_request())
+    inner_fresh.raises = None
+    inner_fresh.status = 500
+    await runner_fresh.run(_request())
+    await runner_fresh.run(_request())
+    with pytest.raises(CircuitOpenError):
+        await runner_fresh.run(_request())

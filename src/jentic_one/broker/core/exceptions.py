@@ -257,12 +257,13 @@ class CredentialIdentityMismatchError(BrokerError):
 
 
 class UpstreamTimeoutError(BrokerError):
-    """The upstream did not respond within the deadline (504).
+    """The upstream did not respond within the deadline, or the pool timed out (504).
 
     ``broker`` origin: the broker gave up and generated this response; no
     upstream answer exists. Typed ``upstream_timeout`` (read phase, the request
-    may have reached the upstream) or ``upstream_connect_failed`` (connect
-    phase, ``pre_send``: no request bytes were sent).
+    may have reached the upstream) or ``upstream_connect_failed`` (connect or
+    pool-acquire phase, ``pre_send``: no request bytes were sent; pool
+    exhaustion also sets ``local_only=True``).
     """
 
     default_type = "upstream_timeout"
@@ -276,8 +277,8 @@ class UpstreamTransportError(BrokerError):
     exists. ``broker`` origin: the broker generated this response. Typed
     ``upstream_transport_error`` (the request may have reached the upstream) or
     ``upstream_connect_failed`` (connect phase, ``pre_send``: no request bytes
-    were sent). A connect or read *timeout* is :class:`UpstreamTimeoutError`
-    (504) instead.
+    were sent). A pool, connect, or read *timeout* is
+    :class:`UpstreamTimeoutError` (504) instead.
     """
 
     default_type = "upstream_transport_error"
