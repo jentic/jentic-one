@@ -624,6 +624,17 @@
                   "title": "Internal Server Error",
                   "type": "server_error"
                 }
+              },
+              "upstream_request_invalid": {
+                "summary": "The broker built an outbound request its HTTP client refused to send (e.g. an injected credential header carrying an illegal byte); fix the stored credential rather than retrying.",
+                "value": {
+                  "detail": "Upstream transport error (LocalProtocolError)",
+                  "error_origin": "broker",
+                  "instance": "/api.example.com/v1/users",
+                  "status": 500,
+                  "title": "Upstream transport error (LocalProtocolError)",
+                  "type": "upstream_request_invalid"
+                }
               }
             },
             "schema": {
@@ -631,7 +642,7 @@
             }
           }
         },
-        "description": "Unexpected broker-side failure — a bug, a panic, or an outbound\nrequest the broker itself built and could not send. Should be\nrare; report with the `traceparent` header for triage. Body is\nRFC 9457 `application/problem+json`.\n"
+        "description": "Unexpected broker-side failure — a bug, a panic, or an outbound\nrequest the broker itself built and could not send\n(`upstream_request_invalid`, e.g. an injected credential header\nwith an illegal byte; fix the stored credential rather than\nretrying). Should be rare; report with the `traceparent` header\nfor triage. Body is RFC 9457 `application/problem+json`.\n"
       },
       "ServiceUnavailable": {
         "content": {

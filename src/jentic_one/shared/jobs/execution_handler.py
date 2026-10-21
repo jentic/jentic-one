@@ -78,7 +78,12 @@ from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ActorType as ActorTypeEnum
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.actors import origin_or_none
-from jentic_one.shared.models.events import EventSeverity, EventTag, EventType
+from jentic_one.shared.models.events import (
+    EventSeverity,
+    EventTag,
+    EventType,
+    thirdparty_auth_error_tag,
+)
 from jentic_one.shared.schemas import OperationInfo
 from jentic_one.shared.url import apply_server_variables
 from jentic_one.shared.url_validation import validate_upstream_url_async
@@ -434,6 +439,9 @@ class ExecutionHandler:
             status = ExecutionStatus.FAILED
             error_msg = safe_error[:MAX_EVENT_SUMMARY_FIELD_LEN]
 
+        thirdparty_tag = thirdparty_auth_error_tag(http_status, api_vendor)
+        error_tags: set[EventTag] | None = {thirdparty_tag} if thirdparty_tag is not None else None
+
         await self._write_lifecycle(
             db,
             job_id=job_id,
@@ -446,6 +454,7 @@ class ExecutionHandler:
             toolkit_id=payload.get("toolkit_id"),
             credential_id=credential_id,
             operation=operation,
+            error_tags=error_tags,
             origin=origin,
         )
 
@@ -588,6 +597,7 @@ class ExecutionHandler:
         toolkit_id: str | None,
         credential_id: str | None,
         operation: OperationInfo | None,
+        error_tags: set[EventTag] | None = None,
         origin: str | None,
     ) -> None:
         """Write the lifecycle events in their own transaction, best-effort.
@@ -613,6 +623,7 @@ class ExecutionHandler:
                     toolkit_id=toolkit_id,
                     credential_id=credential_id,
                     operation=operation,
+                    error_tags=error_tags,
                     origin=origin,
                 )
         except Exception as exc:
@@ -639,6 +650,7 @@ class ExecutionHandler:
         toolkit_id: str | None = None,
         credential_id: str | None = None,
         operation: OperationInfo | None = None,
+        error_tags: set[EventTag] | None = None,
         origin: str | None = None,
     ) -> None:
         # The enqueue path persisted the request-derived Origin string in the
@@ -664,6 +676,9 @@ class ExecutionHandler:
                 )
             else:
                 sanitized = (error_msg or "unknown")[:MAX_EVENT_SUMMARY_FIELD_LEN]
+                failed_tags: set[EventTag] = set(error_tags or ())
+                if origin_tag is not None:
+                    failed_tags.add(origin_tag)
                 await emit_event(
                     session,
                     type=EventType.EXECUTION_FAILED,
@@ -676,7 +691,7 @@ class ExecutionHandler:
                     created_by=created_by,
                     actor_id=created_by,
                     actor_type=actor_type,
-                    tags=origin_tags,
+                    tags=failed_tags or None,
                 )
         except Exception:
             logger.warning("emit_event_failed", job_id=job_id, execution_id=execution_id)
