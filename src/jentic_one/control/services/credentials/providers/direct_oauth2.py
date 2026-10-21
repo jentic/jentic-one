@@ -167,6 +167,8 @@ class DirectOAuth2Provider(OAuth2Provider):
             nonce=nonce,
             redirect_uri=redirect_uri,
             sole_agent_id=request.extra.get("sole_agent_id") or None,
+            browser_binding_hash=request.browser_binding_hash,
+            browser_host=request.browser_host,
         )
         signed_state = encode_state(state_secret, connect_state, ttl)
 

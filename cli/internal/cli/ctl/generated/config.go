@@ -246,6 +246,28 @@ type BrokerConfig struct {
 	// RuleCacheTtlS corresponds to the JSON schema field "rule_cache_ttl_s".
 	RuleCacheTtlS float64 `json:"rule_cache_ttl_s" yaml:"rule_cache_ttl_s" mapstructure:"rule_cache_ttl_s"`
 
+	// How long (seconds) a streaming execution persist waits for one of the
+	// ``broker.streaming_persist_max_concurrency`` slots. Past it the record is
+	// abandoned: logged as ``streaming_execution_persist_abandoned`` and counted on
+	// ``broker.streaming_execution.persist_failures`` (``reason=backlog_timeout``).
+	// The wait runs after the response is complete or the client has disconnected,
+	// when the request no longer holds its admission slot, so the wait delays neither
+	// the client nor ``/ready``. The timeout bounds how long a stalled admin database
+	// can keep records queued in memory, including at shutdown; it does not bound the
+	// write itself once a slot is held.
+	StreamingPersistAcquireTimeoutS float64 `json:"streaming_persist_acquire_timeout_s,omitempty,omitzero" yaml:"streaming_persist_acquire_timeout_s,omitempty" mapstructure:"streaming_persist_acquire_timeout_s,omitempty"`
+
+	// Per-process cap on concurrent post-response persists of streaming execution
+	// records (each holds one admin-DB connection). Excess persists wait for a slot,
+	// up to ``broker.streaming_persist_acquire_timeout_s``; the waiting and writing
+	// counts are exported as ``broker.streaming_execution.persist_pending``. The
+	// effective cap is clamped to ``databases.admin.pool_max - 1`` (minimum 1; a
+	// ``streaming_persist_limit_clamped`` warning is logged when it applies), so with
+	// ``pool_max >= 2`` persists never take every connection of the admin base pool.
+	// ``pool_max`` is the base pool size only; SQLAlchemy's default overflow can open
+	// up to 10 more connections on top of it.
+	StreamingPersistMaxConcurrency int `json:"streaming_persist_max_concurrency,omitempty,omitzero" yaml:"streaming_persist_max_concurrency,omitempty" mapstructure:"streaming_persist_max_concurrency,omitempty"`
+
 	// ToolkitCacheTtlS corresponds to the JSON schema field "toolkit_cache_ttl_s".
 	ToolkitCacheTtlS float64 `json:"toolkit_cache_ttl_s" yaml:"toolkit_cache_ttl_s" mapstructure:"toolkit_cache_ttl_s"`
 
@@ -279,6 +301,18 @@ func (j *BrokerConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["rule_cache_ttl_s"]; !ok || v == nil {
 		plain.RuleCacheTtlS = 3.0
+	}
+	if v, ok := raw["streaming_persist_acquire_timeout_s"]; !ok || v == nil {
+		plain.StreamingPersistAcquireTimeoutS = 5.0
+	}
+	if 0 >= plain.StreamingPersistAcquireTimeoutS {
+		return fmt.Errorf("field %s: must be > %v", "streaming_persist_acquire_timeout_s", 0)
+	}
+	if v, ok := raw["streaming_persist_max_concurrency"]; !ok || v == nil {
+		plain.StreamingPersistMaxConcurrency = 5
+	}
+	if 0 >= plain.StreamingPersistMaxConcurrency {
+		return fmt.Errorf("field %s: must be > %v", "streaming_persist_max_concurrency", 0)
 	}
 	if v, ok := raw["toolkit_cache_ttl_s"]; !ok || v == nil {
 		plain.ToolkitCacheTtlS = 3.0
@@ -2287,8 +2321,9 @@ func (j *ReleaseCheckConfig) UnmarshalJSON(value []byte) error {
 // The “RetryRunner“ decorator retries a failed attempt **only** when it is
 // safe to do so: a connect-phase failure (no bytes on the wire) is retryable
 // for any method, while a post-send failure (read timeout, mirrored “429“/
-// “503“) is retried only for idempotent methods or when an
-// “Idempotency-Key“ is present — a blind “POST“ retry is a double-spend.
+// “503“) is retried only for idempotent HTTP methods — “Idempotency-Key“
+// is broker-consumed and stripped from outbound headers, so a post-send
+// “POST“ or “PATCH“ retry would double-spend (#1799).
 // Each attempt still flows through the circuit breaker (retry *outside*,
 // breaker *inside*); the whole loop is bounded by the request deadline.
 type RetryConfig struct {

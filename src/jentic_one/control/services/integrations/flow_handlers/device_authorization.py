@@ -22,6 +22,7 @@ from jentic_one.control.repos.device_authorization_credential_repo import (
 from jentic_one.control.repos.oauth_app_registration_repo import (
     OAuthAppRegistrationRepository,
 )
+from jentic_one.control.services.credentials.state import BrowserBindingClaim
 from jentic_one.control.services.integrations import device_authorization
 from jentic_one.control.services.integrations.flow_handlers.base import (
     BeginResult,
@@ -97,6 +98,7 @@ class DeviceAuthorizationHandler:
         *,
         app: SessionApp,
         confirmed_scopes: list[str],
+        browser_binding: BrowserBindingClaim | None = None,
     ) -> BeginResult:
         assert app.authorization_endpoint is not None, (
             "device_authorization SessionApp requires authorization_endpoint"
