@@ -1984,7 +1984,7 @@ class SecurityConfig(BaseModel):
     # scale of hours, so a sweep per minute is ample). One tick ≈ the worker
     # poll interval (~2s), so the default ~60 ticks is roughly every 2 minutes.
     credential_expiry_sweep_interval_ticks: int = Field(default=60, ge=1)
-    # Number of failed executions for one actor+toolkit+operation within the
+    # Number of failed executions for one actor+credential+operation within the
     # rolling window before an ``execution.repeated_failure`` event is emitted.
     execution_repeated_failure_threshold: int = Field(default=5, ge=1)
     # Rolling window (seconds) over which repeated failures are counted and over
