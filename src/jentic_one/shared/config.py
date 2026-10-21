@@ -2027,6 +2027,41 @@ class BrokerConfig(BaseModel):
     # is one entry. Eviction is LRU by entry count (the TTL only bounds
     # staleness, never memory).
     rule_cache_max_entries: int = 5_000
+    streaming_persist_max_concurrency: int = Field(
+        default=5,
+        gt=0,
+        description=(
+            "Per-process cap on concurrent post-response persists of streaming "
+            "execution records (each holds one admin-DB connection). Excess "
+            "persists wait for a slot, up to "
+            "``broker.streaming_persist_acquire_timeout_s``; the waiting and "
+            "writing counts are exported as "
+            "``broker.streaming_execution.persist_pending``. The effective cap "
+            "is clamped to ``databases.admin.pool_max - 1`` (minimum 1; a "
+            "``streaming_persist_limit_clamped`` warning is logged when it "
+            "applies), so with ``pool_max >= 2`` persists never take every "
+            "connection of the admin base pool. ``pool_max`` is the base pool "
+            "size only; SQLAlchemy's default overflow can open up to 10 more "
+            "connections on top of it."
+        ),
+    )
+    streaming_persist_acquire_timeout_s: float = Field(
+        default=5.0,
+        gt=0,
+        description=(
+            "How long (seconds) a streaming execution persist waits for one of "
+            "the ``broker.streaming_persist_max_concurrency`` slots. Past it the "
+            "record is abandoned: logged as "
+            "``streaming_execution_persist_abandoned`` and counted on "
+            "``broker.streaming_execution.persist_failures`` "
+            "(``reason=backlog_timeout``). The wait runs after the response is "
+            "complete or the client has disconnected, when the request no "
+            "longer holds its admission slot, so the wait delays neither the "
+            "client nor ``/ready``. The timeout bounds how long a stalled "
+            "admin database can keep records queued in memory, including at "
+            "shutdown; it does not bound the write itself once a slot is held."
+        ),
+    )
     # Absolute public base URL of the admin jobs API, used to build the 202
     # `_links.self` pointer for async executions (e.g. "https://api.example.com").
     # None keeps the legacy broker-relative `/jobs/{id}` link.
