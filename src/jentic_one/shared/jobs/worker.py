@@ -5,11 +5,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import random
+import re
 import time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-import asyncpg
 import structlog
 from sqlalchemy import delete, or_, select, update
 from sqlalchemy.exc import StatementError
@@ -20,7 +20,6 @@ from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.repos.access_token_repo import AccessTokenRepository
 from jentic_one.admin.repos.refresh_token_repo import RefreshTokenRepository
 from jentic_one.shared.config import WorkerConfig
-from jentic_one.shared.db.backends.postgres import TcpKeepalive, keepalive_connection_class
 from jentic_one.shared.db.connectivity import (
     connection_loss_cause,
     describe_connection_loss,
@@ -40,6 +39,7 @@ from jentic_one.shared.jobs.hold import (
 from jentic_one.shared.jobs.wakeup import JOB_NOTIFY_CHANNEL, JobWakeup, job_wakeup
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.models.jobs import JobKind, JobStatus
+from jentic_one.shared.redaction import REDACTED, redact_value
 
 if TYPE_CHECKING:
     from jentic_one.shared.db.session import DatabaseSession
@@ -60,6 +60,17 @@ _DB_CONNECTION_LOST_ERROR = "interrupted: database connection lost"
 _MAX_CHAIN_DEPTH = 8
 # Timeout for UNLISTEN / close on the dedicated Postgres listener connection.
 _LISTEN_CLOSE_TIMEOUT_S = 2.0
+# Matches userinfo embedded in a DSN or URL before the host separator.
+_URL_USERINFO_RE = re.compile(r"(://)[^/\s@]+@")
+
+
+def _redact_listen_error(exc: BaseException) -> str:
+    """Format ``exc`` for ``worker_listen_unavailable`` without SQL or credentials."""
+    cleaned = redact_sql(str(exc))
+    cleaned = _URL_USERINFO_RE.sub(rf"\1{REDACTED}@", cleaned)
+    redacted = redact_value(cleaned)
+    text = redacted if isinstance(redacted, str) else cleaned
+    return (text or type(exc).__name__)[:_ERROR_MAX_LEN]
 
 
 def _carries_sql(exc: BaseException) -> bool:
@@ -280,47 +291,22 @@ class WorkerLoop:
         backend = getattr(self._db, "backend", None)
         if getattr(backend, "dialect_name", None) not in ("postgres", "postgresql"):
             return False
-        return (
-            getattr(self._db, "_config", None) is not None
-            or getattr(self._db, "_engine", None) is not None
-        )
+        return callable(getattr(self._db, "open_listen_connection", None))
 
     async def _open_listen_connection(self) -> Any:
-        """Open a dedicated autocommit ``asyncpg`` connection outside the pool."""
-        config = getattr(self._db, "_config", None)
-        if config is not None:
-            connection_class = (
-                keepalive_connection_class(TcpKeepalive.from_config(config))
-                if config.tcp_keepalive
-                else asyncpg.Connection
-            )
-            return await asyncpg.connect(
-                host=config.host,
-                port=config.port,
-                user=config.user,
-                password=config.password.get_secret_value(),
-                database=config.name,
-                connection_class=connection_class,
-            )
-        url = self._db.engine.url
-        return await asyncpg.connect(
-            host=url.host,
-            port=url.port,
-            user=url.username,
-            password=url.password,
-            database=url.database,
-        )
+        """Open a dedicated autocommit driver connection outside the pool."""
+        return await self._db.open_listen_connection()
 
     def _on_pg_notify(self, connection: Any, pid: int, channel: str, payload: object) -> None:
         """Handle a Postgres ``NOTIFY jentic_jobs`` message.
 
         An empty payload wakes the loop unconditionally. A payload naming a job
         kind wakes the loop only when that kind is registered in
-        ``self._handlers`` (or when no handlers are registered), so a worker
-        dedicated to another surface skips an unnecessary poll.
+        ``self._handlers``, so a worker dedicated to another surface skips an
+        unnecessary poll.
         """
         kind = str(payload) if payload else ""
-        if not kind or not self._handlers.kinds or kind in self._handlers:
+        if not kind or kind in self._handlers:
             self._wake.set()
 
     async def _listen_sleep(self, delay_s: float) -> None:
@@ -351,17 +337,17 @@ class WorkerLoop:
         try:
             if hasattr(conn, "is_closed") and conn.is_closed():
                 return
-            if hasattr(conn, "remove_listener"):
-                with contextlib.suppress(Exception):
-                    async with asyncio.timeout(_LISTEN_CLOSE_TIMEOUT_S):
-                        await conn.remove_listener(JOB_NOTIFY_CHANNEL, self._on_pg_notify)
-            if hasattr(conn, "close"):
-                async with asyncio.timeout(_LISTEN_CLOSE_TIMEOUT_S):
+            async with asyncio.timeout(_LISTEN_CLOSE_TIMEOUT_S):
+                if hasattr(conn, "remove_listener"):
+                    await conn.remove_listener(JOB_NOTIFY_CHANNEL, self._on_pg_notify)
+                if hasattr(conn, "close"):
                     await conn.close()
-        except Exception:
+        except BaseException as exc:
             if hasattr(conn, "terminate"):
                 with contextlib.suppress(Exception):
                     conn.terminate()
+            if not isinstance(exc, Exception):
+                raise
 
     async def _listen_loop(self) -> None:
         """Maintain the dedicated Postgres ``LISTEN jentic_jobs`` connection.
@@ -400,6 +386,8 @@ class WorkerLoop:
                 self._listening.set()
                 if not self._running or self._listen_stop.is_set():
                     break
+                if hasattr(conn, "is_closed") and conn.is_closed():
+                    dropped.set()
                 await dropped.wait()
                 if not self._running or self._listen_stop.is_set():
                     break
@@ -431,15 +419,18 @@ class WorkerLoop:
                         "worker_listen_unavailable",
                         channel=JOB_NOTIFY_CHANNEL,
                         error_type=type(exc).__name__,
-                        error=redact_sql(str(exc))[:_ERROR_MAX_LEN],
+                        error=_redact_listen_error(exc),
                         retry_in_s=round(delay_s, 2),
                     )
+                has_sensitive_error = (
+                    _carries_sql(exc) or _URL_USERINFO_RE.search(str(exc)) is not None
+                )
                 logger.debug(
                     "worker_listen_reconnect_backoff",
                     channel=JOB_NOTIFY_CHANNEL,
                     attempt=outage_attempts,
                     retry_in_s=round(delay_s, 2),
-                    exc_info=True,
+                    exc_info=not has_sensitive_error,
                 )
             finally:
                 self._listening.clear()
@@ -448,7 +439,13 @@ class WorkerLoop:
                     if hasattr(conn, "remove_termination_listener"):
                         with contextlib.suppress(Exception):
                             conn.remove_termination_listener(_on_terminated)
-                    await asyncio.shield(self._close_listen_connection(conn))
+                    close_task = asyncio.create_task(self._close_listen_connection(conn))
+                    try:
+                        await asyncio.shield(close_task)
+                    except asyncio.CancelledError:
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await close_task
+                        raise
 
             if self._running and not self._listen_stop.is_set():
                 await self._listen_sleep(delay_s)
