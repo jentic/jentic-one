@@ -293,11 +293,15 @@ class CredentialRepository:
         *,
         created_by: str,
     ) -> Credential | None:
-        """Re-attribute a credential to a different creator (connect-session confirm)."""
+        """Re-attribute a credential (and any child material rows) to a creator."""
         credential = await session.get(Credential, credential_id)
         if credential is None:
             return None
         credential.created_by = created_by
+        for rel in _CHILD_RELATIONSHIPS:
+            child = getattr(credential, rel)
+            if child is not None:
+                child.created_by = created_by
         await session.flush()
         return credential
 
@@ -358,13 +362,16 @@ class CredentialRepository:
         name: str | None,
         version: str | None,
         exclude_ids: Sequence[str] = (),
+        created_by_in: Sequence[str] | None = None,
         filters: Sequence[ColumnElement[bool]] | None = None,
         limit: int = 50,
     ) -> list[Credential]:
         """Connected, active credentials whose API scope covers the identity.
 
         A NULL ``api_name`` / ``api_version`` on the credential is a wildcard;
-        a ``None`` reference axis matches any value. ``filters`` carries the
+        a ``None`` reference axis matches any value. ``created_by_in``
+        optionally restricts rows to a set of creator IDs (e.g. the target
+        agent's owner and the confirming admin, #1838); ``filters`` carries the
         caller's access scoping.
         """
         stmt = select(Credential).where(
@@ -380,6 +387,8 @@ class CredentialRepository:
             )
         if exclude_ids:
             stmt = stmt.where(Credential.id.not_in(list(exclude_ids)))
+        if created_by_in is not None:
+            stmt = stmt.where(Credential.created_by.in_(list(created_by_in)))
         if filters is not None:
             for f in filters:
                 stmt = stmt.where(f)

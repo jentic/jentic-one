@@ -62,6 +62,7 @@ from jentic_one.control.services.integrations.errors import (
     AuthTypeNotDeclaredError,
     AuthTypeRequiredError,
     ConfirmKindMismatchError,
+    ExistingCredentialNotFoundError,
     InsufficientGrantedScopesError,
     InvalidPollTokenError,
     InvalidStateTransitionError,
@@ -1028,12 +1029,13 @@ async def test_agent_archived_between_check_and_bind_is_refused(
     assert row is not None
     original = ConnectSessionService._require_agent_binding_allowed
 
-    async def check_then_archive(self: ConnectSessionService, *args: Any, **kwargs: Any) -> None:
-        await original(self, *args, **kwargs)
+    async def check_then_archive(self: ConnectSessionService, *args: Any, **kwargs: Any) -> Any:
+        result = await original(self, *args, **kwargs)
         async with env.admin_db.transaction() as session:
             await session.execute(
                 text("UPDATE agents SET status = 'archived' WHERE id = :id"), {"id": _AGENT_ID}
             )
+        return result
 
     monkeypatch.setattr(ConnectSessionService, "_require_agent_binding_allowed", check_then_archive)
     with pytest.raises(AgentInactiveError):
@@ -1056,9 +1058,13 @@ async def test_agent_archived_between_check_and_bind_is_refused(
 
 
 async def _existing_credential(
-    ctx: Context, *, oauth_scope: str | None = None, name: str = "Mine"
+    ctx: Context,
+    *,
+    oauth_scope: str | None = None,
+    name: str = "Mine",
+    created_by: str = _OWNER_ID,
 ) -> str:
-    """A connected credential of the owner's covering the API (OAuth when a scope is given)."""
+    """A connected credential covering the API (OAuth when a scope is given)."""
     credential_id = generate_ksuid("cred")
     async with ctx.control_db.transaction() as session:
         session.add(
@@ -1069,7 +1075,7 @@ async def _existing_credential(
                 name=name,
                 api_vendor=_VENDOR,
                 api_name=_NAME,
-                created_by=_OWNER_ID,
+                created_by=created_by,
                 state="connected",
             )
         )
@@ -1082,7 +1088,7 @@ async def _existing_credential(
                     client_id="mine",
                     encrypted_client_secret=ctx.encryption.encrypt("mine-secret"),
                     authorize_url="https://auth.widgets.example/authorize",
-                    created_by=_OWNER_ID,
+                    created_by=created_by,
                 )
             )
             session.add(
@@ -1091,7 +1097,7 @@ async def _existing_credential(
                     credential_id=credential_id,
                     encrypted_access_token=ctx.encryption.encrypt("access"),
                     scope=oauth_scope,
-                    created_by=_OWNER_ID,
+                    created_by=created_by,
                 )
             )
     return credential_id
@@ -1483,3 +1489,73 @@ async def test_http_reject_status_and_cooldown(env: Context) -> None:
         again = await agent_client.post("/integrations:connect", json=_API_BODY)
         assert (again.status_code, again.json()["type"]) == (429, "recently_rejected")
         assert int(again.headers["Retry-After"]) > 0
+
+
+async def test_admin_confirm_attributes_credential_to_agent_owner_and_scopes_candidates(
+    env: Context,
+) -> None:
+    """When org:admin reviews or confirms a session for another user's agent (#1838):
+    - ``existing_credentials`` lists only credentials owned by the target agent's
+      owner or by the admin (never a third user's credential);
+    - confirming with a third user's credential raises ``ExistingCredentialNotFoundError``;
+    - confirming with a secret attributes ``created_by`` to the target agent's
+      owner while recording the admin as the audit actor.
+    """
+    await _import(env, _KEY_SCHEME)
+    owner_cred = await _existing_credential(env, name="OwnerCred", created_by=_OWNER_ID)
+    admin_cred = await _existing_credential(env, name="AdminCred", created_by=_ADMIN.sub)
+    stranger_cred = await _existing_credential(env, name="StrangerCred", created_by=_STRANGER_ID)
+
+    created = await _connect(env)
+    svc = _svc(env)
+    review = await svc.get_review_data(created.session_id, poll_token=None, identity=_ADMIN)
+    candidate_ids = {c.credential_id for c in review.existing_credentials}
+    assert candidate_ids == {owner_cred, admin_cred}
+    assert stranger_cred not in candidate_ids
+
+    with pytest.raises(ExistingCredentialNotFoundError):
+        await svc.confirm_variant(
+            created.session_id,
+            poll_token=None,
+            variant=ExistingCredentialConfirm(
+                credential_id=stranger_cred,
+                reauthorize=False,
+                checks=_checks(review.digest),
+            ),
+            identity=_ADMIN,
+        )
+    assert not await _bound(env, _AGENT_ID, stranger_cred)
+
+    result = await svc.confirm_variant(
+        created.session_id,
+        poll_token=None,
+        variant=SecretConfirm(
+            kind="api_key",
+            secret=ApiKeySecret(SecretStr(_SECRET)),
+            checks=_checks(review.digest),
+        ),
+        identity=_ADMIN,
+    )
+    assert isinstance(result, ConnectedConfirmResult)
+    async with env.control_db.session() as session:
+        cred = await CredentialRepository.get_by_id(session, result.credential_id)
+        key_row = (
+            await session.execute(
+                select(CustomerAPIKey).where(CustomerAPIKey.credential_id == result.credential_id)
+            )
+        ).scalar_one_or_none()
+    assert cred is not None and cred.created_by == _OWNER_ID
+    assert key_row is not None and key_row.created_by == _OWNER_ID
+
+    async with env.admin_db.session() as session:
+        audit_row = (
+            await session.execute(
+                select(AuditEntry).where(
+                    AuditEntry.target_id == created.session_id,
+                    AuditEntry.action == "confirm",
+                )
+            )
+        ).scalar_one()
+    assert audit_row.actor_id == _ADMIN.sub
+    assert audit_row.after is not None
+    assert audit_row.after.get("credential_created_by") == _OWNER_ID

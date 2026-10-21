@@ -1738,12 +1738,15 @@ async def test_confirm_attributes_agent_started_credential_to_the_approver(
     assert await _credential_created_by(ctx, created.session_id) == expected_creator
 
 
-async def test_confirm_attributes_user_started_credential_to_the_approver(
+async def test_confirm_attributes_user_started_credential_to_the_target_agents_owner(
     integration_context: Context,
     seed_test_vendors: None,
     seed_agent: None,
     clean_session_tables: None,
 ) -> None:
+    # When an org:admin confirms a session for another user's agent, the
+    # credential is owned by the target agent's owner while the audit entry
+    # records the confirming admin (#1838).
     ctx = integration_context
     svc = ConnectSessionService(ctx)
     created = await svc.create_session(
@@ -1756,7 +1759,7 @@ async def test_confirm_attributes_user_started_credential_to_the_approver(
         permission_rules=[],
         identity=_ADMIN_IDENTITY,
     )
-    assert await _credential_created_by(ctx, created.session_id) == _ADMIN_IDENTITY.sub
+    assert await _credential_created_by(ctx, created.session_id) == _USER_ID
 
 
 @pytest.mark.parametrize("status", ["archived", "disabled", "rejected"])
