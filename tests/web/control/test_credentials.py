@@ -1247,6 +1247,19 @@ def test_rule_set_attach_requires_creator_admin_or_curated(
     # org:admin attaches any set, including another user's.
     resp = cred_writer_client.put(attach, json={"rule_set_id": others["rule_set_id"]})
     assert resp.status_code == 204
+    # Each non-admin sees only bindings on credentials/agents visible to them;
+    # org:admin sees the full count, and delete still guards the row (#1858).
+    others_id = others["rule_set_id"]
+    assert (
+        other_writer_client.get(f"/permission-rule-sets/{others_id}").json()["binding_count"] == 0
+    )
+    assert (
+        plain_writer_client.get(f"/permission-rule-sets/{others_id}").json()["binding_count"] == 1
+    )
+    assert cred_writer_client.get(f"/permission-rule-sets/{others_id}").json()["binding_count"] == 1
+    delete_resp = other_writer_client.delete(f"/permission-rule-sets/{others_id}")
+    assert delete_resp.status_code == 409
+    assert delete_resp.json()["type"] == "rule_set_in_use"
     assert plain_writer_client.delete(attach).status_code == 204
 
 

@@ -275,6 +275,43 @@ class PrerequisiteRepository:
         return int(result.scalar_one())
 
     @staticmethod
+    async def count_bindings_for_rule_set_by_credential(
+        session: AsyncSession,
+        rule_set_id: str,
+        *,
+        visible_to: AgentVisibility,
+    ) -> dict[str, tuple[int, int]]:
+        """Per-credential ``(total_count, agent_visible_count)`` for a rule set (admin DB).
+
+        Pairs with a control-DB credential visibility lookup so a non-admin
+        caller's ``binding_count`` on ``GET /permission-rule-sets/{id}``
+        counts only bindings they can read (#1858): ``total_count`` applies to
+        credentials the caller created (where every bound agent is visible),
+        and ``agent_visible_count`` applies to credentials visible through any
+        other read grant (where only agents matching ``visible_to`` are visible).
+        """
+        stmt = text(
+            "SELECT b.credential_id, COUNT(*), "
+            "COALESCE("
+            "SUM(CASE WHEN a.id = :self_id OR a.owner_id IN :owner_ids THEN 1 ELSE 0 END), "
+            "0"
+            ") "
+            "FROM agent_credential_bindings b "
+            "LEFT JOIN agents a ON a.id = b.agent_id "
+            "WHERE b.rule_set_id = :rule_set_id "
+            "GROUP BY b.credential_id"
+        ).bindparams(bindparam("owner_ids", expanding=True))
+        result = await session.execute(
+            stmt,
+            {
+                "rule_set_id": rule_set_id,
+                "self_id": visible_to.self_id,
+                "owner_ids": list(visible_to.owner_ids),
+            },
+        )
+        return {str(row[0]): (int(row[1]), int(row[2])) for row in result.fetchall()}
+
+    @staticmethod
     async def list_rule_set_bindings_page(
         session: AsyncSession, *, after_id: str | None = None, limit: int = 1000
     ) -> list[RuleSetBindingRow]:

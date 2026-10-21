@@ -583,6 +583,14 @@ class CredentialService:
         return rows, has_more, next_cursor
 
     @staticmethod
+    def _agent_visibility_for(identity: Identity) -> AgentVisibility:
+        """Agents a non-admin, non-creator caller may enumerate on a visible credential."""
+        owner_ids = [identity.sub]
+        if OWNER_AGENTS_READ in identity.permissions and identity.parent_actor_id is not None:
+            owner_ids.append(identity.parent_actor_id)
+        return AgentVisibility(self_id=identity.sub, owner_ids=tuple(owner_ids))
+
+    @staticmethod
     def _bound_agent_visibility(
         credential: Credential, identity: Identity
     ) -> AgentVisibility | None:
@@ -597,10 +605,7 @@ class CredentialService:
             return None
         if credential.created_by is not None and credential.created_by == identity.sub:
             return None
-        owner_ids = [identity.sub]
-        if OWNER_AGENTS_READ in identity.permissions and identity.parent_actor_id is not None:
-            owner_ids.append(identity.parent_actor_id)
-        return AgentVisibility(self_id=identity.sub, owner_ids=tuple(owner_ids))
+        return CredentialService._agent_visibility_for(identity)
 
     # --- Per-binding permission rules (theme 5 phase 1) ---
 
@@ -990,19 +995,65 @@ class CredentialService:
         await self._record_rule_set_change(rule_set.id, identity=identity, reason="create rule set")
         return rule_set, set_rules
 
+    async def _visible_binding_count_for_rule_set(
+        self, rule_set_id: str, *, identity: Identity
+    ) -> int:
+        """Count bindings referencing ``rule_set_id`` that ``identity`` may read (#1858).
+
+        Applies the same credential and agent visibility gates as
+        :meth:`list_agents` and :meth:`_require_visible_binding`: ``org:admin``
+        sees every referencing binding, a credential's creator sees every
+        binding on that credential, and any other reader of a credential sees
+        only bindings on agents matching :meth:`_agent_visibility_for`.
+        """
+        if ORG_ADMIN in identity.permissions:
+            async with self._ctx.admin_db.session() as session:
+                return await PrerequisiteRepository.count_bindings_for_rule_set(
+                    session, rule_set_id
+                )
+
+        async with self._ctx.admin_db.session() as session:
+            counts_by_cred = await PrerequisiteRepository.count_bindings_for_rule_set_by_credential(
+                session,
+                rule_set_id,
+                visible_to=self._agent_visibility_for(identity),
+            )
+        if not counts_by_cred:
+            return 0
+
+        access_filters = build_access_filters(
+            identity,
+            Credential,
+            bound_credential_ids=await self._bound_credential_ids(identity),
+            owned_agent_ids=await self._owned_agent_ids(identity),
+            include_shared=True,
+        )
+        async with self._ctx.control_db.session() as session:
+            creators = await CredentialRepository.get_creators_by_ids(
+                session, list(counts_by_cred), filters=access_filters
+            )
+
+        total = 0
+        for cred_id, created_by in creators.items():
+            total_count, agent_visible_count = counts_by_cred[cred_id]
+            if created_by is not None and created_by == identity.sub:
+                total += total_count
+            else:
+                total += agent_visible_count
+        return total
+
     async def get_rule_set(
         self, rule_set_id: str, *, identity: Identity
     ) -> tuple[PermissionRuleSet, list[PermissionRuleSetRule], int]:
-        """Return a rule set, its ordered rules, and its referencing-binding count."""
+        """Return a rule set, its ordered rules, and its caller-visible binding count."""
         async with self._ctx.control_db.session() as session:
             rule_set = await PermissionRuleSetRepository.get_by_id(session, rule_set_id)
             if rule_set is None:
                 raise RuleSetNotFoundError(rule_set_id)
             rules = await PermissionRuleSetRepository.list_rules(session, rule_set_id)
-        async with self._ctx.admin_db.session() as session:
-            binding_count = await PrerequisiteRepository.count_bindings_for_rule_set(
-                session, rule_set_id
-            )
+        binding_count = await self._visible_binding_count_for_rule_set(
+            rule_set_id, identity=identity
+        )
         return rule_set, rules, binding_count
 
     async def list_rule_sets(

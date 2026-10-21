@@ -218,11 +218,19 @@ class CredentialRepository:
         return credential
 
     @staticmethod
-    async def get_creators_by_ids(session: AsyncSession, ids: list[str]) -> dict[str, str | None]:
-        """Batch-resolve credential IDs to their ``created_by`` (missing ids omitted)."""
+    async def get_creators_by_ids(
+        session: AsyncSession,
+        ids: list[str],
+        *,
+        filters: Sequence[ColumnElement[bool]] | None = None,
+    ) -> dict[str, str | None]:
+        """Batch-resolve credential IDs to their ``created_by`` (missing/filtered ids omitted)."""
         if not ids:
             return {}
         stmt = select(Credential.id, Credential.created_by).where(Credential.id.in_(ids))
+        if filters is not None:
+            for f in filters:
+                stmt = stmt.where(f)
         result = await session.execute(stmt)
         return {row.id: row.created_by for row in result}
 
