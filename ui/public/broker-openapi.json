@@ -624,6 +624,17 @@
                   "title": "Internal Server Error",
                   "type": "server_error"
                 }
+              },
+              "upstream_request_invalid": {
+                "summary": "The broker built an outbound request its HTTP client refused to send (e.g. an injected credential header carrying an illegal byte); fix the stored credential rather than retrying.",
+                "value": {
+                  "detail": "Upstream transport error (LocalProtocolError)",
+                  "error_origin": "broker",
+                  "instance": "/api.example.com/v1/users",
+                  "status": 500,
+                  "title": "Upstream transport error (LocalProtocolError)",
+                  "type": "upstream_request_invalid"
+                }
               }
             },
             "schema": {
