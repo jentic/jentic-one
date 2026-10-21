@@ -507,8 +507,8 @@ class WorkerLoop:
                 self._log_commit_outcome_unknown(job, exc)
                 return
             except Exception as exc:
+                await self._mark_dispatched_best_effort(job)
                 if attempt >= _COMPLETION_MAX_RETRIES:
-                    await self._mark_dispatched_best_effort(job)
                     self._log_completion_write_failed(job, exc)
                     return
                 attempt += 1
@@ -581,7 +581,7 @@ class WorkerLoop:
         payload[_DISPATCHED_PAYLOAD_KEY] = True
         with contextlib.suppress(Exception):
             async with self._db.transaction() as session:
-                await session.execute(
+                res = await session.execute(
                     update(Job)
                     .where(
                         Job.id == job.id,
@@ -590,6 +590,8 @@ class WorkerLoop:
                     )
                     .values(payload=payload)
                 )
+                if res.rowcount:  # type: ignore[attr-defined]
+                    job.payload = payload
 
     async def _claim_next(self) -> Any:
         """Claim the oldest claimable job whose kind this worker can handle.
@@ -677,12 +679,16 @@ class WorkerLoop:
         if job.kind != JobKind.EXECUTION or int(job.attempts or 0) <= 1:
             return False
         async with self._db.transaction() as session:
+            db_job = await session.get(Job, job.id, with_for_update=True)
+            if (
+                db_job is None
+                or db_job.status != JobStatus.RUNNING
+                or db_job.attempts != job.attempts
+            ):
+                self._dispatched_jobs.pop(job.id, None)
+                return True
             approval = await get_approved_by_job_id(session, job.id)
             if approval is not None:
-                db_job = await session.get(Job, job.id)
-                if db_job is None or db_job.status != JobStatus.RUNNING:
-                    self._dispatched_jobs.pop(job.id, None)
-                    return True
                 db_job.status = JobStatus.FAILED
                 db_job.error = "approved execution interrupted; not re-run"
                 db_job.visible_at = None
@@ -701,12 +707,8 @@ class WorkerLoop:
                 logger.warning("approved_job_reclaim_refused", job_id=job.id, attempts=job.attempts)
                 return True
 
-            if not await self._has_execution_dispatched(session, job):
+            if not await self._has_execution_dispatched(session, db_job):
                 return False
-            db_job = await session.get(Job, job.id)
-            if db_job is None or db_job.status != JobStatus.RUNNING:
-                self._dispatched_jobs.pop(job.id, None)
-                return True
             db_job.status = JobStatus.FAILED
             db_job.error = "execution interrupted after dispatch; not re-run"
             db_job.visible_at = None
@@ -730,9 +732,16 @@ class WorkerLoop:
         if isinstance(execution_id, str) and execution_id:
             event_clauses.append(Event.execution_id == execution_id)
         if trace_id is not None:
-            event_clauses.append(
-                (Event.trace_id == trace_id) & (Event.type == EventType.CREDENTIAL_ACCESSED)
+            cred_clause = (Event.trace_id == trace_id) & (
+                Event.type == EventType.CREDENTIAL_ACCESSED
             )
+            created_by = getattr(job, "created_by", None)
+            if isinstance(created_by, str) and created_by:
+                cred_clause = cred_clause & (Event.actor_id == created_by)
+            created_at = getattr(job, "created_at", None)
+            if created_at is not None:
+                cred_clause = cred_clause & (Event.created_at >= created_at)
+            event_clauses.append(cred_clause)
 
         predicates = [exists().where(or_(*event_clauses))]
         if isinstance(execution_id, str) and execution_id:
@@ -747,7 +756,7 @@ class WorkerLoop:
         other job kind does.
         """
         async with self._db.transaction() as session:
-            job = await session.get(Job, job_id)
+            job = await session.get(Job, job_id, with_for_update=True)
             if job is None or job.status != JobStatus.RUNNING:
                 return
             job.status = JobStatus.COMPLETED
