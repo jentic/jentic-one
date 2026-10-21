@@ -49,7 +49,7 @@ async def restore_admin_head(integration_config: AppConfig) -> AsyncGenerator[No
 async def _index_defs(admin_db: DatabaseSession) -> dict[str, str]:
     """Map each ``events`` index name to its normalised DDL."""
     async with admin_db.session() as session:
-        if session.bind.dialect.name == "postgresql":
+        if session.get_bind().dialect.name == "postgresql":
             rows = await session.execute(
                 text(
                     "SELECT indexname, indexdef FROM pg_indexes"
@@ -106,7 +106,7 @@ async def test_upgrade_rebuilds_an_invalid_leftover_index(
 ) -> None:
     """A failed ``CONCURRENTLY`` build leaves an INVALID index; a re-run replaces it."""
     async with admin_db.session() as session:
-        if session.bind.dialect.name != "postgresql":
+        if session.get_bind().dialect.name != "postgresql":
             pytest.skip("INVALID indexes exist only on PostgreSQL")
     cfg = _admin_cfg(integration_config)
     await asyncio.to_thread(command.downgrade, cfg, _PARENT_REV)

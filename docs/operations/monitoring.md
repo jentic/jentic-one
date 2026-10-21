@@ -169,8 +169,18 @@ correlate with traces by `trace_id`.
 
 A few instruments are worth alerting on by name:
 `broker.streaming_execution.persist_failures` (a streaming execution's record
-was not written because of a database failure, a timeout or a shutdown
-cut-off — the only signal that happened),
+was not written because of a database failure, a timeout or a shutdown cut-off —
+the only signal that happened; the `reason` attribute separates `write_error`
+from `backlog_timeout`, no slot within
+`broker.streaming_persist_acquire_timeout_s`, and `cancelled`, a timeout or
+shutdown drain; the matching log lines are `streaming_execution_persist_failed`
+and `streaming_execution_persist_abandoned`, whose `stage="writing"` means the
+record may still have landed),
+`broker.streaming_execution.persist_pending` (streaming persists waiting for,
+or holding, one of the `broker.streaming_persist_max_concurrency` slots — a
+steadily rising `state="waiting"` series means admin writes can't keep up;
+these persists run after the response is complete or the client has
+disconnected, and are not counted in `broker.admission.in_flight`),
 `app.background_tasks` with `outcome` `timed_out`, `cancelled` or `rejected`
 (work handed off after a response — today the streaming execution record —
 that hit its budget or was cut off by a shutdown drain),

@@ -113,7 +113,8 @@ DeadlineRunner( RetryRunner( CircuitBreakerRunner( SigV4SigningRunner( HttpRunne
   bulkhead, mid-stream response-size cap, raw-byte streaming.
 
 At the web edge, admission control sheds load when too many requests are in
-flight ([`broker/web/middleware.py`](../../src/jentic_one/broker/web/middleware.py)) and a per-caller rate limiter answers
+flight ([`broker/web/middleware.py`](../../src/jentic_one/broker/web/middleware.py); a request counts until its
+response is complete, not through any post-response background work) and a per-caller rate limiter answers
 `429` with `RateLimit-*` headers ([`broker/web/deps.py`](../../src/jentic_one/broker/web/deps.py)).
 
 ## Egress controls
@@ -224,12 +225,27 @@ drains for up to `services.background_task_drain_timeout_s` before the
 databases close. A database failure, timeout, or shutdown cancellation is
 logged and counted (`broker.streaming_execution.persist_failures`,
 `app.background_tasks`, [monitoring.md](../operations/monitoring.md)) but does
-not fail the call, so a call can, rarely, lack its record. When the upstream
-fails partway through a streamed body, the status line has already been sent:
-the broker logs one `upstream_network_failure` (or `streaming_response_aborted`
-for a size-cap or transfer-deadline cut-off) and closes the connection without
-the final chunk, so an HTTP/1.1 chunked or HTTP/2 client sees a truncated body
-(an HTTP/1.0 client reads a close-delimited body and cannot tell). Lifecycle events (`EXECUTION_COMPLETED` /
+not fail the call, so a call can, rarely, lack its record. Concurrent streaming
+persists are capped per process (`broker.streaming_persist_max_concurrency`,
+clamped to `databases.admin.pool_max - 1`, the admin base pool less one;
+SQLAlchemy's default overflow can open up to 10 connections beyond `pool_max`).
+An excess persist waits for a slot for at most
+`broker.streaming_persist_acquire_timeout_s` and is then abandoned and counted
+(`reason="backlog_timeout"`); the queue is visible as
+`broker.streaming_execution.persist_pending`. The wait never touches admission:
+a request releases its admission slot as soon as its response is complete or its
+client disconnects, so persists queued behind a stalled admin database count
+neither toward `broker.admission.in_flight` nor toward `/ready` saturation. The
+acquire timeout bounds how many records such a stall keeps queued in memory and
+how long a *queued* record holds up shutdown; a persist that already holds a
+slot and is writing runs under the task registry's
+`broker.streaming_persist_timeout_s` budget and the admin pool's checkout
+timeout. When the upstream fails partway through a streamed body, the status
+line has already been sent: the broker logs one `upstream_network_failure` (or
+`streaming_response_aborted` for a size-cap or transfer-deadline cut-off) and
+closes the connection without the final chunk, so an HTTP/1.1 chunked or HTTP/2
+client sees a truncated body (an HTTP/1.0 client reads a close-delimited body
+and cannot tell). Lifecycle events (`EXECUTION_COMPLETED` /
 `EXECUTION_FAILED`), permission denials (`PBAC_DENIED`), and credential
 incidents each emit typed events into the monitor.
 

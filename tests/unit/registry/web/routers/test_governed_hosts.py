@@ -20,6 +20,7 @@ from jentic_one.registry.services.governed_hosts_service import (
 from jentic_one.registry.web.deps import get_governed_hosts_service
 from jentic_one.registry.web.routers import governed_hosts
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.web.cache_control import AuthenticatedResponseCacheMiddleware
 from jentic_one.shared.web.deps import resolve_identity
 
 _HOSTS = ("a.gvh.test", "b.gvh.test")
@@ -48,6 +49,22 @@ def test_200_carries_etag_and_private_cache_headers(client: TestClient) -> None:
     assert resp.headers["ETag"] == f'"{_DIGEST}"'
     # Identity-scoped body: a URL-keyed shared cache must never store it.
     assert resp.headers["Cache-Control"] == "private, no-store"
+    assert resp.headers["Vary"] == "Authorization"
+
+
+def test_default_cache_middleware_keeps_route_cache_control() -> None:
+    """The app-wide authenticated-JSON default (#1835) leaves the route's own
+    ``Cache-Control`` and ``Vary`` in place rather than adding a second value."""
+    app = FastAPI()
+    app.include_router(governed_hosts.router)
+    identity = Identity(sub="agt_test", permissions=["credentials:read"])
+    app.dependency_overrides[resolve_identity] = lambda: identity
+    app.dependency_overrides[get_governed_hosts_service] = lambda: _StubService()
+    app.add_middleware(AuthenticatedResponseCacheMiddleware)
+
+    resp = TestClient(app).get("/governed-hosts", headers={"Authorization": "Bearer test-token"})
+    assert resp.status_code == 200
+    assert resp.headers.get_list("Cache-Control") == ["private, no-store"]
     assert resp.headers["Vary"] == "Authorization"
 
 

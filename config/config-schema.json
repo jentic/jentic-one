@@ -208,6 +208,20 @@
           "title": "Rule Cache Ttl S",
           "type": "number"
         },
+        "streaming_persist_acquire_timeout_s": {
+          "default": 5.0,
+          "description": "How long (seconds) a streaming execution persist waits for one of the ``broker.streaming_persist_max_concurrency`` slots. Past it the record is abandoned: logged as ``streaming_execution_persist_abandoned`` and counted on ``broker.streaming_execution.persist_failures`` (``reason=backlog_timeout``). The wait runs after the response is complete or the client has disconnected, when the request no longer holds its admission slot, so the wait delays neither the client nor ``/ready``. The timeout bounds how long a stalled admin database can keep records queued in memory, including at shutdown; it does not bound the write itself once a slot is held.",
+          "exclusiveMinimum": 0,
+          "title": "Streaming Persist Acquire Timeout S",
+          "type": "number"
+        },
+        "streaming_persist_max_concurrency": {
+          "default": 5,
+          "description": "Per-process cap on concurrent post-response persists of streaming execution records (each holds one admin-DB connection). Excess persists wait for a slot, up to ``broker.streaming_persist_acquire_timeout_s``; the waiting and writing counts are exported as ``broker.streaming_execution.persist_pending``. The effective cap is clamped to ``databases.admin.pool_max - 1`` (minimum 1; a ``streaming_persist_limit_clamped`` warning is logged when it applies), so with ``pool_max >= 2`` persists never take every connection of the admin base pool. ``pool_max`` is the base pool size only; SQLAlchemy's default overflow can open up to 10 more connections on top of it.",
+          "exclusiveMinimum": 0,
+          "title": "Streaming Persist Max Concurrency",
+          "type": "integer"
+        },
         "streaming_persist_timeout_s": {
           "default": 10.0,
           "description": "Budget (seconds) for writing one streaming execution's record and lifecycle event. The write runs after the response, off the request, so it never delays the client; past the budget it is abandoned, logged and counted on ``app.background_tasks`` (``kind=streaming_execution_persist``, ``outcome=timed_out``).",
@@ -1505,7 +1519,7 @@
       "type": "object"
     },
     "RetryConfig": {
-      "description": "Idempotency-aware upstream retry.\n\nThe ``RetryRunner`` decorator retries a failed attempt **only** when it is\nsafe to do so: a connect-phase failure (no bytes on the wire) is retryable\nfor any method, while a post-send failure (read timeout, mirrored ``429``/\n``503``) is retried only for idempotent methods or when an\n``Idempotency-Key`` is present — a blind ``POST`` retry is a double-spend.\nEach attempt still flows through the circuit breaker (retry *outside*,\nbreaker *inside*); the whole loop is bounded by the request deadline.",
+      "description": "Idempotency-aware upstream retry.\n\nThe ``RetryRunner`` decorator retries a failed attempt **only** when it is\nsafe to do so: a connect-phase failure (no bytes on the wire) is retryable\nfor any method, while a post-send failure (read timeout, mirrored ``429``/\n``503``) is retried only for idempotent HTTP methods — ``Idempotency-Key``\nis broker-consumed and stripped from outbound headers, so a post-send\n``POST`` or ``PATCH`` retry would double-spend (#1799).\nEach attempt still flows through the circuit breaker (retry *outside*,\nbreaker *inside*); the whole loop is bounded by the request deadline.",
       "properties": {
         "base_backoff_s": {
           "default": 0.2,

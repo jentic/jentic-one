@@ -115,3 +115,13 @@ def build_queued_execution_authorizer(ctx: Context) -> QueuedExecutionAuthorizer
         credential_deriver=CredentialBindingResolver(ctx.admin_db, ctx.control_db),
         agent_rule_evaluator=AgentRuleEvaluator(ctx.control_db, cache_ttl_seconds=0),
     )
+
+
+def build_worker_actor_status(ctx: Context) -> ActorStatusResolver:
+    """Build the live actor-status read the worker builds its injection identity from.
+
+    Uncached, like the authorizer: it is read right before a queued job's
+    credential is resolved, so a disable that commits during the job's
+    re-authorization still stops it.
+    """
+    return ActorStatusResolver(ctx.admin_db)

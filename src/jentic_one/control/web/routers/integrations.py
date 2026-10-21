@@ -25,6 +25,7 @@ from jentic_one.control.services.integrations.connect_session_service import (
     DeviceAuthorizationConfirmResult,
     ExistingCredentialConfirm,
     OwnClientConfirm,
+    ReauthorizeConfirmResult,
     ReviewData,
     SecretConfirm,
 )
@@ -32,6 +33,10 @@ from jentic_one.control.services.integrations.flow_handlers.manual import (
     ApiKeySecret,
     BasicSecret,
     BearerSecret,
+)
+from jentic_one.control.web.connect_binding import (
+    mint_browser_binding,
+    set_browser_binding_cookie,
 )
 from jentic_one.control.web.connect_limits import ROUTE_LIMITER_ATTR, connect_limiter
 from jentic_one.control.web.deps import get_connect_session_service
@@ -65,9 +70,10 @@ from jentic_one.control.web.schemas.integrations import (
 )
 from jentic_one.control.web.schemas.permission_rules import PermissionRuleSchema
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.resilience import RateLimiter
-from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web import get_ctx, get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.openapi_responses import (
     conflict,
@@ -426,6 +432,7 @@ async def confirm_connect_session(
         ),
     ],
     request: Request,
+    response: Response,
     body: Annotated[
         ConfirmSessionRequest,
         Body(
@@ -442,6 +449,7 @@ async def confirm_connect_session(
     ),
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: ConnectSessionService = Depends(get_connect_session_service),
+    ctx: Context = Depends(get_ctx),
 ) -> ConfirmSessionResponse:
     """Called by the review page after the human confirms selections.
 
@@ -457,8 +465,14 @@ async def confirm_connect_session(
     failed ``begin`` leaves the session retryable, so it must not be
     free to hammer during a vendor incident. Gated like the review read
     (``poll_token`` or owner / ``org:admin``; 403 otherwise).
+
+    A response carrying an ``authorize_url`` also sets a short-lived
+    ``HttpOnly`` cookie scoped to the OAuth callback path: the vendor
+    sign-in completes only in the approver's browser that called this
+    endpoint, whoever opened the session.
     """
     await _enforce_connect_rate_limit(request, identity)
+    binding = mint_browser_binding(request)
 
     if isinstance(body, OAuthConfirmSessionRequest):
         result = await svc.confirm(
@@ -470,10 +484,19 @@ async def confirm_connect_session(
             identity=identity,
             expected_agent_id=body.expected_agent_id,
             digest=body.digest,
+            browser_binding=binding.claim,
         )
     else:
         result = await svc.confirm_variant(
-            session_id, poll_token=poll_token, variant=_to_variant(body), identity=identity
+            session_id,
+            poll_token=poll_token,
+            variant=_to_variant(body),
+            identity=identity,
+            browser_binding=binding.claim,
+        )
+    if isinstance(result, AuthCodeConfirmResult | ReauthorizeConfirmResult):
+        set_browser_binding_cookie(
+            response, request, ctx, binding, authorize_url=result.authorize_url
         )
 
     if isinstance(result, DeviceAuthorizationConfirmResult):

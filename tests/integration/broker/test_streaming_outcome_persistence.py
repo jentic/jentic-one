@@ -375,7 +375,7 @@ async def test_persist_failure_is_counted_and_never_escapes(
 
     assert first.status_code == second.status_code == 200
     assert second.content == _FIRST_CHUNK + b"done"
-    failures.assert_called_once_with(1)
+    failures.assert_called_once_with(1, {"reason": "write_error"})
     assert len(await _records(integration_context, execution_id)) == 1
     assert [e["event"] for e in served.logs].count("streaming_execution_persist_failed") == 1
     assert _unhandled(served) == []

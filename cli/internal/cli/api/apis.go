@@ -89,7 +89,12 @@ func newApisRevisionsCmd(app *app) *cobra.Command {
 		Use:     "revisions <vendor/name/version>",
 		Aliases: []string{"revs"},
 		Short:   "List the revisions of an API",
-		Args:    cobra.ExactArgs(1),
+		Long: "revisions lists an API's revisions, newest first, with each revision's\n" +
+			"state and whether it is the current (live) one.\n" +
+			"A listed revision_id pins broker calls to that revision (e.g. to try a\n" +
+			"draft before promoting it): send the header\n" +
+			"`Jentic-Revision: <vendor>:<name>:<version>=<revision_id>`.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			o.json = cmdcore.JSONOrPretty(cmd, o.json)
 			return app.apisRevisions(cmd.Context(), o, args[0])

@@ -26,12 +26,14 @@ from sqlalchemy import delete, update
 from jentic_one.admin.core.schema.access_tokens import AccessToken
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.refresh_tokens import RefreshToken
+from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import AgentCredentialRepository, AgentRepository
 from jentic_one.admin.services._support.tokens import issue_jwt
 from jentic_one.admin.services.user_service import UserService
 from jentic_one.auth.services.token_service import TokenService
 from jentic_one.auth.web.app import create_app, make_superset_verifier
 from jentic_one.mcp.installer import install_mcp_mount
+from jentic_one.shared.auth.actor_status import SESSION_GENERATION_CLAIM
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import resolved_auth_base_url
 from jentic_one.shared.context import Context
@@ -41,10 +43,22 @@ from tests.web.conftest import noop_lifespan
 pytestmark = pytest.mark.integration
 
 
-def _login_jwt(ctx: Context, user_id: str, permissions: list[str]) -> str:
-    """A user's login JWT, as the admin login route mints it."""
+async def _login_jwt(ctx: Context, user_id: str, permissions: list[str]) -> str:
+    """A user's login JWT, as the admin login route mints it.
+
+    Carries the row's current session generation: disabling a user bumps it,
+    so a token without it is refused even after the user is re-enabled.
+    """
+    async with ctx.admin_db.session() as session:
+        user = await session.get(User, user_id)
+    assert user is not None
     config = ctx.config.admin.auth
-    claims = {"sub": user_id, "actor_type": "user", "permissions": permissions}
+    claims = {
+        "sub": user_id,
+        "actor_type": "user",
+        "permissions": permissions,
+        SESSION_GENERATION_CLAIM: user.session_generation,
+    }
     return issue_jwt(claims, config.jwt_secret.get_secret_value(), config.jwt_ttl_seconds)
 
 
@@ -189,7 +203,7 @@ async def test_ownerless_agent_and_user_login_are_unaffected(
 
     for credential in _agent_channels(ownerless_agent).values():
         assert _me_status(web_context, credential) == 200
-    admin_jwt = _login_jwt(web_context, admin_user_id, ["org:admin"])
+    admin_jwt = await _login_jwt(web_context, admin_user_id, ["org:admin"])
     assert _me_status(web_context, admin_jwt) == 200
     admin_at, _rt = await TokenService(web_context).issue_pair(
         admin_user_id, ActorType.USER, ["openid"]
@@ -197,7 +211,7 @@ async def test_ownerless_agent_and_user_login_are_unaffected(
     assert _me_status(web_context, admin_at) == 200
 
     await UserService(web_context).enable(owner_user_id, identity=_admin(admin_user_id))
-    owner_jwt = _login_jwt(web_context, owner_user_id, ["agents:read"])
+    owner_jwt = await _login_jwt(web_context, owner_user_id, ["agents:read"])
     assert _me_status(web_context, owner_jwt) == 200
     async with web_context.admin_db.session() as session:
         await session.execute(delete(AccessToken).where(AccessToken.actor_id == admin_user_id))

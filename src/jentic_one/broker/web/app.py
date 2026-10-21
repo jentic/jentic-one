@@ -19,7 +19,11 @@ from jentic_one.broker.adapters.runners.circuit import CircuitBreakerRunner
 from jentic_one.broker.adapters.runners.http import HttpRunner
 from jentic_one.broker.adapters.runners.registry import RunnerRegistry
 from jentic_one.broker.adapters.runners.sigv4 import SigV4SigningRunner
-from jentic_one.broker.core.setup import build_queued_execution_authorizer, install_broker_auth
+from jentic_one.broker.core.setup import (
+    build_queued_execution_authorizer,
+    build_worker_actor_status,
+    install_broker_auth,
+)
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
 from jentic_one.broker.services.execution.executor import PipelineExecutor
 from jentic_one.broker.services.execution.pipeline import build_runner
@@ -190,6 +194,9 @@ def create_app(ctx: Context, container: AppContainer | None = None) -> FastAPI:
         # rules still allow) with the sync route's policy — injection never
         # trusts the enqueue-time verdict.
         app.state.broker_execution_authorizer = build_queued_execution_authorizer(ctx)
+        # The worker re-reads the enqueuing actor's row right before injection
+        # and builds the identity it injects for from that live status.
+        app.state.broker_actor_status = build_worker_actor_status(ctx)
         try:
             yield
         finally:

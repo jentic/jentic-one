@@ -45,7 +45,7 @@ from typing import Any, ClassVar
 
 from locust import FastHttpUser, LoadTestShape, constant_throughput, events, task
 
-from tests.perf.common import ECHO_PATH, VENDORS, PerfEnv, upstream_base
+from tests.perf.common import ECHO_PATH, GET_PATH, VENDORS, PerfEnv, upstream_base
 
 ENV = PerfEnv.load()
 USER_RPS = float(os.environ.get("PERF_USER_RPS", "1"))
@@ -160,10 +160,10 @@ class PoolAgentUser(_BrokerUser):
 class RetryUser(_BrokerUser):
     """Upstream fails then succeeds (needs PERF_RETRY=true, PERF_BREAKER=false).
 
-    Carries an ``Idempotency-Key``: the broker only retries a *status* failure
-    (429/5xx after the request was sent) for idempotent methods or keyed
-    requests (see ``broker/adapters/runners/retry.py``), so a key-less POST
-    would correctly surface the first 503.
+    Uses ``GET`` with an ``Idempotency-Key``: the key routes the sync call onto
+    the buffered path (where ``RetryRunner.run`` executes), and ``GET`` satisfies
+    the post-send status-retry gate (429/5xx after the request was sent retries
+    only for idempotent HTTP methods; see ``broker/adapters/runners/retry.py``).
     """
 
     @task
@@ -172,7 +172,7 @@ class RetryUser(_BrokerUser):
         h["X-Mock-Status-Sequence"] = STATUS_SEQUENCE
         h["X-Mock-Test-Id"] = uuid.uuid4().hex
         h["Idempotency-Key"] = uuid.uuid4().hex
-        self.client.post(_proxy_path("perf-noauth"), data=BODY, headers=h, name="echo retry-seq")
+        self.client.get(_proxy_path("perf-noauth", GET_PATH), headers=h, name="echo retry-seq")
 
 
 class FailingUpstreamUser(_BrokerUser):

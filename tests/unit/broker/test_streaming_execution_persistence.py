@@ -52,6 +52,15 @@ def _ctx_req() -> ExecuteRequestContext:
     )
 
 
+def _mock_ctx() -> MagicMock:
+    """A stand-in Context whose persist-gate knobs are real numbers."""
+    ctx = MagicMock()
+    ctx.config.broker.streaming_persist_max_concurrency = 5
+    ctx.config.broker.streaming_persist_acquire_timeout_s = 5.0
+    ctx.config.databases.admin.pool_max = 10
+    return ctx
+
+
 @asynccontextmanager
 async def _fake_stream_ctx(result: StreamingResult) -> AsyncIterator[StreamingResult]:
     yield result
@@ -310,7 +319,7 @@ async def test_persist_callback_calls_persist_streaming_execution() -> None:
     mock_tx = AsyncMock()
     mock_tx.__aenter__.return_value = mock_session
     mock_tx.__aexit__.return_value = False
-    mock_ctx = MagicMock()
+    mock_ctx = _mock_ctx()
     mock_ctx.admin_db.transaction.return_value = mock_tx
 
     started_at = datetime.now(UTC)
@@ -355,7 +364,7 @@ async def test_persist_callback_sets_failed_on_upstream_error() -> None:
     mock_tx = AsyncMock()
     mock_tx.__aenter__.return_value = mock_session
     mock_tx.__aexit__.return_value = False
-    mock_ctx = MagicMock()
+    mock_ctx = _mock_ctx()
     mock_ctx.admin_db.transaction.return_value = mock_tx
 
     started_at = datetime.now(UTC)
@@ -395,7 +404,7 @@ async def test_persist_failure_is_logged_not_raised() -> None:
     outcome = StreamingOutcome(execution_id="exec-p-2", http_status=200)
     outcome.duration_ms = 10
 
-    mock_ctx = MagicMock()
+    mock_ctx = _mock_ctx()
     mock_ctx.admin_db.transaction.side_effect = RuntimeError("DB down")
 
     with patch.object(_streaming_persist_failures, "add") as mock_counter:
@@ -407,7 +416,7 @@ async def test_persist_failure_is_logged_not_raised() -> None:
             actor_id="agent-1",
             actor_type="agent",
         )
-        mock_counter.assert_called_once_with(1)
+        mock_counter.assert_called_once_with(1, {"reason": "write_error"})
 
 
 async def test_abandoned_persist_is_counted_and_the_cancellation_propagates() -> None:
@@ -419,7 +428,7 @@ async def test_abandoned_persist_is_counted_and_the_cancellation_propagates() ->
         await asyncio.sleep(10)
         yield
 
-    mock_ctx = MagicMock()
+    mock_ctx = _mock_ctx()
     mock_ctx.admin_db.transaction.side_effect = _hung_tx
 
     with (
@@ -441,13 +450,13 @@ async def test_abandoned_persist_is_counted_and_the_cancellation_propagates() ->
         with pytest.raises(asyncio.CancelledError):
             await task
 
-    mock_counter.assert_called_once_with(1)
+    mock_counter.assert_called_once_with(1, {"reason": "cancelled"})
     (abandoned,) = [e for e in logs if e["event"] == "streaming_execution_persist_abandoned"]
     assert abandoned["execution_id"] == "exec-p-4"
     assert abandoned["trace_id"] == "trace-1"
-    # The registry's supervisor owns the single error-level line for this incident.
-    assert abandoned["log_level"] == "warning"
-    assert not [e for e in logs if e["log_level"] == "error"]
+    assert abandoned["reason"] == "cancelled"
+    assert abandoned["stage"] == "writing"
+    assert "exc_info" not in abandoned
 
 
 # --- OutcomeStreamingResponse: every exit path settles the outcome once ---

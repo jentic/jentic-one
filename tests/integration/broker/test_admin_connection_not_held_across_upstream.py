@@ -56,7 +56,11 @@ from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.db.utils import insert_append_only_row
 from jentic_one.shared.jobs.execution_handler import ExecutionHandler
 from jentic_one.shared.jobs.handlers import JobHandlerRegistry
-from jentic_one.shared.jobs.protocols import QueuedExecutionRequest, QueuedExecutionVerdict
+from jentic_one.shared.jobs.protocols import (
+    ActorAuthority,
+    QueuedExecutionRequest,
+    QueuedExecutionVerdict,
+)
 from jentic_one.shared.jobs.worker import WorkerLoop
 from jentic_one.shared.models import (
     ActorType,
@@ -550,6 +554,13 @@ class _AllowBoundCredential:
         return QueuedExecutionVerdict(allowed=True, allowed_credential_ids=(_CREDENTIAL_ID,))
 
 
+class _ActiveActor:
+    """The pre-injection actor read, reporting the job's actor active and permitted."""
+
+    async def authority(self, *, actor_id: str, actor_type: str, permission: str) -> ActorAuthority:
+        return ActorAuthority(active=True, holds_permission=True)
+
+
 @pytest.fixture()
 async def clean_jobs(admin_db: DatabaseSession) -> AsyncGenerator[None, None]:
     async def _clean() -> None:
@@ -602,6 +613,7 @@ async def test_queued_execution_holds_no_admin_connection(
             executor=PipelineExecutor(registry),
             credential_injector=CredentialService(ctx),
             execution_authorizer=_AllowBoundCredential(),
+            actor_status=_ActiveActor(),
             # The test upstream listens on loopback, which the default policy blocks.
             egress=EgressConfig(allowed_private_subnets=["127.0.0.0/8"]),
         )
@@ -623,3 +635,17 @@ async def test_queued_execution_holds_no_admin_connection(
     assert record is not None and record.status == ExecutionStatus.COMPLETED
     assert record.credential_id == _CREDENTIAL_ID
     assert len(await _access_events(admin_db, trace_id)) == 1
+    async with admin_db.session() as session:
+        completed = list(
+            (
+                await session.execute(
+                    select(Event).where(
+                        Event.trace_id == trace_id,
+                        Event.type == EventType.EXECUTION_COMPLETED,
+                    )
+                )
+            ).scalars()
+        )
+    assert len(completed) == 1
+    assert completed[0].job_id == job_id
+    assert completed[0].execution_id == record.id
