@@ -49,7 +49,7 @@ from jentic_one.control.repos.connect_session_outcome_repo import (
 from jentic_one.control.repos.connect_session_repo import ConnectSessionRepository
 from jentic_one.control.services.credentials.errors import CredentialNotFoundError
 from jentic_one.control.services.credentials.service import CredentialService
-from jentic_one.control.services.credentials.state import StateReplayedError
+from jentic_one.control.services.credentials.state import StateReplayedError, new_browser_binding
 from jentic_one.control.services.integrations import device_authorization as df
 from jentic_one.control.services.integrations import identity_echo
 from jentic_one.control.services.integrations.connect_session_service import (
@@ -105,6 +105,9 @@ from jentic_one.shared.web.deps import resolve_identity
 from jentic_one.wiring import InProcessCatalogAutoImporter
 
 pytestmark = pytest.mark.integration
+
+# The approver's browser; its cookie value accompanies each callback below.
+_BINDING = new_browser_binding()
 
 
 _USER_ID = "usr_alice"
@@ -588,6 +591,7 @@ async def test_confirm_device_authorization_transitions_to_polling_and_seeds_aux
                 {"effect": "allow", "methods": ["GET"], "path": None, "match_mode": "regex"}
             ],
             identity=_USER_IDENTITY,
+            browser_binding=_BINDING.claim,
         )
 
     assert isinstance(result, DeviceAuthorizationConfirmResult)
@@ -625,6 +629,7 @@ async def test_confirm_auth_code_returns_authorize_url(
         confirmed_scopes=["scope-a"],
         permission_rules=[],
         identity=_USER_IDENTITY,
+        browser_binding=_BINDING.claim,
     )
 
     assert isinstance(result, AuthCodeConfirmResult)
@@ -657,6 +662,7 @@ async def test_confirm_rejects_self_confirm_by_initiating_agent(
             confirmed_scopes=[],
             permission_rules=[],
             identity=_AGENT_IDENTITY,
+            browser_binding=_BINDING.claim,
         )
 
 
@@ -733,6 +739,7 @@ async def test_mark_terminal_from_callback_deletes_credential_and_cascades_sessi
         confirmed_scopes=["scope-a"],
         permission_rules=[],
         identity=_USER_IDENTITY,
+        browser_binding=_BINDING.claim,
     )
     # The error branch consumes the signed state one-shot, exactly like
     # the success branch — so the test drives it with the real state JWT
@@ -746,7 +753,11 @@ async def test_mark_terminal_from_callback_deletes_credential_and_cascades_sessi
     assert pre is not None
     credential_id = pre.credential_id
 
-    await svc.mark_terminal_from_callback(raw_state=raw_state, error="access_denied")
+    await svc.mark_terminal_from_callback(
+        raw_state=raw_state,
+        error="access_denied",
+        browser_binding=_BINDING.value,
+    )
 
     async with ctx.control_db.session() as session:
         # Session gone (FK ``ondelete=CASCADE`` from credentials.id).
@@ -799,6 +810,7 @@ async def test_advance_polling_target_dispatches_to_session_when_live_session_ex
             confirmed_scopes=["read:user"],
             permission_rules=[],
             identity=_USER_IDENTITY,
+            browser_binding=_BINDING.claim,
         )
 
     with (
@@ -940,6 +952,7 @@ async def test_complete_from_callback_vaults_token_and_marks_connected(
         confirmed_scopes=["scope-a"],
         permission_rules=[],
         identity=_USER_IDENTITY,
+        browser_binding=_BINDING.claim,
     )
     # auth-code confirm returns an ``authorize_url`` carrying the
     # signed state the vendor will echo back on the callback.
@@ -971,7 +984,11 @@ async def test_complete_from_callback_vaults_token_and_marks_connected(
         patch("httpx.AsyncClient", return_value=_FakeClient()),
         patch.object(identity_echo, "echo_identity", new=AsyncMock(return_value=identity)),
     ):
-        result = await svc.complete_from_callback(raw_state=raw_state, code="the-code")
+        result = await svc.complete_from_callback(
+            raw_state=raw_state,
+            code="the-code",
+            browser_binding=_BINDING.value,
+        )
 
     assert result.status == "connected"
     assert result.connected_as == "alice"
@@ -1025,6 +1042,7 @@ async def test_complete_from_callback_refuses_state_replay(
         confirmed_scopes=["scope-a"],
         permission_rules=[],
         identity=_USER_IDENTITY,
+        browser_binding=_BINDING.claim,
     )
     assert isinstance(confirmed, AuthCodeConfirmResult)
     raw_state = _state_from_authorize_url(confirmed.authorize_url)
@@ -1058,10 +1076,18 @@ async def test_complete_from_callback_refuses_state_replay(
         patch("httpx.AsyncClient", return_value=_FakeClient()),
         patch.object(identity_echo, "echo_identity", new=AsyncMock(return_value=identity)),
     ):
-        result = await svc.complete_from_callback(raw_state=raw_state, code="the-code")
+        result = await svc.complete_from_callback(
+            raw_state=raw_state,
+            code="the-code",
+            browser_binding=_BINDING.value,
+        )
         assert result.status == "connected"
         with pytest.raises(StateReplayedError):
-            await svc.complete_from_callback(raw_state=raw_state, code="the-code")
+            await svc.complete_from_callback(
+                raw_state=raw_state,
+                code="the-code",
+                browser_binding=_BINDING.value,
+            )
 
     # Vendor token endpoint MUST have been hit exactly once — the
     # second attempt failed the nonce-consume gate before any HTTP.
@@ -1114,6 +1140,7 @@ async def test_confirm_rejects_wrong_poll_token(
             confirmed_scopes=["scope-a"],
             permission_rules=[],
             identity=_USER_IDENTITY,
+            browser_binding=_BINDING.claim,
         )
 
 
@@ -1137,6 +1164,7 @@ async def test_confirm_rejects_unknown_agent(
             permission_rules=[],
             agent_id="agnt_ghost",
             identity=_USER_IDENTITY,
+            browser_binding=_BINDING.claim,
         )
     # Nothing moved: the session is still confirmable.
     async with ctx.control_db.session() as session:
@@ -1168,6 +1196,7 @@ async def test_confirm_rejects_agent_not_owned_by_caller(
             permission_rules=[],
             agent_id=_AGENT_ID,  # owned by usr_alice
             identity=_OTHER_USER_IDENTITY,
+            browser_binding=_BINDING.claim,
         )
 
 
@@ -1191,6 +1220,7 @@ async def test_second_confirm_loses_the_cas_and_conflicts(
         confirmed_scopes=["scope-a"],
         permission_rules=[],
         identity=_USER_IDENTITY,
+        browser_binding=_BINDING.claim,
     )
     assert isinstance(first, AuthCodeConfirmResult)
     with pytest.raises(InvalidStateTransitionError):
@@ -1200,6 +1230,7 @@ async def test_second_confirm_loses_the_cas_and_conflicts(
             confirmed_scopes=["scope-a"],
             permission_rules=[],
             identity=_USER_IDENTITY,
+            browser_binding=_BINDING.claim,
         )
 
 
@@ -1234,6 +1265,7 @@ async def test_confirm_vendor_begin_failure_leaves_session_retryable(
             confirmed_scopes=["repo"],
             permission_rules=[],
             identity=_USER_IDENTITY,
+            browser_binding=_BINDING.claim,
         )
 
     async with ctx.control_db.session() as session:
@@ -1256,6 +1288,7 @@ async def test_confirm_vendor_begin_failure_leaves_session_retryable(
             confirmed_scopes=["repo"],
             permission_rules=[],
             identity=_USER_IDENTITY,
+            browser_binding=_BINDING.claim,
         )
     assert isinstance(retry, DeviceAuthorizationConfirmResult)
     assert retry.user_code == "WXYZ-5678"
@@ -1289,6 +1322,7 @@ async def test_error_callback_replay_after_connect_cannot_delete_live_credential
         confirmed_scopes=["scope-a"],
         permission_rules=[],
         identity=_USER_IDENTITY,
+        browser_binding=_BINDING.claim,
     )
     assert isinstance(confirmed, AuthCodeConfirmResult)
     raw_state = _state_from_authorize_url(confirmed.authorize_url)
@@ -1313,12 +1347,20 @@ async def test_error_callback_replay_after_connect_cannot_delete_live_credential
         patch("httpx.AsyncClient", return_value=_FakeClient()),
         patch.object(identity_echo, "echo_identity", new=AsyncMock(return_value=identity)),
     ):
-        result = await svc.complete_from_callback(raw_state=raw_state, code="the-code")
+        result = await svc.complete_from_callback(
+            raw_state=raw_state,
+            code="the-code",
+            browser_binding=_BINDING.value,
+        )
     assert result.status == "connected"
 
     # Replay the error variant of the same callback URL.
     with pytest.raises(StateReplayedError):
-        await svc.mark_terminal_from_callback(raw_state=raw_state, error="access_denied")
+        await svc.mark_terminal_from_callback(
+            raw_state=raw_state,
+            error="access_denied",
+            browser_binding=_BINDING.value,
+        )
 
     # Even a caller that somehow bypasses the nonce (e.g. a second scanner
     # pod racing a stale poll result) is stopped by the CAS.
@@ -1734,6 +1776,7 @@ async def test_confirm_attributes_agent_started_credential_to_the_approver(
         confirmed_scopes=["scope-a"],
         permission_rules=[],
         identity=_USER_IDENTITY,
+        browser_binding=_BINDING.claim,
     )
     assert await _credential_created_by(ctx, created.session_id) == expected_creator
 
@@ -1758,6 +1801,7 @@ async def test_confirm_attributes_user_started_credential_to_the_target_agents_o
         confirmed_scopes=["scope-a"],
         permission_rules=[],
         identity=_ADMIN_IDENTITY,
+        browser_binding=_BINDING.claim,
     )
     assert await _credential_created_by(ctx, created.session_id) == _USER_ID
 
@@ -1790,6 +1834,7 @@ async def test_confirm_refuses_an_unusable_agent(
                 confirmed_scopes=["scope-a"],
                 permission_rules=[],
                 identity=identity,
+                browser_binding=_BINDING.claim,
             )
     # Nothing moved: no CAS, no binding, credential still the agent's.
     async with ctx.control_db.session() as session:
@@ -1819,6 +1864,7 @@ async def test_confirm_with_token_requires_agents_write_for_the_owner(
             confirmed_scopes=["scope-a"],
             permission_rules=[],
             identity=_OWNER_WITHOUT_AGENTS_WRITE,
+            browser_binding=_BINDING.claim,
         )
 
 
@@ -2090,6 +2136,7 @@ async def test_vendor_entry_reads_refuse_api_targets(
             confirmed_scopes=[],
             permission_rules=[],
             identity=_ADMIN_IDENTITY,
+            browser_binding=_BINDING.claim,
         )
     # The refusal leaves the session untouched.
     async with ctx.control_db.session() as session:

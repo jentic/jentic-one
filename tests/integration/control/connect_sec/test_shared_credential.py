@@ -25,6 +25,7 @@ from jentic_one.control.services.credentials.schemas.connect import (
     ConnectRequest,
 )
 from jentic_one.control.services.credentials.schemas.provision import ProvisionResult
+from jentic_one.control.services.credentials.state import new_browser_binding
 from jentic_one.control.services.integrations.connect_session_service import (
     ConnectedConfirmResult,
     ExistingCredentialConfirm,
@@ -50,6 +51,9 @@ from tests.integration.control.connect_sec.support import (
 
 pytestmark = pytest.mark.integration
 
+# The approver's browser; its cookie value accompanies each callback below.
+_BINDING = new_browser_binding()
+
 
 async def _reauthorize(ctx: Context, session_id: str, credential_id: str) -> Any:
     return await svc(ctx).confirm_variant(
@@ -61,6 +65,7 @@ async def _reauthorize(ctx: Context, session_id: str, credential_id: str) -> Any
             checks=checks(await digest(ctx, session_id)),
         ),
         identity=OWNER,
+        browser_binding=_BINDING.claim,
     )
 
 
@@ -140,7 +145,9 @@ async def test_consent_completion_refuses_when_another_agent_was_bound_meanwhile
 
     with pytest.raises(ConnectFlowError):
         await ConnectService(env).complete(
-            _state_of(result.authorize_url), ConnectCallback(code="vendor-code")
+            _state_of(result.authorize_url),
+            ConnectCallback(code="vendor-code"),
+            browser_binding=_BINDING.value,
         )
     # The wider grant was never stored (nor the code even exchanged).
     assert await _granted(env, narrow) == "read"
@@ -157,7 +164,9 @@ async def test_consent_completion_widens_when_the_agent_is_still_the_only_one(
     assert isinstance(result, ReauthorizeConfirmResult)
     assert (
         await ConnectService(env).complete(
-            _state_of(result.authorize_url), ConnectCallback(code="vendor-code")
+            _state_of(result.authorize_url),
+            ConnectCallback(code="vendor-code"),
+            browser_binding=_BINDING.value,
         )
         == narrow
     )
@@ -176,9 +185,10 @@ async def test_plain_reconnect_of_a_shared_credential_is_unaffected(
         ConnectRequest(scopes=["read"]),
         identity=OWNER,
         redirect_uri="https://app.example.com/credentials/oauth/callback",
+        browser_binding=_BINDING.claim,
     )
     assert isinstance(challenge, AuthCodeChallenge)
     completed = await ConnectService(env).complete(
-        challenge.state, ConnectCallback(code="vendor-code")
+        challenge.state, ConnectCallback(code="vendor-code"), browser_binding=_BINDING.value
     )
     assert completed == narrow
