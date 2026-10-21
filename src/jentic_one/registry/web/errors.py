@@ -99,10 +99,9 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     # generic client detail so it is logged as a recognised class instead of
     # escaping as an opaque traceback. See #642.
     DatabaseConsistencyError: (500, "internal_error"),
-    # A transient DB failure (e.g. a pooled connection lost with pre-ping off)
-    # is a 503, matching the control/admin/auth surfaces. Its subclass for a
-    # connection lost at commit is a 503 too, but its detail asks the client to
-    # check whether the write landed before retrying.
+    # The admin/registry DB cannot answer (e.g. the per-request users-row read
+    # behind a login JWT, #1139): infra, not a client fault — a retryable 503,
+    # matching the admin, auth and control surfaces.
     DatabaseUnavailableError: (503, "database_unavailable"),
 }
 

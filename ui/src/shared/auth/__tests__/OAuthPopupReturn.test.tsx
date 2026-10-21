@@ -71,6 +71,9 @@ describe('OAuthPopupReturn', () => {
 		expect(
 			screen.getByText('Something went wrong. You can close this window and try again.'),
 		).toBeInTheDocument();
+		expect(
+			screen.getByText('Start again from the browser where you began connecting.'),
+		).toBeInTheDocument();
 
 		// Does not close immediately — the user gets a moment to read.
 		vi.advanceTimersByTime(0);

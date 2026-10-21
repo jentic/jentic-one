@@ -4,8 +4,8 @@ The pieces of the ``/authorize`` flow that more than one router needs —
 ``authorize.py`` (the flow itself: IdP redirect, callback, consent) and
 ``local_login.py`` (the local-account form that rejoins that flow, #1276):
 
-- the per-client+IP rate-limit dependency for unauthenticated flow endpoints
-  (plus the approval-status poll's own per-IP bucket),
+- the per-client-network rate-limit dependency for unauthenticated flow
+  endpoints (plus the approval-status poll's own bucket),
 - the platform/registered client gate (D7) helpers,
 - the HMAC-signed, purpose-discriminated, TTL'd internal-state tokens
   (purposes: ``state``, ``approval``, ``login``, ``session``, ``agent-create``,
@@ -38,7 +38,7 @@ from jentic_one.admin.services.oauth_client_service import OAuthClientService
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
 from jentic_one.auth.core.idp import IdpClaims
 from jentic_one.auth.services.errors import InvalidGrantError, RateLimitExceededError
-from jentic_one.auth.web.ratelimit import client_ip, get_auth_backend
+from jentic_one.auth.web.ratelimit import client_rate_limit_key, get_auth_backend
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.oauth_clients import OAuthClientApprovalStatus
 from jentic_one.shared.resilience import RateLimiter
@@ -88,37 +88,33 @@ def _get_authorize_limiter(request: Request, ctx: Context) -> RateLimiter:
         return limiter
     cfg = ctx.config.auth.oauth_rate_limit
     backend = get_auth_backend(request)
-    limiter = RateLimiter(backend, default_rpm=cfg.authorize_rpm, burst=cfg.authorize_burst)
+    # Own bucket namespace: every limiter on the auth surface keys on the
+    # client network, so sharing a namespace would hand two limiters with
+    # different rate/burst params the same bucket (the token endpoint's
+    # client_id-less key is the same bare network).
+    limiter = RateLimiter(
+        backend,
+        default_rpm=cfg.authorize_rpm,
+        burst=cfg.authorize_burst,
+        namespace="oauth-authorize",
+    )
     request.app.state._authorize_limiter = limiter
     return limiter
 
 
 async def check_rate_limit(request: Request, ctx: Context = Depends(get_ctx)) -> None:
-    """Per-client+IP rate limiter for unauthenticated authorization endpoints.
+    """Per-client-network rate limiter for the unauthenticated authorization flow.
 
-    Keyed ``client_id:ip`` when a ``client_id`` query parameter is present,
-    plain IP otherwise.
+    One bucket per client network (IPv4 address or IPv6 /64, see
+    :func:`client_rate_limit_key`) shared by every step of the flow:
+    ``/authorize``, the IdP callback, the consent page and submit, the
+    consent-page agent create, and the local-login form. Nothing else from
+    the request goes into the key: ``client_id`` (and every other parameter)
+    is caller-chosen until verified, so keying on it would hand a caller a
+    fresh bucket per value (#1874).
     """
-    client_id = request.query_params.get("client_id")
-    await _acquire_authorize_bucket(request, ctx, client_id=client_id)
-
-
-async def check_login_rate_limit(request: Request, ctx: Context = Depends(get_ctx)) -> None:
-    """The authorize rate limiter for the local-login routes, keyed by plain IP.
-
-    Their ``client_id`` rides inside the signed ``ls``, so any ``client_id``
-    query parameter on them is caller-chosen: keying on it would hand a
-    caller a fresh bucket per value.
-    """
-    await _acquire_authorize_bucket(request, ctx, client_id=None)
-
-
-async def _acquire_authorize_bucket(
-    request: Request, ctx: Context, *, client_id: str | None
-) -> None:
     trusted = ctx.config.auth.oauth_rate_limit.trusted_networks
-    ip = client_ip(request, trusted)
-    key = f"{client_id}:{ip}" if client_id else ip
+    key = client_rate_limit_key(request, trusted)
     limiter = _get_authorize_limiter(request, ctx)
     outcome = await limiter.acquire(key)
     if not outcome.allowed:
@@ -132,9 +128,9 @@ def _get_approval_status_limiter(request: Request, ctx: Context) -> RateLimiter:
     cfg = ctx.config.auth.oauth_rate_limit
     backend = get_auth_backend(request)
     # Own bucket namespace (mirrors the DCR door): the approval-pending page
-    # polls this endpoint for minutes at a time, and a bare-IP key in the
-    # shared store would otherwise collide with /authorize's fallback bucket —
-    # steady polling must not drain the /authorize quota or vice versa.
+    # polls this endpoint for minutes at a time, and its client-network key
+    # in a shared namespace would collide with /authorize's bucket — steady
+    # polling must not drain the /authorize quota or vice versa.
     limiter = RateLimiter(
         backend,
         default_rpm=cfg.approval_status_rpm,
@@ -148,16 +144,17 @@ def _get_approval_status_limiter(request: Request, ctx: Context) -> RateLimiter:
 async def check_approval_status_rate_limit(
     request: Request, ctx: Context = Depends(get_ctx)
 ) -> None:
-    """Per-IP rate limiter for the anonymous approval-status poll.
+    """Per-client-network rate limiter for the anonymous approval-status poll.
 
-    Keyed by bare IP: the only other request input is the signed state blob,
-    and a self-chosen key component would let one host sidestep the bucket by
-    re-minting blobs (every /authorize render hands out a fresh one).
+    Keyed by client network only: the only other request input is the signed
+    state blob, and a self-chosen key component would let one host sidestep
+    the bucket by re-minting blobs (every /authorize render hands out a fresh
+    one).
     """
     trusted = ctx.config.auth.oauth_rate_limit.trusted_networks
-    ip = client_ip(request, trusted)
+    key = client_rate_limit_key(request, trusted)
     limiter = _get_approval_status_limiter(request, ctx)
-    outcome = await limiter.acquire(ip)
+    outcome = await limiter.acquire(key)
     if not outcome.allowed:
         raise RateLimitExceededError(retry_after=outcome.retry_after_s)
 

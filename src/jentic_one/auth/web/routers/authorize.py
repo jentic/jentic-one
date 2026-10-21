@@ -2717,8 +2717,8 @@ async def consent_agent_status_endpoint(
     page treats a 400 as terminal ("retry the connection") because the blob
     shares the consent handle's lifetime — a retry re-enters the flow, which
     re-parks on a fresh awaiting page while the agent stays pending. Shares
-    the approval-status poll's own per-IP rate bucket (same cadence, same
-    caller shape).
+    the approval-status poll's own per-client-network rate bucket (same
+    cadence, same caller shape).
     """
     params = verify_payload(
         st,

@@ -7,9 +7,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+import structlog
 from pydantic import BaseModel
 
 from jentic_one.registry.core.schema.notes import Note
+from jentic_one.registry.repos.agent_ownership_boundary_repo import (
+    AgentOwnershipBoundaryRepository,
+)
 from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.registry.repos.note_repo import UNSET as UNSET
 from jentic_one.registry.repos.note_repo import NoteRepository, _Unset
@@ -22,8 +26,12 @@ from jentic_one.registry.services.errors import (
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import ORG_ADMIN
 from jentic_one.shared.context import Context
+from jentic_one.shared.models import ActorType
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
+
+logger = structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -63,6 +71,32 @@ class NoteService:
 
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
+
+    async def _owned_agent_ids(self, identity: Identity) -> list[str]:
+        """Agent ids the caller owns, for the read-only owned-agent note clause.
+
+        Lets a human read the notes their own agents wrote (see
+        ``build_access_filters``). Only humans own agents and ``org:admin`` is
+        unrestricted already, so both skip the lookup. A process without the
+        admin database falls back to author-only visibility.
+        """
+        if (
+            ORG_ADMIN in identity.permissions
+            or identity.actor_type != ActorType.USER
+            or not identity.sub
+        ):
+            return []
+        if not self._ctx.is_db_allowed("admin"):
+            logger.warning(
+                "note_owned_agent_lookup_skipped",
+                reason="admin_db_not_allowed",
+                actor_id=identity.sub,
+            )
+            return []
+        async with self._ctx.admin_db.session() as session:
+            return await AgentOwnershipBoundaryRepository.list_agent_ids_owned_by(
+                session, owner_id=identity.sub
+            )
 
     async def create(
         self,
@@ -142,7 +176,9 @@ class NoteService:
         if not note_id.startswith("note_"):
             raise NoteNotFoundError(note_id)
 
-        access_filters = build_access_filters(identity, Note)
+        access_filters = build_access_filters(
+            identity, Note, owned_agent_ids=await self._owned_agent_ids(identity)
+        )
 
         async with self._ctx.registry_db.session() as session:
             note = await NoteRepository.get_by_id(session, note_id, filters=access_filters)
@@ -187,7 +223,12 @@ class NoteService:
             if not api_ids:
                 return NotePage(data=[], has_more=False, next_cursor=None)
 
-        access_filters = build_access_filters(identity, Note)
+        owned_agent_ids = (
+            []
+            if created_by is not None and created_by == identity.sub
+            else await self._owned_agent_ids(identity)
+        )
+        access_filters = build_access_filters(identity, Note, owned_agent_ids=owned_agent_ids)
 
         async with self._ctx.registry_db.session() as session:
             rows = await NoteRepository.list_page(
@@ -232,9 +273,10 @@ class NoteService:
         if not note_id.startswith("note_"):
             raise NoteNotFoundError(note_id)
 
-        # Mutations apply the same visibility as reads: a note the caller cannot
-        # see is reported as not found, before any revision check.
-        access_filters = build_access_filters(identity, Note)
+        # Mutations stay with the note's author (and org:admin): an owner can
+        # read an agent's note but not change it. A note the caller cannot
+        # write is reported as not found, before any revision check.
+        access_filters = build_access_filters(identity, Note, for_write=True)
 
         async with self._ctx.registry_db.transaction() as session:
             note = await NoteRepository.get_by_id(session, note_id, filters=access_filters)
@@ -275,9 +317,10 @@ class NoteService:
         if not note_id.startswith("note_"):
             raise NoteNotFoundError(note_id)
 
-        # Mutations apply the same visibility as reads: a note the caller cannot
-        # see is reported as not found, before any revision check.
-        access_filters = build_access_filters(identity, Note)
+        # Mutations stay with the note's author (and org:admin): an owner can
+        # read an agent's note but not change it. A note the caller cannot
+        # write is reported as not found, before any revision check.
+        access_filters = build_access_filters(identity, Note, for_write=True)
 
         async with self._ctx.registry_db.transaction() as session:
             note = await NoteRepository.get_by_id(session, note_id, filters=access_filters)

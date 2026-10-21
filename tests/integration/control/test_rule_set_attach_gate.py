@@ -19,6 +19,7 @@ from jentic_one.control.repos import PermissionRuleSetRepository
 from jentic_one.control.services.credentials.errors import (
     RuleSetAccessDeniedError,
     RuleSetAttachDeniedError,
+    RuleSetInUseError,
 )
 from jentic_one.control.services.credentials.schemas.credentials import CredentialCreate
 from jentic_one.control.services.credentials.schemas.provision import APIReference
@@ -235,6 +236,52 @@ async def test_curated_set_is_editable_only_by_admin(
 
     updated = await svc.update_rule_set(admin_set.id, identity=_ADMIN, description="changed")
     assert updated.description == "changed"
+
+
+async def test_binding_count_is_scoped_to_caller_visible_bindings(
+    integration_context: Context, svc: CredentialService, cleanup: None
+) -> None:
+    """A rule set attached by two users reports each caller's visible binding count;
+    ``org:admin`` sees the full count (#1858)."""
+    alice_binding = await _binding(integration_context, svc, _ALICE, "cnt-alice", owned=False)
+    bob_binding = await _binding(integration_context, svc, _BOB, "cnt-bob", owned=False)
+    shared_set, _ = await svc.create_rule_set(
+        name="curated-for-count", description=None, rules=_RULES, identity=_ADMIN
+    )
+    await _attach(svc, alice_binding, shared_set.id, _ALICE)
+    await _attach(svc, bob_binding, shared_set.id, _BOB)
+    uninvolved = Identity(
+        sub="usr_rsgate_carol", email="carol@test.local", permissions=["credentials:read"]
+    )
+
+    _, _, alice_count = await svc.get_rule_set(shared_set.id, identity=_ALICE)
+    _, _, bob_count = await svc.get_rule_set(shared_set.id, identity=_BOB)
+    _, _, carol_count = await svc.get_rule_set(shared_set.id, identity=uninvolved)
+    _, _, admin_count = await svc.get_rule_set(shared_set.id, identity=_ADMIN)
+
+    assert alice_count == 1
+    assert bob_count == 1
+    assert carol_count == 0
+    assert admin_count == 2
+
+
+async def test_delete_in_use_checks_full_count_even_when_caller_sees_zero(
+    integration_context: Context, svc: CredentialService, cleanup: None
+) -> None:
+    """Deleting a set still referenced by another user's binding raises
+    ``RuleSetInUseError`` even though the creator's scoped ``binding_count`` is 0 (#1858)."""
+    bob_binding = await _binding(integration_context, svc, _BOB, "del-guard", owned=False)
+    alice_set, _ = await svc.create_rule_set(
+        name="alice-guarded", description=None, rules=_RULES, identity=_ALICE
+    )
+    await _attach(svc, bob_binding, alice_set.id, _ADMIN)
+
+    _, _, visible_to_alice = await svc.get_rule_set(alice_set.id, identity=_ALICE)
+    assert visible_to_alice == 0
+
+    with pytest.raises(RuleSetInUseError) as exc_info:
+        await svc.delete_rule_set(alice_set.id, identity=_ALICE)
+    assert exc_info.value.binding_count == 1
 
 
 async def _seed_users(ctx: Context) -> None:

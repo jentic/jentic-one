@@ -87,7 +87,19 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     RuleSetAttachDeniedError: (403, "rule_set_attach_denied"),
 }
 
-credential_service_error_handler = make_service_error_handler(_ERROR_MAP)
+_CREDENTIAL_SAFE_DETAILS: dict[type[Exception], str] = {
+    # ``RuleSetInUseError`` guards deletion against the full org-wide binding
+    # count (#1858), so its raw ``str(exc)`` stays in server logs while the
+    # client detail does not disclose how many invisible bindings reference the
+    # rule set.
+    RuleSetInUseError: (
+        "Permission rule set is still referenced by one or more bindings; detach them first"
+    ),
+}
+
+credential_service_error_handler = make_service_error_handler(
+    _ERROR_MAP, safe_details=_CREDENTIAL_SAFE_DETAILS
+)
 
 
 # Connect-session flow errors. The MRO walk maps subclasses first, so the

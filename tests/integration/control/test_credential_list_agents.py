@@ -27,6 +27,7 @@ from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import AgentCredentialBindingRepository
 from jentic_one.control.core.schema.credentials import Credential
+from jentic_one.control.core.schema.permission_rule_sets import PermissionRuleSet
 from jentic_one.control.scoping import filters as control_filters
 from jentic_one.control.services.credentials.errors import (
     AgentBindingNotFoundError,
@@ -36,7 +37,10 @@ from jentic_one.control.services.credentials.schemas.credentials import Credenti
 from jentic_one.control.services.credentials.schemas.provision import APIReference
 from jentic_one.control.services.credentials.service import CredentialService
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.auth.permission_catalog import OWNER_AGENTS_READ
+from jentic_one.shared.auth.permission_catalog import (
+    OWNER_AGENTS_READ,
+    OWNER_CREDENTIALS_READ,
+)
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.credentials import CredentialType
@@ -99,6 +103,9 @@ async def _wipe(ctx: Context) -> None:
         await session.execute(delete(User).where(User.id.in_(_USERS)))
         await session.commit()
     async with ctx.control_db.session() as session:
+        await session.execute(
+            delete(PermissionRuleSet).where(PermissionRuleSet.name == "cla-visibility-set")
+        )
         # Detail rows cascade from the credential row.
         await session.execute(delete(Credential).where(Credential.created_by == _OWNER_SUB))
         await session.commit()
@@ -325,3 +332,93 @@ async def test_sharee_cannot_write_binding_rules(
         await CredentialService(integration_context).replace_agent_permissions(
             ruled_credential, _SHAREE_AGENT, [], identity=_SHAREE
         )
+
+
+# --- Rule-set binding_count visibility (#1858) ---
+
+
+@pytest.fixture()
+async def attached_rule_set(integration_context: Context, bound_credential: str) -> str:
+    """A rule set attached to every binding on ``bound_credential``."""
+    svc = CredentialService(integration_context)
+    rule_set, _ = await svc.create_rule_set(
+        name="cla-visibility-set", description=None, rules=_RULES, identity=_ADMIN
+    )
+    for agent_id in _ALL_AGENTS:
+        await svc.attach_binding_rule_set(bound_credential, agent_id, rule_set.id, identity=_ADMIN)
+    return rule_set.id
+
+
+@pytest.mark.parametrize("identity", [_OWNER, _ADMIN], ids=["owner", "admin"])
+async def test_owner_and_admin_see_full_rule_set_binding_count(
+    integration_context: Context, attached_rule_set: str, identity: Identity
+) -> None:
+    _, _, count = await CredentialService(integration_context).get_rule_set(
+        attached_rule_set, identity=identity
+    )
+    assert count == len(_ALL_AGENTS)
+
+
+async def test_sharee_sees_only_own_agents_in_rule_set_binding_count(
+    integration_context: Context, attached_rule_set: str, share_with_sharee: None
+) -> None:
+    _, _, count = await CredentialService(integration_context).get_rule_set(
+        attached_rule_set, identity=_SHAREE
+    )
+    assert count == 2
+
+
+async def test_caller_without_credential_visibility_sees_zero_rule_set_binding_count(
+    integration_context: Context, attached_rule_set: str
+) -> None:
+    _, _, count = await CredentialService(integration_context).get_rule_set(
+        attached_rule_set, identity=_SHAREE
+    )
+    assert count == 0
+
+
+async def test_bound_agent_sees_only_own_binding_in_rule_set_binding_count(
+    integration_context: Context, attached_rule_set: str
+) -> None:
+    identity = _agent_identity(_SHAREE_AGENT)
+    _, _, count = await CredentialService(integration_context).get_rule_set(
+        attached_rule_set, identity=identity
+    )
+    assert count == 1
+
+
+async def test_bound_agent_with_owner_agents_read_sees_owner_agents_in_rule_set_binding_count(
+    integration_context: Context, attached_rule_set: str
+) -> None:
+    identity = _agent_identity(_SHAREE_AGENT, OWNER_AGENTS_READ)
+    _, _, count = await CredentialService(integration_context).get_rule_set(
+        attached_rule_set, identity=identity
+    )
+    assert count == 2
+
+
+async def test_delegated_unbound_agent_sees_only_visible_agents_on_owners_credential(
+    integration_context: Context, attached_rule_set: str
+) -> None:
+    """An unbound agent of the credential creator that reads the credential via
+    ``owner:credentials:read`` is not the credential creator, so it counts only
+    agents it can see itself (0 without ``owner:agents:read``, 1 with it)."""
+    without_agents_read = Identity(
+        sub="agnt_cla_unbound_owner_child",
+        email="unbound@test.local",
+        permissions=[OWNER_CREDENTIALS_READ],
+        actor_type=ActorType.AGENT,
+        parent_actor_id=_OWNER_SUB,
+    )
+    with_agents_read = Identity(
+        sub="agnt_cla_unbound_owner_child",
+        email="unbound@test.local",
+        permissions=[OWNER_CREDENTIALS_READ, OWNER_AGENTS_READ],
+        actor_type=ActorType.AGENT,
+        parent_actor_id=_OWNER_SUB,
+    )
+    svc = CredentialService(integration_context)
+    _, _, count_without = await svc.get_rule_set(attached_rule_set, identity=without_agents_read)
+    _, _, count_with = await svc.get_rule_set(attached_rule_set, identity=with_agents_read)
+    assert count_without == 0
+    assert count_with == 1

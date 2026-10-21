@@ -10668,8 +10668,9 @@ type ClientInterface interface {
 	// ``must_change_password`` gate are re-read from the database at re-mint.
 	// Refusal modes: 401 ``session_expired`` once the original authentication is
 	// older than the absolute window (``admin.auth.session_ttl_seconds``), 401
-	// ``invalid_credentials`` for deactivated users, non-user tokens, or opaque
-	// (non-JWT) credentials. Clients should then send the user back to login.
+	// ``unauthorized`` from the auth gate for a disabled, deleted or unknown user,
+	// and 401 ``invalid_credentials`` for non-user tokens or opaque (non-JWT)
+	// credentials. Clients should then send the user back to login.
 	//
 	// Corresponds with POST /auth/refresh (the `RefreshSession` operationId).
 	RefreshSession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -10838,6 +10839,11 @@ type ClientInterface interface {
 	// free to hammer during a vendor incident. Gated like the review read
 	// (``poll_token`` or owner / ``org:admin``; 403 otherwise).
 	//
+	// A response carrying an ``authorize_url`` also sets a short-lived
+	// ``HttpOnly`` cookie scoped to the OAuth callback path: the vendor
+	// sign-in completes only in the approver's browser that called this
+	// endpoint, whoever opened the session.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /connect-sessions/{session_id}:confirm (the `ConfirmConnectSession` operationId).
@@ -10859,6 +10865,11 @@ type ClientInterface interface {
 	// failed ``begin`` leaves the session retryable, so it must not be
 	// free to hammer during a vendor incident. Gated like the review read
 	// (``poll_token`` or owner / ``org:admin``; 403 otherwise).
+	//
+	// A response carrying an ``authorize_url`` also sets a short-lived
+	// ``HttpOnly`` cookie scoped to the OAuth callback path: the vendor
+	// sign-in completes only in the approver's browser that called this
+	// endpoint, whoever opened the session.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -11078,6 +11089,11 @@ type ClientInterface interface {
 	// redirect; device-flow providers return ``user_code`` /
 	// ``verification_uri`` for the RFC 8628 human step.
 	//
+	// An ``authorize_url`` response also sets a short-lived ``HttpOnly``
+	// cookie scoped to the OAuth callback path: the callback completes only
+	// in the browser that called this endpoint, so call it from the browser
+	// that opens the ``authorize_url``.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /credentials/{credential_id}/connect (the `ConnectCredential` operationId).
@@ -11091,6 +11107,11 @@ type ClientInterface interface {
 	// authorization-code providers return an ``authorize_url`` for popup
 	// redirect; device-flow providers return ``user_code`` /
 	// ``verification_uri`` for the RFC 8628 human step.
+	//
+	// An ``authorize_url`` response also sets a short-lived ``HttpOnly``
+	// cookie scoped to the OAuth callback path: the callback completes only
+	// in the browser that called this endpoint, so call it from the browser
+	// that opens the ``authorize_url``.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -11114,6 +11135,9 @@ type ClientInterface interface {
 	// StreamEvents Stream Events
 	//
 	// Stream events as Server-Sent Events.
+	//
+	// The stream ends once the caller's credential stops verifying (expired,
+	// revoked, or its user disabled or deleted); reconnecting then returns 401.
 	//
 	// Corresponds with GET /events/stream (the `StreamEvents` operationId).
 	StreamEvents(ctx context.Context, params *StreamEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -11409,6 +11433,8 @@ type ClientInterface interface {
 	//
 	// List notes with optional filters and cursor pagination.
 	//
+	// Returns the caller's own notes; a user also sees the notes of agents they own.
+	//
 	// Corresponds with GET /notes (the `ListNotes` operationId).
 	ListNotes(ctx context.Context, params *ListNotesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -11440,6 +11466,9 @@ type ClientInterface interface {
 	// GetNote Get Note
 	//
 	// Retrieve a single note by ID.
+	//
+	// A user can read the notes of agents they own, but only a note's author (or
+	// an org admin) can update or delete it.
 	//
 	// Corresponds with GET /notes/{note_id} (the `GetNote` operationId).
 	GetNote(ctx context.Context, noteId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -11766,8 +11795,8 @@ type ClientInterface interface {
 	// page treats a 400 as terminal ("retry the connection") because the blob
 	// shares the consent handle's lifetime — a retry re-enters the flow, which
 	// re-parks on a fresh awaiting page while the agent stays pending. Shares
-	// the approval-status poll's own per-IP rate bucket (same cadence, same
-	// caller shape).
+	// the approval-status poll's own per-client-network rate bucket (same
+	// cadence, same caller shape).
 	//
 	// Corresponds with GET /oauth/consent/agent/status (the `ConsentAgentStatus` operationId).
 	ConsentAgentStatus(ctx context.Context, params *ConsentAgentStatusParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -11842,8 +11871,9 @@ type ClientInterface interface {
 	//   die, so reconnecting requires fresh consent (deliberately beyond the
 	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-	//   64 KiB declared body length, and per-IP rate limited; its errors speak
-	//   the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+	//   64 KiB declared body length, and rate limited per client network
+	//   (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+	//   (RFC 7009 §2.2.1), not Problem Details.
 	// - **JSON** (any other content type — the pre-G11 contract, byte-identical
 	//   including 422 shapes): requires a platform bearer identity; revokes the
 	//   caller's own token (access → that token, refresh → its family). Used by
@@ -11878,8 +11908,9 @@ type ClientInterface interface {
 	//   die, so reconnecting requires fresh consent (deliberately beyond the
 	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-	//   64 KiB declared body length, and per-IP rate limited; its errors speak
-	//   the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+	//   64 KiB declared body length, and rate limited per client network
+	//   (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+	//   (RFC 7009 §2.2.1), not Problem Details.
 	// - **JSON** (any other content type — the pre-G11 contract, byte-identical
 	//   including 422 shapes): requires a platform bearer identity; revokes the
 	//   caller's own token (access → that token, refresh → its family). Used by
@@ -11914,8 +11945,9 @@ type ClientInterface interface {
 	//   die, so reconnecting requires fresh consent (deliberately beyond the
 	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-	//   64 KiB declared body length, and per-IP rate limited; its errors speak
-	//   the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+	//   64 KiB declared body length, and rate limited per client network
+	//   (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+	//   (RFC 7009 §2.2.1), not Problem Details.
 	// - **JSON** (any other content type — the pre-G11 contract, byte-identical
 	//   including 422 shapes): requires a platform bearer identity; revokes the
 	//   caller's own token (access → that token, refresh → its family). Used by
@@ -12263,7 +12295,11 @@ type ClientInterface interface {
 	// The row is retained — the account is anonymized (tombstone email) and
 	// deactivated so history and audit references stay resolvable — but the
 	// action is terminal: there is no re-enable arm. For the reversible kill
-	// switch use ``:disable`` / ``:enable`` instead.
+	// switch use ``:disable`` / ``:enable`` instead. Deleting a user also cancels
+	// their outstanding invites: redeeming one answers 409
+	// ``invite_already_redeemed``, the same as an invite replaced by a reissue.
+	// Idempotent: deleting an already-deleted user answers 204 and changes
+	// nothing.
 	//
 	// Corresponds with DELETE /users/{user_id} (the `DeleteUser` operationId).
 	DeleteUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -12283,7 +12319,8 @@ type ClientInterface interface {
 	// Update a user's profile fields.
 	//
 	// Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
-	// else only themselves. Any other user answers 404.
+	// else only themselves. Any other user answers 404. A deleted user cannot be
+	// edited (409).
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -12295,7 +12332,8 @@ type ClientInterface interface {
 	// Update a user's profile fields.
 	//
 	// Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
-	// else only themselves. Any other user answers 404.
+	// else only themselves. Any other user answers 404. A deleted user cannot be
+	// edited (409).
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -12306,6 +12344,8 @@ type ClientInterface interface {
 	//
 	// Set the assigned permissions for a user.
 	//
+	// A deleted user's permissions cannot be changed (409).
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PUT /users/{user_id}/permissions (the `SetUserPermissions` operationId).
@@ -12314,6 +12354,8 @@ type ClientInterface interface {
 	// SetUserPermissions Set User Permissions
 	//
 	// Set the assigned permissions for a user.
+	//
+	// A deleted user's permissions cannot be changed (409).
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -12324,12 +12366,17 @@ type ClientInterface interface {
 	//
 	// Disable a user account.
 	//
+	// A deleted user is already permanently inactive and cannot be disabled (409).
+	//
 	// Corresponds with POST /users/{user_id}:disable (the `DisableUser` operationId).
 	DisableUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// EnableUser Enable User
 	//
-	// Enable a user account.
+	// Enable a disabled user account.
+	//
+	// A deleted user cannot be re-enabled (409). Login sessions issued before the
+	// account was disabled stay revoked; the user signs in again.
 	//
 	// Corresponds with POST /users/{user_id}:enable (the `EnableUser` operationId).
 	EnableUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -14260,8 +14307,9 @@ func (c *Client) Login(ctx context.Context, body LoginJSONRequestBody, reqEditor
 // “must_change_password“ gate are re-read from the database at re-mint.
 // Refusal modes: 401 “session_expired“ once the original authentication is
 // older than the absolute window (“admin.auth.session_ttl_seconds“), 401
-// “invalid_credentials“ for deactivated users, non-user tokens, or opaque
-// (non-JWT) credentials. Clients should then send the user back to login.
+// “unauthorized“ from the auth gate for a disabled, deleted or unknown user,
+// and 401 “invalid_credentials“ for non-user tokens or opaque (non-JWT)
+// credentials. Clients should then send the user back to login.
 //
 // Corresponds with POST /auth/refresh (the `RefreshSession` operationId).
 func (c *Client) RefreshSession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -14560,6 +14608,11 @@ func (c *Client) CancelConnectSession(ctx context.Context, sessionId string, par
 // free to hammer during a vendor incident. Gated like the review read
 // (“poll_token“ or owner / “org:admin“; 403 otherwise).
 //
+// A response carrying an “authorize_url“ also sets a short-lived
+// “HttpOnly“ cookie scoped to the OAuth callback path: the vendor
+// sign-in completes only in the approver's browser that called this
+// endpoint, whoever opened the session.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /connect-sessions/{session_id}:confirm (the `ConfirmConnectSession` operationId).
@@ -14591,6 +14644,11 @@ func (c *Client) ConfirmConnectSessionWithBody(ctx context.Context, sessionId st
 // failed “begin“ leaves the session retryable, so it must not be
 // free to hammer during a vendor incident. Gated like the review read
 // (“poll_token“ or owner / “org:admin“; 403 otherwise).
+//
+// A response carrying an “authorize_url“ also sets a short-lived
+// “HttpOnly“ cookie scoped to the OAuth callback path: the vendor
+// sign-in completes only in the approver's browser that called this
+// endpoint, whoever opened the session.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -15020,6 +15078,11 @@ func (c *Client) AttachAgentCredentialRuleSet(ctx context.Context, credentialId 
 // redirect; device-flow providers return “user_code“ /
 // “verification_uri“ for the RFC 8628 human step.
 //
+// An “authorize_url“ response also sets a short-lived “HttpOnly“
+// cookie scoped to the OAuth callback path: the callback completes only
+// in the browser that called this endpoint, so call it from the browser
+// that opens the “authorize_url“.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /credentials/{credential_id}/connect (the `ConnectCredential` operationId).
@@ -15043,6 +15106,11 @@ func (c *Client) ConnectCredentialWithBody(ctx context.Context, credentialId str
 // authorization-code providers return an “authorize_url“ for popup
 // redirect; device-flow providers return “user_code“ /
 // “verification_uri“ for the RFC 8628 human step.
+//
+// An “authorize_url“ response also sets a short-lived “HttpOnly“
+// cookie scoped to the OAuth callback path: the callback completes only
+// in the browser that called this endpoint, so call it from the browser
+// that opens the “authorize_url“.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -15096,6 +15164,9 @@ func (c *Client) ListEvents(ctx context.Context, params *ListEventsParams, reqEd
 // StreamEvents Stream Events
 //
 // Stream events as Server-Sent Events.
+//
+// The stream ends once the caller's credential stops verifying (expired,
+// revoked, or its user disabled or deleted); reconnecting then returns 401.
 //
 // Corresponds with GET /events/stream (the `StreamEvents` operationId).
 func (c *Client) StreamEvents(ctx context.Context, params *StreamEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -15641,6 +15712,8 @@ func (c *Client) GetUsageStats(ctx context.Context, params *GetUsageStatsParams,
 //
 // List notes with optional filters and cursor pagination.
 //
+// Returns the caller's own notes; a user also sees the notes of agents they own.
+//
 // Corresponds with GET /notes (the `ListNotes` operationId).
 func (c *Client) ListNotes(ctx context.Context, params *ListNotesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListNotesRequest(c.Server, params)
@@ -15712,6 +15785,9 @@ func (c *Client) DeleteNote(ctx context.Context, noteId string, params *DeleteNo
 // GetNote Get Note
 //
 // Retrieve a single note by ID.
+//
+// A user can read the notes of agents they own, but only a note's author (or
+// an org admin) can update or delete it.
 //
 // Corresponds with GET /notes/{note_id} (the `GetNote` operationId).
 func (c *Client) GetNote(ctx context.Context, noteId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -16238,8 +16314,8 @@ func (c *Client) ConsentAgentCreateWithFormdataBody(ctx context.Context, body Co
 // page treats a 400 as terminal ("retry the connection") because the blob
 // shares the consent handle's lifetime — a retry re-enters the flow, which
 // re-parks on a fresh awaiting page while the agent stays pending. Shares
-// the approval-status poll's own per-IP rate bucket (same cadence, same
-// caller shape).
+// the approval-status poll's own per-client-network rate bucket (same
+// cadence, same caller shape).
 //
 // Corresponds with GET /oauth/consent/agent/status (the `ConsentAgentStatus` operationId).
 func (c *Client) ConsentAgentStatus(ctx context.Context, params *ConsentAgentStatusParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -16354,8 +16430,9 @@ func (c *Client) IntrospectEndpointWithFormdataBody(ctx context.Context, body In
 //     die, so reconnecting requires fresh consent (deliberately beyond the
 //     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 //     is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-//     64 KiB declared body length, and per-IP rate limited; its errors speak
-//     the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+//     64 KiB declared body length, and rate limited per client network
+//     (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+//     (RFC 7009 §2.2.1), not Problem Details.
 //   - **JSON** (any other content type — the pre-G11 contract, byte-identical
 //     including 422 shapes): requires a platform bearer identity; revokes the
 //     caller's own token (access → that token, refresh → its family). Used by
@@ -16400,8 +16477,9 @@ func (c *Client) RevokeEndpointWithBody(ctx context.Context, contentType string,
 //     die, so reconnecting requires fresh consent (deliberately beyond the
 //     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 //     is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-//     64 KiB declared body length, and per-IP rate limited; its errors speak
-//     the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+//     64 KiB declared body length, and rate limited per client network
+//     (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+//     (RFC 7009 §2.2.1), not Problem Details.
 //   - **JSON** (any other content type — the pre-G11 contract, byte-identical
 //     including 422 shapes): requires a platform bearer identity; revokes the
 //     caller's own token (access → that token, refresh → its family). Used by
@@ -16446,8 +16524,9 @@ func (c *Client) RevokeEndpoint(ctx context.Context, body RevokeEndpointJSONRequ
 //     die, so reconnecting requires fresh consent (deliberately beyond the
 //     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 //     is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-//     64 KiB declared body length, and per-IP rate limited; its errors speak
-//     the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+//     64 KiB declared body length, and rate limited per client network
+//     (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+//     (RFC 7009 §2.2.1), not Problem Details.
 //   - **JSON** (any other content type — the pre-G11 contract, byte-identical
 //     including 422 shapes): requires a platform bearer identity; revokes the
 //     caller's own token (access → that token, refresh → its family). Used by
@@ -17075,7 +17154,11 @@ func (c *Client) ChangePassword(ctx context.Context, body ChangePasswordJSONRequ
 // The row is retained — the account is anonymized (tombstone email) and
 // deactivated so history and audit references stay resolvable — but the
 // action is terminal: there is no re-enable arm. For the reversible kill
-// switch use “:disable“ / “:enable“ instead.
+// switch use “:disable“ / “:enable“ instead. Deleting a user also cancels
+// their outstanding invites: redeeming one answers 409
+// “invite_already_redeemed“, the same as an invite replaced by a reissue.
+// Idempotent: deleting an already-deleted user answers 204 and changes
+// nothing.
 //
 // Corresponds with DELETE /users/{user_id} (the `DeleteUser` operationId).
 func (c *Client) DeleteUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -17115,7 +17198,8 @@ func (c *Client) GetUser(ctx context.Context, userId string, reqEditors ...Reque
 // Update a user's profile fields.
 //
 // Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
-// else only themselves. Any other user answers 404.
+// else only themselves. Any other user answers 404. A deleted user cannot be
+// edited (409).
 //
 // Takes any type of body and a specified content type.
 //
@@ -17137,7 +17221,8 @@ func (c *Client) UpdateUserWithBody(ctx context.Context, userId string, contentT
 // Update a user's profile fields.
 //
 // Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
-// else only themselves. Any other user answers 404.
+// else only themselves. Any other user answers 404. A deleted user cannot be
+// edited (409).
 //
 // Takes a body of the `application/json` content type.
 //
@@ -17158,6 +17243,8 @@ func (c *Client) UpdateUser(ctx context.Context, userId string, body UpdateUserJ
 //
 // Set the assigned permissions for a user.
 //
+// A deleted user's permissions cannot be changed (409).
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with PUT /users/{user_id}/permissions (the `SetUserPermissions` operationId).
@@ -17176,6 +17263,8 @@ func (c *Client) SetUserPermissionsWithBody(ctx context.Context, userId string, 
 // SetUserPermissions Set User Permissions
 //
 // Set the assigned permissions for a user.
+//
+// A deleted user's permissions cannot be changed (409).
 //
 // Takes a body of the `application/json` content type.
 //
@@ -17196,6 +17285,8 @@ func (c *Client) SetUserPermissions(ctx context.Context, userId string, body Set
 //
 // Disable a user account.
 //
+// A deleted user is already permanently inactive and cannot be disabled (409).
+//
 // Corresponds with POST /users/{user_id}:disable (the `DisableUser` operationId).
 func (c *Client) DisableUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDisableUserRequest(c.Server, userId)
@@ -17211,7 +17302,10 @@ func (c *Client) DisableUser(ctx context.Context, userId string, reqEditors ...R
 
 // EnableUser Enable User
 //
-// Enable a user account.
+// Enable a disabled user account.
+//
+// A deleted user cannot be re-enabled (409). Login sessions issued before the
+// account was disabled stay revoked; the user signs in again.
 //
 // Corresponds with POST /users/{user_id}:enable (the `EnableUser` operationId).
 func (c *Client) EnableUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -27106,8 +27200,9 @@ type ClientWithResponsesInterface interface {
 	// ``must_change_password`` gate are re-read from the database at re-mint.
 	// Refusal modes: 401 ``session_expired`` once the original authentication is
 	// older than the absolute window (``admin.auth.session_ttl_seconds``), 401
-	// ``invalid_credentials`` for deactivated users, non-user tokens, or opaque
-	// (non-JWT) credentials. Clients should then send the user back to login.
+	// ``unauthorized`` from the auth gate for a disabled, deleted or unknown user,
+	// and 401 ``invalid_credentials`` for non-user tokens or opaque (non-JWT)
+	// credentials. Clients should then send the user back to login.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -27298,6 +27393,11 @@ type ClientWithResponsesInterface interface {
 	// free to hammer during a vendor incident. Gated like the review read
 	// (``poll_token`` or owner / ``org:admin``; 403 otherwise).
 	//
+	// A response carrying an ``authorize_url`` also sets a short-lived
+	// ``HttpOnly`` cookie scoped to the OAuth callback path: the vendor
+	// sign-in completes only in the approver's browser that called this
+	// endpoint, whoever opened the session.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /connect-sessions/{session_id}:confirm (the `ConfirmConnectSession` operationId).
@@ -27319,6 +27419,11 @@ type ClientWithResponsesInterface interface {
 	// failed ``begin`` leaves the session retryable, so it must not be
 	// free to hammer during a vendor incident. Gated like the review read
 	// (``poll_token`` or owner / ``org:admin``; 403 otherwise).
+	//
+	// A response carrying an ``authorize_url`` also sets a short-lived
+	// ``HttpOnly`` cookie scoped to the OAuth callback path: the vendor
+	// sign-in completes only in the approver's browser that called this
+	// endpoint, whoever opened the session.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -27554,6 +27659,11 @@ type ClientWithResponsesInterface interface {
 	// redirect; device-flow providers return ``user_code`` /
 	// ``verification_uri`` for the RFC 8628 human step.
 	//
+	// An ``authorize_url`` response also sets a short-lived ``HttpOnly``
+	// cookie scoped to the OAuth callback path: the callback completes only
+	// in the browser that called this endpoint, so call it from the browser
+	// that opens the ``authorize_url``.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /credentials/{credential_id}/connect (the `ConnectCredential` operationId).
@@ -27567,6 +27677,11 @@ type ClientWithResponsesInterface interface {
 	// authorization-code providers return an ``authorize_url`` for popup
 	// redirect; device-flow providers return ``user_code`` /
 	// ``verification_uri`` for the RFC 8628 human step.
+	//
+	// An ``authorize_url`` response also sets a short-lived ``HttpOnly``
+	// cookie scoped to the OAuth callback path: the callback completes only
+	// in the browser that called this endpoint, so call it from the browser
+	// that opens the ``authorize_url``.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -27594,6 +27709,9 @@ type ClientWithResponsesInterface interface {
 	// StreamEventsWithResponse Stream Events
 	//
 	// Stream events as Server-Sent Events.
+	//
+	// The stream ends once the caller's credential stops verifying (expired,
+	// revoked, or its user disabled or deleted); reconnecting then returns 401.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -27927,6 +28045,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// List notes with optional filters and cursor pagination.
 	//
+	// Returns the caller's own notes; a user also sees the notes of agents they own.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /notes (the `ListNotes` operationId).
@@ -27962,6 +28082,9 @@ type ClientWithResponsesInterface interface {
 	// GetNoteWithResponse Get Note
 	//
 	// Retrieve a single note by ID.
+	//
+	// A user can read the notes of agents they own, but only a note's author (or
+	// an org admin) can update or delete it.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -28300,8 +28423,8 @@ type ClientWithResponsesInterface interface {
 	// page treats a 400 as terminal ("retry the connection") because the blob
 	// shares the consent handle's lifetime — a retry re-enters the flow, which
 	// re-parks on a fresh awaiting page while the agent stays pending. Shares
-	// the approval-status poll's own per-IP rate bucket (same cadence, same
-	// caller shape).
+	// the approval-status poll's own per-client-network rate bucket (same
+	// cadence, same caller shape).
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -28378,8 +28501,9 @@ type ClientWithResponsesInterface interface {
 	//   die, so reconnecting requires fresh consent (deliberately beyond the
 	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-	//   64 KiB declared body length, and per-IP rate limited; its errors speak
-	//   the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+	//   64 KiB declared body length, and rate limited per client network
+	//   (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+	//   (RFC 7009 §2.2.1), not Problem Details.
 	// - **JSON** (any other content type — the pre-G11 contract, byte-identical
 	//   including 422 shapes): requires a platform bearer identity; revokes the
 	//   caller's own token (access → that token, refresh → its family). Used by
@@ -28414,8 +28538,9 @@ type ClientWithResponsesInterface interface {
 	//   die, so reconnecting requires fresh consent (deliberately beyond the
 	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-	//   64 KiB declared body length, and per-IP rate limited; its errors speak
-	//   the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+	//   64 KiB declared body length, and rate limited per client network
+	//   (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+	//   (RFC 7009 §2.2.1), not Problem Details.
 	// - **JSON** (any other content type — the pre-G11 contract, byte-identical
 	//   including 422 shapes): requires a platform bearer identity; revokes the
 	//   caller's own token (access → that token, refresh → its family). Used by
@@ -28450,8 +28575,9 @@ type ClientWithResponsesInterface interface {
 	//   die, so reconnecting requires fresh consent (deliberately beyond the
 	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-	//   64 KiB declared body length, and per-IP rate limited; its errors speak
-	//   the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+	//   64 KiB declared body length, and rate limited per client network
+	//   (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+	//   (RFC 7009 §2.2.1), not Problem Details.
 	// - **JSON** (any other content type — the pre-G11 contract, byte-identical
 	//   including 422 shapes): requires a platform bearer identity; revokes the
 	//   caller's own token (access → that token, refresh → its family). Used by
@@ -28819,7 +28945,11 @@ type ClientWithResponsesInterface interface {
 	// The row is retained — the account is anonymized (tombstone email) and
 	// deactivated so history and audit references stay resolvable — but the
 	// action is terminal: there is no re-enable arm. For the reversible kill
-	// switch use ``:disable`` / ``:enable`` instead.
+	// switch use ``:disable`` / ``:enable`` instead. Deleting a user also cancels
+	// their outstanding invites: redeeming one answers 409
+	// ``invite_already_redeemed``, the same as an invite replaced by a reissue.
+	// Idempotent: deleting an already-deleted user answers 204 and changes
+	// nothing.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -28843,7 +28973,8 @@ type ClientWithResponsesInterface interface {
 	// Update a user's profile fields.
 	//
 	// Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
-	// else only themselves. Any other user answers 404.
+	// else only themselves. Any other user answers 404. A deleted user cannot be
+	// edited (409).
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -28855,7 +28986,8 @@ type ClientWithResponsesInterface interface {
 	// Update a user's profile fields.
 	//
 	// Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
-	// else only themselves. Any other user answers 404.
+	// else only themselves. Any other user answers 404. A deleted user cannot be
+	// edited (409).
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -28866,6 +28998,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Set the assigned permissions for a user.
 	//
+	// A deleted user's permissions cannot be changed (409).
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /users/{user_id}/permissions (the `SetUserPermissions` operationId).
@@ -28874,6 +29008,8 @@ type ClientWithResponsesInterface interface {
 	// SetUserPermissionsWithResponse Set User Permissions
 	//
 	// Set the assigned permissions for a user.
+	//
+	// A deleted user's permissions cannot be changed (409).
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -28884,6 +29020,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Disable a user account.
 	//
+	// A deleted user is already permanently inactive and cannot be disabled (409).
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /users/{user_id}:disable (the `DisableUser` operationId).
@@ -28891,7 +29029,10 @@ type ClientWithResponsesInterface interface {
 
 	// EnableUserWithResponse Enable User
 	//
-	// Enable a user account.
+	// Enable a disabled user account.
+	//
+	// A deleted user cannot be re-enabled (409). Login sessions issued before the
+	// account was disabled stay revoked; the user signs in again.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -43229,6 +43370,10 @@ type EnableUserHTTPResp struct {
 	ApplicationproblemJSON401 *ProblemDetail
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -43252,6 +43397,16 @@ func (r EnableUserHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r EnableUserHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r EnableUserHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r EnableUserHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -43314,6 +43469,10 @@ type ReissueInviteHTTPResp struct {
 	ApplicationproblemJSON401 *ProblemDetail
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -43342,6 +43501,16 @@ func (r ReissueInviteHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r ReissueInviteHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ReissueInviteHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r ReissueInviteHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -45346,8 +45515,9 @@ func (c *ClientWithResponses) LoginWithResponse(ctx context.Context, body LoginJ
 // “must_change_password“ gate are re-read from the database at re-mint.
 // Refusal modes: 401 “session_expired“ once the original authentication is
 // older than the absolute window (“admin.auth.session_ttl_seconds“), 401
-// “invalid_credentials“ for deactivated users, non-user tokens, or opaque
-// (non-JWT) credentials. Clients should then send the user back to login.
+// “unauthorized“ from the auth gate for a disabled, deleted or unknown user,
+// and 401 “invalid_credentials“ for non-user tokens or opaque (non-JWT)
+// credentials. Clients should then send the user back to login.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -45616,6 +45786,11 @@ func (c *ClientWithResponses) CancelConnectSessionWithResponse(ctx context.Conte
 // free to hammer during a vendor incident. Gated like the review read
 // (“poll_token“ or owner / “org:admin“; 403 otherwise).
 //
+// A response carrying an “authorize_url“ also sets a short-lived
+// “HttpOnly“ cookie scoped to the OAuth callback path: the vendor
+// sign-in completes only in the approver's browser that called this
+// endpoint, whoever opened the session.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /connect-sessions/{session_id}:confirm (the `ConfirmConnectSession` operationId).
@@ -45643,6 +45818,11 @@ func (c *ClientWithResponses) ConfirmConnectSessionWithBodyWithResponse(ctx cont
 // failed “begin“ leaves the session retryable, so it must not be
 // free to hammer during a vendor incident. Gated like the review read
 // (“poll_token“ or owner / “org:admin“; 403 otherwise).
+//
+// A response carrying an “authorize_url“ also sets a short-lived
+// “HttpOnly“ cookie scoped to the OAuth callback path: the vendor
+// sign-in completes only in the approver's browser that called this
+// endpoint, whoever opened the session.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -46004,6 +46184,11 @@ func (c *ClientWithResponses) AttachAgentCredentialRuleSetWithResponse(ctx conte
 // redirect; device-flow providers return “user_code“ /
 // “verification_uri“ for the RFC 8628 human step.
 //
+// An “authorize_url“ response also sets a short-lived “HttpOnly“
+// cookie scoped to the OAuth callback path: the callback completes only
+// in the browser that called this endpoint, so call it from the browser
+// that opens the “authorize_url“.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /credentials/{credential_id}/connect (the `ConnectCredential` operationId).
@@ -46023,6 +46208,11 @@ func (c *ClientWithResponses) ConnectCredentialWithBodyWithResponse(ctx context.
 // authorization-code providers return an “authorize_url“ for popup
 // redirect; device-flow providers return “user_code“ /
 // “verification_uri“ for the RFC 8628 human step.
+//
+// An “authorize_url“ response also sets a short-lived “HttpOnly“
+// cookie scoped to the OAuth callback path: the callback completes only
+// in the browser that called this endpoint, so call it from the browser
+// that opens the “authorize_url“.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -46068,6 +46258,9 @@ func (c *ClientWithResponses) ListEventsWithResponse(ctx context.Context, params
 // StreamEventsWithResponse Stream Events
 //
 // Stream events as Server-Sent Events.
+//
+// The stream ends once the caller's credential stops verifying (expired,
+// revoked, or its user disabled or deleted); reconnecting then returns 401.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -46551,6 +46744,8 @@ func (c *ClientWithResponses) GetUsageStatsWithResponse(ctx context.Context, par
 //
 // List notes with optional filters and cursor pagination.
 //
+// Returns the caller's own notes; a user also sees the notes of agents they own.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /notes (the `ListNotes` operationId).
@@ -46610,6 +46805,9 @@ func (c *ClientWithResponses) DeleteNoteWithResponse(ctx context.Context, noteId
 // GetNoteWithResponse Get Note
 //
 // Retrieve a single note by ID.
+//
+// A user can read the notes of agents they own, but only a note's author (or
+// an org admin) can update or delete it.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -47068,8 +47266,8 @@ func (c *ClientWithResponses) ConsentAgentCreateWithFormdataBodyWithResponse(ctx
 // page treats a 400 as terminal ("retry the connection") because the blob
 // shares the consent handle's lifetime — a retry re-enters the flow, which
 // re-parks on a fresh awaiting page while the agent stays pending. Shares
-// the approval-status poll's own per-IP rate bucket (same cadence, same
-// caller shape).
+// the approval-status poll's own per-client-network rate bucket (same
+// cadence, same caller shape).
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -47170,8 +47368,9 @@ func (c *ClientWithResponses) IntrospectEndpointWithFormdataBodyWithResponse(ctx
 //     die, so reconnecting requires fresh consent (deliberately beyond the
 //     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 //     is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-//     64 KiB declared body length, and per-IP rate limited; its errors speak
-//     the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+//     64 KiB declared body length, and rate limited per client network
+//     (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+//     (RFC 7009 §2.2.1), not Problem Details.
 //   - **JSON** (any other content type — the pre-G11 contract, byte-identical
 //     including 422 shapes): requires a platform bearer identity; revokes the
 //     caller's own token (access → that token, refresh → its family). Used by
@@ -47212,8 +47411,9 @@ func (c *ClientWithResponses) RevokeEndpointWithBodyWithResponse(ctx context.Con
 //     die, so reconnecting requires fresh consent (deliberately beyond the
 //     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 //     is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-//     64 KiB declared body length, and per-IP rate limited; its errors speak
-//     the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+//     64 KiB declared body length, and rate limited per client network
+//     (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+//     (RFC 7009 §2.2.1), not Problem Details.
 //   - **JSON** (any other content type — the pre-G11 contract, byte-identical
 //     including 422 shapes): requires a platform bearer identity; revokes the
 //     caller's own token (access → that token, refresh → its family). Used by
@@ -47254,8 +47454,9 @@ func (c *ClientWithResponses) RevokeEndpointWithResponse(ctx context.Context, bo
 //     die, so reconnecting requires fresh consent (deliberately beyond the
 //     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 //     is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-//     64 KiB declared body length, and per-IP rate limited; its errors speak
-//     the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+//     64 KiB declared body length, and rate limited per client network
+//     (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+//     (RFC 7009 §2.2.1), not Problem Details.
 //   - **JSON** (any other content type — the pre-G11 contract, byte-identical
 //     including 422 shapes): requires a platform bearer identity; revokes the
 //     caller's own token (access → that token, refresh → its family). Used by
@@ -47791,7 +47992,11 @@ func (c *ClientWithResponses) ChangePasswordWithResponse(ctx context.Context, bo
 // The row is retained — the account is anonymized (tombstone email) and
 // deactivated so history and audit references stay resolvable — but the
 // action is terminal: there is no re-enable arm. For the reversible kill
-// switch use “:disable“ / “:enable“ instead.
+// switch use “:disable“ / “:enable“ instead. Deleting a user also cancels
+// their outstanding invites: redeeming one answers 409
+// “invite_already_redeemed“, the same as an invite replaced by a reissue.
+// Idempotent: deleting an already-deleted user answers 204 and changes
+// nothing.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -47827,7 +48032,8 @@ func (c *ClientWithResponses) GetUserWithResponse(ctx context.Context, userId st
 // Update a user's profile fields.
 //
 // Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
-// else only themselves. Any other user answers 404.
+// else only themselves. Any other user answers 404. A deleted user cannot be
+// edited (409).
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -47845,7 +48051,8 @@ func (c *ClientWithResponses) UpdateUserWithBodyWithResponse(ctx context.Context
 // Update a user's profile fields.
 //
 // Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
-// else only themselves. Any other user answers 404.
+// else only themselves. Any other user answers 404. A deleted user cannot be
+// edited (409).
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -47862,6 +48069,8 @@ func (c *ClientWithResponses) UpdateUserWithResponse(ctx context.Context, userId
 //
 // Set the assigned permissions for a user.
 //
+// A deleted user's permissions cannot be changed (409).
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /users/{user_id}/permissions (the `SetUserPermissions` operationId).
@@ -47876,6 +48085,8 @@ func (c *ClientWithResponses) SetUserPermissionsWithBodyWithResponse(ctx context
 // SetUserPermissionsWithResponse Set User Permissions
 //
 // Set the assigned permissions for a user.
+//
+// A deleted user's permissions cannot be changed (409).
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -47892,6 +48103,8 @@ func (c *ClientWithResponses) SetUserPermissionsWithResponse(ctx context.Context
 //
 // Disable a user account.
 //
+// A deleted user is already permanently inactive and cannot be disabled (409).
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /users/{user_id}:disable (the `DisableUser` operationId).
@@ -47905,7 +48118,10 @@ func (c *ClientWithResponses) DisableUserWithResponse(ctx context.Context, userI
 
 // EnableUserWithResponse Enable User
 //
-// Enable a user account.
+// Enable a disabled user account.
+//
+// A deleted user cannot be re-enabled (409). Login sessions issued before the
+// account was disabled stay revoked; the user signs in again.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -60033,6 +60249,20 @@ func ParseEnableUserHTTPResp(rsp *http.Response) (*EnableUserHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -60107,6 +60337,20 @@ func ParseReissueInviteHTTPResp(rsp *http.Response) (*ReissueInviteHTTPResp, err
 			return nil, err
 		}
 		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail

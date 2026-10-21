@@ -469,6 +469,7 @@ class AgentService:
                 actor_id=identity.sub,
                 origin=identity.origin.value,
             )
+        self._ctx.invalidate_broker_caches(agent_id=agent_id)
 
     async def enable(self, agent_id: str, *, identity: Identity) -> None:
         async with self._ctx.admin_db.transaction() as session:
@@ -483,6 +484,7 @@ class AgentService:
                 actor_id=identity.sub,
                 origin=identity.origin.value,
             )
+        self._ctx.invalidate_broker_caches(agent_id=agent_id)
 
     async def archive(self, agent_id: str, *, identity: Identity) -> None:
         async with self._ctx.admin_db.transaction() as session:
@@ -514,6 +516,7 @@ class AgentService:
                 actor_id=identity.sub,
                 origin=identity.origin.value,
             )
+        self._ctx.invalidate_broker_caches(agent_id=agent_id)
 
     async def purge(self, agent_id: str, *, identity: Identity) -> None:
         """Hard-delete an agent and the authority and session rows keyed to it.
@@ -622,6 +625,7 @@ class AgentService:
             permission_rules=control.permission_rules,
             retained_credentials=len(control.retained_credential_ids),
         )
+        self._ctx.invalidate_broker_caches(agent_id=agent_id)
 
     async def _archive_and_sweep(
         self,
@@ -843,6 +847,7 @@ class AgentService:
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
             )
+        self._ctx.invalidate_broker_caches(agent_id=agent_id, credential_id=credential_id)
         view = CredentialBindingView.model_validate(binding)
         view.name = ref.name
         view.serves = [
@@ -921,6 +926,7 @@ class AgentService:
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
             )
+        self._ctx.invalidate_broker_caches(agent_id=agent_id, credential_id=credential_id)
 
     async def _credential_name(self, credential_id: str) -> str | None:
         """Best-effort display name for a credential, for an event summary.
@@ -997,6 +1003,7 @@ class AgentService:
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
             )
+        self._ctx.invalidate_broker_caches(agent_id=agent_id, credential_id=credential_id)
         return CredentialBindingView.model_validate(binding)
 
     async def get_permissions(self, agent_id: str, *, identity: Identity) -> list[str]:
@@ -1052,6 +1059,7 @@ class AgentService:
                 reason="replace_permissions",
                 origin=identity.origin.value,
             )
+        self._ctx.invalidate_broker_caches(agent_id=agent_id)
         return permissions
 
     async def update_agent(

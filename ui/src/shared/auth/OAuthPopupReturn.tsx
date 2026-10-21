@@ -124,6 +124,14 @@ export function OAuthPopupReturn() {
 		<AuthCard as="div" centered className="overflow-hidden" role={isError ? 'alert' : 'status'}>
 			<h1 className="font-heading text-foreground-name text-lg font-semibold">{title}</h1>
 			<p className="text-muted-foreground mt-2 text-sm">{message}</p>
+			{isError && (
+				// The redirect only says `status=error`, whatever the cause, so the
+				// hint stays generic: retrying from the browser that started the
+				// connect fixes the common cases (wrong browser, expired sign-in).
+				<p className="text-muted-foreground mt-2 text-xs">
+					Start again from the browser where you began connecting.
+				</p>
+			)}
 
 			{showAffordance && (
 				<div className="mt-5 flex flex-col items-stretch gap-2">

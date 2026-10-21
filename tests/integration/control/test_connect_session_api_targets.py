@@ -54,6 +54,7 @@ from jentic_one.control.services.credentials.schemas.credentials import (
     OAuth2Redacted,
 )
 from jentic_one.control.services.credentials.service import CredentialService
+from jentic_one.control.services.credentials.state import new_browser_binding
 from jentic_one.control.services.integrations.connect_session_service import (
     ApiTarget,
     AuthCodeConfirmResult,
@@ -1289,6 +1290,7 @@ async def test_session_callback_discards_grant_minted_before_token_url_move(env:
     deleted and the outcome is recorded."""
     await _import(env, _OAUTH_SCHEME)
     created = await _connect(env, requested_scopes=["read"])
+    binding = new_browser_binding()
     confirmed = await _svc(env).confirm_variant(
         created.session_id,
         poll_token=None,
@@ -1301,6 +1303,7 @@ async def test_session_callback_discards_grant_minted_before_token_url_move(env:
             checks=_checks(await _digest(env, created.session_id)),
         ),
         identity=_OWNER,
+        browser_binding=binding.claim,
     )
     assert isinstance(confirmed, AuthCodeConfirmResult)
     row = await _row(env, created.session_id)
@@ -1334,7 +1337,9 @@ async def test_session_callback_discards_grant_minted_before_token_url_move(env:
             )
 
     with patch("httpx.AsyncClient", return_value=_ExchangeWhileTokenUrlMoves()):
-        result = await _svc(env).complete_from_callback(raw_state=raw_state, code="the-code")
+        result = await _svc(env).complete_from_callback(
+            raw_state=raw_state, code="the-code", browser_binding=binding.value
+        )
 
     assert (result.status, result.error_code) == ("failed", "token_url_moved")
     assert posted_to == ["https://auth.widgets.example/token"]
