@@ -1,9 +1,9 @@
 """The sync/streaming broker path emits ``execution.repeated_failure``.
 
 The async-worker path is covered in ``tests/unit/shared/test_repeated_failure.py``;
-this suite closes the gap the plan (step 4.3) called for — asserting the event
-fires through the broker service's ``run_execution`` (BrokerError path) and
-``persist_streaming_execution`` (streaming path) on a FAILED outcome.
+this suite asserts the event fires through the broker service's ``run_execution``
+(BrokerError path) and ``persist_streaming_execution`` (streaming path) on a
+FAILED outcome.
 
 These run against a real in-memory SQLite admin DB (no DB mocking —
 ``tests/arch/test_no_db_mocking.py``) so they exercise the real ``_persist`` →

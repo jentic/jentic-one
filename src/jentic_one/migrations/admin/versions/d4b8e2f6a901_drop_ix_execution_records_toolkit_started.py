@@ -10,8 +10,13 @@ while keeping ``execution_records.toolkit_id`` for historical attribution.
 
 Both the drop and the downgrade rebuild run ``CONCURRENTLY`` in autocommit
 blocks on PostgreSQL so the migration never holds a write-blocking lock on
-``execution_records``. On SQLite the concurrency flag is ignored and the plain
-index is dropped and recreated.
+``execution_records``. A ``CONCURRENTLY`` build that fails on PostgreSQL leaves
+an INVALID index of the same name behind, so ``downgrade()`` first drops any
+INVALID leftover (a valid index is never touched) before ``CREATE INDEX
+CONCURRENTLY IF NOT EXISTS``, and ``upgrade()`` drops with ``IF EXISTS``:
+re-running a half-applied upgrade or downgrade succeeds and ends with a valid
+state. On SQLite the concurrency flag is ignored and the plain index is dropped
+and recreated.
 
 Revision ID: d4b8e2f6a901
 Revises: eb3688e956fc

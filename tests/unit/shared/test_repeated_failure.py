@@ -350,7 +350,7 @@ async def test_new_event_after_window_rolls_off(session: AsyncSession) -> None:
 
 
 async def test_missing_credential_or_operation_is_noop(session: AsyncSession) -> None:
-    await _add_failures(session, 10, credential_id=None, toolkit_id="tk_legacy000000000000000000")
+    await _add_failures(session, 10)
     await maybe_emit_repeated_failure(
         session,
         actor_id=_ACTOR,
@@ -370,6 +370,25 @@ async def test_missing_credential_or_operation_is_noop(session: AsyncSession) ->
         config=SecurityConfig(execution_repeated_failure_threshold=5),
     )
     assert await _repeated_events(session) == []
+
+
+async def test_count_scopes_strictly_to_target_credential(session: AsyncSession) -> None:
+    """Failures on another credential or legacy toolkit-only rows never count
+    toward ``_CREDENTIAL``."""
+    config = SecurityConfig(execution_repeated_failure_threshold=5)
+    await _add_failures(session, 10, credential_id=None, toolkit_id="tk_legacy000000000000000000")
+    await _add_failures(session, 4, credential_id="cred_other0000000000000000")
+    await _add_failures(session, 4, credential_id=_CREDENTIAL)
+
+    await _emit(session, config)
+    assert await _repeated_events(session) == []
+
+    await _add_failures(session, 1, credential_id=_CREDENTIAL)
+    await _emit(session, config)
+    events = await _repeated_events(session)
+    assert len(events) == 1
+    assert events[0].data["credential_id"] == _CREDENTIAL
+    assert events[0].data["failure_count"] == 5
 
 
 async def test_empty_operation_id_is_noop(session: AsyncSession) -> None:
