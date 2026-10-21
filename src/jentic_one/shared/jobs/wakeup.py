@@ -1,17 +1,24 @@
-"""In-process wake-up signal from job enqueuers to the job worker.
+"""In-process and cross-process wake-up signals from job enqueuers to workers.
 
 The worker polls the jobs table on ``worker.poll_interval_s``. A job enqueued in
 the **same process** (the broker's ``Prefer: respond-async`` path, a registry
-import) does not need to wait out that interval: :func:`notify_on_commit` arms a
-one-shot signal that fires once the enqueuing transaction commits, and every
-:class:`~jentic_one.shared.jobs.worker.WorkerLoop` running in the process polls
-immediately.
+import, an approval release) does not need to wait out that interval:
+:func:`notify_on_commit` arms a one-shot signal that fires once the enqueuing
+transaction commits, and every :class:`~jentic_one.shared.jobs.worker.WorkerLoop`
+running in the process polls immediately.
 
-The signal is a latency hint, never a correctness mechanism: a lost or spurious
-wake-up only changes *when* the next poll happens, and jobs enqueued by another
-process are still picked up by the regular poll. Firing only after commit (not
-at flush) keeps the woken poll from racing the enqueuing transaction and
-finding nothing to claim.
+On PostgreSQL, :func:`notify_job_enqueued` also issues
+``SELECT pg_notify('jentic_jobs', :payload)`` inside the enqueuing transaction.
+PostgreSQL delivers transactional notifications only when the transaction
+commits, waking worker loops in other processes (multiple uvicorn workers,
+broker replicas, or split deployments) that hold a ``LISTEN jentic_jobs``
+connection. The payload carries the job ``kind`` so a worker whose registered
+handlers do not include that kind skips the poll.
+
+Both signals are latency hints, never correctness mechanisms: a lost or spurious
+wake-up only changes *when* the next poll happens, and regular polling remains
+the fallback on reconnects, behind transaction-mode connection poolers, and on
+SQLite.
 """
 
 from __future__ import annotations
@@ -19,10 +26,13 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import event
+from sqlalchemy import event, text
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
+
+#: Postgres LISTEN/NOTIFY channel used to wake worker loops across processes.
+JOB_NOTIFY_CHANNEL = "jentic_jobs"
 
 # Session.info key marking a session that already has a pending wake-up armed,
 # so enqueuing several jobs in one transaction registers one listener.
@@ -70,6 +80,19 @@ class JobWakeup:
 job_wakeup = JobWakeup()
 
 
+def _is_postgres_session(session: AsyncSession) -> bool:
+    """True when ``session`` is bound to a PostgreSQL engine."""
+    bind = getattr(session, "bind", None)
+    if bind is None and hasattr(session, "get_bind"):
+        with_bind = session.get_bind
+        try:
+            bind = with_bind()
+        except Exception:
+            bind = None
+    dialect = getattr(bind, "dialect", None)
+    return getattr(dialect, "name", None) == "postgresql"
+
+
 def notify_on_commit(session: AsyncSession, wakeup: JobWakeup | None = None) -> None:
     """Wake in-process workers once ``session``'s current transaction commits.
 
@@ -78,7 +101,9 @@ def notify_on_commit(session: AsyncSession, wakeup: JobWakeup | None = None) -> 
     costs one empty poll.
     """
     target = wakeup or job_wakeup
-    sync_session = session.sync_session
+    sync_session = getattr(session, "sync_session", None)
+    if sync_session is None:
+        return
     if sync_session.info.get(_ARMED_KEY):
         return
     sync_session.info[_ARMED_KEY] = True
@@ -88,3 +113,28 @@ def notify_on_commit(session: AsyncSession, wakeup: JobWakeup | None = None) -> 
         target.notify()
 
     event.listen(sync_session, "after_commit", _after_commit, once=True)
+
+
+async def notify_job_enqueued(
+    session: AsyncSession,
+    kind: str = "",
+    *,
+    wakeup: JobWakeup | None = None,
+) -> None:
+    """Wake in-process and cross-process workers once ``session`` commits.
+
+    Arms the in-process :func:`notify_on_commit` hook and, on PostgreSQL,
+    executes ``SELECT pg_notify('jentic_jobs', :payload)`` in the caller's
+    transaction so PostgreSQL delivers the notification to every listening
+    worker process only when the transaction commits. ``kind`` (the enqueued
+    :class:`~jentic_one.shared.models.jobs.JobKind`, or ``""`` when unspecified)
+    is sent as the notification payload so worker loops whose registered
+    handlers do not include that kind ignore the notification.
+    """
+    notify_on_commit(session, wakeup)
+    if not _is_postgres_session(session):
+        return
+    await session.execute(
+        text("SELECT pg_notify('jentic_jobs', :payload)"),
+        {"payload": str(kind) if kind else ""},
+    )
