@@ -18,10 +18,14 @@ class OAuthTokenRepository:
 
     @staticmethod
     async def acquire_refresh_lock(session: AsyncSession, credential_id: str) -> None:
-        """Acquire a transaction-scoped advisory lock for refresh single-flight.
+        """Acquire the transaction-scoped lock that serialises a credential's grant.
 
-        On PostgreSQL this uses pg_advisory_xact_lock (released at commit/rollback).
-        On SQLite this is a no-op — the in-process asyncio.Lock handles concurrency.
+        Held by the broker's single-flight refresh and by any control write
+        that drops the grant, so the two never interleave. On PostgreSQL this
+        is ``pg_advisory_xact_lock`` (released at commit/rollback). On SQLite
+        it is a no-op: every write transaction opens with ``BEGIN IMMEDIATE``,
+        which already serialises the refresh transaction against the dropping
+        write across processes.
         """
         dialect = session.bind.dialect.name if session.bind else "sqlite"
         if dialect == "postgresql":
@@ -92,6 +96,16 @@ class OAuthTokenRepository:
         row.last_refreshed = datetime.now(UTC)
         await session.flush()
         return row
+
+    @staticmethod
+    async def delete_by_credential(session: AsyncSession, credential_id: str) -> bool:
+        """Delete the credential's token row; ``True`` when one existed."""
+        row = await OAuthTokenRepository.get_by_credential(session, credential_id)
+        if row is None:
+            return False
+        await session.delete(row)
+        await session.flush()
+        return True
 
     @staticmethod
     async def mark_revoked(session: AsyncSession, credential_id: str) -> OAuthToken | None:

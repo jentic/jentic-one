@@ -61,6 +61,7 @@ from jentic_one.control.services.credentials.state import (
     consume_callback_state,
     decode_state,
 )
+from jentic_one.control.services.credentials.token_endpoint import minted_at_current_origin
 from jentic_one.control.services.integrations import identity_echo
 from jentic_one.control.services.integrations.api_targets import (
     SCHEME_OAUTH2,
@@ -99,6 +100,7 @@ from jentic_one.control.services.integrations.errors import (
     SecuritySchemesLookupUnavailableError,
     ServersChangedError,
     SessionNotFoundError,
+    TokenEndpointMovedError,
     TooManyOpenSessionsError,
     UnknownApiError,
     UnsupportedTargetKindError,
@@ -1676,6 +1678,7 @@ class ConnectSessionService:
                 version=version,
                 exclude_ids=[row.credential_id],
                 filters=filters,
+                account_ref_providers=self._ctx.providers.account_ref_provider_names(),
             )
             tokens = {
                 c.id: await OAuthTokenRepository.get_by_credential(session, c.id)
@@ -3117,6 +3120,8 @@ class ConnectSessionService:
                     created_by=row.initiator_actor_id,
                     close_session_id=row.id,
                 )
+            except TokenEndpointMovedError as exc:
+                return await self._fail_token_endpoint_moved(row, exc)
             except _SessionEndedError:
                 return self._ended_during_finalise(row)
             self._record_connected(row)
@@ -3182,6 +3187,8 @@ class ConnectSessionService:
                 created_by=row.initiator_actor_id,
                 close_session_id=row.id,
             )
+        except TokenEndpointMovedError as exc:
+            return await self._fail_token_endpoint_moved(row, exc)
         except _SessionEndedError:
             return self._ended_during_finalise(row)
 
@@ -3217,6 +3224,13 @@ class ConnectSessionService:
         attrs = {"vendor": row.vendor, "flow": row.resolved_flow}
         _sessions_terminal.add(1, {**attrs, "outcome": "connected"})
         _time_to_connected.record((datetime.now(UTC) - row.created_at).total_seconds(), attrs)
+
+    async def _fail_token_endpoint_moved(
+        self, row: ConnectSession, exc: TokenEndpointMovedError
+    ) -> StatusResult:
+        """Fail a session whose grant was discarded by ``_write_finalise``."""
+        await self._mark_terminal(row.id, "failed", str(exc), error_code="token_url_moved")
+        return StatusResult(status="failed", error_code="token_url_moved")
 
     async def _finalise_credential_connected(
         self,
@@ -3287,7 +3301,9 @@ class ConnectSessionService:
         column stays unset.
 
         Raises ``_SessionEndedError`` (nothing written) when
-        ``close_session_id`` is no longer live.
+        ``close_session_id`` is no longer live, and ``TokenEndpointMovedError``
+        (nothing written) when the credential's token endpoint no longer has
+        the origin ``tokens.token_url`` was exchanged at.
         """
         expires_at = (
             datetime.now(UTC) + timedelta(seconds=tokens.expires_in) if tokens.expires_in else None
@@ -3307,6 +3323,12 @@ class ConnectSessionService:
         )
 
         async with self._ctx.control_db.transaction() as session:
+            # Same lock as the broker refresh and a token_url edit. A
+            # cross-origin edit that committed while the code was being
+            # exchanged has moved the credential off the origin this grant
+            # was minted at; storing it would hand its refresh token to the
+            # new origin, so it is discarded and the write rolls back.
+            await OAuthTokenRepository.acquire_refresh_lock(session, credential_id)
             if close_session_id is not None:
                 # Close the session first, compare-and-swap from a live state:
                 # if it was ended meanwhile (the TTL sweep, a cancel), roll the
@@ -3328,6 +3350,15 @@ class ConnectSessionService:
             credential_for_stamp = await CredentialRepository.get_by_id(session, credential_id)
             registration_id_stamp: str | None = None
             if credential_for_stamp is not None:
+                current_token_url = await OAuthClientCredentialRepository.current_token_url(
+                    session, credential_for_stamp
+                )
+                if not minted_at_current_origin(tokens.token_url, current_token_url):
+                    _logger.warning(
+                        "connect_session.finalise_discarded_token_url_moved",
+                        credential_id=credential_id,
+                    )
+                    raise TokenEndpointMovedError(credential_id)
                 registration_id_stamp = credential_for_stamp.oauth_app_registration_id
 
             # Upsert: a re-connect over an existing token row (same

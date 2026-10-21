@@ -171,7 +171,8 @@ class OAuth2Redacted(BaseModel):
     grant_type: str
     scopes: list[str] | None = None
     # Whether the interactive sign-in completed and is still usable: a
-    # provider_account_ref (managed providers store no local token), or a live
+    # provider_account_ref on a provider that connects as an account reference
+    # (it stores no local token), or a live
     # un-revoked token row that can still mint (has a refresh token, or an
     # unexpired/never-expiring access token). Only meaningful for
     # authorization_code credentials — client_credentials need no interactive

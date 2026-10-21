@@ -19,7 +19,10 @@ import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
 
+import httpx
 import pytest
 import structlog
 from fastapi import FastAPI
@@ -38,7 +41,7 @@ from jentic_one.control.core.schema.customer_api_keys import CustomerAPIKey
 from jentic_one.control.core.schema.oauth_app_registrations import OAuthAppRegistration
 from jentic_one.control.core.schema.oauth_client_credentials import OAuthClientCredential
 from jentic_one.control.core.schema.oauth_tokens import OAuthToken
-from jentic_one.control.repos import CredentialRepository
+from jentic_one.control.repos import CredentialRepository, OAuthTokenRepository
 from jentic_one.control.repos.connect_session_outcome_repo import (
     ConnectSessionOutcomeRepository,
 )
@@ -46,6 +49,12 @@ from jentic_one.control.repos.connect_session_repo import ConnectSessionReposito
 from jentic_one.control.repos.oauth_client_credential_repo import (
     OAuthClientCredentialRepository,
 )
+from jentic_one.control.services.credentials.schemas.credentials import (
+    CredentialUpdate,
+    OAuth2Redacted,
+)
+from jentic_one.control.services.credentials.service import CredentialService
+from jentic_one.control.services.credentials.state import new_browser_binding
 from jentic_one.control.services.integrations.connect_session_service import (
     ApiTarget,
     AuthCodeConfirmResult,
@@ -62,6 +71,7 @@ from jentic_one.control.services.integrations.errors import (
     AuthTypeNotDeclaredError,
     AuthTypeRequiredError,
     ConfirmKindMismatchError,
+    ExistingCredentialNotFoundError,
     InsufficientGrantedScopesError,
     InvalidPollTokenError,
     InvalidStateTransitionError,
@@ -107,6 +117,7 @@ from jentic_one.shared.config import (
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.models import ActorType
+from jentic_one.shared.models.credentials import CredentialType
 from jentic_one.shared.models.events import EventType
 from jentic_one.shared.web.deps import resolve_identity
 from jentic_one.shared.web.errors import request_validation_error_handler
@@ -1056,9 +1067,17 @@ async def test_agent_archived_between_check_and_bind_is_refused(
 
 
 async def _existing_credential(
-    ctx: Context, *, oauth_scope: str | None = None, name: str = "Mine"
+    ctx: Context,
+    *,
+    oauth_scope: str | None = None,
+    name: str = "Mine",
+    provider_account_ref: str | None = None,
 ) -> str:
-    """A connected credential of the owner's covering the API (OAuth when a scope is given)."""
+    """A connected credential of the owner's covering the API (OAuth when a scope is given).
+
+    ``provider_account_ref`` stands in for the identity-echo display name a
+    connect-session finalise writes onto a ``direct_oauth2`` credential.
+    """
     credential_id = generate_ksuid("cred")
     async with ctx.control_db.transaction() as session:
         session.add(
@@ -1071,6 +1090,7 @@ async def _existing_credential(
                 api_name=_NAME,
                 created_by=_OWNER_ID,
                 state="connected",
+                provider_account_ref=provider_account_ref,
             )
         )
         await session.flush()
@@ -1161,6 +1181,45 @@ async def test_granted_scope_check_for_an_existing_oauth_credential(env: Context
     assert isinstance(result, ConnectedConfirmResult)
 
 
+async def test_oauth_credential_without_a_live_grant_is_not_offered(env: Context) -> None:
+    """Pins #1425: a credential whose grant was dropped (a cross-origin
+    token_url move) or revoked needs a reconnect, so the review does not
+    offer it for reuse even when the session requests no scopes, and a
+    confirm naming it is refused. A ``direct_oauth2`` credential carrying an
+    identity-echo ``provider_account_ref`` is no exception: the ref is a
+    display name there, not a grant, so it reads as disconnected too."""
+    await _import(env, _OAUTH_SCHEME)
+    created = await _connect(env)
+    live = await _existing_credential(env, oauth_scope="read", name="live")
+    dropped = await _existing_credential(env, oauth_scope="read", name="dropped")
+    echoed = await _existing_credential(
+        env, oauth_scope="read", name="echoed", provider_account_ref="alice"
+    )
+    revoked = await _existing_credential(env, oauth_scope="read", name="revoked")
+    for moved in (dropped, echoed):
+        view = await CredentialService(env).update(
+            moved,
+            CredentialUpdate(
+                type=CredentialType.OAUTH2,
+                token_url="https://login.other.example.org/token",
+                client_secret="moved-secret",  # pragma: allowlist secret
+            ),
+            identity=_OWNER,
+        )
+        assert isinstance(view.details, OAuth2Redacted)
+        assert view.details.connected is False
+    async with env.control_db.transaction() as session:
+        await OAuthTokenRepository.mark_revoked(session, revoked)
+
+    review = await _svc(env).get_review_data(created.session_id, poll_token=None, identity=_OWNER)
+    assert [c.credential_id for c in review.existing_credentials] == [live]
+
+    for refused in (dropped, echoed):
+        with pytest.raises(ExistingCredentialNotFoundError):
+            await _confirm_existing(env, created.session_id, refused)
+        assert not await _bound(env, _AGENT_ID, refused)
+
+
 async def test_reauthorize_only_when_no_other_agent_is_bound(env: Context) -> None:
     await _import(env, _OAUTH_SCHEME)
     created = await _connect(env, requested_scopes=["read", "write"])
@@ -1221,6 +1280,78 @@ async def test_own_oauth_client_resolves_awaiting_app(env: Context) -> None:
     async with env.admin_db.session() as session:
         audit = (await session.execute(select(AuditEntry))).scalars().all()
     assert all(client_secret not in json.dumps(e.after, default=str) for e in audit)
+
+
+async def test_session_callback_discards_grant_minted_before_token_url_move(env: Context) -> None:
+    """Pins #1425 on the session finalise path: a cross-origin token_url edit
+    that commits while the callback's code exchange is in flight fails the
+    session with ``token_url_moved``. The grant minted at the old origin is
+    never stored, and like every failed session the pending credential is
+    deleted and the outcome is recorded."""
+    await _import(env, _OAUTH_SCHEME)
+    created = await _connect(env, requested_scopes=["read"])
+    binding = new_browser_binding()
+    confirmed = await _svc(env).confirm_variant(
+        created.session_id,
+        poll_token=None,
+        variant=OwnClientConfirm(
+            client_id="my-own-client",
+            client_secret=SecretStr("own-client-secret-" + "Q" * 16),
+            authorize_url="https://auth.widgets.example/authorize",
+            token_url="https://auth.widgets.example/token",
+            confirmed_scopes=["read"],
+            checks=_checks(await _digest(env, created.session_id)),
+        ),
+        identity=_OWNER,
+        browser_binding=binding.claim,
+    )
+    assert isinstance(confirmed, AuthCodeConfirmResult)
+    row = await _row(env, created.session_id)
+    assert row is not None
+    credential_id = row.credential_id
+    raw_state = parse_qs(urlsplit(confirmed.authorize_url).query)["state"][0]
+    posted_to: list[str] = []
+
+    class _ExchangeWhileTokenUrlMoves:
+        """The vendor answers the exchange; the cross-origin edit commits first."""
+
+        async def __aenter__(self) -> _ExchangeWhileTokenUrlMoves:
+            return self
+
+        async def __aexit__(self, *_exc: object) -> bool:
+            return False
+
+        async def post(self, url: str, **_kwargs: object) -> httpx.Response:
+            posted_to.append(url)
+            await CredentialService(env).update(
+                credential_id,
+                CredentialUpdate(
+                    type=CredentialType.OAUTH2,
+                    token_url="https://login.other.example.org/token",
+                    client_secret="moved-secret",  # pragma: allowlist secret
+                ),
+                identity=_OWNER,
+            )
+            return httpx.Response(
+                200, json={"access_token": "at-stale", "refresh_token": "rt-stale"}
+            )
+
+    with patch("httpx.AsyncClient", return_value=_ExchangeWhileTokenUrlMoves()):
+        result = await _svc(env).complete_from_callback(
+            raw_state=raw_state, code="the-code", browser_binding=binding.value
+        )
+
+    assert (result.status, result.error_code) == ("failed", "token_url_moved")
+    assert posted_to == ["https://auth.widgets.example/token"]
+    async with env.control_db.session() as session:
+        assert await ConnectSessionRepository.get_by_id(session, created.session_id) is None
+        assert await CredentialRepository.get_by_id(session, credential_id) is None
+        assert await OAuthTokenRepository.get_by_credential(session, credential_id) is None
+        outcome = await ConnectSessionOutcomeRepository.get_by_session_id(
+            session, created.session_id
+        )
+    assert outcome is not None
+    assert (outcome.outcome, outcome.error_code) == ("failed", "token_url_moved")
 
 
 # ---------------------------------------------------------------------------
