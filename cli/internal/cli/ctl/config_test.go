@@ -158,8 +158,9 @@ func TestHeuristicClassifiedEntriesStillExist(t *testing.T) {
 
 // TestBackendConfig_ExplicitZeroValuesSurviveRoundTrip pins #1832: fields whose
 // schema default is non-zero must not carry omitempty/omitzero, so an explicit
-// zero value (0.0 float, 0 int, false bool) survives a JSON or YAML marshal +
-// unmarshal round-trip instead of reverting to its non-zero schema default.
+// zero value (0.0 float, 0 int, false bool, "" string) survives a JSON or YAML
+// marshal + unmarshal round-trip instead of reverting to its non-zero schema
+// default.
 func TestBackendConfig_ExplicitZeroValuesSurviveRoundTrip(t *testing.T) {
 	const inputJSON = `{
 		"databases": {
@@ -175,6 +176,12 @@ func TestBackendConfig_ExplicitZeroValuesSurviveRoundTrip(t *testing.T) {
 		},
 		"control": {
 			"connect": {"manual_flows_enabled": false, "rejection_cooldown_hours": 0}
+		},
+		"catalog": {
+			"manifest_url": ""
+		},
+		"logging": {
+			"file_dir": ""
 		}
 	}`
 
@@ -212,6 +219,18 @@ func TestBackendConfig_ExplicitZeroValuesSurviveRoundTrip(t *testing.T) {
 		if got := cfg.Databases.Admin.PoolRecycleS; got != 0 {
 			t.Errorf("%s: databases.admin.pool_recycle_s = %v, want 0 (reverted to default?)", label, got)
 		}
+		if cfg.Catalog == nil {
+			t.Fatalf("%s: catalog is nil", label)
+		}
+		if got := cfg.Catalog.ManifestUrl; got != "" {
+			t.Errorf("%s: catalog.manifest_url = %q, want \"\" (reverted to default?)", label, got)
+		}
+		if cfg.Logging == nil {
+			t.Fatalf("%s: logging is nil", label)
+		}
+		if got := cfg.Logging.FileDir; got != "" {
+			t.Errorf("%s: logging.file_dir = %q, want \"\" (reverted to default?)", label, got)
+		}
 	}
 
 	assertZeroOverrides(t, "initial unmarshal", initial)
@@ -242,11 +261,11 @@ func TestBackendConfig_ExplicitZeroValuesSurviveRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("json.Marshal of YAML map: %v", err)
 	}
-	var afterYAMLudo generated.BackendConfig
-	if err := json.Unmarshal(yamlAsJSON, &afterYAMLudo); err != nil {
+	var afterYAMLJSON generated.BackendConfig
+	if err := json.Unmarshal(yamlAsJSON, &afterYAMLJSON); err != nil {
 		t.Fatalf("round-trip YAML->JSON Unmarshal: %v", err)
 	}
-	assertZeroOverrides(t, "YAML->UnmarshalJSON round-trip", afterYAMLudo)
+	assertZeroOverrides(t, "YAML->UnmarshalJSON round-trip", afterYAMLJSON)
 
 	var afterYAMLDirect generated.BackendConfig
 	if err := yaml.Unmarshal(marshalledYAML, &afterYAMLDirect); err != nil {
@@ -267,60 +286,141 @@ func TestBackendConfig_ExplicitZeroValuesSurviveRoundTrip(t *testing.T) {
 		t.Errorf("expected jwt_ttl_seconds=0 to be preserved in JSON and fail >0 validation on reload, but unmarshal succeeded with jwt_ttl_seconds=%d",
 			rejected.Admin.Auth.JwtTtlSeconds)
 	}
+
+	// Verify that an anyOf wrapper struct whose UnmarshalJSON does not populate
+	// defaults (VendorAuthConfigIdentityProbe) keeps omitempty/omitzero so
+	// omitting optional enum fields ("method") survives a JSON round-trip.
+	const probeInput = `{"display_template":"{id}","endpoint":"https://example.com/me","identity_field":"id"}`
+	var probe generated.VendorAuthConfigIdentityProbe
+	if err := json.Unmarshal([]byte(probeInput), &probe); err != nil {
+		t.Fatalf("probe initial json.Unmarshal: %v", err)
+	}
+	probeBytes, err := json.Marshal(&probe)
+	if err != nil {
+		t.Fatalf("probe json.Marshal: %v", err)
+	}
+	var probeRoundTrip generated.VendorAuthConfigIdentityProbe
+	if err := json.Unmarshal(probeBytes, &probeRoundTrip); err != nil {
+		t.Fatalf("probe round-trip json.Unmarshal failed ( marshalled %s ): %v", string(probeBytes), err)
+	}
 }
 
 // TestBackendConfig_NonZeroDefaultFieldsHaveNoOmitTags verifies across every
-// reachable struct in generated.BackendConfig that no field with a non-zero
-// schema default carries omitempty or omitzero on its json/yaml/mapstructure tags.
+// generated schema struct (including $defs behind slices, maps, and oneOf/anyOf
+// unions) that:
+//  1. No field with a non-zero schema default carries omitempty or omitzero on
+//     its json/yaml/mapstructure tags.
+//  2. Every non-required field with a zero or absent schema default retains
+//     omitempty,omitzero on json and omitempty on yaml/mapstructure.
 func TestBackendConfig_NonZeroDefaultFieldsHaveNoOmitTags(t *testing.T) {
-	defaults, err := defaultSettings()
+	raw, err := SchemaBytes()
 	if err != nil {
-		t.Fatalf("defaultSettings: %v", err)
+		t.Fatalf("SchemaBytes: %v", err)
+	}
+	type rawObjectSchema struct {
+		Properties map[string]struct {
+			Default json.RawMessage `json:"default"`
+		} `json:"properties"`
+		Required []string `json:"required"`
+	}
+	var schema struct {
+		rawObjectSchema
+		Defs map[string]rawObjectSchema `json:"$defs"`
+	}
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatalf("unmarshal schema: %v", err)
 	}
 
-	var walk func(rt reflect.Type, defMap map[string]any, prefix string)
-	walk = func(rt reflect.Type, defMap map[string]any, prefix string) {
-		if rt.Kind() == reflect.Pointer {
+	objectSchemas := map[string]rawObjectSchema{
+		"ConfigSchemaJson": schema.rawObjectSchema,
+	}
+	for name, def := range schema.Defs {
+		if len(def.Properties) > 0 {
+			objectSchemas[name] = def
+		}
+	}
+
+	visited := map[string]bool{}
+	var walk func(rt reflect.Type)
+	walk = func(rt reflect.Type) {
+		for rt.Kind() == reflect.Pointer || rt.Kind() == reflect.Slice || rt.Kind() == reflect.Map {
 			rt = rt.Elem()
 		}
 		if rt.Kind() != reflect.Struct {
 			return
 		}
+		typeName := rt.Name()
+		if visited[typeName] {
+			return
+		}
+		visited[typeName] = true
+
+		objSchema, hasObjSchema := objectSchemas[typeName]
+		reqSet := map[string]bool{}
+		for _, r := range objSchema.Required {
+			reqSet[r] = true
+		}
+
 		for i := range rt.NumField() {
 			field := rt.Field(i)
+			walk(field.Type)
+			if !hasObjSchema {
+				continue
+			}
 			jsonTag := field.Tag.Get("json")
-			name := strings.Split(jsonTag, ",")[0]
-			if name == "" || name == "-" {
+			propName := strings.Split(jsonTag, ",")[0]
+			if propName == "" || propName == "-" {
 				continue
 			}
-			path := name
-			if prefix != "" {
-				path = prefix + "." + name
-			}
-			ft := field.Type
-			if ft.Kind() == reflect.Pointer {
-				ft = ft.Elem()
-			}
-			if ft.Kind() == reflect.Struct {
-				subMap, _ := asSettings(defMap[name])
-				walk(ft, subMap, path)
+			propSchema, hasProp := objSchema.Properties[propName]
+			if !hasProp {
 				continue
 			}
-			defVal, hasDef := defMap[name]
-			if !hasDef || isZeroDefaultValue(defVal) {
-				continue
+
+			var defVal any
+			if len(propSchema.Default) > 0 {
+				_ = json.Unmarshal(propSchema.Default, &defVal)
 			}
-			for _, tagKey := range []string{"json", "yaml", "mapstructure"} {
-				tagVal := field.Tag.Get(tagKey)
-				if strings.Contains(tagVal, "omitempty") || strings.Contains(tagVal, "omitzero") {
-					t.Errorf("field %s (%s.%s, default=%v) has %s:%q containing omitempty/omitzero",
-						path, rt.Name(), field.Name, defVal, tagKey, tagVal)
+			if !isZeroDefaultValue(defVal) {
+				for _, tagKey := range []string{"json", "yaml", "mapstructure"} {
+					tagVal := field.Tag.Get(tagKey)
+					if strings.Contains(tagVal, "omitempty") || strings.Contains(tagVal, "omitzero") {
+						t.Errorf("%s.%s (json %q, default=%v) has %s:%q containing omitempty/omitzero",
+							typeName, field.Name, propName, defVal, tagKey, tagVal)
+					}
+				}
+			} else if !reqSet[propName] {
+				if got := field.Tag.Get("json"); got != propName+",omitempty,omitzero" {
+					t.Errorf("%s.%s (optional zero-default field %q) has json:%q, want %q",
+						typeName, field.Name, propName, got, propName+",omitempty,omitzero")
+				}
+				for _, tagKey := range []string{"yaml", "mapstructure"} {
+					if got := field.Tag.Get(tagKey); got != propName+",omitempty" {
+						t.Errorf("%s.%s (optional zero-default field %q) has %s:%q, want %q",
+							typeName, field.Name, propName, tagKey, got, propName+",omitempty")
+					}
 				}
 			}
 		}
 	}
 
-	walk(reflect.TypeOf(generated.BackendConfig{}), defaults, "")
+	// Walk BackendConfig plus union-target $defs that sit behind interface{} fields.
+	for _, root := range []any{
+		generated.BackendConfig{},
+		generated.DirectOAuth2ProviderConfig{},
+		generated.PipedreamProviderConfig{},
+		generated.VendorAuthorizationCodeFlowConfig{},
+		generated.VendorDeviceAuthorizationFlowConfig{},
+		generated.VendorIdentityProbeConfig{},
+	} {
+		walk(reflect.TypeOf(root))
+	}
+
+	for name := range objectSchemas {
+		if !visited[name] {
+			t.Errorf("schema object %q has properties in config-schema.json but was not visited by tag check", name)
+		}
+	}
 }
 
 func isZeroDefaultValue(v any) bool {

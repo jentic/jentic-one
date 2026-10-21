@@ -3010,7 +3010,7 @@ type VendorAuthConfigIdentityProbe struct {
 	IdentityField string `json:"identity_field" yaml:"identity_field" mapstructure:"identity_field"`
 
 	// Method corresponds to the JSON schema field "method".
-	Method VendorIdentityProbeConfigMethod `json:"method" yaml:"method" mapstructure:"method"`
+	Method VendorIdentityProbeConfigMethod `json:"method,omitempty,omitzero" yaml:"method,omitempty" mapstructure:"method,omitempty"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.

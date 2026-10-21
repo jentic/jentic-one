@@ -62,7 +62,7 @@ func run(schemaPath, goPath string) error {
 		return fmt.Errorf("parsing schema %s: %w", schemaPath, err)
 	}
 
-	nonZeroDefaults := collectSchemaNonZeroDefaults(doc)
+	schemaDefaults := collectSchemaNonZeroDefaults(doc)
 
 	src, err := os.ReadFile(goPath) //nolint:gosec // generator input: generated config.go under internal/cli/ctl/generated.
 	if err != nil {
@@ -75,10 +75,17 @@ func run(schemaPath, goPath string) error {
 		return fmt.Errorf("parsing %s: %w", goPath, err)
 	}
 
-	collectASTNonZeroDefaults(file, nonZeroDefaults)
-	propagateAliasDefaults(file, nonZeroDefaults)
+	astDefaults := map[string]map[string]bool{}
+	collectASTNonZeroDefaults(file, astDefaults)
 
-	edits := collectTagEdits(fset, file, nonZeroDefaults)
+	if err := verifyDefaultsMatch(schemaDefaults, astDefaults); err != nil {
+		return err
+	}
+
+	edits, err := collectTagEdits(fset, file, schemaDefaults)
+	if err != nil {
+		return err
+	}
 	if len(edits) == 0 {
 		return nil
 	}
@@ -90,6 +97,32 @@ func run(schemaPath, goPath string) error {
 	}
 	if err := os.WriteFile(goPath, formatted, 0o600); err != nil { //nolint:gosec // generator output under internal/cli/ctl/generated.
 		return fmt.Errorf("writing %s: %w", goPath, err)
+	}
+	return nil
+}
+
+// verifyDefaultsMatch fails closed if the schema-declared non-zero defaults and
+// the UnmarshalJSON AST default assignments diverge (for example, if
+// go-jsonschema changes its UnmarshalJSON template or renames a generated type).
+func verifyDefaultsMatch(schemaDefaults, astDefaults map[string]map[string]bool) error {
+	var diffs []string
+	for typeName, props := range schemaDefaults {
+		for prop := range props {
+			if !astDefaults[typeName][prop] {
+				diffs = append(diffs, fmt.Sprintf("%s.%s (in schema, missing from UnmarshalJSON)", typeName, prop))
+			}
+		}
+	}
+	for typeName, props := range astDefaults {
+		for prop := range props {
+			if !schemaDefaults[typeName][prop] {
+				diffs = append(diffs, fmt.Sprintf("%s.%s (in UnmarshalJSON, missing from schema)", typeName, prop))
+			}
+		}
+	}
+	if len(diffs) > 0 {
+		sort.Strings(diffs)
+		return fmt.Errorf("schema vs UnmarshalJSON non-zero default mismatch: %s", strings.Join(diffs, "; "))
 	}
 	return nil
 }
@@ -200,6 +233,10 @@ func matchDefaultAssignment(ifStmt *ast.IfStmt) (propName string, rhs ast.Expr, 
 	if !isIdx {
 		return "", nil, false
 	}
+	rawIdent, isRawIdent := idx.X.(*ast.Ident)
+	if !isRawIdent || rawIdent.Name != "raw" {
+		return "", nil, false
+	}
 	keyLit, isLit := idx.Index.(*ast.BasicLit)
 	if !isLit || keyLit.Kind != token.STRING {
 		return "", nil, false
@@ -228,6 +265,15 @@ func matchDefaultAssignment(ifStmt *ast.IfStmt) (propName string, rhs ast.Expr, 
 
 func isZeroExpr(expr ast.Expr) bool {
 	switch e := expr.(type) {
+	case *ast.ParenExpr:
+		return isZeroExpr(e.X)
+	case *ast.UnaryExpr:
+		if e.Op == token.ADD || e.Op == token.SUB {
+			return isZeroExpr(e.X)
+		}
+		return false
+	case *ast.CompositeLit:
+		return len(e.Elts) == 0
 	case *ast.Ident:
 		return e.Name == "false" || e.Name == "nil"
 	case *ast.BasicLit:
@@ -243,47 +289,15 @@ func isZeroExpr(expr ast.Expr) bool {
 	return false
 }
 
-// propagateAliasDefaults copies non-zero default sets across go-jsonschema's
-// `<Struct>_0 = <Target>` type aliases so inline anyOf wrapper structs inherit
-// their referenced definition's defaults.
-func propagateAliasDefaults(file *ast.File, out map[string]map[string]bool) {
-	for _, decl := range file.Decls {
-		gd, ok := decl.(*ast.GenDecl)
-		if !ok || gd.Tok != token.TYPE {
-			continue
-		}
-		for _, spec := range gd.Specs {
-			ts, ok := spec.(*ast.TypeSpec)
-			if !ok || !ts.Assign.IsValid() || !strings.HasSuffix(ts.Name.Name, "_0") {
-				continue
-			}
-			targetIdent, ok := ts.Type.(*ast.Ident)
-			if !ok {
-				continue
-			}
-			srcSet := out[targetIdent.Name]
-			if len(srcSet) == 0 {
-				continue
-			}
-			wrapperName := strings.TrimSuffix(ts.Name.Name, "_0")
-			if out[wrapperName] == nil {
-				out[wrapperName] = map[string]bool{}
-			}
-			for k, v := range srcSet {
-				out[wrapperName][k] = v
-			}
-		}
-	}
-}
-
 type byteEdit struct {
 	start int
 	end   int
 	repl  string
 }
 
-func collectTagEdits(fset *token.FileSet, file *ast.File, nonZeroDefaults map[string]map[string]bool) []byteEdit {
+func collectTagEdits(fset *token.FileSet, file *ast.File, nonZeroDefaults map[string]map[string]bool) ([]byteEdit, error) {
 	var edits []byteEdit
+	matched := map[string]map[string]bool{}
 	for _, decl := range file.Decls {
 		gd, ok := decl.(*ast.GenDecl)
 		if !ok || gd.Tok != token.TYPE {
@@ -315,6 +329,10 @@ func collectTagEdits(fset *token.FileSet, file *ast.File, nonZeroDefaults map[st
 				if propName == "" || !props[propName] {
 					continue
 				}
+				if matched[ts.Name.Name] == nil {
+					matched[ts.Name.Name] = map[string]bool{}
+				}
+				matched[ts.Name.Name][propName] = true
 				newTag := fmt.Sprintf("`json:%q yaml:%q mapstructure:%q`", propName, propName, propName)
 				if newTag == field.Tag.Value {
 					continue
@@ -327,10 +345,24 @@ func collectTagEdits(fset *token.FileSet, file *ast.File, nonZeroDefaults map[st
 			}
 		}
 	}
+
+	var unmatched []string
+	for typeName, props := range nonZeroDefaults {
+		for prop := range props {
+			if !matched[typeName][prop] {
+				unmatched = append(unmatched, fmt.Sprintf("%s.%s", typeName, prop))
+			}
+		}
+	}
+	if len(unmatched) > 0 {
+		sort.Strings(unmatched)
+		return nil, fmt.Errorf("non-zero default fields not found on generated structs: %s", strings.Join(unmatched, ", "))
+	}
+
 	sort.Slice(edits, func(i, j int) bool {
 		return edits[i].start < edits[j].start
 	})
-	return edits
+	return edits, nil
 }
 
 func applyEdits(src []byte, edits []byteEdit) []byte {
