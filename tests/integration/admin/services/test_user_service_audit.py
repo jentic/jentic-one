@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import delete, select, update
@@ -291,8 +292,9 @@ async def test_disable_cancels_outstanding_invites(
 
     await service.disable(user_id, identity=org_admin)
 
-    with pytest.raises(InviteTokenNotFoundError):
+    with pytest.raises(InviteTokenNotFoundError) as exc_info:
         await InviteService(ctx).redeem(created.invite_token, "a-long-enough-password")
+    assert exc_info.value.token_id == "unknown"
     async with ctx.admin_db.session() as session:
         user = await UserRepository.get_by_id(session, user_id)
         active_tokens = await InviteTokenRepository.get_active_for_user(session, user_id)
@@ -307,14 +309,19 @@ async def test_disable_cancels_outstanding_invites(
     with pytest.raises(InviteTokenAlreadyRedeemedError):
         await InviteService(ctx).redeem(created.invite_token, "a-long-enough-password")
 
+    # A freshly reissued invite after re-enable can be redeemed normally.
+    reissued = await service.reissue_invite(user_id, identity=org_admin)
+    bundle = await InviteService(ctx).redeem(reissued.token, "a-long-enough-password")
+    assert bundle.access_token
+
     await _cleanup_user(ctx, user_id)
 
 
-async def test_redeem_refuses_a_disabled_user_with_a_live_token(
+async def test_redeem_refuses_a_disabled_user_with_a_live_or_expired_token(
     integration_context: Context, admin_user: str
 ) -> None:
-    """A disabled row whose invite token is still unredeemed answers like an
-    unknown token and writes nothing."""
+    """A disabled row whose invite token is unredeemed or expired answers like
+    an unknown token and writes nothing."""
     ctx = integration_context
     service = UserService(ctx)
     org_admin = Identity(sub=admin_user, email="test@local", permissions=["org:admin"])
@@ -330,8 +337,21 @@ async def test_redeem_refuses_a_disabled_user_with_a_live_token(
         )
         await session.commit()
 
-    with pytest.raises(InviteTokenNotFoundError):
+    with pytest.raises(InviteTokenNotFoundError) as exc_info:
         await InviteService(ctx).redeem(created.invite_token, "a-long-enough-password")
+    assert exc_info.value.token_id == "unknown"
+
+    # Even when the token is also past its expiry, the inactive user check runs first.
+    past = datetime.now(UTC) - timedelta(days=1)
+    async with ctx.admin_db.session() as session:
+        await session.execute(
+            update(InviteToken).where(InviteToken.user_id == user_id).values(expires_at=past)
+        )
+        await session.commit()
+
+    with pytest.raises(InviteTokenNotFoundError) as exc_info:
+        await InviteService(ctx).redeem(created.invite_token, "a-long-enough-password")
+    assert exc_info.value.token_id == "unknown"
 
     async with ctx.admin_db.session() as session:
         user = await UserRepository.get_by_id(session, user_id)
@@ -349,11 +369,11 @@ async def test_redeem_refuses_a_disabled_user_with_a_live_token(
     await _cleanup_user(ctx, user_id)
 
 
-async def test_redeem_refuses_a_deleted_user_with_a_live_token(
+async def test_redeem_refuses_a_deleted_user_with_a_live_or_expired_token(
     integration_context: Context, admin_user: str
 ) -> None:
-    """A deleted row whose invite token is still unredeemed answers like an
-    unknown token and writes nothing."""
+    """A deleted row whose invite token is unredeemed or expired answers like
+    an unknown token and writes nothing."""
     ctx = integration_context
     service = UserService(ctx)
     org_admin = Identity(sub=admin_user, email="test@local", permissions=["org:admin"])
@@ -369,8 +389,21 @@ async def test_redeem_refuses_a_deleted_user_with_a_live_token(
         )
         await session.commit()
 
-    with pytest.raises(InviteTokenNotFoundError):
+    with pytest.raises(InviteTokenNotFoundError) as exc_info:
         await InviteService(ctx).redeem(created.invite_token, "a-long-enough-password")
+    assert exc_info.value.token_id == "unknown"
+
+    # Even when the token is also past its expiry, the deleted user check runs first.
+    past = datetime.now(UTC) - timedelta(days=1)
+    async with ctx.admin_db.session() as session:
+        await session.execute(
+            update(InviteToken).where(InviteToken.user_id == user_id).values(expires_at=past)
+        )
+        await session.commit()
+
+    with pytest.raises(InviteTokenNotFoundError) as exc_info:
+        await InviteService(ctx).redeem(created.invite_token, "a-long-enough-password")
+    assert exc_info.value.token_id == "unknown"
 
     async with ctx.admin_db.session() as session:
         user = await UserRepository.get_by_id(session, user_id)

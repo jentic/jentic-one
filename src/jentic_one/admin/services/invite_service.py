@@ -23,7 +23,6 @@ from jentic_one.admin.services.errors import (
     InviteTokenAlreadyRedeemedError,
     InviteTokenExpiredError,
     InviteTokenNotFoundError,
-    UserNotFoundError,
 )
 from jentic_one.admin.services.permission_service import PermissionService
 from jentic_one.admin.services.schemas.auth import TokenBundle
@@ -128,9 +127,7 @@ class InviteService:
             # so a concurrent disable or delete either commits first and is
             # seen here, or waits until this redeem commits.
             user = await UserRepository.get_by_id_for_update(session, token.user_id)
-            if user is None:
-                raise UserNotFoundError(token.user_id)
-            if not user.active or user.deleted_at is not None:
+            if user is None or not user.active or user.deleted_at is not None:
                 # An inactive or deleted user cannot redeem an invite. Answer
                 # like an unknown token so the reply does not distinguish a
                 # deactivated or deleted invitee from a missing token.
