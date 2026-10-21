@@ -3369,10 +3369,14 @@ func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
 //
 // The worker claims a job, sets a **visibility deadline**
 // (“visibility_timeout_s“
-// from claim), and processes it. A job left “RUNNING“ past that deadline by a
-// crashed worker/pod is reclaimed on a later poll. A handler failure requeues the
-// job with capped exponential backoff up to “max_attempts“ claims; beyond that
-// it is dead-lettered (poison-message handling) rather than looped forever.
+// from claim, on the database clock), and processes it. On PostgreSQL a
+// heartbeat renews the deadline every quarter of the timeout while the handler
+// runs. A job left “RUNNING“ past that deadline by a crashed worker/pod is
+// reclaimed on a later poll; every completion, failure and requeue is fenced
+// on the claim, so a worker whose lease lapsed cannot overwrite the newer
+// claim's outcome. A handler failure requeues the job with capped exponential
+// backoff up to “max_attempts“ claims; beyond that it is dead-lettered
+// (poison-message handling) rather than looped forever.
 //
 // Each claim is a single atomic “UPDATE“ (“FOR UPDATE SKIP LOCKED“ on
 // Postgres, a serialised write transaction on SQLite), so any number of worker
@@ -3499,6 +3503,9 @@ func (j *WorkerConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["visibility_timeout_s"]; !ok || v == nil {
 		plain.VisibilityTimeoutS = 120.0
+	}
+	if 0 >= plain.VisibilityTimeoutS {
+		return fmt.Errorf("field %s: must be > %v", "visibility_timeout_s", 0)
 	}
 	*j = WorkerConfig(plain)
 	return nil

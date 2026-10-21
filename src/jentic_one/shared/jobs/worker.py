@@ -12,7 +12,9 @@ from typing import TYPE_CHECKING, Any
 import structlog
 from sqlalchemy import delete, or_, select, update
 from sqlalchemy.exc import StatementError
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
+from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.admin.core.schema.job_results import JobResult
 from jentic_one.admin.core.schema.jobs import Job
@@ -26,6 +28,7 @@ from jentic_one.shared.db.connectivity import (
     redact_sql,
 )
 from jentic_one.shared.db.errors import DatabaseCommitOutcomeUnknownError
+from jentic_one.shared.db.utils import db_now
 from jentic_one.shared.events import emit_event
 from jentic_one.shared.jobs.handlers import JobHandlerRegistry, JobResultPayload
 from jentic_one.shared.jobs.hold import (
@@ -77,6 +80,33 @@ def _carries_sql(exc: BaseException) -> bool:
             return True
         pending.extend(link for link in (current.__cause__, current.__context__) if link)
     return False
+
+
+# A running job's lease is renewed this many times per visibility timeout, so
+# several consecutive heartbeats can fail before another worker may reclaim it.
+_HEARTBEATS_PER_LEASE = 4
+
+
+def _heartbeat_interval_s(cfg: WorkerConfig) -> float:
+    """Seconds between lease renewals for a running job."""
+    return cfg.visibility_timeout_s / _HEARTBEATS_PER_LEASE
+
+
+def _claim_fence(job_id: str, claim: int) -> tuple[ColumnElement[bool], ...]:
+    """Match a job only while it is still held by the claim numbered ``claim``.
+
+    Every claim increments ``attempts`` under the row lock, so the value read
+    back from a claim is a fencing token: a later claim of the same job (after
+    its lease lapsed) carries a higher number. A write guarded by this predicate
+    matches no row once the job has been reclaimed, cancelled, or finalised,
+    so a worker that lost its lease can never overwrite another claim's state.
+    """
+    return (Job.id == job_id, Job.status == JobStatus.RUNNING, Job.attempts == claim)
+
+
+def _claim_of(job: Any) -> int:
+    """The fencing token of a claimed job (its ``attempts`` at claim time)."""
+    return int(job.attempts or 0)
 
 
 def _backoff_s(attempts: int, cfg: WorkerConfig) -> float:
@@ -395,12 +425,14 @@ class WorkerLoop:
         handler = self._handlers.get(kind)
         if handler is None:
             logger.error("job_no_handler", kind=kind, job_id=job.id)
-            await self._fail_job(job.id, f"no handler for kind={kind}")
+            await self._fail_job(job, f"no handler for kind={kind}")
             return
 
         try:
             result = await self._execute_handler(handler, job)
-            await self._complete_job(job.id, job.kind, result)
+            # A lost lease (reclaimed or cancelled meanwhile) drops the
+            # result and requeues nothing: the newer claim owns the job.
+            await self._complete_job(job, result)
         except DatabaseCommitOutcomeUnknownError as exc:
             # The connection dropped while committing, so the write may
             # have landed (for _complete_job: the job is already
@@ -450,7 +482,8 @@ class WorkerLoop:
                 else:
                     logger.exception("job_failed", job_id=job.id, attempts=job.attempts)
             # Same retry contract as any failed attempt: requeue with
-            # backoff, dead-letter past the budget. If the database is
+            # backoff, dead-letter past the budget — fenced on the claim,
+            # so nothing is written once the lease is lost. If the database is
             # still unreachable this raises a connection-loss error to the
             # caller (the run loop owns the outage warning and backoff); the
             # job stays RUNNING and is reclaimed after its visibility timeout.
@@ -464,21 +497,25 @@ class WorkerLoop:
         ``RUNNING`` but its ``visible_at`` deadline has passed (orphaned by a
         dead worker — recover it). The claim atomically flips it to
         ``RUNNING``, stamps a fresh visibility deadline, and increments
-        ``attempts`` so a poison job's retry budget is enforced.
+        ``attempts`` so a poison job's retry budget is enforced. The returned
+        ``attempts`` is the claim's fencing token (see :func:`_claim_fence`).
         ``SKIP LOCKED`` keeps concurrent workers from contending on the same row;
         on SQLite (no row locks) the claim runs in a ``BEGIN IMMEDIATE`` write
         transaction, which serialises claimers. Either way a job is handed to
         exactly one claimer, whether it is another slot of this loop or a loop
         in another process.
+
+        Deadlines are read and stamped on the database clock, so workers on
+        hosts with skewed clocks agree on when a lease has lapsed.
         """
         supported_kinds = list(self._handlers.kinds)
         if not supported_kinds:
             return None
 
-        now = datetime.now(UTC)
-        visible_at = now + timedelta(seconds=self._config.visibility_timeout_s)
+        timeout = timedelta(seconds=self._config.visibility_timeout_s)
 
         async def _claim(session: Any) -> Any:
+            now = await db_now(session)
             claimable = or_(
                 (Job.status == JobStatus.QUEUED)
                 & (or_(Job.visible_at.is_(None), Job.visible_at <= now)),
@@ -497,7 +534,7 @@ class WorkerLoop:
                 .where(Job.id == subq)
                 .values(
                     status=JobStatus.RUNNING,
-                    visible_at=visible_at,
+                    visible_at=now + timeout,
                     attempts=Job.attempts + 1,
                 )
                 .returning(Job)
@@ -513,15 +550,110 @@ class WorkerLoop:
         return await self._db.run_in_transaction(_claim)
 
     async def _execute_handler(self, handler: Any, job: Any) -> JobResultPayload:
-        """Run the handler; it opens its own transactions on the worker's database."""
-        result: JobResultPayload = await handler.execute(
-            job.id,
-            self._db,
-            payload=job.payload,
-            created_by=job.created_by,
-            actor_type=job.actor_type,
+        """Run the handler (it opens its own transactions), renewing the job's lease meanwhile.
+
+        The lease is renewed only where :meth:`_renews_leases` holds (not on SQLite).
+        """
+        heartbeat = (
+            asyncio.create_task(self._heartbeat(job), name=f"job-lease-heartbeat:{job.id}")
+            if self._renews_leases()
+            else None
         )
-        return result
+        try:
+            result: JobResultPayload = await handler.execute(
+                job.id,
+                self._db,
+                payload=job.payload,
+                created_by=job.created_by,
+                actor_type=job.actor_type,
+            )
+            return result
+        finally:
+            if heartbeat is not None:
+                heartbeat.cancel()
+                # Joins the cancelled heartbeat; a cancellation of this task
+                # while waiting still propagates out of gather.
+                await asyncio.gather(heartbeat, return_exceptions=True)
+
+    def _renews_leases(self) -> bool:
+        """Whether a running job's lease is renewed by a heartbeat.
+
+        Not on SQLite: the handler's write transaction holds SQLite's single
+        write lock for the whole run, so a renewal could only wait out the busy
+        timeout and fail — and no other worker can write a reclaim meanwhile.
+        """
+        return bool(self._db.backend.dialect_name != "sqlite")
+
+    async def _heartbeat(self, job: Any) -> None:
+        """Renew ``job``'s lease every heartbeat interval until cancelled or lost.
+
+        Runs alongside the handler and is cancelled when it returns. A failed
+        renewal (e.g. a transient database error) is logged and retried on the
+        next beat; the interval leaves several beats of headroom before the
+        lease lapses. Each renewal is bounded by the interval, so one stalled
+        renewal (a pool checkout or network stall) costs a single beat rather
+        than the remaining lease. A lost lease (the job was reclaimed or
+        cancelled) ends the heartbeat; the handler runs on, and its fenced
+        completion drops the result.
+        """
+        interval = _heartbeat_interval_s(self._config)
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                async with asyncio.timeout(interval):
+                    renewed = await self._renew_lease(job)
+            except Exception as exc:
+                cause = connection_loss_cause(exc)
+                logger.warning(
+                    "job_lease_renew_failed",
+                    job_id=job.id,
+                    claim=_claim_of(job),
+                    error_type=type(cause or exc).__name__,
+                    error=describe_connection_loss(cause) if cause else redact_sql(str(exc)),
+                )
+                continue
+            if not renewed:
+                return
+
+    async def _renew_lease(self, job: Any) -> bool:
+        """Push the claim's visibility deadline out by one timeout on the DB clock.
+
+        Returns False (after logging) when the claim no longer holds the job.
+        """
+        timeout = timedelta(seconds=self._config.visibility_timeout_s)
+        async with self._db.transaction() as session:
+            now = await db_now(session)
+            renewed = await session.execute(
+                update(Job)
+                .where(*_claim_fence(job.id, _claim_of(job)))
+                .values(visible_at=now + timeout)
+                .returning(Job.id)
+            )
+            if renewed.scalar_one_or_none() is not None:
+                return True
+            await self._log_lease_lost(session, job, stage="heartbeat")
+            return False
+
+    async def _log_lease_lost(self, session: AsyncSession, job: Any, *, stage: str) -> None:
+        """Log that a fenced write at ``stage`` matched no row, and why.
+
+        A cancelled job is an expected outcome; anything else (reclaimed by a
+        newer claim, finalised, or deleted) means this worker's lease lapsed.
+        """
+        current = (
+            await session.execute(select(Job.status, Job.attempts).where(Job.id == job.id))
+        ).one_or_none()
+        if current is not None and current.status == JobStatus.CANCELLED:
+            logger.info("job_cancelled_while_running", job_id=job.id, stage=stage)
+            return
+        logger.warning(
+            "job_lease_lost",
+            job_id=job.id,
+            stage=stage,
+            claim=_claim_of(job),
+            current_status=None if current is None else current.status,
+            current_claim=None if current is None else current.attempts,
+        )
 
     async def _is_approved_execution(self, session: Any, job_id: str) -> bool:
         """True when the job is a held execution a reviewer approved."""
@@ -541,12 +673,21 @@ class WorkerLoop:
             approval = await get_approved_by_job_id(session, job.id)
             if approval is None:
                 return False
-            db_job = await session.get(Job, job.id)
-            if db_job is None or db_job.status != JobStatus.RUNNING:
+            refused = (
+                await session.execute(
+                    update(Job)
+                    .where(*_claim_fence(job.id, _claim_of(job)))
+                    .values(
+                        status=JobStatus.FAILED,
+                        error="approved execution interrupted; not re-run",
+                        visible_at=None,
+                    )
+                    .returning(Job.created_by)
+                )
+            ).one_or_none()
+            if refused is None:
+                await self._log_lease_lost(session, job, stage="refuse_reclaim")
                 return True
-            db_job.status = JobStatus.FAILED
-            db_job.error = "approved execution interrupted; not re-run"
-            db_job.visible_at = None
             session.add(
                 JobResult(
                     job_id=job.id,
@@ -555,37 +696,51 @@ class WorkerLoop:
                     body=approval_resume_failed_problem(approval.id),
                     available_until=datetime.now(UTC)
                     + timedelta(seconds=self._approved_result_retention_seconds),
-                    created_by=db_job.created_by,
+                    created_by=refused.created_by,
                 )
             )
         logger.warning("approved_job_reclaim_refused", job_id=job.id, attempts=job.attempts)
         return True
 
-    async def _complete_job(self, job_id: str, kind: str, result: JobResultPayload) -> None:
-        """Mark job completed and write result.
+    async def _complete_job(self, job: Any, result: JobResultPayload) -> bool:
+        """Mark the claimed job completed and write its result.
+
+        The status write is fenced on the claim: when it matches no row the
+        lease was lost (the job was reclaimed, cancelled or finalised), so no
+        result is written and False is returned.
 
         Only an import job emits ``import.completed``: the event (and the spec
         import telemetry derived from it) means a spec was imported, which no
         other job kind does.
         """
+        job_id, kind = job.id, job.kind
         async with self._db.transaction() as session:
-            job = await session.get(Job, job_id)
-            if job is None:
-                return
-            if job.status == JobStatus.CANCELLED:
-                return
-            job.status = JobStatus.COMPLETED
-            job.visible_at = None
+            status = JobStatus.COMPLETED
             available_until = None
-            if kind == JobKind.EXECUTION and await self._is_approved_execution(session, job_id):
+            approved = kind == JobKind.EXECUTION and await self._is_approved_execution(
+                session, job_id
+            )
+            if approved:
                 # An approved execution runs once: a failed run (re-auth deny,
                 # upstream error) is terminal ``failed`` with its outcome as the
                 # result, and the result is kept for the retention window.
                 if result.body.get("status") == "failed":
-                    job.status = JobStatus.FAILED
+                    status = JobStatus.FAILED
                 available_until = datetime.now(UTC) + timedelta(
                     seconds=self._approved_result_retention_seconds
                 )
+            completed = (
+                await session.execute(
+                    update(Job)
+                    .where(*_claim_fence(job_id, _claim_of(job)))
+                    .values(status=status, visible_at=None)
+                    .returning(Job.created_by, Job.actor_type)
+                )
+            ).one_or_none()
+            if completed is None:
+                await self._log_lease_lost(session, job, stage="complete")
+                return False
+            if approved:
                 execution_id = result.body.get("execution_id")
                 if isinstance(execution_id, str) and execution_id:
                     await set_execution_id_for_job(session, job_id, execution_id)
@@ -598,7 +753,7 @@ class WorkerLoop:
             )
             session.add(job_result)
             if kind != JobKind.IMPORT:
-                return
+                return True
             try:
                 await emit_event(
                     session,
@@ -606,12 +761,13 @@ class WorkerLoop:
                     severity=EventSeverity.INFO,
                     summary=f"Import completed (job {job_id})",
                     job_id=job_id,
-                    created_by=job.created_by,
-                    actor_id=job.created_by,
-                    actor_type=job.actor_type,
+                    created_by=completed.created_by,
+                    actor_id=completed.created_by,
+                    actor_type=completed.actor_type,
                 )
             except Exception:
                 logger.warning("emit_event_failed", job_id=job_id)
+        return True
 
     async def _handle_failure(self, job: Any, error: str) -> None:
         """Requeue a failed job with backoff, or dead-letter it past the budget.
@@ -637,11 +793,7 @@ class WorkerLoop:
                 is_approved = await self._is_approved_execution(check_session, job.id)
             if is_approved:
                 if await self._terminal_job(
-                    job.id,
-                    JobStatus.FAILED,
-                    error,
-                    event_summary_prefix="Execution failed",
-                    claim_attempts=job.attempts,
+                    job, JobStatus.FAILED, error, event_summary_prefix="Execution failed"
                 ):
                     logger.info("approved_job_failed_no_retry", job_id=job.id)
                 return
@@ -649,77 +801,60 @@ class WorkerLoop:
         attempts = int(job.attempts or 0)
         if attempts >= self._config.max_attempts:
             if await self._terminal_job(
-                job.id,
+                job,
                 JobStatus.DEAD_LETTER,
                 error,
                 event_summary_prefix="Job dead-lettered",
-                claim_attempts=job.attempts,
             ):
                 logger.error("job_dead_lettered", job_id=job.id, attempts=attempts)
             return
 
         delay_s = _backoff_s(attempts, self._config)
-        requeue_at = datetime.now(UTC) + timedelta(seconds=delay_s)
         async with self._db.transaction() as session:
-            result = await session.execute(
+            requeue_at = await db_now(session) + timedelta(seconds=delay_s)
+            requeued = await session.execute(
                 update(Job)
-                .where(
-                    Job.id == job.id,
-                    Job.status == JobStatus.RUNNING,
-                    Job.attempts == job.attempts,
-                )
+                .where(*_claim_fence(job.id, _claim_of(job)))
                 .values(
                     status=JobStatus.QUEUED,
                     error=error[:_ERROR_MAX_LEN],
                     visible_at=requeue_at,
                 )
+                .returning(Job.id)
             )
-        if not result.rowcount:  # type: ignore[attr-defined]
-            logger.info("job_requeue_skipped_claim_lost", job_id=job.id, attempts=attempts)
-            return
+            if requeued.scalar_one_or_none() is None:
+                await self._log_lease_lost(session, job, stage="requeue")
+                return
         logger.info("job_requeued", job_id=job.id, attempts=attempts, delay_s=round(delay_s, 2))
 
-    async def _fail_job(self, job_id: str, error: str) -> None:
+    async def _fail_job(self, job: Any, error: str) -> None:
         """Mark a job terminally ``FAILED`` (non-retryable, e.g. no handler)."""
-        await self._terminal_job(
-            job_id, JobStatus.FAILED, error, event_summary_prefix="Import failed"
-        )
+        await self._terminal_job(job, JobStatus.FAILED, error, event_summary_prefix="Import failed")
 
     async def _terminal_job(
-        self,
-        job_id: str,
-        status: JobStatus,
-        error: str,
-        *,
-        event_summary_prefix: str,
-        claim_attempts: int | None = None,
+        self, job: Any, status: JobStatus, error: str, *, event_summary_prefix: str
     ) -> bool:
-        """Move a job to a terminal status, clear its claim, and emit an event.
+        """Move a claimed job to a terminal status, clear its claim, and emit an event.
 
-        With ``claim_attempts`` the transition applies only while the row is
-        still ``RUNNING`` under that claim (see :meth:`_handle_failure`); the
-        row is locked for the check so a concurrent reclaim cannot interleave.
-
-        Returns True when the transition was applied, False when the job is
-        gone or the claim check skipped it.
+        Fenced on the claim; returns False (writing nothing) when the lease was lost.
         """
+        job_id = job.id
         async with self._db.transaction() as session:
-            if claim_attempts is None:
-                job = await session.get(Job, job_id)
-            else:
-                job = await session.get(Job, job_id, with_for_update=True)
-                if job is None or (
-                    job.status != JobStatus.RUNNING or job.attempts != claim_attempts
-                ):
-                    logger.info(
-                        "job_terminal_skipped_claim_lost", job_id=job_id, status=str(status)
+            finalised = (
+                await session.execute(
+                    update(Job)
+                    .where(*_claim_fence(job_id, _claim_of(job)))
+                    .values(
+                        status=status,
+                        error=error[:_ERROR_MAX_LEN] if error else None,
+                        visible_at=None,
                     )
-                    return False
-            if job is None:
+                    .returning(Job.created_by, Job.actor_type)
+                )
+            ).one_or_none()
+            if finalised is None:
+                await self._log_lease_lost(session, job, stage=str(status))
                 return False
-            job.status = status
-            job.error = error[:_ERROR_MAX_LEN] if error else None
-            job.visible_at = None
             try:
                 sanitized = error[:_ERROR_MAX_LEN] if error else "unknown"
                 if status == JobStatus.DEAD_LETTER:
@@ -733,9 +868,9 @@ class WorkerLoop:
                     summary=f"{event_summary_prefix}: {sanitized}",
                     requires_action=True,
                     job_id=job_id,
-                    created_by=job.created_by,
-                    actor_id=job.created_by,
-                    actor_type=job.actor_type,
+                    created_by=finalised.created_by,
+                    actor_id=finalised.created_by,
+                    actor_type=finalised.actor_type,
                 )
             except Exception:
                 logger.warning("emit_event_failed", job_id=job_id)

@@ -379,10 +379,14 @@ class WorkerConfig(BaseModel):
     """Background job-worker durability knobs.
 
     The worker claims a job, sets a **visibility deadline** (``visibility_timeout_s``
-    from claim), and processes it. A job left ``RUNNING`` past that deadline by a
-    crashed worker/pod is reclaimed on a later poll. A handler failure requeues the
-    job with capped exponential backoff up to ``max_attempts`` claims; beyond that
-    it is dead-lettered (poison-message handling) rather than looped forever.
+    from claim, on the database clock), and processes it. On PostgreSQL a
+    heartbeat renews the deadline every quarter of the timeout while the handler
+    runs. A job left ``RUNNING`` past that deadline by a crashed worker/pod is
+    reclaimed on a later poll; every completion, failure and requeue is fenced
+    on the claim, so a worker whose lease lapsed cannot overwrite the newer
+    claim's outcome. A handler failure requeues the job with capped exponential
+    backoff up to ``max_attempts`` claims; beyond that it is dead-lettered
+    (poison-message handling) rather than looped forever.
 
     Each claim is a single atomic ``UPDATE`` (``FOR UPDATE SKIP LOCKED`` on
     Postgres, a serialised write transaction on SQLite), so any number of worker
@@ -390,10 +394,14 @@ class WorkerConfig(BaseModel):
     jobs — can poll the same queue without double-claiming a job.
     """
 
-    # How long a claimed (RUNNING) job stays invisible to other workers. Size it
-    # safely above the longest expected handler runtime (upstream timeout + slack)
-    # so a healthy-but-slow job is never reclaimed mid-flight and double-processed.
-    visibility_timeout_s: float = 120.0
+    # How long a claimed (RUNNING) job stays invisible to other workers without a
+    # lease renewal — the delay before a crashed worker's job is reclaimed. On
+    # PostgreSQL the heartbeat keeps a slow-but-healthy job's lease alive. On
+    # SQLite the handler's write transaction holds the database write lock for
+    # the whole run (so no reclaim can be written meanwhile) and the lease is not
+    # renewed; size it above the longest expected handler runtime there. Must be
+    # positive: the heartbeat interval is derived from it.
+    visibility_timeout_s: float = Field(default=120.0, gt=0)
     # Total claims before a repeatedly-failing job is dead-lettered.
     max_attempts: int = 5
     # Backoff before a failed job becomes claimable again: min(base * 2**(n-1), max).

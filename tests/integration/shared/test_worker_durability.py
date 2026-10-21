@@ -204,9 +204,9 @@ class _CompletionOutcomeUnknownWorker(WorkerLoop):
         super().__init__(admin_db, _registry(handler), worker_config=WorkerConfig())
         self._landed = landed
 
-    async def _complete_job(self, job_id: str, kind: str, result: JobResultPayload) -> None:
+    async def _complete_job(self, job: Any, result: JobResultPayload) -> bool:
         if self._landed:
-            await super()._complete_job(job_id, kind, result)
+            await super()._complete_job(job, result)
         raise DatabaseCommitOutcomeUnknownError("connection is closed")
 
 
@@ -327,15 +327,15 @@ async def test_dead_letter_under_the_claim_logs_job_dead_lettered(
     assert (await _get(admin_db, job_id)).status == JobStatus.DEAD_LETTER
     [entry] = [e for e in logs if e["event"] == "job_dead_lettered"]
     assert entry["log_level"] == "error"
-    assert not [e for e in logs if e["event"].endswith("_skipped_claim_lost")]
+    assert not [e for e in logs if e["event"] == "job_lease_lost"]
 
 
 def _assert_only_skip_logged(logs: list[Any]) -> None:
-    """A skipped transition logs one info-level skip line and no failure outcome."""
+    """A skipped transition logs one lease-lost warning and no failure outcome."""
     events = {e["event"]: e for e in logs}
     for outcome in ("job_dead_lettered", "approved_job_failed_no_retry", "job_requeued"):
         assert outcome not in events
-    skips = [e for e in logs if e["event"].endswith("_skipped_claim_lost")]
+    skips = [e for e in logs if e["event"] == "job_lease_lost"]
     assert len(skips) == 1
-    assert skips[0]["log_level"] == "info"
+    assert skips[0]["log_level"] == "warning"
     assert all(e["log_level"] != "error" for e in logs)

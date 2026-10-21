@@ -2143,7 +2143,7 @@
       "type": "object"
     },
     "WorkerConfig": {
-      "description": "Background job-worker durability knobs.\n\nThe worker claims a job, sets a **visibility deadline** (``visibility_timeout_s``\nfrom claim), and processes it. A job left ``RUNNING`` past that deadline by a\ncrashed worker/pod is reclaimed on a later poll. A handler failure requeues the\njob with capped exponential backoff up to ``max_attempts`` claims; beyond that\nit is dead-lettered (poison-message handling) rather than looped forever.\n\nEach claim is a single atomic ``UPDATE`` (``FOR UPDATE SKIP LOCKED`` on\nPostgres, a serialised write transaction on SQLite), so any number of worker\nloops — across processes or replicas, each running up to ``concurrency``\njobs — can poll the same queue without double-claiming a job.",
+      "description": "Background job-worker durability knobs.\n\nThe worker claims a job, sets a **visibility deadline** (``visibility_timeout_s``\nfrom claim, on the database clock), and processes it. On PostgreSQL a\nheartbeat renews the deadline every quarter of the timeout while the handler\nruns. A job left ``RUNNING`` past that deadline by a crashed worker/pod is\nreclaimed on a later poll; every completion, failure and requeue is fenced\non the claim, so a worker whose lease lapsed cannot overwrite the newer\nclaim's outcome. A handler failure requeues the job with capped exponential\nbackoff up to ``max_attempts`` claims; beyond that it is dead-lettered\n(poison-message handling) rather than looped forever.\n\nEach claim is a single atomic ``UPDATE`` (``FOR UPDATE SKIP LOCKED`` on\nPostgres, a serialised write transaction on SQLite), so any number of worker\nloops — across processes or replicas, each running up to ``concurrency``\njobs — can poll the same queue without double-claiming a job.",
       "properties": {
         "concurrency": {
           "default": 1,
@@ -2207,6 +2207,7 @@
         },
         "visibility_timeout_s": {
           "default": 120.0,
+          "exclusiveMinimum": 0,
           "title": "Visibility Timeout S",
           "type": "number"
         }
