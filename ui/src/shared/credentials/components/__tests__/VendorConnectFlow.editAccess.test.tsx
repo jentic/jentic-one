@@ -124,7 +124,7 @@ describe('VendorConnectFlow edit — a person adding scopes', () => {
 		).toBeInTheDocument();
 	});
 
-	it('opens the agent’s waiting request instead of a second one', async () => {
+	it('adds scopes beside an agent’s waiting request', async () => {
 		seedBinding({ scope_catalog: CATALOG });
 		const open = seedMockAgentConnectSession({
 			agent_id: 'agnt_1',
@@ -160,11 +160,10 @@ describe('VendorConnectFlow edit — a person adding scopes', () => {
 		await user.click(await screen.findByText('gmail.send', { selector: 'code' }));
 		await user.click(screen.getByRole('button', { name: 'Sign in and add' }));
 
-		expect(
-			await screen.findByText(/request to change this access is waiting/),
-		).toBeInTheDocument();
-		expect(await screen.findByRole('button', { name: 'Reject' })).toBeInTheDocument();
-		expect(getMockConnectSessions().map((s) => s.session_id)).toEqual([open.session_id]);
+		await waitFor(() => expect(window.open).toHaveBeenCalled());
+		// Both are open: the agent's request waits on its review.
+		expect(getMockConnectSessions().map((s) => s.session_id)).toContain(open.session_id);
+		expect(getMockConnectSessions()).toHaveLength(2);
 	});
 
 	it('says when the credential can’t take more scopes', async () => {

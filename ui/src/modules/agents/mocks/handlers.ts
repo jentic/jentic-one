@@ -26,7 +26,6 @@ import { SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR } from '@/shared/lib';
 import { CredentialType, type Credential } from '@/shared/credentials/api';
 import {
 	findMockCredential,
-	getMockConnectSessions,
 	seedMockAgentConnectSession,
 	seedMockCredentials,
 } from '@/shared/credentials/mocks/handlers';
@@ -2039,27 +2038,6 @@ export const agentsHandlers = [
 			(b) => b.agent_id === agentId && b.credential_id === body.credential_id,
 		);
 		if (!row) return new HttpResponse(null, { status: 404 });
-		const open = getMockConnectSessions().find(
-			(s) =>
-				s.edit?.binding.agent_id === agentId &&
-				s.edit.binding.credential_id === body.credential_id,
-		);
-		const addsScopes = (body.scopes?.add ?? []).some(
-			(scope) => !(row.granted_scopes ?? []).includes(scope),
-		);
-		// A person's own change applied at once doesn't wait on an open edit;
-		// one adding scopes needs the binding's one open-edit slot.
-		if (open && (!body.apply || addsScopes)) {
-			return HttpResponse.json(
-				{
-					type: 'edit_open',
-					status: 409,
-					detail: 'An edit of this binding is already open.',
-					session_id: open.session_id,
-				},
-				{ status: 409, headers: { 'Content-Type': 'application/problem+json' } },
-			);
-		}
 		const set = row.rule_set_id
 			? ruleSets.find((r) => r.rule_set_id === row.rule_set_id)
 			: undefined;

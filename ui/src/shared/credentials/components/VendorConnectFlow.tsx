@@ -2022,7 +2022,7 @@ function describeEditError(err: unknown): string {
  * A person adding scopes to a binding's credential: their own change, applied
  * as they make it through an edit session (`apply`). It goes straight to the
  * vendor sign-in, the same step an approved agent request runs. An agent's
- * edit already open for the binding opens instead, to approve or discard first.
+ * open request for the binding is rebased onto it once it lands.
  */
 function EditAccessFlow({
 	agentId,
@@ -2047,7 +2047,6 @@ function EditAccessFlow({
 	const [pickedScopes, setPickedScopes] = useState<Set<string>>(() => new Set());
 	const [reason, setReason] = useState('');
 	const [error, setError] = useState<string | null>(null);
-	const [openEdit, setOpenEdit] = useState<string | null>(null);
 	const [consent, setConsent] = useState<{
 		sessionId: string;
 		pollToken: string;
@@ -2086,17 +2085,6 @@ function EditAccessFlow({
 		}
 	}, [consent, outcome, polling.data, queryClient, agentId, credentialId]);
 
-	if (openEdit) {
-		return (
-			<div className="space-y-4">
-				<p role="status" className="text-muted-foreground text-sm">
-					An agent’s request to change this access is waiting. Approve or discard it
-					before adding scopes.
-				</p>
-				<VendorApproveFlow sessionId={openEdit} onBack={onBack} onDone={onDone} />
-			</div>
-		);
-	}
 	if (outcome) {
 		return (
 			<TerminalStep
@@ -2181,15 +2169,6 @@ function EditAccessFlow({
 				}
 			}
 		} catch (err) {
-			const open = err instanceof IntegrationsApiError ? err.extensions.session_id : null;
-			if (
-				err instanceof IntegrationsApiError &&
-				err.code === 'edit_open' &&
-				typeof open === 'string'
-			) {
-				setOpenEdit(open);
-				return;
-			}
 			setError(describeEditError(err));
 		}
 	};

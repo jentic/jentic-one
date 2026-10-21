@@ -198,13 +198,14 @@ export function ApiAccessSidebar({
 	const access = useBindingAccess(agent.id, credentialId ?? '', {
 		enabled: open && credentialId != null && !credentialLocked,
 	});
-	// An agent's request to change this binding, waiting on a review. A change
-	// made here merges into it, or leaves it for the agent to amend.
+	// The agent's own request to change this binding, waiting on a review. A
+	// change made here merges into it, or leaves it for the agent to amend.
 	const openRequests = useOpenConnectRequests({ enabled: open && canWriteCredentials });
 	const openEdit = openRequests.data?.find(
 		(r) =>
 			String(r.intent) === 'edit' &&
 			r.agent_id === agent.id &&
+			r.requested_by_actor_id === agent.id &&
 			r.credential_id === credentialId,
 	);
 	// What the broker evaluates: an attached rule set's rules, else the inline ones.
