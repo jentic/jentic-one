@@ -361,3 +361,55 @@ async def test_update_agent_owner_transfer_suspends_foreign_bindings_only(
         assert call.kwargs["data"]["reason"] == "agent_ownership_transferred"
 
     ctx.invalidate_broker_caches.assert_called_once_with(agent_id="agnt_test123")
+
+
+@pytest.mark.asyncio
+@patch("jentic_one.auth.services.agent_service.emit_event_best_effort", new_callable=AsyncMock)
+@patch("jentic_one.auth.services.agent_service.CredentialRefRepository")
+@patch("jentic_one.auth.services.agent_service.AgentCredentialBindingRepository")
+@patch(
+    "jentic_one.auth.services.agent_service.revoke_active_grants_for_agent",
+    new_callable=AsyncMock,
+)
+@patch("jentic_one.auth.services.agent_service.record_audit", new_callable=AsyncMock)
+@patch("jentic_one.auth.services.agent_service.AgentRepository")
+async def test_update_agent_owner_transfer_without_control_db_suspends_all_active_bindings(
+    mock_repo: MagicMock,
+    mock_audit: AsyncMock,
+    mock_revoke: AsyncMock,
+    mock_binding_repo: MagicMock,
+    mock_cred_ref_repo: MagicMock,
+    mock_emit_event: AsyncMock,
+) -> None:
+    """When control DB access is disabled, owner transfer fails closed and
+    suspends all active bindings on the agent."""
+    ctx = _make_ctx()
+    ctx.is_db_allowed.return_value = False
+    svc = AgentService(ctx)
+
+    mock_repo.get_by_id_for_update = AsyncMock(return_value=_make_agent_row(owner_id="usr_old"))
+    mock_repo.update_agent = AsyncMock(return_value=_make_agent_row(owner_id="usr_new"))
+    mock_binding_repo.list_for_agent = AsyncMock(
+        return_value=[
+            _make_binding("cred_one", suspended=False),
+            _make_binding("cred_two", suspended=True),
+        ]
+    )
+    mock_binding_repo.set_suspended = AsyncMock()
+    mock_cred_ref_repo.get_refs_for_ids = AsyncMock()
+
+    await svc.update_agent(
+        "agnt_test123",
+        update_data={"owner_id": "usr_new"},
+        identity=_admin_identity(),
+    )
+
+    mock_cred_ref_repo.get_refs_for_ids.assert_not_awaited()
+    mock_binding_repo.set_suspended.assert_awaited_once_with(
+        ctx.admin_db.transaction.return_value.__aenter__.return_value,
+        agent_id="agnt_test123",
+        credential_id="cred_one",
+        suspended=True,
+    )
+    assert mock_emit_event.await_count == 1
+    ctx.invalidate_broker_caches.assert_called_once_with(agent_id="agnt_test123")
