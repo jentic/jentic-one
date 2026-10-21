@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import delete, select, update
@@ -262,11 +263,13 @@ async def test_delete_cancels_outstanding_invites(
 
     await service.delete(user_id, identity=org_admin)
 
-    with pytest.raises(InviteTokenAlreadyRedeemedError):
+    with pytest.raises(InviteTokenNotFoundError):
         await InviteService(ctx).redeem(created.invite_token, "a-long-enough-password")
     async with ctx.admin_db.session() as session:
         user = await UserRepository.get_by_id(session, user_id)
+        active_tokens = await InviteTokenRepository.get_active_for_user(session, user_id)
     assert user is not None and user.invite_state == InviteState.PENDING
+    assert active_tokens == []
     assert await _password_hash(ctx, user_id) is None
     entries = await _audit_entries_for(ctx, user_id)
     assert not [e for e in entries if e.action == AuditAction.ENABLE.value]
@@ -274,11 +277,103 @@ async def test_delete_cancels_outstanding_invites(
     await _cleanup_user(ctx, user_id)
 
 
-async def test_redeem_refuses_a_deleted_user_with_a_live_token(
+async def test_disable_cancels_outstanding_invites(
     integration_context: Context, admin_user: str
 ) -> None:
-    """A deleted row whose invite token is still unredeemed answers like an
-    unknown token and writes nothing."""
+    """Disabling an invited user cancels their pending invite and refuses redeem."""
+    ctx = integration_context
+    service = UserService(ctx)
+    org_admin = Identity(sub=admin_user, email="test@local", permissions=["org:admin"])
+    created = await service.create(
+        UserCreatePayload(email="audit-dis-invite@test.local", first_name="I", last_name="S"),
+        identity=org_admin,
+    )
+    user_id = created.user.id
+
+    await service.disable(user_id, identity=org_admin)
+
+    with pytest.raises(InviteTokenNotFoundError) as exc_info:
+        await InviteService(ctx).redeem(created.invite_token, "a-long-enough-password")
+    assert exc_info.value.token_id == "unknown"
+    async with ctx.admin_db.session() as session:
+        user = await UserRepository.get_by_id(session, user_id)
+        active_tokens = await InviteTokenRepository.get_active_for_user(session, user_id)
+    assert user is not None and not user.active and user.invite_state == InviteState.PENDING
+    assert active_tokens == []
+    assert await _password_hash(ctx, user_id) is None
+    entries = await _audit_entries_for(ctx, user_id)
+    assert not [e for e in entries if e.action == AuditAction.ENABLE.value]
+
+    # Re-enabling the user does not revive the pre-disable invite token.
+    await service.enable(user_id, identity=org_admin)
+    with pytest.raises(InviteTokenAlreadyRedeemedError):
+        await InviteService(ctx).redeem(created.invite_token, "a-long-enough-password")
+
+    # A freshly reissued invite after re-enable can be redeemed normally.
+    reissued = await service.reissue_invite(user_id, identity=org_admin)
+    bundle = await InviteService(ctx).redeem(reissued.token, "a-long-enough-password")
+    assert bundle.access_token
+
+    await _cleanup_user(ctx, user_id)
+
+
+async def test_redeem_refuses_a_disabled_user_with_a_live_or_expired_token(
+    integration_context: Context, admin_user: str
+) -> None:
+    """A disabled row whose invite token is unredeemed or expired answers like
+    an unknown token and writes nothing."""
+    ctx = integration_context
+    service = UserService(ctx)
+    org_admin = Identity(sub=admin_user, email="test@local", permissions=["org:admin"])
+    created = await service.create(
+        UserCreatePayload(email="audit-dis-live@test.local", first_name="L", last_name="S"),
+        identity=org_admin,
+    )
+    user_id = created.user.id
+    await service.disable(user_id, identity=org_admin)
+    async with ctx.admin_db.session() as session:
+        await session.execute(
+            update(InviteToken).where(InviteToken.user_id == user_id).values(redeemed_at=None)
+        )
+        await session.commit()
+
+    with pytest.raises(InviteTokenNotFoundError) as exc_info:
+        await InviteService(ctx).redeem(created.invite_token, "a-long-enough-password")
+    assert exc_info.value.token_id == "unknown"
+
+    # Even when the token is also past its expiry, the inactive user check runs first.
+    past = datetime.now(UTC) - timedelta(days=1)
+    async with ctx.admin_db.session() as session:
+        await session.execute(
+            update(InviteToken).where(InviteToken.user_id == user_id).values(expires_at=past)
+        )
+        await session.commit()
+
+    with pytest.raises(InviteTokenNotFoundError) as exc_info:
+        await InviteService(ctx).redeem(created.invite_token, "a-long-enough-password")
+    assert exc_info.value.token_id == "unknown"
+
+    async with ctx.admin_db.session() as session:
+        user = await UserRepository.get_by_id(session, user_id)
+        tokens = (
+            (await session.execute(select(InviteToken).where(InviteToken.user_id == user_id)))
+            .scalars()
+            .all()
+        )
+    assert user is not None and not user.active and user.invite_state == InviteState.PENDING
+    assert [t.redeemed_at for t in tokens] == [None]
+    assert await _password_hash(ctx, user_id) is None
+    entries = await _audit_entries_for(ctx, user_id)
+    assert not [e for e in entries if e.action == AuditAction.ENABLE.value]
+
+    await _cleanup_user(ctx, user_id)
+
+
+async def test_redeem_refuses_a_deleted_user_with_a_live_or_expired_token(
+    integration_context: Context, admin_user: str
+) -> None:
+    """A deleted row whose invite token is unredeemed or expired answers like
+    an unknown token and writes nothing."""
     ctx = integration_context
     service = UserService(ctx)
     org_admin = Identity(sub=admin_user, email="test@local", permissions=["org:admin"])
@@ -294,8 +389,21 @@ async def test_redeem_refuses_a_deleted_user_with_a_live_token(
         )
         await session.commit()
 
-    with pytest.raises(InviteTokenNotFoundError):
+    with pytest.raises(InviteTokenNotFoundError) as exc_info:
         await InviteService(ctx).redeem(created.invite_token, "a-long-enough-password")
+    assert exc_info.value.token_id == "unknown"
+
+    # Even when the token is also past its expiry, the deleted user check runs first.
+    past = datetime.now(UTC) - timedelta(days=1)
+    async with ctx.admin_db.session() as session:
+        await session.execute(
+            update(InviteToken).where(InviteToken.user_id == user_id).values(expires_at=past)
+        )
+        await session.commit()
+
+    with pytest.raises(InviteTokenNotFoundError) as exc_info:
+        await InviteService(ctx).redeem(created.invite_token, "a-long-enough-password")
+    assert exc_info.value.token_id == "unknown"
 
     async with ctx.admin_db.session() as session:
         user = await UserRepository.get_by_id(session, user_id)
@@ -428,6 +536,44 @@ async def test_redeem_waits_for_a_concurrent_delete_and_refuses(
     with pytest.raises(InviteTokenNotFoundError):
         await task
     user = await _user_row(ctx, user_id)
+    assert user.invite_state == InviteState.PENDING
+    assert await _password_hash(ctx, user_id) is None
+    entries = await _audit_entries_for(ctx, user_id)
+    assert not [e for e in entries if e.action == AuditAction.ENABLE.value]
+
+    await _cleanup_user(ctx, user_id)
+
+
+@pytest.mark.skipif(_SQLITE, reason="row locks require Postgres")
+async def test_redeem_waits_for_a_concurrent_disable_and_refuses(
+    integration_context: Context, admin_user: str
+) -> None:
+    """A redeem that read the token before a disable committed waits on the user
+    row lock, then sees ``active=False`` and writes nothing.
+    """
+    ctx = integration_context
+    service = UserService(ctx)
+    org_admin = Identity(sub=admin_user, email="test@local", permissions=["org:admin"])
+    created = await service.create(
+        UserCreatePayload(email="audit-race-dis-redeem@test.local", first_name="R", last_name="S"),
+        identity=org_admin,
+    )
+    user_id = created.user.id
+
+    async with ctx.admin_db.transaction() as session:
+        await UserRepository.disable(session, user_id)
+        for token in await InviteTokenRepository.get_active_for_user(session, user_id):
+            await InviteTokenRepository.redeem(session, token.id)
+        task = asyncio.create_task(
+            InviteService(ctx).redeem(created.invite_token, "a-long-enough-password")
+        )
+        await asyncio.sleep(0.5)
+        assert not task.done(), "redeem should wait on the disabled user's row lock"
+
+    with pytest.raises(InviteTokenNotFoundError):
+        await task
+    user = await _user_row(ctx, user_id)
+    assert not user.active
     assert user.invite_state == InviteState.PENDING
     assert await _password_hash(ctx, user_id) is None
     entries = await _audit_entries_for(ctx, user_id)
