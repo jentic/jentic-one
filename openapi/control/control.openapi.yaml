@@ -24927,7 +24927,10 @@ paths:
   /notes:
     description: '`POST`: Create Note. `GET`: List Notes.'
     get:
-      description: List notes with optional filters and cursor pagination.
+      description: |-
+        List notes with optional filters and cursor pagination.
+
+        Returns the caller's own notes; a user also sees the notes of agents they own.
       operationId: listNotes
       parameters:
       - description: Opaque cursor from a previous page's `next_cursor`; omit for the first page.
@@ -25304,7 +25307,11 @@ paths:
       - Notes
     description: '`GET`: Get Note. `PATCH`: Update Note. `DELETE`: Delete Note.'
     get:
-      description: Retrieve a single note by ID.
+      description: |-
+        Retrieve a single note by ID.
+
+        A user can read the notes of agents they own, but only a note's author (or
+        an org admin) can update or delete it.
       operationId: getNote
       parameters:
       - description: ID of the note.

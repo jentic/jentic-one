@@ -43728,7 +43728,7 @@
     "/notes": {
       "description": "`POST`: Create Note. `GET`: List Notes.",
       "get": {
-        "description": "List notes with optional filters and cursor pagination.",
+        "description": "List notes with optional filters and cursor pagination.\n\nReturns the caller's own notes; a user also sees the notes of agents they own.",
         "operationId": "listNotes",
         "parameters": [
           {
@@ -44444,7 +44444,7 @@
       },
       "description": "`GET`: Get Note. `PATCH`: Update Note. `DELETE`: Delete Note.",
       "get": {
-        "description": "Retrieve a single note by ID.",
+        "description": "Retrieve a single note by ID.\n\nA user can read the notes of agents they own, but only a note's author (or\nan org admin) can update or delete it.",
         "operationId": "getNote",
         "parameters": [
           {
