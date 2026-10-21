@@ -10,15 +10,26 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import urlparse
 
 import pytest
-from fastapi import Request
+from fastapi import FastAPI, Request
+from fastapi.testclient import TestClient
 
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
 from jentic_one.auth.services.errors import InvalidGrantError
-from jentic_one.auth.web.flow import STATE_MAX_AGE_SECONDS, sign_payload, verify_payload
+from jentic_one.auth.web.flow import (
+    STATE_MAX_AGE_SECONDS,
+    derive_key,
+    idp_binding_cookie_name,
+    mint_idp_browser_binding,
+    sign_payload,
+    verify_payload,
+)
+from jentic_one.auth.web.routers import authorize
 from jentic_one.auth.web.routers.authorize import (
     _callback_uri,
     _is_allowed_redirect_uri,
 )
+from jentic_one.shared.config import AuthConfig, PlatformClientConfig
+from jentic_one.shared.state.backend import MemoryStateBackend
 
 SECRET = "test-secret-key"
 
@@ -215,3 +226,107 @@ async def test_authorize_validation_unknown_client_rejected() -> None:
 def test_callback_uri_without_canonical_falls_back_to_request() -> None:
     request = _FakeRequest("http://localhost:8000/oauth/callback")
     assert _callback_uri(cast("Request", request), "") == "http://localhost:8000/oauth/callback"
+
+
+# ---------- IdP callback browser-binding cookie & single-use state ----------
+
+
+def test_callback_requires_browser_binding_cookie_and_enforces_single_use_state() -> None:
+    """/oauth/callback rejects missing or mismatched browser-binding cookies
+    without burning the state, and rejects a second callback with the same state."""
+    app = FastAPI()
+    app.include_router(authorize.router)
+
+    ctx = MagicMock()
+    ctx.config.auth = AuthConfig(
+        canonical_base_url="https://auth.example.com",
+        platform_clients=[
+            PlatformClientConfig(
+                client_id="jentic-web",
+                redirect_uris=["https://app.example.com/cb"],
+            )
+        ],
+    )
+    ctx.config.admin.auth.jwt_secret.get_secret_value.return_value = SECRET
+    app.state.ctx = ctx
+    app.state.auth_state_backend = MemoryStateBackend()
+
+    binding = mint_idp_browser_binding()
+    state = sign_payload(
+        {
+            "client_id": "jentic-web",
+            "redirect_uri": "https://app.example.com/cb",
+            "code_challenge": "challenge-1",
+            "scope": "openid",
+            "nonce": "n1",
+            "original_state": "client-st",
+            "idp_nonce": "idp-nonce-1",
+            "bnd": binding.digest,
+            "iat": str(int(time.time())),
+        },
+        derive_key(SECRET, "state"),
+        purpose="state",
+    )
+    cookie_name = idp_binding_cookie_name(binding.digest, secure=True)
+
+    with (
+        patch("jentic_one.auth.web.flow.OAuthClientService") as mock_client_svc_cls,
+        patch("jentic_one.auth.web.routers.authorize.AuthorizeService") as mock_svc_cls,
+    ):
+        mock_client_svc_cls.return_value.get_by_client_id = AsyncMock(return_value=None)
+        mock_svc = MagicMock()
+        mock_svc.handle_idp_callback_with_email = AsyncMock(
+            return_value=("platform-code-1", "user@example.com")
+        )
+        mock_svc_cls.return_value = mock_svc
+
+        client = TestClient(app, base_url="https://auth.example.com")
+
+        # 1. Missing cookie -> rejected before burning state or exchanging code.
+        no_cookie = client.get(
+            "/oauth/callback",
+            params={"code": "up-code", "state": state},
+            follow_redirects=False,
+        )
+        assert no_cookie.status_code == 302
+        assert no_cookie.headers["location"] == "/error?error=invalid_state"
+        mock_svc.handle_idp_callback_with_email.assert_not_awaited()
+
+        # 2. Wrong cookie value -> rejected before burning state.
+        client.cookies.set(cookie_name, "wrong-binding-secret")
+        bad_cookie = client.get(
+            "/oauth/callback",
+            params={"code": "up-code", "state": state},
+            follow_redirects=False,
+        )
+        assert bad_cookie.status_code == 302
+        assert bad_cookie.headers["location"] == "/error?error=invalid_state"
+        mock_svc.handle_idp_callback_with_email.assert_not_awaited()
+
+        # 3. Matching cookie -> succeeds and clears the cookie.
+        client.cookies.set(cookie_name, binding.value)
+        ok = client.get(
+            "/oauth/callback",
+            params={"code": "up-code", "state": state},
+            follow_redirects=False,
+        )
+        assert ok.status_code == 302
+        assert (
+            ok.headers["location"]
+            == "https://app.example.com/cb?code=platform-code-1&state=client-st"
+        )
+        mock_svc.handle_idp_callback_with_email.assert_awaited_once()
+        call_kwargs = mock_svc.handle_idp_callback_with_email.await_args.kwargs
+        assert call_kwargs["idp_nonce"] == "idp-nonce-1"
+        assert call_kwargs["idp_code_verifier"]
+
+        # 4. Replay of the same state (even if cookie is re-sent) -> rejected as single-use.
+        client.cookies.set(cookie_name, binding.value)
+        replay = client.get(
+            "/oauth/callback",
+            params={"code": "up-code", "state": state},
+            follow_redirects=False,
+        )
+        assert replay.status_code == 302
+        assert replay.headers["location"] == "/error?error=invalid_state"
+        assert mock_svc.handle_idp_callback_with_email.await_count == 1

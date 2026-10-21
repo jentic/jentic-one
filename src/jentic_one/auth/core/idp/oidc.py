@@ -8,13 +8,35 @@ for a config via the factory in `jentic_one.auth.core.idp.factory`.
 
 from __future__ import annotations
 
+import hmac
 from dataclasses import replace
+from typing import Any
 from urllib.parse import urlencode
 
 import httpx
+import jwt
 
 from jentic_one.auth.core.idp.adapter import IdpClaims, parse_email_verified
+from jentic_one.auth.services.errors import InvalidGrantError
 from jentic_one.shared.config import IdpConfig
+
+#: Asymmetric JWS algorithms permitted for upstream OIDC id_token verification.
+#: Symmetric algorithms (HS*) and "none" are excluded so an upstream key cannot
+#: be confused with an HMAC secret.
+_ALLOWED_ID_TOKEN_ALGS: frozenset[str] = frozenset(
+    {
+        "RS256",
+        "RS384",
+        "RS512",
+        "PS256",
+        "PS384",
+        "PS512",
+        "ES256",
+        "ES384",
+        "ES512",
+        "EdDSA",
+    }
+)
 
 
 class OidcAdapter:
@@ -34,14 +56,24 @@ class OidcAdapter:
     # Subclasses override the `_default_*_endpoint` hooks to plug in well-known
     # endpoints; explicit config always wins over any default.
 
+    def _default_issuer(self) -> str:
+        return self._config.issuer
+
+    @property
+    def issuer(self) -> str:
+        return (self._config.issuer or self._default_issuer()).rstrip("/")
+
     def _default_authorization_endpoint(self) -> str:
-        return f"{self._config.issuer.rstrip('/')}/authorize"
+        return f"{self.issuer}/authorize"
 
     def _default_token_endpoint(self) -> str:
-        return f"{self._config.issuer.rstrip('/')}/oauth/token"
+        return f"{self.issuer}/oauth/token"
 
     def _default_userinfo_endpoint(self) -> str:
-        return f"{self._config.issuer.rstrip('/')}/userinfo"
+        return f"{self.issuer}/userinfo"
+
+    def _default_jwks_uri(self) -> str:
+        return f"{self.issuer}/.well-known/jwks.json"
 
     @property
     def _authorization_endpoint(self) -> str:
@@ -55,9 +87,16 @@ class OidcAdapter:
     def _userinfo_endpoint(self) -> str:
         return self._config.userinfo_endpoint or self._default_userinfo_endpoint()
 
-    def authorize_url(self, *, state: str, nonce: str, redirect_uri: str) -> str:
+    def authorize_url(
+        self,
+        *,
+        state: str,
+        nonce: str,
+        redirect_uri: str,
+        code_challenge: str | None = None,
+    ) -> str:
         """Build the OIDC authorization URL."""
-        params = {
+        params: dict[str, str] = {
             "response_type": "code",
             "client_id": self._config.client_id,
             "redirect_uri": redirect_uri,
@@ -65,23 +104,152 @@ class OidcAdapter:
             "state": state,
             "nonce": nonce,
         }
+        if code_challenge:
+            params["code_challenge"] = code_challenge
+            params["code_challenge_method"] = "S256"
         return f"{self._authorization_endpoint}?{urlencode(params)}"
 
-    async def exchange_code(self, code: str, *, redirect_uri: str) -> dict[str, object]:
-        """Exchange upstream code for tokens, then fetch userinfo."""
+    async def _fetch_jwks(self, client: httpx.AsyncClient) -> dict[str, Any]:
+        """Fetch the upstream provider's JWKS via OIDC discovery or default JWKS URI."""
+        jwks_uri: str | None = None
+        if self._discovery is not None:
+            cached_uri = self._discovery.get("jwks_uri")
+            if isinstance(cached_uri, str) and cached_uri:
+                jwks_uri = cached_uri
+
+        if jwks_uri is None and self.issuer:
+            discovery_url = f"{self.issuer}/.well-known/openid-configuration"
+            try:
+                disc_resp = await client.get(discovery_url)
+                if disc_resp.status_code == 200:
+                    disc_data = disc_resp.json()
+                    if isinstance(disc_data, dict):
+                        self._discovery = disc_data
+                        discovered_uri = disc_data.get("jwks_uri")
+                        if isinstance(discovered_uri, str) and discovered_uri:
+                            jwks_uri = discovered_uri
+            except (httpx.HTTPError, ValueError):
+                pass
+
+        if not jwks_uri:
+            jwks_uri = self._default_jwks_uri()
+
+        jwks_resp = await client.get(jwks_uri)
+        jwks_resp.raise_for_status()
+        jwks_data = jwks_resp.json()
+        if not isinstance(jwks_data, dict) or not isinstance(jwks_data.get("keys"), list):
+            raise InvalidGrantError("Upstream JWKS response is malformed")
+        return jwks_data
+
+    def _verify_id_token(
+        self,
+        raw_id_token: str,
+        jwks_data: dict[str, Any],
+        *,
+        expected_nonce: str | None,
+    ) -> dict[str, Any]:
+        """Verify the upstream id_token signature, standard claims, and nonce."""
+        try:
+            header = jwt.get_unverified_header(raw_id_token)
+        except jwt.PyJWTError as exc:
+            raise InvalidGrantError("Malformed upstream id_token header") from exc
+
+        alg = header.get("alg")
+        if not isinstance(alg, str) or alg not in _ALLOWED_ID_TOKEN_ALGS:
+            raise InvalidGrantError(f"Unsupported upstream id_token algorithm: {alg!r}")
+
+        kid = header.get("kid")
+        try:
+            jwk_set = jwt.PyJWKSet.from_dict(jwks_data)
+        except jwt.PyJWTError as exc:
+            raise InvalidGrantError("Invalid upstream JWKS") from exc
+
+        signing_key: Any = None
+        if isinstance(kid, str) and kid:
+            for jwk_key in jwk_set.keys:
+                if jwk_key.key_id == kid:
+                    signing_key = jwk_key.key
+                    break
+            if signing_key is None:
+                raise InvalidGrantError("No matching key in upstream JWKS for kid")
+        elif len(jwk_set.keys) == 1:
+            signing_key = jwk_set.keys[0].key
+        else:
+            raise InvalidGrantError("Upstream id_token is missing kid header")
+
+        required_claims = ["iss", "sub", "aud", "exp"]
+        if expected_nonce is not None:
+            required_claims.append("nonce")
+
+        try:
+            claims: dict[str, Any] = jwt.decode(
+                raw_id_token,
+                signing_key,
+                algorithms=[alg],
+                audience=self._config.client_id,
+                options={"require": required_claims, "verify_iss": False},
+            )
+        except jwt.PyJWTError as exc:
+            raise InvalidGrantError("Upstream id_token verification failed") from exc
+
+        token_iss = claims.get("iss")
+        if not isinstance(token_iss, str) or not token_iss:
+            raise InvalidGrantError("Upstream id_token is missing iss claim")
+        if self.issuer and token_iss.rstrip("/") != self.issuer:
+            raise InvalidGrantError("Upstream id_token issuer mismatch")
+
+        token_sub = claims.get("sub")
+        if not isinstance(token_sub, str) or not token_sub:
+            raise InvalidGrantError("Upstream id_token is missing sub claim")
+
+        if expected_nonce is not None:
+            token_nonce = claims.get("nonce")
+            if not isinstance(token_nonce, str) or not hmac.compare_digest(
+                token_nonce, expected_nonce
+            ):
+                raise InvalidGrantError("Upstream id_token nonce mismatch")
+
+        return claims
+
+    async def exchange_code(
+        self,
+        code: str,
+        *,
+        redirect_uri: str,
+        code_verifier: str | None = None,
+        nonce: str | None = None,
+    ) -> dict[str, object]:
+        """Exchange upstream code for tokens, verify id_token, then fetch userinfo."""
+        token_form: dict[str, str] = {
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": redirect_uri,
+            "client_id": self._config.client_id,
+            "client_secret": self._config.client_secret.get_secret_value(),
+        }
+        if code_verifier is not None:
+            token_form["code_verifier"] = code_verifier
+
         async with httpx.AsyncClient(timeout=10.0) as client:
             token_resp = await client.post(
                 self._token_endpoint,
-                data={
-                    "grant_type": "authorization_code",
-                    "code": code,
-                    "redirect_uri": redirect_uri,
-                    "client_id": self._config.client_id,
-                    "client_secret": self._config.client_secret.get_secret_value(),
-                },
+                data=token_form,
             )
             token_resp.raise_for_status()
             token_data = token_resp.json()
+            if not isinstance(token_data, dict):
+                raise InvalidGrantError("Upstream token response is malformed")
+
+            raw_id_token = token_data.get("id_token")
+            if not isinstance(raw_id_token, str) or not raw_id_token:
+                raise InvalidGrantError("Upstream token response is missing id_token")
+
+            jwks_data = await self._fetch_jwks(client)
+            id_token_claims = self._verify_id_token(
+                raw_id_token,
+                jwks_data,
+                expected_nonce=nonce,
+            )
 
             access_token = token_data.get("access_token", "")
             userinfo_resp = await client.get(
@@ -89,16 +257,33 @@ class OidcAdapter:
                 headers={"Authorization": f"Bearer {access_token}"},
             )
             userinfo_resp.raise_for_status()
-            return userinfo_resp.json()  # type: ignore[no-any-return]
+            userinfo = userinfo_resp.json()
+            if not isinstance(userinfo, dict):
+                raise InvalidGrantError("Upstream userinfo response is malformed")
+
+            userinfo_sub = userinfo.get("sub")
+            if not isinstance(userinfo_sub, str) or not userinfo_sub:
+                raise InvalidGrantError("Upstream userinfo response is missing sub")
+            if not hmac.compare_digest(userinfo_sub, str(id_token_claims["sub"])):
+                raise InvalidGrantError("Upstream userinfo sub does not match id_token sub")
+
+            merged: dict[str, object] = dict(userinfo)
+            merged.setdefault("iss", str(id_token_claims["iss"]).rstrip("/"))
+            if "hd" not in merged and "hd" in id_token_claims:
+                merged["hd"] = id_token_claims["hd"]
+            return merged
 
     def map_claims(self, userinfo: dict[str, object]) -> IdpClaims:
         """Map standard OIDC claims to IdpClaims."""
+        raw_iss = userinfo.get("iss")
+        issuer = str(raw_iss).rstrip("/") if isinstance(raw_iss, str) and raw_iss else self.issuer
         return IdpClaims(
             external_subject=str(userinfo.get("sub", "")),
             email=str(userinfo.get("email", "")),
             first_name=str(userinfo.get("given_name", "")),
             last_name=str(userinfo.get("family_name", "")),
             email_verified=parse_email_verified(userinfo.get("email_verified")),
+            issuer=issuer,
         )
 
 
@@ -116,6 +301,10 @@ class GoogleOidcAdapter(OidcAdapter):
     AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
     TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
     USERINFO_ENDPOINT = "https://openidconnect.googleapis.com/v1/userinfo"
+    JWKS_URI = "https://www.googleapis.com/oauth2/v3/certs"
+
+    def _default_issuer(self) -> str:
+        return self.ISSUER
 
     def _default_authorization_endpoint(self) -> str:
         return self.AUTHORIZATION_ENDPOINT
@@ -125,6 +314,9 @@ class GoogleOidcAdapter(OidcAdapter):
 
     def _default_userinfo_endpoint(self) -> str:
         return self.USERINFO_ENDPOINT
+
+    def _default_jwks_uri(self) -> str:
+        return self.JWKS_URI
 
     def map_claims(self, userinfo: dict[str, object]) -> IdpClaims:
         """Map Google claims, surfacing the `hd` (hosted-domain) claim.

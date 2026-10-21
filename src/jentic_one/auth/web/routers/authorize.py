@@ -95,14 +95,20 @@ from jentic_one.auth.web.flow import (
     approval_state_key,
     check_approval_status_rate_limit,
     check_rate_limit,
+    clear_idp_binding_cookie,
     client_gate_passes,
+    compute_s256_code_challenge,
+    derive_idp_pkce_verifier,
     get_cached_oauth_client,
     get_consent_backend,
     is_platform_client,
+    mint_idp_browser_binding,
     platform_client_allows_redirect,
     resolve_identity_gate,
+    set_idp_binding_cookie,
     sign_payload,
     state_signing_key,
+    verify_idp_binding_cookie,
     verify_payload,
     write_idp_consent_handle,
     write_local_consent_handle,
@@ -1279,6 +1285,11 @@ async def authorize_endpoint(
 
     callback_uri = _callback_uri(request, effective_auth_base_url(ctx.config))
 
+    idp_nonce = secrets.token_urlsafe(24)
+    idp_code_verifier = derive_idp_pkce_verifier(ctx, idp_nonce)
+    idp_code_challenge = compute_s256_code_challenge(idp_code_verifier)
+    binding = mint_idp_browser_binding()
+
     state_payload: dict[str, str | None] = {
         "client_id": client_id,
         "redirect_uri": redirect_uri,
@@ -1288,12 +1299,18 @@ async def authorize_endpoint(
         "original_state": state,
         "iat": str(int(time.time())),
     }
-    internal_state = sign_payload(dict(state_payload), state_signing_key(ctx), purpose="state")
+    idp_state_payload: dict[str, str | None] = {
+        **state_payload,
+        "idp_nonce": idp_nonce,
+        "bnd": binding.digest,
+    }
+    internal_state = sign_payload(idp_state_payload, state_signing_key(ctx), purpose="state")
 
     idp_url = authorize_svc.get_authorize_redirect_url(
         state=internal_state,
-        nonce=nonce or secrets.token_urlsafe(16),
+        nonce=idp_nonce,
         redirect_uri=callback_uri,
+        code_challenge=idp_code_challenge,
     )
 
     # Identity dispatch: the explicit rung ladder lives in flow.py
@@ -1330,6 +1347,8 @@ async def authorize_endpoint(
         return _error_redirect(
             redirect_uri, "server_error", state, "no identity provider configured"
         )
+    if idp_url is not None and gate_result.headers.get("location") == idp_url:
+        set_idp_binding_cookie(gate_result, request, binding, callback_uri=callback_uri)
     return gate_result
 
 
@@ -1560,8 +1579,32 @@ async def oauth_callback(
     scope = params.get("scope", "openid")
     nonce = params.get("nonce")
     original_state = params.get("original_state")
+    idp_nonce = str(params.get("idp_nonce") or "") or None
+    expected_bnd = str(params.get("bnd") or "") or None
 
     callback_uri = _callback_uri(request, effective_auth_base_url(ctx.config))
+
+    if not verify_idp_binding_cookie(request, expected_bnd, callback_uri=callback_uri):
+        logger.warning("oauth_callback_binding_cookie_invalid", client_id=client_id)
+        return RedirectResponse(url="/error?error=invalid_state", status_code=302)
+
+    backend = get_consent_backend(request)
+    state_digest = hashlib.sha256(state.encode("utf-8")).hexdigest()
+    if not await backend.set_if_absent(
+        f"oauth-state-used:{state_digest}",
+        b"1",
+        ttl_s=float(STATE_MAX_AGE_SECONDS),
+    ):
+        logger.warning("oauth_callback_state_replayed", client_id=client_id)
+        resp = RedirectResponse(url="/error?error=invalid_state", status_code=302)
+        clear_idp_binding_cookie(resp, request, expected_bnd, callback_uri=callback_uri)
+        return resp
+
+    idp_code_verifier = derive_idp_pkce_verifier(ctx, idp_nonce) if idp_nonce else None
+
+    def _finish_callback(response: RedirectResponse) -> RedirectResponse:
+        clear_idp_binding_cookie(response, request, expected_bnd, callback_uri=callback_uri)
+        return response
 
     oauth_client = await get_cached_oauth_client(request, client_id or "", ctx)
     if oauth_client is not None and not client_gate_passes(oauth_client):
@@ -1571,7 +1614,7 @@ async def oauth_callback(
         # Browser-facing human error, never an OAuth redirect to the client
         # (D7: clients can't observe browser-side rejections).
         logger.warning("oauth_client_gate_failed_midflow", client_id=client_id, stage="callback")
-        return RedirectResponse(url="/error?error=access_denied", status_code=302)
+        return _finish_callback(RedirectResponse(url="/error?error=access_denied", status_code=302))
     # Third-party clients always require consent regardless of the client's
     # require_consent flag: consent-skip is a first-party trust decision that
     # only platform clients (configured operator-side, not admin-registered)
@@ -1589,10 +1632,14 @@ async def oauth_callback(
             claims = await authorize_svc.exchange_idp_code_for_claims(
                 code=code,
                 redirect_uri=callback_uri,
+                idp_code_verifier=idp_code_verifier,
+                idp_nonce=idp_nonce,
             )
         except (InvalidGrantError, httpx.HTTPStatusError):
             logger.warning("oauth_idp_exchange_failed", client_id=client_id, exc_info=True)
-            return RedirectResponse(url="/error?error=server_error", status_code=302)
+            return _finish_callback(
+                RedirectResponse(url="/error?error=server_error", status_code=302)
+            )
 
         consent_handle = await write_idp_consent_handle(
             request,
@@ -1605,7 +1652,9 @@ async def oauth_callback(
             nonce=nonce,
             oauth_client=oauth_client,
         )
-        return RedirectResponse(url=f"/oauth/consent?ch={consent_handle}", status_code=302)
+        return _finish_callback(
+            RedirectResponse(url=f"/oauth/consent?ch={consent_handle}", status_code=302)
+        )
 
     try:
         platform_code, _email = await authorize_svc.handle_idp_callback_with_email(
@@ -1616,21 +1665,25 @@ async def oauth_callback(
             code_challenge=code_challenge or "",
             scopes=scope or "openid",
             nonce=nonce,
+            idp_code_verifier=idp_code_verifier,
+            idp_nonce=idp_nonce,
         )
     except UserNotAdmittedError:
         logger.warning("oauth_user_not_admitted", client_id=client_id)
-        return RedirectResponse(url="/error?error=access_denied", status_code=302)
+        return _finish_callback(RedirectResponse(url="/error?error=access_denied", status_code=302))
     except (InvalidGrantError, httpx.HTTPStatusError):
         logger.warning("oauth_idp_exchange_failed", client_id=client_id, exc_info=True)
-        return RedirectResponse(url="/error?error=server_error", status_code=302)
+        return _finish_callback(RedirectResponse(url="/error?error=server_error", status_code=302))
 
     redirect_params: dict[str, str] = {"code": platform_code}
     if original_state:
         redirect_params["state"] = original_state
 
     separator = "&" if "?" in (original_redirect_uri or "") else "?"
-    return RedirectResponse(
-        url=f"{original_redirect_uri}{separator}{urlencode(redirect_params)}", status_code=302
+    return _finish_callback(
+        RedirectResponse(
+            url=f"{original_redirect_uri}{separator}{urlencode(redirect_params)}", status_code=302
+        )
     )
 
 
@@ -1736,6 +1789,7 @@ def _claims_from_params(params: dict[str, object]) -> IdpClaims | None:
         first_name=str(claims_data.get("first_name") or ""),
         last_name=str(claims_data.get("last_name") or ""),
         hosted_domain=str(hosted_domain) if hosted_domain else None,
+        issuer=str(claims_data.get("issuer") or ""),
     )
 
 
@@ -1785,6 +1839,9 @@ def _consent_user_key(params: dict[str, object]) -> str | None:
         return f"local:{local_user_id}"
     claims_data = params.get("claims")
     if isinstance(claims_data, dict) and claims_data.get("external_subject"):
+        issuer = claims_data.get("issuer")
+        if issuer:
+            return f"idp:{issuer}:{claims_data['external_subject']}"
         return f"idp:{claims_data['external_subject']}"
     return None
 
