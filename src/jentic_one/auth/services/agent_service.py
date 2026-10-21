@@ -27,6 +27,7 @@ from jentic_one.admin.services._support.actor_jobs import cancel_queued_executio
 from jentic_one.auth.repos import (
     AgentControlPurgeRepository,
     BindingRuleRepository,
+    CredentialRef,
     CredentialRefRepository,
 )
 from jentic_one.auth.services.agent_permission_ceiling import check_agent_permission_grant
@@ -1077,8 +1078,11 @@ class AgentService:
         owner's consent live would strand a grant the new owner cannot revoke
         self-serve. Fail-safe posture — if the sweep fails, the transfer rolls
         back; the new owner re-consents through the normal flow if the
-        connection is still wanted. The agent's key channel (API key, scopes,
-        credential bindings) is deliberately untouched.
+        connection is still wanted. Active credential bindings to credentials
+        outside the new owner's ownership are suspended in the same
+        transaction, so the new owner does not inherit active access to the
+        previous owner's credentials; the agent's API key and scopes are
+        untouched.
 
         Only the owner or an ``org:admin`` caller may update the agent (others
         get a uniform 404); changing ``owner_id`` is ``org:admin``-only. An
@@ -1089,6 +1093,7 @@ class AgentService:
             async with self._ctx.admin_db.session() as session:
                 agent = await self._load_owned_agent(session, agent_id, identity=identity)
                 return await self._view(session, agent)
+        owner_transferred = False
         try:
             async with self._ctx.admin_db.transaction() as session:
                 agent = await self._load_owned_agent(
@@ -1108,6 +1113,9 @@ class AgentService:
                     await revoke_active_grants_for_agent(
                         session, agent_id, identity=identity, agent_name=agent.name
                     )
+                    await self._suspend_foreign_bindings_on_transfer(
+                        session, agent, identity=identity
+                    )
                 await record_audit(
                     session,
                     action=AuditAction.UPDATE,
@@ -1122,7 +1130,88 @@ class AgentService:
                 view = await self._view(session, agent)
         except DatabaseIntegrityError:
             raise InvalidOwnerError(update_data.get("owner_id") or "") from None
+        if owner_transferred:
+            self._ctx.invalidate_broker_caches(agent_id=agent_id)
         return view
+
+    async def _suspend_foreign_bindings_on_transfer(
+        self,
+        session: AsyncSession,
+        agent: Agent,
+        *,
+        identity: Identity,
+    ) -> int:
+        """Suspend active bindings on ``agent`` to credentials the new owner does not own.
+
+        Credentials created by ``agent`` itself or by the new ``agent.owner_id``
+        stay active; every other active binding is suspended in ``session`` so
+        an ownership transfer never hands the new owner an active binding they
+        could not create themselves. When the control database is unavailable
+        or a bound credential row is missing, fails closed by suspending.
+        """
+        bindings = await AgentCredentialBindingRepository.list_for_agent(session, agent.id)
+        active_bindings = [b for b in bindings if not b.suspended]
+        if not active_bindings:
+            return 0
+        refs: dict[str, CredentialRef] = {}
+        if self._ctx.is_db_allowed("control"):
+            credential_ids = [b.credential_id for b in active_bindings]
+            async with self._ctx.control_db.session() as control_session:
+                refs = await CredentialRefRepository.get_refs_for_ids(
+                    control_session, credential_ids
+                )
+        allowed_creators = {agent.id}
+        if agent.owner_id is not None:
+            allowed_creators.add(agent.owner_id)
+        suspended_count = 0
+        for binding in active_bindings:
+            ref = refs.get(binding.credential_id)
+            if ref is not None and ref.created_by in allowed_creators:
+                continue
+            await AgentCredentialBindingRepository.set_suspended(
+                session,
+                agent_id=agent.id,
+                credential_id=binding.credential_id,
+                suspended=True,
+            )
+            await record_audit(
+                session,
+                action=AuditAction.DISABLE,
+                target_type=AuditTargetType.CREDENTIAL_BINDING,
+                target_id=binding.credential_id,
+                actor_type=identity.actor_type,
+                actor_id=identity.sub,
+                target_parent_id=agent.id,
+                reason="suspend_credential_binding: agent ownership transferred",
+                origin=identity.origin.value,
+            )
+            credential = summary_label(ref.name if ref is not None else None, binding.credential_id)
+            await emit_event_best_effort(
+                session,
+                type=EventType.CREDENTIAL_UNBOUND_FROM_AGENT,
+                severity=EventSeverity.INFO,
+                summary=(
+                    f"Credential {credential} suspended for agent "
+                    f"{summary_label(agent.name, agent.id)} because its owner changed"
+                ),
+                data={
+                    "agent_id": agent.id,
+                    "credential_id": binding.credential_id,
+                    "reason": "agent_ownership_transferred",
+                },
+                created_by=agent.id,
+                actor_id=identity.sub,
+                actor_type=identity.actor_type.value,
+            )
+            suspended_count += 1
+        if suspended_count:
+            logger.info(
+                "credential_bindings_suspended_on_agent_transfer",
+                agent_id=agent.id,
+                count=suspended_count,
+                actor_id=identity.sub,
+            )
+        return suspended_count
 
     async def update_jwks(
         self,
