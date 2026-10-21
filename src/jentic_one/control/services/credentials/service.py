@@ -104,7 +104,7 @@ from jentic_one.shared.permissions.evaluation import (
 )
 from jentic_one.shared.permissions.matching import compile_matcher
 from jentic_one.shared.url_path import has_ambiguous_traversal, normalize_path
-from jentic_one.shared.url_validation import validate_upstream_url
+from jentic_one.shared.url_validation import validate_upstream_url_async
 
 logger = structlog.get_logger()
 
@@ -146,10 +146,15 @@ class CredentialService:
         An agent must be able to read a credential it is actively bound to
         even when it owns nothing (issues #665/#682). Suspended bindings
         grant no visibility — a cut-off cuts reads of the credential too, while
-        the binding row itself stays visible in ``/me``. ``org:admin`` is
-        unrestricted already, so skip the lookup.
+        the binding row itself stays visible in ``/me``. Only agents hold
+        bindings and ``org:admin`` is unrestricted already, so both skip the
+        lookup.
         """
-        if ORG_ADMIN in identity.permissions or not identity.sub:
+        if (
+            ORG_ADMIN in identity.permissions
+            or identity.actor_type != ActorType.AGENT
+            or not identity.sub
+        ):
             return []
         async with self._ctx.admin_db.session() as session:
             return await PrerequisiteRepository.list_credential_ids_for_agent(
@@ -230,6 +235,17 @@ class CredentialService:
         stored_type = to_stored(payload.type, grant_type=payload.grant_type)
         encryption = self._ctx.encryption
 
+        # Resolve the OAuth2 endpoints before the write transaction opens: on
+        # SQLite ``transaction()`` holds the process-wide writer lock, so a slow
+        # resolver inside it would fail concurrent writers on ``busy_timeout``.
+        validated_token_url: str | None = None
+        validated_authorize_url: str | None = None
+        if payload.type == CredentialType.OAUTH2:
+            validated_token_url = await self._validated_oauth2_url("token_url", payload.token_url)
+            validated_authorize_url = await self._validated_oauth2_url(
+                "authorize_url", payload.authorize_url
+            )
+
         async with self._ctx.control_db.transaction() as session:
             credential = await CredentialRepository.create(
                 session,
@@ -289,21 +305,6 @@ class CredentialService:
                 )
 
             elif payload.type == CredentialType.OAUTH2:
-                egress = resolved_control_egress(self._ctx.config)
-                validated_token_url: str | None = None
-                if payload.token_url:
-                    try:
-                        validated_token_url = validate_upstream_url(payload.token_url, egress)
-                    except ValueError as exc:
-                        raise InvalidCredentialInputError(f"Invalid token_url: {exc}") from exc
-                validated_authorize_url: str | None = None
-                if payload.authorize_url:
-                    try:
-                        validated_authorize_url = validate_upstream_url(
-                            payload.authorize_url, egress
-                        )
-                    except ValueError as exc:
-                        raise InvalidCredentialInputError(f"Invalid authorize_url: {exc}") from exc
                 grant = payload.grant_type or "client_credentials"
 
                 if grant == "device_code":
@@ -502,6 +503,30 @@ class CredentialService:
             )
             return self._to_redacted(credential, registration_names=names)
 
+    async def visible_creator_ids(
+        self, actor_ids: Sequence[str], *, identity: Identity
+    ) -> set[str]:
+        """Return the ids in ``actor_ids`` that created a credential the caller can read.
+
+        Uses the same read filters as :meth:`get`, extension-registered
+        visibility (``include_shared``) included, so a credential shared with
+        the caller names its creator too. The credential read is one query,
+        bounded by ``actor_ids``.
+        """
+        if not actor_ids:
+            return set()
+        access_filters = build_access_filters(
+            identity,
+            Credential,
+            bound_credential_ids=await self._bound_credential_ids(identity),
+            owned_agent_ids=await self._owned_agent_ids(identity),
+            include_shared=True,
+        )
+        async with self._ctx.control_db.session() as session:
+            return await CredentialRepository.get_creators_among(
+                session, actor_ids, filters=access_filters
+            )
+
     async def list_agents(
         self,
         credential_id: str,
@@ -563,6 +588,14 @@ class CredentialService:
         return rows, has_more, next_cursor
 
     @staticmethod
+    def _agent_visibility_for(identity: Identity) -> AgentVisibility:
+        """Agents a non-admin, non-creator caller may enumerate on a visible credential."""
+        owner_ids = [identity.sub]
+        if OWNER_AGENTS_READ in identity.permissions and identity.parent_actor_id is not None:
+            owner_ids.append(identity.parent_actor_id)
+        return AgentVisibility(self_id=identity.sub, owner_ids=tuple(owner_ids))
+
+    @staticmethod
     def _bound_agent_visibility(
         credential: Credential, identity: Identity
     ) -> AgentVisibility | None:
@@ -577,10 +610,7 @@ class CredentialService:
             return None
         if credential.created_by is not None and credential.created_by == identity.sub:
             return None
-        owner_ids = [identity.sub]
-        if OWNER_AGENTS_READ in identity.permissions and identity.parent_actor_id is not None:
-            owner_ids.append(identity.parent_actor_id)
-        return AgentVisibility(self_id=identity.sub, owner_ids=tuple(owner_ids))
+        return CredentialService._agent_visibility_for(identity)
 
     # --- Per-binding permission rules (theme 5 phase 1) ---
 
@@ -970,19 +1000,77 @@ class CredentialService:
         await self._record_rule_set_change(rule_set.id, identity=identity, reason="create rule set")
         return rule_set, set_rules
 
+    async def _visible_binding_count_for_rule_set(
+        self, rule_set_id: str, *, identity: Identity
+    ) -> int:
+        """Count bindings referencing ``rule_set_id`` that ``identity`` may read (#1858).
+
+        Applies the same credential and agent visibility gates as
+        :meth:`list_agents` and :meth:`_require_visible_binding`: ``org:admin``
+        sees every referencing binding, a credential's creator sees every
+        binding on that credential, and any other reader of a credential sees
+        only bindings on agents matching :meth:`_agent_visibility_for`.
+        """
+        if ORG_ADMIN in identity.permissions:
+            async with self._ctx.admin_db.session() as session:
+                return await PrerequisiteRepository.count_bindings_for_rule_set(
+                    session, rule_set_id
+                )
+
+        async with self._ctx.admin_db.session() as session:
+            counts_by_cred = await PrerequisiteRepository.count_bindings_for_rule_set_by_credential(
+                session,
+                rule_set_id,
+                visible_to=self._agent_visibility_for(identity),
+            )
+            if not counts_by_cred:
+                return 0
+            bound_credential_ids = (
+                await PrerequisiteRepository.list_credential_ids_for_agent(
+                    session, agent_id=identity.sub
+                )
+                if identity.actor_type == ActorType.AGENT and identity.sub
+                else []
+            )
+            owned_agent_ids = (
+                await PrerequisiteRepository.list_agent_ids_owned_by(session, owner_id=identity.sub)
+                if identity.actor_type == ActorType.USER and identity.sub
+                else []
+            )
+
+        access_filters = build_access_filters(
+            identity,
+            Credential,
+            bound_credential_ids=bound_credential_ids,
+            owned_agent_ids=owned_agent_ids,
+            include_shared=True,
+        )
+        async with self._ctx.control_db.session() as session:
+            creators = await CredentialRepository.get_creators_by_ids(
+                session, list(counts_by_cred), filters=access_filters
+            )
+
+        total = 0
+        for cred_id, created_by in creators.items():
+            total_count, agent_visible_count = counts_by_cred[cred_id]
+            if created_by is not None and created_by == identity.sub:
+                total += total_count
+            else:
+                total += agent_visible_count
+        return total
+
     async def get_rule_set(
         self, rule_set_id: str, *, identity: Identity
     ) -> tuple[PermissionRuleSet, list[PermissionRuleSetRule], int]:
-        """Return a rule set, its ordered rules, and its referencing-binding count."""
+        """Return a rule set, its ordered rules, and its caller-visible binding count."""
         async with self._ctx.control_db.session() as session:
             rule_set = await PermissionRuleSetRepository.get_by_id(session, rule_set_id)
             if rule_set is None:
                 raise RuleSetNotFoundError(rule_set_id)
             rules = await PermissionRuleSetRepository.list_rules(session, rule_set_id)
-        async with self._ctx.admin_db.session() as session:
-            binding_count = await PrerequisiteRepository.count_bindings_for_rule_set(
-                session, rule_set_id
-            )
+        binding_count = await self._visible_binding_count_for_rule_set(
+            rule_set_id, identity=identity
+        )
         return rule_set, rules, binding_count
 
     async def list_rule_sets(
@@ -1157,23 +1245,56 @@ class CredentialService:
 
         return CredentialPage(data=data, has_more=has_more, next_cursor=next_cursor)
 
+    async def _validated_oauth2_url(self, field: str, url: str | None) -> str | None:
+        """Check an OAuth2 endpoint against ``control.egress``; ``None``/empty passes through.
+
+        Resolves DNS, so callers run it before opening a write transaction.
+        """
+        if not url:
+            return None
+        try:
+            return await validate_upstream_url_async(url, resolved_control_egress(self._ctx.config))
+        except ValueError as exc:
+            raise InvalidCredentialInputError(f"Invalid {field}: {exc}") from exc
+
+    @staticmethod
+    async def _get_updatable(
+        session: Any,
+        credential_id: str,
+        payload: CredentialUpdate,
+        access_filters: Sequence[Any],
+    ) -> Credential:
+        """Load a credential the caller can see, rejecting a change of ``type``."""
+        credential = await CredentialRepository.get_by_id(
+            session, credential_id, filters=access_filters
+        )
+        if credential is None:
+            raise CredentialNotFoundError(credential_id)
+        if payload.type != to_wire(StoredCredentialType(credential.type)):
+            raise ImmutableFieldError("type")
+        return credential
+
     async def update(
         self, credential_id: str, payload: CredentialUpdate, *, identity: Identity
     ) -> CredentialRedactedView:
-        """Update/rotate a credential."""
+        """Update/rotate a credential.
+
+        Not-found and type-mismatch errors take precedence over an invalid
+        ``token_url``.
+        """
         access_filters = build_access_filters(identity, Credential, for_write=True)
+        # ``token_url`` resolves DNS, so it is validated before the write
+        # transaction opens (as in ``create``), after a read-only existence and
+        # type check. The transaction repeats that check against the row it writes.
+        validated_token_url: str | None = None
+        if payload.type == CredentialType.OAUTH2 and payload.client_secret is not None:
+            async with self._ctx.control_db.session() as session:
+                await self._get_updatable(session, credential_id, payload, access_filters)
+            validated_token_url = await self._validated_oauth2_url("token_url", payload.token_url)
         async with self._ctx.control_db.transaction() as session:
-            credential = await CredentialRepository.get_by_id(
-                session, credential_id, filters=access_filters
-            )
-            if credential is None:
-                raise CredentialNotFoundError(credential_id)
+            credential = await self._get_updatable(session, credential_id, payload, access_filters)
 
             before_state = {"name": credential.name, "active": credential.active}
-
-            wire_type = to_wire(StoredCredentialType(credential.type))
-            if payload.type != wire_type:
-                raise ImmutableFieldError("type")
 
             # The api_key parameter binding (field_name/location) is derived from
             # the API spec at create time and must not drift afterwards — a wrong
@@ -1252,14 +1373,6 @@ class CredentialService:
                     changed = True
 
             elif payload.type == CredentialType.OAUTH2 and payload.client_secret is not None:
-                validated_token_url: str | None = None
-                if payload.token_url:
-                    try:
-                        validated_token_url = validate_upstream_url(
-                            payload.token_url, resolved_control_egress(self._ctx.config)
-                        )
-                    except ValueError as exc:
-                        raise InvalidCredentialInputError(f"Invalid token_url: {exc}") from exc
                 encrypted_secret = encryption.encrypt(payload.client_secret)
                 scope = " ".join(payload.scopes) if payload.scopes else None
                 await OAuthClientCredentialRepository.update(
@@ -1312,16 +1425,16 @@ class CredentialService:
                     )
                     changed = True
 
-            credential = await CredentialRepository.get_by_id(session, credential_id)
-            assert credential is not None
+            updated = await CredentialRepository.get_by_id(session, credential_id)
+            assert updated is not None
             if changed:
-                credential.updated_at = datetime.now(UTC)
+                updated.updated_at = datetime.now(UTC)
             await session.flush()
             names = await OAuthAppRegistrationRepository.get_names_by_ids(
-                session, _registration_ids([credential])
+                session, _registration_ids([updated])
             )
-            view = self._to_redacted(credential, registration_names=names)
-            after_state = {"name": credential.name, "active": credential.active}
+            view = self._to_redacted(updated, registration_names=names)
+            after_state = {"name": updated.name, "active": updated.active}
 
         # A PATCH that persisted nothing (e.g. only echoed field_name/location)
         # is a no-op — no timestamp bump and no audit noise.

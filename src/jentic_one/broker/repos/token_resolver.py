@@ -9,11 +9,14 @@ from datetime import UTC, datetime
 from sqlalchemy import Boolean, text
 
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.owner_status import log_agent_owner_inactive
 from jentic_one.shared.auth.verify import scopes_to_permissions
 from jentic_one.shared.db import DatabaseSession
 from jentic_one.shared.models import ActorType
 
 ACCESS_TOKEN_PREFIX = "at_"
+#: ``actor_status`` of an active, owned agent whose owner is not active.
+_OWNER_INACTIVE = "owner_inactive"
 
 
 class InProcessTokenResolver:
@@ -34,10 +37,12 @@ class InProcessTokenResolver:
         now = datetime.now(UTC)
 
         # actor_status re-checks the actor row on every resolve (#1136): a
-        # disabled/archived agent's outstanding token must stop resolving as
+        # disabled/archived agent's outstanding token (or an owned agent's
+        # whose owner is disabled or deleted) must stop resolving as
         # active, bounded only by the broker's short verdict-cache TTL. NULL
         # (actor row missing) fails closed; the users table models "disabled"
-        # as active=false, normalised here to the same status string.
+        # as active=false and "deleted" as deleted_at set (refused even on a
+        # row that reads active), normalised here to the same status string.
         # oauth_client_active mirrors that guarantee for third-party clients
         # (kill-switch on deactivate must reach broker traffic, not just auth
         # surface). NULL indicates no issuing client, treated as active.
@@ -54,13 +59,25 @@ class InProcessTokenResolver:
             " t.expires_at, t.revoked_at, t.oauth_client_id, t.oauth_grant_id,"
             " CASE t.actor_type"
             "  WHEN 'agent' THEN"
-            "   (SELECT a.status FROM agents a WHERE a.id = t.actor_id)"
+            # An owned agent follows its owner's account status: while the
+            # owner is disabled or deleted the agent reads 'owner_inactive'.
+            # A soft-deleted user has users.active false, so the o.active
+            # probe covers delete too. Ownerless agents depend on their own
+            # status alone. One PK probe on agents, one on users.
+            "   (SELECT CASE"
+            "     WHEN a.status <> 'active' THEN a.status"
+            "     WHEN a.owner_id IS NULL THEN 'active'"
+            "     WHEN EXISTS (SELECT 1 FROM users o"
+            "      WHERE o.id = a.owner_id AND o.active) THEN 'active'"
+            "     ELSE 'owner_inactive' END"
+            "    FROM agents a WHERE a.id = t.actor_id)"
             # Service-account sessions are retired (theme 8; the tables were
             # dropped in Phase 4). Kept as an explicit fail-closed arm: a
             # bare deletion would drop a residual row into ELSE 'active'.
             "  WHEN 'service_account' THEN 'retired'"
             "  WHEN 'user' THEN"
-            "   (SELECT CASE WHEN u.active THEN 'active' ELSE 'disabled' END"
+            "   (SELECT CASE WHEN u.active AND u.deleted_at IS NULL"
+            "     THEN 'active' ELSE 'disabled' END"
             "    FROM users u WHERE u.id = t.actor_id)"
             "  ELSE 'active'"
             " END AS actor_status,"
@@ -70,6 +87,9 @@ class InProcessTokenResolver:
             # gate, so a NULL/missing row just degrades to the id.
             " (SELECT a.name FROM agents a WHERE a.id = t.actor_id"
             "   AND t.actor_type = 'agent') AS actor_name,"
+            # Only read to name the owner in the ``agent_owner_inactive`` log.
+            " (SELECT a.owner_id FROM agents a WHERE a.id = t.actor_id"
+            "   AND t.actor_type = 'agent') AS actor_owner_id,"
             " (SELECT c.active FROM oauth_clients c"
             "  WHERE c.client_id = t.oauth_client_id) AS oauth_client_active,"
             " (SELECT c.approval_status = 'approved' FROM oauth_clients c"
@@ -141,6 +161,10 @@ class InProcessTokenResolver:
             # A retired actor type (``toolkit``, ``service_account``) on a
             # residual row: not an identity any more. Fail closed.
             return None
+
+        if row.actor_status == _OWNER_INACTIVE:
+            # Logged once per verdict-cache miss, not per request.
+            log_agent_owner_inactive(row.actor_id, row.actor_owner_id)
 
         active = (
             revoked_at is None

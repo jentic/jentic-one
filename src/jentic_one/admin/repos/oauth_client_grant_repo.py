@@ -40,8 +40,19 @@ class OAuthClientGrantRepository:
         return grant
 
     @staticmethod
-    async def get_by_id(session: AsyncSession, grant_id: str) -> OAuthClientGrant | None:
-        return await session.get(OAuthClientGrant, grant_id)
+    async def get_by_id(
+        session: AsyncSession,
+        grant_id: str,
+        *,
+        filters: Sequence[ColumnElement[bool]] | None = None,
+    ) -> OAuthClientGrant | None:
+        if filters is None:
+            return await session.get(OAuthClientGrant, grant_id)
+        stmt = select(OAuthClientGrant).where(OAuthClientGrant.id == grant_id)
+        for f in filters:
+            stmt = stmt.where(f)
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
 
     @staticmethod
     async def list_active_for_pair(

@@ -6,8 +6,10 @@ import hashlib
 import secrets
 from datetime import UTC, datetime, timedelta
 
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.repos import (
     AccessTokenRepository,
     ActorPermissionGrantRepository,
@@ -20,6 +22,7 @@ from jentic_one.admin.repos import (
 from jentic_one.auth.services.errors import InvalidGrantError
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.owner_status import log_agent_owner_inactive
 from jentic_one.shared.auth.verify import scopes_to_permissions
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.ids import generate_ksuid
@@ -28,6 +31,8 @@ from jentic_one.shared.models.oauth_clients import OAuthGrantStatus
 
 ACCESS_TOKEN_PREFIX = "at_"
 REFRESH_TOKEN_PREFIX = "rt_"
+
+logger = structlog.get_logger(__name__)
 
 
 def _hash_token(token: str) -> str:
@@ -133,22 +138,46 @@ async def _resolve_grant_gate(
     return True, frozenset(grant.scopes)
 
 
+async def _agent_may_act(session: AsyncSession, agent_id: str) -> tuple[Agent | None, bool]:
+    """The agent row and whether it may authenticate, from one statement.
+
+    An agent may act while its own status is ``active`` and, when it has an
+    owner, while that owner is active too: an owned agent follows its owner's
+    account status (disabled or deleted owner → refused; re-enabling the owner
+    restores it). Ownerless agents depend on their own status alone. A missing
+    row fails closed. The owner refusal logs ``agent_owner_inactive``.
+    """
+    found = await AgentRepository.get_with_owner_active(session, agent_id)
+    if found is None:
+        return None, False
+    agent, owner_active = found
+    if agent.status != ActorStatus.ACTIVE:
+        return agent, False
+    if not owner_active:
+        # A soft-deleted owner has ``active`` false, so this covers delete too.
+        log_agent_owner_inactive(agent.id, agent.owner_id)
+        return agent, False
+    return agent, True
+
+
 async def _actor_is_active(session: AsyncSession, actor_id: str, actor_type: str) -> bool:
     """Whether the token's actor is currently allowed to authenticate.
 
     Disabling an actor must kill its *outstanding* tokens, not just block new
-    mints (#1136) — so every token verdict re-checks the actor row. Fails
+    mints (#1136) — so every token verdict re-checks the actor row (and, for
+    an owned agent, its owner's, see :func:`_agent_may_act`). Fails
     closed when the actor row is missing (e.g. a hard-deleted user whose
     tokens were never revoked). Any other actor type, including the retired
     ``service_account`` and ``toolkit`` strings on a residual row, fails
     closed: only users and agents can authenticate.
     """
     if actor_type == ActorType.AGENT:
-        agent = await AgentRepository.get_by_id(session, actor_id)
-        return agent is not None and agent.status == ActorStatus.ACTIVE
+        _agent, may_act = await _agent_may_act(session, actor_id)
+        return may_act
     if actor_type == ActorType.USER:
         user = await UserRepository.get_by_id(session, actor_id)
-        return user is not None and user.active
+        # Delete is terminal: a deleted row is refused even if it reads active.
+        return user is not None and user.active and user.deleted_at is None
     return False
 
 
@@ -577,7 +606,9 @@ class TokenService:
         The verdict also re-checks the actor's own status (#1136): a disabled
         or archived actor's outstanding tokens resolve as inactive immediately,
         so disable alone is a working kill switch — no separate token-family
-        revocation required.
+        revocation required. An owned agent's tokens also resolve as inactive
+        while its owner is disabled or deleted, and resolve again once the
+        owner is re-enabled; the owner is read by the same agent lookup.
         """
         if not token.startswith(ACCESS_TOKEN_PREFIX):
             return None
@@ -628,13 +659,13 @@ class TokenService:
             parent_actor_id: str | None = None
             actor_name = ""
             if at.actor_type == ActorType.AGENT:
-                # One lookup serves both parent resolution and the status check.
-                agent = await AgentRepository.get_by_id(session, at.actor_id)
+                # One lookup serves parent resolution and the status check
+                # (the agent's own status and its owner's, joined).
+                agent, actor_active = await _agent_may_act(session, at.actor_id)
                 parent_actor_id = agent.owner_id if agent is not None else None
                 # The row is already in hand — carry its display name so audit
                 # summaries can name the agent instead of its ksuid (#1543).
                 actor_name = agent.name or "" if agent is not None else ""
-                actor_active = agent is not None and agent.status == ActorStatus.ACTIVE
             else:
                 actor_active = await _actor_is_active(session, at.actor_id, at.actor_type)
 

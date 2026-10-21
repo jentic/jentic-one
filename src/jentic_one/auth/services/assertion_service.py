@@ -13,6 +13,7 @@ from jentic_one.auth.services.errors import InvalidGrantError
 from jentic_one.auth.services.token_service import TokenService
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.auth import resolve_agent_key
+from jentic_one.shared.auth.owner_status import log_agent_owner_inactive
 from jentic_one.shared.config import resolved_auth_base_url
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorStatus, ActorType
@@ -111,7 +112,8 @@ class AssertionService:
         # issue_pair's own run_in_transaction doesn't deadlock waiting for
         # this connection's write lock to release (SQLite single-writer).
         async with self._ctx.admin_db.transaction() as session:
-            agent = await AgentRepository.get_by_id_for_update(session, issuer)
+            found = await AgentRepository.get_with_owner_active(session, issuer, for_update=True)
+            agent, owner_active = found if found is not None else (None, False)
 
             if agent is None or not agent.jwks:
                 raise InvalidGrantError(_INVALID)
@@ -152,6 +154,13 @@ class AssertionService:
             if agent.status == ActorStatus.PENDING:
                 raise InvalidGrantError(_PENDING)
             if agent.status != ActorStatus.ACTIVE:
+                raise InvalidGrantError(_INVALID)
+            if not owner_active:
+                # An owned agent follows its owner's account status: no new
+                # tokens while the owner is disabled or deleted (a soft-deleted
+                # user has ``active`` false). Same generic
+                # refusal as any other non-active agent.
+                log_agent_owner_inactive(agent.id, agent.owner_id)
                 raise InvalidGrantError(_INVALID)
 
             jti = payload.get("jti")

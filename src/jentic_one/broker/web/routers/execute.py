@@ -51,6 +51,7 @@ from jentic_one.broker.core.headers import (
 )
 from jentic_one.broker.core.idempotency import fingerprint
 from jentic_one.broker.core.proxy_headers import (
+    PASSTHROUGH_CACHE_CONTROL,
     forward_headers,
     passthrough_response_headers,
     reconstruct_upstream_url,
@@ -107,9 +108,10 @@ from jentic_one.shared.broker.protocols import (
 from jentic_one.shared.config import UpstreamClientConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import (
-    MAX_EVENT_SUMMARY_FIELD_LEN,
     emit_event_best_effort,
     mint_trace_id,
+    summary_label,
+    summary_text,
     valid_trace_id_or_none,
 )
 from jentic_one.shared.events.repeated_failure import RepeatedFailureCounter
@@ -121,6 +123,7 @@ from jentic_one.shared.jobs.hold import (
     file_hold,
     review_page_path,
 )
+from jentic_one.shared.jobs.hold import agent_name as held_agent_name
 from jentic_one.shared.jobs.protocols import InjectedAuth
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ExecutionStatus
@@ -607,6 +610,8 @@ async def _handle(
         credential_id=request.headers.get("jentic-credential-id"),
         request_server_variables=ctx_req.server_variables,
         server_variables_unresolved=ctx_req.server_variables_unresolved,
+        trace_id=ctx_req.trace_id,
+        operation_path=resolved.operation.path,
     )
     selected_credential = authorization.selected_credential
     allowed_credential_ids = authorization.allowed_credential_ids
@@ -892,8 +897,11 @@ def _replay_response(stored: StoredResponse) -> Response:
     status/headers with an empty body and a marker header so the caller knows the
     body wasn't cached (the no-duplicate-side-effect guarantee still held).
     """
-    headers = dict(stored.headers)
+    # A replay re-emits a passthrough body, so it carries the passthrough
+    # Cache-Control whatever the stored record holds (#1835).
+    headers = {k: v for k, v in stored.headers.items() if k.lower() != "cache-control"}
     headers[JenticHeader.IDEMPOTENT_REPLAYED.value] = "true"
+    headers["cache-control"] = PASSTHROUGH_CACHE_CONTROL
     if stored.body_omitted:
         headers[JenticHeader.IDEMPOTENCY_BODY_OMITTED.value] = "true"
         # The stored content-length described the original (uncached) body; drop
@@ -1046,12 +1054,15 @@ async def _handle_hold(
             ) from exc
         review_url = _review_url(ctx, request, hold.approval_id)
         if not hold.joined:
-            summary_path = path[:MAX_EVENT_SUMMARY_FIELD_LEN]
+            # An identity resolved from a JWT carries no name; read it from the
+            # agent row then, so every approval event names the agent alike.
+            name = identity.actor_name or await held_agent_name(session, identity.sub)
+            agent = summary_label(name, identity.sub)
             await emit_event_best_effort(
                 session,
                 type=EventType.EXECUTION_APPROVAL_REQUESTED,
                 severity=EventSeverity.WARNING,
-                summary=f"Agent {identity.sub} wants to {ctx_req.method} {summary_path}",
+                summary=f"Agent {agent} wants to {ctx_req.method} {summary_text(path)}",
                 requires_action=True,
                 trace_id=valid_trace_id_or_none(ctx_req.trace_id),
                 execution_id=execution_id,

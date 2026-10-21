@@ -158,7 +158,7 @@ from jentic_one.shared.models.api_identity import (
 from jentic_one.shared.models.credentials import StoredCredentialType
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
-from jentic_one.shared.url_validation import validate_upstream_url
+from jentic_one.shared.url_validation import validate_upstream_url_async
 from jentic_one.shared.vendor_domain import vendor_from_api_id
 
 _logger = structlog.get_logger(__name__)
@@ -1995,7 +1995,9 @@ class ConnectSessionService:
         # and be governable by the confirming caller before any binding
         # or rule write happens in its name.
         if effective_agent_id is not None:
-            await self._require_agent_binding_allowed(effective_agent_id, identity)
+            await self._require_agent_binding_allowed(
+                effective_agent_id, identity, late_bound=late_bound
+            )
         api_target = row.target_kind == TARGET_KIND_API
         await self._verify_review(
             row,
@@ -2181,7 +2183,9 @@ class ConnectSessionService:
             # Binding an existing credential needs an agent to bind it to.
             raise ConfirmKindMismatchError(kind, [_allowed_confirm_kinds(row)[0]])
         if effective_agent_id is not None:
-            await self._require_agent_binding_allowed(effective_agent_id, identity)
+            await self._require_agent_binding_allowed(
+                effective_agent_id, identity, late_bound=late_bound
+            )
         await self._verify_review(
             row,
             effective_agent_id=effective_agent_id,
@@ -2541,8 +2545,8 @@ class ConnectSessionService:
         # the ones the token exchange, refresh and later edits accept.
         egress = resolved_control_egress(self._ctx.config)
         try:
-            authorize_url = validate_upstream_url(variant.authorize_url, egress)
-            token_url = validate_upstream_url(variant.token_url, egress)
+            authorize_url = await validate_upstream_url_async(variant.authorize_url, egress)
+            token_url = await validate_upstream_url_async(variant.token_url, egress)
         except ValueError as exc:
             raise OwnClientInvalidError(str(exc)) from exc
 
@@ -2685,7 +2689,9 @@ class ConnectSessionService:
             raise AgentInactiveError(agent_id, agent.status)
         return agent
 
-    async def _require_agent_binding_allowed(self, agent_id: str, identity: Identity) -> None:
+    async def _require_agent_binding_allowed(
+        self, agent_id: str, identity: Identity, *, late_bound: bool
+    ) -> None:
         """The target agent must exist, be governable by the caller, and be usable.
 
         Cross-DB read (agents live in the admin DB) through the
@@ -2696,6 +2702,15 @@ class ConnectSessionService:
         route's own gate). An archived, disabled or rejected agent is
         refused — it can no longer use the credential, and archive revokes
         its bindings.
+
+        A missing agent raises :class:`AgentNotFoundError`. When the agent is
+        ``late_bound`` (the session had none and the confirm names it), one
+        the caller does not govern (owned by someone else, or by nobody)
+        raises the same :class:`AgentNotFoundError` as
+        :meth:`_require_session_agent_allowed`, so it answers exactly like an
+        agent named at create time. An agent already named on the session is
+        shown in its review, so a caller who does not govern it gets
+        :class:`ConfirmationForbiddenError`.
         """
         async with self._ctx.admin_db.session() as admin_session:
             agent = await EffectsRepository.get_agent_owner(admin_session, agent_id)
@@ -2705,6 +2720,8 @@ class ConnectSessionService:
             # An ownerless agent (nullable ``owner_id``) has no owner to
             # match — only ``org:admin`` may bind in its name. Fail closed.
             if agent.owner_id is None or identity.sub != agent.owner_id:
+                if late_bound:
+                    raise AgentNotFoundError(agent_id)
                 raise ConfirmationForbiddenError(f"agent {agent_id!r} is not owned by the caller")
             if not _is_owner_approver(identity):
                 raise ConfirmationForbiddenError(

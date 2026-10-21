@@ -215,6 +215,20 @@ class DatabaseConfig(BaseModel):
         default=10,
         description="Maximum connections in the PostgreSQL connection pool (ignored for SQLite).",
     )
+    pool_pre_ping: bool = Field(
+        default=True,
+        description=(
+            "PostgreSQL: test each pooled connection on checkout and transparently "
+            "replace a dead one. On asyncpg the ping costs three round trips "
+            "(``BEGIN``, ``;``, ``ROLLBACK``) per checkout. With ``false``, "
+            "``pool_recycle_s`` and TCP keepalive do not cover a Postgres restart or "
+            "failover, a pooler/proxy restart, or a terminated backend: after such an "
+            "event the first request on each pool per process can fail with an HTTP "
+            "503 (work run through the retrying transaction helper is re-run on a "
+            "fresh connection instead). Only disable it where those events are rare "
+            "and that error is acceptable. Ignored for SQLite."
+        ),
+    )
     pool_recycle_s: int = Field(
         default=POOL_RECYCLE_S,
         ge=0,
@@ -369,6 +383,11 @@ class WorkerConfig(BaseModel):
     crashed worker/pod is reclaimed on a later poll. A handler failure requeues the
     job with capped exponential backoff up to ``max_attempts`` claims; beyond that
     it is dead-lettered (poison-message handling) rather than looped forever.
+
+    Each claim is a single atomic ``UPDATE`` (``FOR UPDATE SKIP LOCKED`` on
+    Postgres, a serialised write transaction on SQLite), so any number of worker
+    loops — across processes or replicas, each running up to ``concurrency``
+    jobs — can poll the same queue without double-claiming a job.
     """
 
     # How long a claimed (RUNNING) job stays invisible to other workers. Size it
@@ -403,6 +422,48 @@ class WorkerConfig(BaseModel):
         description=(
             "Cap, in seconds, on the worker's reconnect delay while the database "
             "is unreachable — a recovered database is picked up within this long."
+        ),
+    )
+    poll_interval_s: float = Field(
+        default=2.0,
+        ge=0.25,
+        le=60.0,
+        description=(
+            "Idle wait (seconds) between job-queue polls when nothing is claimable. "
+            "A job enqueued in the same process wakes the worker immediately, so "
+            "this mainly bounds pickup latency for jobs enqueued by another process "
+            "and how quickly visibility-expired jobs are reclaimed. Every poll is a "
+            "write transaction (the claim is an ``UPDATE``) even when the queue is "
+            "empty — on SQLite it takes the database write lock that request writes "
+            "also wait on — so each process issues about ``1 / poll_interval_s`` of "
+            "them per second while idle."
+        ),
+    )
+    concurrency: int = Field(
+        default=1,
+        ge=1,
+        le=64,
+        description=(
+            "Maximum jobs one worker process runs at once (1 = serial). Postgres "
+            "only: SQLite requires 1, because a job's handler holds the database "
+            "write lock across its upstream call, so a second concurrent job's "
+            "writes would time out. Each in-flight job holds about 2 admin-DB "
+            "connections at once (its handler transaction plus the run-time "
+            "authorization or credential-audit session it opens), so "
+            "``2 * concurrency`` must stay below ``databases.admin.pool_max``, "
+            "leaving the remainder for HTTP requests and other background work "
+            "in the same process."
+        ),
+    )
+    sweep_interval_s: float = Field(
+        default=120.0,
+        ge=1.0,
+        le=86_400.0,
+        description=(
+            "Seconds between the worker's retention sweeps, which expire lapsed "
+            "execution approvals and delete expired job results and long-expired "
+            "access/refresh token rows. Measured in wall time, independent of "
+            "``poll_interval_s`` and wake-ups."
         ),
     )
 
@@ -774,12 +835,18 @@ class OAuthRateLimitConfig(BaseModel):
     authorize_rpm: int = Field(
         default=30,
         description=(
-            "Sustained requests/minute allowed on the unauthenticated "
-            "``/authorize`` endpoints, keyed per ``client_id``+IP — except "
-            "the local-login routes, which carry no query ``client_id`` and "
-            "fall back to a bare-IP key. Behind a proxy, set "
+            "Sustained requests/minute allowed per client network (IPv4 "
+            "address or IPv6 /64) across the unauthenticated authorization "
+            "flow: ``/authorize``, the IdP callback, the consent page, its "
+            "submit and inline agent create, and the local-login form share "
+            "one bucket, whatever "
+            "``client_id`` they name. A sign-in spends two to six requests "
+            "(more after a mistyped password), so the defaults admit at "
+            "least five back-to-back sign-ins and then at least five a minute "
+            "per network; raise both for a large shared NAT or egress IP. "
+            "Behind a proxy, set "
             "``auth.oauth_rate_limit.trusted_proxies`` or every client "
-            "shares the proxy's IP bucket."
+            "shares the proxy's bucket."
         ),
     )
     authorize_burst: int = Field(
@@ -789,8 +856,9 @@ class OAuthRateLimitConfig(BaseModel):
     exchange_rpm: int = Field(
         default=60,
         description=(
-            "Sustained requests/minute allowed per ``client_id``+IP on the "
-            "token endpoint (also reused per-IP for token revocation)."
+            "Sustained requests/minute allowed per ``client_id`` + client "
+            "network (IPv4 address or IPv6 /64) on the token endpoint (also "
+            "reused per client network for token revocation)."
         ),
     )
     exchange_burst: int = Field(
@@ -800,8 +868,9 @@ class OAuthRateLimitConfig(BaseModel):
     registration_rpm: int = Field(
         default=10,
         description=(
-            "Sustained requests/minute allowed per IP on anonymous dynamic "
-            "client registration (``POST /oauth-clients``)."
+            "Sustained requests/minute allowed per client network (IPv4 "
+            "address or IPv6 /64) on anonymous dynamic client registration "
+            "(``POST /oauth-clients``)."
         ),
     )
     registration_burst: int = Field(
@@ -2489,6 +2558,38 @@ class AppConfig(BaseModel):
                 # public_base_url; ``_serve`` warns via has_spa_platform_client.
                 return self
             self.auth.platform_clients.append(spa_client)
+        return self
+
+    @model_validator(mode="after")
+    def _worker_concurrency_fits_admin_db(self) -> AppConfig:
+        """Refuse a ``worker.concurrency`` the admin database cannot sustain.
+
+        SQLite: a job's handler transaction holds the write lock across its
+        upstream call, so a second concurrent job's claim and outcome writes
+        time out — a finished job's outcome is lost and the job re-runs on
+        reclaim. Postgres: each in-flight job holds about two admin
+        connections at once (handler transaction plus its authorization or
+        credential-audit session); at ``2 * concurrency >= pool_max`` every
+        connection can be held by an outer transaction while its inner one
+        waits, so jobs and HTTP requests sharing the pool time out together.
+        """
+        concurrency = self.worker.concurrency
+        if concurrency <= 1:
+            return self
+        admin = self.databases.admin
+        if admin.backend == "sqlite":
+            raise ValueError(
+                f"worker.concurrency={concurrency} is not supported with a sqlite "
+                "admin database; set worker.concurrency to 1"
+            )
+        if 2 * concurrency >= admin.pool_max:
+            raise ValueError(
+                f"worker.concurrency={concurrency} needs about {2 * concurrency} "
+                "admin-DB connections (2 per in-flight job), which does not fit "
+                f"databases.admin.pool_max={admin.pool_max}; raise pool_max above "
+                f"{2 * concurrency} or lower worker.concurrency to "
+                f"{max(1, (admin.pool_max - 1) // 2)}"
+            )
         return self
 
     def extension(self, name: str) -> BaseModel | None:

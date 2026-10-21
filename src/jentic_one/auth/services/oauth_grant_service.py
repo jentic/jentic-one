@@ -11,7 +11,6 @@ from __future__ import annotations
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
 from jentic_one.admin.repos import (
     AgentRepository,
@@ -20,6 +19,7 @@ from jentic_one.admin.repos import (
 from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.admin.services.oauth_grant_admin_service import (
     OAuthGrantAdminService,
+    is_grant_revoke_admin,
     viewer_can_revoke,
 )
 from jentic_one.admin.services.schemas.oauth_grants import OAuthGrantView
@@ -229,10 +229,25 @@ class OAuthGrantService:
         in the same transaction (belt — the resolvers' live grant gate is the
         braces). Idempotent: revoking an already-revoked grant re-runs the
         sweep but writes no second audit/event.
+
+        A grant the caller cannot see (``build_access_filters`` on
+        ``OAuthClientGrant``) raises the same ``OAuthGrantNotFoundError`` as
+        an unknown id. A holder of a revoke-admin permission may revoke any
+        grant, so the lookup is unscoped for them. Only a caller who can see
+        the grant but is not its consenting user (the bound agent, or the
+        agent's owner on a grant someone else consented to) gets
+        ``OAuthGrantAccessDeniedError``.
         """
+        access_filters = (
+            None
+            if is_grant_revoke_admin(identity)
+            else build_access_filters(identity, OAuthClientGrant)
+        )
 
         async def _write(session: AsyncSession) -> bool:
-            grant = await OAuthClientGrantRepository.get_by_id(session, grant_id)
+            grant = await OAuthClientGrantRepository.get_by_id(
+                session, grant_id, filters=access_filters
+            )
             if grant is None:
                 raise OAuthGrantNotFoundError(grant_id)
             if not viewer_can_revoke(grant.user_id, identity):
@@ -265,13 +280,11 @@ class OAuthGrantService:
         Owner-or-admin, mirroring ``revoke_grant``'s semantics on the read
         side: the agent's owner sees their agent's grants; anyone else needs
         ``org:admin`` (the only unrestricted reader of the grant registry —
-        the shared listing read is caller-scoped for everyone else). A caller
-        who is not ``org:admin`` and cannot
-        see the agent (the same visibility as ``GET /agents/{id}``) gets
-        ``ActorNotFoundError``, exactly like a missing agent, matching every
-        other ``/agents/{id}`` route. A caller who can see the agent but does
-        not own it (the agent itself, or a delegated sibling agent) gets
-        ``OAuthGrantAccessDeniedError``.
+        the shared listing read is caller-scoped for everyone else). This is
+        the owner-or-``org:admin`` check of ``AgentService._load_owned_agent``:
+        any other caller, including one who can see the agent without owning
+        it (the agent itself, or a delegated sibling agent), gets
+        ``ActorNotFoundError``, exactly like a missing agent.
 
         Items carry the display fields (client name, redirect-URI origin,
         scopes, created, last-used, status) plus the consenting ``user_id``
@@ -286,16 +299,10 @@ class OAuthGrantService:
         history rows.
         """
         is_admin_reader = ORG_ADMIN in identity.permissions
-        access_filters = None if is_admin_reader else build_access_filters(identity, Agent)
         async with self._ctx.admin_db.session() as session:
-            agent = await AgentRepository.get_by_id(session, agent_id, filters=access_filters)
-        if agent is None:
+            agent = await AgentRepository.get_by_id(session, agent_id)
+        if agent is None or (not is_admin_reader and agent.owner_id != identity.sub):
             raise ActorNotFoundError(agent_id)
-        if not is_admin_reader and agent.owner_id != identity.sub:
-            raise OAuthGrantAccessDeniedError(
-                agent_id,
-                message=f"Not permitted to list OAuth grants for agent '{agent_id}'",
-            )
 
         return await OAuthGrantAdminService(self._ctx).list_grants(
             identity=identity, agent_id=agent_id, status=status, limit=limit, cursor=cursor

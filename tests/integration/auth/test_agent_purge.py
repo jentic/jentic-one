@@ -705,3 +705,11 @@ async def test_archive_and_purge_withdraw_pending_holds(
             .all()
         )
         assert [w.actor_id for w in withdrawals] == [purge_env.admin_id]
+        summaries = (
+            await session.execute(
+                select(Event.summary).where(
+                    Event.job_id == pending_job, Event.type == "execution.approval_withdrawn"
+                )
+            )
+        ).scalars()
+        assert list(summaries) == ["Call POST /v1/refunds by agent 'purge' withdrawn"]

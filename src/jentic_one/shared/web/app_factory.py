@@ -44,6 +44,7 @@ from jentic_one.shared.telemetry.sink import TelemetrySink, set_active_sink
 from jentic_one.shared.tracing import instrument_inbound_app
 from jentic_one.shared.web.agent_discovery import get_agent_discovery_router
 from jentic_one.shared.web.auth import API_KEY_HEADER
+from jentic_one.shared.web.cache_control import AuthenticatedResponseCacheMiddleware
 from jentic_one.shared.web.container import AppContainer, RouterSpec
 from jentic_one.shared.web.deps import TokenVerifier
 from jentic_one.shared.web.errors import (
@@ -255,6 +256,7 @@ def _start_worker(
     upstream_executor: Any | None = None,
     credential_injector: Any | None = None,
     execution_authorizer: Any | None = None,
+    actor_status: Any | None = None,
     repeated_failure_counter: RepeatedFailureCounter | None = None,
 ) -> tuple[WorkerLoop, asyncio.Task[None]] | None:
     """Start the background worker if the admin DB is available.
@@ -282,8 +284,11 @@ def _start_worker(
     ``execution_authorizer`` is the broker's run-time re-authorizer: every
     queued execution is re-checked with the sync route's policy before any
     credential is resolved (the handler refuses a credential injector without
-    one). ``repeated_failure_counter`` is the broker's shared-state gate in front
-    of the repeated-failure scan (``None`` scans on every failed job).
+    one). ``actor_status`` is the broker's ``ActorStatusResolver``: the handler
+    builds the identity it injects for from a live read of the actor row (and
+    likewise refuses an injector without it). ``repeated_failure_counter`` is
+    the broker's shared-state gate in front of the repeated-failure scan
+    (``None`` scans on every failed job).
 
     Returns the ``(worker, task)`` pair so the lifespan can **drain** the worker
     (let the in-flight job finish or be reclaimed) before tearing the shared
@@ -305,6 +310,7 @@ def _start_worker(
                 upstream_timeout_s=ctx.config.broker.upstream_timeout_s,
                 credential_injector=credential_injector,
                 execution_authorizer=execution_authorizer,
+                actor_status=actor_status,
                 egress=ctx.config.broker.egress,
                 security_config=ctx.config.security,
                 # Same predicate the broker's hold path files under, so a held
@@ -656,6 +662,7 @@ def create_surface_app(
                 upstream_executor=getattr(app.state, "broker_upstream_executor", None),
                 credential_injector=getattr(app.state, "broker_credential_injector", None),
                 execution_authorizer=getattr(app.state, "broker_execution_authorizer", None),
+                actor_status=getattr(app.state, "broker_actor_status", None),
                 repeated_failure_counter=getattr(
                     app.state, "broker_repeated_failure_counter", None
                 ),
@@ -766,6 +773,8 @@ def create_surface_app(
         app.include_router(
             catch_all_router, tags=list(catch_all_tags), responses=COMMON_ERROR_RESPONSES
         )
+    # Authenticated JSON is caller-specific: keep it out of shared caches (#1835).
+    app.add_middleware(AuthenticatedResponseCacheMiddleware)
     app.add_middleware(RequestIDMiddleware)
     app.add_exception_handler(ProblemDetailException, spa_aware_problem_detail_handler)  # type: ignore[arg-type]
     app.add_exception_handler(RequestValidationError, request_validation_error_handler)  # type: ignore[arg-type]
@@ -1021,6 +1030,8 @@ def create_combined_app(
     for installer in container.extra_installers:
         installer(root, ctx)
 
+    # Authenticated JSON is caller-specific: keep it out of shared caches (#1835).
+    root.add_middleware(AuthenticatedResponseCacheMiddleware)
     root.add_middleware(RequestIDMiddleware)
     attach_http_observability(root)
     install_openapi_metadata(root)

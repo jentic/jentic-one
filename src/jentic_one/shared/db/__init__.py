@@ -2,6 +2,7 @@
 
 from jentic_one.shared.db.base import AdminBase, ControlBase, RegistryBase
 from jentic_one.shared.db.errors import (
+    DatabaseCommitOutcomeUnknownError,
     DatabaseDataError,
     DatabaseIntegrityError,
     DatabaseUnavailableError,
@@ -12,6 +13,7 @@ from jentic_one.shared.db.utils import db_now, utcnow
 __all__ = [
     "AdminBase",
     "ControlBase",
+    "DatabaseCommitOutcomeUnknownError",
     "DatabaseDataError",
     "DatabaseIntegrityError",
     "DatabaseSession",

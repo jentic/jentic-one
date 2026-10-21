@@ -29,7 +29,14 @@ from jentic_one.control.repos import AgentPermissionRuleRepository
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import InviteState, StoredCredentialType
 from jentic_one.shared.models.events import EventType
-from tests.web.auth.conftest import OWNER_EMAIL, _build_app, _make_token
+from tests.web.auth.conftest import (
+    OWNER_EMAIL,
+    _build_app,
+    _make_agent_token,
+    _make_token,
+    assert_same_response,
+)
+from tests.web.conftest import seeded_jwt_user
 
 pytestmark = pytest.mark.integration
 
@@ -738,6 +745,41 @@ def test_sibling_agent_read_is_indistinguishable_from_unknown_id(
     assert owner_client.get(f"/agents/{test_agent_id}{suffix}").status_code == 200
 
 
+@pytest.mark.parametrize("body", [{}, {"description": "changed"}], ids=["empty", "non-empty"])
+def test_sibling_agent_patch_is_indistinguishable_from_unknown_id(
+    web_context: Context,
+    owner_client: TestClient,
+    binding_agent_id: str,
+    owner_user_id: str,
+    test_agent_id: str,
+    body: dict[str, str],
+) -> None:
+    """A sibling holding ``agents:write`` gets the unknown-id 404 from ``PATCH``.
+
+    With ``owner:agents:read`` but not ``agents:read`` it cannot read the
+    sibling, so an empty body must not return the sibling's profile either:
+    both bodies answer exactly like a nonexistent id. The owner's empty
+    ``PATCH`` still returns the agent.
+    """
+    token = _make_agent_token(
+        web_context, binding_agent_id, owner_user_id, ["owner:agents:read", "agents:write"]
+    )
+    unknown_id = "agnt_does_not_exist"
+    with TestClient(
+        _build_app(web_context), headers={"Authorization": f"Bearer {token}"}
+    ) as sibling_client:
+        sibling = sibling_client.patch(f"/agents/{test_agent_id}", json=body)
+        unknown = sibling_client.patch(f"/agents/{unknown_id}", json=body)
+    assert sibling.status_code == 404, sibling.text
+    assert sibling.json()["type"] == "actor_not_found"
+    assert_same_response(sibling, test_agent_id, unknown, unknown_id)
+
+    own = owner_client.patch(f"/agents/{test_agent_id}", json={})
+    assert own.status_code == 200, own.text
+    assert own.json()["id"] == test_agent_id
+    assert own.json()["description"] == "Test agent for web tests"
+
+
 @pytest.mark.asyncio
 async def test_purge_drops_inline_rules_so_rebind_starts_default_deny(
     owner_client: TestClient,
@@ -983,6 +1025,13 @@ async def test_approve_leaves_other_agents_alerts_untouched(
             await session.commit()
 
 
+@pytest.fixture()
+async def _rotation_user(web_context: Context) -> AsyncGenerator[str, None]:
+    async with seeded_jwt_user(web_context, "user-needs-rotation") as user_id:
+        yield user_id
+
+
+@pytest.mark.usefixtures("_rotation_user")
 def test_password_rotation_required(web_context: Context) -> None:
     """Tokens with must_change_password=True get 403 on permission-gated endpoints."""
     config = web_context.config.admin.auth

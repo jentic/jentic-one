@@ -45,6 +45,11 @@ _MATERIAL_RELATIONSHIP: Mapping[str, str] = {
 }
 
 
+# Upper bound on IDs bound into one IN (...) clause, well under SQLite's and
+# Postgres's host-parameter limits.
+_ID_BATCH_SIZE = 500
+
+
 class CredentialRepository:
     """Data access layer for Credential entities — flush-only, never commits."""
 
@@ -112,12 +117,16 @@ class CredentialRepository:
         Widen the prefilter to also match the caller's raw (un-slugified) input so
         historical rows persisted before vendor normalization still surface as
         candidates; the final identity match is normalized in the resolver.
+
+        Rows are ordered by ``id`` so the ambiguity 409's candidate list and the
+        id its directive suggests are stable across calls.
         """
         normalized = slugify_api_field(api_vendor)
         result = await session.execute(
             select(Credential)
             .where(Credential.api_vendor.in_({api_vendor, normalized}))
             .options(*(raiseload(getattr(Credential, rel)) for rel in _CHILD_RELATIONSHIPS))
+            .order_by(Credential.id)
         )
         return list(result.scalars().all())
 
@@ -214,13 +223,47 @@ class CredentialRepository:
         return credential
 
     @staticmethod
-    async def get_creators_by_ids(session: AsyncSession, ids: list[str]) -> dict[str, str | None]:
-        """Batch-resolve credential IDs to their ``created_by`` (missing ids omitted)."""
+    async def get_creators_by_ids(
+        session: AsyncSession,
+        ids: list[str],
+        *,
+        filters: Sequence[ColumnElement[bool]] | None = None,
+    ) -> dict[str, str | None]:
+        """Batch-resolve credential IDs to their ``created_by`` (missing/filtered ids omitted)."""
         if not ids:
             return {}
-        stmt = select(Credential.id, Credential.created_by).where(Credential.id.in_(ids))
+        creators: dict[str, str | None] = {}
+        for i in range(0, len(ids), _ID_BATCH_SIZE):
+            batch = ids[i : i + _ID_BATCH_SIZE]
+            stmt = select(Credential.id, Credential.created_by).where(Credential.id.in_(batch))
+            if filters is not None:
+                for f in filters:
+                    stmt = stmt.where(f)
+            result = await session.execute(stmt)
+            for row in result:
+                creators[row.id] = row.created_by
+        return creators
+
+    @staticmethod
+    async def get_creators_among(
+        session: AsyncSession,
+        actor_ids: Sequence[str],
+        *,
+        filters: Sequence[ColumnElement[bool]] | None = None,
+    ) -> set[str]:
+        """Return the ids in ``actor_ids`` that created a credential matching ``filters``."""
+        if not actor_ids:
+            return set()
+        stmt = (
+            select(Credential.created_by)
+            .where(Credential.created_by.in_(list(actor_ids)))
+            .distinct()
+        )
+        if filters is not None:
+            for f in filters:
+                stmt = stmt.where(f)
         result = await session.execute(stmt)
-        return {row.id: row.created_by for row in result}
+        return {row for row in result.scalars().all() if row is not None}
 
     @staticmethod
     async def get_registration_display_names(

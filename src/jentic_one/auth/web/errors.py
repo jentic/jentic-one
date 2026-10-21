@@ -35,7 +35,7 @@ from jentic_one.auth.services.errors import (
 from jentic_one.shared.db.errors import DatabaseUnavailableError
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.pagination import InvalidCursorError
-from jentic_one.shared.web.errors import make_service_error_handler
+from jentic_one.shared.web.errors import DB_UNAVAILABLE_SAFE_DETAILS, make_service_error_handler
 
 _logger = structlog.get_logger(__name__)
 _meter = get_meter("jentic_one.auth")
@@ -113,7 +113,7 @@ _DB_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
 # caller (CWE-209), so send a static, generic detail and log the raw message
 # server-side (handled by the factory).
 _DB_SAFE_DETAILS: dict[type[Exception], str] = {
-    DatabaseUnavailableError: "The database is temporarily unavailable; please retry.",
+    **DB_UNAVAILABLE_SAFE_DETAILS,
 }
 
 database_error_handler = make_service_error_handler(_DB_ERROR_MAP, safe_details=_DB_SAFE_DETAILS)

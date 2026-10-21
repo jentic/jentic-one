@@ -227,16 +227,15 @@ class OAuthGrantAccessDeniedError(AuthServiceError):
     """Raised when a caller may not operate on an OAuth grant.
 
     Grant ``:revoke`` is owner-or-admin: the consenting user
-    owns the grant; anyone else needs the admin permission. 403, not 404 —
-    the grant id is a ksuid, not a secret.
+    owns the grant; anyone else needs the admin permission. Raised only to a
+    caller who can see the grant without being allowed to revoke it; a grant
+    the caller cannot see raises ``OAuthGrantNotFoundError`` instead.
 
-    ``resource_id`` is the denied resource — a grant id on the ``:revoke``
-    path, an agent id on the per-agent listing path (the listing gate denies
-    before any grant is in hand).
+    ``resource_id`` is the denied grant id.
     """
 
-    def __init__(self, resource_id: str, *, message: str | None = None) -> None:
-        super().__init__(message or f"Not permitted to operate on OAuth grant '{resource_id}'")
+    def __init__(self, resource_id: str) -> None:
+        super().__init__(f"Not permitted to operate on OAuth grant '{resource_id}'")
         self.resource_id = resource_id
 
 

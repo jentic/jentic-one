@@ -107,10 +107,18 @@ def _make_agent_row(
     return row
 
 
-def _make_user_row(*, active: bool = True) -> MagicMock:
+def _with_owner(agent_row: MagicMock, *, owner_active: bool = True) -> tuple[MagicMock, bool]:
+    """The ``AgentRepository.get_with_owner_active`` result for ``agent_row``."""
+    return agent_row, owner_active
+
+
+def _make_user_row(*, active: bool = True, deleted_at: datetime | None = None) -> MagicMock:
     row = MagicMock()
     row.id = "usr_test123"
     row.active = active
+    # Set explicitly: a bare MagicMock attribute is not None, so the
+    # deleted-user check would (correctly) fail closed on it.
+    row.deleted_at = deleted_at
     return row
 
 
@@ -197,7 +205,9 @@ async def test_refresh_reports_live_agent_scopes_not_snapshot(
     mock_rt_repo.create = AsyncMock(return_value=MagicMock(id="rt_next"))
     mock_rt_repo.consume = AsyncMock()
     mock_at_repo.create = AsyncMock()
-    mock_agent_repo.get_by_id = AsyncMock(return_value=_make_agent_row(status="active"))
+    mock_agent_repo.get_with_owner_active = AsyncMock(
+        return_value=_with_owner(_make_agent_row(status="active"))
+    )
     # Live grants have narrowed since mint: apis:write was revoked.
     live_grant = MagicMock()
     live_grant.permission = "apis:read"
@@ -455,7 +465,7 @@ async def test_resolve_long_lived_agent_token_uses_live_grants(
         actor_id="agnt_x", actor_type="agent", scopes=["apis:read"], is_ephemeral=False
     )
     mock_at_repo.get_by_hash = AsyncMock(return_value=at_row)
-    mock_agent_repo.get_by_id = AsyncMock(return_value=_make_agent_row())
+    mock_agent_repo.get_with_owner_active = AsyncMock(return_value=_with_owner(_make_agent_row()))
     mock_grant_repo.list_for_actor = AsyncMock(
         return_value=[MagicMock(permission="apis:read"), MagicMock(permission="apis:write")]
     )
@@ -489,7 +499,7 @@ async def test_resolve_ephemeral_minted_token_keeps_snapshot(
         is_ephemeral=True,
     )
     mock_at_repo.get_by_hash = AsyncMock(return_value=at_row)
-    mock_agent_repo.get_by_id = AsyncMock(return_value=_make_agent_row())
+    mock_agent_repo.get_with_owner_active = AsyncMock(return_value=_with_owner(_make_agent_row()))
     mock_grant_repo.list_for_actor = AsyncMock()
 
     svc = TokenService(ctx)
@@ -540,7 +550,9 @@ async def test_resolve_non_active_agent_token_is_inactive(
     ctx = _make_ctx()
     at_row = _make_access_token_row(actor_id="agnt_x", actor_type="agent")
     mock_at_repo.get_by_hash = AsyncMock(return_value=at_row)
-    mock_agent_repo.get_by_id = AsyncMock(return_value=_make_agent_row(status=status))
+    mock_agent_repo.get_with_owner_active = AsyncMock(
+        return_value=_with_owner(_make_agent_row(status=status))
+    )
     mock_grant_repo.list_for_actor = AsyncMock(return_value=[])
 
     svc = TokenService(ctx)
@@ -548,6 +560,30 @@ async def test_resolve_non_active_agent_token_is_inactive(
 
     assert resolved is not None
     assert resolved.active is False
+
+
+@patch("jentic_one.auth.services.token_service.ActorPermissionGrantRepository")
+@patch("jentic_one.auth.services.token_service.AgentRepository")
+@patch("jentic_one.auth.services.token_service.AccessTokenRepository")
+async def test_resolve_active_agent_with_inactive_owner_is_inactive(
+    mock_at_repo: MagicMock,
+    mock_agent_repo: MagicMock,
+    mock_grant_repo: MagicMock,
+) -> None:
+    """An active agent's token resolves as inactive while its owner is inactive."""
+    ctx = _make_ctx()
+    at_row = _make_access_token_row(actor_id="agnt_x", actor_type="agent")
+    mock_at_repo.get_by_hash = AsyncMock(return_value=at_row)
+    mock_agent_repo.get_with_owner_active = AsyncMock(
+        return_value=_with_owner(_make_agent_row(status="active"), owner_active=False)
+    )
+    mock_grant_repo.list_for_actor = AsyncMock(return_value=[])
+
+    resolved = await TokenService(ctx).resolve_access_token("at_agenttoken")
+
+    assert resolved is not None
+    assert resolved.active is False
+    assert resolved.parent_actor_id == "usr_owner"
 
 
 @patch("jentic_one.auth.services.token_service.ActorPermissionGrantRepository")
@@ -562,7 +598,7 @@ async def test_resolve_missing_agent_row_fails_closed(
     ctx = _make_ctx()
     at_row = _make_access_token_row(actor_id="agnt_gone", actor_type="agent")
     mock_at_repo.get_by_hash = AsyncMock(return_value=at_row)
-    mock_agent_repo.get_by_id = AsyncMock(return_value=None)
+    mock_agent_repo.get_with_owner_active = AsyncMock(return_value=None)
     mock_grant_repo.list_for_actor = AsyncMock(return_value=[])
 
     svc = TokenService(ctx)
@@ -621,7 +657,9 @@ async def test_refresh_disabled_agent_rejected_without_minting(
     mock_rt_repo.create = AsyncMock()
     mock_rt_repo.consume = AsyncMock()
     mock_at_repo.create = AsyncMock()
-    mock_agent_repo.get_by_id = AsyncMock(return_value=_make_agent_row(status="disabled"))
+    mock_agent_repo.get_with_owner_active = AsyncMock(
+        return_value=_with_owner(_make_agent_row(status="disabled"))
+    )
 
     svc = TokenService(ctx)
     with pytest.raises(InvalidGrantError, match="not active"):
@@ -646,6 +684,48 @@ async def test_refresh_deactivated_user_rejected(
     svc = TokenService(ctx)
     with pytest.raises(InvalidGrantError, match="not active"):
         await svc.refresh("rt_deactivateduser")
+
+
+@patch("jentic_one.auth.services.token_service.UserRepository")
+@patch("jentic_one.auth.services.token_service.AccessTokenRepository")
+async def test_resolve_deleted_user_token_is_inactive_even_if_row_reads_active(
+    mock_at_repo: MagicMock, mock_user_repo: MagicMock
+) -> None:
+    ctx = _make_ctx()
+    at_row = _make_access_token_row(actor_id="usr_x", actor_type="user")
+    mock_at_repo.get_by_hash = AsyncMock(return_value=at_row)
+    mock_user_repo.get_by_id = AsyncMock(
+        return_value=_make_user_row(active=True, deleted_at=datetime.now(UTC))
+    )
+
+    svc = TokenService(ctx)
+    resolved = await svc.resolve_access_token("at_deleteduser")
+
+    assert resolved is not None
+    assert resolved.active is False
+
+
+@patch("jentic_one.auth.services.token_service.UserRepository")
+@patch("jentic_one.auth.services.token_service.RefreshTokenRepository")
+@patch("jentic_one.auth.services.token_service.AccessTokenRepository")
+async def test_refresh_deleted_user_rejected_even_if_row_reads_active(
+    mock_at_repo: MagicMock, mock_rt_repo: MagicMock, mock_user_repo: MagicMock
+) -> None:
+    ctx = _make_ctx()
+    rt_row = _make_refresh_token_row()
+    mock_rt_repo.get_by_hash = AsyncMock(return_value=rt_row)
+    mock_rt_repo.create = AsyncMock()
+    mock_at_repo.create = AsyncMock()
+    mock_user_repo.get_by_id = AsyncMock(
+        return_value=_make_user_row(active=True, deleted_at=datetime.now(UTC))
+    )
+
+    svc = TokenService(ctx)
+    with pytest.raises(InvalidGrantError, match="not active"):
+        await svc.refresh("rt_deleteduser")
+
+    mock_at_repo.create.assert_not_called()
+    mock_rt_repo.create.assert_not_called()
 
 
 @patch("jentic_one.auth.services.token_service.OAuthClientRepository")
@@ -724,7 +804,9 @@ async def test_refresh_reuse_detection_wins_over_disabled_actor(
     mock_rt_repo.get_by_hash = AsyncMock(return_value=rt_row)
     mock_rt_repo.revoke_family = AsyncMock()
     mock_at_repo.revoke_family = AsyncMock()
-    mock_agent_repo.get_by_id = AsyncMock(return_value=_make_agent_row(status="disabled"))
+    mock_agent_repo.get_with_owner_active = AsyncMock(
+        return_value=_with_owner(_make_agent_row(status="disabled"))
+    )
 
     svc = TokenService(ctx)
     with pytest.raises(InvalidGrantError, match="reuse detected"):
@@ -742,7 +824,9 @@ async def test_introspect_disabled_agent_access_token_inactive(
     ctx = _make_ctx()
     at_row = _make_access_token_row(actor_id="agnt_x", actor_type="agent")
     mock_at_repo.get_by_hash = AsyncMock(return_value=at_row)
-    mock_agent_repo.get_by_id = AsyncMock(return_value=_make_agent_row(status="disabled"))
+    mock_agent_repo.get_with_owner_active = AsyncMock(
+        return_value=_with_owner(_make_agent_row(status="disabled"))
+    )
 
     svc = TokenService(ctx)
     result = await svc.introspect("at_disabledagent")
@@ -758,7 +842,9 @@ async def test_introspect_disabled_agent_refresh_token_inactive(
     ctx = _make_ctx()
     rt_row = _make_refresh_token_row(actor_id="agnt_x", actor_type="agent")
     mock_rt_repo.get_by_hash = AsyncMock(return_value=rt_row)
-    mock_agent_repo.get_by_id = AsyncMock(return_value=_make_agent_row(status="disabled"))
+    mock_agent_repo.get_with_owner_active = AsyncMock(
+        return_value=_with_owner(_make_agent_row(status="disabled"))
+    )
 
     svc = TokenService(ctx)
     result = await svc.introspect("rt_disabledagent")

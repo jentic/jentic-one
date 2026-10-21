@@ -15,7 +15,8 @@ import pytest
 
 from jentic_one.broker.core.headers import JenticHeader
 from jentic_one.broker.core.schemas import ExecuteRequestContext
-from jentic_one.broker.web.routers.execute import _assemble_response
+from jentic_one.broker.services.idempotency import StoredResponse
+from jentic_one.broker.web.routers.execute import _assemble_response, _replay_response
 from jentic_one.shared.broker.execution import (
     ErrorOrigin,
     ExecutionContext,
@@ -119,3 +120,37 @@ def test_success_body_and_headers_are_mirrored_verbatim() -> None:
     # No upstream error → no ``Jentic-Error-Origin`` (broker success/upstream success).
     assert JenticHeader.ERROR_ORIGIN.value not in response.headers
     assert response.headers[JenticHeader.UPSTREAM_STATUS.value] == "200"
+
+
+def test_upstream_cache_control_is_replaced_with_private_no_store() -> None:
+    """Pins #1835: the body was fetched with a broker-injected credential, so an
+    upstream ``public`` directive never reaches a shared cache in front of the
+    broker; non-JSON bodies included."""
+    response = _assemble_response(
+        _outcome(
+            status_code=200,
+            body=b"a,b\n1,2\n",
+            upstream_headers={
+                "content-type": "text/csv",
+                "cache-control": "public, max-age=3600",
+                "etag": '"abc123"',
+            },
+        ),
+        _ctx_req(),
+    )
+
+    assert response.headers.getlist("cache-control") == ["private, no-store"]
+    assert response.headers["etag"] == '"abc123"'
+
+
+def test_idempotent_replay_carries_private_no_store() -> None:
+    stored = StoredResponse(
+        status_code=200,
+        headers={"content-type": "application/json", "Cache-Control": "public, max-age=60"},
+        body=b"{}",
+        body_omitted=False,
+    )
+    response = _replay_response(stored)
+
+    assert response.headers.getlist("cache-control") == ["private, no-store"]
+    assert response.headers[JenticHeader.IDEMPOTENT_REPLAYED.value] == "true"

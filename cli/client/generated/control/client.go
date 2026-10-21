@@ -9571,11 +9571,21 @@ type ClientInterface interface {
 	// may call it, so a UI can label the owners, approvers and actors it
 	// already holds by id without `users:read`.
 	//
-	// Users resolve for every caller. Agents resolve only when visible to the
-	// caller: itself, its own agents, its owner's agents with
-	// `owner:agents:read`, or every agent for `org:admin`. Ids that match no
-	// visible actor are silently left out rather than reported as errors.
-	// Listing the whole directory needs `users:read` on `GET /actors`.
+	// Agents resolve when visible to the caller: itself, its own agents, its
+	// owner's agents with `owner:agents:read`, or every agent for `org:admin`.
+	// Users resolve when the caller can already see them by id: itself; the
+	// owner, registrant, approver or denier of an agent it can see, and the
+	// API key creator and key rotation/revocation actor of an agent it owns
+	// (with `agents:read`); the actor on an event it can see (with
+	// `events:read`); the decider of a held execution it can see; the
+	// consenting user of an OAuth grant bound to an agent it owns; the creator
+	// of a credential it can read (with `credentials:read` or
+	// `owner:credentials:read`); and, with `oauth-clients:read`, the
+	// consenting user of a grant bound to the caller itself and the creator of
+	// any OAuth client. `org:admin` resolves every user.
+	// Ids that match no visible actor are silently left
+	// out, exactly like unknown ids. Listing the whole directory needs
+	// `users:read` on `GET /actors`.
 	//
 	// Corresponds with GET /actors/lookup (the `LookupActors` operationId).
 	LookupActors(ctx context.Context, params *LookupActorsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -10020,8 +10030,8 @@ type ClientInterface interface {
 	// granted scopes, the consenting user, its `status`, created and last-used
 	// timestamps, and `can_revoke` for the caller. Filter by `status`
 	// (`active` or `revoked`); results are cursor-paginated. Allowed for the
-	// agent's owner or an admin. An agent the caller cannot see answers 404,
-	// the same as one that does not exist. Revoke a grant with
+	// agent's owner or an admin; any other caller gets 404, the same as for an
+	// agent that does not exist. Revoke a grant with
 	// `POST /oauth-grants/{grant_id}:revoke`.
 	//
 	// Corresponds with GET /agents/{agent_id}/oauth-grants (the `ListAgentOauthGrants` operationId).
@@ -10572,8 +10582,9 @@ type ClientInterface interface {
 	// ``must_change_password`` gate are re-read from the database at re-mint.
 	// Refusal modes: 401 ``session_expired`` once the original authentication is
 	// older than the absolute window (``admin.auth.session_ttl_seconds``), 401
-	// ``invalid_credentials`` for deactivated users, non-user tokens, or opaque
-	// (non-JWT) credentials. Clients should then send the user back to login.
+	// ``unauthorized`` from the auth gate for a disabled, deleted or unknown user,
+	// and 401 ``invalid_credentials`` for non-user tokens or opaque (non-JWT)
+	// credentials. Clients should then send the user back to login.
 	//
 	// Corresponds with POST /auth/refresh (the `RefreshSession` operationId).
 	RefreshSession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -11019,6 +11030,9 @@ type ClientInterface interface {
 	//
 	// Stream events as Server-Sent Events.
 	//
+	// The stream ends once the caller's credential stops verifying (expired,
+	// revoked, or its user disabled or deleted); reconnecting then returns 401.
+	//
 	// Corresponds with GET /events/stream (the `StreamEvents` operationId).
 	StreamEvents(ctx context.Context, params *StreamEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -11313,6 +11327,8 @@ type ClientInterface interface {
 	//
 	// List notes with optional filters and cursor pagination.
 	//
+	// Returns the caller's own notes; a user also sees the notes of agents they own.
+	//
 	// Corresponds with GET /notes (the `ListNotes` operationId).
 	ListNotes(ctx context.Context, params *ListNotesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -11344,6 +11360,9 @@ type ClientInterface interface {
 	// GetNote Get Note
 	//
 	// Retrieve a single note by ID.
+	//
+	// A user can read the notes of agents they own, but only a note's author (or
+	// an org admin) can update or delete it.
 	//
 	// Corresponds with GET /notes/{note_id} (the `GetNote` operationId).
 	GetNote(ctx context.Context, noteId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -11516,7 +11535,10 @@ type ClientInterface interface {
 	//
 	// Revoke a consent→agent grant — one of the three revocation kill radii.
 	//
-	// Allowed for the grant's owner (the consenting user) or an admin. Marks
+	// Allowed for the grant's owner (the consenting user) or an admin. A grant
+	// the caller cannot see answers 404, the same as one that does not exist;
+	// a caller who can see it but may not revoke it (the bound agent, or the
+	// agent's owner when someone else consented) gets 403. Marks
 	// the grant ``revoked`` and revokes every outstanding access/refresh token
 	// minted under it in the same transaction; the live resolvers also re-check
 	// grant status on every verdict (belt + braces). The client's next token
@@ -11667,8 +11689,8 @@ type ClientInterface interface {
 	// page treats a 400 as terminal ("retry the connection") because the blob
 	// shares the consent handle's lifetime — a retry re-enters the flow, which
 	// re-parks on a fresh awaiting page while the agent stays pending. Shares
-	// the approval-status poll's own per-IP rate bucket (same cadence, same
-	// caller shape).
+	// the approval-status poll's own per-client-network rate bucket (same
+	// cadence, same caller shape).
 	//
 	// Corresponds with GET /oauth/consent/agent/status (the `ConsentAgentStatus` operationId).
 	ConsentAgentStatus(ctx context.Context, params *ConsentAgentStatusParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -11743,8 +11765,9 @@ type ClientInterface interface {
 	//   die, so reconnecting requires fresh consent (deliberately beyond the
 	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-	//   64 KiB declared body length, and per-IP rate limited; its errors speak
-	//   the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+	//   64 KiB declared body length, and rate limited per client network
+	//   (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+	//   (RFC 7009 §2.2.1), not Problem Details.
 	// - **JSON** (any other content type — the pre-G11 contract, byte-identical
 	//   including 422 shapes): requires a platform bearer identity; revokes the
 	//   caller's own token (access → that token, refresh → its family). Used by
@@ -11779,8 +11802,9 @@ type ClientInterface interface {
 	//   die, so reconnecting requires fresh consent (deliberately beyond the
 	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-	//   64 KiB declared body length, and per-IP rate limited; its errors speak
-	//   the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+	//   64 KiB declared body length, and rate limited per client network
+	//   (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+	//   (RFC 7009 §2.2.1), not Problem Details.
 	// - **JSON** (any other content type — the pre-G11 contract, byte-identical
 	//   including 422 shapes): requires a platform bearer identity; revokes the
 	//   caller's own token (access → that token, refresh → its family). Used by
@@ -11815,8 +11839,9 @@ type ClientInterface interface {
 	//   die, so reconnecting requires fresh consent (deliberately beyond the
 	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-	//   64 KiB declared body length, and per-IP rate limited; its errors speak
-	//   the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+	//   64 KiB declared body length, and rate limited per client network
+	//   (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+	//   (RFC 7009 §2.2.1), not Problem Details.
 	// - **JSON** (any other content type — the pre-G11 contract, byte-identical
 	//   including 422 shapes): requires a platform bearer identity; revokes the
 	//   caller's own token (access → that token, refresh → its family). Used by
@@ -12164,7 +12189,11 @@ type ClientInterface interface {
 	// The row is retained — the account is anonymized (tombstone email) and
 	// deactivated so history and audit references stay resolvable — but the
 	// action is terminal: there is no re-enable arm. For the reversible kill
-	// switch use ``:disable`` / ``:enable`` instead.
+	// switch use ``:disable`` / ``:enable`` instead. Deleting a user also cancels
+	// their outstanding invites: redeeming one answers 409
+	// ``invite_already_redeemed``, the same as an invite replaced by a reissue.
+	// Idempotent: deleting an already-deleted user answers 204 and changes
+	// nothing.
 	//
 	// Corresponds with DELETE /users/{user_id} (the `DeleteUser` operationId).
 	DeleteUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -12184,7 +12213,8 @@ type ClientInterface interface {
 	// Update a user's profile fields.
 	//
 	// Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
-	// else only themselves. Any other user answers 404.
+	// else only themselves. Any other user answers 404. A deleted user cannot be
+	// edited (409).
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -12196,7 +12226,8 @@ type ClientInterface interface {
 	// Update a user's profile fields.
 	//
 	// Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
-	// else only themselves. Any other user answers 404.
+	// else only themselves. Any other user answers 404. A deleted user cannot be
+	// edited (409).
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -12207,6 +12238,8 @@ type ClientInterface interface {
 	//
 	// Set the assigned permissions for a user.
 	//
+	// A deleted user's permissions cannot be changed (409).
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PUT /users/{user_id}/permissions (the `SetUserPermissions` operationId).
@@ -12215,6 +12248,8 @@ type ClientInterface interface {
 	// SetUserPermissions Set User Permissions
 	//
 	// Set the assigned permissions for a user.
+	//
+	// A deleted user's permissions cannot be changed (409).
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -12225,12 +12260,17 @@ type ClientInterface interface {
 	//
 	// Disable a user account.
 	//
+	// A deleted user is already permanently inactive and cannot be disabled (409).
+	//
 	// Corresponds with POST /users/{user_id}:disable (the `DisableUser` operationId).
 	DisableUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// EnableUser Enable User
 	//
-	// Enable a user account.
+	// Enable a disabled user account.
+	//
+	// A deleted user cannot be re-enabled (409). Login sessions issued before the
+	// account was disabled stay revoked; the user signs in again.
 	//
 	// Corresponds with POST /users/{user_id}:enable (the `EnableUser` operationId).
 	EnableUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -12350,11 +12390,21 @@ func (c *Client) ListActors(ctx context.Context, params *ListActorsParams, reqEd
 // may call it, so a UI can label the owners, approvers and actors it
 // already holds by id without `users:read`.
 //
-// Users resolve for every caller. Agents resolve only when visible to the
-// caller: itself, its own agents, its owner's agents with
-// `owner:agents:read`, or every agent for `org:admin`. Ids that match no
-// visible actor are silently left out rather than reported as errors.
-// Listing the whole directory needs `users:read` on `GET /actors`.
+// Agents resolve when visible to the caller: itself, its own agents, its
+// owner's agents with `owner:agents:read`, or every agent for `org:admin`.
+// Users resolve when the caller can already see them by id: itself; the
+// owner, registrant, approver or denier of an agent it can see, and the
+// API key creator and key rotation/revocation actor of an agent it owns
+// (with `agents:read`); the actor on an event it can see (with
+// `events:read`); the decider of a held execution it can see; the
+// consenting user of an OAuth grant bound to an agent it owns; the creator
+// of a credential it can read (with `credentials:read` or
+// `owner:credentials:read`); and, with `oauth-clients:read`, the
+// consenting user of a grant bound to the caller itself and the creator of
+// any OAuth client. `org:admin` resolves every user.
+// Ids that match no visible actor are silently left
+// out, exactly like unknown ids. Listing the whole directory needs
+// `users:read` on `GET /actors`.
 //
 // Corresponds with GET /actors/lookup (the `LookupActors` operationId).
 func (c *Client) LookupActors(ctx context.Context, params *LookupActorsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -13149,8 +13199,8 @@ func (c *Client) UpdateAgentJwks(ctx context.Context, agentId string, body Updat
 // granted scopes, the consenting user, its `status`, created and last-used
 // timestamps, and `can_revoke` for the caller. Filter by `status`
 // (`active` or `revoked`); results are cursor-paginated. Allowed for the
-// agent's owner or an admin. An agent the caller cannot see answers 404,
-// the same as one that does not exist. Revoke a grant with
+// agent's owner or an admin; any other caller gets 404, the same as for an
+// agent that does not exist. Revoke a grant with
 // `POST /oauth-grants/{grant_id}:revoke`.
 //
 // Corresponds with GET /agents/{agent_id}/oauth-grants (the `ListAgentOauthGrants` operationId).
@@ -14151,8 +14201,9 @@ func (c *Client) Login(ctx context.Context, body LoginJSONRequestBody, reqEditor
 // “must_change_password“ gate are re-read from the database at re-mint.
 // Refusal modes: 401 “session_expired“ once the original authentication is
 // older than the absolute window (“admin.auth.session_ttl_seconds“), 401
-// “invalid_credentials“ for deactivated users, non-user tokens, or opaque
-// (non-JWT) credentials. Clients should then send the user back to login.
+// “unauthorized“ from the auth gate for a disabled, deleted or unknown user,
+// and 401 “invalid_credentials“ for non-user tokens or opaque (non-JWT)
+// credentials. Clients should then send the user back to login.
 //
 // Corresponds with POST /auth/refresh (the `RefreshSession` operationId).
 func (c *Client) RefreshSession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -14988,6 +15039,9 @@ func (c *Client) ListEvents(ctx context.Context, params *ListEventsParams, reqEd
 //
 // Stream events as Server-Sent Events.
 //
+// The stream ends once the caller's credential stops verifying (expired,
+// revoked, or its user disabled or deleted); reconnecting then returns 401.
+//
 // Corresponds with GET /events/stream (the `StreamEvents` operationId).
 func (c *Client) StreamEvents(ctx context.Context, params *StreamEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewStreamEventsRequest(c.Server, params)
@@ -15532,6 +15586,8 @@ func (c *Client) GetUsageStats(ctx context.Context, params *GetUsageStatsParams,
 //
 // List notes with optional filters and cursor pagination.
 //
+// Returns the caller's own notes; a user also sees the notes of agents they own.
+//
 // Corresponds with GET /notes (the `ListNotes` operationId).
 func (c *Client) ListNotes(ctx context.Context, params *ListNotesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListNotesRequest(c.Server, params)
@@ -15603,6 +15659,9 @@ func (c *Client) DeleteNote(ctx context.Context, noteId string, params *DeleteNo
 // GetNote Get Note
 //
 // Retrieve a single note by ID.
+//
+// A user can read the notes of agents they own, but only a note's author (or
+// an org admin) can update or delete it.
 //
 // Corresponds with GET /notes/{note_id} (the `GetNote` operationId).
 func (c *Client) GetNote(ctx context.Context, noteId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -15915,7 +15974,10 @@ func (c *Client) RegisterOauthClientEndpoint(ctx context.Context, body RegisterO
 //
 // Revoke a consent→agent grant — one of the three revocation kill radii.
 //
-// Allowed for the grant's owner (the consenting user) or an admin. Marks
+// Allowed for the grant's owner (the consenting user) or an admin. A grant
+// the caller cannot see answers 404, the same as one that does not exist;
+// a caller who can see it but may not revoke it (the bound agent, or the
+// agent's owner when someone else consented) gets 403. Marks
 // the grant “revoked“ and revokes every outstanding access/refresh token
 // minted under it in the same transaction; the live resolvers also re-check
 // grant status on every verdict (belt + braces). The client's next token
@@ -16126,8 +16188,8 @@ func (c *Client) ConsentAgentCreateWithFormdataBody(ctx context.Context, body Co
 // page treats a 400 as terminal ("retry the connection") because the blob
 // shares the consent handle's lifetime — a retry re-enters the flow, which
 // re-parks on a fresh awaiting page while the agent stays pending. Shares
-// the approval-status poll's own per-IP rate bucket (same cadence, same
-// caller shape).
+// the approval-status poll's own per-client-network rate bucket (same
+// cadence, same caller shape).
 //
 // Corresponds with GET /oauth/consent/agent/status (the `ConsentAgentStatus` operationId).
 func (c *Client) ConsentAgentStatus(ctx context.Context, params *ConsentAgentStatusParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -16242,8 +16304,9 @@ func (c *Client) IntrospectEndpointWithFormdataBody(ctx context.Context, body In
 //     die, so reconnecting requires fresh consent (deliberately beyond the
 //     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 //     is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-//     64 KiB declared body length, and per-IP rate limited; its errors speak
-//     the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+//     64 KiB declared body length, and rate limited per client network
+//     (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+//     (RFC 7009 §2.2.1), not Problem Details.
 //   - **JSON** (any other content type — the pre-G11 contract, byte-identical
 //     including 422 shapes): requires a platform bearer identity; revokes the
 //     caller's own token (access → that token, refresh → its family). Used by
@@ -16288,8 +16351,9 @@ func (c *Client) RevokeEndpointWithBody(ctx context.Context, contentType string,
 //     die, so reconnecting requires fresh consent (deliberately beyond the
 //     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 //     is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-//     64 KiB declared body length, and per-IP rate limited; its errors speak
-//     the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+//     64 KiB declared body length, and rate limited per client network
+//     (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+//     (RFC 7009 §2.2.1), not Problem Details.
 //   - **JSON** (any other content type — the pre-G11 contract, byte-identical
 //     including 422 shapes): requires a platform bearer identity; revokes the
 //     caller's own token (access → that token, refresh → its family). Used by
@@ -16334,8 +16398,9 @@ func (c *Client) RevokeEndpoint(ctx context.Context, body RevokeEndpointJSONRequ
 //     die, so reconnecting requires fresh consent (deliberately beyond the
 //     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 //     is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-//     64 KiB declared body length, and per-IP rate limited; its errors speak
-//     the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+//     64 KiB declared body length, and rate limited per client network
+//     (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+//     (RFC 7009 §2.2.1), not Problem Details.
 //   - **JSON** (any other content type — the pre-G11 contract, byte-identical
 //     including 422 shapes): requires a platform bearer identity; revokes the
 //     caller's own token (access → that token, refresh → its family). Used by
@@ -16963,7 +17028,11 @@ func (c *Client) ChangePassword(ctx context.Context, body ChangePasswordJSONRequ
 // The row is retained — the account is anonymized (tombstone email) and
 // deactivated so history and audit references stay resolvable — but the
 // action is terminal: there is no re-enable arm. For the reversible kill
-// switch use “:disable“ / “:enable“ instead.
+// switch use “:disable“ / “:enable“ instead. Deleting a user also cancels
+// their outstanding invites: redeeming one answers 409
+// “invite_already_redeemed“, the same as an invite replaced by a reissue.
+// Idempotent: deleting an already-deleted user answers 204 and changes
+// nothing.
 //
 // Corresponds with DELETE /users/{user_id} (the `DeleteUser` operationId).
 func (c *Client) DeleteUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -17003,7 +17072,8 @@ func (c *Client) GetUser(ctx context.Context, userId string, reqEditors ...Reque
 // Update a user's profile fields.
 //
 // Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
-// else only themselves. Any other user answers 404.
+// else only themselves. Any other user answers 404. A deleted user cannot be
+// edited (409).
 //
 // Takes any type of body and a specified content type.
 //
@@ -17025,7 +17095,8 @@ func (c *Client) UpdateUserWithBody(ctx context.Context, userId string, contentT
 // Update a user's profile fields.
 //
 // Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
-// else only themselves. Any other user answers 404.
+// else only themselves. Any other user answers 404. A deleted user cannot be
+// edited (409).
 //
 // Takes a body of the `application/json` content type.
 //
@@ -17046,6 +17117,8 @@ func (c *Client) UpdateUser(ctx context.Context, userId string, body UpdateUserJ
 //
 // Set the assigned permissions for a user.
 //
+// A deleted user's permissions cannot be changed (409).
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with PUT /users/{user_id}/permissions (the `SetUserPermissions` operationId).
@@ -17064,6 +17137,8 @@ func (c *Client) SetUserPermissionsWithBody(ctx context.Context, userId string, 
 // SetUserPermissions Set User Permissions
 //
 // Set the assigned permissions for a user.
+//
+// A deleted user's permissions cannot be changed (409).
 //
 // Takes a body of the `application/json` content type.
 //
@@ -17084,6 +17159,8 @@ func (c *Client) SetUserPermissions(ctx context.Context, userId string, body Set
 //
 // Disable a user account.
 //
+// A deleted user is already permanently inactive and cannot be disabled (409).
+//
 // Corresponds with POST /users/{user_id}:disable (the `DisableUser` operationId).
 func (c *Client) DisableUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDisableUserRequest(c.Server, userId)
@@ -17099,7 +17176,10 @@ func (c *Client) DisableUser(ctx context.Context, userId string, reqEditors ...R
 
 // EnableUser Enable User
 //
-// Enable a user account.
+// Enable a disabled user account.
+//
+// A deleted user cannot be re-enabled (409). Login sessions issued before the
+// account was disabled stay revoked; the user signs in again.
 //
 // Corresponds with POST /users/{user_id}:enable (the `EnableUser` operationId).
 func (c *Client) EnableUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -25891,11 +25971,21 @@ type ClientWithResponsesInterface interface {
 	// may call it, so a UI can label the owners, approvers and actors it
 	// already holds by id without `users:read`.
 	//
-	// Users resolve for every caller. Agents resolve only when visible to the
-	// caller: itself, its own agents, its owner's agents with
-	// `owner:agents:read`, or every agent for `org:admin`. Ids that match no
-	// visible actor are silently left out rather than reported as errors.
-	// Listing the whole directory needs `users:read` on `GET /actors`.
+	// Agents resolve when visible to the caller: itself, its own agents, its
+	// owner's agents with `owner:agents:read`, or every agent for `org:admin`.
+	// Users resolve when the caller can already see them by id: itself; the
+	// owner, registrant, approver or denier of an agent it can see, and the
+	// API key creator and key rotation/revocation actor of an agent it owns
+	// (with `agents:read`); the actor on an event it can see (with
+	// `events:read`); the decider of a held execution it can see; the
+	// consenting user of an OAuth grant bound to an agent it owns; the creator
+	// of a credential it can read (with `credentials:read` or
+	// `owner:credentials:read`); and, with `oauth-clients:read`, the
+	// consenting user of a grant bound to the caller itself and the creator of
+	// any OAuth client. `org:admin` resolves every user.
+	// Ids that match no visible actor are silently left
+	// out, exactly like unknown ids. Listing the whole directory needs
+	// `users:read` on `GET /actors`.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -26378,8 +26468,8 @@ type ClientWithResponsesInterface interface {
 	// granted scopes, the consenting user, its `status`, created and last-used
 	// timestamps, and `can_revoke` for the caller. Filter by `status`
 	// (`active` or `revoked`); results are cursor-paginated. Allowed for the
-	// agent's owner or an admin. An agent the caller cannot see answers 404,
-	// the same as one that does not exist. Revoke a grant with
+	// agent's owner or an admin; any other caller gets 404, the same as for an
+	// agent that does not exist. Revoke a grant with
 	// `POST /oauth-grants/{grant_id}:revoke`.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -26984,8 +27074,9 @@ type ClientWithResponsesInterface interface {
 	// ``must_change_password`` gate are re-read from the database at re-mint.
 	// Refusal modes: 401 ``session_expired`` once the original authentication is
 	// older than the absolute window (``admin.auth.session_ttl_seconds``), 401
-	// ``invalid_credentials`` for deactivated users, non-user tokens, or opaque
-	// (non-JWT) credentials. Clients should then send the user back to login.
+	// ``unauthorized`` from the auth gate for a disabled, deleted or unknown user,
+	// and 401 ``invalid_credentials`` for non-user tokens or opaque (non-JWT)
+	// credentials. Clients should then send the user back to login.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -27473,6 +27564,9 @@ type ClientWithResponsesInterface interface {
 	//
 	// Stream events as Server-Sent Events.
 	//
+	// The stream ends once the caller's credential stops verifying (expired,
+	// revoked, or its user disabled or deleted); reconnecting then returns 401.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /events/stream (the `StreamEvents` operationId).
@@ -27805,6 +27899,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// List notes with optional filters and cursor pagination.
 	//
+	// Returns the caller's own notes; a user also sees the notes of agents they own.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /notes (the `ListNotes` operationId).
@@ -27840,6 +27936,9 @@ type ClientWithResponsesInterface interface {
 	// GetNoteWithResponse Get Note
 	//
 	// Retrieve a single note by ID.
+	//
+	// A user can read the notes of agents they own, but only a note's author (or
+	// an org admin) can update or delete it.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -28020,7 +28119,10 @@ type ClientWithResponsesInterface interface {
 	//
 	// Revoke a consent→agent grant — one of the three revocation kill radii.
 	//
-	// Allowed for the grant's owner (the consenting user) or an admin. Marks
+	// Allowed for the grant's owner (the consenting user) or an admin. A grant
+	// the caller cannot see answers 404, the same as one that does not exist;
+	// a caller who can see it but may not revoke it (the bound agent, or the
+	// agent's owner when someone else consented) gets 403. Marks
 	// the grant ``revoked`` and revokes every outstanding access/refresh token
 	// minted under it in the same transaction; the live resolvers also re-check
 	// grant status on every verdict (belt + braces). The client's next token
@@ -28175,8 +28277,8 @@ type ClientWithResponsesInterface interface {
 	// page treats a 400 as terminal ("retry the connection") because the blob
 	// shares the consent handle's lifetime — a retry re-enters the flow, which
 	// re-parks on a fresh awaiting page while the agent stays pending. Shares
-	// the approval-status poll's own per-IP rate bucket (same cadence, same
-	// caller shape).
+	// the approval-status poll's own per-client-network rate bucket (same
+	// cadence, same caller shape).
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -28253,8 +28355,9 @@ type ClientWithResponsesInterface interface {
 	//   die, so reconnecting requires fresh consent (deliberately beyond the
 	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-	//   64 KiB declared body length, and per-IP rate limited; its errors speak
-	//   the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+	//   64 KiB declared body length, and rate limited per client network
+	//   (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+	//   (RFC 7009 §2.2.1), not Problem Details.
 	// - **JSON** (any other content type — the pre-G11 contract, byte-identical
 	//   including 422 shapes): requires a platform bearer identity; revokes the
 	//   caller's own token (access → that token, refresh → its family). Used by
@@ -28289,8 +28392,9 @@ type ClientWithResponsesInterface interface {
 	//   die, so reconnecting requires fresh consent (deliberately beyond the
 	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-	//   64 KiB declared body length, and per-IP rate limited; its errors speak
-	//   the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+	//   64 KiB declared body length, and rate limited per client network
+	//   (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+	//   (RFC 7009 §2.2.1), not Problem Details.
 	// - **JSON** (any other content type — the pre-G11 contract, byte-identical
 	//   including 422 shapes): requires a platform bearer identity; revokes the
 	//   caller's own token (access → that token, refresh → its family). Used by
@@ -28325,8 +28429,9 @@ type ClientWithResponsesInterface interface {
 	//   die, so reconnecting requires fresh consent (deliberately beyond the
 	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-	//   64 KiB declared body length, and per-IP rate limited; its errors speak
-	//   the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+	//   64 KiB declared body length, and rate limited per client network
+	//   (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+	//   (RFC 7009 §2.2.1), not Problem Details.
 	// - **JSON** (any other content type — the pre-G11 contract, byte-identical
 	//   including 422 shapes): requires a platform bearer identity; revokes the
 	//   caller's own token (access → that token, refresh → its family). Used by
@@ -28694,7 +28799,11 @@ type ClientWithResponsesInterface interface {
 	// The row is retained — the account is anonymized (tombstone email) and
 	// deactivated so history and audit references stay resolvable — but the
 	// action is terminal: there is no re-enable arm. For the reversible kill
-	// switch use ``:disable`` / ``:enable`` instead.
+	// switch use ``:disable`` / ``:enable`` instead. Deleting a user also cancels
+	// their outstanding invites: redeeming one answers 409
+	// ``invite_already_redeemed``, the same as an invite replaced by a reissue.
+	// Idempotent: deleting an already-deleted user answers 204 and changes
+	// nothing.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -28718,7 +28827,8 @@ type ClientWithResponsesInterface interface {
 	// Update a user's profile fields.
 	//
 	// Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
-	// else only themselves. Any other user answers 404.
+	// else only themselves. Any other user answers 404. A deleted user cannot be
+	// edited (409).
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -28730,7 +28840,8 @@ type ClientWithResponsesInterface interface {
 	// Update a user's profile fields.
 	//
 	// Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
-	// else only themselves. Any other user answers 404.
+	// else only themselves. Any other user answers 404. A deleted user cannot be
+	// edited (409).
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -28741,6 +28852,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Set the assigned permissions for a user.
 	//
+	// A deleted user's permissions cannot be changed (409).
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /users/{user_id}/permissions (the `SetUserPermissions` operationId).
@@ -28749,6 +28862,8 @@ type ClientWithResponsesInterface interface {
 	// SetUserPermissionsWithResponse Set User Permissions
 	//
 	// Set the assigned permissions for a user.
+	//
+	// A deleted user's permissions cannot be changed (409).
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -28759,6 +28874,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Disable a user account.
 	//
+	// A deleted user is already permanently inactive and cannot be disabled (409).
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /users/{user_id}:disable (the `DisableUser` operationId).
@@ -28766,7 +28883,10 @@ type ClientWithResponsesInterface interface {
 
 	// EnableUserWithResponse Enable User
 	//
-	// Enable a user account.
+	// Enable a disabled user account.
+	//
+	// A deleted user cannot be re-enabled (409). Login sessions issued before the
+	// account was disabled stay revoked; the user signs in again.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -43104,6 +43224,10 @@ type EnableUserHTTPResp struct {
 	ApplicationproblemJSON401 *ProblemDetail
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -43127,6 +43251,16 @@ func (r EnableUserHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r EnableUserHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r EnableUserHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r EnableUserHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -43189,6 +43323,10 @@ type ReissueInviteHTTPResp struct {
 	ApplicationproblemJSON401 *ProblemDetail
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -43217,6 +43355,16 @@ func (r ReissueInviteHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r ReissueInviteHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ReissueInviteHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r ReissueInviteHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -43638,11 +43786,21 @@ func (c *ClientWithResponses) ListActorsWithResponse(ctx context.Context, params
 // may call it, so a UI can label the owners, approvers and actors it
 // already holds by id without `users:read`.
 //
-// Users resolve for every caller. Agents resolve only when visible to the
-// caller: itself, its own agents, its owner's agents with
-// `owner:agents:read`, or every agent for `org:admin`. Ids that match no
-// visible actor are silently left out rather than reported as errors.
-// Listing the whole directory needs `users:read` on `GET /actors`.
+// Agents resolve when visible to the caller: itself, its own agents, its
+// owner's agents with `owner:agents:read`, or every agent for `org:admin`.
+// Users resolve when the caller can already see them by id: itself; the
+// owner, registrant, approver or denier of an agent it can see, and the
+// API key creator and key rotation/revocation actor of an agent it owns
+// (with `agents:read`); the actor on an event it can see (with
+// `events:read`); the decider of a held execution it can see; the
+// consenting user of an OAuth grant bound to an agent it owns; the creator
+// of a credential it can read (with `credentials:read` or
+// `owner:credentials:read`); and, with `oauth-clients:read`, the
+// consenting user of a grant bound to the caller itself and the creator of
+// any OAuth client. `org:admin` resolves every user.
+// Ids that match no visible actor are silently left
+// out, exactly like unknown ids. Listing the whole directory needs
+// `users:read` on `GET /actors`.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -44335,8 +44493,8 @@ func (c *ClientWithResponses) UpdateAgentJwksWithResponse(ctx context.Context, a
 // granted scopes, the consenting user, its `status`, created and last-used
 // timestamps, and `can_revoke` for the caller. Filter by `status`
 // (`active` or `revoked`); results are cursor-paginated. Allowed for the
-// agent's owner or an admin. An agent the caller cannot see answers 404,
-// the same as one that does not exist. Revoke a grant with
+// agent's owner or an admin; any other caller gets 404, the same as for an
+// agent that does not exist. Revoke a grant with
 // `POST /oauth-grants/{grant_id}:revoke`.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -45211,8 +45369,9 @@ func (c *ClientWithResponses) LoginWithResponse(ctx context.Context, body LoginJ
 // “must_change_password“ gate are re-read from the database at re-mint.
 // Refusal modes: 401 “session_expired“ once the original authentication is
 // older than the absolute window (“admin.auth.session_ttl_seconds“), 401
-// “invalid_credentials“ for deactivated users, non-user tokens, or opaque
-// (non-JWT) credentials. Clients should then send the user back to login.
+// “unauthorized“ from the auth gate for a disabled, deleted or unknown user,
+// and 401 “invalid_credentials“ for non-user tokens or opaque (non-JWT)
+// credentials. Clients should then send the user back to login.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -45934,6 +46093,9 @@ func (c *ClientWithResponses) ListEventsWithResponse(ctx context.Context, params
 //
 // Stream events as Server-Sent Events.
 //
+// The stream ends once the caller's credential stops verifying (expired,
+// revoked, or its user disabled or deleted); reconnecting then returns 401.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /events/stream (the `StreamEvents` operationId).
@@ -46416,6 +46578,8 @@ func (c *ClientWithResponses) GetUsageStatsWithResponse(ctx context.Context, par
 //
 // List notes with optional filters and cursor pagination.
 //
+// Returns the caller's own notes; a user also sees the notes of agents they own.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /notes (the `ListNotes` operationId).
@@ -46475,6 +46639,9 @@ func (c *ClientWithResponses) DeleteNoteWithResponse(ctx context.Context, noteId
 // GetNoteWithResponse Get Note
 //
 // Retrieve a single note by ID.
+//
+// A user can read the notes of agents they own, but only a note's author (or
+// an org admin) can update or delete it.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -46739,7 +46906,10 @@ func (c *ClientWithResponses) RegisterOauthClientEndpointWithResponse(ctx contex
 //
 // Revoke a consent→agent grant — one of the three revocation kill radii.
 //
-// Allowed for the grant's owner (the consenting user) or an admin. Marks
+// Allowed for the grant's owner (the consenting user) or an admin. A grant
+// the caller cannot see answers 404, the same as one that does not exist;
+// a caller who can see it but may not revoke it (the bound agent, or the
+// agent's owner when someone else consented) gets 403. Marks
 // the grant “revoked“ and revokes every outstanding access/refresh token
 // minted under it in the same transaction; the live resolvers also re-check
 // grant status on every verdict (belt + braces). The client's next token
@@ -46930,8 +47100,8 @@ func (c *ClientWithResponses) ConsentAgentCreateWithFormdataBodyWithResponse(ctx
 // page treats a 400 as terminal ("retry the connection") because the blob
 // shares the consent handle's lifetime — a retry re-enters the flow, which
 // re-parks on a fresh awaiting page while the agent stays pending. Shares
-// the approval-status poll's own per-IP rate bucket (same cadence, same
-// caller shape).
+// the approval-status poll's own per-client-network rate bucket (same
+// cadence, same caller shape).
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -47032,8 +47202,9 @@ func (c *ClientWithResponses) IntrospectEndpointWithFormdataBodyWithResponse(ctx
 //     die, so reconnecting requires fresh consent (deliberately beyond the
 //     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 //     is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-//     64 KiB declared body length, and per-IP rate limited; its errors speak
-//     the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+//     64 KiB declared body length, and rate limited per client network
+//     (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+//     (RFC 7009 §2.2.1), not Problem Details.
 //   - **JSON** (any other content type — the pre-G11 contract, byte-identical
 //     including 422 shapes): requires a platform bearer identity; revokes the
 //     caller's own token (access → that token, refresh → its family). Used by
@@ -47074,8 +47245,9 @@ func (c *ClientWithResponses) RevokeEndpointWithBodyWithResponse(ctx context.Con
 //     die, so reconnecting requires fresh consent (deliberately beyond the
 //     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 //     is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-//     64 KiB declared body length, and per-IP rate limited; its errors speak
-//     the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+//     64 KiB declared body length, and rate limited per client network
+//     (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+//     (RFC 7009 §2.2.1), not Problem Details.
 //   - **JSON** (any other content type — the pre-G11 contract, byte-identical
 //     including 422 shapes): requires a platform bearer identity; revokes the
 //     caller's own token (access → that token, refresh → its family). Used by
@@ -47116,8 +47288,9 @@ func (c *ClientWithResponses) RevokeEndpointWithResponse(ctx context.Context, bo
 //     die, so reconnecting requires fresh consent (deliberately beyond the
 //     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
 //     is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-//     64 KiB declared body length, and per-IP rate limited; its errors speak
-//     the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+//     64 KiB declared body length, and rate limited per client network
+//     (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+//     (RFC 7009 §2.2.1), not Problem Details.
 //   - **JSON** (any other content type — the pre-G11 contract, byte-identical
 //     including 422 shapes): requires a platform bearer identity; revokes the
 //     caller's own token (access → that token, refresh → its family). Used by
@@ -47653,7 +47826,11 @@ func (c *ClientWithResponses) ChangePasswordWithResponse(ctx context.Context, bo
 // The row is retained — the account is anonymized (tombstone email) and
 // deactivated so history and audit references stay resolvable — but the
 // action is terminal: there is no re-enable arm. For the reversible kill
-// switch use “:disable“ / “:enable“ instead.
+// switch use “:disable“ / “:enable“ instead. Deleting a user also cancels
+// their outstanding invites: redeeming one answers 409
+// “invite_already_redeemed“, the same as an invite replaced by a reissue.
+// Idempotent: deleting an already-deleted user answers 204 and changes
+// nothing.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -47689,7 +47866,8 @@ func (c *ClientWithResponses) GetUserWithResponse(ctx context.Context, userId st
 // Update a user's profile fields.
 //
 // Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
-// else only themselves. Any other user answers 404.
+// else only themselves. Any other user answers 404. A deleted user cannot be
+// edited (409).
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -47707,7 +47885,8 @@ func (c *ClientWithResponses) UpdateUserWithBodyWithResponse(ctx context.Context
 // Update a user's profile fields.
 //
 // Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
-// else only themselves. Any other user answers 404.
+// else only themselves. Any other user answers 404. A deleted user cannot be
+// edited (409).
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -47724,6 +47903,8 @@ func (c *ClientWithResponses) UpdateUserWithResponse(ctx context.Context, userId
 //
 // Set the assigned permissions for a user.
 //
+// A deleted user's permissions cannot be changed (409).
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /users/{user_id}/permissions (the `SetUserPermissions` operationId).
@@ -47738,6 +47919,8 @@ func (c *ClientWithResponses) SetUserPermissionsWithBodyWithResponse(ctx context
 // SetUserPermissionsWithResponse Set User Permissions
 //
 // Set the assigned permissions for a user.
+//
+// A deleted user's permissions cannot be changed (409).
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -47754,6 +47937,8 @@ func (c *ClientWithResponses) SetUserPermissionsWithResponse(ctx context.Context
 //
 // Disable a user account.
 //
+// A deleted user is already permanently inactive and cannot be disabled (409).
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /users/{user_id}:disable (the `DisableUser` operationId).
@@ -47767,7 +47952,10 @@ func (c *ClientWithResponses) DisableUserWithResponse(ctx context.Context, userI
 
 // EnableUserWithResponse Enable User
 //
-// Enable a user account.
+// Enable a disabled user account.
+//
+// A deleted user cannot be re-enabled (409). Login sessions issued before the
+// account was disabled stay revoked; the user signs in again.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -59895,6 +60083,20 @@ func ParseEnableUserHTTPResp(rsp *http.Response) (*EnableUserHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -59969,6 +60171,20 @@ func ParseReissueInviteHTTPResp(rsp *http.Response) (*ReissueInviteHTTPResp, err
 			return nil, err
 		}
 		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail

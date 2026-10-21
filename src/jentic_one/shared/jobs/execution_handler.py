@@ -15,19 +15,27 @@ Before any credential is resolved the job is **re-authorized** through the
 injected ``ExecutionAuthorizer`` — the sync route's policy (actor still active
 and holding the execute scope, binding still present and not suspended,
 permission rules still allow),
-evaluated at run time rather than trusted from enqueue time. A denied job
-completes with a ``failed`` result carrying the problem body the sync route
-would have returned; no credential is injected and no upstream call is made.
+evaluated at run time rather than trusted from enqueue time. The identity
+credentials are then resolved for is built from one fresh read of the actor's
+rows through the injected ``ActorStatusReader`` (liveness and the execute
+permission together), taken after those authorization reads and immediately
+before injection and dispatch: an actor that is no longer active (or no longer
+exists), or that has lost the execute permission, is denied there too. A
+denied job completes with a ``failed`` result carrying the problem body the
+sync route would have returned; no credential is injected and no upstream
+call is made.
 
 ``shared/jobs/`` must not import ``broker/`` (arch boundary): the
-``ExecutionAuthorizer``, ``CredentialInjector`` and ``UpstreamExecutor`` are
-protocols satisfied by broker-side implementations injected at worker startup.
+``ExecutionAuthorizer``, ``ActorStatusReader``, ``CredentialInjector`` and
+``UpstreamExecutor`` are protocols satisfied by broker-side implementations
+injected at worker startup.
 """
 
 from __future__ import annotations
 
 import base64
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlencode, urlparse, urlunparse
@@ -35,6 +43,7 @@ from urllib.parse import urlencode, urlparse, urlunparse
 import structlog
 
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION
 from jentic_one.shared.config import SecurityConfig
 from jentic_one.shared.crypto.encryption import EncryptionService
 from jentic_one.shared.db.connectivity import involves_database_error, redact_sql
@@ -53,13 +62,20 @@ from jentic_one.shared.jobs.handlers import JobResultPayload
 from jentic_one.shared.jobs.hold import ENCRYPTED_PAYLOAD_KEY
 from jentic_one.shared.jobs.operation_payload import operation_from_job_payload
 from jentic_one.shared.jobs.protocols import (
+    ActorStatusReader,
     CredentialInjector,
     ExecutionAuthorizer,
     ExecutionRecordNotPersistedError,
     InjectedAuth,
     QueuedExecutionRequest,
+    QueuedExecutionVerdict,
     UpstreamExecRequest,
     UpstreamExecutor,
+)
+from jentic_one.shared.jobs.queued_denials import (
+    inactive_actor_problem,
+    insufficient_scope_problem,
+    queued_execution_instance,
 )
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ActorType as ActorTypeEnum
@@ -125,10 +141,8 @@ _HELD_PAYLOAD_UNDECRYPTABLE_PROBLEM: dict[str, Any] = {
     "error_origin": "broker",
 }
 
-# The resolved-identity dataclass needs an ``active`` flag; the worker only
-# injects after the job passed the run-time ``ExecutionAuthorizer`` re-check
-# (which includes the actor-still-active check), so it is always True here.
-_WORKER_IDENTITY_ACTIVE = True
+#: A pre-injection refusal: the log ``reason`` and the problem-body builder.
+_PreInjectionDenial = tuple[str, Callable[[str], dict[str, object]]]
 
 
 class ExecutionHandler:
@@ -144,6 +158,7 @@ class ExecutionHandler:
         security_config: SecurityConfig | None = None,
         execution_authorizer: ExecutionAuthorizer | None = None,
         encryption: EncryptionService | None = None,
+        actor_status: ActorStatusReader | None = None,
         repeated_failure_counter: RepeatedFailureCounter | None = None,
     ) -> None:
         if credential_injector is not None and execution_authorizer is None:
@@ -151,8 +166,17 @@ class ExecutionHandler:
             # job without re-checking its authorization would honour an
             # enqueue-time decision the actor/binding/rules may have revoked.
             raise ValueError("credential_injector requires an execution_authorizer")
+        if credential_injector is not None and actor_status is None:
+            # Same reason: without a live actor read, the identity used for
+            # injection could not reflect a disable that lands after enqueue.
+            raise ValueError("credential_injector requires an actor_status reader")
+        if actor_status is not None and execution_authorizer is None:
+            # The live actor read runs only after the run-time authorizer
+            # allows the job; a reader on its own would never be consulted.
+            raise ValueError("actor_status requires an execution_authorizer")
         self._executor = executor
         self._authorizer = execution_authorizer
+        self._actor_status = actor_status
         self._timeout = upstream_timeout_s
         self._credential_injector = credential_injector
         self._egress = egress
@@ -234,6 +258,7 @@ class ExecutionHandler:
         # the boundary injection uses is the one re-derived *now*.
         allowed: tuple[str, ...] = ()
         pinned_credential_id: str | None = None
+        identity: Identity | None = None
         if self._authorizer is not None:
             verdict = await self._authorizer.authorize(
                 QueuedExecutionRequest(
@@ -246,12 +271,30 @@ class ExecutionHandler:
                     api_version=api_version or "",
                     operation_id=operation.id if operation else None,
                     relative_path=operation.relative_path if operation else None,
+                    operation_path=operation.path if operation else None,
+                    trace_id=trace_id,
                     credential_id=payload.get("credential_id"),
                     server_variables=server_variables,
                     server_variables_unresolved=server_variables_unresolved,
                     job_id=job_id,
                 )
             )
+            # One live read of the actor's rows (liveness + the execute
+            # permission), after the authorization reads and right before any
+            # credential is decrypted or the upstream is called, so a disable
+            # or revocation that commits while the job is being re-authorized
+            # still stops it. A refusal comes back as a denied verdict and is
+            # recorded below like any other run-time denial.
+            if verdict.allowed and self._actor_status is not None:
+                identity, verdict = await self._recheck_actor(
+                    self._actor_status,
+                    verdict,
+                    job_id=job_id,
+                    execution_id=execution_id,
+                    created_by=created_by,
+                    actor_type=actor_type,
+                    upstream_url=upstream_url,
+                )
             if not verdict.allowed:
                 return await self._deny(
                     db,
@@ -273,6 +316,11 @@ class ExecutionHandler:
         credential_name: str | None = None
         signing = None
         if self._credential_injector is not None and api_vendor:
+            if identity is None:
+                # Unreachable while the constructor's wiring invariant holds
+                # (an injector implies an authorizer and an actor_status
+                # reader); refuse loudly rather than send the call unchecked.
+                raise RuntimeError("credential injection reached without a live actor identity")
             # The injection boundary is the one the run-time re-authorization
             # just derived (the caller's currently bound credentials) — never
             # the enqueue-time snapshot in the payload. An empty boundary
@@ -281,7 +329,7 @@ class ExecutionHandler:
                 api_vendor=api_vendor,
                 api_name=api_name or "",
                 api_version=api_version or "",
-                identity=_worker_identity(created_by, actor_type),
+                identity=identity,
                 credential_id=pinned_credential_id,
                 allowed_credential_ids=list(allowed),
                 trace_id=trace_id,
@@ -416,6 +464,74 @@ class ExecutionHandler:
             result_body["body_b64"] = base64.b64encode(response_body).decode()
 
         return JobResultPayload(body=result_body, content_type=content_type)
+
+    async def _recheck_actor(
+        self,
+        actor_status: ActorStatusReader,
+        verdict: QueuedExecutionVerdict,
+        *,
+        job_id: str,
+        execution_id: str,
+        created_by: str,
+        actor_type: str,
+        upstream_url: str,
+    ) -> tuple[Identity | None, QueuedExecutionVerdict]:
+        """Re-read the actor right before injection: the identity to inject for, or a denial.
+
+        Called only once the authorizer has allowed the job. Returns
+        ``(identity, verdict)`` with the verdict unchanged when the actor is
+        still active and still holds the execute permission, else
+        ``(None, denied verdict)`` carrying the sync edge's problem body, so
+        the caller records it like any other run-time denial. An actor type
+        that is no longer issued (a retired ``toolkit`` / ``service_account``
+        job) is refused before any read.
+
+        The worker holds no token for the actor, so it resolves the credential
+        by the actor's id and type, mirroring the sync path's ``identity``
+        argument to ``CredentialInjector.inject``. ``permissions`` is
+        intentionally empty: the injector only uses ``sub`` + ``actor_type``.
+        """
+        denial = await self._actor_denial(actor_status, created_by, actor_type)
+        if denial is None:
+            identity = Identity(
+                sub=created_by,
+                actor_type=ActorTypeEnum(actor_type),
+                permissions=[],
+                expires_at=None,
+                active=True,
+            )
+            return identity, verdict
+        reason, problem_for = denial
+        logger.info(
+            "queued_execution_denied",
+            reason=reason,
+            stage="pre_injection",
+            job_id=job_id,
+            execution_id=execution_id,
+            actor_id=created_by,
+            actor_type=actor_type,
+        )
+        return None, QueuedExecutionVerdict(
+            allowed=False, problem=problem_for(queued_execution_instance(upstream_url))
+        )
+
+    @staticmethod
+    async def _actor_denial(
+        actor_status: ActorStatusReader, created_by: str, actor_type: str
+    ) -> _PreInjectionDenial | None:
+        """Why the live read refuses the actor, or ``None`` when it may still execute."""
+        try:
+            ActorTypeEnum(actor_type)
+        except ValueError:
+            return "actor_type_retired", inactive_actor_problem
+        authority = await actor_status.authority(
+            actor_id=created_by, actor_type=actor_type, permission=BROKER_EXECUTE_PERMISSION
+        )
+        if not authority.active:
+            return "actor_inactive", inactive_actor_problem
+        if not authority.holds_permission:
+            return "insufficient_scope", insufficient_scope_problem
+        return None
 
     async def _deny(
         self,
@@ -582,26 +698,6 @@ class ExecutionHandler:
                 config=self._security_config,
                 failure_counter=self._repeated_failure_counter,
             )
-
-
-def _worker_identity(created_by: str, actor_type: str) -> Identity:
-    """A minimal resolved identity for credential resolution by the worker.
-
-    The inbound token was validated at enqueue time; the worker resolves the
-    credential by the enqueuing actor's identity, mirroring the sync path's
-    ``identity`` argument to ``CredentialInjector.inject``.
-
-    ``permissions`` is intentionally empty: the credential injector only uses
-    ``sub`` + ``actor_type`` to resolve the credential row — RBAC permissions
-    were already enforced at enqueue time (execute:write gate on the API route).
-    """
-    return Identity(
-        sub=created_by,
-        actor_type=ActorTypeEnum(actor_type),
-        permissions=[],
-        expires_at=None,
-        active=_WORKER_IDENTITY_ACTIVE,
-    )
 
 
 @dataclass(frozen=True, slots=True)

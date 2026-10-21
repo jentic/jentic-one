@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import builtins
+import copy
 import io
 import os
 import threading
@@ -42,6 +43,7 @@ from jentic_one.shared.config import (
     SigningKeyConfig,
     TelemetryConfig,
     TrustedIssuerConfig,
+    WorkerConfig,
     _apps_for_secret_guard,
     _csv_to_list,
     _deep_merge,
@@ -61,6 +63,7 @@ from jentic_one.shared.state import (
     BackendKind,
     MemoryBackendConfig,
     MemoryStateBackend,
+    NamespaceBudget,
     StateBackendConfig,
     build_state_backend,
 )
@@ -2296,15 +2299,19 @@ def test_entitlement_env_override_round_trip(config_file: Path):
     assert config.entitlement.refresh_interval_seconds == 600
 
 
-def test_db_connection_tunables_default_and_env_override(config_file: Path):
-    """Pool recycle and TCP keepalive are per-database ``databases.*`` settings."""
+def test_db_connection_tunables_default_and_env_override(
+    config_file: Path, tmp_path: Path, sample_config_dict: dict[str, Any]
+):
+    """Pre-ping, pool recycle and TCP keepalive are per-database ``databases.*`` settings."""
     default = load_config(config_file).databases.registry
+    assert default.pool_pre_ping is True
     assert default.pool_recycle_s == config_module.POOL_RECYCLE_S == 1800
     assert default.tcp_keepalive is True
     assert default.tcp_keepalive_idle_s == config_module.TCP_KEEPALIVE_IDLE_S == 60
     assert default.tcp_keepalive_interval_s == config_module.TCP_KEEPALIVE_INTERVAL_S == 10
     assert default.tcp_keepalive_count == config_module.TCP_KEEPALIVE_COUNT == 5
     env = {
+        "JENTIC__DATABASES__REGISTRY__POOL_PRE_PING": "false",
         "JENTIC__DATABASES__REGISTRY__POOL_RECYCLE_S": "0",
         "JENTIC__DATABASES__REGISTRY__TCP_KEEPALIVE": "false",
         "JENTIC__DATABASES__CONTROL__TCP_KEEPALIVE_IDLE_S": "30",
@@ -2313,12 +2320,22 @@ def test_db_connection_tunables_default_and_env_override(config_file: Path):
     }
     with patch.dict(os.environ, env, clear=False):
         config = load_config(config_file)
+    assert config.databases.registry.pool_pre_ping is False
     assert config.databases.registry.pool_recycle_s == 0
     assert config.databases.registry.tcp_keepalive is False
     control = config.databases.control
+    assert control.pool_pre_ping is True
     assert (control.tcp_keepalive_idle_s, control.tcp_keepalive_interval_s) == (30, 3)
     assert control.tcp_keepalive_count == 9
     assert config.databases.admin.tcp_keepalive_idle_s == 60
+
+    doc = copy.deepcopy(sample_config_dict)
+    doc["databases"]["admin"]["pool_pre_ping"] = False
+    from_yaml = tmp_path / "no-pre-ping.yaml"
+    from_yaml.write_text(yaml.dump(doc))
+    databases = load_config(from_yaml).databases
+    assert databases.admin.pool_pre_ping is False
+    assert databases.registry.pool_pre_ping is True
 
 
 @pytest.mark.parametrize(
@@ -2467,6 +2484,116 @@ def test_http_jwks_url_env_override_rejected_in_production(config_file: Path):
         load_config(config_file)
 
 
+def test_worker_poll_and_concurrency_defaults_keep_serial_2s_poll():
+    cfg = WorkerConfig()
+    assert cfg.poll_interval_s == 2.0
+    assert cfg.concurrency == 1
+
+
+def test_worker_poll_and_concurrency_from_yaml(tmp_path: Path):
+    config = _load(tmp_path, {"worker": {"poll_interval_s": 0.25, "concurrency": 4}})
+    assert config.worker.poll_interval_s == 0.25
+    assert config.worker.concurrency == 4
+
+
+def test_worker_poll_and_concurrency_from_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("JENTIC__WORKER__POLL_INTERVAL_S", "0.5")
+    monkeypatch.setenv("JENTIC__WORKER__CONCURRENCY", "4")
+    config = _load(tmp_path, {})
+    assert config.worker.poll_interval_s == 0.5
+    assert config.worker.concurrency == 4
+
+
+@pytest.mark.parametrize("value", [0.25, 60.0])
+def test_worker_poll_interval_accepts_bounds(value: float):
+    assert WorkerConfig(poll_interval_s=value).poll_interval_s == value
+
+
+@pytest.mark.parametrize("value", [0.0, 0.05, 0.249, 60.01, -1.0])
+def test_worker_poll_interval_rejects_out_of_bounds(value: float):
+    with pytest.raises(ValidationError):
+        WorkerConfig(poll_interval_s=value)
+
+
+@pytest.mark.parametrize("value", [0, -1, 65])
+def test_worker_concurrency_rejects_out_of_bounds(value: int):
+    with pytest.raises(ValidationError):
+        WorkerConfig(concurrency=value)
+
+
+def _with_admin(tmp_path: Path, admin: dict[str, Any], concurrency: int) -> AppConfig:
+    dbs = {**_min_dbs(), "admin": admin}
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.safe_dump({"databases": dbs, "worker": {"concurrency": concurrency}}))
+    return load_config(path)
+
+
+def test_worker_concurrency_above_one_is_refused_on_sqlite(tmp_path: Path):
+    """The handler's SQLite write lock spans the upstream call: only serial is safe."""
+    sqlite_admin = {"backend": "sqlite", "path": str(tmp_path / "admin.db")}
+    assert _with_admin(tmp_path, sqlite_admin, 1).worker.concurrency == 1
+    with pytest.raises(ConfigError, match=r"worker.concurrency=2 is not supported with a sqlite"):
+        _with_admin(tmp_path, sqlite_admin, 2)
+
+
+def test_worker_concurrency_above_one_is_refused_on_sqlite_via_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("JENTIC__WORKER__CONCURRENCY", "3")
+    sqlite_admin = {"backend": "sqlite", "path": str(tmp_path / "admin.db")}
+    with pytest.raises(ConfigError, match=r"not supported with a sqlite admin database"):
+        _with_admin(tmp_path, sqlite_admin, 1)
+
+
+@pytest.mark.parametrize(
+    ("pool_max", "concurrency", "ok"),
+    [
+        (10, 4, True),  # 8 connections < 10
+        (10, 5, False),  # 10 connections: no headroom
+        (10, 6, False),
+        (9, 4, True),
+        (8, 4, False),
+        (2, 1, True),  # serial is never refused
+        (129, 64, True),
+    ],
+)
+def test_worker_concurrency_must_fit_the_admin_pool_on_postgres(
+    tmp_path: Path, pool_max: int, concurrency: int, ok: bool
+):
+    """Each in-flight job holds ~2 admin connections; 2 x concurrency must stay below pool_max."""
+    admin = {"name": "admin", "pool_max": pool_max}
+    if ok:
+        assert _with_admin(tmp_path, admin, concurrency).worker.concurrency == concurrency
+    else:
+        with pytest.raises(ConfigError, match=r"2 per in-flight job.*pool_max"):
+            _with_admin(tmp_path, admin, concurrency)
+
+
+def test_worker_concurrency_pool_error_suggests_a_fitting_value(tmp_path: Path):
+    with pytest.raises(ConfigError, match=r"lower worker.concurrency to 4"):
+        _with_admin(tmp_path, {"name": "admin", "pool_max": 10}, 8)
+
+
+def test_worker_sweep_interval_default_yaml_and_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    assert WorkerConfig().sweep_interval_s == 120.0
+    assert _load(tmp_path, {"worker": {"sweep_interval_s": 30}}).worker.sweep_interval_s == 30.0
+    monkeypatch.setenv("JENTIC__WORKER__SWEEP_INTERVAL_S", "600")
+    assert _load(tmp_path, {}).worker.sweep_interval_s == 600.0
+
+
+@pytest.mark.parametrize("value", [1.0, 86_400.0])
+def test_worker_sweep_interval_accepts_bounds(value: float):
+    assert WorkerConfig(sweep_interval_s=value).sweep_interval_s == value
+
+
+@pytest.mark.parametrize("value", [0.0, 0.99, 86_400.1, -5.0])
+def test_worker_sweep_interval_rejects_out_of_bounds(value: float):
+    with pytest.raises(ValidationError):
+        WorkerConfig(sweep_interval_s=value)
+
+
 # --- memory shared-state backend budgets --------------------------------------
 
 
@@ -2513,6 +2640,23 @@ def test_an_idem_override_keeps_the_per_caller_share_unless_set():
     assert budgets["idem"].max_owner_share == 0.1
     assert budgets["idem-body"].max_owner_share == 1.0
     assert budgets["cb"].max_owner_share is None
+
+
+def test_login_csrf_has_a_per_client_share_sized_like_other_namespaces():
+    default = MemoryBackendConfig().budgets()["login-csrf"]
+    assert default.max_owner_share == 0.02
+    assert default.max_entries == 100_000
+    assert default.max_bytes == 16 * 1024 * 1024
+
+    # It follows the per-namespace defaults, and an override keeps the share.
+    resized = MemoryBackendConfig(max_entries_per_namespace=7, max_bytes_per_namespace=9_000)
+    assert resized.budgets()["login-csrf"] == NamespaceBudget(
+        max_entries=7, max_bytes=9_000, max_owner_share=0.02
+    )
+    overridden = MemoryBackendConfig.model_validate(
+        {"namespaces": {"login-csrf": {"max_entries": 10, "max_bytes": 10_000}}}
+    )
+    assert overridden.budgets()["login-csrf"].max_owner_share == 0.02
 
 
 @pytest.mark.parametrize(

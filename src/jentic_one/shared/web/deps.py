@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Coroutine
+from enum import StrEnum
 from typing import Any
 
 from fastapi import Depends, Request
@@ -11,6 +12,7 @@ from jentic.problem_details import Forbidden, Unauthorized
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import compute_effective
 from jentic_one.shared.context import Context
+from jentic_one.shared.db.errors import DatabaseUnavailableError
 from jentic_one.shared.events.mcp_session import SESSION_ID_HEADER, schedule_mcp_session_emit
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.actors import Origin
@@ -53,7 +55,10 @@ async def resolve_identity(request: Request) -> Identity:
     verify_token: TokenVerifier = request.app.state.verify_token
     try:
         identity = await verify_token(credential, request)
-    except (Unauthorized, Forbidden):
+    except (Unauthorized, Forbidden, DatabaseUnavailableError):
+        # A database that cannot answer is not a bad credential: the surface's
+        # handler turns it into a retryable 503 (the caller is still refused),
+        # so a DB blip never reads to a client as "your session is dead".
         raise
     except Exception:
         raise Unauthorized(
@@ -76,6 +81,44 @@ async def resolve_identity(request: Request) -> Identity:
         actor_type=identity.actor_type.value,
     )
     return identity
+
+
+class CredentialRecheckResult(StrEnum):
+    """The outcome of re-verifying a request's credential mid-response."""
+
+    #: The credential still verifies.
+    VALID = "valid"
+    #: The verifier refused it: expired, revoked, or its actor disabled or deleted.
+    REFUSED = "refused"
+    #: The verifier could not answer (the database is unavailable).
+    UNAVAILABLE = "unavailable"
+
+
+CredentialRecheck = Callable[[], Coroutine[Any, Any, CredentialRecheckResult]]
+
+
+def get_credential_recheck(request: Request) -> CredentialRecheck:
+    """A re-verifier for the request's own credential, for responses that outlive the request.
+
+    A streaming response (``/events/stream``) authenticates once, then stays
+    open far longer than any single verification. The returned callable runs
+    the presented credential back through the app's verifier and reports
+    whether it still verifies (#1139). A database that cannot answer reads as
+    ``UNAVAILABLE`` and any other failure as ``REFUSED``; the caller treats
+    both as not valid (fail closed), and a reconnect gets the precise 401/503.
+    """
+
+    async def _recheck() -> CredentialRecheckResult:
+        verify_token: TokenVerifier = request.app.state.verify_token
+        try:
+            await verify_token(extract_credential(request), request)
+        except DatabaseUnavailableError:
+            return CredentialRecheckResult.UNAVAILABLE
+        except Exception:
+            return CredentialRecheckResult.REFUSED
+        return CredentialRecheckResult.VALID
+
+    return _recheck
 
 
 def get_current_identity(

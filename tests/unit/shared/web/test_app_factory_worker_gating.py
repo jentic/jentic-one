@@ -81,23 +81,31 @@ def test_execution_handler_still_registered_for_broker() -> None:
     ):
         broker_ctx = _ctx(dbs={"admin", "control", "registry"})
         broker_ctx.config.broker.upstream_timeout_s = 30
-        injector, authorizer, counter = MagicMock(), MagicMock(), MagicMock()
+        injector, authorizer, actor_status, counter = (
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+        )
         result = app_factory._start_worker(
             broker_ctx,
             {"broker"},
             upstream_executor=MagicMock(),
             credential_injector=injector,
             execution_authorizer=authorizer,
+            actor_status=actor_status,
             repeated_failure_counter=counter,
         )
         import_handler.assert_not_called()
         assert result is not None
         registry_arg = worker_loop.call_args.args[1]
         assert registry_arg.kinds == {JobKind.EXECUTION}
-        # The run-time re-authorizer reaches the handler alongside the injector.
+        # The run-time re-authorizer and the live actor-status reader reach the
+        # handler alongside the injector.
         kwargs = execution_handler.call_args.kwargs
         assert kwargs["credential_injector"] is injector
         assert kwargs["execution_authorizer"] is authorizer
+        assert kwargs["actor_status"] is actor_status
         # The broker's repeated-failure scan gate reaches the async path too.
         assert kwargs["repeated_failure_counter"] is counter
 

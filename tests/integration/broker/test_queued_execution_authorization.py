@@ -6,35 +6,71 @@ the broker lifespan does, and asserts that a change made *after* enqueue —
 agent suspended, execute scope revoked, binding suspended or removed,
 credential deactivated, rule changed — is honoured when
 the job runs, with the same problem type the sync execute route returns.
+Also pins the ``broker.pbac_denied`` / ``broker.credential_binding_unserved``
+events both paths record: trace-correlated, naming the API and operation
+template, never the concrete request path or query.
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncGenerator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 import structlog
+from fastapi import FastAPI
 from sqlalchemy import delete, select, update
+from starlette.requests import Request
 
+import jentic_one.broker.web.routers.execute as execute_mod
 from jentic_one.admin.core.schema.actor_permission_grants import ActorPermissionGrant
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.agents import Agent
+from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.held_executions import HeldExecution
+from jentic_one.admin.core.schema.job_results import JobResult
 from jentic_one.admin.core.schema.jobs import Job
+from jentic_one.admin.core.schema.user_permission_grants import UserPermissionGrant
 from jentic_one.admin.core.schema.users import User
+from jentic_one.broker.core.exceptions import ActionDeniedError
 from jentic_one.broker.core.setup import build_queued_execution_authorizer
+from jentic_one.broker.repos import AgentRuleEvaluator, CredentialBindingResolver
 from jentic_one.broker.repos.actor_status import ActorStatusResolver
 from jentic_one.broker.services.execution import authorization
 from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.customer_api_keys import CustomerAPIKey
-from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION
+from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import (
+    APIS_READ,
+    BROKER_EXECUTE_PERMISSION,
+    ORG_ADMIN,
+)
+from jentic_one.shared.broker.protocols import ResolveResult
+from jentic_one.shared.config import WorkerConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.ids import generate_ksuid
-from jentic_one.shared.jobs.protocols import QueuedExecutionRequest
-from jentic_one.shared.models import JobKind, JobStatus, StoredCredentialType
+from jentic_one.shared.jobs.execution_handler import ExecutionHandler
+from jentic_one.shared.jobs.handlers import JobHandlerRegistry
+from jentic_one.shared.jobs.protocols import (
+    InjectedAuth,
+    QueuedExecutionRequest,
+    UpstreamExecRequest,
+    UpstreamExecResult,
+)
+from jentic_one.shared.jobs.worker import WorkerLoop
+from jentic_one.shared.models import (
+    ActorType,
+    EventType,
+    JobKind,
+    JobStatus,
+    StoredCredentialType,
+)
+from jentic_one.shared.schemas import APIReference, OperationInfo
 
 pytestmark = pytest.mark.integration
 
@@ -53,6 +89,7 @@ async def clean_tables(integration_context: Context) -> AsyncGenerator[None, Non
             await session.execute(delete(AgentCredentialBinding))
             await session.execute(delete(ActorPermissionGrant))
             await session.execute(delete(Agent))
+            await session.execute(delete(Event))
             await session.commit()
         async with ctx.control_db.session() as session:
             await session.execute(delete(AgentPermissionRule))
@@ -270,25 +307,249 @@ async def test_rule_changed_after_enqueue_is_denied(
     assert verdict.problem["status"] == 403
 
 
-async def test_actor_status_resolver_reads_user_and_agent_rows(
+_TRACE_ID = "0af7651916cd43dd8448eb211c80319c"
+_DENIAL_IDENTITY_KEYS = (
+    "api_vendor",
+    "api_name",
+    "api_version",
+    "operation_id",
+    "operation_method",
+    "operation_path",
+)
+
+
+async def _denial_events(ctx: Context) -> list[Event]:
+    async with ctx.admin_db.session() as session:
+        result = await session.execute(select(Event).where(Event.type == EventType.PBAC_DENIED))
+        return list(result.scalars())
+
+
+async def _deny_by_rule(ctx: Context, agent_id: str) -> None:
+    async with ctx.control_db.session() as session:
+        await session.execute(
+            update(AgentPermissionRule)
+            .where(AgentPermissionRule.agent_id == agent_id)
+            .values(effect="deny")
+        )
+        await session.commit()
+
+
+async def test_rule_denial_event_carries_trace_id_and_resolved_operation(
+    integration_context: Context, clean_tables: None
+) -> None:
+    agent_id, credential_id = await _seed_bound_agent(integration_context)
+    await _deny_by_rule(integration_context, agent_id)
+
+    verdict = await build_queued_execution_authorizer(integration_context).authorize(
+        replace(
+            _request(agent_id, credential_id),
+            operation_id="listPets",
+            relative_path="/pets/secret-id-123",
+            operation_path="/pets/{petId}",
+            trace_id=_TRACE_ID,
+        )
+    )
+
+    assert verdict.allowed is False
+    (event,) = await _denial_events(integration_context)
+    assert event.trace_id == _TRACE_ID
+    assert event.data is not None
+    assert event.data["reason"] == "no_rule_matched"
+    assert {k: event.data[k] for k in _DENIAL_IDENTITY_KEYS} == {
+        "api_vendor": _VENDOR,
+        "api_name": _API_NAME,
+        "api_version": _API_VERSION,
+        "operation_id": "listPets",
+        "operation_method": "GET",
+        "operation_path": "/pets/{petId}",
+    }
+    # The concrete request path never reaches the event.
+    assert "secret-id-123" not in str(event.data)
+    assert "secret-id-123" not in event.summary
+    async with integration_context.admin_db.session() as session:
+        by_trace = await session.execute(select(Event.id).where(Event.trace_id == _TRACE_ID))
+        assert [row[0] for row in by_trace] == [event.id]
+
+
+@pytest.mark.parametrize("bad_trace_id", ["not-a-trace", "0" * 32, "ABC", ""])
+async def test_rule_denial_with_malformed_trace_id_still_records_an_uncorrelated_event(
+    integration_context: Context, clean_tables: None, bad_trace_id: str
+) -> None:
+    agent_id, credential_id = await _seed_bound_agent(integration_context)
+    await _deny_by_rule(integration_context, agent_id)
+
+    verdict = await build_queued_execution_authorizer(integration_context).authorize(
+        replace(_request(agent_id, credential_id), trace_id=bad_trace_id)
+    )
+
+    assert verdict.allowed is False
+    (event,) = await _denial_events(integration_context)
+    assert event.trace_id is None
+
+
+async def test_unserved_api_denial_event_carries_trace_id(
     integration_context: Context, clean_tables: None
 ) -> None:
     ctx = integration_context
-    agent_id, _ = await _seed_bound_agent(ctx)
-    user = User(email="queued@example.com", first_name="Q", last_name="User", active=False)
     async with ctx.admin_db.session() as session:
-        session.add(user)
+        agent = Agent(name="unbound-agent", registered_by="usr_owner", status="active")
+        session.add(agent)
+        await session.flush()
+        session.add(
+            ActorPermissionGrant(
+                actor_id=agent.id, actor_type="agent", permission=BROKER_EXECUTE_PERMISSION
+            )
+        )
         await session.commit()
-        user_id = user.id
+        agent_id = agent.id
+
+    verdict = await build_queued_execution_authorizer(ctx).authorize(
+        replace(_request(agent_id, "cred_none"), trace_id=_TRACE_ID)
+    )
+
+    assert verdict.allowed is False
+    async with ctx.admin_db.session() as session:
+        result = await session.execute(
+            select(Event).where(Event.type == EventType.CREDENTIAL_BINDING_UNSERVED)
+        )
+        (event,) = result.scalars()
+    assert event.trace_id == _TRACE_ID
+
+
+class _PetsResolver:
+    """Discovery stand-in: resolves every URL to one templated pets operation."""
+
+    async def resolve_operation(
+        self, *, method: str, url: str, revision_id: Any = None
+    ) -> ResolveResult | None:
+        return ResolveResult(
+            operation=OperationInfo(
+                id="getPet",
+                path="/pets/{petId}",
+                method=method,
+                relative_path="/pets/secret-id-123",
+            ),
+            api=APIReference(vendor=_VENDOR, name=_API_NAME, version=_API_VERSION),
+            path_params={"petId": "secret-id-123"},
+        )
+
+
+async def test_sync_route_denial_event_carries_the_traceparent_trace_id(
+    integration_context: Context, clean_tables: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The direct execute route stamps the request's ``traceparent`` trace id
+    and the operation template on the denial event — never the concrete path
+    or query."""
+    ctx = integration_context
+    agent_id, _ = await _seed_bound_agent(ctx)
+    await _deny_by_rule(ctx, agent_id)
+
+    async def _no_dns(raw_url: str, egress: Any = None) -> str:
+        return raw_url
+
+    monkeypatch.setattr(execute_mod, "validate_upstream_url_async", _no_dns)
+    app = FastAPI()
+    app.state.broker_registry_resolver = _PetsResolver()
+    raw_path = b"/api.acme.com/v1/pets/secret-id-123"
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": raw_path.decode(),
+            "raw_path": raw_path,
+            "query_string": b"token=QUERYSECRET456",
+            "headers": [(b"traceparent", f"00-{_TRACE_ID}-00f067aa0ba902b7-01".encode())],
+            "app": app,
+        }
+    )
+
+    with pytest.raises(ActionDeniedError):
+        await execute_mod._handle(
+            request,
+            "GET",
+            ctx,
+            Identity(sub=agent_id, actor_type=ActorType.AGENT, permissions=[]),
+            CredentialBindingResolver(ctx.admin_db, ctx.control_db),
+            AgentRuleEvaluator(ctx.control_db, cache_ttl_seconds=0),
+            MagicMock(),  # runner — never reached: authorization denies first
+            None,  # idempotency
+        )
+
+    (event,) = await _denial_events(ctx)
+    assert event.trace_id == _TRACE_ID
+    assert event.data is not None
+    assert {k: event.data[k] for k in _DENIAL_IDENTITY_KEYS} == {
+        "api_vendor": _VENDOR,
+        "api_name": _API_NAME,
+        "api_version": _API_VERSION,
+        "operation_id": "getPet",
+        "operation_method": "GET",
+        "operation_path": "/pets/{petId}",
+    }
+    recorded = f"{event.summary} {event.detail} {json.dumps(event.data)}"
+    assert "secret-id-123" not in recorded
+    assert "QUERYSECRET456" not in recorded
+
+
+async def test_actor_status_resolver_reads_user_and_agent_rows(
+    integration_context: Context, clean_tables: None
+) -> None:
+    """One read per actor answers liveness and the execute permission.
+
+    Agents hold it by exact grant; users by the implication-expanded set of
+    their live ``user_permission_grants`` (``org:admin`` implies it)."""
+    ctx = integration_context
+    agent_id, _ = await _seed_bound_agent(ctx)
+    users = {
+        "direct": (True, {BROKER_EXECUTE_PERMISSION}),
+        "admin": (True, {ORG_ADMIN}),
+        "revoked": (True, {APIS_READ}),
+        "ungranted": (True, set()),
+        "disabled": (False, {BROKER_EXECUTE_PERMISSION}),
+    }
+    user_ids: dict[str, str] = {}
+    async with ctx.admin_db.session() as session:
+        for label, (active, permissions) in users.items():
+            user = User(
+                email=f"queued-{label}@example.com", first_name="Q", last_name=label, active=active
+            )
+            session.add(user)
+            await session.flush()
+            user_ids[label] = user.id
+            for permission in permissions:
+                session.add(UserPermissionGrant(user_id=user.id, permission=permission))
+        await session.commit()
     resolver = ActorStatusResolver(ctx.admin_db)
+
+    async def authority(actor_id: str, actor_type: str) -> tuple[bool, bool]:
+        result = await resolver.authority(
+            actor_id=actor_id, actor_type=actor_type, permission=BROKER_EXECUTE_PERMISSION
+        )
+        return result.active, result.holds_permission
+
     try:
-        assert await resolver.is_active(actor_id=agent_id, actor_type="agent") is True
-        assert await resolver.is_active(actor_id=user_id, actor_type="user") is False
-        assert await resolver.is_active(actor_id="agt_missing", actor_type="agent") is False
-        assert await resolver.is_active(actor_id=agent_id, actor_type="toolkit") is False
+        assert await authority(agent_id, "agent") == (True, True)
+        assert await authority(user_ids["direct"], "user") == (True, True)
+        assert await authority(user_ids["admin"], "user") == (True, True)
+        assert await authority(user_ids["revoked"], "user") == (True, False)
+        assert await authority(user_ids["ungranted"], "user") == (True, False)
+        assert await authority(user_ids["disabled"], "user") == (False, True)
+        assert await authority("agt_missing", "agent") == (False, False)
+        assert await authority("usr_missing", "user") == (False, False)
+        assert await authority(agent_id, "toolkit") == (False, False)
+        async with ctx.admin_db.session() as session:
+            await session.execute(
+                delete(ActorPermissionGrant).where(ActorPermissionGrant.actor_id == agent_id)
+            )
+            await session.commit()
+        assert await authority(agent_id, "agent") == (True, False)
     finally:
         async with ctx.admin_db.session() as session:
-            await session.execute(delete(User).where(User.id == user_id))
+            ids = list(user_ids.values())
+            await session.execute(
+                delete(UserPermissionGrant).where(UserPermissionGrant.user_id.in_(ids))
+            )
+            await session.execute(delete(User).where(User.id.in_(ids)))
             await session.commit()
 
 
@@ -309,10 +570,11 @@ async def test_actor_status_resolver_refuses_retired_service_account_actors(
         )
         await session.commit()
     resolver = ActorStatusResolver(ctx.admin_db)
-    assert await resolver.is_active(actor_id="sva_queued", actor_type="service_account") is False
-    assert not await resolver.holds_permission(
+    authority = await resolver.authority(
         actor_id="sva_queued", actor_type="service_account", permission=BROKER_EXECUTE_PERMISSION
     )
+    assert authority.active is False
+    assert authority.holds_permission is False
 
 
 async def _set_rule(ctx: Context, agent_id: str, *, path: str, match_mode: str) -> None:
@@ -653,3 +915,241 @@ async def test_approved_job_still_fails_when_the_rule_now_denies(
     assert verdict.allowed is False
     assert verdict.problem is not None
     assert verdict.problem["type"] == "action_denied"
+
+
+# --- An owned agent's queued work follows its owner's account status ---------
+
+
+class _RecordingExecutor:
+    """Stands in for the broker pipeline; records whether anything went upstream."""
+
+    def __init__(self) -> None:
+        self.requests: list[UpstreamExecRequest] = []
+
+    async def execute(self, request: UpstreamExecRequest, *, db: Any) -> UpstreamExecResult:
+        self.requests.append(request)
+        return UpstreamExecResult(status_code=200, body=b"ok", content_type=None, duration_ms=1)
+
+
+class _RecordingInjector:
+    """Stands in for credential injection; records whether it was reached."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def inject(self, **_: Any) -> InjectedAuth:
+        self.calls += 1
+        return InjectedAuth(headers={"X-Api-Key": "SECRET"}, query_params={}, cookies={})
+
+
+@pytest.fixture()
+async def owner_id(integration_context: Context) -> AsyncGenerator[str, None]:
+    """An active user who owns the seeded agent (see :func:`_own`)."""
+    ctx = integration_context
+    user = User(email="queued-owner@example.com", first_name="Q", last_name="Owner", active=True)
+    async with ctx.admin_db.session() as session:
+        session.add(user)
+        await session.commit()
+        user_id = user.id
+    yield user_id
+    async with ctx.admin_db.session() as session:
+        # agents.owner_id is ON DELETE RESTRICT: drop the owned agent first.
+        await session.execute(delete(AgentCredentialBinding))
+        await session.execute(delete(ActorPermissionGrant))
+        await session.execute(delete(Agent).where(Agent.owner_id == user_id))
+        await session.execute(delete(User).where(User.id == user_id))
+        await session.commit()
+
+
+@pytest.fixture()
+async def clean_worker_jobs(integration_context: Context) -> AsyncGenerator[None, None]:
+    yield
+    async with integration_context.admin_db.session() as session:
+        await session.execute(delete(HeldExecution))
+        await session.execute(delete(JobResult))
+        await session.execute(delete(Job))
+        await session.commit()
+
+
+async def _own(ctx: Context, agent_id: str, owner_id: str) -> None:
+    async with ctx.admin_db.session() as session:
+        await session.execute(update(Agent).where(Agent.id == agent_id).values(owner_id=owner_id))
+        await session.commit()
+
+
+async def _set_owner_active(ctx: Context, owner_id: str, *, active: bool) -> None:
+    async with ctx.admin_db.session() as session:
+        await session.execute(update(User).where(User.id == owner_id).values(active=active))
+        await session.commit()
+
+
+async def _queue_job(ctx: Context, agent_id: str, credential_id: str) -> str:
+    async with ctx.admin_db.session() as session:
+        job = Job(
+            kind=JobKind.EXECUTION,
+            status=JobStatus.QUEUED,
+            created_by=agent_id,
+            actor_type="agent",
+            payload={
+                "execution_id": generate_ksuid("exec"),
+                "upstream_url": _URL,
+                "method": "GET",
+                "api_vendor": _VENDOR,
+                "api_name": _API_NAME,
+                "api_version": _API_VERSION,
+                "credential_id": credential_id,
+                "operation": {"id": "op_pets", "path": "/v1/pets", "method": "GET"},
+            },
+        )
+        session.add(job)
+        await session.commit()
+        return str(job.id)
+
+
+async def _approve_hold(ctx: Context, job_id: str, agent_id: str, credential_id: str) -> None:
+    async with ctx.admin_db.session() as session:
+        session.add(
+            HeldExecution(
+                job_id=job_id,
+                agent_id=agent_id,
+                credential_id=credential_id,
+                api_vendor=_VENDOR,
+                api_name=_API_NAME,
+                api_version=_API_VERSION,
+                method="GET",
+                path="/v1/pets",
+                request_fingerprint=generate_ksuid("fp").ljust(64, "0"),
+                state="approved",
+                expires_at=datetime.now(UTC) + timedelta(hours=1),
+            )
+        )
+        await session.commit()
+
+
+async def _run_one_tick(ctx: Context) -> tuple[_RecordingExecutor, _RecordingInjector]:
+    """One real worker tick over the real run-time re-authorizer."""
+    executor = _RecordingExecutor()
+    injector = _RecordingInjector()
+    registry = JobHandlerRegistry()
+    registry.register(
+        JobKind.EXECUTION,
+        ExecutionHandler(
+            executor=executor,
+            credential_injector=injector,
+            execution_authorizer=build_queued_execution_authorizer(ctx),
+            actor_status=ActorStatusResolver(ctx.admin_db),
+        ),
+    )
+    assert await WorkerLoop(ctx.admin_db, registry, worker_config=WorkerConfig())._tick() is True
+    return executor, injector
+
+
+async def _job_result(ctx: Context, job_id: str) -> dict[str, Any]:
+    async with ctx.admin_db.session() as session:
+        result = (
+            await session.execute(select(JobResult).where(JobResult.job_id == job_id))
+        ).scalar_one()
+    return dict(result.body)
+
+
+async def test_actor_status_resolver_follows_the_owner(
+    integration_context: Context, clean_tables: None, owner_id: str
+) -> None:
+    """An owned agent reads inactive while its owner is; its own status is untouched."""
+    ctx = integration_context
+    agent_id, _ = await _seed_bound_agent(ctx)
+    await _own(ctx, agent_id, owner_id)
+    resolver = ActorStatusResolver(ctx.admin_db)
+    assert await resolver.is_active(actor_id=agent_id, actor_type="agent") is True
+
+    await _set_owner_active(ctx, owner_id, active=False)
+    with structlog.testing.capture_logs() as logs:
+        assert await resolver.is_active(actor_id=agent_id, actor_type="agent") is False
+    owner_inactive = [log for log in logs if log["event"] == "agent_owner_inactive"]
+    assert len(owner_inactive) == 1
+    assert owner_inactive[0]["log_level"] == "info"
+    assert owner_inactive[0]["agent_id"] == agent_id
+    assert owner_inactive[0]["owner_id"] == owner_id
+
+    await _set_owner_active(ctx, owner_id, active=True)
+    assert await resolver.is_active(actor_id=agent_id, actor_type="agent") is True
+    async with ctx.admin_db.session() as session:
+        agent = await session.get(Agent, agent_id)
+        assert agent is not None and agent.status == "active"
+
+
+async def test_queued_job_of_an_owned_agent_is_denied_while_the_owner_is_inactive(
+    integration_context: Context, clean_tables: None, owner_id: str, clean_worker_jobs: None
+) -> None:
+    """A worker tick refuses the job before injection; nothing goes upstream."""
+    ctx = integration_context
+    agent_id, credential_id = await _seed_bound_agent(ctx)
+    await _own(ctx, agent_id, owner_id)
+    job_id = await _queue_job(ctx, agent_id, credential_id)
+    await _set_owner_active(ctx, owner_id, active=False)
+
+    executor, injector = await _run_one_tick(ctx)
+
+    assert executor.requests == []
+    assert injector.calls == 0
+    body = await _job_result(ctx, job_id)
+    assert body["status"] == "failed"
+    assert body["http_status"] == 401
+    assert body["problem"]["type"] == "unauthorized"
+
+
+async def test_queued_job_of_an_owned_agent_runs_once_the_owner_is_re_enabled(
+    integration_context: Context, clean_tables: None, owner_id: str, clean_worker_jobs: None
+) -> None:
+    ctx = integration_context
+    agent_id, credential_id = await _seed_bound_agent(ctx)
+    await _own(ctx, agent_id, owner_id)
+    await _set_owner_active(ctx, owner_id, active=False)
+    await _set_owner_active(ctx, owner_id, active=True)
+    job_id = await _queue_job(ctx, agent_id, credential_id)
+
+    executor, injector = await _run_one_tick(ctx)
+
+    assert len(executor.requests) == 1
+    assert injector.calls == 1
+    assert (await _job_result(ctx, job_id))["http_status"] == 200
+
+
+async def test_approved_hold_of_an_owned_agent_is_denied_while_the_owner_is_inactive(
+    integration_context: Context, clean_tables: None, owner_id: str, clean_worker_jobs: None
+) -> None:
+    """An approval does not outlive the owner's account status."""
+    ctx = integration_context
+    agent_id, credential_id = await _seed_bound_agent(ctx)
+    await _own(ctx, agent_id, owner_id)
+    await _set_rule_effect(ctx, agent_id, "require-approval")
+    job_id = await _queue_job(ctx, agent_id, credential_id)
+    await _approve_hold(ctx, job_id, agent_id, credential_id)
+    await _set_owner_active(ctx, owner_id, active=False)
+
+    executor, injector = await _run_one_tick(ctx)
+
+    assert executor.requests == []
+    assert injector.calls == 0
+    body = await _job_result(ctx, job_id)
+    assert body["status"] == "failed"
+    assert body["http_status"] == 401
+    assert body["problem"]["type"] == "unauthorized"
+
+
+async def test_approved_hold_of_an_owned_agent_runs_while_the_owner_is_active(
+    integration_context: Context, clean_tables: None, owner_id: str, clean_worker_jobs: None
+) -> None:
+    """Control: the same approved hold runs when the owner is active."""
+    ctx = integration_context
+    agent_id, credential_id = await _seed_bound_agent(ctx)
+    await _own(ctx, agent_id, owner_id)
+    await _set_rule_effect(ctx, agent_id, "require-approval")
+    job_id = await _queue_job(ctx, agent_id, credential_id)
+    await _approve_hold(ctx, job_id, agent_id, credential_id)
+
+    executor, injector = await _run_one_tick(ctx)
+
+    assert len(executor.requests) == 1
+    assert injector.calls == 1
+    assert (await _job_result(ctx, job_id))["http_status"] == 200

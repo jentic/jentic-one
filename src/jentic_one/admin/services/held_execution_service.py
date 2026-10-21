@@ -53,7 +53,9 @@ from jentic_one.shared.jobs.hold import (
     ENCRYPTED_PAYLOAD_KEY,
     PROBLEM_CONTENT_TYPE,
     approval_denied_problem,
+    held_call_summary,
 )
+from jentic_one.shared.jobs.wakeup import notify_on_commit
 from jentic_one.shared.models.actors import ActorType
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
 from jentic_one.shared.models.events import EventSeverity, EventType
@@ -251,7 +253,11 @@ class HeldExecutionService:
             if not moved:
                 # Raising rolls the decision back with the transaction.
                 raise HeldExecutionJobNotHeldError(approval_id, updated.job_id)
-            if not approve:
+            if approve:
+                # The released job is claimable once this commits; wake any
+                # worker in this process instead of waiting for its next poll.
+                notify_on_commit(session)
+            else:
                 await JobRepository.update(session, updated.job_id, error="approval denied")
                 await JobResultRepository.create(
                     session,
@@ -261,6 +267,7 @@ class HeldExecutionService:
                     content_type=PROBLEM_CONTENT_TYPE,
                     created_by=identity.sub,
                 )
+            agent = await AgentRepository.get_by_id(session, updated.agent_id)
             await AuditRepository.record(
                 session,
                 action=AuditAction.APPROVE if approve else AuditAction.DENY,
@@ -276,7 +283,13 @@ class HeldExecutionService:
                 session,
                 type=EventType.EXECUTION_APPROVAL_DECIDED,
                 severity=EventSeverity.INFO,
-                summary=f"Execution approval {approval_id} {new_state.value}",
+                summary=held_call_summary(
+                    agent_name=agent.name if agent is not None else None,
+                    agent_id=updated.agent_id,
+                    method=updated.method,
+                    path=updated.path,
+                    outcome=new_state.value,
+                ),
                 job_id=updated.job_id,
                 created_by=identity.sub,
                 actor_id=identity.sub,
@@ -335,6 +348,7 @@ class HeldExecutionService:
             )
             if not moved:
                 raise HeldExecutionJobNotHeldError(approval_id, updated.job_id)
+            agent = await AgentRepository.get_by_id(session, updated.agent_id)
             await AuditRepository.record(
                 session,
                 action=AuditAction.WITHDRAW,
@@ -349,7 +363,13 @@ class HeldExecutionService:
                 session,
                 type=EventType.EXECUTION_APPROVAL_WITHDRAWN,
                 severity=EventSeverity.INFO,
-                summary=f"Execution approval {approval_id} withdrawn",
+                summary=held_call_summary(
+                    agent_name=agent.name if agent is not None else None,
+                    agent_id=updated.agent_id,
+                    method=updated.method,
+                    path=updated.path,
+                    outcome="withdrawn",
+                ),
                 job_id=updated.job_id,
                 created_by=identity.sub,
                 actor_id=identity.sub,

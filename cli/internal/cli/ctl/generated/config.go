@@ -828,6 +828,16 @@ type DatabaseConfig struct {
 	// Maximum connections in the PostgreSQL connection pool (ignored for SQLite).
 	PoolMax int `json:"pool_max,omitempty,omitzero" yaml:"pool_max,omitempty" mapstructure:"pool_max,omitempty"`
 
+	// PostgreSQL: test each pooled connection on checkout and transparently replace a
+	// dead one. On asyncpg the ping costs three round trips (``BEGIN``, ``;``,
+	// ``ROLLBACK``) per checkout. With ``false``, ``pool_recycle_s`` and TCP
+	// keepalive do not cover a Postgres restart or failover, a pooler/proxy restart,
+	// or a terminated backend: after such an event the first request on each pool per
+	// process can fail with an HTTP 503 (work run through the retrying transaction
+	// helper is re-run on a fresh connection instead). Only disable it where those
+	// events are rare and that error is acceptable. Ignored for SQLite.
+	PoolPrePing bool `json:"pool_pre_ping,omitempty,omitzero" yaml:"pool_pre_ping,omitempty" mapstructure:"pool_pre_ping,omitempty"`
+
 	// PostgreSQL: replace a pooled connection once it is this many seconds old, on
 	// its next checkout, so a connection silently dropped by a middlebox or left
 	// behind by a server restart is retired before use. Keep it below any server,
@@ -932,6 +942,9 @@ func (j *DatabaseConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["pool_max"]; !ok || v == nil {
 		plain.PoolMax = 10
+	}
+	if v, ok := raw["pool_pre_ping"]; !ok || v == nil {
+		plain.PoolPrePing = true
 	}
 	if v, ok := raw["pool_recycle_s"]; !ok || v == nil {
 		plain.PoolRecycleS = 1800
@@ -1771,7 +1784,11 @@ type MemoryBackendConfig struct {
 	// first ``:``). Unless overridden here, idem (Idempotency-Key records) is 250000
 	// entries / 134217728 bytes (128 MiB) and idem-body (their stored response
 	// bodies) 1000000 entries / 33554432 bytes (32 MiB), each with a 0.1 per-caller
-	// share; every other namespace uses max_entries_per_namespace /
+	// share; login-csrf (login page CSRF nonces) uses max_entries_per_namespace /
+	// max_bytes_per_namespace with a 0.02 per-client share, about 370 live nonces per
+	// IPv4 address or IPv6 /64 at the defaults (about 900 bytes each, 5-minute TTL),
+	// twice what the default authorize rate limit lets one client network request in
+	// that time; every other namespace uses max_entries_per_namespace /
 	// max_bytes_per_namespace. The sustained idempotent request rate idem can hold is
 	// min(max_entries, max_bytes / record_bytes) / broker.idempotency.ttl_s, where
 	// record_bytes is about 1000 bytes plus the response headers (capped at 512
@@ -1786,14 +1803,18 @@ type MemoryBackendConfig struct {
 // first “:“). Unless overridden here, idem (Idempotency-Key records) is 250000
 // entries / 134217728 bytes (128 MiB) and idem-body (their stored response bodies)
 // 1000000 entries / 33554432 bytes (32 MiB), each with a 0.1 per-caller share;
-// every other namespace uses max_entries_per_namespace / max_bytes_per_namespace.
-// The sustained idempotent request rate idem can hold is min(max_entries,
-// max_bytes / record_bytes) / broker.idempotency.ttl_s, where record_bytes is
-// about 1000 bytes plus the response headers (capped at 512 bytes): about 30 req/s
-// at the defaults and a 1 h TTL, and a tenth of that per caller. Above it,
-// Idempotency-Key requests get 503 idempotency_unavailable; bodies (about 830
-// bytes + body length each) stop being stored for replay sooner, about 5 req/s of
-// 1 KiB bodies, without refusing requests.
+// login-csrf (login page CSRF nonces) uses max_entries_per_namespace /
+// max_bytes_per_namespace with a 0.02 per-client share, about 370 live nonces per
+// IPv4 address or IPv6 /64 at the defaults (about 900 bytes each, 5-minute TTL),
+// twice what the default authorize rate limit lets one client network request in
+// that time; every other namespace uses max_entries_per_namespace /
+// max_bytes_per_namespace. The sustained idempotent request rate idem can hold is
+// min(max_entries, max_bytes / record_bytes) / broker.idempotency.ttl_s, where
+// record_bytes is about 1000 bytes plus the response headers (capped at 512
+// bytes): about 30 req/s at the defaults and a 1 h TTL, and a tenth of that per
+// caller. Above it, Idempotency-Key requests get 503 idempotency_unavailable;
+// bodies (about 830 bytes + body length each) stop being stored for replay sooner,
+// about 5 req/s of 1 KiB bodies, without refusing requests.
 type MemoryBackendConfigNamespaces map[string]MemoryNamespaceBudgetConfig
 
 // UnmarshalJSON implements json.Unmarshaler.
@@ -1839,9 +1860,10 @@ type MemoryNamespaceBudgetConfig struct {
 	MaxEntries int `json:"max_entries" yaml:"max_entries" mapstructure:"max_entries"`
 
 	// Most of max_entries and max_bytes that one owner (the key's second ``:``
-	// segment, for idem and idem-body the calling actor) may hold; an owner over its
-	// share is refused without affecting the others. Unset, it is 0.1 for idem and
-	// idem-body and unlimited elsewhere; 1.0 lets one owner use the whole namespace.
+	// segment: for idem and idem-body the calling actor, for login-csrf the client's
+	// IPv4 address or IPv6 /64) may hold; an owner over its share is refused without
+	// affecting the others. Unset, it is 0.1 for idem and idem-body, 0.02 for
+	// login-csrf and unlimited elsewhere; 1.0 lets one owner use the whole namespace.
 	MaxOwnerShare interface{} `json:"max_owner_share,omitempty,omitzero" yaml:"max_owner_share,omitempty" mapstructure:"max_owner_share,omitempty"`
 }
 
@@ -1953,25 +1975,30 @@ type OAuthRateLimitConfig struct {
 	// Burst allowance on top of ``authorize_rpm``.
 	AuthorizeBurst int `json:"authorize_burst,omitempty,omitzero" yaml:"authorize_burst,omitempty" mapstructure:"authorize_burst,omitempty"`
 
-	// Sustained requests/minute allowed on the unauthenticated ``/authorize``
-	// endpoints, keyed per ``client_id``+IP — except the local-login routes, which
-	// carry no query ``client_id`` and fall back to a bare-IP key. Behind a proxy,
-	// set ``auth.oauth_rate_limit.trusted_proxies`` or every client shares the
-	// proxy's IP bucket.
+	// Sustained requests/minute allowed per client network (IPv4 address or IPv6 /64)
+	// across the unauthenticated authorization flow: ``/authorize``, the IdP
+	// callback, the consent page, its submit and inline agent create, and the
+	// local-login form share one bucket, whatever ``client_id`` they name. A sign-in
+	// spends two to six requests (more after a mistyped password), so the defaults
+	// admit at least five back-to-back sign-ins and then at least five a minute per
+	// network; raise both for a large shared NAT or egress IP. Behind a proxy, set
+	// ``auth.oauth_rate_limit.trusted_proxies`` or every client shares the proxy's
+	// bucket.
 	AuthorizeRpm int `json:"authorize_rpm,omitempty,omitzero" yaml:"authorize_rpm,omitempty" mapstructure:"authorize_rpm,omitempty"`
 
 	// Burst allowance on top of ``exchange_rpm``.
 	ExchangeBurst int `json:"exchange_burst,omitempty,omitzero" yaml:"exchange_burst,omitempty" mapstructure:"exchange_burst,omitempty"`
 
-	// Sustained requests/minute allowed per ``client_id``+IP on the token endpoint
-	// (also reused per-IP for token revocation).
+	// Sustained requests/minute allowed per ``client_id`` + client network (IPv4
+	// address or IPv6 /64) on the token endpoint (also reused per client network for
+	// token revocation).
 	ExchangeRpm int `json:"exchange_rpm,omitempty,omitzero" yaml:"exchange_rpm,omitempty" mapstructure:"exchange_rpm,omitempty"`
 
 	// Burst allowance on top of ``registration_rpm``.
 	RegistrationBurst int `json:"registration_burst,omitempty,omitzero" yaml:"registration_burst,omitempty" mapstructure:"registration_burst,omitempty"`
 
-	// Sustained requests/minute allowed per IP on anonymous dynamic client
-	// registration (``POST /oauth-clients``).
+	// Sustained requests/minute allowed per client network (IPv4 address or IPv6 /64)
+	// on anonymous dynamic client registration (``POST /oauth-clients``).
 	RegistrationRpm int `json:"registration_rpm,omitempty,omitzero" yaml:"registration_rpm,omitempty" mapstructure:"registration_rpm,omitempty"`
 
 	// Reverse proxies whose ``X-Forwarded-For`` header is honored when deriving the
@@ -3327,12 +3354,36 @@ func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
 // crashed worker/pod is reclaimed on a later poll. A handler failure requeues the
 // job with capped exponential backoff up to “max_attempts“ claims; beyond that
 // it is dead-lettered (poison-message handling) rather than looped forever.
+//
+// Each claim is a single atomic “UPDATE“ (“FOR UPDATE SKIP LOCKED“ on
+// Postgres, a serialised write transaction on SQLite), so any number of worker
+// loops — across processes or replicas, each running up to “concurrency“
+// jobs — can poll the same queue without double-claiming a job.
 type WorkerConfig struct {
+	// Maximum jobs one worker process runs at once (1 = serial). Postgres only:
+	// SQLite requires 1, because a job's handler holds the database write lock across
+	// its upstream call, so a second concurrent job's writes would time out. Each
+	// in-flight job holds about 2 admin-DB connections at once (its handler
+	// transaction plus the run-time authorization or credential-audit session it
+	// opens), so ``2 * concurrency`` must stay below ``databases.admin.pool_max``,
+	// leaving the remainder for HTTP requests and other background work in the same
+	// process.
+	Concurrency int `json:"concurrency,omitempty,omitzero" yaml:"concurrency,omitempty" mapstructure:"concurrency,omitempty"`
+
 	// DrainTimeoutS corresponds to the JSON schema field "drain_timeout_s".
 	DrainTimeoutS float64 `json:"drain_timeout_s,omitempty,omitzero" yaml:"drain_timeout_s,omitempty" mapstructure:"drain_timeout_s,omitempty"`
 
 	// MaxAttempts corresponds to the JSON schema field "max_attempts".
 	MaxAttempts int `json:"max_attempts,omitempty,omitzero" yaml:"max_attempts,omitempty" mapstructure:"max_attempts,omitempty"`
+
+	// Idle wait (seconds) between job-queue polls when nothing is claimable. A job
+	// enqueued in the same process wakes the worker immediately, so this mainly
+	// bounds pickup latency for jobs enqueued by another process and how quickly
+	// visibility-expired jobs are reclaimed. Every poll is a write transaction (the
+	// claim is an ``UPDATE``) even when the queue is empty — on SQLite it takes the
+	// database write lock that request writes also wait on — so each process issues
+	// about ``1 / poll_interval_s`` of them per second while idle.
+	PollIntervalS float64 `json:"poll_interval_s,omitempty,omitzero" yaml:"poll_interval_s,omitempty" mapstructure:"poll_interval_s,omitempty"`
 
 	// First delay, in seconds, before the worker retries after losing its database
 	// connection. Doubles on each further failed attempt up to
@@ -3350,6 +3401,11 @@ type WorkerConfig struct {
 	// RetryBackoffMaxS corresponds to the JSON schema field "retry_backoff_max_s".
 	RetryBackoffMaxS float64 `json:"retry_backoff_max_s,omitempty,omitzero" yaml:"retry_backoff_max_s,omitempty" mapstructure:"retry_backoff_max_s,omitempty"`
 
+	// Seconds between the worker's retention sweeps, which expire lapsed execution
+	// approvals and delete expired job results and long-expired access/refresh token
+	// rows. Measured in wall time, independent of ``poll_interval_s`` and wake-ups.
+	SweepIntervalS float64 `json:"sweep_interval_s,omitempty,omitzero" yaml:"sweep_interval_s,omitempty" mapstructure:"sweep_interval_s,omitempty"`
+
 	// VisibilityTimeoutS corresponds to the JSON schema field "visibility_timeout_s".
 	VisibilityTimeoutS float64 `json:"visibility_timeout_s,omitempty,omitzero" yaml:"visibility_timeout_s,omitempty" mapstructure:"visibility_timeout_s,omitempty"`
 }
@@ -3365,11 +3421,29 @@ func (j *WorkerConfig) UnmarshalJSON(value []byte) error {
 	if err := json.Unmarshal(value, &plain); err != nil {
 		return err
 	}
+	if v, ok := raw["concurrency"]; !ok || v == nil {
+		plain.Concurrency = 1
+	}
+	if 64 < plain.Concurrency {
+		return fmt.Errorf("field %s: must be <= %v", "concurrency", 64)
+	}
+	if 1 > plain.Concurrency {
+		return fmt.Errorf("field %s: must be >= %v", "concurrency", 1)
+	}
 	if v, ok := raw["drain_timeout_s"]; !ok || v == nil {
 		plain.DrainTimeoutS = 25.0
 	}
 	if v, ok := raw["max_attempts"]; !ok || v == nil {
 		plain.MaxAttempts = 5
+	}
+	if v, ok := raw["poll_interval_s"]; !ok || v == nil {
+		plain.PollIntervalS = 2.0
+	}
+	if 60 < plain.PollIntervalS {
+		return fmt.Errorf("field %s: must be <= %v", "poll_interval_s", 60)
+	}
+	if 0.25 > plain.PollIntervalS {
+		return fmt.Errorf("field %s: must be >= %v", "poll_interval_s", 0.25)
 	}
 	if v, ok := raw["reconnect_backoff_base_s"]; !ok || v == nil {
 		plain.ReconnectBackoffBaseS = 2.0
@@ -3394,6 +3468,15 @@ func (j *WorkerConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["retry_backoff_max_s"]; !ok || v == nil {
 		plain.RetryBackoffMaxS = 60.0
+	}
+	if v, ok := raw["sweep_interval_s"]; !ok || v == nil {
+		plain.SweepIntervalS = 120.0
+	}
+	if 86400 < plain.SweepIntervalS {
+		return fmt.Errorf("field %s: must be <= %v", "sweep_interval_s", 86400)
+	}
+	if 1 > plain.SweepIntervalS {
+		return fmt.Errorf("field %s: must be >= %v", "sweep_interval_s", 1)
 	}
 	if v, ok := raw["visibility_timeout_s"]; !ok || v == nil {
 		plain.VisibilityTimeoutS = 120.0

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI, Request
 
-from jentic_one.broker.core.token_validation import CachedTokenValidator
+from jentic_one.broker.core.token_validation import CachedActorStatus, CachedTokenValidator
 from jentic_one.broker.repos import (
     ActorStatusResolver,
     AgentRuleEvaluator,
@@ -57,7 +57,17 @@ def install_broker_auth(app: FastAPI, ctx: Context) -> None:
         cache_ttl_seconds=ctx.config.broker.resolve_cache_ttl_seconds,
     )
     verifier = build_jwt_verifier(ctx.config.broker)
-    jwt_validator = JwtTokenValidator(verifier=verifier) if verifier is not None else None
+    jwt_validator = (
+        JwtTokenValidator(
+            verifier=verifier,
+            actor_status=CachedActorStatus(
+                resolver=ActorStatusResolver(ctx.admin_db),
+                cache_ttl_seconds=ctx.config.broker.resolve_cache_ttl_seconds,
+            ),
+        )
+        if verifier is not None
+        else None
+    )
     triple = CompositeTokenValidator(
         opaque=opaque,
         api_key=api_key_cached,
@@ -105,3 +115,13 @@ def build_queued_execution_authorizer(ctx: Context) -> QueuedExecutionAuthorizer
         credential_deriver=CredentialBindingResolver(ctx.admin_db, ctx.control_db),
         agent_rule_evaluator=AgentRuleEvaluator(ctx.control_db, cache_ttl_seconds=0),
     )
+
+
+def build_worker_actor_status(ctx: Context) -> ActorStatusResolver:
+    """Build the live actor-status read the worker builds its injection identity from.
+
+    Uncached, like the authorizer: it is read right before a queued job's
+    credential is resolved, so a disable that commits during the job's
+    re-authorization still stops it.
+    """
+    return ActorStatusResolver(ctx.admin_db)

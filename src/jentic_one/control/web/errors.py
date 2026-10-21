@@ -72,7 +72,7 @@ from jentic_one.shared.db.errors import (
     DatabaseUnavailableError,
 )
 from jentic_one.shared.pagination import InvalidCursorError
-from jentic_one.shared.web.errors import make_service_error_handler
+from jentic_one.shared.web.errors import DB_UNAVAILABLE_SAFE_DETAILS, make_service_error_handler
 
 _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     CredentialNotFoundError: (404, "credential_not_found"),
@@ -87,7 +87,19 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     RuleSetAttachDeniedError: (403, "rule_set_attach_denied"),
 }
 
-credential_service_error_handler = make_service_error_handler(_ERROR_MAP)
+_CREDENTIAL_SAFE_DETAILS: dict[type[Exception], str] = {
+    # ``RuleSetInUseError`` guards deletion against the full org-wide binding
+    # count (#1858), so its raw ``str(exc)`` stays in server logs while the
+    # client detail does not disclose how many invisible bindings reference the
+    # rule set.
+    RuleSetInUseError: (
+        "Permission rule set is still referenced by one or more bindings; detach them first"
+    ),
+}
+
+credential_service_error_handler = make_service_error_handler(
+    _ERROR_MAP, safe_details=_CREDENTIAL_SAFE_DETAILS
+)
 
 
 # Connect-session flow errors. The MRO walk maps subclasses first, so the
@@ -269,7 +281,7 @@ _DB_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
 _DB_SAFE_DETAILS: dict[type[Exception], str] = {
     DatabaseIntegrityError: "The request conflicts with the current state of the resource.",
     DatabaseDataError: "A field value exceeds the maximum length allowed.",
-    DatabaseUnavailableError: "The database is temporarily unavailable; please retry.",
+    **DB_UNAVAILABLE_SAFE_DETAILS,
 }
 
 database_error_handler = make_service_error_handler(_DB_ERROR_MAP, safe_details=_DB_SAFE_DETAILS)

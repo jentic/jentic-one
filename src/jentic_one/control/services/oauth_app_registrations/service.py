@@ -30,7 +30,7 @@ from jentic_one.shared.config import EgressConfig, resolved_control_egress
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.audit import AuditReason
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
-from jentic_one.shared.url_validation import validate_upstream_url
+from jentic_one.shared.url_validation import validate_upstream_url_async
 
 
 class OAuthAppRegistrationService:
@@ -54,8 +54,8 @@ class OAuthAppRegistrationService:
         identity: Identity,
     ) -> OAuthAppRegistrationView:
         egress = resolved_control_egress(self._ctx.config)
-        authorize_url = _validate_endpoint_url("authorize_url", authorize_url, egress)
-        token_url = _validate_endpoint_url("token_url", token_url, egress)
+        authorize_url = await _validate_endpoint_url("authorize_url", authorize_url, egress)
+        token_url = await _validate_endpoint_url("token_url", token_url, egress)
         encrypted = self._ctx.encryption.encrypt(client_secret)
         async with self._ctx.control_db.transaction() as session:
             registration = await OAuthAppRegistrationRepository.create_authorization_code(
@@ -106,10 +106,10 @@ class OAuthAppRegistrationService:
         identity: Identity,
     ) -> OAuthAppRegistrationView:
         egress = resolved_control_egress(self._ctx.config)
-        authorization_endpoint = _validate_endpoint_url(
+        authorization_endpoint = await _validate_endpoint_url(
             "authorization_endpoint", authorization_endpoint, egress
         )
-        token_endpoint = _validate_endpoint_url("token_endpoint", token_endpoint, egress)
+        token_endpoint = await _validate_endpoint_url("token_endpoint", token_endpoint, egress)
         async with self._ctx.control_db.transaction() as session:
             registration = await OAuthAppRegistrationRepository.create_device_authorization(
                 session,
@@ -202,12 +202,16 @@ class OAuthAppRegistrationService:
         identity: Identity,
     ) -> OAuthAppRegistrationView:
         egress = resolved_control_egress(self._ctx.config)
-        authorize_url = _validate_optional_endpoint_url("authorize_url", authorize_url, egress)
-        token_url = _validate_optional_endpoint_url("token_url", token_url, egress)
-        authorization_endpoint = _validate_optional_endpoint_url(
+        authorize_url = await _validate_optional_endpoint_url(
+            "authorize_url", authorize_url, egress
+        )
+        token_url = await _validate_optional_endpoint_url("token_url", token_url, egress)
+        authorization_endpoint = await _validate_optional_endpoint_url(
             "authorization_endpoint", authorization_endpoint, egress
         )
-        token_endpoint = _validate_optional_endpoint_url("token_endpoint", token_endpoint, egress)
+        token_endpoint = await _validate_optional_endpoint_url(
+            "token_endpoint", token_endpoint, egress
+        )
         async with self._ctx.control_db.transaction() as session:
             registration = await OAuthAppRegistrationRepository.get_by_id(session, registration_id)
             if registration is None:
@@ -352,7 +356,7 @@ class OAuthAppRegistrationService:
         )
 
 
-def _validate_endpoint_url(field: str, value: str, egress: EgressConfig) -> str:
+async def _validate_endpoint_url(field: str, value: str, egress: EgressConfig) -> str:
     """Require an https URL that passes the upstream SSRF guard.
 
     These endpoints receive client credentials and authorization codes, so
@@ -362,15 +366,15 @@ def _validate_endpoint_url(field: str, value: str, egress: EgressConfig) -> str:
     if not value.strip().lower().startswith("https://"):
         raise InvalidOAuthAppRegistrationInputError(f"Invalid {field}: must use https")
     try:
-        return validate_upstream_url(value, egress)
+        return await validate_upstream_url_async(value, egress)
     except ValueError as exc:
         raise InvalidOAuthAppRegistrationInputError(f"Invalid {field}: {exc}") from exc
 
 
-def _validate_optional_endpoint_url(
+async def _validate_optional_endpoint_url(
     field: str, value: str | None, egress: EgressConfig
 ) -> str | None:
-    return None if value is None else _validate_endpoint_url(field, value, egress)
+    return None if value is None else await _validate_endpoint_url(field, value, egress)
 
 
 def _project(
