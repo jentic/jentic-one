@@ -424,11 +424,31 @@
             "type": "object"
           },
           "scopes": {
-            "description": "OAuth scopes to add, from show_access's scope_catalog when it has one. The approver re-consents the credential; other agents bound to it gain them too.",
-            "items": {
-              "type": "string"
+            "description": "The OAuth scope change: {\"add\": […], \"remove\": […]} or {\"set\": […]} (the full list). Add only scopes from show_access's scope_catalog when it has one. The approver signs in to the vendor again; other agents bound to the credential get the change too.",
+            "properties": {
+              "add": {
+                "description": "Scopes to add.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "remove": {
+                "description": "Scopes to remove.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "set": {
+                "description": "The full scope list to replace the grant's with. Not combined with add or remove.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
             },
-            "type": "array"
+            "type": "object"
           }
         },
         "required": [
@@ -565,11 +585,31 @@
             "type": "object"
           },
           "scopes": {
-            "description": "OAuth scopes to add, from show_access's scope_catalog when it has one. The approver re-consents the credential; other agents bound to it gain them too.",
-            "items": {
-              "type": "string"
+            "description": "The OAuth scope change: {\"add\": […], \"remove\": […]} or {\"set\": […]} (the full list). Add only scopes from show_access's scope_catalog when it has one. The approver signs in to the vendor again; other agents bound to the credential get the change too.",
+            "properties": {
+              "add": {
+                "description": "Scopes to add.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "remove": {
+                "description": "Scopes to remove.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "set": {
+                "description": "The full scope list to replace the grant's with. Not combined with add or remove.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
             },
-            "type": "array"
+            "type": "object"
           },
           "session_id": {
             "description": "The open request to change (required), from request_access_change or request_connection.",

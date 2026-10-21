@@ -116,10 +116,26 @@ var editRulesSchema = map[string]any{
 	},
 }
 
+// editScopesSchema is the scope change, shaped like the rule change.
+var editScopesSchema = map[string]any{
+	"description": "The OAuth scope change: {\"add\": […], \"remove\": […]} or {\"set\": […]} (the full list). " +
+		"Add only scopes from show_access's scope_catalog when it has one. The approver signs in to the vendor " +
+		"again; other agents bound to the credential get the change too.",
+	"type": "object",
+	"properties": map[string]any{
+		"add":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Scopes to add."},
+		"remove": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Scopes to remove."},
+		"set": map[string]any{
+			"type": "array", "items": map[string]any{"type": "string"},
+			"description": "The full scope list to replace the grant's with. Not combined with add or remove.",
+		},
+	},
+}
+
 var requestAccessChangeParams = []paramSpec{
 	{name: "credential_id", kind: paramString},
 	{name: "rules", kind: paramJSON},
-	{name: "scopes", kind: paramStringList},
+	{name: "scopes", kind: paramJSON},
 	{name: "resume", kind: paramJSON},
 	{name: "reason", kind: paramString},
 }
@@ -131,11 +147,8 @@ var requestAccessChangeSchema = map[string]any{
 			"type":        "string",
 			"description": "The binding's credential (required), as show_access and whoami report it.",
 		},
-		"rules": editRulesSchema,
-		"scopes": map[string]any{
-			"type": "array", "items": map[string]any{"type": "string"},
-			"description": "OAuth scopes to add, from show_access's scope_catalog when it has one. The approver re-consents the credential; other agents bound to it gain them too.",
-		},
+		"rules":  editRulesSchema,
+		"scopes": editScopesSchema,
 		"resume": map[string]any{
 			"type":        "boolean",
 			"description": "Ask to switch a suspended binding back on.",
@@ -151,7 +164,7 @@ var requestAccessChangeSchema = map[string]any{
 var amendRequestParams = []paramSpec{
 	{name: "session_id", kind: paramString},
 	{name: "rules", kind: paramJSON},
-	{name: "scopes", kind: paramStringList},
+	{name: "scopes", kind: paramJSON},
 	{name: "resume", kind: paramJSON},
 	{name: "reason", kind: paramString},
 	{name: "requested_permission_rules", aliases: []string{"permission_rules"}, kind: paramJSON},
@@ -166,7 +179,7 @@ var amendRequestSchema = map[string]any{
 			"description": "The open request to change (required), from request_access_change or request_connection.",
 		},
 		"rules":  editRulesSchema,
-		"scopes": requestAccessChangeSchema["properties"].(map[string]any)["scopes"],
+		"scopes": editScopesSchema,
 		"resume": requestAccessChangeSchema["properties"].(map[string]any)["resume"],
 		"reason": requestAccessChangeSchema["properties"].(map[string]any)["reason"],
 		"requested_permission_rules": map[string]any{
@@ -200,7 +213,17 @@ func editInputFromArgs(args map[string]any) (editInput, error) {
 		}
 		in.addJSON, in.remove, in.setJSON = rules.Add, rules.Remove, rules.Set
 	}
-	in.scopes, _ = args["scopes"].([]string)
+	if raw, ok := args["scopes"].(json.RawMessage); ok {
+		var scopes struct {
+			Add    []string `json:"add"`
+			Remove []string `json:"remove"`
+			Set    []string `json:"set"`
+		}
+		if err := json.Unmarshal(raw, &scopes); err != nil {
+			return in, fmt.Errorf(`scopes must be an object {"add": […], "remove": […]} or {"set": […]}: %w`, err)
+		}
+		in.addScopes, in.removeScopes, in.setScopes = scopes.Add, scopes.Remove, scopes.Set
+	}
 	if raw, ok := args["resume"].(json.RawMessage); ok {
 		var resume bool
 		if err := json.Unmarshal(raw, &resume); err != nil {

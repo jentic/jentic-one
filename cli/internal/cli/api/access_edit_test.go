@@ -47,7 +47,8 @@ func TestMCPRequestAccessChange_ShapesTheWireAndWithholdsThePollToken(t *testing
 	res, err := s.handleRequestAccessChange(activeCtx(srv.URL), callToolRequest("request_access_change",
 		`{"credential_id":"cred_1","rules":{"add":[{"effect":"allow","methods":["POST"],"path":"/v1/send",
 		"match_mode":"exact"},{"rule":{"effect":"deny","path":"/v1/admin"},"before":"apr_1"}],
-		"remove":["apr_9"]},"scopes":["gmail.send"],"resume":true,"reason":"send replies"}`))
+		"remove":["apr_9"]},"scopes":{"add":["gmail.send"],"remove":["gmail.modify"]},"resume":true,
+		"reason":"send replies"}`))
 	if err != nil {
 		t.Fatalf("handleRequestAccessChange: %v", err)
 	}
@@ -71,6 +72,9 @@ func TestMCPRequestAccessChange_ShapesTheWireAndWithholdsThePollToken(t *testing
 	scopes, _ := cp.seen["scopes"].(map[string]any)
 	if add, _ := scopes["add"].([]any); len(add) != 1 || add[0] != "gmail.send" {
 		t.Errorf("scopes = %v", cp.seen["scopes"])
+	}
+	if remove, _ := scopes["remove"].([]any); len(remove) != 1 || remove[0] != "gmail.modify" {
+		t.Errorf("scopes.remove = %v", cp.seen["scopes"])
 	}
 	if cp.seen["resume"] != true || cp.seen["reason"] != "send replies" {
 		t.Errorf("resume/reason = %v / %v", cp.seen["resume"], cp.seen["reason"])
@@ -209,5 +213,24 @@ func TestAccessEditWait_AConflictedRequestPointsAtAmend(t *testing.T) {
 	}
 	if coded := accessEditConflicted("cs_e", "cred_1"); !strings.Contains(coded.Actionable, "jentic access amend cs_e") {
 		t.Errorf("actionable = %q, want the amend step", coded.Actionable)
+	}
+}
+
+func TestAccessEdit_SetScopesIsNotCombinedWithAddOrRemove(t *testing.T) {
+	withXDG(t)
+	cp := &editControlPlane{status: http.StatusCreated, body: editCreatedBody}
+	srv := cp.server(t)
+	defer srv.Close()
+
+	if _, err := runConnectTree(t, srv.URL, "access", "edit", "cred_1",
+		"--set-scopes", "repo", "--remove-scopes", "gist"); err == nil {
+		t.Fatal("want an argument error for --set-scopes with --remove-scopes")
+	}
+	if _, err := runConnectTree(t, srv.URL, "access", "edit", "cred_1", "--set-scopes", "repo,read:org"); err != nil {
+		t.Fatalf("access edit --set-scopes: %v", err)
+	}
+	scopes, _ := cp.seen["scopes"].(map[string]any)
+	if set, _ := scopes["set"].([]any); len(set) != 2 {
+		t.Errorf("scopes = %v, want the full set", cp.seen["scopes"])
 	}
 }

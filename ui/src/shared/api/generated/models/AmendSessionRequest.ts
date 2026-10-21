@@ -30,7 +30,7 @@ export type AmendSessionRequest = {
      */
     rules?: (EditRulesRequest | null);
     /**
-     * Edit sessions: the scopes to add, replacing the current ask.
+     * Edit sessions: the scope change, replacing the current ask.
      */
     scopes?: (EditScopesRequest | null);
 };

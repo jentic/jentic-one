@@ -3,12 +3,23 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Scopes to add to the binding's OAuth credential.
+ * A change to the binding's OAuth credential scopes: `add`/`remove`, or the full list in `set`.
+ *
+ * Confirming a change runs a vendor sign-in for exactly the resulting scopes;
+ * other agents bound to the credential get the change too.
  */
 export type EditScopesRequest = {
     /**
-     * Scopes to add (at most 100). Confirming runs a vendor consent on the credential; other agents bound to it gain them too.
+     * Scopes to add (at most 100).
      */
     add?: Array<string>;
+    /**
+     * Scopes to remove (at most 100).
+     */
+    remove?: Array<string>;
+    /**
+     * The full scope list to replace the grant's with. Not combined with add or remove.
+     */
+    set?: (Array<string> | null);
 };
 

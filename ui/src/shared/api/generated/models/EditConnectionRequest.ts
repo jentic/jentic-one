@@ -33,7 +33,7 @@ export type EditConnectionRequest = {
      */
     rules?: (EditRulesRequest | null);
     /**
-     * Scopes to add. OAuth credentials connected through an authorization-code or device-authorization app only; others are 422 scopes_not_supported.
+     * The scope change. OAuth credentials connected through an authorization-code or device-authorization app only; others are 422 scopes_not_supported.
      */
     scopes?: (EditScopesRequest | null);
 };

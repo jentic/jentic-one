@@ -9,7 +9,7 @@ ad-hoc error ``JSONResponse`` bodies.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 
 import structlog
 from fastapi import APIRouter, Body, Depends, Path, Query, Request, Response
@@ -65,6 +65,7 @@ from jentic_one.control.web.schemas.integrations import (
     EditRuleSetView,
     EditRulesRequest,
     EditRuleView,
+    EditScopesRequest,
     ExistingCredentialConfirmSessionRequest,
     ExistingCredentialResponse,
     IntegrationsConnectRequest,
@@ -226,6 +227,17 @@ async def integrations_connect(
 
 
 # ---------------------------------------------------------------------------
+def _scope_change(scopes: EditScopesRequest | None) -> dict[str, Any]:
+    """An edit's scope change as :class:`EditRequest` fields."""
+    if scopes is None:
+        return {}
+    return {
+        "add_scopes": list(scopes.add),
+        "remove_scopes": list(scopes.remove),
+        "set_scopes": list(scopes.set_scopes) if scopes.set_scopes is not None else None,
+    }
+
+
 # POST /integrations:edit-connection — begin an edit of an existing binding
 # ---------------------------------------------------------------------------
 
@@ -295,7 +307,7 @@ async def integrations_edit_connection(
                 if rules.set_rules is not None
                 else None
             ),
-            add_scopes=list(body.scopes.add) if body.scopes is not None else [],
+            **_scope_change(body.scopes),
             resume=body.resume,
             reason=body.reason,
         ),
@@ -796,7 +808,7 @@ async def amend_connect_session(
                 else None
             ),
             requested_scopes=body.requested_scopes,
-            add_scopes=list(body.scopes.add) if body.scopes is not None else [],
+            scopes=EditRequest(**_scope_change(body.scopes)) if body.scopes is not None else None,
         ),
     )
     return AmendSessionResponse(

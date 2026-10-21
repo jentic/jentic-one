@@ -91,6 +91,7 @@ from jentic_one.control.services.integrations.edits import (
     resolve_edit,
     rule_content,
     rule_to_write,
+    scopes_changed,
     target_rules,
     widens_access,
 )
@@ -304,8 +305,8 @@ class ConsentSource:
 class SessionAmend:
     """What an amend changes; ``fields`` names the parts it carries.
 
-    ``rules``, ``resume`` and ``add_scopes`` (the ``scopes`` field) apply to
-    edit sessions;
+    ``rules``, ``resume`` and ``scopes`` (a request whose scope change is
+    read) apply to edit sessions;
     ``requested_permission_rules`` and ``requested_scopes`` to create
     sessions; ``reason`` to both.
     """
@@ -316,7 +317,7 @@ class SessionAmend:
     reason: str | None = None
     requested_permission_rules: list[dict[str, object]] | None = None
     requested_scopes: list[str] | None = None
-    add_scopes: list[str] = field(default_factory=list)
+    scopes: EditRequest | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -1754,14 +1755,15 @@ class ConnectSessionService:
             assert row.baseline is not None
             previous = EditRequest.from_proposal(current.proposal)
             rules = amend.rules if "rules" in amend.fields else previous
-            assert rules is not None
+            scope_ask = amend.scopes if "scopes" in amend.fields else previous
+            assert rules is not None and scope_ask is not None
             request = EditRequest(
                 add=rules.add,
                 remove=rules.remove,
                 set_rules=rules.set_rules,
-                add_scopes=(
-                    list(amend.add_scopes) if "scopes" in amend.fields else previous.add_scopes
-                ),
+                add_scopes=scope_ask.add_scopes,
+                remove_scopes=scope_ask.remove_scopes,
+                set_scopes=scope_ask.set_scopes,
                 resume=amend.resume if "resume" in amend.fields else previous.resume,
                 reason=amend.reason if "reason" in amend.fields else previous.reason,
             )
@@ -1771,12 +1773,11 @@ class ConnectSessionService:
             except (UnknownRuleError, NothingToChangeError) as exc:
                 exc.point_at(row.credential_id, row.agent_id)
                 raise
-            new_scopes = added_scopes(row.baseline, result)
-            if new_scopes:
+            if scopes_changed(row.baseline, result):
                 async with self._ctx.control_db.session() as session:
                     credential = await CredentialRepository.get_by_id(session, row.credential_id)
                 consent = await self._consent_source(credential) if credential else None
-                self._require_addable_scopes(consent, new_scopes)
+                self._require_scope_change(consent, row.baseline, result)
             proposal = request.as_proposal()
             digest = revision_digest(baseline=row.baseline, result=result, reason=request.reason)
             fields = {"reason": request.reason}
@@ -1982,8 +1983,8 @@ class ConnectSessionService:
         # on the session like a vendor connect's; ``None`` when the
         # credential cannot be re-consented here.
         consent = await self._consent_source(credential)
-        new_scopes = added_scopes(baseline, result)
-        self._require_addable_scopes(consent, new_scopes)
+        new_scopes = scopes_changed(baseline, result)
+        self._require_scope_change(consent, baseline, result)
         if apply:
             await self._require_agent_binding_allowed(agent_id, identity, late_bound=False)
             if not new_scopes:
@@ -2214,7 +2215,7 @@ class ConnectSessionService:
             confirmed_scopes=confirmed_scopes,
         )
         granted = list(row.baseline.get("granted_scopes") or [])
-        if set(change["scopes"]) - set(granted):
+        if set(change["scopes"]) != set(granted):
             return await self._begin_edit_consent(row, change, identity=identity)
 
         async with self._ctx.control_db.transaction() as session:
@@ -2337,21 +2338,26 @@ class ConnectSessionService:
     async def _require_scope_widening_allowed(
         self, credential: Credential, agent_id: str, identity: Identity
     ) -> None:
-        """Widening a credential other agents use is its owner's or an org admin's call."""
+        """Changing a credential other agents use is its owner's or an org admin's call."""
         others = await self._other_bound_agent_ids(credential.id, agent_id)
         if not others or ORG_ADMIN in identity.permissions:
             return
         if credential.created_by != identity.sub:
             raise ScopeWideningForbiddenError(credential.id)
 
-    def _require_addable_scopes(self, consent: ConsentSource | None, scopes: list[str]) -> None:
-        """Refuse adding ``scopes`` the credential can't take or its vendor doesn't offer."""
-        if not scopes:
+    def _require_scope_change(
+        self,
+        consent: ConsentSource | None,
+        baseline: Mapping[str, Any],
+        result: Mapping[str, Any],
+    ) -> None:
+        """Refuse a scope change the credential can't take, or adding a scope its vendor lacks."""
+        if not scopes_changed(baseline, result):
             return
         if consent is None:
             raise ScopesNotSupportedError()
         if consent.entry is not None:
-            unknown = self._vendors.validate_scopes(consent.entry, scopes)
+            unknown = self._vendors.validate_scopes(consent.entry, added_scopes(baseline, result))
             if unknown:
                 raise ScopeValidationError(unknown)
 
@@ -2579,13 +2585,16 @@ class ConnectSessionService:
             if ORG_ADMIN not in identity.permissions and owner != identity.sub:
                 raise RuleSetConfirmForbiddenError(rule_set["id"])
         granted = list(baseline.get("granted_scopes") or [])
+        # The approved scopes exactly, so a removal narrows the grant; none
+        # approved keeps it as it is.
+        scopes = sorted(set(confirmed_scopes) if confirmed_scopes is not None else set(granted))
         return {
             "rules": [rule_to_write(r) for r in permission_rules],
             "rule_set_id": rule_set["id"] if rule_set is not None and not copy_curated else None,
             "detach_rule_set": copy_curated,
             "resume": resume and bool(baseline["suspended"]),
             "bind": False,
-            "scopes": sorted(set(granted) | set(confirmed_scopes or [])),
+            "scopes": scopes,
             "outcome": OUTCOME_APPLIED,
             "approved_by": identity.sub,
             "revision_id": revision_id,
@@ -2773,7 +2782,7 @@ class ConnectSessionService:
             result=dict(revision.result),
             widens_access=widens_access(row.baseline, revision.result),
             other_bound_agents=others,
-            needs_vendor_consent=bool(added_scopes(row.baseline, revision.result)),
+            needs_vendor_consent=scopes_changed(row.baseline, revision.result),
             conflicts=list(revision.proposal.get("conflicts") or []),
         )
 
@@ -4684,6 +4693,24 @@ class ConnectSessionService:
                 row.id, "failed", "consented as another account", error_code="account_changed"
             )
             return StatusResult(status="failed", error_code="account_changed")
+        # Some vendors carry earlier scopes into a new grant. One that kept a
+        # scope the change removes isn't written: the credential keeps its
+        # token, and the scope has to be revoked at the vendor.
+        kept = sorted(set(tokens.granted_scopes or []) - set(change["scopes"]))
+        if row.baseline is not None and kept:
+            _logger.warning(
+                "connect_session.edit_scopes_not_removed",
+                session_id=row.id,
+                credential_id=row.credential_id,
+                kept=kept,
+            )
+            await self._mark_terminal(
+                row.id,
+                "failed",
+                f"the vendor kept scopes the change removes: {', '.join(kept)}",
+                error_code="scopes_not_removed",
+            )
+            return StatusResult(status="failed", error_code="scopes_not_removed")
 
         # The rules were approved against the binding as it was. If they moved
         # while the grant was out, writing them would undo that change: the

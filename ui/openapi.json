@@ -919,6 +919,13 @@
             "scopes": {
               "add": [
                 "gmail.send"
+              ],
+              "remove": [
+                "gmail.modify"
+              ],
+              "set": [
+                "gmail.readonly",
+                "gmail.send"
               ]
             }
           }
@@ -1063,10 +1070,17 @@
                 "type": "null"
               }
             ],
-            "description": "Edit sessions: the scopes to add, replacing the current ask.",
+            "description": "Edit sessions: the scope change, replacing the current ask.",
             "examples": [
               {
                 "add": [
+                  "gmail.send"
+                ],
+                "remove": [
+                  "gmail.modify"
+                ],
+                "set": [
+                  "gmail.readonly",
                   "gmail.send"
                 ]
               }
@@ -6734,6 +6748,13 @@
             "scopes": {
               "add": [
                 "gmail.send"
+              ],
+              "remove": [
+                "gmail.modify"
+              ],
+              "set": [
+                "gmail.readonly",
+                "gmail.send"
               ]
             }
           }
@@ -6852,10 +6873,17 @@
                 "type": "null"
               }
             ],
-            "description": "Scopes to add. OAuth credentials connected through an authorization-code or device-authorization app only; others are 422 scopes_not_supported.",
+            "description": "The scope change. OAuth credentials connected through an authorization-code or device-authorization app only; others are 422 scopes_not_supported.",
             "examples": [
               {
                 "add": [
+                  "gmail.send"
+                ],
+                "remove": [
+                  "gmail.modify"
+                ],
+                "set": [
+                  "gmail.readonly",
                   "gmail.send"
                 ]
               }
@@ -7046,17 +7074,24 @@
       },
       "EditScopesRequest": {
         "additionalProperties": false,
-        "description": "Scopes to add to the binding's OAuth credential.",
+        "description": "A change to the binding's OAuth credential scopes: `add`/`remove`, or the full list in `set`.\n\nConfirming a change runs a vendor sign-in for exactly the resulting scopes;\nother agents bound to the credential get the change too.",
         "examples": [
           {
             "add": [
+              "gmail.send"
+            ],
+            "remove": [
+              "gmail.modify"
+            ],
+            "set": [
+              "gmail.readonly",
               "gmail.send"
             ]
           }
         ],
         "properties": {
           "add": {
-            "description": "Scopes to add (at most 100). Confirming runs a vendor consent on the credential; other agents bound to it gain them too.",
+            "description": "Scopes to add (at most 100).",
             "examples": [
               [
                 "gmail.send"
@@ -7068,6 +7103,42 @@
             "maxItems": 100,
             "title": "Add",
             "type": "array"
+          },
+          "remove": {
+            "description": "Scopes to remove (at most 100).",
+            "examples": [
+              [
+                "gmail.modify"
+              ]
+            ],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Remove",
+            "type": "array"
+          },
+          "set": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The full scope list to replace the grant's with. Not combined with add or remove.",
+            "examples": [
+              [
+                "gmail.readonly",
+                "gmail.send"
+              ]
+            ],
+            "title": "Set"
           }
         },
         "title": "EditScopesRequest",
@@ -35937,6 +36008,13 @@
                 "scopes": {
                   "add": [
                     "gmail.send"
+                  ],
+                  "remove": [
+                    "gmail.modify"
+                  ],
+                  "set": [
+                    "gmail.readonly",
+                    "gmail.send"
                   ]
                 }
               },
@@ -43527,6 +43605,13 @@
                 },
                 "scopes": {
                   "add": [
+                    "gmail.send"
+                  ],
+                  "remove": [
+                    "gmail.modify"
+                  ],
+                  "set": [
+                    "gmail.readonly",
                     "gmail.send"
                   ]
                 }

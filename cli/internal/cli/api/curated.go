@@ -114,7 +114,7 @@ func CuratedBindings() []CuratedBinding {
 			Bind: map[string]string{
 				"credential_id": PositionalArg,
 				"rules":         "add",
-				"scopes":        "scopes",
+				"scopes":        "add-scopes",
 				"resume":        "resume",
 				"reason":        "reason",
 			},
@@ -130,7 +130,7 @@ func CuratedBindings() []CuratedBinding {
 			Params:  control.AmendSessionRequest{},
 			Bind: map[string]string{
 				"rules":                      "add",
-				"scopes":                     "scopes",
+				"scopes":                     "add-scopes",
 				"resume":                     "resume",
 				"reason":                     "reason",
 				"requested_permission_rules": "requested-rules",

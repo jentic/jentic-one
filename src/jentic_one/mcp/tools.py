@@ -1990,14 +1990,14 @@ async def handle_show_access(env: CallEnv, arguments: dict[str, Any]) -> mcp_typ
 _REQUEST_ACCESS_CHANGE_PARAMS = [
     ParamSpec("credential_id", "string"),
     ParamSpec("rules", "json"),
-    ParamSpec("scopes", "string_list"),
+    ParamSpec("scopes", "json"),
     ParamSpec("resume", "json"),
     ParamSpec("reason", "string"),
 ]
 _AMEND_REQUEST_PARAMS = [
     ParamSpec("session_id", "string"),
     ParamSpec("rules", "json"),
-    ParamSpec("scopes", "string_list"),
+    ParamSpec("scopes", "json"),
     ParamSpec("resume", "json"),
     ParamSpec("reason", "string"),
     ParamSpec("requested_permission_rules", "json", ("permission_rules",)),
@@ -2062,10 +2062,31 @@ def _edit_request(args: dict[str, Any]) -> EditRequest:
         set_rules=(
             _edit_rule_list(rules["set"], "rules.set") if rules.get("set") is not None else None
         ),
-        add_scopes=list(args.get("scopes") or []),
+        **_edit_scopes(args.get("scopes")),
         resume=resume,
         reason=reason,
     )
+
+
+def _edit_scopes(raw: Any) -> dict[str, Any]:
+    """The scope change in a tool call: ``{"add": […], "remove": […]}`` or ``{"set": […]}``."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise invalid_params('scopes must be an object {"add": […], "remove": […]} or {"set": […]}')
+    for key in ("add", "remove", "set"):
+        value = raw.get(key)
+        if value is not None and (
+            not isinstance(value, list) or not all(isinstance(s, str) for s in value)
+        ):
+            raise invalid_params(f"scopes.{key} must be a list of scope names")
+    if raw.get("set") is not None and (raw.get("add") or raw.get("remove")):
+        raise invalid_params("pass either add/remove or set, not both")
+    return {
+        "add_scopes": list(raw.get("add") or []),
+        "remove_scopes": list(raw.get("remove") or []),
+        "set_scopes": list(raw["set"]) if raw.get("set") is not None else None,
+    }
 
 
 def _edit_refusal(env: CallEnv, exc: Exception, what: str) -> ToolError:
@@ -2184,7 +2205,7 @@ async def handle_amend_request(env: CallEnv, arguments: dict[str, Any]) -> mcp_t
             else None
         ),
         requested_scopes=list(args["requested_scopes"]) if "requested_scopes" in fields else None,
-        add_scopes=request.add_scopes,
+        scopes=request if "scopes" in fields else None,
     )
     try:
         amended = await ConnectSessionService(env.ctx).amend_session(

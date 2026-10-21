@@ -7,7 +7,7 @@ at (with that set's rules), whether it is suspended, and the credential's
 granted scopes. Every revision of the edit resolves the initiator's request
 against that baseline into one **result**, the access confirming it would
 leave in place, so ``add``/``remove`` and ``set`` produce the same thing to
-review.
+review. Rules and scopes are changed the same way.
 
 While a shared rule set is attached its rules are the ones that apply, so an
 edit changes the set's rules; otherwise it changes the binding's own rules.
@@ -49,14 +49,17 @@ class RuleAdd:
 class EditRequest:
     """What an edit asks for, relative to the baseline.
 
-    Either ``add``/``remove`` or ``set`` (the full rule list, which also
-    covers re-ordering); the router refuses a request carrying both.
+    For rules, either ``add``/``remove`` or ``set`` (the full rule list, which
+    also covers re-ordering); for scopes, either ``add_scopes``/``remove_scopes``
+    or ``set_scopes``. The router refuses a request carrying both of a pair.
     """
 
     add: list[RuleAdd] = field(default_factory=list)
     remove: list[str] = field(default_factory=list)
     set_rules: list[dict[str, Any]] | None = None
     add_scopes: list[str] = field(default_factory=list)
+    remove_scopes: list[str] = field(default_factory=list)
+    set_scopes: list[str] | None = None
     resume: bool = False
     reason: str | None = None
 
@@ -65,13 +68,16 @@ class EditRequest:
         """Rebuild the request a revision stored with :meth:`as_proposal`."""
         rules = proposal.get("rules") or {}
         set_rules = rules.get("set")
+        scopes = proposal.get("scopes") or {}
         return cls(
             add=[
                 RuleAdd(rule=dict(a["rule"]), before=a.get("before")) for a in rules.get("add", [])
             ],
             remove=list(rules.get("remove", [])),
             set_rules=[dict(r) for r in set_rules] if set_rules is not None else None,
-            add_scopes=list((proposal.get("scopes") or {}).get("add", [])),
+            add_scopes=list(scopes.get("add", [])),
+            remove_scopes=list(scopes.get("remove", [])),
+            set_scopes=list(scopes["set"]) if scopes.get("set") is not None else None,
             resume=bool(proposal.get("resume", False)),
             reason=proposal.get("reason"),
         )
@@ -86,9 +92,14 @@ class EditRequest:
                 "add": [{"rule": dict(a.rule), "before": a.before} for a in self.add],
                 "remove": list(self.remove),
             }
+        scopes: dict[str, Any] = (
+            {"set": list(self.set_scopes)}
+            if self.set_scopes is not None
+            else {"add": list(self.add_scopes), "remove": list(self.remove_scopes)}
+        )
         return {
             "rules": rules,
-            "scopes": {"add": list(self.add_scopes)},
+            "scopes": scopes,
             "resume": self.resume,
             "reason": self.reason,
         }
@@ -162,13 +173,21 @@ def resolve_edit(
             resolved.insert(index, new)
 
     granted = baseline.get("granted_scopes")
-    if request.add_scopes and granted is None:
-        # Only an OAuth grant has scopes the platform can widen.
+    asks_scopes = bool(request.add_scopes or request.remove_scopes) or (
+        request.set_scopes is not None
+    )
+    if asks_scopes and granted is None:
+        # Only an OAuth grant has scopes the platform can change.
         raise ScopesNotSupportedError()
+    if request.set_scopes is not None:
+        scopes = set(request.set_scopes)
+    else:
+        # Removing a scope the grant doesn't hold is already in place.
+        scopes = (set(granted or []) | set(request.add_scopes)) - set(request.remove_scopes)
     result = {
         "target": target,
         "rules": resolved,
-        "scopes": sorted(set(granted or []) | set(request.add_scopes)),
+        "scopes": sorted(scopes),
         "suspended": bool(baseline["suspended"]) and not request.resume,
     }
     return result, dropped
@@ -215,8 +234,21 @@ def widens_access(baseline: Mapping[str, Any], result: Mapping[str, Any]) -> boo
 
 
 def added_scopes(baseline: Mapping[str, Any], result: Mapping[str, Any]) -> list[str]:
-    """Scopes ``result`` holds that the credential's grant does not (a vendor consent)."""
+    """Scopes ``result`` holds that the credential's grant does not."""
     return sorted(set(result["scopes"]) - set(baseline.get("granted_scopes") or []))
+
+
+def removed_scopes(baseline: Mapping[str, Any], result: Mapping[str, Any]) -> list[str]:
+    """Scopes the credential's grant holds that ``result`` drops."""
+    return sorted(set(baseline.get("granted_scopes") or []) - set(result["scopes"]))
+
+
+def scopes_changed(baseline: Mapping[str, Any], result: Mapping[str, Any]) -> bool:
+    """Whether ``result`` changes the grant's scopes, so confirming runs a vendor sign-in.
+
+    Adding or removing alike: the sign-in asks for exactly the result's scopes.
+    """
+    return set(result["scopes"]) != set(baseline.get("granted_scopes") or [])
 
 
 def baseline_matches(stored: Mapping[str, Any], live: Mapping[str, Any]) -> bool:

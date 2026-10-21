@@ -11,9 +11,12 @@ from jentic_one.control.services.integrations.edits import (
     TARGET_RULE_SET,
     EditRequest,
     RuleAdd,
+    added_scopes,
     baseline_matches,
+    removed_scopes,
     require_change,
     resolve_edit,
+    scopes_changed,
     widens_access,
 )
 from jentic_one.control.services.integrations.errors import (
@@ -158,6 +161,36 @@ def test_scopes_cannot_be_added_without_an_oauth_grant() -> None:
         resolve_edit(_baseline() | {"granted_scopes": None}, EditRequest(add_scopes=["x"]))
 
 
+def test_removing_or_replacing_scopes_changes_the_grant_without_widening() -> None:
+    base = _baseline() | {"granted_scopes": ["gist", "repo"]}
+    removed, _ = resolve_edit(base, EditRequest(remove_scopes=["gist"]))
+    assert removed["scopes"] == ["repo"]
+    assert (removed_scopes(base, removed), scopes_changed(base, removed)) == (["gist"], True)
+    require_change(base, removed)
+    assert widens_access(base, removed) is False
+
+    replaced, _ = resolve_edit(base, EditRequest(set_scopes=["repo", "read:org"]))
+    assert replaced["scopes"] == ["read:org", "repo"]
+    assert (added_scopes(base, replaced), removed_scopes(base, replaced)) == (
+        ["read:org"],
+        ["gist"],
+    )
+    assert widens_access(base, replaced) is True
+
+    # Removing a scope the grant doesn't hold is already in place.
+    absent, _ = resolve_edit(base, EditRequest(remove_scopes=["admin:org"]))
+    assert scopes_changed(base, absent) is False
+    with pytest.raises(NothingToChangeError):
+        require_change(base, absent)
+
+
+def test_scopes_cannot_be_removed_without_an_oauth_grant() -> None:
+    with pytest.raises(ScopesNotSupportedError):
+        resolve_edit(_baseline() | {"granted_scopes": None}, EditRequest(remove_scopes=["x"]))
+
+
 def test_a_proposal_round_trips_its_scopes() -> None:
     request = EditRequest(add=[RuleAdd(_SEND)], add_scopes=["gist"], resume=True, reason="r")
     assert EditRequest.from_proposal(request.as_proposal()) == request
+    for scopes in (EditRequest(remove_scopes=["gist"]), EditRequest(set_scopes=["repo"])):
+        assert EditRequest.from_proposal(scopes.as_proposal()) == scopes

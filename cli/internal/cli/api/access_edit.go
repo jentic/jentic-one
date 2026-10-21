@@ -35,9 +35,12 @@ type editInput struct {
 	remove []string
 	// setJSON is the full replacement rule list.
 	setJSON json.RawMessage
-	scopes  []string
-	resume  *bool
-	reason  *string
+	// The scope change, shaped like the rule change: add/remove or set.
+	addScopes    []string
+	removeScopes []string
+	setScopes    []string
+	resume       *bool
+	reason       *string
 	// Create sessions only (amend).
 	requestedRulesJSON json.RawMessage
 	requestedScopes    []string
@@ -132,12 +135,27 @@ func (in editInput) editRules() (*control.EditRulesRequest, error) {
 	return out, nil
 }
 
-func (in editInput) editScopes() *control.EditScopesRequest {
-	if len(in.scopes) == 0 {
-		return nil
+func (in editInput) editScopes() (*control.EditScopesRequest, error) {
+	if in.setScopes != nil && (len(in.addScopes) > 0 || len(in.removeScopes) > 0) {
+		return nil, errors.New("pass either add/remove or set for scopes, not both")
 	}
-	scopes := append([]string(nil), in.scopes...)
-	return &control.EditScopesRequest{Add: &scopes}
+	if in.setScopes != nil {
+		set := append([]string{}, in.setScopes...)
+		return &control.EditScopesRequest{Set: &set}, nil
+	}
+	if len(in.addScopes) == 0 && len(in.removeScopes) == 0 {
+		return nil, nil
+	}
+	out := &control.EditScopesRequest{}
+	if len(in.addScopes) > 0 {
+		add := append([]string(nil), in.addScopes...)
+		out.Add = &add
+	}
+	if len(in.removeScopes) > 0 {
+		remove := append([]string(nil), in.removeScopes...)
+		out.Remove = &remove
+	}
+	return out, nil
 }
 
 // editCreated is the 201 body of :edit-connection (poll_token decoded, never re-emitted).
@@ -212,6 +230,10 @@ func (a *app) requestAccessChange(ctx context.Context, credentialID string, in e
 	if err != nil {
 		return nil, "", &ux.CodedError{Code: ux.CodeMissingArgument, Msg: err.Error()}
 	}
+	scopes, err := in.editScopes()
+	if err != nil {
+		return nil, "", &ux.CodedError{Code: ux.CodeMissingArgument, Msg: err.Error()}
+	}
 	client, err := a.controlClient(ctx)
 	if err != nil {
 		return nil, "", err
@@ -220,7 +242,7 @@ func (a *app) requestAccessChange(ctx context.Context, credentialID string, in e
 	body := control.EditConnectionRequest{
 		CredentialId: credentialID,
 		Rules:        rules,
-		Scopes:       in.editScopes(),
+		Scopes:       scopes,
 		Resume:       in.resume,
 		Reason:       in.reason,
 	}
@@ -251,7 +273,11 @@ func (a *app) amendRequest(ctx context.Context, sessionID string, in editInput) 
 	if err != nil {
 		return nil, &ux.CodedError{Code: ux.CodeMissingArgument, Msg: err.Error()}
 	}
-	body := control.AmendSessionRequest{Rules: rules, Scopes: in.editScopes(), Resume: in.resume, Reason: in.reason}
+	scopes, err := in.editScopes()
+	if err != nil {
+		return nil, &ux.CodedError{Code: ux.CodeMissingArgument, Msg: err.Error()}
+	}
+	body := control.AmendSessionRequest{Rules: rules, Scopes: scopes, Resume: in.resume, Reason: in.reason}
 	if len(in.requestedRulesJSON) > 0 {
 		requested, err := decodeEditRules(in.requestedRulesJSON, "requested_permission_rules")
 		if err != nil {
@@ -312,7 +338,9 @@ func editFlags(cmd *cobra.Command, in *editInput, addJSON, setJSON *string, resu
 	cmd.Flags().StringVar(&in.before, "before", "", "rule id to insert the added rules before (first match wins); appended when omitted")
 	cmd.Flags().StringSliceVar(&in.remove, "remove", nil, "rule ids to remove (from `jentic access show`)")
 	cmd.Flags().StringVar(setJSON, "set", "", "the full rule list to replace the current one with, as JSON (not combined with --add/--remove)")
-	cmd.Flags().StringSliceVar(&in.scopes, "scopes", nil, "OAuth scopes to add (the approver re-consents the credential)")
+	cmd.Flags().StringSliceVar(&in.addScopes, "add-scopes", nil, "OAuth scopes to add (the approver signs in to the vendor again)")
+	cmd.Flags().StringSliceVar(&in.removeScopes, "remove-scopes", nil, "OAuth scopes to remove")
+	cmd.Flags().StringSliceVar(&in.setScopes, "set-scopes", nil, "the full OAuth scope list to replace the grant's with (not combined with --add-scopes/--remove-scopes)")
 	cmd.Flags().BoolVar(resume, "resume", false, "switch a suspended binding back on")
 	cmd.Flags().StringVar(reason, "reason", "", "why you need the change (shown to the approver; max 1024 chars)")
 }
@@ -346,7 +374,8 @@ func newAccessEditCmd(a *app) *cobra.Command {
 		Short: "Ask for a change to your access through one credential (a human approves it)",
 		Long: "edit asks your human user to change what your binding to the credential lets you\n" +
 			"do: rules to add (--add, optionally --before a rule id), remove (--remove) or\n" +
-			"replace (--set), OAuth scopes to add (--scopes), or resuming a suspended binding\n" +
+			"replace (--set), OAuth scopes to add, remove or replace (--add-scopes,\n" +
+			"--remove-scopes, --set-scopes), or resuming a suspended binding\n" +
 			"(--resume). Read your access first with `jentic access show`: rule ids come from\n" +
 			"there, and a denial's suggested_rules fit --add as-is. Put every change you need\n" +
 			"in one request. It prints the approval_url to relay; nothing changes until they\n" +
@@ -426,9 +455,10 @@ func newAccessAmendCmd(a *app) *cobra.Command {
 		Long: "amend changes what an open request asks for; the reviewer sees the new version and\n" +
 			"approves it once. The fields you pass replace those parts of the ask and the rest\n" +
 			"stay. For a change to your access (`jentic access edit`) pass --add/--remove/--set,\n" +
-			"--scopes, --resume or --reason; for a new connection (`jentic connect`) pass\n" +
-			"--requested-rules, --requested-scopes or --reason. A request that was already\n" +
-			"approved or ended cannot be amended: ask again instead.",
+			"--add-scopes/--remove-scopes/--set-scopes, --resume or --reason; for a new\n" +
+			"connection (`jentic connect`) pass --requested-rules, --requested-scopes or\n" +
+			"--reason. A request that was already approved or ended cannot be amended: ask\n" +
+			"again instead.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			aud := ux.FromContext(cmd.Context())

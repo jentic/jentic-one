@@ -107,8 +107,8 @@ One dashboard — relay the right ask, then retry once they confirm.
 
 **Asking for an access change.** Read your access first (`jentic access show
 <credential_id>` / `show_access`): the rules with their ids, the shared rule
-set, the granted scopes and the scopes you can add (`scope_catalog`; ask only
-for those). Then put **every** change you need in one request
+set, the granted scopes and the scopes the vendor offers (`scope_catalog`; add
+only those). Then put **every** change you need in one request
 (`jentic access edit` / `request_access_change`) and relay its
 `approval_url`. To change an open request — yours, for a new connection or an
 access change — amend it (`jentic access amend <session_id>` /
@@ -207,10 +207,11 @@ conflicts. Read your access again and amend the request to fit. After the human 
   dashboard.
 - `jentic access show <credential_id>` — what your binding to the credential
   lets you do: rules with their ids, the shared rule set (whose rules apply
-  instead), granted scopes, the scopes an edit can add, suspension.
+  instead), granted scopes, the scopes the vendor offers, suspension.
 - `jentic access edit <credential_id>` — ask for a change to that binding
   (`--add` rules, optionally `--before <rule id>`; `--remove <rule id>`;
-  `--set` the whole list; `--scopes` to add; `--resume`); prints the
+  `--set` the whole list; scopes the same way with `--add-scopes`,
+  `--remove-scopes` or `--set-scopes`; `--resume`); prints the
   `approval_url` a human approves. `jentic access amend <session_id>` changes
   an open request instead of asking again.
 - `jentic connect <vendor>` / `jentic connect --api <vendor/name/version>`

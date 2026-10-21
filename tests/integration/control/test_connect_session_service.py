@@ -2790,6 +2790,85 @@ async def test_a_scopes_only_change_lands_beside_rules_changed_meanwhile(
     assert status.status == "applied"
 
 
+async def test_an_edit_replaces_the_scopes_with_a_fresh_sign_in(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    credential_id = await _connected_device_credential(ctx, svc)
+
+    # The agent asks to swap a scope: removing one runs the sign-in too.
+    edit = await svc.create_edit_session(
+        credential_id=credential_id,
+        agent_id=_AGENT_ID,
+        identity=_AGENT_IDENTITY,
+        request=EditRequest(add_scopes=["repo"], remove_scopes=["read:user"]),
+    )
+    review = await svc.get_review_data(edit.session_id, poll_token=None, identity=_USER_IDENTITY)
+    assert review.edit is not None and review.edit.needs_vendor_consent is True
+    assert review.edit.result["scopes"] == ["repo"]
+    begin = AsyncMock(return_value=_DEVICE_BEGIN)
+    with patch.object(df, "begin_device_authorization", new=begin):
+        challenge = await svc.confirm_edit(
+            edit.session_id,
+            poll_token=None,
+            identity=_USER_IDENTITY,
+            revision_id=review.edit.revision_id,
+            permission_rules=list(review.edit.result["rules"]),
+            resume=False,
+            confirmed_scopes=review.edit.result["scopes"],
+        )
+    assert isinstance(challenge, DeviceAuthorizationConfirmResult)
+    # The sign-in asks for exactly the new set, not the old one plus it.
+    assert begin.await_args is not None and begin.await_args.kwargs["scopes"] == ["repo"]
+
+    echo = identity_echo.IdentityEchoResult(display="octo", raw={"login": "octo"})
+    with (
+        patch.object(
+            DeviceAuthorizationHandler, "advance", new=AsyncMock(return_value=_success(["repo"]))
+        ),
+        patch.object(identity_echo, "echo_identity", new=AsyncMock(return_value=echo)),
+    ):
+        await svc.advance_polling_target(credential_id)
+    assert await _token_scope(ctx, credential_id) == "repo"
+    status = await svc.get_status(
+        edit.session_id, poll_token=edit.poll_token, identity=_AGENT_IDENTITY
+    )
+    assert status.status == "applied"
+
+
+async def test_a_grant_that_keeps_a_removed_scope_changes_nothing(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    credential_id = await _connected_device_credential(ctx, svc)
+    with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)):
+        applied = await svc.create_edit_session(
+            credential_id=credential_id,
+            agent_id=_AGENT_ID,
+            identity=_USER_IDENTITY,
+            request=EditRequest(set_scopes=["repo"]),
+            apply=True,
+        )
+    # The vendor carries the earlier scope into the new grant.
+    await _land_grant(svc, credential_id)
+
+    assert await _token_scope(ctx, credential_id) == "read:user"
+    status = await svc.get_status(
+        applied.session_id, poll_token=applied.poll_token, identity=_USER_IDENTITY
+    )
+    assert (status.status, status.error_code) == ("failed", "scopes_not_removed")
+
+
 async def test_a_failed_consent_leaves_the_credential_as_it_was(
     integration_context: Context,
     seed_test_vendors: None,
@@ -2964,7 +3043,9 @@ async def test_an_edit_adds_only_scopes_the_vendor_offers(
         await svc.amend_session(
             edit.session_id,
             identity=_AGENT_IDENTITY,
-            amend=SessionAmend(fields=frozenset({"scopes"}), add_scopes=["not-a-scope"]),
+            amend=SessionAmend(
+                fields=frozenset({"scopes"}), scopes=EditRequest(add_scopes=["not-a-scope"])
+            ),
         )
 
 

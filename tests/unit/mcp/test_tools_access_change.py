@@ -107,7 +107,7 @@ async def test_the_callers_own_binding_is_edited_and_the_poll_token_withheld() -
                 ],
                 "remove": ["apr_9"],
             },
-            "scopes": ["gmail.send"],
+            "scopes": {"add": ["gmail.send"], "remove": ["gmail.modify"]},
             "resume": True,
         },
     )
@@ -117,6 +117,7 @@ async def test_the_callers_own_binding_is_edited_and_the_poll_token_withheld() -
     request: EditRequest = call["request"]
     assert [a.before for a in request.add] == [None, "apr_1"]
     assert (request.remove, request.add_scopes, request.resume) == (["apr_9"], ["gmail.send"], True)
+    assert request.remove_scopes == ["gmail.modify"]
     payload = _payload(result)
     assert (payload["session_id"], payload["revision_id"]) == ("cs_e", "csr_1")
     assert "pt_secret" not in json.dumps(payload)

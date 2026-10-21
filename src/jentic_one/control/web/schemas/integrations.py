@@ -328,19 +328,43 @@ class EditRulesRequest(BaseModel):
 
 
 class EditScopesRequest(BaseModel):
-    """Scopes to add to the binding's OAuth credential."""
+    """A change to the binding's OAuth credential scopes: `add`/`remove`, or the full list in `set`.
 
-    model_config = ConfigDict(extra="forbid")
+    Confirming a change runs a vendor sign-in for exactly the resulting scopes;
+    other agents bound to the credential get the change too.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     add: list[str] = Field(
         default_factory=list,
         max_length=100,
         examples=[["gmail.send"]],
+        description="Scopes to add (at most 100).",
+    )
+    remove: list[str] = Field(
+        default_factory=list,
+        max_length=100,
+        examples=[["gmail.modify"]],
+        description="Scopes to remove (at most 100).",
+    )
+    set_scopes: list[str] | None = Field(
+        default=None,
+        alias="set",
+        max_length=100,
+        examples=[["gmail.readonly", "gmail.send"]],
         description=(
-            "Scopes to add (at most 100). Confirming runs a vendor consent on the credential; "
-            "other agents bound to it gain them too."
+            "The full scope list to replace the grant's with. Not combined with add or remove."
         ),
     )
+
+    @model_validator(mode="after")
+    def _set_alone(self) -> EditScopesRequest:
+        if self.set_scopes is not None and (self.add or self.remove):
+            raise ValueError("pass either add/remove or set, not both")
+        if set(self.add) & set(self.remove):
+            raise ValueError("a scope can't be both added and removed")
+        return self
 
 
 class EditConnectionRequest(BaseModel):
@@ -370,7 +394,7 @@ class EditConnectionRequest(BaseModel):
     scopes: EditScopesRequest | None = Field(
         default=None,
         description=(
-            "Scopes to add. OAuth credentials connected through an authorization-code or "
+            "The scope change. OAuth credentials connected through an authorization-code or "
             "device-authorization app only; others are 422 scopes_not_supported."
         ),
     )
@@ -407,7 +431,7 @@ class AmendSessionRequest(BaseModel):
         default=None, examples=[True], description="Edit sessions: resume a suspended binding."
     )
     scopes: EditScopesRequest | None = Field(
-        default=None, description="Edit sessions: the scopes to add, replacing the current ask."
+        default=None, description="Edit sessions: the scope change, replacing the current ask."
     )
     requested_permission_rules: list[PermissionRuleSchema] | None = Field(
         default=None,
