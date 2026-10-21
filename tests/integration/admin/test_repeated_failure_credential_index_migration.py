@@ -57,7 +57,7 @@ async def restore_admin_head(integration_config: AppConfig) -> AsyncGenerator[No
 async def _index_defs(admin_db: DatabaseSession) -> dict[str, str]:
     """Map each ``execution_records`` index name to its normalised DDL."""
     async with admin_db.session() as session:
-        if session.bind.dialect.name == "postgresql":
+        if session.get_bind().dialect.name == "postgresql":
             rows = await session.execute(
                 text(
                     "SELECT indexname, indexdef FROM pg_indexes"

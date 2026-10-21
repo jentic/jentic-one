@@ -1,17 +1,22 @@
-"""Unit tests for the broker admission-control middleware (§04 R1).
+"""Unit tests for the broker admission-control middleware.
 
 Past ``max_in_flight`` the next request is shed with ``503`` + ``Retry-After``
-without queuing; infra routes (``/health``, ``/metrics``) are never gated; slots
-release after the in-flight request completes.
+without queuing; infra routes (``/health``, ``/metrics``) are never gated; a
+slot releases once its response completes or the client disconnects, before
+any post-response work.
 """
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 
 import httpx
 import pytest
 from fastapi import FastAPI
+from starlette.background import BackgroundTask
+from starlette.responses import Response, StreamingResponse
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from jentic_one.broker.web.middleware import AdmissionControlMiddleware, _AdmissionGate
 
@@ -84,8 +89,8 @@ async def test_health_excluded_even_while_shedding() -> None:
 @pytest.mark.asyncio
 async def test_connection_close_stamped_while_draining() -> None:
     # During drain the middleware stamps Connection: close so a keep-alive
-    # client/LB tears the connection down and re-resolves to a healthy pod
-    # (§09 E4.3). A non-draining gate leaves the header untouched.
+    # client/LB tears the connection down and re-resolves to a healthy pod.
+    # A non-draining gate leaves the header untouched.
     admission_gate = _AdmissionGate(max_in_flight=5)
     app = FastAPI()
 
@@ -106,3 +111,159 @@ async def test_connection_close_stamped_while_draining() -> None:
         draining = await client.get("/ping")
         assert draining.status_code == 200
         assert draining.headers["connection"].lower() == "close"
+
+
+async def _drive(
+    app: ASGIApp, path: str, sent: list[Message], *, disconnect: asyncio.Event | None = None
+) -> None:
+    """Run one raw ASGI request through ``app``, recording what it sends."""
+    scope = {"type": "http", "method": "GET", "path": path, "headers": [], "query_string": b""}
+    delivered = False
+
+    async def receive() -> Message:
+        nonlocal delivered
+        if not delivered:
+            delivered = True
+            return {"type": "http.request", "body": b"", "more_body": False}
+        await (disconnect or asyncio.Event()).wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message: Message) -> None:
+        sent.append(message)
+
+    await app(scope, receive, send)
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.asyncio
+async def test_slot_released_when_response_completes_not_after_background(
+    streaming: bool,
+) -> None:
+    """Post-response background work holds no slot and doesn't count toward /ready."""
+    admission_gate = _AdmissionGate(max_in_flight=1)
+    background_started = asyncio.Event()
+    background_release = asyncio.Event()
+
+    async def _background() -> None:
+        background_started.set()
+        await background_release.wait()
+
+    async def _body() -> AsyncIterator[bytes]:
+        yield b"ok"
+
+    app = FastAPI()
+
+    @app.get("/done")
+    async def done() -> Response:
+        task = BackgroundTask(_background)
+        if streaming:
+            return StreamingResponse(_body(), background=task)
+        return Response(b"ok", background=task)
+
+    @app.get("/ping")
+    async def ping() -> dict[str, str]:
+        return {"status": "ok"}
+
+    app.add_middleware(
+        AdmissionControlMiddleware, max_in_flight=1, retry_after_s=7, gate=admission_gate
+    )
+
+    sent: list[Message] = []
+    request = asyncio.create_task(_drive(app, "/done", sent))
+    async with asyncio.timeout(2.0):
+        await background_started.wait()
+
+    # The response is complete and the background task still runs inside the
+    # app call, yet the slot is already free.
+    assert sent[-1]["type"] == "http.response.body"
+    assert not sent[-1].get("more_body", False)
+    assert not request.done()
+    assert admission_gate.in_flight == 0
+    assert admission_gate.saturation == 0.0
+
+    # A second request is admitted rather than shed while the first one's
+    # background work is still running.
+    second: list[Message] = []
+    async with asyncio.timeout(2.0):
+        await _drive(app, "/ping", second)
+    assert second[0]["status"] == 200
+    assert not request.done()
+
+    background_release.set()
+    await request
+    assert admission_gate.in_flight == 0
+
+
+@pytest.mark.asyncio
+async def test_slot_released_on_client_disconnect_mid_stream() -> None:
+    """A mid-stream disconnect frees the slot before the post-response persist runs.
+
+    Starlette cancels the body on ``http.disconnect`` and still runs the
+    response's BackgroundTask inside the app call; that work must not count as
+    in flight or toward /ready saturation.
+    """
+    admission_gate = _AdmissionGate(max_in_flight=1)
+    body_started = asyncio.Event()
+    background_started = asyncio.Event()
+    background_release = asyncio.Event()
+    disconnect = asyncio.Event()
+
+    async def _background() -> None:
+        background_started.set()
+        await background_release.wait()
+
+    async def _body() -> AsyncIterator[bytes]:
+        yield b"partial"
+        body_started.set()
+        await asyncio.Event().wait()  # an upstream that never finishes
+        yield b"unreachable"
+
+    app = FastAPI()
+
+    @app.get("/stream")
+    async def stream() -> Response:
+        return StreamingResponse(_body(), background=BackgroundTask(_background))
+
+    app.add_middleware(
+        AdmissionControlMiddleware, max_in_flight=1, retry_after_s=7, gate=admission_gate
+    )
+
+    sent: list[Message] = []
+    request = asyncio.create_task(_drive(app, "/stream", sent, disconnect=disconnect))
+    async with asyncio.timeout(2.0):
+        await body_started.wait()
+    assert admission_gate.in_flight == 1
+
+    disconnect.set()
+    async with asyncio.timeout(2.0):
+        await background_started.wait()
+
+    # The final body message was never sent, yet the slot is free while the
+    # background task still runs.
+    assert all(m.get("more_body", False) for m in sent if m["type"] == "http.response.body")
+    assert not request.done()
+    assert admission_gate.in_flight == 0
+    assert admission_gate.saturation == 0.0
+
+    background_release.set()
+    await request
+    assert admission_gate.in_flight == 0
+
+
+@pytest.mark.asyncio
+async def test_slot_released_once_when_app_raises_after_response() -> None:
+    """A slot freed at response completion is not released again on exit."""
+    admission_gate = _AdmissionGate(max_in_flight=2)
+
+    async def app(scope: Scope, receive: Receive, send: Send) -> None:
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok", "more_body": False})
+        assert admission_gate.in_flight == 0
+        raise RuntimeError("post-response failure")
+
+    middleware = AdmissionControlMiddleware(
+        app, max_in_flight=2, retry_after_s=7, gate=admission_gate
+    )
+    with pytest.raises(RuntimeError):
+        await _drive(middleware, "/x", [])
+    assert admission_gate.in_flight == 0

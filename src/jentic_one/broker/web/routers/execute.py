@@ -13,8 +13,11 @@ pipeline stages / runner decorators (``services/execution/pipeline.py``,
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
+import weakref
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlencode, urlparse, urlunparse
@@ -104,7 +107,7 @@ from jentic_one.shared.broker.protocols import (
     ResolveResult,
     RuleVerdict,
 )
-from jentic_one.shared.config import UpstreamClientConfig
+from jentic_one.shared.config import AppConfig, UpstreamClientConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import (
     emit_event_best_effort,
@@ -144,8 +147,29 @@ logger = structlog.get_logger(__name__)
 _meter = get_meter("broker")
 _streaming_persist_failures = _meter.create_counter(
     "broker.streaming_execution.persist_failures",
-    description="Failed attempts to persist a streaming execution record",
+    unit="{persist}",
+    description=(
+        "Streaming execution records not persisted, by reason: write_error (the "
+        "write raised), backlog_timeout (no slot within "
+        "broker.streaming_persist_acquire_timeout_s) or cancelled (abandoned "
+        "while waiting or writing; a record cancelled while writing may still "
+        "have landed)"
+    ),
 )
+_streaming_persist_pending = _meter.create_up_down_counter(
+    "broker.streaming_execution.persist_pending",
+    unit="{persist}",
+    description=(
+        "Streaming execution persists in this process that have not finished, by "
+        "state: waiting (queued for a broker.streaming_persist_max_concurrency "
+        "slot) or in_flight (holding a slot and writing)"
+    ),
+)
+_PENDING_WAITING = {"state": "waiting"}
+_PENDING_IN_FLIGHT = {"state": "in_flight"}
+_REASON_WRITE_ERROR = {"reason": "write_error"}
+_REASON_BACKLOG_TIMEOUT = {"reason": "backlog_timeout"}
+_REASON_CANCELLED = {"reason": "cancelled"}
 _unregistered_url_handled = _meter.create_counter(
     "broker.unregistered_url.handled",
     description=(
@@ -157,6 +181,124 @@ _unregistered_url_handled = _meter.create_counter(
 router = APIRouter()
 
 _BODY_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+@dataclass(frozen=True, slots=True)
+class _StreamingPersistGate:
+    """The semaphore bounding one Context's concurrent streaming persists."""
+
+    loop: asyncio.AbstractEventLoop
+    limit: int
+    semaphore: asyncio.Semaphore
+
+
+# One gate per Context (its admin pool), so two Contexts in one process never
+# share or thrash a semaphore. A gate is rebuilt only when the running event
+# loop changes: one Semaphore must not straddle loops.
+_persist_gates: weakref.WeakKeyDictionary[Context, _StreamingPersistGate] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _effective_persist_limit(config: AppConfig) -> int:
+    """``streaming_persist_max_concurrency`` clamped to ``admin.pool_max - 1`` (floor 1)."""
+    return min(
+        config.broker.streaming_persist_max_concurrency,
+        max(1, config.databases.admin.pool_max - 1),
+    )
+
+
+def _streaming_persist_gate(ctx: Context) -> _StreamingPersistGate:
+    """The gate bounding ``ctx``'s concurrent streaming persists on this loop.
+
+    Logs ``streaming_persist_limit_clamped`` when the gate is built with a
+    limit below the configured one, so the effective cap is never silent.
+    """
+    loop = asyncio.get_running_loop()
+    gate = _persist_gates.get(ctx)
+    if gate is None or gate.loop is not loop:
+        limit = _effective_persist_limit(ctx.config)
+        configured = ctx.config.broker.streaming_persist_max_concurrency
+        if limit < configured:
+            logger.warning(
+                "streaming_persist_limit_clamped",
+                configured=configured,
+                effective=limit,
+                admin_pool_max=ctx.config.databases.admin.pool_max,
+            )
+        gate = _StreamingPersistGate(loop=loop, limit=limit, semaphore=asyncio.Semaphore(limit))
+        _persist_gates[ctx] = gate
+    return gate
+
+
+def _record_persist_failed(outcome: StreamingOutcome, ctx_req: ExecuteRequestContext) -> None:
+    """Count and log a persist whose write raised (call from an ``except``)."""
+    _streaming_persist_failures.add(1, _REASON_WRITE_ERROR)
+    logger.error(
+        "streaming_execution_persist_failed",
+        execution_id=outcome.execution_id,
+        trace_id=ctx_req.trace_id,
+        reason=_REASON_WRITE_ERROR["reason"],
+        exc_info=True,
+    )
+
+
+def _record_persist_abandoned(
+    outcome: StreamingOutcome,
+    ctx_req: ExecuteRequestContext,
+    *,
+    reason: dict[str, str],
+    stage: str,
+    **fields: object,
+) -> None:
+    """Count and log a persist given up before it finished.
+
+    ``stage`` is ``waiting`` (no slot yet, so nothing was written) or
+    ``writing`` (cancelled inside the transaction, so the record may or may not
+    have landed). An expected condition, so no traceback.
+    """
+    _streaming_persist_failures.add(1, reason)
+    logger.error(
+        "streaming_execution_persist_abandoned",
+        execution_id=outcome.execution_id,
+        trace_id=ctx_req.trace_id,
+        reason=reason["reason"],
+        stage=stage,
+        **fields,
+    )
+
+
+async def _acquire_persist_slot(
+    semaphore: asyncio.Semaphore,
+    timeout_s: float,
+    outcome: StreamingOutcome,
+    ctx_req: ExecuteRequestContext,
+) -> bool:
+    """Wait up to ``timeout_s`` for a persist slot; ``False`` when it timed out.
+
+    A timeout or a cancellation while waiting is counted and logged as
+    abandoned; the cancellation is re-raised. No permit is held on any path
+    that does not return ``True``.
+    """
+    _streaming_persist_pending.add(1, _PENDING_WAITING)
+    try:
+        async with asyncio.timeout(timeout_s):
+            await semaphore.acquire()
+    except TimeoutError:
+        _record_persist_abandoned(
+            outcome,
+            ctx_req,
+            reason=_REASON_BACKLOG_TIMEOUT,
+            stage="waiting",
+            acquire_timeout_s=timeout_s,
+        )
+        return False
+    except asyncio.CancelledError:
+        _record_persist_abandoned(outcome, ctx_req, reason=_REASON_CANCELLED, stage="waiting")
+        raise
+    finally:
+        _streaming_persist_pending.add(-1, _PENDING_WAITING)
+    return True
 
 
 async def _persist_streaming_outcome(
@@ -171,7 +313,16 @@ async def _persist_streaming_outcome(
     """Best-effort persistence of a streaming execution record.
 
     Extracted so unit tests can exercise the real logic without invoking the full
-    handler.
+    handler. Concurrent calls for one Context are bounded by its
+    ``_streaming_persist_gate``: an excess call waits for a slot before opening
+    the admin transaction, for at most
+    ``broker.streaming_persist_acquire_timeout_s``. Callers run it once the
+    response is complete or the client has disconnected, when the request no
+    longer holds its admission slot, so the wait delays neither the client nor
+    ``/ready``. Never raises except
+    ``CancelledError``: a write error, a slot timeout and a cancellation (e.g.
+    shutdown) are each logged and counted on
+    ``broker.streaming_execution.persist_failures`` by ``reason``.
     """
     status = (
         ExecutionStatus.FAILED
@@ -181,6 +332,15 @@ async def _persist_streaming_outcome(
     error_msg = outcome.error or (
         f"Upstream returned {outcome.http_status}" if status is ExecutionStatus.FAILED else None
     )
+    try:
+        semaphore = _streaming_persist_gate(ctx).semaphore
+        acquire_timeout_s = ctx.config.broker.streaming_persist_acquire_timeout_s
+    except Exception:
+        _record_persist_failed(outcome, ctx_req)
+        return
+    if not await _acquire_persist_slot(semaphore, acquire_timeout_s, outcome, ctx_req):
+        return
+    _streaming_persist_pending.add(1, _PENDING_IN_FLIGHT)
     try:
         async with ctx.admin_db.transaction() as session:
             await persist_streaming_execution(
@@ -197,13 +357,14 @@ async def _persist_streaming_outcome(
                 origin=origin,
                 security_config=ctx.config.security,
             )
+    except asyncio.CancelledError:
+        _record_persist_abandoned(outcome, ctx_req, reason=_REASON_CANCELLED, stage="writing")
+        raise
     except Exception:
-        _streaming_persist_failures.add(1)
-        logger.error(
-            "streaming_execution_persist_failed",
-            execution_id=outcome.execution_id,
-            exc_info=True,
-        )
+        _record_persist_failed(outcome, ctx_req)
+    finally:
+        semaphore.release()
+        _streaming_persist_pending.add(-1, _PENDING_IN_FLIGHT)
 
 
 def _resolve_body_cap(content_type: str | None, cfg: UpstreamClientConfig) -> int:
@@ -697,7 +858,6 @@ async def _handle(
         body,
         selected_credential=selected_credential,
         allowed_credential_ids=allowed_credential_ids,
-        has_idempotency_key=bool(idem_key),
     )
 
     response = _assemble_response(outcome, ctx_req)
@@ -723,7 +883,6 @@ async def _execute_buffered(
     *,
     selected_credential: ResolvedCredential | None = None,
     allowed_credential_ids: list[str] | None = None,
-    has_idempotency_key: bool = False,
 ) -> ExecutionOutcome:
     """Inject credentials, run the buffered upstream call, and persist its record.
 
@@ -768,7 +927,6 @@ async def _execute_buffered(
         origin=identity.origin.value,
         security_config=ctx.config.security,
         signing=injection.signing,
-        has_idempotency_key=has_idempotency_key,
     )
 
 
@@ -791,8 +949,9 @@ async def _handle_streaming(
     ``open_streaming_response``.
 
     Persistence is best-effort via a Starlette BackgroundTask that fires after the
-    streaming body completes (or errors). A DB failure is logged + counted but does
-    not affect the already-sent response.
+    streaming body completes, errors or is cut short by a client disconnect,
+    once the request has released its admission slot. A DB failure is logged +
+    counted but does not affect the already-sent response.
     """
     body = await _read_request_body(request, ctx_req.method, ctx)
     credential_name = request.headers.get("jentic-credential-name")
@@ -826,7 +985,6 @@ async def _handle_streaming(
         body=body,
         timeout_s=ctx.config.broker.upstream_timeout_s,
         signing=injection.signing,
-        has_idempotency_key=bool(request.headers.get("idempotency-key")),
     )
 
     async def _persist_callback(outcome: StreamingOutcome) -> None:
