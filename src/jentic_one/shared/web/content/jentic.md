@@ -263,8 +263,11 @@ a failure by its symptom, not by assuming access: transport failures
 - Access is granted by a human: your operator approves every connection and
   binds you in the dashboard. You can *start* a connect session yourself
   (`jentic connect` / `request_connection`, by vendor key or API identity),
-  but you can't approve it, bind an existing credential, or grant yourself
-  permissions.
+  and ask for a change to a binding's rules or scopes (`jentic access edit` /
+  `request_access_change`, after reading it with `jentic access show` /
+  `show_access`), but you can't approve either, bind an existing credential,
+  or grant yourself permissions. Change an open request with `jentic access
+  amend` / `amend_request` rather than asking again.
 - **Verify which backend you're talking to before diagnosing "missing" APIs
   or credentials** — compare `instance` stamps (see step 3) and stick to one
   surface for the whole task.

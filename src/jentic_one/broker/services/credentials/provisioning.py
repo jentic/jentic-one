@@ -22,6 +22,27 @@ from jentic_one.shared.schemas import APIReference
 logger = structlog.get_logger(__name__)
 
 
+async def open_edit_provisioning_url(
+    ctx: Context, *, identity: Identity, credential_id: str
+) -> str | None:
+    """Return the owner deep link to the agent's open edit of its binding, if any.
+
+    Best-effort like :func:`open_session_provisioning_url`.
+    """
+    if identity.actor_type != ActorType.AGENT or not identity.sub:
+        return None
+    try:
+        session_id = await OpenConnectSessionReader(ctx.control_db).find_open_edit_id(
+            agent_id=identity.sub, credential_id=credential_id
+        )
+    except Exception:
+        logger.warning("open_edit_lookup_failed", credential_id=credential_id, exc_info=True)
+        return None
+    if session_id is None:
+        return None
+    return connect_approval_url(ctx.config, session_id)
+
+
 async def open_session_provisioning_url(
     ctx: Context, *, identity: Identity, api: APIReference
 ) -> str | None:

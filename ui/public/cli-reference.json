@@ -1723,6 +1723,227 @@
           ]
         },
         {
+          "name": "access",
+          "path": "jentic access",
+          "use": "access",
+          "short": "Show and change what your credential bindings let you do",
+          "group_title": "APIs",
+          "flags": [
+            {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            }
+          ],
+          "subcommands": [
+            {
+              "name": "show",
+              "path": "jentic access show",
+              "use": "show \u003ccredential_id\u003e",
+              "short": "Show your access through one credential: rules, rule set, scopes, suspension",
+              "long": "show answers with what your binding to the credential grants: its\npermission rules with their ids (data), the shared rule set it points at\n(whose rules apply instead of data), the credential's granted OAuth scopes,\nand whether the binding is suspended. Credential ids come from whoami.",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                }
+              ]
+            },
+            {
+              "name": "edit",
+              "path": "jentic access edit",
+              "use": "edit \u003ccredential_id\u003e",
+              "short": "Ask for a change to your access through one credential (a human approves it)",
+              "long": "edit asks your human user to change what your binding to the credential lets you\ndo: rules to add (--add, optionally --before a rule id), remove (--remove) or\nreplace (--set), OAuth scopes to add, remove or replace (--add-scopes,\n--remove-scopes, --set-scopes), or resuming a suspended binding\n(--resume). Read your access first with `jentic access show`: rule ids come from\nthere, and a denial's suggested_rules fit --add as-is. Put every change you need\nin one request. It prints the approval_url to relay; nothing changes until they\napprove. If a request for this binding is already open, amend that one with\n`jentic access amend \u003csession_id\u003e` instead. --wait polls until it is applied or ends.",
+              "flags": [
+                {
+                  "name": "add",
+                  "type": "string",
+                  "usage": "rules to add, as a JSON list of rules or {\"rule\": …, \"before\": \"\u003crule id\u003e\"} (a denial's suggested_rules fit as-is)"
+                },
+                {
+                  "name": "add-scopes",
+                  "type": "stringSlice",
+                  "default": "[]",
+                  "usage": "OAuth scopes to add (the approver signs in to the vendor again)"
+                },
+                {
+                  "name": "before",
+                  "type": "string",
+                  "usage": "rule id to insert the added rules before (first match wins); appended when omitted"
+                },
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
+                },
+                {
+                  "name": "reason",
+                  "type": "string",
+                  "usage": "why you need the change (shown to the approver; max 1024 chars)"
+                },
+                {
+                  "name": "remove",
+                  "type": "stringSlice",
+                  "default": "[]",
+                  "usage": "rule ids to remove (from `jentic access show`)"
+                },
+                {
+                  "name": "remove-scopes",
+                  "type": "stringSlice",
+                  "default": "[]",
+                  "usage": "OAuth scopes to remove"
+                },
+                {
+                  "name": "resume",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "switch a suspended binding back on"
+                },
+                {
+                  "name": "set",
+                  "type": "string",
+                  "usage": "the full rule list to replace the current one with, as JSON (not combined with --add/--remove)"
+                },
+                {
+                  "name": "set-scopes",
+                  "type": "stringSlice",
+                  "default": "[]",
+                  "usage": "the full OAuth scope list to replace the grant's with (not combined with --add-scopes/--remove-scopes)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                },
+                {
+                  "name": "timeout",
+                  "type": "duration",
+                  "default": "5m0s",
+                  "usage": "how long --wait polls before exiting 3 (TIMEOUT_PENDING)"
+                },
+                {
+                  "name": "wait",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "poll the request until it is applied or ends"
+                }
+              ]
+            },
+            {
+              "name": "amend",
+              "path": "jentic access amend",
+              "use": "amend \u003csession_id\u003e",
+              "short": "Change an open request you made, before it is approved",
+              "long": "amend changes what an open request asks for; the reviewer sees the new version and\napproves it once. The fields you pass replace those parts of the ask and the rest\nstay. For a change to your access (`jentic access edit`) pass --add/--remove/--set,\n--add-scopes/--remove-scopes/--set-scopes, --resume or --reason; for a new\nconnection (`jentic connect`) pass --requested-rules, --requested-scopes or\n--reason. A request that was already approved or ended cannot be amended: ask\nagain instead.",
+              "flags": [
+                {
+                  "name": "add",
+                  "type": "string",
+                  "usage": "rules to add, as a JSON list of rules or {\"rule\": …, \"before\": \"\u003crule id\u003e\"} (a denial's suggested_rules fit as-is)"
+                },
+                {
+                  "name": "add-scopes",
+                  "type": "stringSlice",
+                  "default": "[]",
+                  "usage": "OAuth scopes to add (the approver signs in to the vendor again)"
+                },
+                {
+                  "name": "before",
+                  "type": "string",
+                  "usage": "rule id to insert the added rules before (first match wins); appended when omitted"
+                },
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
+                },
+                {
+                  "name": "reason",
+                  "type": "string",
+                  "usage": "why you need the change (shown to the approver; max 1024 chars)"
+                },
+                {
+                  "name": "remove",
+                  "type": "stringSlice",
+                  "default": "[]",
+                  "usage": "rule ids to remove (from `jentic access show`)"
+                },
+                {
+                  "name": "remove-scopes",
+                  "type": "stringSlice",
+                  "default": "[]",
+                  "usage": "OAuth scopes to remove"
+                },
+                {
+                  "name": "requested-rules",
+                  "type": "string",
+                  "usage": "for a new connection: the rules to ask for, as a JSON list (replaces the ask)"
+                },
+                {
+                  "name": "requested-scopes",
+                  "type": "stringSlice",
+                  "default": "[]",
+                  "usage": "for a new connection: the scopes to ask for (replaces the ask)"
+                },
+                {
+                  "name": "resume",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "switch a suspended binding back on"
+                },
+                {
+                  "name": "set",
+                  "type": "string",
+                  "usage": "the full rule list to replace the current one with, as JSON (not combined with --add/--remove)"
+                },
+                {
+                  "name": "set-scopes",
+                  "type": "stringSlice",
+                  "default": "[]",
+                  "usage": "the full OAuth scope list to replace the grant's with (not combined with --add-scopes/--remove-scopes)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                }
+              ]
+            }
+          ]
+        },
+        {
           "name": "search",
           "path": "jentic search",
           "use": "search \u003cquery\u003e",

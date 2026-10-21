@@ -322,6 +322,306 @@
         "type": "object"
       },
       "annotations": {}
+    },
+    {
+      "name": "show_access",
+      "title": "Show your access through a credential",
+      "description": "Show what your binding to one credential lets you do: its permission rules with their ids (data, first match wins, default deny), the shared rule set it points at (whose rules apply instead of data), the credential's granted OAuth scopes, and whether the binding is suspended. Example: {\"credential_id\": \"cred_…\"} — credential ids come from whoami's bindings. Call it before asking for a change to your access, and when such a request fails. A credential you are not bound to (or whose binding is suspended) is not found: call whoami to list your bindings.",
+      "input_schema": {
+        "properties": {
+          "credential_id": {
+            "description": "The credential whose binding to read (required), e.g. \"cred_…\" from whoami's credential bindings.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "credential_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "read_only_hint": true
+      }
+    },
+    {
+      "name": "request_access_change",
+      "title": "Ask for a change to your access",
+      "description": "Ask your human user to change what your binding to one credential lets you do — the recovery for a rules denial (action_denied), whose parameters.edit names the credential and the rule to ask for. Read your access with show_access first: rule ids come from there. Example: {\"credential_id\": \"cred_…\", \"rules\": {\"add\": [{\"effect\": \"allow\", \"methods\": [\"POST\"], \"path\": \"/v1/send\", \"match_mode\": \"exact\"}]}, \"reason\": \"send replies\"}. Also: remove rules by id, replace the list with rules.set, add OAuth scopes, or resume a suspended binding. Put every change you need in one request. Returns {session_id, approval_url}: relay the approval_url — nothing changes until a human approves. If a request for the binding is already open, you get that session back: change it with amend_request instead.",
+      "input_schema": {
+        "properties": {
+          "credential_id": {
+            "description": "The binding's credential (required), as show_access and whoami report it.",
+            "type": "string"
+          },
+          "reason": {
+            "description": "Why you need the change (max 1024 chars). Shown to the reviewer.",
+            "type": "string"
+          },
+          "resume": {
+            "description": "Ask to switch a suspended binding back on.",
+            "type": "boolean"
+          },
+          "rules": {
+            "properties": {
+              "add": {
+                "description": "Rules to add: each a rule object, or {\"rule\": …, \"before\": \"\u003crule id\u003e\"} to place it before a rule (first match wins; appended otherwise). A denial's parameters.edit.suggested_rules fit as-is.",
+                "items": {
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "remove": {
+                "description": "Ids of rules to remove (from show_access).",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "set": {
+                "description": "The full rule list to replace the current one with, in order. Not combined with add or remove.",
+                "items": {
+                  "properties": {
+                    "effect": {
+                      "enum": [
+                        "allow",
+                        "deny",
+                        "require-approval"
+                      ],
+                      "type": "string"
+                    },
+                    "match_mode": {
+                      "enum": [
+                        "regex",
+                        "prefix",
+                        "exact"
+                      ],
+                      "type": "string"
+                    },
+                    "methods": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "operations": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "path": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "effect"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "scopes": {
+            "description": "The OAuth scope change: {\"add\": […], \"remove\": […]} or {\"set\": […]} (the full list). Add only scopes from show_access's scope_catalog when it has one. The approver signs in to the vendor again; other agents bound to the credential get the change too.",
+            "properties": {
+              "add": {
+                "description": "Scopes to add.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "remove": {
+                "description": "Scopes to remove.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "set": {
+                "description": "The full scope list to replace the grant's with. Not combined with add or remove.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "credential_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {}
+    },
+    {
+      "name": "amend_request",
+      "title": "Change an open request",
+      "description": "Change what an open request you made asks for, before it is approved — instead of asking again. The fields you pass replace those parts of the ask; the rest stay. For a request_access_change request pass rules, scopes, resume or reason; for a request_connection request pass requested_permission_rules, requested_scopes or reason. Example: {\"session_id\": \"cs_…\", \"rules\": {\"add\": [ … ]}}. The approval_url stays the same; tell your human user the request changed. A request already approved or ended cannot be amended: ask again.",
+      "input_schema": {
+        "properties": {
+          "reason": {
+            "description": "Why you need the change (max 1024 chars). Shown to the reviewer.",
+            "type": "string"
+          },
+          "requested_permission_rules": {
+            "description": "For a request_connection request: the rules to ask for, replacing the ask.",
+            "items": {
+              "properties": {
+                "effect": {
+                  "enum": [
+                    "allow",
+                    "deny",
+                    "require-approval"
+                  ],
+                  "type": "string"
+                },
+                "match_mode": {
+                  "enum": [
+                    "regex",
+                    "prefix",
+                    "exact"
+                  ],
+                  "type": "string"
+                },
+                "methods": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "operations": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "effect"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "requested_scopes": {
+            "description": "For a request_connection request: the scopes to ask for, replacing the ask.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "resume": {
+            "description": "Ask to switch a suspended binding back on.",
+            "type": "boolean"
+          },
+          "rules": {
+            "properties": {
+              "add": {
+                "description": "Rules to add: each a rule object, or {\"rule\": …, \"before\": \"\u003crule id\u003e\"} to place it before a rule (first match wins; appended otherwise). A denial's parameters.edit.suggested_rules fit as-is.",
+                "items": {
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "remove": {
+                "description": "Ids of rules to remove (from show_access).",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "set": {
+                "description": "The full rule list to replace the current one with, in order. Not combined with add or remove.",
+                "items": {
+                  "properties": {
+                    "effect": {
+                      "enum": [
+                        "allow",
+                        "deny",
+                        "require-approval"
+                      ],
+                      "type": "string"
+                    },
+                    "match_mode": {
+                      "enum": [
+                        "regex",
+                        "prefix",
+                        "exact"
+                      ],
+                      "type": "string"
+                    },
+                    "methods": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "operations": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "path": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "effect"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "scopes": {
+            "description": "The OAuth scope change: {\"add\": […], \"remove\": […]} or {\"set\": […]} (the full list). Add only scopes from show_access's scope_catalog when it has one. The approver signs in to the vendor again; other agents bound to the credential get the change too.",
+            "properties": {
+              "add": {
+                "description": "Scopes to add.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "remove": {
+                "description": "Scopes to remove.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "set": {
+                "description": "The full scope list to replace the grant's with. Not combined with add or remove.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "session_id": {
+            "description": "The open request to change (required), from request_access_change or request_connection.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {}
     }
   ]
 }

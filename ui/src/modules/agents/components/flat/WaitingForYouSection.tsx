@@ -25,7 +25,7 @@ import { formatTimestamp } from '@/shared/lib/utils';
 import { useOpenConnectRequests } from '@/shared/credentials/api';
 import {
 	groupConnectRequestsByAgent,
-	summariseConnectTargets,
+	describeConnectAsks,
 	useCanApproveConnectRequests,
 	type AgentConnectRequests,
 } from '@/shared/credentials/lib/connectRequests';
@@ -125,7 +125,7 @@ function ConnectRequestsRow({ group, name }: { group: AgentConnectRequests; name
 	return (
 		<WaitingRow
 			name={name}
-			what={`wants to connect ${summariseConnectTargets(group.sessions)}`}
+			what={`wants to ${describeConnectAsks(group.sessions)}`}
 			since={group.since}
 		>
 			{group.sessions.map((session) => (
@@ -147,7 +147,10 @@ function ConnectRequestsRow({ group, name }: { group: AgentConnectRequests; name
 							Review
 							<span className="sr-only">
 								{' '}
-								{name}&apos;s request to connect {session.vendor_display_name}
+								{name}&apos;s request to{' '}
+								{session.intent === 'edit'
+									? `change its access to ${session.vendor_display_name}`
+									: `connect ${session.vendor_display_name}`}
 							</span>
 						</>
 					)}

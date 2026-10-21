@@ -23,13 +23,26 @@ from jentic_one.shared.models.api_identity import credential_coverage_where
 # Live states mirror ``control.repos.connect_session_repo.LIVE_STATES``:
 # ``created`` waits for the owner's review, ``awaiting_app`` for an OAuth app
 # to connect through, ``polling`` for the vendor flow.
+# Only create sessions: an edit session changes a binding the agent already
+# holds, so it never answers a missing-credential denial.
 # Newest first, so the link names the session the agent opened last.
 _OPEN_SESSION_FOR_API = text(
     "SELECT cs.id FROM connect_sessions cs "
     "JOIN credentials c ON c.id = cs.credential_id "
     "WHERE cs.agent_id = :agent_id AND cs.state IN ('created', 'awaiting_app', 'polling') "
+    "AND cs.intent = 'create' "
     f"AND {credential_coverage_where()} "
     "ORDER BY cs.created_at DESC, cs.id DESC LIMIT 1"
+)
+
+
+# An agent's open edit of one binding (at most one: the open-edit index).
+_OPEN_EDIT_FOR_BINDING = text(
+    "SELECT cs.id FROM connect_sessions cs "
+    "WHERE cs.agent_id = :agent_id AND cs.credential_id = :credential_id "
+    "AND cs.initiator_actor_id = :agent_id "
+    "AND cs.intent = 'edit' AND cs.state IN ('created', 'awaiting_app', 'polling') "
+    "ORDER BY cs.created_at DESC LIMIT 1"
 )
 
 
@@ -48,6 +61,17 @@ class OpenConnectSessionReader:
                 await session.execute(
                     _OPEN_SESSION_FOR_API,
                     {"agent_id": agent_id, "vendor": vendor, "name": name, "version": version},
+                )
+            ).first()
+        return str(row[0]) if row is not None else None
+
+    async def find_open_edit_id(self, *, agent_id: str, credential_id: str) -> str | None:
+        """Return the agent's own newest open edit of one binding, or ``None``."""
+        async with self._control_db.session() as session:
+            row = (
+                await session.execute(
+                    _OPEN_EDIT_FOR_BINDING,
+                    {"agent_id": agent_id, "credential_id": credential_id},
                 )
             ).first()
         return str(row[0]) if row is not None else None

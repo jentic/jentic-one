@@ -390,30 +390,6 @@ async def test_agent_without_owner_delegation_cannot_connect(
         await ConnectService(ctx).begin(credential_id, ConnectRequest(), identity=identity)
 
 
-async def test_sole_agent_id_in_request_extra_is_ignored(
-    integration_context: Context, clean_connect_tables: None
-) -> None:
-    """``sole_agent_id`` is honoured only from the keyword, never from ``extra``.
-
-    ``extra`` is caller-supplied on ``POST /credentials/{id}/connect``.
-    """
-    ctx = integration_context
-    credential_id = await _connectable_credential(ctx)
-    secret = ctx.config.credentials.connect.state_secret.get_secret_value()
-    svc = ConnectService(ctx)
-    smuggled = ConnectRequest(extra={"sole_agent_id": "agnt_injected"})
-
-    ignored = await svc.begin(credential_id, smuggled, identity=_OWNER)
-    assert isinstance(ignored, AuthCodeChallenge)
-    assert decode_state(secret, ignored.state).sole_agent_id is None
-
-    explicit = await svc.begin(
-        credential_id, smuggled, identity=_OWNER, sole_agent_id="agnt_explicit"
-    )
-    assert isinstance(explicit, AuthCodeChallenge)
-    assert decode_state(secret, explicit.state).sole_agent_id == "agnt_explicit"
-
-
 # --- Pipedream connect flow tests ---
 
 

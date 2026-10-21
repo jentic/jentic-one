@@ -314,6 +314,63 @@ async def test_bound_agent_with_owner_agents_read_reads_owner_agents_bindings(
     assert readable == {_SHAREE_AGENT, _SHAREE_AGENT_2}
 
 
+async def test_bound_agent_reads_its_binding_access(
+    integration_context: Context, ruled_credential: str
+) -> None:
+    """The bound agent sees its rules with their ids and no rule set or scopes on
+    a bearer credential. A suspended binding hides the credential from its agent,
+    so only a human reads ``suspended`` as true."""
+    svc = CredentialService(integration_context)
+    identity = _agent_identity(_SHAREE_AGENT)
+
+    access = await svc.get_binding_access(ruled_credential, _SHAREE_AGENT, identity=identity)
+    assert [(r.effect, r.path) for r in access.rules] == [("allow", "/v1/.*")]
+    assert access.rules[0].id.startswith("apr_")
+    assert access.rule_set is None
+    assert access.rule_set_rules == []
+    assert access.granted_scopes is None
+    assert access.suspended is False
+    with pytest.raises(AgentBindingNotFoundError):
+        await svc.get_binding_access(ruled_credential, _OWNER_AGENT, identity=identity)
+
+    async with integration_context.admin_db.transaction() as session:
+        await AgentCredentialBindingRepository.set_suspended(
+            session, agent_id=_SHAREE_AGENT, credential_id=ruled_credential, suspended=True
+        )
+    access = await svc.get_binding_access(ruled_credential, _SHAREE_AGENT, identity=_OWNER)
+    assert access.suspended is True
+    with pytest.raises(CredentialNotFoundError):
+        await svc.get_binding_access(ruled_credential, _SHAREE_AGENT, identity=identity)
+
+
+async def test_binding_access_carries_the_attached_rule_set(
+    integration_context: Context, ruled_credential: str
+) -> None:
+    svc = CredentialService(integration_context)
+    rule_set, _ = await svc.create_rule_set(
+        name="cla read-only",
+        description=None,
+        rules=[{"effect": "allow", "methods": ["GET"], "path": "/v2/"}],
+        identity=_OWNER,
+    )
+    try:
+        await svc.attach_binding_rule_set(
+            ruled_credential, _SHAREE_AGENT, rule_set.id, identity=_OWNER
+        )
+        access = await svc.get_binding_access(
+            ruled_credential, _SHAREE_AGENT, identity=_agent_identity(_SHAREE_AGENT)
+        )
+        assert access.rule_set is not None
+        assert (access.rule_set.id, access.rule_set.curated) == (rule_set.id, False)
+        assert [r.path for r in access.rule_set_rules] == ["/v2/"]
+        assert access.rule_set_rules[0].id.startswith("prr_")
+        # The inline rules stay listed; they are dormant while the set is attached.
+        assert [r.path for r in access.rules] == ["/v1/.*"]
+    finally:
+        await svc.detach_binding_rule_set(ruled_credential, _SHAREE_AGENT, identity=_OWNER)
+        await svc.delete_rule_set(rule_set.id, identity=_OWNER)
+
+
 async def test_binding_read_without_credential_visibility_gets_credential_not_found(
     integration_context: Context, ruled_credential: str
 ) -> None:

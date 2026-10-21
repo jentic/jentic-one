@@ -24,7 +24,12 @@
 import { http, HttpResponse } from 'msw';
 import { SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR } from '@/shared/lib';
 import { CredentialType, type Credential } from '@/shared/credentials/api';
-import { findMockCredential, seedMockCredentials } from '@/shared/credentials/mocks/handlers';
+import {
+	findMockCredential,
+	seedMockAgentConnectSession,
+	seedMockCredentials,
+} from '@/shared/credentials/mocks/handlers';
+import type { EditConnectionBody, EditRuleView } from '@/shared/credentials/api/vendors-types';
 import { DEFAULT_AGENT_PERMISSIONS } from '@/modules/agents/lib/requestedPermissions';
 
 type Status = 'pending' | 'active' | 'rejected' | 'disabled' | 'archived';
@@ -124,6 +129,42 @@ type BindingRule = {
 	_system?: boolean;
 };
 
+/**
+ * Mirror the backend rule schema's guards: a condition-less allow is a 422, and
+ * an invalid regex path is a 422.
+ */
+function ruleSchemaError(rules: readonly BindingRule[]): Response | null {
+	for (const rule of rules) {
+		const conditionless =
+			!rule.methods?.length &&
+			!(typeof rule.path === 'string' && rule.path.trim()) &&
+			!rule.operations?.length;
+		if (rule.effect !== 'deny' && conditionless) {
+			return HttpResponse.json(
+				{ detail: `A condition-less ${rule.effect} rule is not permitted.` },
+				{ status: 422 },
+			);
+		}
+		if (rule.path && (rule.match_mode ?? 'regex') === 'regex') {
+			try {
+				new RegExp(rule.path);
+			} catch {
+				return HttpResponse.json(
+					{ detail: `Invalid path regex: ${rule.path}` },
+					{ status: 422 },
+				);
+			}
+		}
+	}
+	return null;
+}
+
+/** Replace a binding's operator rules; its system rules survive untouched. */
+function replaceOperatorRules(row: CredentialBindingRow, rules: readonly BindingRule[]): void {
+	const systemRules = row.permissions.filter((r) => r._system);
+	row.permissions = [...rules.map((r) => ({ ...r, _system: false })), ...systemRules];
+}
+
 /** One binding row (CredentialBindingResponse shape + its rule list). */
 interface CredentialBindingRow {
 	id: string;
@@ -135,6 +176,14 @@ interface CredentialBindingRow {
 	bound_at: string;
 	serves: Array<{ api_vendor: string; api_name?: string | null; api_version?: string | null }>;
 	permissions: BindingRule[];
+	/** The credential's granted OAuth scopes; null (the default) for a non-OAuth one. */
+	granted_scopes?: string[] | null;
+	/** The vendor's scopes an edit can pick from; null when its client has no catalog. */
+	scope_catalog?: Array<{
+		name: string;
+		classification: 'read' | 'write' | 'admin';
+		description: string;
+	}> | null;
 }
 
 let credentialBindings: CredentialBindingRow[] = [];
@@ -1965,7 +2014,159 @@ export const agentsHandlers = [
 			(b) => b.agent_id === params.aid && b.credential_id === params.cid,
 		);
 		if (!row) return new HttpResponse(null, { status: 404 });
-		return HttpResponse.json({ data: row.permissions });
+		const set = row.rule_set_id
+			? ruleSets.find((r) => r.rule_set_id === row.rule_set_id)
+			: undefined;
+		return HttpResponse.json({
+			data: row.permissions,
+			rule_set: set
+				? { id: set.rule_set_id, name: set.name, curated: set.curated, rules: set.rules }
+				: null,
+			granted_scopes: row.granted_scopes ?? null,
+			suspended: row.suspended,
+			// An OAuth credential (one with a grant) takes more scopes.
+			scopes_editable: row.granted_scopes != null,
+			scope_catalog: row.scope_catalog ?? null,
+		});
+	}),
+	// A person asking to change a binding (the Edit access flow). The edit
+	// session lands in the connect-session store, so the review reads it.
+	http.post('/integrations:edit-connection', async ({ request }) => {
+		const body = (await request.json()) as EditConnectionBody;
+		const agentId = body.agent_id ?? '';
+		const row = credentialBindings.find(
+			(b) => b.agent_id === agentId && b.credential_id === body.credential_id,
+		);
+		if (!row) return new HttpResponse(null, { status: 404 });
+		const set = row.rule_set_id
+			? ruleSets.find((r) => r.rule_set_id === row.rule_set_id)
+			: undefined;
+		const view = (r: BindingRule, i: number | null): EditRuleView => ({
+			id: i === null ? null : `apr_${row.id}_${i}`,
+			effect: r.effect,
+			methods: r.methods ?? null,
+			path: r.path ?? null,
+			match_mode: r.match_mode,
+			operations: r.operations ?? null,
+		});
+		const today = (set?.rules ?? row.permissions).filter((r) => !r._system).map(view);
+		const result = body.rules ? body.rules.set.map((r) => view(r, null)) : today;
+		const granted = row.granted_scopes ?? [];
+		// Scopes change like rules: add/remove, or the full list in set.
+		const nextScopes = (
+			body.scopes?.set ??
+			[...new Set([...granted, ...(body.scopes?.add ?? [])])].filter(
+				(s) => !(body.scopes?.remove ?? []).includes(s),
+			)
+		).sort();
+		const added = nextScopes.filter((s) => !granted.includes(s));
+		const scopesChange = JSON.stringify(nextScopes) !== JSON.stringify([...granted].sort());
+		const offered = row.scope_catalog?.map((scope) => scope.name);
+		const unknown = offered ? added.filter((s) => !offered.includes(s)) : [];
+		if (unknown.length > 0) {
+			return HttpResponse.json(
+				{
+					type: 'connect_session_unknown_scopes',
+					status: 400,
+					detail: 'Unknown scopes for the vendor.',
+					unknown_scopes: unknown,
+				},
+				{ status: 400, headers: { 'Content-Type': 'application/problem+json' } },
+			);
+		}
+		const resume = row.suspended && body.resume === true;
+		const content = (rules: EditRuleView[]) =>
+			JSON.stringify(rules.map(({ id: _id, ...rule }) => rule));
+		const rulesChange = body.rules != null && content(result) !== content(today);
+		if (!rulesChange && !scopesChange && !resume) {
+			return HttpResponse.json(
+				{ type: 'nothing_to_change', status: 422, detail: 'The edit changes nothing.' },
+				{ status: 422, headers: { 'Content-Type': 'application/problem+json' } },
+			);
+		}
+		if (body.rules) {
+			const refused = ruleSchemaError(body.rules.set as BindingRule[]);
+			if (refused) return refused;
+		}
+		if (body.apply && !scopesChange) {
+			if (body.rules) {
+				if (set && !set.curated) set.rules = body.rules.set as BindingRule[];
+				else {
+					replaceOperatorRules(row, body.rules.set as BindingRule[]);
+					if (set) row.rule_set_id = null;
+				}
+			}
+			if (resume) row.suspended = false;
+			return HttpResponse.json(
+				{
+					session_id: `sess_applied_${row.id}`,
+					approval_url: 'https://jentic.example.test/app/agents',
+					poll_token: 'ptok_applied',
+					resolved_flow: 'edit',
+					revision_id: 'csr_1',
+					status: 'applied',
+					challenge: null,
+				},
+				{ status: 201 },
+			);
+		}
+		const session = seedMockAgentConnectSession({
+			agent_id: agentId,
+			vendor_key: row.serves[0]?.api_vendor ?? 'mock',
+			resolved_flow: 'edit',
+			requested_by_actor_id: 'usr_mock_owner',
+			reason: body.reason ?? null,
+			edit: {
+				binding: {
+					agent_id: agentId,
+					credential_id: row.credential_id,
+					credential_name: row.name,
+				},
+				revision: { id: 'csr_1', number: 1 },
+				current: {
+					rules: today,
+					rule_set: set
+						? {
+								id: set.rule_set_id,
+								name: set.name,
+								curated: set.curated,
+								rules: today,
+							}
+						: null,
+					suspended: row.suspended,
+					granted_scopes: row.granted_scopes ?? null,
+				},
+				result: {
+					target: set && !set.curated ? 'rule_set' : 'binding',
+					rules: result,
+					scopes: nextScopes,
+					suspended: row.suspended && !resume,
+				},
+				widens_access: true,
+				other_bound_agents: [],
+				needs_vendor_consent: scopesChange,
+			},
+		});
+		// Applying added scopes goes straight to the vendor sign-in.
+		const consenting = body.apply === true;
+		if (consenting) session.state = 'polling';
+		return HttpResponse.json(
+			{
+				session_id: session.session_id,
+				approval_url: `https://jentic.example.test/app/agents?approve=${session.session_id}`,
+				poll_token: session.poll_token,
+				resolved_flow: 'edit',
+				revision_id: 'csr_1',
+				status: consenting ? 'consenting' : 'pending',
+				challenge: consenting
+					? {
+							kind: 'authorization_code',
+							authorize_url: `https://vendor.example.test/oauth/authorize?edit=${session.session_id}`,
+						}
+					: null,
+			},
+			{ status: 201 },
+		);
 	}),
 	http.put('/credentials/:cid/agents/:aid/permissions', async ({ params, request }) => {
 		const row = credentialBindings.find(
@@ -1973,34 +2174,9 @@ export const agentsHandlers = [
 		);
 		if (!row) return new HttpResponse(null, { status: 404 });
 		const rules = (await request.json()) as BindingRule[];
-		// Mirror the backend schema's guards (same contract as the toolkit-era
-		// permissions PUT): a condition-less allow is a 422, and an invalid
-		// regex path is a 422.
-		for (const rule of rules) {
-			const conditionless =
-				!rule.methods?.length &&
-				!(typeof rule.path === 'string' && rule.path.trim()) &&
-				!rule.operations?.length;
-			if (rule.effect !== 'deny' && conditionless) {
-				return HttpResponse.json(
-					{ detail: `A condition-less ${rule.effect} rule is not permitted.` },
-					{ status: 422 },
-				);
-			}
-			if (rule.path && (rule.match_mode ?? 'regex') === 'regex') {
-				try {
-					new RegExp(rule.path);
-				} catch {
-					return HttpResponse.json(
-						{ detail: `Invalid path regex: ${rule.path}` },
-						{ status: 422 },
-					);
-				}
-			}
-		}
-		// Replace USER rules only — system rules survive the save untouched.
-		const systemRules = row.permissions.filter((r) => r._system);
-		row.permissions = [...rules.map((r) => ({ ...r, _system: false })), ...systemRules];
+		const refused = ruleSchemaError(rules);
+		if (refused) return refused;
+		replaceOperatorRules(row, rules);
 		return HttpResponse.json({ data: row.permissions });
 	}),
 	// Shared rule sets: the detail read and the binding attach/detach pointer.

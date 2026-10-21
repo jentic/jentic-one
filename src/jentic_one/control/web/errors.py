@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import re
 
 from fastapi import Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from jentic_one.control.services.credentials.errors import (
@@ -19,17 +21,26 @@ from jentic_one.control.services.credentials.errors import (
     RuleSetNotFoundError,
     UnsupportedProviderForTypeError,
 )
+from jentic_one.control.services.integrations.connect_session_service import (
+    ConnectSessionService,
+)
 from jentic_one.control.services.integrations.device_authorization import (
     DeviceAuthorizationError,
 )
 from jentic_one.control.services.integrations.errors import (
     AgentInactiveError,
     AgentNotFoundError,
+    AmendFieldsMismatchError,
     AuthTypeNotDeclaredError,
     AuthTypeRequiredError,
+    BaselineChangedError,
     ConfirmationForbiddenError,
     ConfirmKindMismatchError,
+    ConnectOpenError,
     ConnectSessionServiceError,
+    EditBindingNotFoundError,
+    EditConflictedError,
+    EditOpenError,
     ExistingCredentialNotFoundError,
     InsufficientGrantedScopesError,
     InvalidOAuthAppRegistrationError,
@@ -38,20 +49,28 @@ from jentic_one.control.services.integrations.errors import (
     ManualFlowsDisabledError,
     NoDeclaredSchemeError,
     NoOpForFlowError,
+    NothingToChangeError,
     OAuthAppChangedError,
     OwnClientInvalidError,
-    ReauthorizeUnavailableError,
+    PointsAtAccessError,
     RecentlyRejectedError,
     ReservedAuthFieldError,
     ReviewStaleError,
+    RevisionChangedError,
+    RevisionRequiredError,
+    RuleSetConfirmForbiddenError,
     RulesRequiredError,
     SchemeChangedError,
+    ScopeChangeForbiddenError,
+    ScopesNotSupportedError,
     ScopeValidationError,
     SecuritySchemesLookupUnavailableError,
     ServersChangedError,
+    SessionClosedError,
     SessionNotFoundError,
     TooManyOpenSessionsError,
     UnknownApiError,
+    UnknownRuleError,
     UnpinnedServerHostError,
 )
 from jentic_one.control.services.oauth_app_registrations.errors import (
@@ -72,7 +91,11 @@ from jentic_one.shared.db.errors import (
     DatabaseUnavailableError,
 )
 from jentic_one.shared.pagination import InvalidCursorError
-from jentic_one.shared.web.errors import DB_UNAVAILABLE_SAFE_DETAILS, make_service_error_handler
+from jentic_one.shared.web.errors import (
+    DB_UNAVAILABLE_SAFE_DETAILS,
+    make_service_error_handler,
+    register_validation_enricher,
+)
 
 _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     CredentialNotFoundError: (404, "credential_not_found"),
@@ -140,8 +163,21 @@ _CONNECT_SESSION_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     RecentlyRejectedError: (429, "recently_rejected"),
     ExistingCredentialNotFoundError: (404, "existing_credential_not_found"),
     InsufficientGrantedScopesError: (409, "insufficient_granted_scopes"),
-    ReauthorizeUnavailableError: (409, "reauthorize_unavailable"),
     OwnClientInvalidError: (400, "own_oauth_client_invalid"),
+    EditBindingNotFoundError: (404, "agent_binding_not_found"),
+    NothingToChangeError: (422, "nothing_to_change"),
+    UnknownRuleError: (422, "unknown_rule"),
+    EditOpenError: (409, "edit_open"),
+    RevisionChangedError: (409, "revision_changed"),
+    BaselineChangedError: (409, "baseline_changed"),
+    EditConflictedError: (409, "edit_conflicted"),
+    RuleSetConfirmForbiddenError: (403, "rule_set_confirm_forbidden"),
+    RevisionRequiredError: (422, "revision_required"),
+    SessionClosedError: (409, "session_closed"),
+    ConnectOpenError: (409, "connect_open"),
+    AmendFieldsMismatchError: (422, "amend_fields_mismatch"),
+    ScopesNotSupportedError: (422, "scopes_not_supported"),
+    ScopeChangeForbiddenError: (403, "scope_change_forbidden"),
     ConnectSessionServiceError: (500, "connect_session_error"),
 }
 
@@ -149,6 +185,82 @@ _CONNECT_SESSION_SAFE_DETAILS: dict[type[Exception], str] = {
     InvalidPollTokenError: "Connect session not found or not accessible to the caller",
     ConnectSessionServiceError: "Internal error handling the connect session.",
 }
+
+
+#: What an agent should do when an edit or amend refusal means its picture of
+#: its access is wrong (the broker's ``agent_directive`` shape).
+_CHECK_ACCESS_INSTRUCTION = (
+    "Your request didn't match your current access. Check it with show_access "
+    "(`jentic access show <credential_id>`), then retry."
+)
+
+
+def check_access_directive(
+    *, credential_id: str, agent_id: str | None, base_url: str
+) -> dict[str, object]:
+    """The ``check_access`` directive pointing an agent at a binding's current access.
+
+    Shared with the hosted MCP mount, which renders the same refusals.
+    """
+    parameters: dict[str, object] = {
+        "credential_id": credential_id,
+        "suggested_command": f"jentic access show {credential_id}",
+    }
+    if agent_id is not None:
+        parameters["access_url"] = (
+            f"{base_url.rstrip('/')}/credentials/{credential_id}/agents/{agent_id}/permissions"
+        )
+    return {
+        "strategy": "check_access",
+        "parameters": parameters,
+        "human_readable_instruction": _CHECK_ACCESS_INSTRUCTION,
+    }
+
+
+#: Request fields carrying permission rules on the edit and amend routes.
+_RULE_FIELDS = frozenset({"rules", "requested_permission_rules"})
+_AMEND_PATH = re.compile(r"/connect-sessions/(?P<session_id>[^/]+):amend$")
+
+
+async def _edit_rules_validation_enricher(
+    request: Request, exc: RequestValidationError
+) -> dict[str, object] | None:
+    """A malformed rule on an edit or amend points the agent at its current access.
+
+    Only the rule fields count: a rule the binding's schema refuses usually
+    means the caller is working from a wrong picture of its access. The
+    credential comes from the edit request's body, or from the session an
+    amend names.
+    """
+    if not any(_RULE_FIELDS.intersection(map(str, err.get("loc", ()))) for err in exc.errors()):
+        return None
+    path = request.url.path
+    credential_id: str | None = None
+    agent_id: str | None = None
+    if path.endswith("/integrations:edit-connection"):
+        body = exc.body if isinstance(exc.body, dict) else {}
+        raw = body.get("credential_id")
+        credential_id = raw if isinstance(raw, str) and raw else None
+        raw_agent = body.get("agent_id")
+        agent_id = raw_agent if isinstance(raw_agent, str) and raw_agent else None
+    elif (match := _AMEND_PATH.search(path)) is not None:
+        ctx = getattr(request.app.state, "ctx", None)
+        if ctx is None:
+            return None
+        target = await ConnectSessionService(ctx).edit_binding_of(match["session_id"])
+        if target is None:
+            return None
+        credential_id, agent_id = target
+    if credential_id is None:
+        return None
+    return {
+        "agent_directive": check_access_directive(
+            credential_id=credential_id, agent_id=agent_id, base_url=str(request.base_url)
+        )
+    }
+
+
+register_validation_enricher(_edit_rules_validation_enricher)
 
 
 def _connect_session_response_hook(
@@ -172,6 +284,20 @@ def _connect_session_response_hook(
         extra["allowed_kinds"] = exc.allowed
     elif isinstance(exc, RecentlyRejectedError):
         headers["Retry-After"] = str(exc.retry_after_seconds)
+    elif isinstance(exc, EditOpenError | SessionClosedError):
+        extra["session_id"] = exc.session_id
+    elif isinstance(exc, ConnectOpenError):
+        extra.update(session_id=exc.session_id, approval_url=exc.approval_url)
+    elif isinstance(exc, AmendFieldsMismatchError):
+        extra["fields"] = exc.fields
+    if isinstance(exc, PointsAtAccessError) and exc.credential_id is not None:
+        extra["agent_directive"] = check_access_directive(
+            credential_id=exc.credential_id, agent_id=exc.agent_id, base_url=str(request.base_url)
+        )
+    elif isinstance(exc, RevisionChangedError | BaselineChangedError):
+        extra["current_revision_id"] = exc.current_revision_id
+    elif isinstance(exc, EditConflictedError):
+        extra["conflicts"] = exc.conflicts
     if not extra and not headers:
         return response
     content: dict[str, object] = json.loads(bytes(response.body))

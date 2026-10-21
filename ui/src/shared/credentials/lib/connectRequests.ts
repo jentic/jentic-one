@@ -57,6 +57,20 @@ export function summariseConnectTargets(
 }
 
 /**
+ * What an agent's open requests ask for, as a verb phrase: "connect GitHub",
+ * "change its access to Gmail", or both. Edit sessions change an existing
+ * binding rather than connect a new account.
+ */
+export function describeConnectAsks(sessions: readonly ConnectSessionSummaryResponse[]): string {
+	const edits = sessions.filter((s) => s.intent === 'edit');
+	const creates = sessions.filter((s) => s.intent !== 'edit');
+	const parts: string[] = [];
+	if (creates.length) parts.push(`connect ${summariseConnectTargets(creates)}`);
+	if (edits.length) parts.push(`change its access to ${summariseConnectTargets(edits)}`);
+	return parts.join(' and ');
+}
+
+/**
  * Whether the viewer may approve an agent's connect request: `org:admin`, or
  * holding both `credentials:write` and `agents:write` (approving writes the
  * agent's binding), plus a credentials read to list the requests. The waiting

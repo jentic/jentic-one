@@ -79,11 +79,6 @@ class ConnectState(BaseModel):
     # §4.1.3 requires the match). None for legacy/older flows and non-redirect
     # providers.
     redirect_uri: str | None = None
-    # Set on a re-authorize started from a connect session: the one agent
-    # allowed to be bound to the credential when the wider grant lands. The
-    # callback refuses the grant if any other agent was bound meanwhile, since
-    # re-authorizing widens the credential for every agent bound to it.
-    sole_agent_id: str | None = None
     # SHA-256 (hex) of the browser-binding cookie value set on the browser
     # that started the flow; the callback refuses a request whose cookie does
     # not hash to it. ``browser_host`` is the host that browser called the

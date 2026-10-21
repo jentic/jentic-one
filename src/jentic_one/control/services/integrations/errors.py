@@ -10,6 +10,21 @@ class ConnectSessionServiceError(Exception):
     """Base class for connect-session service errors."""
 
 
+class PointsAtAccessError(ConnectSessionServiceError):
+    """An edit or amend refusal that means the caller's picture of its access is wrong.
+
+    The response carries a ``check_access`` agent directive pointing at the
+    binding's current access; :meth:`point_at` names the binding.
+    """
+
+    credential_id: str | None = None
+    agent_id: str | None = None
+
+    def point_at(self, credential_id: str | None, agent_id: str | None) -> None:
+        self.credential_id = credential_id
+        self.agent_id = agent_id
+
+
 class SessionNotFoundError(ConnectSessionServiceError):
     pass
 
@@ -294,17 +309,154 @@ class InsufficientGrantedScopesError(ConnectSessionServiceError):
         self.missing = missing
 
 
-class ReauthorizeUnavailableError(ConnectSessionServiceError):
-    """Widening the credential's scopes is not allowed (shared with other agents, or not OAuth)."""
-
-    def __init__(self, credential_id: str, reason: str) -> None:
-        super().__init__(f"credential {credential_id!r} cannot be re-authorized: {reason}")
-        self.credential_id = credential_id
-        self.reason = reason
-
-
 class OwnClientInvalidError(ConnectSessionServiceError):
     """The approver's own OAuth client is missing an endpoint or names an unsafe one."""
 
     def __init__(self, detail: str) -> None:
         super().__init__(f"own OAuth client is not usable: {detail}")
+
+
+class EditBindingNotFoundError(ConnectSessionServiceError):
+    """The edit names a binding that does not exist, or one the caller may not edit.
+
+    An agent's suspended binding answers the same: suspension hides the
+    credential from its agent.
+    """
+
+    def __init__(self, credential_id: str) -> None:
+        super().__init__(f"no credential binding for {credential_id!r} that the caller may edit")
+        self.credential_id = credential_id
+
+
+class NothingToChangeError(PointsAtAccessError):
+    """The edit would leave the binding exactly as it is."""
+
+    def __init__(self) -> None:
+        super().__init__("the requested change is already in place; nothing to change")
+
+
+class UnknownRuleError(PointsAtAccessError):
+    """A ``remove`` or ``before`` names a rule the binding does not hold."""
+
+    def __init__(self, rule_id: str) -> None:
+        super().__init__(f"rule {rule_id!r} is not on this binding")
+        self.rule_id = rule_id
+
+
+class EditOpenError(PointsAtAccessError):
+    """The binding already has an open edit session; amend that one instead."""
+
+    def __init__(self, session_id: str) -> None:
+        super().__init__(f"an edit for this binding is already open ({session_id}); amend it")
+        self.session_id = session_id
+
+
+class RevisionChangedError(ConnectSessionServiceError):
+    """The confirm names a revision that is no longer the session's current one."""
+
+    def __init__(self, session_id: str, current_revision_id: str | None) -> None:
+        super().__init__(f"session {session_id!r} changed since it was reviewed; review it again")
+        self.session_id = session_id
+        self.current_revision_id = current_revision_id
+
+
+class BaselineChangedError(ConnectSessionServiceError):
+    """The binding changed after the edit opened; the session was rebased onto it."""
+
+    def __init__(self, session_id: str, current_revision_id: str) -> None:
+        super().__init__(
+            f"the binding changed since session {session_id!r} opened; "
+            "review the rebased request again"
+        )
+        self.session_id = session_id
+        self.current_revision_id = current_revision_id
+
+
+class EditConflictedError(ConnectSessionServiceError):
+    """The binding changed under an open edit in a way its request can't follow.
+
+    ``conflicts`` names each part (a rule the request names that is gone, a
+    full replacement of rules that changed since). The agent amends the
+    request, or the reviewer approves their own rules with ``resolve_conflicts``.
+    """
+
+    def __init__(self, session_id: str, conflicts: list[dict[str, str]]) -> None:
+        super().__init__(
+            f"session {session_id!r} conflicts with a change to the binding: amend it, "
+            "or approve your own rules with resolve_conflicts"
+        )
+        self.session_id = session_id
+        self.conflicts = conflicts
+
+
+class RuleSetConfirmForbiddenError(ConnectSessionServiceError):
+    """The edit changes a shared rule set the confirming caller does not own."""
+
+    def __init__(self, rule_set_id: str) -> None:
+        super().__init__(
+            f"the edit changes shared rule set {rule_set_id!r}; only its owner or an "
+            "org admin may confirm it"
+        )
+        self.rule_set_id = rule_set_id
+
+
+class RevisionRequiredError(ConnectSessionServiceError):
+    """A confirm named no ``revision_id``: it must approve the revision its reviewer saw."""
+
+    def __init__(self) -> None:
+        super().__init__("revision_id is required: confirm the revision the review shows")
+
+
+class SessionClosedError(PointsAtAccessError):
+    """The session was confirmed or has ended, so its ask can no longer change."""
+
+    def __init__(self, session_id: str) -> None:
+        super().__init__(
+            f"session {session_id!r} is closed and cannot be amended; start a new request"
+        )
+        self.session_id = session_id
+
+
+class ConnectOpenError(ConnectSessionServiceError):
+    """The agent already has an open connect session for this target; amend that one."""
+
+    def __init__(self, session_id: str, approval_url: str) -> None:
+        super().__init__(
+            f"a connect session for this target is already open ({session_id}); amend it"
+        )
+        self.session_id = session_id
+        self.approval_url = approval_url
+
+
+class AmendFieldsMismatchError(ConnectSessionServiceError):
+    """The amend carries fields that do not apply to the session's intent."""
+
+    def __init__(self, intent: str, fields: list[str]) -> None:
+        super().__init__(f"fields {fields!r} do not apply to a {intent} session")
+        self.intent = intent
+        self.fields = fields
+
+
+class ScopesNotSupportedError(ConnectSessionServiceError):
+    """The edit adds scopes to a credential whose access the platform cannot widen.
+
+    Only OAuth credentials connected through an authorization-code or
+    device-authorization app can be re-consented with more scopes.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "scopes can only be added to an OAuth credential connected through an "
+            "authorization-code or device-authorization app"
+        )
+
+
+class ScopeChangeForbiddenError(ConnectSessionServiceError):
+    """Changing the scopes of a credential other agents use; the caller may not."""
+
+    def __init__(self, credential_id: str) -> None:
+        super().__init__(
+            f"changing the scopes of credential {credential_id!r} changes them for other bound "
+            "agents; only its owner or an org admin may confirm that"
+        )
+        self.credential_id = credential_id

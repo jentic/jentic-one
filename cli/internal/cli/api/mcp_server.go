@@ -226,7 +226,8 @@ var inspectOperationSchema = map[string]any{
 // inspect_operation), the 1-C execute surface (execute, execute_read,
 // get_execution_result — mcp_execute.go), the catalog tools
 // (search_catalog, import_api — mcp_catalog.go), and the connect tool
-// (request_connection — mcp_request_connection.go). Docstrings
+// (request_connection — mcp_request_connection.go), and the agent's own access
+// (show_access, request_access_change, amend_request — mcp_access.go). Docstrings
 // encode the flow (get_started first, whoami before discovery, search →
 // inspect → execute, access is granted by a human operator — never probe by
 // executing) per §3.2, with concrete argument examples a model can copy.
@@ -235,7 +236,8 @@ func (s *mcpServer) toolSpecs() []mcpToolSpec {
 	execSpecs := s.executeToolSpecs()
 	catalogSpecs := s.catalogToolSpecs()
 	connectSpecs := s.connectToolSpecs()
-	specs := make([]mcpToolSpec, 0, 4+len(execSpecs)+len(catalogSpecs)+len(connectSpecs))
+	accessSpecs := append(s.accessToolSpecs(), s.editToolSpecs()...)
+	specs := make([]mcpToolSpec, 0, 4+len(execSpecs)+len(catalogSpecs)+len(connectSpecs)+len(accessSpecs))
 	specs = append(specs, []mcpToolSpec{
 		{
 			tool: &mcp.Tool{
@@ -327,7 +329,8 @@ func (s *mcpServer) toolSpecs() []mcpToolSpec {
 	}...)
 	specs = append(specs, execSpecs...)
 	specs = append(specs, catalogSpecs...)
-	return append(specs, connectSpecs...)
+	specs = append(specs, connectSpecs...)
+	return append(specs, accessSpecs...)
 }
 
 // registerTools applies the serving filters. --exclude-tools drops by name;

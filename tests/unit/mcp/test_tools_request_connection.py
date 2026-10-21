@@ -29,6 +29,7 @@ from jentic_one.control.services.integrations.connect_session_service import (
 from jentic_one.control.services.integrations.errors import (
     AuthTypeNotDeclaredError,
     AuthTypeRequiredError,
+    ConnectOpenError,
     InvalidOAuthAppRegistrationError,
     ManualFlowsDisabledError,
     NoDeclaredSchemeError,
@@ -653,3 +654,17 @@ async def test_api_target_errors_map_like_the_go_mount(
         assert payload["details"]["options"] == ["api_key", "oauth2"]
     if isinstance(error, ManualFlowsDisabledError | NoDeclaredSchemeError):
         assert _TARGET in payload["actionable_step"]
+
+
+async def test_an_open_request_is_relayed_not_an_error() -> None:
+    _FakeConnectSessionService.error = ConnectOpenError(
+        "cs_open", "https://auth.example.com/connect/cs_open"
+    )
+    result = await dispatch_tool_call(
+        _env(["credentials:connect"]), "request_connection", {"vendor": "github"}
+    )
+    assert not result.is_error
+    payload = _payload(result)
+    assert payload["session_id"] == "cs_open"
+    assert payload["approval_url"] == "https://auth.example.com/connect/cs_open"
+    assert payload["already_open"] is True

@@ -134,28 +134,20 @@ export function ConfirmBlockedNotice({ reason }: { reason: string }) {
  *   for `awaiting_app`, the approver's own OAuth client);
  * * `shared_app` — register an organisation-wide OAuth app (hosts that have
  *   that surface only);
- * * `existing:<id>` — bind a credential the approver already holds;
- * * `reauthorize:<id>` — bind it and ask the vendor for the missing scopes
- *   (only when no other agent uses it).
+ * * `existing:<id>` — bind a credential the approver already holds, first
+ *   asking the vendor for any scopes its sign-in is missing.
  */
 export type ConnectMethod =
-	| { kind: 'primary' }
-	| { kind: 'shared_app' }
-	| { kind: 'existing'; credentialId: string }
-	| { kind: 'reauthorize'; credentialId: string };
+	{ kind: 'primary' } | { kind: 'shared_app' } | { kind: 'existing'; credentialId: string };
 
 export function methodKey(method: ConnectMethod): string {
 	if (method.kind === 'existing') return `existing:${method.credentialId}`;
-	if (method.kind === 'reauthorize') return `reauthorize:${method.credentialId}`;
 	return method.kind;
 }
 
 export function parseMethodKey(key: string): ConnectMethod {
 	if (key.startsWith('existing:')) {
 		return { kind: 'existing', credentialId: key.slice('existing:'.length) };
-	}
-	if (key.startsWith('reauthorize:')) {
-		return { kind: 'reauthorize', credentialId: key.slice('reauthorize:'.length) };
 	}
 	return key === 'shared_app' ? { kind: 'shared_app' } : { kind: 'primary' };
 }
@@ -168,37 +160,69 @@ function scopeList(scopes: readonly string[]): string {
 	return scopes.length ? scopes.join(', ') : 'none';
 }
 
+/** The other agents a wider grant on ``credential`` would reach, by name. */
+function OtherAgents({ credential }: { credential: ExistingCredential }) {
+	return (
+		<>
+			{credential.other_bound_agents.map((agent, i) => (
+				<span key={agent.agent_id}>
+					{i > 0 && ', '}
+					<ActorLabel actorId={agent.agent_id} />
+				</span>
+			))}
+		</>
+	);
+}
+
 /** The description under an existing credential's option. */
 function candidateDescription(credential: ExistingCredential, requested: string[]): ReactNode {
 	if (!isOAuthType(credential.type)) {
 		return "Already connected. Its upstream permissions aren't visible to Jentic, so check it can do what the agent needs.";
 	}
 	const granted = credential.granted_scopes ?? [];
-	if (credential.can_bind) {
+	const missing = credential.missing_scopes ?? [];
+	if (!missing.length) {
 		return requested.length
 			? `Its sign-in covers the requested scopes (${scopeList(requested)}).`
 			: 'Already connected.';
 	}
-	const missing = credential.missing_scopes ?? [];
+	const shared = credential.other_bound_agents.length > 0;
+	if (credential.can_bind) {
+		return (
+			<span className="block space-y-1">
+				<span className="block">
+					Granted {scopeList(granted)}. You&apos;ll sign in again to add{' '}
+					{scopeList(missing)}; the agent is connected once that&apos;s done.
+				</span>
+				{shared && (
+					<span className="block">
+						This also gives {scopeList(missing)} to {sharedWithCount(credential)} using
+						it (
+						<OtherAgents credential={credential} />
+						).
+					</span>
+				)}
+			</span>
+		);
+	}
 	return (
 		<span className="block space-y-1">
 			<span className="block">
 				Granted {scopeList(granted)}; the agent asked for {scopeList(requested)}. Missing{' '}
-				{scopeList(missing)}, so binding it as is would fail upstream.
+				{scopeList(missing)}.
 			</span>
-			{!credential.can_reauthorize && credential.other_bound_agent_ids.length > 0 && (
-				<span className="block">
-					{sharedWithCount(credential)} (
-					{credential.other_bound_agent_ids.map((id, i) => (
-						<span key={id}>
-							{i > 0 && ', '}
-							<ActorLabel actorId={id} />
-						</span>
-					))}
-					), so it can&apos;t be widened: that would widen theirs too. Connect a new
-					credential instead.
-				</span>
-			)}
+			<span className="block">
+				{credential.needs_vendor_consent && shared ? (
+					<>
+						It&apos;s used by {sharedWithCount(credential)} (
+						<OtherAgents credential={credential} />
+						), and only its owner or an admin can widen it. Connect a new credential
+						instead.
+					</>
+				) : (
+					"It can't be widened here. Connect a new credential instead."
+				)}
+			</span>
 		</span>
 	);
 }
@@ -234,19 +258,13 @@ export function buildMethodOptions({
 	for (const credential of candidates) {
 		options.push({
 			value: `existing:${credential.credential_id}`,
-			label: `Use ${credential.name}`,
+			label:
+				credential.can_bind && credential.needs_vendor_consent
+					? `Use ${credential.name} and add the missing scopes`
+					: `Use ${credential.name}`,
 			description: candidateDescription(credential, requestedScopes),
 			disabled: !credential.can_bind,
 		});
-		if (!credential.can_bind && credential.can_reauthorize) {
-			options.push({
-				value: `reauthorize:${credential.credential_id}`,
-				label: `Re-authorize ${credential.name} with more scopes`,
-				description: `No other agent uses it. You'll sign in again to grant ${scopeList(
-					credential.missing_scopes ?? [],
-				)}.`,
-			});
-		}
 	}
 	return options;
 }

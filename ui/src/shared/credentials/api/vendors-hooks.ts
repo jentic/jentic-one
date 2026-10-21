@@ -16,6 +16,7 @@ import {
 import { useCallback, useMemo } from 'react';
 import {
 	bindCredentialToAgentBlocked,
+	getBindingAccess,
 	getPermissionRuleSet,
 	listBindingPermissions,
 	replaceBindingPermissions,
@@ -25,15 +26,18 @@ import {
 	getVendorAuthCapabilities,
 	listAgentsForPicker,
 	listAllVendorOperations,
+	listConnectSessionRevisions,
 	listOpenConnectRequests,
 	listVendors,
 	pollConnectSessionStatus,
 	rejectConnectSession,
+	startEditConnection,
 	startIntegrationConnect,
 	type VendorOperationsPage,
 } from '@/shared/credentials/api/vendors-client';
 import type {
 	AgentListResponse,
+	BindingAccessResponse,
 	ConnectSessionSummaryResponse,
 	PermissionRuleReadSchema,
 	PermissionRuleSchema,
@@ -46,7 +50,10 @@ import type {
 	ConfirmSessionResponse,
 	ConnectRequest,
 	ConnectResponse,
+	EditConnectionBody,
+	EditConnectionResult,
 	ReviewSession,
+	SessionRevision,
 	StatusResponse,
 	VendorAuthCapabilities,
 	VendorListResponse,
@@ -127,6 +134,9 @@ export function useConnectSession(
 			const status = (query.state.error as { status?: number | null } | null)?.status;
 			if (typeof status === 'number' && status >= 400 && status < 500) return false;
 			const data = query.state.data;
+			// An edit's review is re-read so a new revision (an amend) shows
+			// up while the reviewer has it open.
+			if (data?.edit) return 10_000;
 			if (data?.api_reference?.version) return false;
 			return 2_000;
 		},
@@ -204,6 +214,34 @@ export function useStartIntegrationConnect() {
 	});
 }
 
+/** Open an edit of a binding's access; the open-request signals pick it up. */
+export function useStartEditConnection() {
+	const client = useQueryClient();
+	return useMutation<EditConnectionResult, Error, EditConnectionBody>({
+		mutationFn: (body) => startEditConnection(body),
+		onSuccess: () => {
+			void client.invalidateQueries({ queryKey: connectRequestsKey });
+		},
+	});
+}
+
+/**
+ * One binding's full access read: its rules, the attached rule set (whose
+ * rules apply instead), its granted scopes and suspension. Nested under the
+ * binding-permissions slice, so a rules save anywhere refreshes it.
+ */
+export function useBindingAccess(
+	agentId: string,
+	credentialId: string,
+	options?: { enabled?: boolean },
+) {
+	return useQuery<BindingAccessResponse>({
+		queryKey: [...bindingPermissionsKey(agentId, credentialId), 'access'] as const,
+		queryFn: () => getBindingAccess(agentId, credentialId),
+		enabled: options?.enabled ?? true,
+	});
+}
+
 /**
  * Bind a credential to a batch of agents in "start blocked" mode (no
  * rules). Powers the post-connect "Bind to more agents" CTA: after
@@ -248,6 +286,27 @@ export function invalidateBindingSurfaces(
 			}),
 		]),
 		client.invalidateQueries({ queryKey: credentialKeys.agents(credentialId) }),
+	]);
+}
+
+/**
+ * What an applied edit changes, refreshed: the binding (its rules, its
+ * suspension, the tiles over it), every agent the credential's new scopes
+ * reach, and the shared rule sets (an edit may change the one attached).
+ */
+export function invalidateEditSurfaces(
+	client: QueryClient,
+	edit: {
+		binding: { agent_id: string; credential_id: string };
+		other_bound_agents: { agent_id: string }[];
+	},
+): Promise<unknown> {
+	return Promise.all([
+		invalidateBindingSurfaces(client, edit.binding.credential_id, [
+			edit.binding.agent_id,
+			...edit.other_bound_agents.map((a) => a.agent_id),
+		]),
+		client.invalidateQueries({ queryKey: [...sharedQueryKeys.agentsRoot, 'rule-set'] }),
 	]);
 }
 
@@ -502,6 +561,20 @@ export function useOpenConnectRequests(options?: { enabled?: boolean }) {
  * TanStack Query's `refetchInterval` drives the cadence. On terminal states
  * (connected / failed / expired) the caller should flip `enabled=false`.
  */
+/** A session's revisions, for the review's history view. */
+export function useConnectSessionRevisions(
+	sessionId: string,
+	pollToken: string | undefined,
+	options?: { enabled?: boolean },
+) {
+	return useQuery<SessionRevision[]>({
+		queryKey: ['integrations', 'session-revisions', sessionId, pollToken ?? ''] as const,
+		queryFn: () => listConnectSessionRevisions(sessionId, pollToken),
+		enabled: options?.enabled ?? true,
+		staleTime: 5_000,
+	});
+}
+
 export function usePollConnectSessionStatus(
 	sessionId: string,
 	pollToken: string | undefined,
