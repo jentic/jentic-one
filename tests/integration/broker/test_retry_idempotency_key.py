@@ -89,6 +89,7 @@ async def clean(integration_context: Context) -> AsyncGenerator[None, None]:
     [
         pytest.param("POST", True, 503, 1, id="keyed-post-not-retried"),
         pytest.param("POST", False, 503, 1, id="keyless-post-not-retried"),
+        pytest.param("PATCH", True, 503, 1, id="keyed-patch-not-retried"),
         pytest.param("GET", False, 200, 3, id="get-retried-by-method"),
     ],
 )
@@ -104,7 +105,7 @@ async def test_status_retry_gate_does_not_resend_keyed_post(
     inbound = {"Content-Type": "application/json", "Host": "broker.local"}
     if keyed:
         inbound["Idempotency-Key"] = "0b5c0d8e-1799-4c1e-9f00-000000001799"
-    body = b'{"amount": 1}' if method == "POST" else None
+    body = b'{"amount": 1}' if method in ("POST", "PATCH") else None
     ctx_req = ExecuteRequestContext(
         upstream_url=f"http://127.0.0.1:{upstream.port}/charges",
         method=method,

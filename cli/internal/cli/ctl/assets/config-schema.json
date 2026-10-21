@@ -1498,7 +1498,7 @@
       "type": "object"
     },
     "RetryConfig": {
-      "description": "Idempotency-aware upstream retry.\n\nThe ``RetryRunner`` decorator retries a failed attempt **only** when it is\nsafe to do so: a connect-phase failure (no bytes on the wire) is retryable\nfor any method, while a post-send failure (read timeout, mirrored ``429``/\n``503``) is retried only for idempotent methods or when an\n``Idempotency-Key`` is present — a blind ``POST`` retry is a double-spend.\nEach attempt still flows through the circuit breaker (retry *outside*,\nbreaker *inside*); the whole loop is bounded by the request deadline.",
+      "description": "Idempotency-aware upstream retry.\n\nThe ``RetryRunner`` decorator retries a failed attempt **only** when it is\nsafe to do so: a connect-phase failure (no bytes on the wire) is retryable\nfor any method, while a post-send failure (read timeout, mirrored ``429``/\n``503``) is retried only for idempotent HTTP methods — ``Idempotency-Key``\nis broker-consumed and stripped from outbound headers, so a post-send\n``POST`` or ``PATCH`` retry would double-spend (#1799).\nEach attempt still flows through the circuit breaker (retry *outside*,\nbreaker *inside*); the whole loop is bounded by the request deadline.",
       "properties": {
         "base_backoff_s": {
           "default": 0.2,
