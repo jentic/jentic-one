@@ -27,7 +27,12 @@ from jentic_one.broker.adapters.runners.base import (
     StreamingUpstreamRunner,
     UpstreamRunner,
 )
-from jentic_one.broker.core.exceptions import BrokerError, CircuitOpenError
+from jentic_one.broker.core.exceptions import (
+    BrokerError,
+    CircuitOpenError,
+    UpstreamTimeoutError,
+    UpstreamTransportError,
+)
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.resilience.circuit import CircuitBreaker
 
@@ -88,9 +93,9 @@ class CircuitBreakerRunner:
 
         try:
             result = await self._inner.run(request)
-        except BrokerError:
+        except (UpstreamTimeoutError, UpstreamTransportError):
             # A transport failure (timeout, connect error) the inner runner
-            # mapped to a BrokerError counts against the upstream.
+            # mapped to an upstream error counts against the upstream.
             await self._breaker.record(host, ok=False)
             raise
         await self._breaker.record(host, ok=result.status_code < 500)
@@ -129,7 +134,7 @@ class CircuitBreakerRunner:
                 recorded = True
                 await self._breaker.record(host, ok=result.status_code < 500)
                 yield result
-        except BrokerError:
+        except (UpstreamTimeoutError, UpstreamTransportError):
             if not recorded:
                 await self._breaker.record(host, ok=False)
             raise

@@ -101,6 +101,7 @@ class PipelineExecutor(UpstreamExecutor):
                 actor_type=request.metadata["actor_type"],
                 origin=request.metadata.get("origin"),
                 signing=request.signing,
+                emit_lifecycle=False,
             )
         except Exception as exc:
             if not broker.dispatched:

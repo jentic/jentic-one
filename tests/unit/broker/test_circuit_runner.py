@@ -12,7 +12,11 @@ import pytest
 
 from jentic_one.broker.adapters.runners.base import RunnerRequest, RunnerResult
 from jentic_one.broker.adapters.runners.circuit import _NO_HOST_KEY, CircuitBreakerRunner
-from jentic_one.broker.core.exceptions import CircuitOpenError, UpstreamTimeoutError
+from jentic_one.broker.core.exceptions import (
+    BrokerError,
+    CircuitOpenError,
+    UpstreamTimeoutError,
+)
 from jentic_one.shared.resilience import CircuitBreaker
 from jentic_one.shared.resilience.circuit import _OPEN_PREFIX
 from jentic_one.shared.state.backend import MemoryStateBackend
@@ -91,6 +95,19 @@ async def test_transport_error_counts_as_failure_and_propagates() -> None:
     # Two transport failures (min_calls 2, ratio 1.0) trip the circuit.
     with pytest.raises(CircuitOpenError):
         await runner.run(_request())
+
+
+@pytest.mark.asyncio
+async def test_local_protocol_error_does_not_trip_circuit() -> None:
+    backend = MemoryStateBackend()
+    inner = _FakeRunner(raises=BrokerError(detail="bad header", type="upstream_request_invalid"))
+    runner = CircuitBreakerRunner(inner, _breaker(backend), enforcement_mode="blocking")
+
+    for _ in range(3):
+        with pytest.raises(BrokerError) as excinfo:
+            await runner.run(_request())
+        assert excinfo.value.type == "upstream_request_invalid"
+    assert inner.calls == 3
 
 
 @pytest.mark.asyncio

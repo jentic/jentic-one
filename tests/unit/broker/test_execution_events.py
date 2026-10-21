@@ -639,3 +639,57 @@ async def test_persist_streaming_execution_tags_events_with_origin() -> None:
     call_kwargs = mock_emit.call_args.kwargs
     assert call_kwargs["type"] == EventType.EXECUTION_COMPLETED
     assert call_kwargs["tags"] == {Origin.CLI}
+
+
+@pytest.mark.asyncio
+async def test_run_execution_skips_lifecycle_event_when_emit_lifecycle_false() -> None:
+    """Pins #1788: ``emit_lifecycle=False`` persists the execution record without
+    emitting ``EXECUTION_COMPLETED`` / ``EXECUTION_FAILED`` in ``run_execution``,
+    so the async worker path emits a single lifecycle event from ``ExecutionHandler``."""
+    session = AsyncMock()
+    scope = SessionScope(session)
+
+    with (
+        patch(
+            "jentic_one.broker.services.execution.service.record_execution",
+            new_callable=AsyncMock,
+        ) as mock_record,
+        patch(
+            "jentic_one.broker.services.execution.service.emit_event",
+            new_callable=AsyncMock,
+        ) as mock_emit,
+    ):
+        await run_execution(
+            _ctx_req(),
+            body=None,
+            headers=None,
+            admin_db=scope,
+            broker=default_broker(_SuccessRunner()),
+            actor_id="agt_abc",
+            actor_type="agent",
+            emit_lifecycle=False,
+        )
+        await run_execution(
+            _ctx_req(),
+            body=None,
+            headers=None,
+            admin_db=scope,
+            broker=default_broker(_StatusRunner(401)),
+            actor_id="agt_abc",
+            actor_type="agent",
+            emit_lifecycle=False,
+        )
+        with pytest.raises(BrokerError):
+            await run_execution(
+                _ctx_req(),
+                body=None,
+                headers=None,
+                admin_db=scope,
+                broker=default_broker(_FailRunner()),
+                actor_id="agt_abc",
+                actor_type="agent",
+                emit_lifecycle=False,
+            )
+
+    assert mock_record.await_count == 3
+    mock_emit.assert_not_awaited()

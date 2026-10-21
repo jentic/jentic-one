@@ -89,8 +89,8 @@ class BrokerError(Exception):
         # Whether the failure happened *before any request bytes hit the wire*
         # (connect-phase). A pre-send failure is safe to retry for ANY method —
         # the upstream cannot have acted; a post-send failure (read timeout, drop
-        # after send) is only safe to retry for idempotent methods / with an
-        # Idempotency-Key. Defaults to False (assume bytes were sent).
+        # after send) is only safe to retry for idempotent HTTP methods (#1799).
+        # Defaults to False (assume bytes were sent).
         self.pre_send = pre_send
 
 
