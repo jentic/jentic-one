@@ -589,7 +589,7 @@ class ApiRevisionRepository:
             name,
             version,
         ) in result.all():
-            if api_id in seen:
+            if api_id in seen or source_url is None:
                 continue
             seen.add(api_id)
             specs.append(

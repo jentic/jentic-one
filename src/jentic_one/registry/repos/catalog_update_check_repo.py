@@ -19,6 +19,11 @@ from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.catalog_update_checks import CatalogUpdateCheck
 from jentic_one.shared.models import ApiRevisionState
 
+# SQLAlchemy 2.0 parameterizes Select over a single tuple TypeVar (Select[tuple[...]]),
+# whereas 2.1 parameterizes it over a TypeVarTuple (Select[...]). A PEP 695 alias
+# to the unsubscripted Select type-checks cleanly under both versions.
+type _OutdatedSelect = Select
+
 
 class CatalogUpdateCheckRepository:
     """Data access for the update-notify check rows — flush-only, never commits."""
@@ -32,7 +37,7 @@ class CatalogUpdateCheckRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
-    def _outdated_base(now: datetime | None = None) -> Select[tuple[uuid.UUID, str]]:
+    def _outdated_base(now: datetime | None = None) -> _OutdatedSelect:
         """Shared selectable of ``(local_api_id, spec_url)`` for genuinely-outdated APIs.
 
         An API is *outdated* when its check row carries a ``last_notified_digest`` (a real
@@ -66,7 +71,7 @@ class CatalogUpdateCheckRepository:
         )
 
     @staticmethod
-    def _served_outdated_core() -> Select[tuple[uuid.UUID, str]]:
+    def _served_outdated_core() -> _OutdatedSelect:
         """The outdated selectable *without* the snooze predicate — the shared core.
 
         Ranks each API's non-archived revisions exactly as the notify sweep does (current
@@ -187,7 +192,7 @@ class CatalogUpdateCheckRepository:
         return {url for (url,) in result.all() if url}
 
     @staticmethod
-    def _outdated_base_unsnoozed() -> Select[tuple[uuid.UUID, str]]:
+    def _outdated_base_unsnoozed() -> _OutdatedSelect:
         """:meth:`_outdated_base` without the snooze exclusion (include-snoozed surfaces)."""
         return CatalogUpdateCheckRepository._served_outdated_core()
 

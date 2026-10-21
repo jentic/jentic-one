@@ -56,7 +56,10 @@ class UrlIndexCandidate:
 
 
 _CandidateRow = tuple[OperationURLIndex, str, str, str, str, str]
-_CandidateSelect = Select[_CandidateRow]
+# SQLAlchemy 2.0 parameterizes Select over a single tuple TypeVar (Select[tuple[...]]),
+# whereas 2.1 parameterizes it over a TypeVarTuple (Select[...]). A PEP 695 alias
+# to the unsubscripted Select type-checks cleanly under both versions.
+type _CandidateSelect = Select
 
 
 @dataclass(frozen=True)

@@ -574,6 +574,39 @@ jobs:
         with:
           key: ${{ fromJSON(needs.changes.outputs.keys)['test-arch'] }}
 
+  # Non-blocking forward-compatibility canary for SQLAlchemy 2.1 (#1831):
+  # uv.lock pins SQLAlchemy 2.0.x, so the main lint/test jobs do not surface
+  # 2.1-only SADeprecationWarnings or generic-Select typing changes. Running
+  # python -m mypy and python -m pytest inside an ephemeral `--with` overlay
+  # ensures the 2.1 wheel is imported instead of .venv/bin console scripts.
+  test-sqlalchemy-2-1:
+    name: SQLAlchemy 2.1 compatibility
+    needs: [lint, changes]
+    if: needs.changes.outputs.pr-tier != 'true' || needs.changes.outputs.unit-tests == 'true'
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: make sync
+
+      - name: Type-check against SQLAlchemy 2.1
+        run: |
+          uv run --with 'sqlalchemy==2.1.*' python -c 'import sqlalchemy; assert sqlalchemy.__version__.startswith("2.1."), sqlalchemy.__version__'
+          uv run --with 'sqlalchemy==2.1.*' python -m mypy
+
+      - name: Run unit & architecture tests against SQLAlchemy 2.1
+        run: uv run --with 'sqlalchemy==2.1.*' python -m pytest tests/unit tests/arch -n auto --dist loadfile --no-cov $PYTEST_ARGS
+
   test-integration:
     name: Integration tests (${{ matrix.backend }})
     needs: [lint, changes]
@@ -1442,7 +1475,7 @@ jobs:
   ci-status:
     name: CI status
     if: always()
-    needs: [lint, openapi-client-drift, score, security, security-image, test-unit, test-arch, test-integration, ui, ui-test, ui-e2e, ui-e2e-realbackend, smoke-packaging, cli, cli-artifact-smoke, installer, e2e-install]
+    needs: [lint, openapi-client-drift, score, security, security-image, test-unit, test-arch, test-sqlalchemy-2-1, test-integration, ui, ui-test, ui-e2e, ui-e2e-realbackend, smoke-packaging, cli, cli-artifact-smoke, installer, e2e-install]
     runs-on: ubuntu-latest
     steps:
       - name: Check job results

@@ -6,13 +6,15 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Select, Text, case, cast, false, func, literal, select
+from sqlalchemy import Integer, Select, Text, case, cast, false, func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.expression import ColumnElement, SQLColumnExpression
 
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.shared.models import ExecutionStatus, JobKind, JobStatus
+
+type _AnySelect = Select
 
 
 def _is_postgres(session: AsyncSession) -> bool:
@@ -25,15 +27,15 @@ def _is_postgres(session: AsyncSession) -> bool:
     return session.bind.dialect.name == "postgresql" if session.bind else True
 
 
-def _epoch_seconds(session: AsyncSession) -> SQLColumnExpression[Any]:
+def _epoch_seconds(session: AsyncSession) -> ColumnElement[Any]:
     """Epoch seconds of ``started_at`` as a numeric expression, per dialect.
 
     Postgres has ``extract('epoch', ts)``; SQLite has no ``extract`` but
-    ``strftime('%s', ts)`` yields the unix seconds (as text, cast to a number).
+    ``strftime('%s', ts)`` yields the unix seconds as text, cast to ``Integer``.
     """
     if _is_postgres(session):
         return func.extract("epoch", ExecutionRecord.started_at)
-    return cast(func.strftime("%s", ExecutionRecord.started_at), Text)
+    return cast(func.strftime("%s", ExecutionRecord.started_at), Integer)
 
 
 def _slash_join(*parts: Any) -> SQLColumnExpression[Any]:
@@ -385,7 +387,7 @@ class MonitoringRepository:
         """
         key_expr, group_cols = _group_key(group_by)
 
-        stmt: Select[Any] = (
+        stmt: _AnySelect = (
             select(
                 key_expr.label("key"),
                 key_expr.label("label"),
@@ -443,7 +445,7 @@ class MonitoringRepository:
             Text,
         ).label("seg")
 
-        stmt: Select[Any] = (
+        stmt: _AnySelect = (
             select(
                 key_expr.label("key"),
                 segment_idx,
