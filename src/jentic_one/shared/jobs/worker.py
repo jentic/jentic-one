@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import random
+import re
 import time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -35,9 +36,10 @@ from jentic_one.shared.jobs.hold import (
     get_approved_by_job_id,
     set_execution_id_for_job,
 )
-from jentic_one.shared.jobs.wakeup import JobWakeup, job_wakeup
+from jentic_one.shared.jobs.wakeup import JOB_NOTIFY_CHANNEL, JobWakeup, job_wakeup
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.models.jobs import JobKind, JobStatus
+from jentic_one.shared.redaction import REDACTED, redact_value
 
 if TYPE_CHECKING:
     from jentic_one.shared.db.session import DatabaseSession
@@ -56,6 +58,19 @@ _ERROR_MAX_LEN = 128
 _DB_CONNECTION_LOST_ERROR = "interrupted: database connection lost"
 # Bounds the exception-chain walk in _carries_sql.
 _MAX_CHAIN_DEPTH = 8
+# Timeout for UNLISTEN / close on the dedicated Postgres listener connection.
+_LISTEN_CLOSE_TIMEOUT_S = 2.0
+# Matches userinfo embedded in a DSN or URL before the host separator.
+_URL_USERINFO_RE = re.compile(r"(://)[^/\s@]+@")
+
+
+def _redact_listen_error(exc: BaseException) -> str:
+    """Format ``exc`` for ``worker_listen_unavailable`` without SQL or credentials."""
+    cleaned = redact_sql(str(exc))
+    cleaned = _URL_USERINFO_RE.sub(rf"\1{REDACTED}@", cleaned)
+    redacted = redact_value(cleaned)
+    text = redacted if isinstance(redacted, str) else cleaned
+    return (text or type(exc).__name__)[:_ERROR_MAX_LEN]
 
 
 def _carries_sql(exc: BaseException) -> bool:
@@ -110,7 +125,8 @@ class WorkerLoop:
     loops — in one process or many — can share the queue. It polls every
     ``worker.poll_interval_s`` while idle, re-polls as soon as a running job
     frees a slot, and is woken early by :data:`~jentic_one.shared.jobs.wakeup.job_wakeup`
-    when a job is enqueued in the same process.
+    when a job is enqueued in the same process and by PostgreSQL
+    ``LISTEN jentic_jobs`` when a job is enqueued in another process.
     """
 
     def __init__(
@@ -144,10 +160,14 @@ class WorkerLoop:
         self._running = False
         self._draining = False
         self._last_sweep = time.monotonic()
-        # Set by an in-process enqueue, a finished job freeing a slot, stop()
-        # and drain() — anything that makes polling (or exiting) worthwhile
-        # before the poll interval is up.
+        # Set by an in-process enqueue, a cross-process Postgres NOTIFY, a
+        # finished job freeing a slot, stop() and drain() — anything that makes
+        # polling (or exiting) worthwhile before the poll interval is up.
         self._wake = asyncio.Event()
+        self._listen_task: asyncio.Task[None] | None = None
+        self._listen_stop = asyncio.Event()
+        self._listen_drop: asyncio.Event | None = None
+        self._listening = asyncio.Event()
         self._in_flight: set[asyncio.Task[None]] = set()
         # Set while no claim is in flight and no claimed job is being
         # processed — so drain() waits both for running jobs and for a claim
@@ -181,7 +201,11 @@ class WorkerLoop:
         (they stay ``RUNNING`` and are reclaimed after their visibility timeout).
         """
         self._running = True
+        self._listen_stop.clear()
+        self._listening.clear()
         self._wakeup.subscribe(self._wake)
+        if self._can_listen():
+            self._listen_task = asyncio.create_task(self._listen_loop(), name="worker-pg-listen")
         logger.info(
             "worker_loop_started",
             poll_interval_s=self._poll_interval,
@@ -252,9 +276,179 @@ class WorkerLoop:
             logger.info("worker_loop_cancelled")
             raise
         finally:
+            await self._stop_listener()
             self._wakeup.unsubscribe(self._wake)
             self._running = False
             logger.info("worker_loop_stopped")
+
+    def _can_listen(self) -> bool:
+        """True when this loop can maintain a dedicated Postgres LISTEN connection."""
+        if (
+            "_open_listen_connection" in self.__dict__
+            or type(self)._open_listen_connection is not WorkerLoop._open_listen_connection
+        ):
+            return True
+        backend = getattr(self._db, "backend", None)
+        if getattr(backend, "dialect_name", None) not in ("postgres", "postgresql"):
+            return False
+        return callable(getattr(self._db, "open_listen_connection", None))
+
+    async def _open_listen_connection(self) -> Any:
+        """Open a dedicated autocommit driver connection outside the pool."""
+        return await self._db.open_listen_connection()
+
+    def _on_pg_notify(self, connection: Any, pid: int, channel: str, payload: object) -> None:
+        """Handle a Postgres ``NOTIFY jentic_jobs`` message.
+
+        An empty payload wakes the loop unconditionally. A payload naming a job
+        kind wakes the loop only when that kind is registered in
+        ``self._handlers``, so a worker dedicated to another surface skips an
+        unnecessary poll.
+        """
+        kind = str(payload) if payload else ""
+        if not kind or kind in self._handlers:
+            self._wake.set()
+
+    async def _listen_sleep(self, delay_s: float) -> None:
+        """Backoff wait between LISTEN reconnect attempts; exits early on stop()."""
+        with contextlib.suppress(TimeoutError):
+            async with asyncio.timeout(delay_s):
+                await self._listen_stop.wait()
+
+    def _signal_listen_stop(self) -> None:
+        self._listen_stop.set()
+        if self._listen_drop is not None:
+            self._listen_drop.set()
+
+    async def _stop_listener(self) -> None:
+        """Stop the Postgres LISTEN task and wait for its connection to close."""
+        self._signal_listen_stop()
+        task = self._listen_task
+        self._listen_task = None
+        if task is None:
+            return
+        if not task.done():
+            task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    async def _close_listen_connection(self, conn: Any) -> None:
+        """Best-effort UNLISTEN and close on the dedicated listener connection."""
+        try:
+            if hasattr(conn, "is_closed") and conn.is_closed():
+                return
+            async with asyncio.timeout(_LISTEN_CLOSE_TIMEOUT_S):
+                if hasattr(conn, "remove_listener"):
+                    await conn.remove_listener(JOB_NOTIFY_CHANNEL, self._on_pg_notify)
+                if hasattr(conn, "close"):
+                    await conn.close()
+        except BaseException as exc:
+            if hasattr(conn, "terminate"):
+                with contextlib.suppress(Exception):
+                    conn.terminate()
+            if not isinstance(exc, Exception):
+                raise
+
+    async def _listen_loop(self) -> None:
+        """Maintain the dedicated Postgres ``LISTEN jentic_jobs`` connection.
+
+        Runs alongside the poll loop on a connection outside the SQLAlchemy
+        pool so ``LISTEN`` stays in autocommit without holding a pooled
+        connection. If establishing the connection or issuing ``LISTEN`` fails
+        (e.g. a transient outage or a transaction-mode connection pooler that
+        rejects ``LISTEN``), or if an active connection drops, the failure is
+        logged and retried with capped, jittered exponential backoff while the
+        worker continues polling on ``poll_interval_s``.
+        """
+        outage_attempts = 0
+        outage_started = 0.0
+        while self._running and not self._listen_stop.is_set():
+            conn: Any = None
+            dropped = asyncio.Event()
+            self._listen_drop = dropped
+
+            def _on_terminated(_conn: Any, _ev: asyncio.Event = dropped) -> None:
+                _ev.set()
+
+            try:
+                conn = await self._open_listen_connection()
+                if hasattr(conn, "add_termination_listener"):
+                    conn.add_termination_listener(_on_terminated)
+                await conn.add_listener(JOB_NOTIFY_CHANNEL, self._on_pg_notify)
+                if outage_attempts:
+                    logger.info(
+                        "worker_listen_recovered",
+                        channel=JOB_NOTIFY_CHANNEL,
+                        failed_attempts=outage_attempts,
+                        outage_s=round(time.monotonic() - outage_started, 2),
+                    )
+                    outage_attempts = 0
+                self._listening.set()
+                if not self._running or self._listen_stop.is_set():
+                    break
+                if hasattr(conn, "is_closed") and conn.is_closed():
+                    dropped.set()
+                await dropped.wait()
+                if not self._running or self._listen_stop.is_set():
+                    break
+                outage_attempts += 1
+                delay_s = _reconnect_backoff_s(outage_attempts, self._jitter(), self._config)
+                if outage_attempts == 1:
+                    outage_started = time.monotonic()
+                    logger.warning(
+                        "worker_listen_unavailable",
+                        channel=JOB_NOTIFY_CHANNEL,
+                        error_type="ConnectionClosed",
+                        error="listener connection terminated",
+                        retry_in_s=round(delay_s, 2),
+                    )
+                logger.debug(
+                    "worker_listen_reconnect_backoff",
+                    channel=JOB_NOTIFY_CHANNEL,
+                    attempt=outage_attempts,
+                    retry_in_s=round(delay_s, 2),
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                outage_attempts += 1
+                delay_s = _reconnect_backoff_s(outage_attempts, self._jitter(), self._config)
+                if outage_attempts == 1:
+                    outage_started = time.monotonic()
+                    logger.warning(
+                        "worker_listen_unavailable",
+                        channel=JOB_NOTIFY_CHANNEL,
+                        error_type=type(exc).__name__,
+                        error=_redact_listen_error(exc),
+                        retry_in_s=round(delay_s, 2),
+                    )
+                has_sensitive_error = (
+                    _carries_sql(exc) or _URL_USERINFO_RE.search(str(exc)) is not None
+                )
+                logger.debug(
+                    "worker_listen_reconnect_backoff",
+                    channel=JOB_NOTIFY_CHANNEL,
+                    attempt=outage_attempts,
+                    retry_in_s=round(delay_s, 2),
+                    exc_info=not has_sensitive_error,
+                )
+            finally:
+                self._listening.clear()
+                self._listen_drop = None
+                if conn is not None:
+                    if hasattr(conn, "remove_termination_listener"):
+                        with contextlib.suppress(Exception):
+                            conn.remove_termination_listener(_on_terminated)
+                    close_task = asyncio.create_task(self._close_listen_connection(conn))
+                    try:
+                        await asyncio.shield(close_task)
+                    except asyncio.CancelledError:
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await close_task
+                        raise
+
+            if self._running and not self._listen_stop.is_set():
+                await self._listen_sleep(delay_s)
 
     async def _sleep(self, delay_s: float) -> None:
         """Reconnect backoff wait (a seam so tests can observe delays without waiting)."""
@@ -789,6 +983,7 @@ class WorkerLoop:
         """Signal the worker to stop claiming; ``run`` returns once in-flight jobs finish."""
         self._running = False
         self._wake.set()
+        self._signal_listen_stop()
 
     async def drain(self, timeout_s: float | None = None) -> bool:
         """Stop claiming new jobs and wait for every in-flight job to finish.
@@ -806,6 +1001,7 @@ class WorkerLoop:
         """
         self._draining = True
         self._wake.set()
+        self._signal_listen_stop()
         budget = self._config.drain_timeout_s if timeout_s is None else timeout_s
         try:
             async with asyncio.timeout(budget):
@@ -822,4 +1018,5 @@ class WorkerLoop:
             drained = False
         self._running = False
         self._wake.set()
+        self._signal_listen_stop()
         return drained

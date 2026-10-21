@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import structlog
 from sqlalchemy import text
@@ -188,6 +188,15 @@ class DatabaseSession:
             await self._engine.dispose()
             self._engine = None
             self._session_factory = None
+
+    async def open_listen_connection(self) -> Any:
+        """Open a dedicated autocommit driver connection outside the pool for ``LISTEN``.
+
+        Postgres only; raises :class:`RuntimeError` on SQLite.
+        """
+        if self._is_sqlite or not hasattr(self._backend, "open_listen_connection"):
+            raise RuntimeError("LISTEN connections are only supported on PostgreSQL.")
+        return await self._backend.open_listen_connection(self._config)
 
     @asynccontextmanager
     async def session(self) -> AsyncGenerator[AsyncSession, None]:
