@@ -697,7 +697,6 @@ async def _handle(
         body,
         selected_credential=selected_credential,
         allowed_credential_ids=allowed_credential_ids,
-        has_idempotency_key=bool(idem_key),
     )
 
     response = _assemble_response(outcome, ctx_req)
@@ -723,7 +722,6 @@ async def _execute_buffered(
     *,
     selected_credential: ResolvedCredential | None = None,
     allowed_credential_ids: list[str] | None = None,
-    has_idempotency_key: bool = False,
 ) -> ExecutionOutcome:
     """Inject credentials, run the buffered upstream call, and persist its record.
 
@@ -768,7 +766,6 @@ async def _execute_buffered(
         origin=identity.origin.value,
         security_config=ctx.config.security,
         signing=injection.signing,
-        has_idempotency_key=has_idempotency_key,
     )
 
 
@@ -826,7 +823,6 @@ async def _handle_streaming(
         body=body,
         timeout_s=ctx.config.broker.upstream_timeout_s,
         signing=injection.signing,
-        has_idempotency_key=bool(request.headers.get("idempotency-key")),
     )
 
     async def _persist_callback(outcome: StreamingOutcome) -> None:
