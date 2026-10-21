@@ -134,11 +134,16 @@ class AgentAuthService:
     async def _ensure_active_and_owned(
         session: AsyncSession, agent_id: str, identity: Identity
     ) -> None:
-        """Validate active status and ownership inside the transaction (SELECT FOR UPDATE)."""
+        """Validate ownership and active status inside the transaction (SELECT FOR UPDATE).
+
+        Ownership is checked before status so a caller who does not own the
+        agent gets the same ``ActorNotFoundError`` (404) as a missing id,
+        regardless of the agent's status.
+        """
         agent = await AgentRepository.get_by_id_for_update(session, agent_id)
         if agent is None:
             raise ActorNotFoundError(agent_id)
-        if agent.status != ActorStatus.ACTIVE:
-            raise InvalidTransitionError(agent_id, agent.status, "generate-api-key")
         if "org:admin" not in identity.permissions and agent.owner_id != identity.sub:
             raise ActorNotFoundError(agent_id)
+        if agent.status != ActorStatus.ACTIVE:
+            raise InvalidTransitionError(agent_id, agent.status, "generate-api-key")
