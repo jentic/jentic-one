@@ -102,7 +102,7 @@ def _map_transport_error(exc: _TransportFailure) -> BrokerError:
       :class:`UpstreamTransportError` (502), ``upstream_transport_error``.
     - Anything else (``LocalProtocolError``: the broker built a request httpx
       refuses to send; ``UnsupportedProtocol``) → a plain :class:`BrokerError`
-      (500), ``upstream_transport_error``.
+      (500), ``upstream_request_invalid``.
 
     ``pre_send`` marks a connect-phase failure: no request bytes reached the
     upstream, so a retry is safe for any method. The caller-facing detail never
@@ -127,7 +127,7 @@ def _map_transport_error(exc: _TransportFailure) -> BrokerError:
         )
     if isinstance(exc, _UPSTREAM_LEG_ERRORS):
         return UpstreamTransportError(detail=_transport_error_detail(exc))
-    return BrokerError(detail=_transport_error_detail(exc), type="upstream_transport_error")
+    return BrokerError(detail=_transport_error_detail(exc), type="upstream_request_invalid")
 
 
 class _HostSlot:

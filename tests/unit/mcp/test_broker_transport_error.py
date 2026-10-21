@@ -81,6 +81,12 @@ def _body(problem: dict[str, Any]) -> bytes:
             ex.RECOVER_WAIT,
         ),
         (UpstreamTransportError("dropped"), True, False, ex.RECOVER_UNKNOWN),
+        (
+            BrokerError("bad header", type="upstream_request_invalid"),
+            True,
+            False,
+            ex.RECOVER_UNKNOWN,
+        ),
     ],
     ids=lambda v: type(v).__name__ if isinstance(v, Exception) else str(v),
 )
@@ -232,6 +238,7 @@ def test_retry_after_seconds() -> None:
         (501, "runner_scheme_unsupported", ex.RECOVER_SCHEME),
         (502, "upstream_response_too_large", ex.RECOVER_UNKNOWN),
         (502, "upstream_transport_error", ex.RECOVER_UNKNOWN),
+        (500, "upstream_request_invalid", ex.RECOVER_UNKNOWN),
         (504, "about:blank", ex.RECOVER_UNKNOWN),
         (504, "", ex.RECOVER_UNKNOWN),
         (503, "about:blank", ex.RECOVER_UNKNOWN),
@@ -328,6 +335,10 @@ def _protocol_error(_req: httpx.Request) -> httpx.Response:
     raise httpx.RemoteProtocolError("peer closed")
 
 
+def _local_protocol_error(_req: httpx.Request) -> httpx.Response:
+    raise httpx.LocalProtocolError("bad header")
+
+
 def _oversized(_req: httpx.Request) -> httpx.Response:
     async def chunks() -> AsyncIterator[bytes]:
         for _ in range(8):
@@ -350,6 +361,7 @@ async def _stalls(_req: httpx.Request) -> httpx.Response:
         (_read_timeout, {}, 504, "upstream_timeout", False, False),
         (_read_timeout, {}, 504, "upstream_timeout", True, True),
         (_protocol_error, {}, 502, "upstream_transport_error", True, False),
+        (_local_protocol_error, {}, 500, "upstream_request_invalid", True, False),
         (_oversized, {"max_response_bytes": 8}, 502, "upstream_response_too_large", True, False),
         (_stalls, {"deadline_s": 0.01}, 504, "deadline_exceeded", True, True),
     ],
@@ -359,6 +371,7 @@ async def _stalls(_req: httpx.Request) -> httpx.Response:
         "read-unsafe",
         "read-safe",
         "transport",
+        "request-invalid",
         "too-large",
         "deadline",
     ],

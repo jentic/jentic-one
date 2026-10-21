@@ -1569,9 +1569,11 @@ components:
     ServerError:
       description: |
         Unexpected broker-side failure — a bug, a panic, or an outbound
-        request the broker itself built and could not send. Should be
-        rare; report with the `traceparent` header for triage. Body is
-        RFC 9457 `application/problem+json`.
+        request the broker itself built and could not send
+        (`upstream_request_invalid`, e.g. an injected credential header
+        with an illegal byte; fix the stored credential rather than
+        retrying). Should be rare; report with the `traceparent` header
+        for triage. Body is RFC 9457 `application/problem+json`.
       content:
         application/problem+json:
           schema:

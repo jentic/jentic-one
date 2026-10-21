@@ -147,12 +147,22 @@ async def test_buffered_read_timeout_is_504() -> None:
 
 
 @pytest.mark.asyncio
-async def test_buffered_local_protocol_error_is_500() -> None:
+@pytest.mark.parametrize(
+    "exc_type",
+    [httpx.LocalProtocolError, httpx.UnsupportedProtocol],
+    ids=lambda t: t.__name__,
+)
+async def test_buffered_local_protocol_error_is_500(exc_type: type[httpx.HTTPError]) -> None:
     """A malformed outbound request is the broker's own failure, not the upstream's."""
-    exc = await _buffered_error(_raises(httpx.LocalProtocolError))
+    exc = await _buffered_error(_raises(exc_type))
 
-    assert status_for_broker_error(exc) == 500
-    assert exc.type == "upstream_transport_error"
+    status, body, _ = await _rendered(exc)
+    assert status == 500
+    assert body["type"] == "upstream_request_invalid"
+    assert body["detail"] == f"Upstream transport error ({exc_type.__name__})"
+    assert body["error_origin"] == "broker"
+    assert _MARKER not in json.dumps(body)
+    assert exc.pre_send is False
 
 
 # --- streaming path (failure before the response starts) --------------------
@@ -195,11 +205,17 @@ async def test_streaming_connect_timeout_matches_buffered() -> None:
 
 
 @pytest.mark.asyncio
-async def test_streaming_local_protocol_error_is_500() -> None:
-    exc = await _streaming_error(_raises(httpx.LocalProtocolError))
+@pytest.mark.parametrize(
+    "exc_type",
+    [httpx.LocalProtocolError, httpx.UnsupportedProtocol],
+    ids=lambda t: t.__name__,
+)
+async def test_streaming_local_protocol_error_is_500(exc_type: type[httpx.HTTPError]) -> None:
+    exc = await _streaming_error(_raises(exc_type))
 
     assert status_for_broker_error(exc) == 500
-    assert exc.type == "upstream_transport_error"
+    assert exc.type == "upstream_request_invalid"
+    assert exc.pre_send is False
 
 
 # --- connect-time DNS failure under the DNS-pinning transport ---------------
