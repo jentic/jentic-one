@@ -48,7 +48,7 @@ function renderEdit() {
 	const onDone = vi.fn();
 	renderWithProviders(
 		<VendorConnectFlow
-			mode="edit"
+			mode="add-scopes"
 			agentId="agnt_1"
 			credentialId="cred_gmail"
 			credentialName="Work Gmail"

@@ -167,12 +167,12 @@ export function ApiAccessSidebar({
 	// The edit sheet is a SECOND SheetPrimitive: its Escape must not tear down this
 	// sidebar. The confirms are native `<dialog>`s, which SheetPrimitive yields to.
 	const [editOpen, setEditOpen] = useState(false);
-	const [editAccessOpen, setEditAccessOpen] = useState(false);
+	const [addScopesOpen, setAddScopesOpen] = useState(false);
 	const [reviewingEdit, setReviewingEdit] = useState<string | null>(null);
 	const [deleteOpen, setDeleteOpen] = useState(false);
 	const [unbindOpen, setUnbindOpen] = useState(false);
 	const guardedClose = (): void => {
-		if (editOpen || editAccessOpen || reviewingEdit) return;
+		if (editOpen || addScopesOpen || reviewingEdit) return;
 		onClose();
 	};
 
@@ -528,7 +528,7 @@ export function ApiAccessSidebar({
 												<Button
 													size="xs"
 													variant="tonal"
-													onClick={() => setEditAccessOpen(true)}
+													onClick={() => setAddScopesOpen(true)}
 												>
 													<Plus className="h-4 w-4" /> Add scopes
 												</Button>
@@ -721,17 +721,17 @@ export function ApiAccessSidebar({
 				/>
 			)}
 
-			{editAccessOpen && shown && (
+			{addScopesOpen && shown && (
 				<CreateCredentialFlow
 					open
-					editAccess={{
+					addScopes={{
 						agentId: agent.id,
 						credentialId: shown.credentialId,
 						credentialName: shown.credentialName,
 						vendorKey: shown.vendor,
 					}}
-					onClose={() => setEditAccessOpen(false)}
-					onCreated={() => setEditAccessOpen(false)}
+					onClose={() => setAddScopesOpen(false)}
+					onCreated={() => setAddScopesOpen(false)}
 				/>
 			)}
 

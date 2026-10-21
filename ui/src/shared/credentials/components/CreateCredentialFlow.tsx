@@ -151,7 +151,7 @@ interface CreateCredentialFlowProps {
 	 * When provided, the flow opens on adding scopes to one binding's
 	 * credential: the person's own change, applied via the vendor sign-in.
 	 */
-	editAccess?: {
+	addScopes?: {
 		agentId: string;
 		credentialId: string;
 		credentialName: string;
@@ -244,7 +244,7 @@ export function CreateCredentialFlow({
 	initialVendor,
 	surface = 'sheet',
 	approvalSession,
-	editAccess,
+	addScopes,
 	preselectedAgentId,
 	onVendorConnected,
 	renderPostConnect,
@@ -897,7 +897,7 @@ export function CreateCredentialFlow({
 		approvalSession?.pollToken,
 	);
 	const approvingEdit = approvalSession != null && approvalReview.data?.edit != null;
-	const title = editAccess
+	const title = addScopes
 		? 'Add scopes'
 		: approvingEdit
 			? 'Review access change'
@@ -917,7 +917,7 @@ export function CreateCredentialFlow({
 		: 'Fill in the credential details';
 	// A pinned API removes the pick step, so the step counter would be lying. The
 	// vendor path is its own two-step flow, so it drops the counter too.
-	const subtitle = editAccess ? (
+	const subtitle = addScopes ? (
 		<span>Grant the agent more of what the vendor offers.</span>
 	) : approvingEdit ? (
 		<span>An agent is asking to change its access.</span>
@@ -976,7 +976,7 @@ export function CreateCredentialFlow({
 	// Approve mode and the vendor step render VendorConnectFlow's own inline
 	// action bar, so the flow's footer stands down for both.
 	const footer =
-		editAccess || approvalSession || step === 'vendor' ? undefined : step === 'pick' ? (
+		addScopes || approvalSession || step === 'vendor' ? undefined : step === 'pick' ? (
 			// Always reachable, not only from no-results: an operator who knows the
 			// API isn't catalogued shouldn't have to search first.
 			<Button
@@ -1045,8 +1045,8 @@ export function CreateCredentialFlow({
 			</>
 		) : undefined;
 
-	const body = editAccess ? (
-		<VendorConnectFlow mode="edit" {...editAccess} onBack={onClose} onDone={onClose} />
+	const body = addScopes ? (
+		<VendorConnectFlow mode="add-scopes" {...addScopes} onBack={onClose} onDone={onClose} />
 	) : approvalSession ? (
 		<VendorConnectFlow
 			mode="approve"
@@ -1455,7 +1455,7 @@ export function CreateCredentialFlow({
 	);
 
 	/** A connect session is open (created on `VendorConnectFlow` mount). */
-	const connectInPlay = !!editAccess || !!approvalSession || step === 'vendor';
+	const connectInPlay = !!addScopes || !!approvalSession || step === 'vendor';
 
 	if (surface === 'dialog') {
 		return (
@@ -1464,7 +1464,7 @@ export function CreateCredentialFlow({
 				onClose={onClose}
 				title={title}
 				subtitle={subtitle}
-				size={editAccess || approvalSession || step !== 'form' ? 'lg' : 'xl'}
+				size={addScopes || approvalSession || step !== 'form' ? 'lg' : 'xl'}
 				footer={footer}
 				dismissOnBackdrop={false}
 			>

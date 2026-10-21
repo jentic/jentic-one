@@ -175,7 +175,7 @@ export type VendorConnectFlowProps =
 			 * A person adding scopes to a binding's credential: their own change,
 			 * applied at once through an edit session, via the vendor sign-in.
 			 */
-			mode: 'edit';
+			mode: 'add-scopes';
 			agentId: string;
 			credentialId: string;
 			credentialName: string;
@@ -223,9 +223,9 @@ const DEFAULT_ALLOW_GET_RULE: PermissionRule = {
 const EMPTY_PATHS: readonly string[] = [];
 
 export function VendorConnectFlow(props: VendorConnectFlowProps) {
-	if (props.mode === 'edit') {
+	if (props.mode === 'add-scopes') {
 		return (
-			<EditAccessFlow
+			<AddScopesFlow
 				agentId={props.agentId}
 				credentialId={props.credentialId}
 				credentialName={props.credentialName}
@@ -2024,7 +2024,7 @@ function describeEditError(err: unknown): string {
  * vendor sign-in, the same step an approved agent request runs. An agent's
  * open request for the binding is rebased onto it once it lands.
  */
-function EditAccessFlow({
+function AddScopesFlow({
 	agentId,
 	credentialId,
 	credentialName,
@@ -2343,11 +2343,8 @@ function RulesStep({
 	error,
 	apiReference,
 	requireRule = false,
-	subtitle,
 }: {
 	display: VendorDisplay;
-	/** The header line; defaults to the connect flow's. */
-	subtitle?: string;
 	// Rules the initiating agent supplied on ``:connect``. Empty in the
 	// self-flow. When non-empty, rows render with a "requested by agent"
 	// pill (see below) so the human owner sees exactly what the agent
@@ -2405,10 +2402,7 @@ function RulesStep({
 		<div className="space-y-5">
 			<VendorHeader
 				display={display}
-				subtitle={
-					subtitle ??
-					`Set what this credential lets an agent do on ${display.displayName}.`
-				}
+				subtitle={`Set what this credential lets an agent do on ${display.displayName}.`}
 			/>
 
 			<div className="space-y-2">
