@@ -152,7 +152,7 @@ async def test_downgrade_rebuilds_an_invalid_leftover_toolkit_started_index(
 ) -> None:
     """A failed ``CONCURRENTLY`` downgrade build leaves an INVALID index; re-running replaces it."""
     async with admin_db.session() as session:
-        if session.bind.dialect.name != "postgresql":
+        if session.get_bind().dialect.name != "postgresql":
             pytest.skip("INVALID indexes exist only on PostgreSQL")
     cfg = _admin_cfg(integration_config)
     await asyncio.to_thread(command.upgrade, cfg, "head")
