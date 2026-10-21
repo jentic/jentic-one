@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+import structlog
 from pydantic import BaseModel
 
 from jentic_one.registry.core.schema.notes import Note
@@ -17,7 +18,7 @@ from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.registry.repos.note_repo import UNSET as UNSET
 from jentic_one.registry.repos.note_repo import NoteRepository, _Unset
 from jentic_one.registry.repos.operation_repo import OperationRepository as OpRepo
-from jentic_one.registry.scoping.filters import ORG_ADMIN, build_access_filters
+from jentic_one.registry.scoping.filters import build_access_filters
 from jentic_one.registry.services.errors import (
     InvalidNoteResourceError,
     NoteNotFoundError,
@@ -25,9 +26,12 @@ from jentic_one.registry.services.errors import (
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import ORG_ADMIN
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
+
+logger = structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -80,8 +84,14 @@ class NoteService:
             ORG_ADMIN in identity.permissions
             or identity.actor_type != ActorType.USER
             or not identity.sub
-            or not self._ctx.is_db_allowed("admin")
         ):
+            return []
+        if not self._ctx.is_db_allowed("admin"):
+            logger.warning(
+                "note_owned_agent_lookup_skipped",
+                reason="admin_db_not_allowed",
+                actor_id=identity.sub,
+            )
             return []
         async with self._ctx.admin_db.session() as session:
             return await AgentOwnershipBoundaryRepository.list_agent_ids_owned_by(
@@ -213,9 +223,12 @@ class NoteService:
             if not api_ids:
                 return NotePage(data=[], has_more=False, next_cursor=None)
 
-        access_filters = build_access_filters(
-            identity, Note, owned_agent_ids=await self._owned_agent_ids(identity)
+        owned_agent_ids = (
+            []
+            if created_by is not None and created_by == identity.sub
+            else await self._owned_agent_ids(identity)
         )
+        access_filters = build_access_filters(identity, Note, owned_agent_ids=owned_agent_ids)
 
         async with self._ctx.registry_db.session() as session:
             rows = await NoteRepository.list_page(

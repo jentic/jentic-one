@@ -7,8 +7,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.registry.core.schema.notes import Note
 from jentic_one.shared.auth.identity import Identity
-
-ORG_ADMIN = "org:admin"
+from jentic_one.shared.auth.permission_catalog import ORG_ADMIN
 
 
 def build_access_filters(

@@ -26,11 +26,8 @@ def _make_ctx() -> MagicMock:
     ctx.registry_db.transaction.return_value.__aexit__ = AsyncMock(return_value=False)
     ctx.registry_db.session.return_value.__aenter__ = AsyncMock(return_value=mock_session)
     ctx.registry_db.session.return_value.__aexit__ = AsyncMock(return_value=False)
-    # Owned-agent lookup for note reads: the caller owns no agents.
-    admin_session = AsyncMock()
-    admin_session.execute.return_value = MagicMock(fetchall=MagicMock(return_value=[]))
-    ctx.admin_db.session.return_value.__aenter__ = AsyncMock(return_value=admin_session)
-    ctx.admin_db.session.return_value.__aexit__ = AsyncMock(return_value=False)
+    # Unit tests exercise registry-only logic without an admin DB connection.
+    ctx.is_db_allowed.return_value = False
     return ctx
 
 
