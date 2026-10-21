@@ -7,26 +7,19 @@
  * Suspend/resume is the reversible cut-off, so it sits in the header.
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ExternalLink, Info, LogIn, PauseCircle, Pencil, PlayCircle, X } from 'lucide-react';
+import { ExternalLink, LogIn } from 'lucide-react';
 import {
 	Button,
-	CodeSnippet,
-	CopyButton,
 	DangerZone,
 	ErrorAlert,
-	SheetHeader,
 	SheetPrimitive,
 	Skeleton,
 	UserText,
-	VendorIcon,
 	toast,
 	ConfirmDialog,
-	TruncateWithTooltip,
-	Tooltip,
 	type DangerZoneAction,
 } from '@/shared/ui';
-import { vendorIconPropsFor } from '@/shared/lib';
-import { formatTimestamp, isolateText, timeAgo } from '@/shared/lib/utils';
+import { isolateText } from '@/shared/lib/utils';
 import {
 	AGENTS_WRITE,
 	CREDENTIALS_WRITE,
@@ -39,11 +32,9 @@ import {
 	OperationImpactPreview,
 	type OpsApiReference,
 	CredentialDeleteDialog,
-	SharedWithYouBadge,
 	EditCredentialSheet,
 } from '@/shared/credentials/components';
 import { credentialEditableBy } from '@/shared/credentials/lib/credentialAuthority';
-import { credentialTypeIcon } from '@/shared/credentials/lib/authTypeIcons';
 import {
 	summarizeBindingRules,
 	useAgentBindingEffectiveRules,
@@ -57,14 +48,12 @@ import { AgentBindingPermissionsEditor } from '@/modules/agents/components/detai
 import { AgentBindingRuleTester } from '@/modules/agents/components/detail/AgentBindingRuleTester';
 import { toEditorRule } from '@/modules/agents/components/detail/shared';
 import { BindingRuleSetPanel } from '@/modules/agents/components/detail/BindingRuleSetPanel';
-import {
-	MultiCredentialNote,
-	credentialIdHeader,
-} from '@/modules/agents/components/flat/MultiCredentialNote';
+
 import type { ApiTileModel } from '@/modules/agents/lib/apiTiles';
 import { deriveTileStatus } from '@/modules/agents/lib/tileStatus';
-import { TileStatusChip } from '@/modules/agents/components/flat/TileStatusMarker';
 import { AgentNameText } from '@/modules/agents/components/AgentNameText';
+import { AccessHeader } from '@/modules/agents/components/flat/access/AccessHeader';
+import { CredentialSection } from '@/modules/agents/components/flat/access/CredentialSection';
 import { clipName } from '@/modules/agents/lib/agentName';
 
 /** The sheet's scrolling body, with a bottom fade shown only while content
@@ -155,7 +144,6 @@ export function ApiAccessSidebar({
 		if (tile) setStickyTile(tile);
 	}, [tile]);
 	const shown = tile ?? stickyTile;
-	const SidebarAuthIcon = shown?.authType ? credentialTypeIcon(shown.authType) : null;
 
 	// The editor's live draft-vs-saved dirtiness — gates the tester.
 	const [rulesDirty, setRulesDirty] = useState(false);
@@ -308,16 +296,13 @@ export function ApiAccessSidebar({
 	// "1 agent" is this agent alone; anything more is the shared-secret warning
 	// the operator needs before editing or deleting. A viewer the credential is
 	// shared with sees only their own agents, so the count is "of your agents".
-	const usedByLabel = credentialReadOnly
-		? `${boundAgentRows.length} of your agents`
-		: boundAgentRows.length === 1
-			? 'this agent only'
-			: `${boundAgentRows.length} agents`;
-	const credentialAge = shown?.credentialUpdatedAt
-		? `updated ${timeAgo(shown.credentialUpdatedAt)}`
-		: shown?.credentialCreatedAt
-			? `added ${timeAgo(shown.credentialCreatedAt)}`
-			: null;
+	const usedBy = !credentialAgents.isSuccess
+		? null
+		: credentialReadOnly
+			? `${boundAgentRows.length} of your agents`
+			: boundAgentRows.length === 1
+				? 'this agent only'
+				: `${boundAgentRows.length} agents`;
 
 	const dangerActions: DangerZoneAction[] = shown
 		? [
@@ -364,84 +349,18 @@ export function ApiAccessSidebar({
 			>
 				{shown && (
 					<div id={sidebarId} className="flex h-full flex-col">
-						<SheetHeader className="justify-between">
-							<div className="flex min-w-0 items-start gap-3">
-								<VendorIcon {...vendorIconPropsFor(shown)} size="sm" />
-								<div className="min-w-0">
-									<div className="flex min-w-0 items-center gap-2">
-										<h2
-											id={headingId}
-											dir="auto"
-											className="font-heading text-foreground-name min-w-0 text-base font-semibold"
-										>
-											<TruncateWithTooltip>{shown.title}</TruncateWithTooltip>
-										</h2>
-										<TileStatusChip status={status} className="shrink-0" />
-									</div>
-									<p className="text-muted-foreground truncate text-xs">
-										<UserText>
-											{shown.host}
-											{shown.authLabel ? ` · ${shown.authLabel}` : ''}
-										</UserText>{' '}
-										— access for <UserText>{agent.name}</UserText>
-										{shown.suspended ? ' · not serving calls' : ''}
-										{shown.suspended && shown.suspendedReason === 'api_deleted'
-											? ' because its API was deleted — review the rules before resuming'
-											: ''}
-									</p>
-								</div>
-							</div>
-							{/* Suspend/resume lives HERE, not in the danger zone: pausing is safe (rules
-							    survive, resume restores access), so it sits with the status line. */}
-							<div className="flex shrink-0 items-center gap-1.5">
-								{!canManageBinding ? null : shown.suspended ? (
-									<Tooltip
-										content="Resume this binding — rules survived; access is restored."
-										interactiveChild
-										placement="bottom"
-									>
-										<Button
-											size="sm"
-											variant="secondary"
-											loading={resume.isPending}
-											onClick={() =>
-												credentialId && resume.mutate(credentialId)
-											}
-											aria-label={`Resume binding for ${shown.credentialName}`}
-										>
-											<PlayCircle className="h-4 w-4" /> Resume
-										</Button>
-									</Tooltip>
-								) : (
-									<Tooltip
-										content="Pause this binding — reversible; rules survive and resume restores access."
-										interactiveChild
-										placement="bottom"
-									>
-										<Button
-											size="sm"
-											variant="secondary"
-											loading={suspendPending}
-											onClick={() =>
-												credentialId && unbind.mutate({ credentialId })
-											}
-											aria-label={`Suspend binding for ${shown.credentialName}`}
-										>
-											<PauseCircle className="h-4 w-4" /> Pause
-										</Button>
-									</Tooltip>
-								)}
-								<Button
-									variant="ghost"
-									size="icon-xs"
-									aria-label="Close"
-									onClick={onClose}
-									className="shrink-0"
-								>
-									<X className="h-4 w-4" />
-								</Button>
-							</div>
-						</SheetHeader>
+						<AccessHeader
+							tile={shown}
+							headingId={headingId}
+							agentName={agent.name}
+							status={status}
+							canPause={canManageBinding}
+							pausing={suspendPending}
+							resuming={resume.isPending}
+							onPause={() => credentialId && unbind.mutate({ credentialId })}
+							onResume={() => credentialId && resume.mutate(credentialId)}
+							onClose={onClose}
+						/>
 
 						<ScrollFadeBody>
 							{/* Awaiting consent: the one not-usable state the redacted
@@ -474,104 +393,16 @@ export function ApiAccessSidebar({
 								</div>
 							)}
 
-							{/* 1 — The credential. Read view; edits stack the shared
-							    edit sheet (secrets stay write-only there). */}
-							<section aria-label="Credential" className="space-y-3">
-								<h3 className="text-foreground text-sm font-semibold">
-									Credential
-								</h3>
-								<div className="bg-surface-inset flex flex-wrap items-center gap-3 rounded-lg px-4 py-3">
-									<div className="min-w-0 flex-1">
-										<p className="text-foreground-name truncate text-sm font-semibold">
-											<UserText>{shown.credentialName}</UserText>
-										</p>
-										<p className="text-muted-foreground text-xs">
-											{SidebarAuthIcon && (
-												<SidebarAuthIcon
-													aria-hidden="true"
-													className="mr-1 inline-block h-3 w-3 align-[-2px]"
-												/>
-											)}
-											{shown.authLabel ?? 'Credential'} · bound{' '}
-											<Tooltip content={formatTimestamp(shown.boundAt)}>
-												<span>{timeAgo(shown.boundAt)}</span>
-											</Tooltip>
-											{/* The credential's last update when one happened, else
-											    its creation. Omitted when the org row is unreachable. */}
-											{credentialAge && <> · {credentialAge}</>}
-											{/* The blast radius of editing or revoking this secret,
-											    from the read the cascade confirm already makes. */}
-											{credentialAgents.isSuccess && (
-												<> · used by {usedByLabel}</>
-											)}
-										</p>
-									</div>
-									{credentialReadOnly ? (
-										<SharedWithYouBadge />
-									) : credentialLocked ? null : (
-										<Button
-											size="xs"
-											variant="tonal"
-											onClick={() => setEditOpen(true)}
-										>
-											<Pencil className="h-4 w-4" /> Edit credential
-										</Button>
-									)}
-								</div>
-								{/* The full id, copyable: what a call names in
-								    Jentic-Credential-Id when the agent holds several. */}
-								<div
-									data-testid="credential-id-row"
-									className="flex min-w-0 items-center gap-2 text-xs"
-								>
-									<span className="text-muted-foreground shrink-0">ID</span>
-									<code className="text-foreground/90 min-w-0 flex-1 font-mono [overflow-wrap:anywhere]">
-										{shown.credentialId}
-									</code>
-									<CopyButton
-										value={shown.credentialId}
-										size="icon"
-										variant="ghost"
-										ariaLabel="Copy the credential ID"
-										toastMessage="Credential ID copied"
-									/>
-								</div>
-								{accountCount > 1 && (
-									<>
-										<MultiCredentialNote
-											apiTitle={shown.title}
-											count={accountCount}
-										/>
-										<CodeSnippet
-											label="Header that picks this credential"
-											code={credentialIdHeader(shown.credentialId)}
-											copyAriaLabel="Copy the Jentic-Credential-Id header"
-										/>
-									</>
-								)}
-							</section>
-
-							{/* Blast radius: rules are keyed by (credential, agent) —
-							    one credential can serve several APIs. */}
-							{siblingApiTitles.length > 0 && (
-								<p
-									data-testid="blast-radius-note"
-									className="bg-surface-inset text-foreground-lighter flex items-start gap-2 rounded-lg px-3.5 py-2.5 text-xs leading-relaxed"
-								>
-									<Info
-										className="text-caution mt-0.5 h-4 w-4 shrink-0"
-										aria-hidden="true"
-									/>
-									<span>
-										This credential also serves{' '}
-										<strong>{siblingApiTitles.join(', ')}</strong> for{' '}
-										<AgentNameText name={agent.name} />. The rules below are
-										shared — changing them changes access to{' '}
-										{siblingApiTitles.length === 1 ? 'that API' : 'those APIs'}{' '}
-										too.
-									</span>
-								</p>
-							)}
+							<CredentialSection
+								tile={shown}
+								agentName={agent.name}
+								usedBy={usedBy}
+								sharedWithViewer={credentialReadOnly}
+								canEdit={!credentialLocked}
+								onEdit={() => setEditOpen(true)}
+								accountCount={accountCount}
+								siblingApiTitles={siblingApiTitles}
+							/>
 
 							{/* 2 — The permission rules, keyed by agent+credential so a
 							    different tile never inherits a stale draft. */}
