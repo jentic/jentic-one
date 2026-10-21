@@ -2682,6 +2682,113 @@ async def test_adding_scopes_runs_beside_an_open_agent_edit(
     assert again.value.session_id == open_edit.session_id
 
 
+async def _land_grant(svc: ConnectSessionService, credential_id: str) -> None:
+    echo = identity_echo.IdentityEchoResult(display="octo", raw={"login": "octo"})
+    with (
+        patch.object(
+            DeviceAuthorizationHandler,
+            "advance",
+            new=AsyncMock(return_value=_success(["read:user", "repo"])),
+        ),
+        patch.object(identity_echo, "echo_identity", new=AsyncMock(return_value=echo)),
+    ):
+        await svc.advance_polling_target(credential_id)
+
+
+async def _paths(ctx: Context, credential_id: str) -> list[str | None]:
+    async with ctx.control_db.session() as session:
+        rules = await AgentPermissionRuleRepository.list_rules(session, _AGENT_ID, credential_id)
+    return [r.path for r in rules if not r.is_system]
+
+
+async def test_rules_changed_while_a_grant_is_out_are_kept_and_the_rest_reopens(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    credential_id = await _connected_device_credential(ctx, svc)
+    edit = await svc.create_edit_session(
+        credential_id=credential_id,
+        agent_id=_AGENT_ID,
+        identity=_AGENT_IDENTITY,
+        request=EditRequest(add=[RuleAdd(_WRITE_RULE)], add_scopes=["repo"]),
+    )
+    review = await svc.get_review_data(edit.session_id, poll_token=None, identity=_USER_IDENTITY)
+    assert review.edit is not None
+    with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)):
+        await svc.confirm_edit(
+            edit.session_id,
+            poll_token=None,
+            identity=_USER_IDENTITY,
+            revision_id=review.edit.revision_id,
+            permission_rules=list(review.edit.result["rules"]),
+            resume=False,
+            confirmed_scopes=["read:user", "repo"],
+        )
+    # While the grant is out, an admin changes the rules.
+    other = _READ_RULE | {"path": "/orgs"}
+    await svc.create_edit_session(
+        credential_id=credential_id,
+        agent_id=_AGENT_ID,
+        identity=_USER_IDENTITY,
+        request=EditRequest(set_rules=[other]),
+        apply=True,
+    )
+
+    await _land_grant(svc, credential_id)
+    # The scopes land; the admin's rules aren't overwritten.
+    assert await _token_scope(ctx, credential_id) == "read:user repo"
+    assert await _paths(ctx, credential_id) == ["/orgs"]
+    # The agent's rule change waits on its review again, on today's rules.
+    status = await svc.get_status(
+        edit.session_id, poll_token=edit.poll_token, identity=_AGENT_IDENTITY
+    )
+    assert status.status == "pending"
+    again = await svc.get_review_data(edit.session_id, poll_token=None, identity=_USER_IDENTITY)
+    assert again.edit is not None and again.state == "created"
+    assert again.edit.needs_vendor_consent is False
+    assert [r["path"] for r in again.edit.result["rules"]] == ["/orgs", "/repos"]
+
+
+async def test_a_scopes_only_change_lands_beside_rules_changed_meanwhile(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    credential_id = await _connected_device_credential(ctx, svc)
+    with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)):
+        applied = await svc.create_edit_session(
+            credential_id=credential_id,
+            agent_id=_AGENT_ID,
+            identity=_USER_IDENTITY,
+            request=EditRequest(add_scopes=["repo"]),
+            apply=True,
+        )
+    await svc.create_edit_session(
+        credential_id=credential_id,
+        agent_id=_AGENT_ID,
+        identity=_USER_IDENTITY,
+        request=EditRequest(set_rules=[_READ_RULE | {"path": "/orgs"}]),
+        apply=True,
+    )
+
+    await _land_grant(svc, credential_id)
+    assert await _token_scope(ctx, credential_id) == "read:user repo"
+    assert await _paths(ctx, credential_id) == ["/orgs"]
+    status = await svc.get_status(
+        applied.session_id, poll_token=applied.poll_token, identity=_USER_IDENTITY
+    )
+    assert status.status == "applied"
+
+
 async def test_a_failed_consent_leaves_the_credential_as_it_was(
     integration_context: Context,
     seed_test_vendors: None,

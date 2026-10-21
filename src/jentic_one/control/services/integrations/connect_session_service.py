@@ -632,6 +632,17 @@ def _edit_conflicts(
     return conflicts
 
 
+def _rules_moved(before: Mapping[str, Any], live: Mapping[str, Any]) -> bool:
+    """Whether the rule list an edit changes moved from ``before`` to ``live``."""
+    before_set = (before.get("rule_set") or {}).get("id")
+    live_set = (live.get("rule_set") or {}).get("id")
+    if before_set != live_set:
+        return True
+    was = [rule_content(r) for r in target_rules(before)[1]]
+    now = [rule_content(r) for r in target_rules(live)[1]]
+    return was != now
+
+
 #: ``error_code`` of a session a human explicitly rejected.
 ERROR_REJECTED = "rejected"
 
@@ -2451,9 +2462,15 @@ class ConnectSessionService:
     async def _write_change(
         self, session: Any, row: ConnectSession, change: dict[str, Any]
     ) -> None:
-        """Write an approved change's rules, record its outcome and close the session."""
+        """Write an approved change's rules, record its outcome and close the session.
+
+        ``keep_rules`` leaves the rules as they are (the approved ones were for
+        rules that moved since).
+        """
         assert row.agent_id is not None
-        if change["rule_set_id"] is not None:
+        if change.get("keep_rules"):
+            pass  # rewriting them would also re-id them under other open edits
+        elif change["rule_set_id"] is not None:
             await PermissionRuleSetRepository.replace_user_rules(
                 session, change["rule_set_id"], change["rules"], created_by=change["approved_by"]
             )
@@ -2514,7 +2531,11 @@ class ConnectSessionService:
         if row.baseline is not None:
             _, before = target_rules(row.baseline)
         before_content = [rule_content(r) for r in before]
-        after_content = [rule_content(r) for r in change["rules"]]
+        after_content = (
+            before_content
+            if change.get("keep_rules")
+            else [rule_content(r) for r in change["rules"]]
+        )
         _logger.info(
             "connect_session.edit_applied",
             session_id=row.id,
@@ -4674,6 +4695,17 @@ class ConnectSessionService:
             )
             return StatusResult(status="failed", error_code="account_changed")
 
+        # The rules were approved against the binding as it was. If they moved
+        # while the grant was out, writing them would undo that change: the
+        # grant still lands, and the rules are left for the reviewer again.
+        reopen = False
+        if row.baseline is not None and not change["bind"]:
+            live = await self._live_binding_snapshot(row)
+            if live is not None and _rules_moved(row.baseline, live):
+                _, before = target_rules(row.baseline)
+                reopen = change["rules"] != [rule_to_write(r) for r in before]
+                change = {**change, "keep_rules": True, "detach_rule_set": False}
+
         await self._write_finalise(
             credential_id=row.credential_id,
             handler=handler,
@@ -4682,6 +4714,8 @@ class ConnectSessionService:
             created_by=change["approved_by"],
             close_session_id=None,
         )
+        if reopen:
+            return await self._reopen_edit(row, change)
         async with self._ctx.control_db.transaction() as session:
             won = await ConnectSessionRepository.transition_state(
                 session, row.id, to_state=change["outcome"], from_states=("polling",)
@@ -4698,6 +4732,35 @@ class ConnectSessionService:
             credential_id=row.credential_id,
             bound_scopes=tokens.granted_scopes,
         )
+
+    async def _reopen_edit(self, row: ConnectSession, change: dict[str, Any]) -> StatusResult:
+        """The grant landed but the rules moved since approval: reopen the rule change.
+
+        The scopes are in, and so is a resume. The request is rebased onto the
+        binding as it is now and waits on its review again, without a vendor
+        step this time.
+        """
+        async with self._ctx.control_db.transaction() as session:
+            won = await ConnectSessionRepository.transition_state(
+                session,
+                row.id,
+                to_state="created",
+                from_states=("polling",),
+                approved_change=None,
+                resolved_flow=EDIT_FLOW,
+            )
+        if not won:
+            return StatusResult(status="failed", error_code="session_closed")
+        await self._apply_admin_change(row, change)
+        live = await self._live_binding_snapshot(row)
+        if live is not None:
+            await self._rebase_edit(row, live)
+        _logger.info(
+            "connect_session.edit_reopened",
+            session_id=row.id,
+            credential_id=row.credential_id,
+        )
+        return StatusResult(status="pending")
 
     @staticmethod
     def _record_connected(row: ConnectSession, *, connected_as: str | None = None) -> None:
