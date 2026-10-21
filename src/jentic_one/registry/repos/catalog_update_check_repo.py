@@ -19,10 +19,7 @@ from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.catalog_update_checks import CatalogUpdateCheck
 from jentic_one.shared.models import ApiRevisionState
 
-# SQLAlchemy 2.0 parameterizes Select over a single tuple TypeVar (Select[tuple[...]]),
-# whereas 2.1 parameterizes it over a TypeVarTuple (Select[...]). A PEP 695 alias
-# to the unsubscripted Select type-checks cleanly under both versions.
-type _OutdatedSelect = Select
+_OutdatedSelect = Select[uuid.UUID, str]
 
 
 class CatalogUpdateCheckRepository:

@@ -14,9 +14,8 @@ from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.shared.models import ExecutionStatus, JobKind, JobStatus
 
-# SQLAlchemy 2.0 parameterizes Select over a single tuple TypeVar (Select[tuple[...]]),
-# whereas 2.1 parameterizes it over a TypeVarTuple (Select[...]). A PEP 695 alias
-# to the unsubscripted Select type-checks cleanly under both versions.
+# SQLAlchemy 2.1 parameterizes Select over a TypeVarTuple (Select[*_Ts]).
+# A PEP 695 alias to the unsubscripted Select covers multi-column selects.
 type _AnySelect = Select
 
 
