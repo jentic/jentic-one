@@ -601,11 +601,11 @@ jobs:
 
       - name: Type-check against SQLAlchemy 2.1
         run: |
-          uv run --with 'sqlalchemy==2.1.*' python -c 'import sqlalchemy; assert sqlalchemy.__version__.startswith("2.1."), sqlalchemy.__version__'
-          uv run --with 'sqlalchemy==2.1.*' python -m mypy
+          uv run --frozen --with 'sqlalchemy==2.1.*' python -c 'import sqlalchemy; assert sqlalchemy.__version__.startswith("2.1."), sqlalchemy.__version__'
+          uv run --frozen --with 'sqlalchemy==2.1.*' python -m mypy
 
       - name: Run unit & architecture tests against SQLAlchemy 2.1
-        run: uv run --with 'sqlalchemy==2.1.*' python -m pytest tests/unit tests/arch -n auto --dist loadfile --no-cov $PYTEST_ARGS
+        run: uv run --frozen --with 'sqlalchemy==2.1.*' python -m pytest tests/unit tests/arch -n auto --dist loadfile --no-cov $PYTEST_ARGS
 
   test-integration:
     name: Integration tests (${{ matrix.backend }})
@@ -1475,7 +1475,9 @@ jobs:
   ci-status:
     name: CI status
     if: always()
-    needs: [lint, openapi-client-drift, score, security, security-image, test-unit, test-arch, test-sqlalchemy-2-1, test-integration, ui, ui-test, ui-e2e, ui-e2e-realbackend, smoke-packaging, cli, cli-artifact-smoke, installer, e2e-install]
+    # `test-sqlalchemy-2-1` is a non-blocking canary (`continue-on-error: true`)
+    # and is omitted until SQLAlchemy 2.1 becomes a required gate.
+    needs: [lint, openapi-client-drift, score, security, security-image, test-unit, test-arch, test-integration, ui, ui-test, ui-e2e, ui-e2e-realbackend, smoke-packaging, cli, cli-artifact-smoke, installer, e2e-install]
     runs-on: ubuntu-latest
     steps:
       - name: Check job results

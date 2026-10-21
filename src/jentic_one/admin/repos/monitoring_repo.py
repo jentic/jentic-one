@@ -14,6 +14,9 @@ from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.shared.models import ExecutionStatus, JobKind, JobStatus
 
+# SQLAlchemy 2.0 parameterizes Select over a single tuple TypeVar (Select[tuple[...]]),
+# whereas 2.1 parameterizes it over a TypeVarTuple (Select[...]). A PEP 695 alias
+# to the unsubscripted Select type-checks cleanly under both versions.
 type _AnySelect = Select
 
 
@@ -27,7 +30,7 @@ def _is_postgres(session: AsyncSession) -> bool:
     return session.bind.dialect.name == "postgresql" if session.bind else True
 
 
-def _epoch_seconds(session: AsyncSession) -> ColumnElement[Any]:
+def _epoch_seconds(session: AsyncSession) -> ColumnElement[int]:
     """Epoch seconds of ``started_at`` as a numeric expression, per dialect.
 
     Postgres has ``extract('epoch', ts)``; SQLite has no ``extract`` but

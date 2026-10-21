@@ -227,3 +227,6 @@ def test_epoch_seconds_casts_to_integer_on_sqlite() -> None:
     compiled = str(expr.compile(dialect=sqlite.dialect()))
     assert "CAST(strftime(" in compiled
     assert "AS INTEGER)" in compiled
+    sub_compiled = str((expr - 10).compile(dialect=sqlite.dialect()))
+    assert "CAST(strftime(" in sub_compiled
+    assert "AS INTEGER) -" in sub_compiled
