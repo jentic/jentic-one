@@ -163,6 +163,23 @@ class PostgresBackend(DatabaseBackend):
             kwargs["pool_recycle"] = config.pool_recycle_s
         return kwargs
 
+    async def open_listen_connection(self, config: DatabaseConfig) -> Any:
+        """Open a dedicated autocommit ``asyncpg`` connection outside the pool."""
+        connection_class = (
+            keepalive_connection_class(TcpKeepalive.from_config(config))
+            if config.tcp_keepalive
+            else asyncpg.Connection
+        )
+        return await asyncpg.connect(
+            host=config.host,
+            port=config.port,
+            user=config.user,
+            password=config.password.get_secret_value(),
+            database=config.name,
+            server_settings={"search_path": f"{config.schema_name},public"},
+            connection_class=connection_class,
+        )
+
 
 def _is_driver_closed(dbapi_connection: Any) -> bool:
     driver = getattr(dbapi_connection, "driver_connection", None)

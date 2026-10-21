@@ -787,3 +787,111 @@ async def test_listen_disconnect_reconnects_and_stop_cleans_up_connection() -> N
     assert not worker._listening.is_set()
     assert len([e for e in logs if e["event"] == "worker_listen_unavailable"]) == 1
     assert len([e for e in logs if e["event"] == "worker_listen_recovered"]) == 1
+
+
+async def test_close_listen_connection_terminates_on_error_or_cancellation() -> None:
+    """A failing or cancelled listener close falls back to ``conn.terminate()``."""
+
+    class _BrokenCloseConn(_FakeListenConn):
+        async def remove_listener(self, channel: str, cb: Callable[..., None]) -> None:
+            raise OSError("broken pipe")
+
+    class _CancelledCloseConn(_FakeListenConn):
+        async def remove_listener(self, channel: str, cb: Callable[..., None]) -> None:
+            raise asyncio.CancelledError
+
+    worker = WorkerLoop(
+        db=_FakeDb(),  # type: ignore[arg-type]
+        handler_registry=JobHandlerRegistry(),
+    )
+    broken = _BrokenCloseConn()
+    await worker._close_listen_connection(broken)
+    assert broken.terminated is True
+
+    cancelled = _CancelledCloseConn()
+    with pytest.raises(asyncio.CancelledError):
+        await worker._close_listen_connection(cancelled)
+    assert cancelled.terminated is True
+
+
+async def test_stop_listener_waits_for_in_flight_close_when_cancelled() -> None:
+    """Cancelling ``_listen_task`` after ``stop()`` entered ``finally`` still awaits close."""
+    close_started = asyncio.Event()
+    release_close = asyncio.Event()
+
+    class _SlowCloseConn(_FakeListenConn):
+        async def close(self) -> None:
+            close_started.set()
+            await release_close.wait()
+            await super().close()
+
+    conn = _SlowCloseConn()
+
+    async def body(job: _Job) -> None:
+        return None
+
+    worker = _ListeningScriptedWorker(
+        body,
+        outcomes=[conn],
+        config=WorkerConfig(poll_interval_s=60.0),
+    )
+    worker._running = True
+    listen_task = asyncio.create_task(worker._listen_loop())
+    worker._listen_task = listen_task
+    await asyncio.wait_for(worker._listening.wait(), timeout=_PROMPT_S)
+
+    worker._signal_listen_stop()
+    await asyncio.wait_for(close_started.wait(), timeout=_PROMPT_S)
+
+    stop_task = asyncio.create_task(worker._stop_listener())
+    await _yield_loop(5)
+    assert not stop_task.done(), "_stop_listener must wait until _close_listen_connection finishes"
+
+    release_close.set()
+    await asyncio.wait_for(stop_task, timeout=_PROMPT_S)
+    assert conn.closed is True
+    assert conn.terminated is False
+
+
+async def test_listen_error_redacts_embedded_url_credentials_and_omits_traceback() -> None:
+    """Listener errors carrying DSN userinfo redact the credentials and omit ``exc_info``."""
+    recovered_conn = _FakeListenConn()
+
+    async def body(job: _Job) -> None:
+        return None
+
+    dsn_error = (
+        "connect failed for "
+        "postgresql://admin:s3cr3tPass@db.internal:5432/app"  # pragma: allowlist secret
+    )
+    worker = _ListeningScriptedWorker(
+        body,
+        outcomes=[
+            RuntimeError(dsn_error),
+            recovered_conn,
+        ],
+        config=WorkerConfig(poll_interval_s=60.0),
+    )
+    with structlog.testing.capture_logs() as logs:
+        task = asyncio.create_task(worker.run())
+        await asyncio.wait_for(worker._listening.wait(), timeout=_PROMPT_S)
+        worker.stop()
+        await asyncio.wait_for(task, timeout=_PROMPT_S)
+
+    [warning] = [e for e in logs if e["event"] == "worker_listen_unavailable"]
+    assert "s3cr3tPass" not in str(warning)
+    assert "postgresql://***REDACTED***@db.internal:5432/app" in warning["error"]
+    [backoff] = [e for e in logs if e["event"] == "worker_listen_reconnect_backoff"]
+    assert backoff["exc_info"] is False
+
+
+def test_on_pg_notify_ignores_named_kind_when_no_handlers_are_registered() -> None:
+    """A worker with an empty handler registry ignores kind-scoped notifications."""
+    worker = WorkerLoop(
+        db=_FakeDb(),  # type: ignore[arg-type]
+        handler_registry=JobHandlerRegistry(),
+    )
+    worker._on_pg_notify(None, 1, JOB_NOTIFY_CHANNEL, JobKind.EXECUTION)
+    assert not worker._wake.is_set()
+    worker._on_pg_notify(None, 1, JOB_NOTIFY_CHANNEL, "")
+    assert worker._wake.is_set()

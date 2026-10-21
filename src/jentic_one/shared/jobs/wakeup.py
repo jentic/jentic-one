@@ -34,6 +34,8 @@ if TYPE_CHECKING:
 #: Postgres LISTEN/NOTIFY channel used to wake worker loops across processes.
 JOB_NOTIFY_CHANNEL = "jentic_jobs"
 
+_NOTIFY_SQL = text(f"SELECT pg_notify('{JOB_NOTIFY_CHANNEL}', :payload)")
+
 # Session.info key marking a session that already has a pending wake-up armed,
 # so enqueuing several jobs in one transaction registers one listener.
 _ARMED_KEY = "jentic_job_wakeup_armed"
@@ -135,6 +137,6 @@ async def notify_job_enqueued(
     if not _is_postgres_session(session):
         return
     await session.execute(
-        text("SELECT pg_notify('jentic_jobs', :payload)"),
+        _NOTIFY_SQL,
         {"payload": str(kind) if kind else ""},
     )
