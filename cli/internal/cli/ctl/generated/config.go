@@ -255,7 +255,7 @@ type BrokerConfig struct {
 	// the client nor ``/ready``. The timeout bounds how long a stalled admin database
 	// can keep records queued in memory, including at shutdown; it does not bound the
 	// write itself once a slot is held.
-	StreamingPersistAcquireTimeoutS float64 `json:"streaming_persist_acquire_timeout_s,omitempty,omitzero" yaml:"streaming_persist_acquire_timeout_s,omitempty" mapstructure:"streaming_persist_acquire_timeout_s,omitempty"`
+	StreamingPersistAcquireTimeoutS float64 `json:"streaming_persist_acquire_timeout_s" yaml:"streaming_persist_acquire_timeout_s" mapstructure:"streaming_persist_acquire_timeout_s"`
 
 	// Per-process cap on concurrent post-response persists of streaming execution
 	// records (each holds one admin-DB connection). Excess persists wait for a slot,
@@ -266,7 +266,7 @@ type BrokerConfig struct {
 	// ``pool_max >= 2`` persists never take every connection of the admin base pool.
 	// ``pool_max`` is the base pool size only; SQLAlchemy's default overflow can open
 	// up to 10 more connections on top of it.
-	StreamingPersistMaxConcurrency int `json:"streaming_persist_max_concurrency,omitempty,omitzero" yaml:"streaming_persist_max_concurrency,omitempty" mapstructure:"streaming_persist_max_concurrency,omitempty"`
+	StreamingPersistMaxConcurrency int `json:"streaming_persist_max_concurrency" yaml:"streaming_persist_max_concurrency" mapstructure:"streaming_persist_max_concurrency"`
 
 	// ToolkitCacheTtlS corresponds to the JSON schema field "toolkit_cache_ttl_s".
 	ToolkitCacheTtlS float64 `json:"toolkit_cache_ttl_s" yaml:"toolkit_cache_ttl_s" mapstructure:"toolkit_cache_ttl_s"`
