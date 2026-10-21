@@ -44,6 +44,25 @@ def upgrade() -> None:
         )
     )
     op.execute(sa.text(f"UPDATE {_TABLE} SET issuer = provider WHERE issuer = ''"))
+    # Collapse any rows that collide on (issuer, external_subject) after backfill
+    # before adding the issuer-scoped unique constraint.
+    op.execute(
+        sa.text(
+            f"""
+            DELETE FROM {_TABLE} WHERE id IN (
+                SELECT id FROM (
+                    SELECT id,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY issuer, external_subject
+                               ORDER BY created_at DESC, id DESC
+                           ) AS rn
+                    FROM {_TABLE}
+                ) ranked
+                WHERE ranked.rn > 1
+            )
+            """
+        )
+    )
     with op.batch_alter_table(_TABLE) as batch_op:
         batch_op.drop_constraint(_OLD_UQ, type_="unique")
         batch_op.create_unique_constraint(_NEW_UQ, ["issuer", "external_subject"])

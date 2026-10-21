@@ -9,6 +9,7 @@ for a config via the factory in `jentic_one.auth.core.idp.factory`.
 from __future__ import annotations
 
 import hmac
+import time
 from dataclasses import replace
 from typing import Any
 from urllib.parse import urlencode
@@ -38,6 +39,11 @@ _ALLOWED_ID_TOKEN_ALGS: frozenset[str] = frozenset(
     }
 )
 
+#: Cache TTL for upstream JWKS documents (seconds). On unknown ``kid`` or key
+#: verification failure against a cached JWKS, ``exchange_code`` forces one
+#: immediate refresh to handle upstream key rotation cleanly.
+_JWKS_CACHE_TTL_SECONDS: float = 300.0
+
 
 class OidcAdapter:
     """Generic OIDC-compliant identity provider adapter.
@@ -51,6 +57,8 @@ class OidcAdapter:
     def __init__(self, config: IdpConfig) -> None:
         self._config = config
         self._discovery: dict[str, object] | None = None
+        self._jwks_cache: dict[str, Any] | None = None
+        self._jwks_fetched_at: float = 0.0
 
     # ── Endpoint defaults (overridable by provider subclasses) ────────────────
     # Subclasses override the `_default_*_endpoint` hooks to plug in well-known
@@ -109,10 +117,20 @@ class OidcAdapter:
             params["code_challenge_method"] = "S256"
         return f"{self._authorization_endpoint}?{urlencode(params)}"
 
-    async def _fetch_jwks(self, client: httpx.AsyncClient) -> dict[str, Any]:
+    async def _fetch_jwks(
+        self, client: httpx.AsyncClient, *, force_refresh: bool = False
+    ) -> dict[str, Any]:
         """Fetch the upstream provider's JWKS via OIDC discovery or default JWKS URI."""
+        now = time.monotonic()
+        if (
+            not force_refresh
+            and self._jwks_cache is not None
+            and (now - self._jwks_fetched_at) < _JWKS_CACHE_TTL_SECONDS
+        ):
+            return self._jwks_cache
+
         jwks_uri: str | None = None
-        if self._discovery is not None:
+        if not force_refresh and self._discovery is not None:
             cached_uri = self._discovery.get("jwks_uri")
             if isinstance(cached_uri, str) and cached_uri:
                 jwks_uri = cached_uri
@@ -136,10 +154,25 @@ class OidcAdapter:
 
         jwks_resp = await client.get(jwks_uri)
         jwks_resp.raise_for_status()
-        jwks_data = jwks_resp.json()
+        try:
+            jwks_data = jwks_resp.json()
+        except ValueError as exc:
+            raise InvalidGrantError("Upstream JWKS response is malformed") from exc
         if not isinstance(jwks_data, dict) or not isinstance(jwks_data.get("keys"), list):
             raise InvalidGrantError("Upstream JWKS response is malformed")
+        self._jwks_cache = jwks_data
+        self._jwks_fetched_at = time.monotonic()
         return jwks_data
+
+    def _expected_issuer(self) -> str:
+        """Resolve the expected upstream issuer from config or OIDC discovery."""
+        if self.issuer:
+            return self.issuer
+        if self._discovery is not None:
+            disc_iss = self._discovery.get("issuer")
+            if isinstance(disc_iss, str) and disc_iss:
+                return disc_iss.rstrip("/")
+        return ""
 
     def _verify_id_token(
         self,
@@ -161,7 +194,7 @@ class OidcAdapter:
         kid = header.get("kid")
         try:
             jwk_set = jwt.PyJWKSet.from_dict(jwks_data)
-        except jwt.PyJWTError as exc:
+        except (jwt.PyJWTError, ValueError, KeyError, TypeError) as exc:
             raise InvalidGrantError("Invalid upstream JWKS") from exc
 
         signing_key: Any = None
@@ -179,6 +212,8 @@ class OidcAdapter:
 
         required_claims = ["iss", "sub", "aud", "exp"]
         if expected_nonce is not None:
+            if not expected_nonce:
+                raise InvalidGrantError("Upstream id_token nonce mismatch")
             required_claims.append("nonce")
 
         try:
@@ -195,7 +230,8 @@ class OidcAdapter:
         token_iss = claims.get("iss")
         if not isinstance(token_iss, str) or not token_iss:
             raise InvalidGrantError("Upstream id_token is missing iss claim")
-        if self.issuer and token_iss.rstrip("/") != self.issuer:
+        expected_iss = self._expected_issuer()
+        if not expected_iss or token_iss.rstrip("/") != expected_iss:
             raise InvalidGrantError("Upstream id_token issuer mismatch")
 
         token_sub = claims.get("sub")
@@ -204,8 +240,10 @@ class OidcAdapter:
 
         if expected_nonce is not None:
             token_nonce = claims.get("nonce")
-            if not isinstance(token_nonce, str) or not hmac.compare_digest(
-                token_nonce, expected_nonce
+            if (
+                not isinstance(token_nonce, str)
+                or not token_nonce
+                or not hmac.compare_digest(token_nonce, expected_nonce)
             ):
                 raise InvalidGrantError("Upstream id_token nonce mismatch")
 
@@ -236,7 +274,10 @@ class OidcAdapter:
                 data=token_form,
             )
             token_resp.raise_for_status()
-            token_data = token_resp.json()
+            try:
+                token_data = token_resp.json()
+            except ValueError as exc:
+                raise InvalidGrantError("Upstream token response is malformed") from exc
             if not isinstance(token_data, dict):
                 raise InvalidGrantError("Upstream token response is malformed")
 
@@ -244,20 +285,39 @@ class OidcAdapter:
             if not isinstance(raw_id_token, str) or not raw_id_token:
                 raise InvalidGrantError("Upstream token response is missing id_token")
 
-            jwks_data = await self._fetch_jwks(client)
-            id_token_claims = self._verify_id_token(
-                raw_id_token,
-                jwks_data,
-                expected_nonce=nonce,
+            had_cached_jwks = (
+                self._jwks_cache is not None
+                and (time.monotonic() - self._jwks_fetched_at) < _JWKS_CACHE_TTL_SECONDS
             )
+            jwks_data = await self._fetch_jwks(client)
+            try:
+                id_token_claims = self._verify_id_token(
+                    raw_id_token,
+                    jwks_data,
+                    expected_nonce=nonce,
+                )
+            except InvalidGrantError:
+                if not had_cached_jwks:
+                    raise
+                jwks_data = await self._fetch_jwks(client, force_refresh=True)
+                id_token_claims = self._verify_id_token(
+                    raw_id_token,
+                    jwks_data,
+                    expected_nonce=nonce,
+                )
 
-            access_token = token_data.get("access_token", "")
+            access_token = token_data.get("access_token")
+            if not isinstance(access_token, str) or not access_token:
+                raise InvalidGrantError("Upstream token response is missing access_token")
             userinfo_resp = await client.get(
                 self._userinfo_endpoint,
                 headers={"Authorization": f"Bearer {access_token}"},
             )
             userinfo_resp.raise_for_status()
-            userinfo = userinfo_resp.json()
+            try:
+                userinfo = userinfo_resp.json()
+            except ValueError as exc:
+                raise InvalidGrantError("Upstream userinfo response is malformed") from exc
             if not isinstance(userinfo, dict):
                 raise InvalidGrantError("Upstream userinfo response is malformed")
 
@@ -267,9 +327,24 @@ class OidcAdapter:
             if not hmac.compare_digest(userinfo_sub, str(id_token_claims["sub"])):
                 raise InvalidGrantError("Upstream userinfo sub does not match id_token sub")
 
+            verified_iss = str(id_token_claims["iss"]).rstrip("/")
+            userinfo_iss = userinfo.get("iss")
+            if isinstance(userinfo_iss, str) and userinfo_iss:
+                if userinfo_iss.rstrip("/") != verified_iss:
+                    raise InvalidGrantError("Upstream userinfo iss does not match id_token iss")
+            elif userinfo_iss is not None:
+                raise InvalidGrantError("Upstream userinfo iss does not match id_token iss")
+
+            if (
+                "hd" in id_token_claims
+                and "hd" in userinfo
+                and str(userinfo["hd"]) != str(id_token_claims["hd"])
+            ):
+                raise InvalidGrantError("Upstream userinfo hd does not match id_token hd")
+
             merged: dict[str, object] = dict(userinfo)
-            merged.setdefault("iss", str(id_token_claims["iss"]).rstrip("/"))
-            if "hd" not in merged and "hd" in id_token_claims:
+            merged["iss"] = verified_iss
+            if "hd" in id_token_claims:
                 merged["hd"] = id_token_claims["hd"]
             return merged
 

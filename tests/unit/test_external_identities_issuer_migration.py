@@ -53,6 +53,14 @@ def test_external_identities_issuer_migration_roundtrip(sqlite_stack: Path) -> N
             "INSERT INTO external_identities (id, provider, external_subject, user_id,"
             " created_at, updated_at)"
             " VALUES ('eid_1', 'google', 'sub-google-1', 'usr_1',"
+            " '2026-01-02 00:00:00', '2026-01-02 00:00:00')"
+        )
+        # Older row whose provider value collides with the backfilled Google issuer
+        # URL for the same external_subject; upgrade deduplicates to the newest row.
+        conn.execute(
+            "INSERT INTO external_identities (id, provider, external_subject, user_id,"
+            " created_at, updated_at)"
+            " VALUES ('eid_1_old', 'https://accounts.google.com', 'sub-google-1', 'usr_2',"
             " '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
         )
         conn.execute(
@@ -68,6 +76,7 @@ def test_external_identities_issuer_migration_roundtrip(sqlite_stack: Path) -> N
     with sqlite3.connect(db_path) as conn:
         rows = dict(conn.execute("SELECT id, issuer FROM external_identities").fetchall())
         assert rows["eid_1"] == "https://accounts.google.com"
+        assert "eid_1_old" not in rows
         assert rows["eid_2"] == "oidc"
 
         # After upgrade, another row with the same provider='oidc' and external_subject='sub-shared'

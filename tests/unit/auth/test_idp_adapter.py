@@ -420,3 +420,152 @@ async def test_exchange_code_rejects_userinfo_sub_mismatch(adapter: OidcAdapter)
             redirect_uri="https://app.example.com/oauth/callback",
             nonce="flow-nonce-1",
         )
+
+
+@pytest.mark.parametrize("alg", ["HS256", "none"])
+@respx.mock
+async def test_exchange_code_rejects_symmetric_or_none_id_token_algorithm(
+    adapter: OidcAdapter, alg: str
+) -> None:
+    payload: dict[str, Any] = {
+        "iss": "https://idp.example.com",
+        "sub": "ext-user-123",
+        "aud": "test-client",
+        "nonce": "flow-nonce-1",
+        "iat": int(time.time()),
+        "exp": int(time.time()) + 300,
+    }
+    key = "shared-secret" if alg == "HS256" else None
+    id_token = jwt.encode(payload, key, algorithm=alg, headers={"kid": "idp-kid-1"})  # type: ignore[arg-type]
+    respx.post("https://idp.example.com/oauth/token").mock(
+        return_value=httpx.Response(200, json={"access_token": "up-tok", "id_token": id_token})
+    )
+    respx.get("https://idp.example.com/.well-known/openid-configuration").mock(
+        return_value=httpx.Response(404)
+    )
+    respx.get("https://idp.example.com/.well-known/jwks.json").mock(
+        return_value=httpx.Response(200, json={"keys": [_RSA_JWK]})
+    )
+
+    with pytest.raises(InvalidGrantError, match="Unsupported upstream id_token algorithm"):
+        await adapter.exchange_code(
+            "auth-code-1",
+            redirect_uri="https://app.example.com/oauth/callback",
+            nonce="flow-nonce-1",
+        )
+
+
+@respx.mock
+async def test_exchange_code_rejects_empty_nonce(adapter: OidcAdapter) -> None:
+    id_token = _sign_upstream_id_token(nonce="")
+    respx.post("https://idp.example.com/oauth/token").mock(
+        return_value=httpx.Response(200, json={"access_token": "up-tok", "id_token": id_token})
+    )
+    respx.get("https://idp.example.com/.well-known/openid-configuration").mock(
+        return_value=httpx.Response(404)
+    )
+    respx.get("https://idp.example.com/.well-known/jwks.json").mock(
+        return_value=httpx.Response(200, json={"keys": [_RSA_JWK]})
+    )
+
+    with pytest.raises(InvalidGrantError, match="nonce mismatch"):
+        await adapter.exchange_code(
+            "auth-code-1",
+            redirect_uri="https://app.example.com/oauth/callback",
+            nonce="flow-nonce-1",
+        )
+
+
+@respx.mock
+async def test_exchange_code_rejects_userinfo_iss_mismatch(adapter: OidcAdapter) -> None:
+    id_token = _sign_upstream_id_token()
+    respx.post("https://idp.example.com/oauth/token").mock(
+        return_value=httpx.Response(200, json={"access_token": "up-tok", "id_token": id_token})
+    )
+    respx.get("https://idp.example.com/.well-known/openid-configuration").mock(
+        return_value=httpx.Response(404)
+    )
+    respx.get("https://idp.example.com/.well-known/jwks.json").mock(
+        return_value=httpx.Response(200, json={"keys": [_RSA_JWK]})
+    )
+    respx.get("https://idp.example.com/userinfo").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "sub": "ext-user-123",
+                "iss": "https://other-idp.example.com",
+                "email": "user@example.com",
+                "email_verified": True,
+            },
+        )
+    )
+
+    with pytest.raises(InvalidGrantError, match="iss does not match"):
+        await adapter.exchange_code(
+            "auth-code-1",
+            redirect_uri="https://app.example.com/oauth/callback",
+            nonce="flow-nonce-1",
+        )
+
+
+@respx.mock
+async def test_exchange_code_caches_jwks_and_refreshes_on_key_rotation(
+    adapter: OidcAdapter,
+) -> None:
+    rotated_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    rotated_jwk: dict[str, Any] = {
+        **jwt.api_jwk.PyJWK.from_json(RSAAlgorithm.to_jwk(rotated_key.public_key()))._jwk_data,
+        "kid": "idp-kid-2",
+        "use": "sig",
+        "alg": "RS256",
+    }
+    first_token = _sign_upstream_id_token(kid="idp-kid-1", key=_RSA_KEY)
+    second_token = _sign_upstream_id_token(kid="idp-kid-2", key=rotated_key)
+
+    respx.post("https://idp.example.com/oauth/token").mock(
+        side_effect=[
+            httpx.Response(200, json={"access_token": "up-tok-1", "id_token": first_token}),
+            httpx.Response(200, json={"access_token": "up-tok-1", "id_token": first_token}),
+            httpx.Response(200, json={"access_token": "up-tok-2", "id_token": second_token}),
+        ]
+    )
+    respx.get("https://idp.example.com/.well-known/openid-configuration").mock(
+        return_value=httpx.Response(404)
+    )
+    jwks_route = respx.get("https://idp.example.com/.well-known/jwks.json").mock(
+        side_effect=[
+            httpx.Response(200, json={"keys": [_RSA_JWK]}),
+            httpx.Response(200, json={"keys": [rotated_jwk]}),
+        ]
+    )
+    respx.get("https://idp.example.com/userinfo").mock(
+        return_value=httpx.Response(
+            200,
+            json={"sub": "ext-user-123", "email": "user@example.com", "email_verified": True},
+        )
+    )
+
+    # First call fetches JWKS once.
+    await adapter.exchange_code(
+        "auth-code-1",
+        redirect_uri="https://app.example.com/oauth/callback",
+        nonce="flow-nonce-1",
+    )
+    assert jwks_route.call_count == 1
+
+    # Second call with same kid uses cached JWKS without another network fetch.
+    await adapter.exchange_code(
+        "auth-code-2",
+        redirect_uri="https://app.example.com/oauth/callback",
+        nonce="flow-nonce-1",
+    )
+    assert jwks_route.call_count == 1
+
+    # Third call with rotated kid triggers a single forced JWKS refresh and succeeds.
+    userinfo = await adapter.exchange_code(
+        "auth-code-3",
+        redirect_uri="https://app.example.com/oauth/callback",
+        nonce="flow-nonce-1",
+    )
+    assert jwks_route.call_count == 2
+    assert userinfo["sub"] == "ext-user-123"

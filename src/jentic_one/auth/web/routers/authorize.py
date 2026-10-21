@@ -1584,7 +1584,13 @@ async def oauth_callback(
 
     callback_uri = _callback_uri(request, effective_auth_base_url(ctx.config))
 
-    if not verify_idp_binding_cookie(request, expected_bnd, callback_uri=callback_uri):
+    def _finish_callback(response: RedirectResponse) -> RedirectResponse:
+        clear_idp_binding_cookie(response, request, expected_bnd, callback_uri=callback_uri)
+        return response
+
+    if not idp_nonce or not verify_idp_binding_cookie(
+        request, expected_bnd, callback_uri=callback_uri
+    ):
         logger.warning("oauth_callback_binding_cookie_invalid", client_id=client_id)
         return RedirectResponse(url="/error?error=invalid_state", status_code=302)
 
@@ -1596,15 +1602,9 @@ async def oauth_callback(
         ttl_s=float(STATE_MAX_AGE_SECONDS),
     ):
         logger.warning("oauth_callback_state_replayed", client_id=client_id)
-        resp = RedirectResponse(url="/error?error=invalid_state", status_code=302)
-        clear_idp_binding_cookie(resp, request, expected_bnd, callback_uri=callback_uri)
-        return resp
+        return _finish_callback(RedirectResponse(url="/error?error=invalid_state", status_code=302))
 
-    idp_code_verifier = derive_idp_pkce_verifier(ctx, idp_nonce) if idp_nonce else None
-
-    def _finish_callback(response: RedirectResponse) -> RedirectResponse:
-        clear_idp_binding_cookie(response, request, expected_bnd, callback_uri=callback_uri)
-        return response
+    idp_code_verifier = derive_idp_pkce_verifier(ctx, idp_nonce)
 
     oauth_client = await get_cached_oauth_client(request, client_id or "", ctx)
     if oauth_client is not None and not client_gate_passes(oauth_client):
@@ -1635,7 +1635,7 @@ async def oauth_callback(
                 idp_code_verifier=idp_code_verifier,
                 idp_nonce=idp_nonce,
             )
-        except (InvalidGrantError, httpx.HTTPStatusError):
+        except (InvalidGrantError, httpx.HTTPError):
             logger.warning("oauth_idp_exchange_failed", client_id=client_id, exc_info=True)
             return _finish_callback(
                 RedirectResponse(url="/error?error=server_error", status_code=302)
@@ -1671,7 +1671,7 @@ async def oauth_callback(
     except UserNotAdmittedError:
         logger.warning("oauth_user_not_admitted", client_id=client_id)
         return _finish_callback(RedirectResponse(url="/error?error=access_denied", status_code=302))
-    except (InvalidGrantError, httpx.HTTPStatusError):
+    except (InvalidGrantError, httpx.HTTPError):
         logger.warning("oauth_idp_exchange_failed", client_id=client_id, exc_info=True)
         return _finish_callback(RedirectResponse(url="/error?error=server_error", status_code=302))
 

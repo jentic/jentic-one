@@ -213,7 +213,7 @@ class AuthorizeService:
             code,
             redirect_uri=redirect_uri,
             code_verifier=idp_code_verifier,
-            nonce=idp_nonce if idp_nonce is not None else nonce,
+            nonce=idp_nonce,
         )
         claims = adapter.map_claims(userinfo)
         user_id = await self._resolve_or_create_user(claims)
