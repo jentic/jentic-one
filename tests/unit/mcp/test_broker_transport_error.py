@@ -323,12 +323,20 @@ def _connect_timeout(_req: httpx.Request) -> httpx.Response:
     raise httpx.ConnectTimeout("slow")
 
 
+def _pool_timeout(_req: httpx.Request) -> httpx.Response:
+    raise httpx.PoolTimeout("pool exhausted")
+
+
 def _read_timeout(_req: httpx.Request) -> httpx.Response:
     raise httpx.ReadTimeout("slow")
 
 
 def _connect_refused(_req: httpx.Request) -> httpx.Response:
     raise httpx.ConnectError("refused")
+
+
+def _proxy_refused(_req: httpx.Request) -> httpx.Response:
+    raise httpx.ProxyError("tunnel refused")
 
 
 def _protocol_error(_req: httpx.Request) -> httpx.Response:
@@ -357,7 +365,9 @@ async def _stalls(_req: httpx.Request) -> httpx.Response:
     ("handler", "kwargs", "status", "problem_type", "retry_safe", "want_retryable"),
     [
         (_connect_timeout, {}, 504, "upstream_connect_failed", False, True),
+        (_pool_timeout, {}, 504, "upstream_connect_failed", False, True),
         (_connect_refused, {}, 502, "upstream_connect_failed", False, True),
+        (_proxy_refused, {}, 502, "upstream_connect_failed", False, True),
         (_read_timeout, {}, 504, "upstream_timeout", False, False),
         (_read_timeout, {}, 504, "upstream_timeout", True, True),
         (_protocol_error, {}, 502, "upstream_transport_error", True, False),
@@ -367,7 +377,9 @@ async def _stalls(_req: httpx.Request) -> httpx.Response:
     ],
     ids=[
         "connect",
+        "pool-timeout",
         "connect-refused",
+        "proxy-refused",
         "read-unsafe",
         "read-safe",
         "transport",
