@@ -74,6 +74,7 @@ class BrokerError(Exception):
         headers: dict[str, str] | None = None,
         instance: str | None = None,
         pre_send: bool = False,
+        local_only: bool = False,
     ) -> None:
         super().__init__(detail)
         self.detail = detail
@@ -92,6 +93,12 @@ class BrokerError(Exception):
         # after send) is only safe to retry for idempotent methods / with an
         # Idempotency-Key. Defaults to False (assume bytes were sent).
         self.pre_send = pre_send
+        # Whether the failure is local to the broker's own shared resources
+        # (e.g. outbound connection-pool exhaustion) rather than the target
+        # upstream host. A broker-local failure is excluded from per-host
+        # circuit-breaker accounting so one host saturating the shared pool
+        # cannot trip another host's breaker (#1795). Defaults to False.
+        self.local_only = local_only
 
 
 class OperationNotFoundError(BrokerError):

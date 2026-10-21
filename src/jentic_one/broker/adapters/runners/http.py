@@ -83,21 +83,26 @@ def _record_transport_error(span: Span, exc: _TransportFailure) -> None:
     span.set_status(StatusCode.ERROR)
 
 
-#: Transport failures on the upstream leg — the connection dropped (including
-#: mid-body), broke the protocol, or a proxy in front of the upstream failed.
-#: The broker answers these as a gateway: 502.
-_UPSTREAM_LEG_ERRORS = (httpx.NetworkError, httpx.RemoteProtocolError, httpx.ProxyError)
+#: Transport failures on the upstream leg after the connection is established —
+#: the connection dropped (including mid-body) or broke the protocol. The broker
+#: answers these as a gateway: 502.
+_UPSTREAM_LEG_ERRORS = (httpx.NetworkError, httpx.RemoteProtocolError)
 
 
 def _map_transport_error(exc: _TransportFailure) -> BrokerError:
     """The domain error for a transport failure on either runner path.
 
+    - ``PoolTimeout`` → :class:`UpstreamTimeoutError` (504),
+      ``upstream_connect_failed``, ``pre_send``, ``local_only`` (the broker's
+      own connection pool had no free slot, so no bytes were sent and the
+      target host's circuit breaker is not charged).
     - ``ConnectTimeout`` → :class:`UpstreamTimeoutError` (504),
       ``upstream_connect_failed``, ``pre_send``.
     - Any other timeout → :class:`UpstreamTimeoutError` (504), ``upstream_timeout``.
-    - ``ConnectError``, or :class:`UpstreamHostUnresolvedError` from the
-      DNS-pinning transport → :class:`UpstreamTransportError` (502),
-      ``upstream_connect_failed``, ``pre_send``.
+    - ``ConnectError``, ``ProxyError`` (refused proxy ``CONNECT`` tunnel), or
+      :class:`UpstreamHostUnresolvedError` from the DNS-pinning transport →
+      :class:`UpstreamTransportError` (502), ``upstream_connect_failed``,
+      ``pre_send``.
     - Any other upstream-leg failure (:data:`_UPSTREAM_LEG_ERRORS`) →
       :class:`UpstreamTransportError` (502), ``upstream_transport_error``.
     - Anything else (``LocalProtocolError``: the broker built a request httpx
@@ -108,6 +113,13 @@ def _map_transport_error(exc: _TransportFailure) -> BrokerError:
     upstream, so a retry is safe for any method. The caller-facing detail never
     carries the exception message (see :func:`_transport_error_detail`).
     """
+    if isinstance(exc, httpx.PoolTimeout):
+        return UpstreamTimeoutError(
+            detail="The broker's upstream connection pool had no free connection in time.",
+            type="upstream_connect_failed",
+            pre_send=True,
+            local_only=True,
+        )
     if isinstance(exc, httpx.ConnectTimeout):
         return UpstreamTimeoutError(
             detail="The upstream connection could not be established in time.",
@@ -119,7 +131,7 @@ def _map_transport_error(exc: _TransportFailure) -> BrokerError:
             detail="The upstream did not respond within the deadline.",
             type="upstream_timeout",
         )
-    if isinstance(exc, httpx.ConnectError | UpstreamHostUnresolvedError):
+    if isinstance(exc, httpx.ConnectError | httpx.ProxyError | UpstreamHostUnresolvedError):
         return UpstreamTransportError(
             detail="The upstream connection could not be established.",
             type="upstream_connect_failed",

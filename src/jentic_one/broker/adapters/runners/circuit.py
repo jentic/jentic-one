@@ -88,10 +88,12 @@ class CircuitBreakerRunner:
 
         try:
             result = await self._inner.run(request)
-        except BrokerError:
+        except BrokerError as exc:
             # A transport failure (timeout, connect error) the inner runner
-            # mapped to a BrokerError counts against the upstream.
-            await self._breaker.record(host, ok=False)
+            # mapped to a BrokerError counts against the upstream, unless the
+            # failure is local to the broker's own shared pool (#1795).
+            if not exc.local_only:
+                await self._breaker.record(host, ok=False)
             raise
         await self._breaker.record(host, ok=result.status_code < 500)
         return result
@@ -129,8 +131,8 @@ class CircuitBreakerRunner:
                 recorded = True
                 await self._breaker.record(host, ok=result.status_code < 500)
                 yield result
-        except BrokerError:
-            if not recorded:
+        except BrokerError as exc:
+            if not recorded and not exc.local_only:
                 await self._breaker.record(host, ok=False)
             raise
 
