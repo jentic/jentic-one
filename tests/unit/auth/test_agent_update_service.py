@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from jentic_one.auth.repos.credential_ref_repo import CredentialRef
 from jentic_one.auth.services.agent_service import AgentService
 from jentic_one.auth.services.errors import (
     ActorNotFoundError,
@@ -15,6 +16,8 @@ from jentic_one.auth.services.errors import (
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.db import DatabaseIntegrityError
+from jentic_one.shared.models.audit import AuditAction, AuditTargetType
+from jentic_one.shared.models.events import EventType
 
 pytestmark = pytest.mark.usefixtures("no_api_key")
 
@@ -30,8 +33,14 @@ def _admin_identity() -> Identity:
 def _make_ctx() -> MagicMock:
     ctx = MagicMock()
     mock_session = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = []
+    mock_session.execute.return_value = mock_result
     ctx.admin_db.transaction.return_value.__aenter__ = AsyncMock(return_value=mock_session)
     ctx.admin_db.transaction.return_value.__aexit__ = AsyncMock(return_value=False)
+    mock_control_session = AsyncMock()
+    ctx.control_db.session.return_value.__aenter__ = AsyncMock(return_value=mock_control_session)
+    ctx.control_db.session.return_value.__aexit__ = AsyncMock(return_value=False)
     return ctx
 
 
@@ -246,3 +255,161 @@ async def test_update_agent_invalid_owner_raises(
             update_data={"owner_id": "usr_nonexistent"},
             identity=_admin_identity(),
         )
+
+
+def _make_binding(credential_id: str, *, suspended: bool = False) -> MagicMock:
+    binding = MagicMock()
+    binding.agent_id = "agnt_test123"
+    binding.credential_id = credential_id
+    binding.suspended = suspended
+    return binding
+
+
+def _make_cred_ref(credential_id: str, *, created_by: str | None) -> CredentialRef:
+    return CredentialRef(
+        id=credential_id,
+        name=f"name-{credential_id}",
+        created_by=created_by,
+        active=True,
+        api_vendor="vendor",
+        api_name="api",
+        api_version="v1",
+    )
+
+
+@pytest.mark.asyncio
+@patch("jentic_one.auth.services.agent_service.emit_event_best_effort", new_callable=AsyncMock)
+@patch("jentic_one.auth.services.agent_service.CredentialRefRepository")
+@patch("jentic_one.auth.services.agent_service.AgentCredentialBindingRepository")
+@patch(
+    "jentic_one.auth.services.agent_service.revoke_active_grants_for_agent",
+    new_callable=AsyncMock,
+)
+@patch("jentic_one.auth.services.agent_service.record_audit", new_callable=AsyncMock)
+@patch("jentic_one.auth.services.agent_service.AgentRepository")
+async def test_update_agent_owner_transfer_suspends_foreign_bindings_only(
+    mock_repo: MagicMock,
+    mock_audit: AsyncMock,
+    mock_revoke: AsyncMock,
+    mock_binding_repo: MagicMock,
+    mock_cred_ref_repo: MagicMock,
+    mock_emit_event: AsyncMock,
+) -> None:
+    """Owner transfer suspends active bindings to credentials not created by
+    the new owner or the agent itself, and invalidates broker caches."""
+    ctx = _make_ctx()
+    ctx.is_db_allowed.return_value = True
+    svc = AgentService(ctx)
+
+    agent_before = _make_agent_row(owner_id="usr_old")
+    agent_after = _make_agent_row(owner_id="usr_new")
+    mock_repo.get_by_id_for_update = AsyncMock(return_value=agent_before)
+    mock_repo.update_agent = AsyncMock(return_value=agent_after)
+
+    mock_binding_repo.list_for_agent = AsyncMock(
+        return_value=[
+            _make_binding("cred_old_owner", suspended=False),
+            _make_binding("cred_new_owner", suspended=False),
+            _make_binding("cred_self", suspended=False),
+            _make_binding("cred_missing", suspended=False),
+            _make_binding("cred_already_suspended", suspended=True),
+        ]
+    )
+    mock_binding_repo.set_suspended = AsyncMock()
+    mock_cred_ref_repo.get_refs_for_ids = AsyncMock(
+        return_value={
+            "cred_old_owner": _make_cred_ref("cred_old_owner", created_by="usr_old"),
+            "cred_new_owner": _make_cred_ref("cred_new_owner", created_by="usr_new"),
+            "cred_self": _make_cred_ref("cred_self", created_by="agnt_test123"),
+        }
+    )
+
+    identity = _admin_identity()
+    view = await svc.update_agent(
+        "agnt_test123",
+        update_data={"owner_id": "usr_new"},
+        identity=identity,
+    )
+
+    assert view.owner_id == "usr_new"
+    suspended_ids = [
+        call.kwargs["credential_id"] for call in mock_binding_repo.set_suspended.await_args_list
+    ]
+    assert suspended_ids == ["cred_old_owner", "cred_missing"]
+    assert all(
+        call.kwargs["suspended"] is True for call in mock_binding_repo.set_suspended.await_args_list
+    )
+
+    binding_audits = [
+        call
+        for call in mock_audit.await_args_list
+        if call.kwargs.get("target_type") == AuditTargetType.CREDENTIAL_BINDING
+    ]
+    assert [call.kwargs["target_id"] for call in binding_audits] == [
+        "cred_old_owner",
+        "cred_missing",
+    ]
+    assert all(call.kwargs["action"] == AuditAction.DISABLE for call in binding_audits)
+    assert all(
+        call.kwargs["reason"] == "suspend_credential_binding: agent ownership transferred"
+        for call in binding_audits
+    )
+
+    assert mock_emit_event.await_count == 2
+    for call in mock_emit_event.await_args_list:
+        assert call.kwargs["type"] == EventType.CREDENTIAL_UNBOUND_FROM_AGENT
+        assert call.kwargs["data"]["reason"] == "agent_ownership_transferred"
+
+    ctx.invalidate_broker_caches.assert_called_once_with(agent_id="agnt_test123")
+
+
+@pytest.mark.asyncio
+@patch("jentic_one.auth.services.agent_service.emit_event_best_effort", new_callable=AsyncMock)
+@patch("jentic_one.auth.services.agent_service.CredentialRefRepository")
+@patch("jentic_one.auth.services.agent_service.AgentCredentialBindingRepository")
+@patch(
+    "jentic_one.auth.services.agent_service.revoke_active_grants_for_agent",
+    new_callable=AsyncMock,
+)
+@patch("jentic_one.auth.services.agent_service.record_audit", new_callable=AsyncMock)
+@patch("jentic_one.auth.services.agent_service.AgentRepository")
+async def test_update_agent_owner_transfer_without_control_db_suspends_all_active_bindings(
+    mock_repo: MagicMock,
+    mock_audit: AsyncMock,
+    mock_revoke: AsyncMock,
+    mock_binding_repo: MagicMock,
+    mock_cred_ref_repo: MagicMock,
+    mock_emit_event: AsyncMock,
+) -> None:
+    """When control DB access is disabled, owner transfer fails closed and
+    suspends all active bindings on the agent."""
+    ctx = _make_ctx()
+    ctx.is_db_allowed.return_value = False
+    svc = AgentService(ctx)
+
+    mock_repo.get_by_id_for_update = AsyncMock(return_value=_make_agent_row(owner_id="usr_old"))
+    mock_repo.update_agent = AsyncMock(return_value=_make_agent_row(owner_id="usr_new"))
+    mock_binding_repo.list_for_agent = AsyncMock(
+        return_value=[
+            _make_binding("cred_one", suspended=False),
+            _make_binding("cred_two", suspended=True),
+        ]
+    )
+    mock_binding_repo.set_suspended = AsyncMock()
+    mock_cred_ref_repo.get_refs_for_ids = AsyncMock()
+
+    await svc.update_agent(
+        "agnt_test123",
+        update_data={"owner_id": "usr_new"},
+        identity=_admin_identity(),
+    )
+
+    mock_cred_ref_repo.get_refs_for_ids.assert_not_awaited()
+    mock_binding_repo.set_suspended.assert_awaited_once_with(
+        ctx.admin_db.transaction.return_value.__aenter__.return_value,
+        agent_id="agnt_test123",
+        credential_id="cred_one",
+        suspended=True,
+    )
+    assert mock_emit_event.await_count == 1
+    ctx.invalidate_broker_caches.assert_called_once_with(agent_id="agnt_test123")
