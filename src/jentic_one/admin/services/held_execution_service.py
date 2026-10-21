@@ -53,7 +53,7 @@ from jentic_one.shared.jobs.hold import (
     approval_denied_problem,
     held_call_summary,
 )
-from jentic_one.shared.jobs.wakeup import notify_on_commit
+from jentic_one.shared.jobs.wakeup import notify_job_enqueued
 from jentic_one.shared.models.actors import ActorType
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
 from jentic_one.shared.models.events import EventSeverity, EventType
@@ -250,8 +250,9 @@ class HeldExecutionService:
                 raise HeldExecutionJobNotHeldError(approval_id, updated.job_id)
             if approve:
                 # The released job is claimable once this commits; wake any
-                # worker in this process instead of waiting for its next poll.
-                notify_on_commit(session)
+                # worker in this process or across processes instead of waiting
+                # for its next poll.
+                await notify_job_enqueued(session, JobKind.EXECUTION)
             else:
                 await JobRepository.update(session, updated.job_id, error="approval denied")
                 await JobResultRepository.create(

@@ -68,6 +68,9 @@ class JobHandlerRegistry:
     def kinds(self) -> set[JobKind]:
         return set(self._handlers.keys())
 
+    def __contains__(self, kind: object) -> bool:
+        return kind in self._handlers
+
     def register(self, kind: JobKind, handler: JobHandler) -> None:
         self._handlers[kind] = handler
 
