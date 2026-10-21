@@ -20,7 +20,6 @@ from sqlalchemy import text
 
 from jentic_one.control.services.integrations.revisions import revision_digest
 from jentic_one.shared.config import AppConfig
-from jentic_one.shared.db.errors import DatabaseIntegrityError
 from jentic_one.shared.db.session import DatabaseSession
 from tests.harness.postgres import alembic_config_for
 
@@ -131,7 +130,7 @@ async def test_revisions_migration_backfills_open_sessions(
     assert first.digest == revision_digest(baseline=None, result=result, reason="Needs repos")
 
 
-async def test_open_edit_index_allows_one_live_edit_per_binding(
+async def test_a_binding_holds_any_number_of_live_edits(
     control_db: DatabaseSession,
     restore_control_head: None,
 ) -> None:
@@ -148,5 +147,12 @@ async def test_open_edit_index_allows_one_live_edit_per_binding(
     )
     await _insert(control_db, edit, id="cs_rv_old", state="rejected", token="digest-old")
     await _insert(control_db, edit, id="cs_rv_e1", state="created", token="digest-e1")
-    with pytest.raises(DatabaseIntegrityError):
-        await _insert(control_db, edit, id="cs_rv_e2", state="created", token="digest-e2")
+    await _insert(control_db, edit, id="cs_rv_e2", state="created", token="digest-e2")
+    async with control_db.session() as session:
+        live = await session.execute(
+            text(
+                "SELECT count(*) FROM connect_sessions WHERE credential_id = 'cred_rv_live'"
+                " AND state = 'created'"
+            )
+        )
+    assert live.scalar_one() == 2

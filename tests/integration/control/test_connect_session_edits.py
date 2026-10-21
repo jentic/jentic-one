@@ -597,7 +597,7 @@ async def test_a_human_applies_their_own_change_at_once(
     async with ctx.control_db.session() as session:
         assert (
             await ConnectSessionRepository.get_open_edit(
-                session, agent_id=_AGENT, credential_id=binding
+                session, agent_id=_AGENT, credential_id=binding, initiator_actor_id=_OWNER_SUB
             )
             is None
         )

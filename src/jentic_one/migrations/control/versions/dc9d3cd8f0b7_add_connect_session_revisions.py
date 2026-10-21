@@ -27,10 +27,6 @@ down_revision: str | None = "70ff607085b4"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-_OPEN_EDIT_PREDICATE = (
-    "intent = 'edit' AND state IN ('created', 'awaiting_app', 'polling') AND agent_id IS NOT NULL"
-)
-
 
 def upgrade() -> None:
     pg = op.get_bind().dialect.name == "postgresql"
@@ -45,14 +41,6 @@ def upgrade() -> None:
         "connect_sessions", sa.Column("current_revision_id", sa.String(30), nullable=True)
     )
     op.add_column("connect_sessions", sa.Column("approved_change", json_type, nullable=True))
-    op.create_index(
-        "ix_connect_sessions_open_edit",
-        "connect_sessions",
-        ["agent_id", "credential_id"],
-        unique=True,
-        postgresql_where=sa.text(_OPEN_EDIT_PREDICATE),
-        sqlite_where=sa.text(_OPEN_EDIT_PREDICATE),
-    )
     op.create_table(
         "connect_session_revisions",
         sa.Column(
@@ -96,7 +84,6 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_table("connect_session_revisions")
-    op.drop_index("ix_connect_sessions_open_edit", table_name="connect_sessions")
     op.drop_column("connect_sessions", "approved_change")
     op.drop_column("connect_sessions", "current_revision_id")
     op.drop_column("connect_sessions", "baseline")

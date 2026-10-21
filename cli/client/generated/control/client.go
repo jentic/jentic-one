@@ -11598,9 +11598,10 @@ type ClientInterface interface {
 	// approves it on the review page; nothing changes until then. An agent
 	// edits its own binding and must omit `agent_id`; a human names the agent
 	// and must be its owner or an org admin. A change that is already in place
-	// is 422 `nothing_to_change`, a rule id the binding does not hold is 422
-	// `unknown_rule`, and a binding with an open edit is 409 `edit_open` with
-	// that session's `session_id`.
+	// is 422 `nothing_to_change`, and a rule id the binding does not hold is 422
+	// `unknown_rule`. A binding can have several open edits, each rebased as
+	// others land; an agent asking again while its own is open is 409
+	// `edit_open` with that session's `session_id`, to amend instead.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -11616,9 +11617,10 @@ type ClientInterface interface {
 	// approves it on the review page; nothing changes until then. An agent
 	// edits its own binding and must omit `agent_id`; a human names the agent
 	// and must be its owner or an org admin. A change that is already in place
-	// is 422 `nothing_to_change`, a rule id the binding does not hold is 422
-	// `unknown_rule`, and a binding with an open edit is 409 `edit_open` with
-	// that session's `session_id`.
+	// is 422 `nothing_to_change`, and a rule id the binding does not hold is 422
+	// `unknown_rule`. A binding can have several open edits, each rebased as
+	// others land; an agent asking again while its own is open is 409
+	// `edit_open` with that session's `session_id`, to amend instead.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -15887,9 +15889,10 @@ func (c *Client) IntegrationsConnect(ctx context.Context, body IntegrationsConne
 // approves it on the review page; nothing changes until then. An agent
 // edits its own binding and must omit `agent_id`; a human names the agent
 // and must be its owner or an org admin. A change that is already in place
-// is 422 `nothing_to_change`, a rule id the binding does not hold is 422
-// `unknown_rule`, and a binding with an open edit is 409 `edit_open` with
-// that session's `session_id`.
+// is 422 `nothing_to_change`, and a rule id the binding does not hold is 422
+// `unknown_rule`. A binding can have several open edits, each rebased as
+// others land; an agent asking again while its own is open is 409
+// `edit_open` with that session's `session_id`, to amend instead.
 //
 // Takes any type of body and a specified content type.
 //
@@ -15915,9 +15918,10 @@ func (c *Client) IntegrationsEditConnectionWithBody(ctx context.Context, content
 // approves it on the review page; nothing changes until then. An agent
 // edits its own binding and must omit `agent_id`; a human names the agent
 // and must be its owner or an org admin. A change that is already in place
-// is 422 `nothing_to_change`, a rule id the binding does not hold is 422
-// `unknown_rule`, and a binding with an open edit is 409 `edit_open` with
-// that session's `session_id`.
+// is 422 `nothing_to_change`, and a rule id the binding does not hold is 422
+// `unknown_rule`. A binding can have several open edits, each rebased as
+// others land; an agent asking again while its own is open is 409
+// `edit_open` with that session's `session_id`, to amend instead.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -28536,9 +28540,10 @@ type ClientWithResponsesInterface interface {
 	// approves it on the review page; nothing changes until then. An agent
 	// edits its own binding and must omit `agent_id`; a human names the agent
 	// and must be its owner or an org admin. A change that is already in place
-	// is 422 `nothing_to_change`, a rule id the binding does not hold is 422
-	// `unknown_rule`, and a binding with an open edit is 409 `edit_open` with
-	// that session's `session_id`.
+	// is 422 `nothing_to_change`, and a rule id the binding does not hold is 422
+	// `unknown_rule`. A binding can have several open edits, each rebased as
+	// others land; an agent asking again while its own is open is 409
+	// `edit_open` with that session's `session_id`, to amend instead.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -28554,9 +28559,10 @@ type ClientWithResponsesInterface interface {
 	// approves it on the review page; nothing changes until then. An agent
 	// edits its own binding and must omit `agent_id`; a human names the agent
 	// and must be its owner or an org admin. A change that is already in place
-	// is 422 `nothing_to_change`, a rule id the binding does not hold is 422
-	// `unknown_rule`, and a binding with an open edit is 409 `edit_open` with
-	// that session's `session_id`.
+	// is 422 `nothing_to_change`, and a rule id the binding does not hold is 422
+	// `unknown_rule`. A binding can have several open edits, each rebased as
+	// others land; an agent asking again while its own is open is 409
+	// `edit_open` with that session's `session_id`, to amend instead.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -47569,9 +47575,10 @@ func (c *ClientWithResponses) IntegrationsConnectWithResponse(ctx context.Contex
 // approves it on the review page; nothing changes until then. An agent
 // edits its own binding and must omit `agent_id`; a human names the agent
 // and must be its owner or an org admin. A change that is already in place
-// is 422 `nothing_to_change`, a rule id the binding does not hold is 422
-// `unknown_rule`, and a binding with an open edit is 409 `edit_open` with
-// that session's `session_id`.
+// is 422 `nothing_to_change`, and a rule id the binding does not hold is 422
+// `unknown_rule`. A binding can have several open edits, each rebased as
+// others land; an agent asking again while its own is open is 409
+// `edit_open` with that session's `session_id`, to amend instead.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -47593,9 +47600,10 @@ func (c *ClientWithResponses) IntegrationsEditConnectionWithBodyWithResponse(ctx
 // approves it on the review page; nothing changes until then. An agent
 // edits its own binding and must omit `agent_id`; a human names the agent
 // and must be its owner or an org admin. A change that is already in place
-// is 422 `nothing_to_change`, a rule id the binding does not hold is 422
-// `unknown_rule`, and a binding with an open edit is 409 `edit_open` with
-// that session's `session_id`.
+// is 422 `nothing_to_change`, and a rule id the binding does not hold is 422
+// `unknown_rule`. A binding can have several open edits, each rebased as
+// others land; an agent asking again while its own is open is 409
+// `edit_open` with that session's `session_id`, to amend instead.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

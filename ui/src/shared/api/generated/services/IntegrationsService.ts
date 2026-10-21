@@ -460,9 +460,10 @@ export class IntegrationsService {
      * approves it on the review page; nothing changes until then. An agent
      * edits its own binding and must omit `agent_id`; a human names the agent
      * and must be its owner or an org admin. A change that is already in place
-     * is 422 `nothing_to_change`, a rule id the binding does not hold is 422
-     * `unknown_rule`, and a binding with an open edit is 409 `edit_open` with
-     * that session's `session_id`.
+     * is 422 `nothing_to_change`, and a rule id the binding does not hold is 422
+     * `unknown_rule`. A binding can have several open edits, each rebased as
+     * others land; an agent asking again while its own is open is 409
+     * `edit_open` with that session's `session_id`, to amend instead.
      * @returns any Successful Response
      * @throws ApiError
      */
@@ -484,7 +485,7 @@ export class IntegrationsService {
                 401: `Unauthorized`,
                 403: `Forbidden`,
                 404: `No binding the caller may edit for this credential`,
-                409: `The binding already has an open edit; amend it`,
+                409: `The calling agent already has an open edit of this binding; amend it`,
                 422: `Unprocessable Entity`,
                 429: `Rate limit or open-session cap`,
                 500: `Internal Server Error`,

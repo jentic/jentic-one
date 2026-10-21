@@ -610,9 +610,6 @@ _EDIT_AMEND_FIELDS = frozenset({"rules", "resume", "scopes"})
 
 #: ``resolved_flow`` of an edit session: no vendor conversation.
 EDIT_FLOW = "edit"
-# A human's own change while it is written: never an open state, so it never
-# holds the binding's open-edit slot.
-EDIT_APPLYING = "applying"
 
 
 def _edit_conflicts(
@@ -1936,30 +1933,37 @@ class ConnectSessionService:
         The binding is snapshot as the session's baseline and the request is
         resolved against it as revision 1. A request that changes nothing is
         :class:`NothingToChangeError`; one naming a rule the binding does not
-        hold is :class:`UnknownRuleError`; a binding with an open edit is
-        :class:`EditOpenError` naming that session. Nothing is written to the
-        binding until a human confirms.
+        hold is :class:`UnknownRuleError`. A binding can have any number of
+        open edits; each follows the binding as other changes land. An agent
+        asking again while its own edit is open gets :class:`EditOpenError`
+        naming it, to amend instead. Nothing is written to the binding until
+        a human confirms.
 
         ``apply`` is a human approving their own change as they make it: it is
         written at once, with no review. A change that adds scopes starts the
         vendor consent instead (``challenge``) and lands when it completes. An
         agent never applies its own change (:class:`ConfirmationForbiddenError`).
-        An applied change doesn't wait on an agent's open edit: that edit is
-        rebased onto it when next read. Adding scopes while one is open is
-        still :class:`EditOpenError`.
+        Open edits of the binding are rebased onto it when next read.
         """
         if apply and identity.actor_type == ActorType.AGENT:
             raise ConfirmationForbiddenError("an agent's change is approved by a human")
         binding = await self._require_editable_binding(credential_id, agent_id, identity)
         async with self._ctx.control_db.session() as session:
             credential = await CredentialRepository.get_by_id(session, credential_id)
-            open_edit = await ConnectSessionRepository.get_open_edit(
-                session, agent_id=agent_id, credential_id=credential_id
+            own_open = (
+                await ConnectSessionRepository.get_open_edit(
+                    session,
+                    agent_id=agent_id,
+                    credential_id=credential_id,
+                    initiator_actor_id=identity.sub,
+                )
+                if identity.actor_type == ActorType.AGENT
+                else None
             )
         if credential is None or credential.state == "pending":
             raise EditBindingNotFoundError(credential_id)
-        if open_edit is not None and not apply:
-            error = EditOpenError(open_edit.id)
+        if own_open is not None:
+            error = EditOpenError(own_open.id)
             error.point_at(credential_id, agent_id)
             raise error
         # The hold is on the agent asking again; its owner can still make the change.
@@ -1982,8 +1986,6 @@ class ConnectSessionService:
         new_scopes = added_scopes(baseline, result)
         self._require_addable_scopes(consent, new_scopes)
         if apply:
-            if open_edit is not None and new_scopes:
-                raise EditOpenError(open_edit.id)
             await self._require_agent_binding_allowed(agent_id, identity)
             if not new_scopes:
                 return await self._apply_edit_now(
@@ -2001,45 +2003,35 @@ class ConnectSessionService:
 
         cap_scope = await self._check_open_session_caps(agent_id, identity.sub)
         poll_token = secrets.token_urlsafe(32)
-        try:
-            async with self._ctx.control_db.transaction() as session:
-                await self._enforce_open_session_caps(session, cap_scope)
-                row = await ConnectSessionRepository.create(
-                    session,
-                    intent=INTENT_EDIT,
-                    baseline=baseline,
-                    credential_id=credential_id,
-                    vendor=(
-                        (consent.key if consent is not None else None)
-                        or credential.api_vendor
-                        or credential.catalog_api_id
-                        or credential.name
-                    ),
-                    agent_id=agent_id,
-                    initiator_actor_id=identity.sub,
-                    state="created",
-                    resolved_flow=EDIT_FLOW,
-                    poll_token_hash=hash_secret(poll_token),
-                    reason=request.reason,
-                    created_by=identity.sub,
-                )
-                revision = await ConnectSessionRevisionRepository.append(
-                    session,
-                    session_id=row.id,
-                    proposal=request.as_proposal(),
-                    result=result,
-                    digest=revision_digest(baseline=baseline, result=result, reason=request.reason),
-                    created_by=identity.sub,
-                )
-        except DatabaseIntegrityError:
-            # A concurrent edit of the same binding won the open-edit index.
-            async with self._ctx.control_db.session() as session:
-                winner = await ConnectSessionRepository.get_open_edit(
-                    session, agent_id=agent_id, credential_id=credential_id
-                )
-            if winner is None:
-                raise
-            raise EditOpenError(winner.id) from None
+        async with self._ctx.control_db.transaction() as session:
+            await self._enforce_open_session_caps(session, cap_scope)
+            row = await ConnectSessionRepository.create(
+                session,
+                intent=INTENT_EDIT,
+                baseline=baseline,
+                credential_id=credential_id,
+                vendor=(
+                    (consent.key if consent is not None else None)
+                    or credential.api_vendor
+                    or credential.catalog_api_id
+                    or credential.name
+                ),
+                agent_id=agent_id,
+                initiator_actor_id=identity.sub,
+                state="created",
+                resolved_flow=EDIT_FLOW,
+                poll_token_hash=hash_secret(poll_token),
+                reason=request.reason,
+                created_by=identity.sub,
+            )
+            revision = await ConnectSessionRevisionRepository.append(
+                session,
+                session_id=row.id,
+                proposal=request.as_proposal(),
+                result=result,
+                digest=revision_digest(baseline=baseline, result=result, reason=request.reason),
+                created_by=identity.sub,
+            )
 
         _logger.info(
             "connect_session.edit_created",
@@ -2099,11 +2091,7 @@ class ConnectSessionService:
         result: dict[str, Any],
         vendor: str,
     ) -> CreatedEditSession:
-        """Open, approve and write a human's own change in one transaction.
-
-        The session row never holds an open state, so an agent's open edit of
-        the same binding stays where it is (and is rebased when next read).
-        """
+        """Open, approve and write a human's own change in one transaction."""
         poll_token = secrets.token_urlsafe(32)
         async with self._ctx.control_db.transaction() as session:
             row = await ConnectSessionRepository.create(
@@ -2114,7 +2102,7 @@ class ConnectSessionService:
                 vendor=vendor,
                 agent_id=agent_id,
                 initiator_actor_id=identity.sub,
-                state=EDIT_APPLYING,
+                state="created",
                 resolved_flow=EDIT_FLOW,
                 poll_token_hash=hash_secret(poll_token),
                 reason=request.reason,
@@ -3965,36 +3953,27 @@ class ConnectSessionService:
             "revision_id": variant.checks.revision_id,
         }
         cas_fields: dict[str, Any] = {"agent_id": agent_id} if late_bound else {}
-        try:
-            async with self._ctx.control_db.transaction() as session:
-                won = await ConnectSessionRepository.transition_state(
-                    session,
-                    row.id,
-                    to_state="polling",
-                    from_states=(row.state,),
-                    revision_id=variant.checks.revision_id,
-                    intent=INTENT_EDIT,
-                    credential_id=credential.id,
-                    target_kind=TARGET_KIND_VENDOR,
-                    vendor=consent.key or credential.api_vendor,
-                    vendor_key=None,
-                    dedupe_key=None,
-                    resolved_flow=consent.handler_cls.kind,
-                    approved_change=change,
-                    **cas_fields,
-                )
-                if won:
-                    # The session now points at the chosen credential, so its
-                    # own pending one goes alone.
-                    await CredentialRepository.delete(session, row.credential_id)
-        except DatabaseIntegrityError:
-            async with self._ctx.control_db.session() as session:
-                open_edit = await ConnectSessionRepository.get_open_edit(
-                    session, agent_id=agent_id, credential_id=credential.id
-                )
-            if open_edit is None:
-                raise
-            raise EditOpenError(open_edit.id) from None
+        async with self._ctx.control_db.transaction() as session:
+            won = await ConnectSessionRepository.transition_state(
+                session,
+                row.id,
+                to_state="polling",
+                from_states=(row.state,),
+                revision_id=variant.checks.revision_id,
+                intent=INTENT_EDIT,
+                credential_id=credential.id,
+                target_kind=TARGET_KIND_VENDOR,
+                vendor=consent.key or credential.api_vendor,
+                vendor_key=None,
+                dedupe_key=None,
+                resolved_flow=consent.handler_cls.kind,
+                approved_change=change,
+                **cas_fields,
+            )
+            if won:
+                # The session now points at the chosen credential, so its
+                # own pending one goes alone.
+                await CredentialRepository.delete(session, row.credential_id)
         if not won:
             raise InvalidStateTransitionError(row.id, row.state, "confirm")
         async with self._ctx.control_db.session() as session:

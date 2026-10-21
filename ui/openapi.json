@@ -43481,7 +43481,7 @@
     "/integrations:edit-connection": {
       "description": "`POST`: Ask to change a credential binding.",
       "post": {
-        "description": "Open a connect session that edits an existing binding instead of creating one.\n\nThe change (rules to add, remove or replace, and resuming a suspended\nbinding) is resolved against the binding as it is now, and a human\napproves it on the review page; nothing changes until then. An agent\nedits its own binding and must omit `agent_id`; a human names the agent\nand must be its owner or an org admin. A change that is already in place\nis 422 `nothing_to_change`, a rule id the binding does not hold is 422\n`unknown_rule`, and a binding with an open edit is 409 `edit_open` with\nthat session's `session_id`.",
+        "description": "Open a connect session that edits an existing binding instead of creating one.\n\nThe change (rules to add, remove or replace, and resuming a suspended\nbinding) is resolved against the binding as it is now, and a human\napproves it on the review page; nothing changes until then. An agent\nedits its own binding and must omit `agent_id`; a human names the agent\nand must be its owner or an org admin. A change that is already in place\nis 422 `nothing_to_change`, and a rule id the binding does not hold is 422\n`unknown_rule`. A binding can have several open edits, each rebased as\nothers land; an agent asking again while its own is open is 409\n`edit_open` with that session's `session_id`, to amend instead.",
         "operationId": "integrationsEditConnection",
         "requestBody": {
           "content": {
@@ -43631,7 +43631,7 @@
                 }
               }
             },
-            "description": "The binding already has an open edit; amend it"
+            "description": "The calling agent already has an open edit of this binding; amend it"
           },
           "422": {
             "content": {

@@ -353,14 +353,23 @@ class ConnectSessionRepository:
 
     @staticmethod
     async def get_open_edit(
-        session: AsyncSession, *, agent_id: str, credential_id: str
+        session: AsyncSession, *, agent_id: str, credential_id: str, initiator_actor_id: str
     ) -> ConnectSession | None:
-        """The open edit session for one binding (the open-edit index's key)."""
-        stmt = select(ConnectSession).where(
-            ConnectSession.intent == INTENT_EDIT,
-            ConnectSession.state.in_(LIVE_STATES),
-            ConnectSession.agent_id == agent_id,
-            ConnectSession.credential_id == credential_id,
+        """``initiator_actor_id``'s newest open edit of one binding.
+
+        A binding can have any number of open edits; this finds the caller's
+        own, so an agent asking again amends its request instead.
+        """
+        stmt = (
+            select(ConnectSession)
+            .where(
+                ConnectSession.intent == INTENT_EDIT,
+                ConnectSession.state.in_(LIVE_STATES),
+                ConnectSession.agent_id == agent_id,
+                ConnectSession.credential_id == credential_id,
+                ConnectSession.initiator_actor_id == initiator_actor_id,
+            )
+            .order_by(ConnectSession.created_at.desc())
         )
         result = await session.execute(stmt)
         return result.scalars().first()

@@ -1558,12 +1558,13 @@ def test_edit_connection_round_trip(
         "/integrations:edit-connection",
         json={"credential_id": credential_id, "agent_id": agent_id, "rules": {"remove": [rule_id]}},
     )
-    assert resp.status_code == 409, resp.text
-    assert resp.json()["session_id"] == created["session_id"]
-    assert resp.json()["agent_directive"]["strategy"] == "check_access"
+    # A binding can have several open edits at once.
+    assert resp.status_code == 201, resp.text
+    second = resp.json()["session_id"]
 
     listed = cred_writer_client.get("/connect-sessions").json()["data"]
-    assert {r["session_id"]: r["intent"] for r in listed}[created["session_id"]] == "edit"
+    intents = {r["session_id"]: r["intent"] for r in listed}
+    assert intents[created["session_id"]] == intents[second] == "edit"
 
     resp = cred_writer_client.post(
         f"/connect-sessions/{created['session_id']}:amend",

@@ -2641,7 +2641,7 @@ async def test_a_human_applying_added_scopes_goes_straight_to_the_vendor_sign_in
     assert status.status == "pending"
 
 
-async def test_adding_scopes_waits_for_an_open_agent_edit(
+async def test_adding_scopes_runs_beside_an_open_agent_edit(
     integration_context: Context,
     seed_test_vendors: None,
     seed_agent: None,
@@ -2657,16 +2657,29 @@ async def test_adding_scopes_waits_for_an_open_agent_edit(
         identity=_AGENT_IDENTITY,
         request=EditRequest(add=[RuleAdd(_WRITE_RULE)]),
     )
-    # A consent needs the binding's one open-edit slot.
-    with pytest.raises(EditOpenError) as err:
-        await svc.create_edit_session(
+    # A binding holds any number of open edits: the admin's sign-in doesn't wait.
+    with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)):
+        applied = await svc.create_edit_session(
             credential_id=credential_id,
             agent_id=_AGENT_ID,
             identity=_USER_IDENTITY,
             request=EditRequest(add_scopes=["repo"]),
             apply=True,
         )
-    assert err.value.session_id == open_edit.session_id
+    assert isinstance(applied.challenge, DeviceAuthorizationConfirmResult)
+    review = await svc.get_review_data(
+        open_edit.session_id, poll_token=None, identity=_USER_IDENTITY
+    )
+    assert review.state == "created"
+    # The agent asking again still amends its own.
+    with pytest.raises(EditOpenError) as again:
+        await svc.create_edit_session(
+            credential_id=credential_id,
+            agent_id=_AGENT_ID,
+            identity=_AGENT_IDENTITY,
+            request=EditRequest(add=[RuleAdd(_READ_RULE)]),
+        )
+    assert again.value.session_id == open_edit.session_id
 
 
 async def test_a_failed_consent_leaves_the_credential_as_it_was(

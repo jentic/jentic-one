@@ -237,7 +237,7 @@ async def integrations_connect(
     response_model=None,
     responses=with_responses(
         not_found("No binding the caller may edit for this credential"),
-        conflict("The binding already has an open edit; amend it"),
+        conflict("The calling agent already has an open edit of this binding; amend it"),
         too_many_requests("Rate limit or open-session cap"),
     ),
 )
@@ -256,9 +256,10 @@ async def integrations_edit_connection(
     approves it on the review page; nothing changes until then. An agent
     edits its own binding and must omit `agent_id`; a human names the agent
     and must be its owner or an org admin. A change that is already in place
-    is 422 `nothing_to_change`, a rule id the binding does not hold is 422
-    `unknown_rule`, and a binding with an open edit is 409 `edit_open` with
-    that session's `session_id`.
+    is 422 `nothing_to_change`, and a rule id the binding does not hold is 422
+    `unknown_rule`. A binding can have several open edits, each rebased as
+    others land; an agent asking again while its own is open is 409
+    `edit_open` with that session's `session_id`, to amend instead.
     """
     await _enforce_connect_rate_limit(request, identity)
 

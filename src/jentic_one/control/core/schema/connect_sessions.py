@@ -48,9 +48,6 @@ _OPEN_VENDOR_TARGET_PREDICATE = (
 )
 
 # One open edit per binding. Mirrors the repository's live states.
-_OPEN_EDIT_PREDICATE = (
-    "intent = 'edit' AND state IN ('created', 'awaiting_app', 'polling') AND agent_id IS NOT NULL"
-)
 
 
 class ConnectSession(AuditableMixin, ControlBase):
@@ -84,14 +81,6 @@ class ConnectSession(AuditableMixin, ControlBase):
             unique=True,
             postgresql_where=text(_OPEN_VENDOR_TARGET_PREDICATE),
             sqlite_where=text(_OPEN_VENDOR_TARGET_PREDICATE),
-        ),
-        Index(
-            "ix_connect_sessions_open_edit",
-            "agent_id",
-            "credential_id",
-            unique=True,
-            postgresql_where=text(_OPEN_EDIT_PREDICATE),
-            sqlite_where=text(_OPEN_EDIT_PREDICATE),
         ),
     )
 

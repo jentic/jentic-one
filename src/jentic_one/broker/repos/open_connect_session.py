@@ -40,8 +40,9 @@ _OPEN_SESSION_FOR_API = text(
 _OPEN_EDIT_FOR_BINDING = text(
     "SELECT cs.id FROM connect_sessions cs "
     "WHERE cs.agent_id = :agent_id AND cs.credential_id = :credential_id "
+    "AND cs.initiator_actor_id = :agent_id "
     "AND cs.intent = 'edit' AND cs.state IN ('created', 'awaiting_app', 'polling') "
-    "LIMIT 1"
+    "ORDER BY cs.created_at DESC LIMIT 1"
 )
 
 
@@ -65,7 +66,7 @@ class OpenConnectSessionReader:
         return str(row[0]) if row is not None else None
 
     async def find_open_edit_id(self, *, agent_id: str, credential_id: str) -> str | None:
-        """Return the agent's open edit session for one binding, or ``None``."""
+        """Return the agent's own newest open edit of one binding, or ``None``."""
         async with self._control_db.session() as session:
             row = (
                 await session.execute(
