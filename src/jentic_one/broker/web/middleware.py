@@ -12,7 +12,10 @@ coordinated across instances (that is rate limiting). Acquire is
 **non-blocking**: past ``max_in_flight`` the request is shed immediately with a
 ``503`` + ``Retry-After`` rather than queued (the whole point is to fail fast).
 ``/health`` and ``/metrics`` are excluded so infra routes answer even while
-shedding.
+shedding. A request holds its slot until its response is complete (the final
+``http.response.body`` message is sent) or the client disconnects (the app
+receives ``http.disconnect``), whichever comes first, not until the app call
+returns, so post-response work never counts as in flight.
 """
 
 from __future__ import annotations
@@ -94,15 +97,25 @@ class AdmissionControlMiddleware:
             await self._send_503(send)
             return
 
+        # The slot covers the request until its response is complete or the
+        # client disconnects. Work the app runs after that (a Starlette
+        # BackgroundTask, e.g. the streaming execution persist, which Starlette
+        # still runs when a disconnect cuts a StreamingResponse short) neither
+        # holds capacity nor counts toward /ready saturation.
+        slot = _AdmissionSlot(self._gate)
         # During drain, stamp ``Connection: close`` so a keep-alive LB/client
         # tears the connection down after this in-flight request and re-resolves
         # to a healthy pod for the next one (readiness alone doesn't close an
         # already-open keep-alive connection).
         out_send = _drain_close_send(send) if self._gate.draining else send
         try:
-            await self._app(scope, receive, out_send)
+            await self._app(
+                scope,
+                _release_on_disconnect_receive(receive, slot),
+                _release_on_complete_send(out_send, slot),
+            )
         finally:
-            self._gate.release()
+            slot.release()
 
     async def _send_503(self, send: Send) -> None:
         body = json.dumps(
@@ -130,6 +143,50 @@ class AdmissionControlMiddleware:
 
 def _is_excluded(path: str) -> bool:
     return any(path == p or path.startswith(p + "/") for p in _EXCLUDED_PREFIXES)
+
+
+class _AdmissionSlot:
+    """One request's hold on the gate, released at most once."""
+
+    __slots__ = ("_gate", "_held")
+
+    def __init__(self, gate: _AdmissionGate) -> None:
+        self._gate = gate
+        self._held = True
+
+    def release(self) -> None:
+        if self._held:
+            self._held = False
+            self._gate.release()
+
+
+def _release_on_complete_send(send: Send, slot: _AdmissionSlot) -> Send:
+    """Wrap ``send`` to release ``slot`` once the final body message is sent."""
+
+    async def wrapped(message: Message) -> None:
+        await send(message)
+        if message["type"] == "http.response.body" and not message.get("more_body", False):
+            slot.release()
+
+    return wrapped
+
+
+def _release_on_disconnect_receive(receive: Receive, slot: _AdmissionSlot) -> Receive:
+    """Wrap ``receive`` to release ``slot`` once the client has disconnected.
+
+    A disconnect means the server sends nothing more to this client: Starlette
+    cancels a ``StreamingResponse`` body on it, and a body read raises
+    ``ClientDisconnect``. What the app still runs after that is post-response
+    work, which must not hold ingress capacity.
+    """
+
+    async def wrapped() -> Message:
+        message = await receive()
+        if message["type"] == "http.disconnect":
+            slot.release()
+        return message
+
+    return wrapped
 
 
 def _drain_close_send(send: Send) -> Send:

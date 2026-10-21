@@ -97,6 +97,8 @@ class PipedreamProvider:
             actor_type=request.extra.get("actor_type"),
             issued_at=datetime.now(UTC),
             nonce=nonce,
+            browser_binding_hash=request.browser_binding_hash,
+            browser_host=request.browser_host,
         )
         signed_state = encode_state(state_secret, connect_state, ttl)
 

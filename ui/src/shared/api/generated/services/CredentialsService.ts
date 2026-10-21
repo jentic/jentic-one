@@ -549,6 +549,11 @@ export class CredentialsService {
      * authorization-code providers return an ``authorize_url`` for popup
      * redirect; device-flow providers return ``user_code`` /
      * ``verification_uri`` for the RFC 8628 human step.
+     *
+     * An ``authorize_url`` response also sets a short-lived ``HttpOnly``
+     * cookie scoped to the OAuth callback path: the callback completes only
+     * in the browser that called this endpoint, so call it from the browser
+     * that opens the ``authorize_url``.
      * @returns any Successful Response
      * @throws ApiError
      */

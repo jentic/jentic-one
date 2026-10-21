@@ -249,6 +249,34 @@ class ConnectSessionRepository:
         return [str(row_id) for row_id in result.scalars().all()]
 
     @staticmethod
+    async def list_lapsed_ids(
+        session: AsyncSession,
+        *,
+        state: str,
+        flow: str,
+        updated_before: datetime,
+        limit: int,
+    ) -> list[str]:
+        """Return ids of ``state`` sessions of ``flow`` not touched since ``updated_before``.
+
+        Feeds the TTL sweep for flows whose state goes stale before the
+        session TTL does (an auth-code session in ``polling`` can no longer
+        complete once its signed callback state has expired).
+        """
+        stmt = (
+            select(ConnectSession.id)
+            .where(
+                ConnectSession.state == state,
+                ConnectSession.resolved_flow == flow,
+                ConnectSession.updated_at < updated_before,
+            )
+            .order_by(ConnectSession.updated_at.asc())
+            .limit(limit)
+        )
+        result = await session.execute(stmt)
+        return [str(row_id) for row_id in result.scalars().all()]
+
+    @staticmethod
     async def update_fields(
         session: AsyncSession, session_id: str, **fields: Any
     ) -> ConnectSession | None:

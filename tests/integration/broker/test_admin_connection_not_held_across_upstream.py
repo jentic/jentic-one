@@ -635,3 +635,17 @@ async def test_queued_execution_holds_no_admin_connection(
     assert record is not None and record.status == ExecutionStatus.COMPLETED
     assert record.credential_id == _CREDENTIAL_ID
     assert len(await _access_events(admin_db, trace_id)) == 1
+    async with admin_db.session() as session:
+        completed = list(
+            (
+                await session.execute(
+                    select(Event).where(
+                        Event.trace_id == trace_id,
+                        Event.type == EventType.EXECUTION_COMPLETED,
+                    )
+                )
+            ).scalars()
+        )
+    assert len(completed) == 1
+    assert completed[0].job_id == job_id
+    assert completed[0].execution_id == record.id

@@ -1659,8 +1659,9 @@ class RetryConfig(BaseModel):
     The ``RetryRunner`` decorator retries a failed attempt **only** when it is
     safe to do so: a connect-phase failure (no bytes on the wire) is retryable
     for any method, while a post-send failure (read timeout, mirrored ``429``/
-    ``503``) is retried only for idempotent methods or when an
-    ``Idempotency-Key`` is present — a blind ``POST`` retry is a double-spend.
+    ``503``) is retried only for idempotent HTTP methods — ``Idempotency-Key``
+    is broker-consumed and stripped from outbound headers, so a post-send
+    ``POST`` or ``PATCH`` retry would double-spend (#1799).
     Each attempt still flows through the circuit breaker (retry *outside*,
     breaker *inside*); the whole loop is bounded by the request deadline.
     """
@@ -1983,7 +1984,7 @@ class SecurityConfig(BaseModel):
     # scale of hours, so a sweep per minute is ample). One tick ≈ the worker
     # poll interval (~2s), so the default ~60 ticks is roughly every 2 minutes.
     credential_expiry_sweep_interval_ticks: int = Field(default=60, ge=1)
-    # Number of failed executions for one actor+toolkit+operation within the
+    # Number of failed executions for one actor+credential+operation within the
     # rolling window before an ``execution.repeated_failure`` event is emitted.
     execution_repeated_failure_threshold: int = Field(default=5, ge=1)
     # Rolling window (seconds) over which repeated failures are counted and over
@@ -2027,6 +2028,41 @@ class BrokerConfig(BaseModel):
     # is one entry. Eviction is LRU by entry count (the TTL only bounds
     # staleness, never memory).
     rule_cache_max_entries: int = 5_000
+    streaming_persist_max_concurrency: int = Field(
+        default=5,
+        gt=0,
+        description=(
+            "Per-process cap on concurrent post-response persists of streaming "
+            "execution records (each holds one admin-DB connection). Excess "
+            "persists wait for a slot, up to "
+            "``broker.streaming_persist_acquire_timeout_s``; the waiting and "
+            "writing counts are exported as "
+            "``broker.streaming_execution.persist_pending``. The effective cap "
+            "is clamped to ``databases.admin.pool_max - 1`` (minimum 1; a "
+            "``streaming_persist_limit_clamped`` warning is logged when it "
+            "applies), so with ``pool_max >= 2`` persists never take every "
+            "connection of the admin base pool. ``pool_max`` is the base pool "
+            "size only; SQLAlchemy's default overflow can open up to 10 more "
+            "connections on top of it."
+        ),
+    )
+    streaming_persist_acquire_timeout_s: float = Field(
+        default=5.0,
+        gt=0,
+        description=(
+            "How long (seconds) a streaming execution persist waits for one of "
+            "the ``broker.streaming_persist_max_concurrency`` slots. Past it the "
+            "record is abandoned: logged as "
+            "``streaming_execution_persist_abandoned`` and counted on "
+            "``broker.streaming_execution.persist_failures`` "
+            "(``reason=backlog_timeout``). The wait runs after the response is "
+            "complete or the client has disconnected, when the request no "
+            "longer holds its admission slot, so the wait delays neither the "
+            "client nor ``/ready``. The timeout bounds how long a stalled "
+            "admin database can keep records queued in memory, including at "
+            "shutdown; it does not bound the write itself once a slot is held."
+        ),
+    )
     # Absolute public base URL of the admin jobs API, used to build the 202
     # `_links.self` pointer for async executions (e.g. "https://api.example.com").
     # None keeps the legacy broker-relative `/jobs/{id}` link.

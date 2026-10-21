@@ -20,6 +20,7 @@ from jentic_one.control.services.credentials.schemas.connect import (
 )
 from jentic_one.control.services.credentials.schemas.provision import APIReference
 from jentic_one.control.services.credentials.state import (
+    BrowserBindingClaim,
     StateError,
     consume_callback_state,
 )
@@ -53,11 +54,17 @@ class ConnectService:
         *,
         identity: Identity,
         redirect_uri: str | None = None,
+        browser_binding: BrowserBindingClaim | None = None,
     ) -> ConnectChallenge:
         """Load the caller's credential, resolve provider, initiate connect flow.
 
         A credential the caller cannot see is a 404. Visibility includes owner
         delegation (see the comment on the filter below).
+
+        ``browser_binding`` names the browser that may finish the flow: its
+        hash rides the signed state and the callback requires the matching
+        cookie. Without it the state is unbound and every callback for it
+        is refused.
         """
         # Read filter on purpose, not ``for_write``: an agent holding
         # ``owner:credentials:read`` may start a connect for its owner's
@@ -89,6 +96,8 @@ class ConnectService:
             scopes=request.scopes,
             extra=extra,
             redirect_uri=redirect_uri,
+            browser_binding_hash=browser_binding.digest if browser_binding else None,
+            browser_host=browser_binding.host if browser_binding else None,
         )
 
         return await provider.begin_connect(self._ctx, api=api, request=enriched_request)
@@ -97,15 +106,22 @@ class ConnectService:
         self,
         raw_state: str,
         callback: ConnectCallback,
+        *,
+        browser_binding: str | None,
     ) -> str:
-        """Verify state, exchange code via provider, persist tokens. Returns credential_id."""
+        """Verify state, exchange code via provider, persist tokens. Returns credential_id.
+
+        ``browser_binding`` is the binding cookie the callback carried.
+        """
         # Shared prologue with ``ConnectSessionService.complete_from_callback``
         # so replay protection lives in exactly one place. ``StateError``
         # covers every failure mode (expired / invalid / missing-actor /
         # nonce already consumed); we surface the taxonomy back to the
         # router via ``ConnectFlowError`` for the standalone path.
         try:
-            state = await consume_callback_state(self._ctx, raw_state)
+            state = await consume_callback_state(
+                self._ctx, raw_state, browser_binding=browser_binding
+            )
         except StateError as exc:
             raise ConnectFlowError(str(exc)) from exc
 

@@ -20,13 +20,12 @@ class ExecutionRecord(AuditableMixin, AdminBase):
     __table_args__ = (
         Index("ix_execution_records_started_at", "started_at"),
         Index("ix_execution_records_trace_id", "trace_id"),
-        Index("ix_execution_records_toolkit_started", "toolkit_id", "started_at"),
         Index("ix_execution_records_status", "status"),
         Index("ix_execution_records_actor", "actor_id", "actor_type"),
         Index("ix_execution_records_credential_id", "credential_id"),
         # Covers the repeated-failure count in ``shared/events/repeated_failure.py``:
-        # equality on actor, credential (the live consumer axis) and operation,
-        # then the ``started_at`` window range, over failed rows only.
+        # equality on actor, credential, and operation, then the ``started_at``
+        # window range, over failed rows only.
         Index(
             "ix_execution_records_repeated_failure_credential_scan",
             "actor_id",
@@ -44,18 +43,14 @@ class ExecutionRecord(AuditableMixin, AdminBase):
         default=lambda: generate_ksuid("exec"),
         server_default=func.generate_ksuid("exec"),
     )
-    # Nullable-legacy (theme-5 Phase 2): the toolkit that mediated the execution
-    # on the legacy path. NULL for direct-binding executions — their consumer
-    # attribution is ``credential_id`` — and permanently NULL once toolkits are
-    # retired (Phase 4+). All five toolkit-keyed surfaces (this column, the
-    # idempotency fingerprint, tracestate, repeated-failure keying, lifecycle
-    # events) move to the credential axis together.
+    # Historical toolkit attribution for rows recorded before toolkits were
+    # retired; NULL for credential-bound executions, whose consumer attribution
+    # lives on ``credential_id`` / ``credential_name``.
     toolkit_id: Mapped[str | None] = mapped_column(String(30), nullable=True)
-    # Denormalized historical name for ``toolkit_id`` (theme-5 Phase 6b): the
-    # control ``toolkits`` table it used to be resolved from at read time is
-    # dropped. Backfilled by the Phase-6a flattening job pre-drop; NULL for
-    # rows whose toolkit was already deleted (exactly what the read-time
-    # resolver reported for them) and for all direct-binding executions.
+    # Denormalized historical name for ``toolkit_id``: the control ``toolkits``
+    # table does not exist at runtime, so historical rows carry the name stored
+    # during flattening; NULL for rows whose toolkit was already deleted before
+    # flattening and for all credential-bound executions.
     toolkit_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     trace_id: Mapped[str] = mapped_column(String(32), nullable=False)
     started_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)

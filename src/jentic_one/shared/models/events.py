@@ -243,6 +243,28 @@ class ErrorSource(StrEnum):
     UPSTREAM_IMPORTED = "upstream_imported"
 
 
+#: Upstream auth-rejection status → third-party ``auth_failure`` tag. 401 is an
+#: RFC-tight authentication rejection; 403 mixes auth + authorization (kept as a
+#: distinct, lower-precision tag so the funnel can separate them downstream).
+_THIRDPARTY_AUTH_TAGS: dict[int, ErrorSource] = {
+    401: ErrorSource.AUTH_THIRDPARTY_UNAUTHORIZED,
+    403: ErrorSource.AUTH_THIRDPARTY_FORBIDDEN,
+}
+
+
+def thirdparty_auth_error_tag(
+    http_status: int | None, api_vendor: str | None
+) -> ErrorSource | None:
+    """Return the third-party auth ``ErrorSource`` tag for an upstream 401/403.
+
+    Returns ``None`` when ``api_vendor`` is unset (a vendorless call has no
+    credential path to reject) or ``http_status`` is not 401/403.
+    """
+    if http_status is None or not api_vendor:
+        return None
+    return _THIRDPARTY_AUTH_TAGS.get(http_status)
+
+
 class SpecSource(StrEnum):
     """Closed-enum tag splitting a spec import by provenance.
 

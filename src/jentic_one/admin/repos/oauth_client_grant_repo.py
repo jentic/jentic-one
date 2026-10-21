@@ -189,7 +189,7 @@ class OAuthClientGrantRepository:
             .group_by(OAuthClientGrant.oauth_client_id)
         )
         result = await session.execute(stmt)
-        return dict(result.all())  # type: ignore[arg-type]
+        return {row[0]: row[1] for row in result.all()}
 
     @staticmethod
     async def count_active_for_client(session: AsyncSession, oauth_client_id: str) -> int:

@@ -14,6 +14,7 @@ only the router's own logic.
 from __future__ import annotations
 
 import datetime as dt
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -88,7 +89,18 @@ def _build_app(*, svc: Any, identity: Identity = _USER_IDENTITY) -> FastAPI:
         app.add_exception_handler(exc_class, handler)
     app.dependency_overrides[get_connect_session_service] = lambda: svc
     app.dependency_overrides[shared_deps.resolve_identity] = lambda: identity
+    # ``:confirm`` reads the state TTL and public origin to set the
+    # browser-binding cookie; nothing else in this router touches ``Context``.
+    app.dependency_overrides[shared_deps.get_ctx] = lambda: _CTX
     return app
+
+
+_CTX = SimpleNamespace(
+    config=SimpleNamespace(
+        credentials=SimpleNamespace(connect=SimpleNamespace(state_ttl_seconds=600)),
+        server=SimpleNamespace(public_base_url=""),
+    )
+)
 
 
 # ---------------------------------------------------------------------------

@@ -68,7 +68,10 @@ from jentic_one.control.repos.prerequisite_repo import (
 )
 from jentic_one.control.scoping.filters import build_access_filters
 from jentic_one.control.services.credentials.mapping import to_wire
-from jentic_one.control.services.credentials.state import consume_callback_state
+from jentic_one.control.services.credentials.state import (
+    BrowserBindingClaim,
+    consume_callback_state,
+)
 from jentic_one.control.services.integrations import identity_echo
 from jentic_one.control.services.integrations.api_targets import (
     SCHEME_OAUTH2,
@@ -593,6 +596,15 @@ class StatusResult:
 # Overall hard TTL for a vendor OAuth session — clamps stale rows even if
 # flow-level device_code_expires_at hasn't been reached.
 _SESSION_TTL_SECONDS = 30 * 60
+# Slack past the signed callback state's TTL before the sweep expires an
+# auth-code session still waiting on its callback (clock skew, a callback
+# already in flight).
+_CALLBACK_STATE_GRACE = timedelta(seconds=60)
+
+
+class _SessionEndedError(Exception):
+    """The session left its live states before its finalise write (nothing written)."""
+
 
 # Flows that live for ``_SESSION_TTL_SECONDS``. Every other flow (a session a
 # human completes by entering a credential, or one waiting for an OAuth app)
@@ -1921,6 +1933,7 @@ class ConnectSessionService:
         identity: Identity,
         request: EditRequest,
         apply: bool = False,
+        browser_binding: BrowserBindingClaim | None = None,
     ) -> CreatedEditSession:
         """Open a session that edits an existing ``(agent, credential)`` binding.
 
@@ -2070,7 +2083,9 @@ class ConnectSessionService:
                 resume=request.resume,
                 confirmed_scopes=result["scopes"],
             )
-            challenge = await self._begin_edit_consent(row, change, identity=identity)
+            challenge = await self._begin_edit_consent(
+                row, change, identity=identity, browser_binding=browser_binding
+            )
         return CreatedEditSession(
             session_id=row.id,
             approval_url=self._approval_url_for(row.id),
@@ -2155,6 +2170,7 @@ class ConnectSessionService:
         resume: bool,
         confirmed_scopes: list[str] | None = None,
         resolve_conflicts: bool = False,
+        browser_binding: BrowserBindingClaim | None = None,
     ) -> ConfirmResult:
         """Apply an edit session's change as the reviewer submitted it.
 
@@ -2216,7 +2232,9 @@ class ConnectSessionService:
         )
         granted = list(row.baseline.get("granted_scopes") or [])
         if set(change["scopes"]) != set(granted):
-            return await self._begin_edit_consent(row, change, identity=identity)
+            return await self._begin_edit_consent(
+                row, change, identity=identity, browser_binding=browser_binding
+            )
 
         async with self._ctx.control_db.transaction() as session:
             won = await ConnectSessionRepository.transition_edit(
@@ -2233,7 +2251,12 @@ class ConnectSessionService:
         return ConnectedConfirmResult(credential_id=row.credential_id)
 
     async def _begin_edit_consent(
-        self, row: ConnectSession, change: dict[str, Any], *, identity: Identity
+        self,
+        row: ConnectSession,
+        change: dict[str, Any],
+        *,
+        identity: Identity,
+        browser_binding: BrowserBindingClaim | None = None,
     ) -> ConfirmResult:
         """Hold ``change`` on the session and start the vendor consent for its scopes."""
         assert row.agent_id is not None
@@ -2265,7 +2288,9 @@ class ConnectSessionService:
                 raise InvalidStateTransitionError(row.id, row.state, "confirm")
             polling = await ConnectSessionRepository.get_by_id(session, row.id)
         assert polling is not None
-        challenge = await self._begin_consent(polling, consent, change["scopes"])
+        challenge = await self._begin_consent(
+            polling, consent, change["scopes"], browser_binding=browser_binding
+        )
         _logger.info(
             "connect_session.edit_consent_started",
             session_id=row.id,
@@ -2299,6 +2324,7 @@ class ConnectSessionService:
         scopes: list[str],
         *,
         retryable: bool = True,
+        browser_binding: BrowserBindingClaim | None = None,
     ) -> ConfirmResult:
         """Start the vendor consent for a polling edit session; undo the confirm on failure.
 
@@ -2309,7 +2335,9 @@ class ConnectSessionService:
         """
         handler = consent.handler_cls(self._ctx)
         try:
-            challenge = await handler.begin(row, app=consent.app, confirmed_scopes=scopes)
+            challenge = await handler.begin(
+                row, app=consent.app, confirmed_scopes=scopes, browser_binding=browser_binding
+            )
         except Exception:
             if not retryable:
                 await self._mark_terminal(
@@ -3352,6 +3380,9 @@ class ConnectSessionService:
         digest: str | None = None,
         # The revision the approver reviewed; required, and it must be current.
         revision_id: str | None = None,
+        # The approver's browser: an authorization-code flow binds its
+        # callback to it, since the approver is the one who goes to the vendor.
+        browser_binding: BrowserBindingClaim | None = None,
     ) -> ConfirmResult:
         """Confirm scopes + permissions and kick off the vendor-side flow.
 
@@ -3463,7 +3494,12 @@ class ConnectSessionService:
         # signed state token for auth-code). We only own the flow-agnostic
         # state machine + permission-rule capture below.
         try:
-            challenge = await handler.begin(row, app=session_app, confirmed_scopes=confirmed_scopes)
+            challenge = await handler.begin(
+                row,
+                app=session_app,
+                confirmed_scopes=confirmed_scopes,
+                browser_binding=browser_binding,
+            )
         except Exception:
             # A vendor-side ``begin`` failure must leave the session
             # retryable — roll the CAS back to ``created`` (undoing a
@@ -3570,6 +3606,7 @@ class ConnectSessionService:
         poll_token: str | None,
         variant: ConfirmVariant,
         identity: Identity,
+        browser_binding: BrowserBindingClaim | None = None,
     ) -> ConfirmResult:
         """Confirm with an entered secret, an own OAuth client or an existing credential.
 
@@ -3634,11 +3671,21 @@ class ConnectSessionService:
         elif isinstance(variant, ExistingCredentialConfirm):
             assert effective_agent_id is not None
             result = await self._confirm_existing(
-                row, variant, effective_agent_id, late_bound=late_bound, identity=identity
+                row,
+                variant,
+                effective_agent_id,
+                late_bound=late_bound,
+                identity=identity,
+                browser_binding=browser_binding,
             )
         else:
             result = await self._confirm_own_client(
-                row, variant, effective_agent_id, late_bound=late_bound, identity=identity
+                row,
+                variant,
+                effective_agent_id,
+                late_bound=late_bound,
+                identity=identity,
+                browser_binding=browser_binding,
             )
 
         await record_audit_best_effort(
@@ -3868,6 +3915,7 @@ class ConnectSessionService:
         *,
         late_bound: bool,
         identity: Identity,
+        browser_binding: BrowserBindingClaim | None,
     ) -> ConfirmResult:
         async with self._ctx.control_db.session() as session:
             pending = await CredentialRepository.get_by_id(session, row.credential_id)
@@ -3879,7 +3927,13 @@ class ConnectSessionService:
             if not chosen.needs_vendor_consent:
                 raise InsufficientGrantedScopesError(chosen.credential_id, chosen.missing_scopes)
             return await self._confirm_existing_with_consent(
-                row, variant, chosen, agent_id, late_bound=late_bound, identity=identity
+                row,
+                variant,
+                chosen,
+                agent_id,
+                late_bound=late_bound,
+                identity=identity,
+                browser_binding=browser_binding,
             )
 
         newly_bound = await self._bind_for_confirm(
@@ -3937,6 +3991,7 @@ class ConnectSessionService:
         *,
         late_bound: bool,
         identity: Identity,
+        browser_binding: BrowserBindingClaim | None,
     ) -> ConfirmResult:
         """Use an existing credential that lacks scopes the session asks for, in one step.
 
@@ -3997,7 +4052,9 @@ class ConnectSessionService:
         async with self._ctx.control_db.session() as session:
             polling = await ConnectSessionRepository.get_by_id(session, row.id)
         assert polling is not None
-        return await self._begin_consent(polling, consent, scopes, retryable=False)
+        return await self._begin_consent(
+            polling, consent, scopes, retryable=False, browser_binding=browser_binding
+        )
 
     async def _confirm_own_client(
         self,
@@ -4007,6 +4064,7 @@ class ConnectSessionService:
         *,
         late_bound: bool,
         identity: Identity,
+        browser_binding: BrowserBindingClaim | None,
     ) -> AuthCodeConfirmResult:
         if not variant.authorize_url.strip() or not variant.token_url.strip():
             raise OwnClientInvalidError("authorize_url and token_url are required")
@@ -4074,7 +4132,10 @@ class ConnectSessionService:
         )
         try:
             challenge = await handler.begin(
-                current, app=app, confirmed_scopes=variant.confirmed_scopes
+                current,
+                app=app,
+                confirmed_scopes=variant.confirmed_scopes,
+                browser_binding=browser_binding,
             )
         except Exception:
             # Leave the session as it was so the approver can retry.
@@ -4568,14 +4629,17 @@ class ConnectSessionService:
             # An API target on the approver's own OAuth client: no registry
             # entry, so no identity probe, and the API is already registered.
             _require_api_own_client(row)
-            await self._write_finalise(
-                credential_id=row.credential_id,
-                handler=handler,
-                tokens=tokens,
-                connected_as=None,
-                created_by=row.initiator_actor_id,
-                close_session_id=row.id,
-            )
+            try:
+                await self._write_finalise(
+                    credential_id=row.credential_id,
+                    handler=handler,
+                    tokens=tokens,
+                    connected_as=None,
+                    created_by=row.initiator_actor_id,
+                    close_session_id=row.id,
+                )
+            except _SessionEndedError:
+                return self._ended_during_finalise(row)
             self._record_connected(row)
             return StatusResult(
                 status="connected",
@@ -4630,14 +4694,17 @@ class ConnectSessionService:
                 )
                 return StatusResult(status="failed", error_code="identity_echo_failed")
 
-        await self._write_finalise(
-            credential_id=row.credential_id,
-            handler=handler,
-            tokens=tokens,
-            connected_as=connected_as,
-            created_by=row.initiator_actor_id,
-            close_session_id=row.id,
-        )
+        try:
+            await self._write_finalise(
+                credential_id=row.credential_id,
+                handler=handler,
+                tokens=tokens,
+                connected_as=connected_as,
+                created_by=row.initiator_actor_id,
+                close_session_id=row.id,
+            )
+        except _SessionEndedError:
+            return self._ended_during_finalise(row)
 
         self._record_connected(row, connected_as=connected_as)
         await self._maybe_import_catalog(
@@ -4804,6 +4871,12 @@ class ConnectSessionService:
         return StatusResult(status="pending")
 
     @staticmethod
+    def _ended_during_finalise(row: ConnectSession) -> StatusResult:
+        """The session ended while its tokens were being fetched; nothing was kept."""
+        _logger.warning("connect_session.ended_before_finalise", session_id=row.id)
+        return StatusResult(status="failed", error_code="session_ended")
+
+    @staticmethod
     def _record_connected(row: ConnectSession, *, connected_as: str | None = None) -> None:
         """Log line + metrics for a session that reached ``connected``."""
         _logger.info(
@@ -4886,6 +4959,9 @@ class ConnectSessionService:
         onto ``credential.provider_account_ref`` when non-None (session
         mode after identity echo); credential-mode passes ``None`` and the
         column stays unset.
+
+        Raises ``_SessionEndedError`` (nothing written) when
+        ``close_session_id`` is no longer live.
         """
         expires_at = (
             datetime.now(UTC) + timedelta(seconds=tokens.expires_in) if tokens.expires_in else None
@@ -4905,6 +4981,21 @@ class ConnectSessionService:
         )
 
         async with self._ctx.control_db.transaction() as session:
+            if close_session_id is not None:
+                # Close the session first, compare-and-swap from a live state:
+                # if it was ended meanwhile (the TTL sweep, a cancel), roll the
+                # whole write back so the grant is not kept on a credential
+                # that is being torn down. Taking the row first also makes a
+                # concurrent ``_mark_terminal`` wait for this commit and lose.
+                won = await ConnectSessionRepository.transition_state(
+                    session,
+                    close_session_id,
+                    to_state="connected",
+                    from_states=LIVE_STATES,
+                    connected_as=connected_as,
+                )
+                if not won:
+                    raise _SessionEndedError(close_session_id)
             # Look up the credential once so we can stamp the oauth_tokens
             # row with the shared-registration provenance. Nullable — legacy
             # embedded credentials just leave it NULL.
@@ -4964,12 +5055,7 @@ class ConnectSessionService:
                 credential.updated_at = datetime.now(UTC)
                 await session.flush()
             if close_session_id is not None:
-                closed = await ConnectSessionRepository.update_fields(
-                    session,
-                    close_session_id,
-                    state="connected",
-                    connected_as=connected_as,
-                )
+                closed = await ConnectSessionRepository.get_by_id(session, close_session_id)
                 if closed is not None:
                     await ConnectSessionOutcomeRepository.record(
                         session,
@@ -5180,7 +5266,11 @@ class ConnectSessionService:
         ``_mark_terminal`` (CAS-guarded), so a session that completes
         between the read and the sweep is left alone. Vendor OAuth flows
         expire after ``_SESSION_TTL_SECONDS``; every other flow after
-        ``control.connect.manual_flows_ttl_hours``.
+        ``control.connect.manual_flows_ttl_hours``. An auth-code session
+        waiting on its callback (``polling``) also expires once its signed
+        callback state has (``credentials.connect.state_ttl_seconds`` after
+        confirm, plus a minute's grace): no callback can complete it after
+        that, so the agent waiting on it learns at once.
 
         The same tick drops outcomes older than the retention window.
         Returns the number of sessions actually expired.
@@ -5223,9 +5313,25 @@ class ConnectSessionService:
                 flows=_OAUTH_FLOWS,
                 exclude_target_kind=TARGET_KIND_VENDOR,
             )
+            lapsed_ids = await ConnectSessionRepository.list_lapsed_ids(
+                read_session,
+                state="polling",
+                flow=AuthCodeFlowHandler.kind,
+                updated_before=now
+                - timedelta(seconds=self._ctx.config.credentials.connect.state_ttl_seconds)
+                - _CALLBACK_STATE_GRACE,
+                limit=limit,
+            )
         expired = 0
         for session_id in stale_ids:
             if await self._mark_terminal(session_id, "expired", "session TTL exceeded"):
+                expired += 1
+        for session_id in lapsed_ids:
+            if session_id in stale_ids:
+                continue
+            if await self._mark_terminal(
+                session_id, "expired", "authorization not completed in time"
+            ):
                 expired += 1
         async with self._ctx.control_db.transaction() as session:
             await ConnectSessionOutcomeRepository.delete_ended_before(
@@ -5235,7 +5341,9 @@ class ConnectSessionService:
 
     # ---- redirect-based (auth-code / MCP) completion ----------------------
 
-    async def mark_terminal_from_callback(self, *, raw_state: str, error: str) -> str:
+    async def mark_terminal_from_callback(
+        self, *, raw_state: str, error: str, browser_binding: str | None
+    ) -> str:
         """Mark a session ``failed`` from a callback landing that carried no
         usable code (vendor returned ``error`` or dropped ``code`` entirely).
 
@@ -5245,10 +5353,12 @@ class ConnectSessionService:
         one-shot nonce too, or a captured callback URL with
         ``error=access_denied`` could be replayed after a successful
         connect (``_mark_terminal``'s CAS is the second line of defence).
-        Raises ``StateError`` subclasses on decode / replay failures.
+        Raises ``StateError`` subclasses on decode / replay failures, and
+        when ``browser_binding`` (the callback's binding cookie) does not
+        match — then nothing is written and the session stays live.
         Returns the session id for the router's log line.
         """
-        state = await consume_callback_state(self._ctx, raw_state)
+        state = await consume_callback_state(self._ctx, raw_state, browser_binding=browser_binding)
         if state.session_id is None:
             raise NoOpForFlowError("callback state missing session id")
         await self._mark_terminal(state.session_id, "failed", error, error_code="callback_error")
@@ -5320,6 +5430,7 @@ class ConnectSessionService:
         *,
         raw_state: str,
         code: str,
+        browser_binding: str | None,
     ) -> StatusResult:
         """Complete a connect session from an OAuth callback landing.
 
@@ -5335,17 +5446,35 @@ class ConnectSessionService:
         doesn't support a callback path (device flow) — a defensive
         guard the router should never trip, since only auth-code state
         JWTs carry a ``sid``.
+
+        ``browser_binding`` is the binding cookie the callback carried; a
+        missing or mismatched one is refused before the nonce is consumed,
+        leaving the session live for the approver's own browser.
         """
-        state = await consume_callback_state(self._ctx, raw_state)
+        state = await consume_callback_state(self._ctx, raw_state, browser_binding=browser_binding)
         if state.session_id is None:
             # State without ``sid`` doesn't belong on this path — router
             # dispatches to the standalone-credential handler for those.
             raise NoOpForFlowError("callback state missing session id")
 
-        async with self._ctx.control_db.session() as read_session:
-            row = await ConnectSessionRepository.get_by_id(read_session, state.session_id)
+        # The callback has arrived: bump ``updated_at`` on a live session so
+        # the TTL sweep (which expires a ``polling`` auth-code session once
+        # its callback state lapses) is unlikely to pick it up during a slow
+        # exchange. This only narrows the window — a sweep that listed the id
+        # before this touch can still expire it. The guarantee is the
+        # ``from_states`` CAS in ``_write_finalise``: a session that ended
+        # meanwhile is never marked connected and its grant is rolled back.
+        # A terminal session is left untouched.
+        async with self._ctx.control_db.transaction() as touch_session:
+            row = await ConnectSessionRepository.get_by_id(touch_session, state.session_id)
             if row is None:
                 raise SessionNotFoundError(state.session_id)
+            if row.state in LIVE_STATES:
+                row = await ConnectSessionRepository.update_fields(
+                    touch_session, state.session_id, updated_at=datetime.now(UTC)
+                )
+                if row is None:  # pragma: no cover - fetched in this transaction
+                    raise SessionNotFoundError(state.session_id)
 
         # Callback-only handler concretely by construction — the state JWT
         # that carries ``sid`` is signed by the auth-code path, so any

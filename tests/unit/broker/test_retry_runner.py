@@ -1,11 +1,11 @@
-"""Unit tests for the ``RetryRunner`` decorator (§09 E4.1).
+"""Unit tests for the ``RetryRunner`` decorator.
 
 Retry is the capability-gated, idempotency-aware loop wrapping the
-breaker-decorated transport. The gate is ``pre_send OR idempotent_method OR
-has_idempotency_key``: a connect-phase failure retries for any method, a
-post-send failure (read timeout, mirrored 429/503) only for safe methods or with
-an ``Idempotency-Key``. Backoff is exponential + full jitter, an upstream
-``Retry-After`` is honored, and the whole loop is bounded by the deadline.
+breaker-decorated transport. The gate is ``pre_send OR idempotent_method``:
+a connect-phase failure retries for any method, while a post-send failure
+(read timeout, mirrored 429/503) retries only for idempotent HTTP methods
+(#1799). Backoff is exponential + full jitter, an upstream ``Retry-After`` is
+honored, and the whole loop is bounded by the deadline.
 """
 
 from __future__ import annotations
@@ -77,8 +77,8 @@ def _get(url: str = "https://api.example.com/x") -> RunnerRequest:
     return RunnerRequest(method="GET", url=url)
 
 
-def _post(*, keyed: bool = False) -> RunnerRequest:
-    return RunnerRequest(method="POST", url="https://api.example.com/x", has_idempotency_key=keyed)
+def _post(headers: dict[str, str] | None = None) -> RunnerRequest:
+    return RunnerRequest(method="POST", url="https://api.example.com/x", headers=headers or {})
 
 
 # --- idempotency classification -------------------------------------------------
@@ -89,49 +89,56 @@ def test_idempotent_methods() -> None:
         assert _is_idempotent(RunnerRequest(method=method, url="https://x"))
 
 
-def test_post_without_key_is_not_idempotent() -> None:
+def test_post_and_patch_are_not_idempotent() -> None:
     assert not _is_idempotent(_post())
+    assert not _is_idempotent(RunnerRequest(method="patch", url="https://x"))
 
 
-def test_post_with_idempotency_key_flag_is_idempotent() -> None:
-    assert _is_idempotent(_post(keyed=True))
-    assert _is_idempotent(RunnerRequest(method="patch", url="https://x", has_idempotency_key=True))
-
-
-def test_idempotency_key_header_alone_does_not_count() -> None:
-    # Pins #1711: the gate reads the handler-set flag. ``headers`` are the
-    # upstream-bound set, which never carries the broker-consumed key.
-    request = RunnerRequest(
-        method="POST", url="https://api.example.com/x", headers={"Idempotency-Key": "abc"}
+def test_idempotency_key_header_does_not_license_post_send_retry() -> None:
+    # Pins #1799: the broker consumes Idempotency-Key and strips it from
+    # outbound headers, so the upstream cannot deduplicate a post-send retry of
+    # POST or PATCH even when a caller supplies the header.
+    assert not _is_idempotent(_post(headers={"Idempotency-Key": "abc"}))
+    assert not _is_idempotent(
+        RunnerRequest(method="PATCH", url="https://x", headers={"idempotency-key": "abc"})
     )
-    assert not _is_idempotent(request)
 
 
 # --- transport-error retry decisions -------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_connect_phase_error_retries_any_method() -> None:
-    # Key-less POST + connect-phase (pre_send) error → retryable (no bytes sent).
+@pytest.mark.parametrize("method", ["POST", "PATCH"])
+@pytest.mark.parametrize("headers", [{}, {"Idempotency-Key": "k1"}], ids=["unkeyed", "keyed"])
+async def test_connect_phase_error_retries_any_method(method: str, headers: dict[str, str]) -> None:
+    # POST/PATCH + connect-phase (pre_send) error → retryable (no bytes sent).
     err = UpstreamTimeoutError(detail="connect", origin=ErrorOrigin.UPSTREAM, pre_send=True)
     inner = _ScriptedRunner([err, _ok(201)])
     runner = RetryRunner(inner, max_attempts=3, base_backoff_s=0.0)
 
-    result = await runner.run(_post())
+    result = await runner.run(
+        RunnerRequest(method=method, url="https://api.example.com/x", headers=headers)
+    )
 
     assert result.status_code == 201
     assert inner.calls == 2
 
 
 @pytest.mark.asyncio
-async def test_post_send_error_not_retried_for_keyless_post() -> None:
-    # Post-send read timeout on a key-less POST → double-spend risk, no retry.
+@pytest.mark.parametrize("method", ["POST", "PATCH"])
+@pytest.mark.parametrize("headers", [{}, {"Idempotency-Key": "k1"}], ids=["unkeyed", "keyed"])
+async def test_post_send_error_not_retried_for_non_idempotent_method(
+    method: str, headers: dict[str, str]
+) -> None:
+    # Post-send read timeout on POST or PATCH → double-spend risk, no retry (#1799).
     err = UpstreamTimeoutError(detail="read", origin=ErrorOrigin.UPSTREAM)
     inner = _ScriptedRunner([err, _ok(200)])
     runner = RetryRunner(inner, max_attempts=3, base_backoff_s=0.0)
 
     with pytest.raises(UpstreamTimeoutError):
-        await runner.run(_post())
+        await runner.run(
+            RunnerRequest(method=method, url="https://api.example.com/x", headers=headers)
+        )
     assert inner.calls == 1
 
 
@@ -142,18 +149,6 @@ async def test_post_send_error_retried_for_idempotent_method() -> None:
     runner = RetryRunner(inner, max_attempts=3, base_backoff_s=0.0)
 
     result = await runner.run(_get())
-
-    assert result.status_code == 200
-    assert inner.calls == 2
-
-
-@pytest.mark.asyncio
-async def test_post_send_error_retried_with_idempotency_key() -> None:
-    err = UpstreamTimeoutError(detail="read", origin=ErrorOrigin.UPSTREAM)
-    inner = _ScriptedRunner([err, _ok(200)])
-    runner = RetryRunner(inner, max_attempts=3, base_backoff_s=0.0)
-
-    result = await runner.run(_post(keyed=True))
 
     assert result.status_code == 200
     assert inner.calls == 2
@@ -185,26 +180,22 @@ async def test_retryable_status_retried_for_idempotent() -> None:
 
 
 @pytest.mark.asyncio
-async def test_retryable_status_not_retried_for_keyless_post() -> None:
-    inner = _ScriptedRunner([_ok(503), _ok(200)])
+@pytest.mark.parametrize("method", ["POST", "PATCH"])
+@pytest.mark.parametrize("status_code", [429, 503])
+@pytest.mark.parametrize("headers", [{}, {"Idempotency-Key": "k1"}], ids=["unkeyed", "keyed"])
+async def test_retryable_status_not_retried_for_non_idempotent_method(
+    method: str, status_code: int, headers: dict[str, str]
+) -> None:
+    inner = _ScriptedRunner([_ok(status_code), _ok(200)])
     runner = RetryRunner(inner, max_attempts=3, base_backoff_s=0.0)
 
-    result = await runner.run(_post())
+    result = await runner.run(
+        RunnerRequest(method=method, url="https://api.example.com/x", headers=headers)
+    )
 
-    # Returned verbatim, not retried (would double-spend a non-idempotent POST).
-    assert result.status_code == 503
+    # Returned verbatim, not retried (would double-spend a non-idempotent mutation; #1799).
+    assert result.status_code == status_code
     assert inner.calls == 1
-
-
-@pytest.mark.asyncio
-async def test_retryable_status_retried_for_keyed_post() -> None:
-    inner = _ScriptedRunner([_ok(503), _ok(503), _ok(200)])
-    runner = RetryRunner(inner, max_attempts=3, base_backoff_s=0.0)
-
-    result = await runner.run(_post(keyed=True))
-
-    assert result.status_code == 200
-    assert inner.calls == 3
 
 
 @pytest.mark.asyncio
@@ -252,11 +243,17 @@ async def test_retry_after_header_honored(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 @pytest.mark.asyncio
-async def test_stream_passes_through_without_retry() -> None:
+@pytest.mark.parametrize("method", ["GET", "POST", "PATCH"])
+async def test_stream_passes_through_without_retry(method: str) -> None:
     inner = _ScriptedRunner([_ok(200)])
     runner = RetryRunner(inner, max_attempts=3)
+    req = RunnerRequest(
+        method=method,
+        url="https://api.example.com/x",
+        headers={"Idempotency-Key": "k1"},
+    )
 
-    async with runner.stream(_get()) as result:
+    async with runner.stream(req) as result:
         assert result.status_code == 200
     assert inner.calls == 1
 

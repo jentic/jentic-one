@@ -324,6 +324,11 @@ export class IntegrationsService {
      * failed ``begin`` leaves the session retryable, so it must not be
      * free to hammer during a vendor incident. Gated like the review read
      * (``poll_token`` or owner / ``org:admin``; 403 otherwise).
+     *
+     * A response carrying an ``authorize_url`` also sets a short-lived
+     * ``HttpOnly`` cookie scoped to the OAuth callback path: the vendor
+     * sign-in completes only in the approver's browser that called this
+     * endpoint, whoever opened the session.
      * @returns any Successful Response
      * @throws ApiError
      */
