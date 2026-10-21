@@ -1026,14 +1026,14 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		expect(inDialog.getByText('/chat.post (prefix)')).toBeInTheDocument();
 	});
 
-	it('offers Add scopes only for a credential that takes more', async () => {
+	it('offers Edit scopes only for a credential whose scopes can change', async () => {
 		renderPage();
 		await screen.findByText('1 access rule');
 		const dialog = await openSidebar('Slack');
 		// A bearer token has no OAuth grant to widen.
 		await within(dialog).findByRole('button', { name: /Edit credential/ });
 		expect(
-			within(dialog).queryByRole('button', { name: /Add scopes/ }),
+			within(dialog).queryByRole('button', { name: /Edit scopes/ }),
 		).not.toBeInTheDocument();
 	});
 

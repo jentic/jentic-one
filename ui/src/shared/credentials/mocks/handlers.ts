@@ -793,9 +793,11 @@ const connectSessionsHandlers = [
 					current_revision_id: editBlock.revision.id,
 				});
 			}
-			const granted = new Set(editBlock.current.granted_scopes ?? []);
-			if ((body.confirmed_scopes ?? []).some((scope) => !granted.has(scope))) {
-				// Added scopes: the vendor consent runs first; it applies with the grant.
+			const granted = [...(editBlock.current.granted_scopes ?? [])].sort();
+			const confirmed = body.confirmed_scopes ? [...body.confirmed_scopes].sort() : granted;
+			if (JSON.stringify(confirmed) !== JSON.stringify(granted)) {
+				// Scopes added or removed: the vendor sign-in for the new set runs
+				// first; the change applies with the grant.
 				gated.state = 'polling';
 				return HttpResponse.json({
 					kind: 'authorization_code',

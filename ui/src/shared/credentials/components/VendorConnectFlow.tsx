@@ -82,6 +82,7 @@ import {
 } from '@/shared/credentials/lib/connectReview';
 import {
 	addedScopes,
+	removedScopes,
 	describeConflict,
 	describeRuleMatch,
 	resumes,
@@ -105,6 +106,7 @@ import type {
 	ReviewScope,
 	ReviewSession,
 	ScopeClassification,
+	StatusResponse,
 	VendorScopeCatalog,
 	VendorSummary,
 } from '@/shared/credentials/api/vendors-types';
@@ -175,7 +177,7 @@ export type VendorConnectFlowProps =
 			 * A person adding scopes to a binding's credential: their own change,
 			 * applied at once through an edit session, via the vendor sign-in.
 			 */
-			mode: 'add-scopes';
+			mode: 'edit-scopes';
 			agentId: string;
 			credentialId: string;
 			credentialName: string;
@@ -223,9 +225,9 @@ const DEFAULT_ALLOW_GET_RULE: PermissionRule = {
 const EMPTY_PATHS: readonly string[] = [];
 
 export function VendorConnectFlow(props: VendorConnectFlowProps) {
-	if (props.mode === 'add-scopes') {
+	if (props.mode === 'edit-scopes') {
 		return (
-			<AddScopesFlow
+			<EditScopesFlow
 				agentId={props.agentId}
 				credentialId={props.credentialId}
 				credentialName={props.credentialName}
@@ -1628,6 +1630,7 @@ function EditApproveFlow({
 	const conflicts = shown.conflicts ?? [];
 	const changes = useMemo(() => ruleChanges(shown), [shown]);
 	const newScopes = useMemo(() => addedScopes(shown), [shown]);
+	const droppedScopes = useMemo(() => removedScopes(shown), [shown]);
 	const editedRules =
 		JSON.stringify(rules) !== JSON.stringify(rulesToConfirm(shown.result.rules));
 	const credentialName = shown.binding.credential_name ?? session.vendor_display_name;
@@ -1665,11 +1668,7 @@ function EditApproveFlow({
 		const err = polling.error as { status?: number } | undefined;
 		const status = polling.data?.status;
 		if (err?.status === 403 || status === 'failed' || status === 'expired') {
-			setFailure(
-				status === 'expired'
-					? 'The sign-in expired before the scopes were granted. Nothing changed.'
-					: 'The scopes weren’t granted, so nothing changed.',
-			);
+			setFailure(signInFailure(polling.data));
 			goTo('terminal');
 			void queryClient.invalidateQueries({ queryKey: connectRequestsKey });
 			return;
@@ -1908,17 +1907,27 @@ function EditApproveFlow({
 				<RuleChangeList changes={changes} />
 			</section>
 
-			{newScopes.length > 0 && (
+			{(newScopes.length > 0 || droppedScopes.length > 0) && (
 				<section aria-label="Scope changes" className="space-y-1 text-sm">
-					<h3 className="font-medium">Scopes to add</h3>
-					<p className="font-mono text-xs">{newScopes.join(', ')}</p>
+					{newScopes.length > 0 && (
+						<>
+							<h3 className="font-medium">Scopes to add</h3>
+							<p className="font-mono text-xs">{newScopes.join(', ')}</p>
+						</>
+					)}
+					{droppedScopes.length > 0 && (
+						<>
+							<h3 className="font-medium">Scopes to remove</h3>
+							<p className="font-mono text-xs">{droppedScopes.join(', ')}</p>
+						</>
+					)}
 					<p className="text-muted-foreground text-xs">
-						Approving asks you to sign in again to grant them; nothing changes until you
-						do.
+						Approving asks you to sign in to the vendor again for the new set of scopes;
+						nothing changes until you do.
 					</p>
 					{otherAgents.length > 0 && (
 						<p className="text-muted-foreground text-xs">
-							They also reach{' '}
+							The changes also reach{' '}
 							{otherAgents.length === 1
 								? '1 other agent'
 								: `${otherAgents.length} other agents`}{' '}
@@ -2005,6 +2014,17 @@ function EditApproveFlow({
 	);
 }
 
+/** Why a scope change's vendor sign-in ended without applying it. */
+function signInFailure(status: StatusResponse | undefined): string {
+	if (status?.status === 'expired') {
+		return 'The sign-in expired before the scopes were granted. Nothing changed.';
+	}
+	if (status?.error_code === 'scopes_not_removed') {
+		return 'The vendor kept scopes this change removes, so nothing changed. Revoke the app’s access at the vendor to drop them, then try again.';
+	}
+	return 'The scopes weren’t granted, so nothing changed.';
+}
+
 /** Why a person's change was refused, for the scopes step. */
 function describeEditError(err: unknown): string {
 	if (err instanceof IntegrationsApiError && err.code === 'connect_session_unknown_scopes') {
@@ -2013,18 +2033,19 @@ function describeEditError(err: unknown): string {
 		return `The vendor doesn’t offer ${names ? `these scopes: ${names}` : 'those scopes'}. Check the names and try again.`;
 	}
 	if (err instanceof IntegrationsApiError && err.code === 'nothing_to_change') {
-		return 'Those scopes are already granted. Pick one the credential doesn’t hold yet.';
+		return 'Those are the scopes it has already.';
 	}
 	return err instanceof Error ? err.message : 'The change couldn’t be started. Try again.';
 }
 
 /**
- * A person adding scopes to a binding's credential: their own change, applied
- * as they make it through an edit session (`apply`). It goes straight to the
- * vendor sign-in, the same step an approved agent request runs. An agent's
- * open request for the binding is rebased onto it once it lands.
+ * A person changing the scopes on a binding's credential (adding, removing or
+ * both): their own change, applied as they make it through an edit session
+ * (`apply`). It goes straight to the vendor sign-in for the new set, the same
+ * step an approved agent request runs. An agent's open request for the
+ * binding is rebased onto it once it lands.
  */
-function AddScopesFlow({
+function EditScopesFlow({
 	agentId,
 	credentialId,
 	credentialName,
@@ -2043,8 +2064,9 @@ function AddScopesFlow({
 	const access = useBindingAccess(agentId, credentialId);
 	const start = useStartEditConnection();
 	const cancelMutation = useCancelConnectSession();
-	const [scopes, setScopes] = useState('');
-	const [pickedScopes, setPickedScopes] = useState<Set<string>>(() => new Set());
+	const [typed, setTyped] = useState('');
+	// The scopes ticked; untouched, it is the grant as it stands.
+	const [picked, setPicked] = useState<Set<string> | null>(null);
 	const [reason, setReason] = useState('');
 	const [error, setError] = useState<string | null>(null);
 	const [consent, setConsent] = useState<{
@@ -2077,10 +2099,7 @@ function AddScopesFlow({
 			toast({ title: 'Access updated', variant: 'success' });
 		} else if (status === 'failed' || status === 'expired') {
 			setOutcome({
-				failed:
-					status === 'expired'
-						? 'The sign-in expired before the scopes were granted. Nothing changed.'
-						: 'The scopes weren’t granted, so nothing changed.',
+				failed: signInFailure(polling.data),
 			});
 		}
 	}, [consent, outcome, polling.data, queryClient, agentId, credentialId]);
@@ -2134,16 +2153,35 @@ function AddScopesFlow({
 	}
 
 	const granted = data.granted_scopes ?? [];
-	// The vendor's scopes not granted yet. Without a catalog, a scope is named
-	// as text and passed to the vendor as asked.
-	const catalog = data.scope_catalog
-		? data.scope_catalog
-				.filter((scope) => !granted.includes(scope.name))
-				.map((scope) => ({ ...scope, default: false }))
-		: null;
-	const toAdd = catalog
-		? [...pickedScopes]
-		: [...new Set(scopes.split(/[\s,]+/).filter(Boolean))].filter((s) => !granted.includes(s));
+	const chosen = picked ?? new Set(granted);
+	// Every scope to tick or untick: the vendor's catalog, plus any the grant
+	// holds that it doesn't list. Without a catalog, the grant's scopes, and
+	// more are named as text and passed to the vendor as asked.
+	const options = [
+		...(data.scope_catalog ?? []).map((scope) => ({ ...scope, default: false })),
+		...granted
+			.filter((name) => !data.scope_catalog?.some((scope) => scope.name === name))
+			.map((name) => ({
+				name,
+				classification: 'read' as const,
+				default: false,
+				description: '',
+			})),
+	];
+	const next = [
+		...new Set([
+			...chosen,
+			...(data.scope_catalog ? [] : typed.split(/[\s,]+/).filter(Boolean)),
+		]),
+	].sort();
+	const changed = JSON.stringify(next) !== JSON.stringify([...granted].sort());
+	const toggle = (name: string): void =>
+		setPicked(() => {
+			const updated = new Set(chosen);
+			if (updated.has(name)) updated.delete(name);
+			else updated.add(name);
+			return updated;
+		});
 
 	const submit = async (): Promise<void> => {
 		setError(null);
@@ -2151,7 +2189,7 @@ function AddScopesFlow({
 			const result = await start.mutateAsync({
 				agent_id: agentId,
 				credential_id: credentialId,
-				scopes: { add: toAdd },
+				scopes: { set: next },
 				reason: reason.trim() || undefined,
 				apply: true,
 			});
@@ -2175,49 +2213,44 @@ function AddScopesFlow({
 
 	return (
 		<div className="space-y-5">
-			<VendorHeader display={display} subtitle={`Add OAuth scopes to ${credentialName}.`} />
+			<VendorHeader
+				display={display}
+				subtitle={`Change the OAuth scopes on ${credentialName}.`}
+			/>
 
 			{!data.scopes_addable ? (
 				<p className="text-muted-foreground text-sm">
-					This credential can’t take more scopes here.
+					This credential’s scopes can’t be changed here.
 				</p>
-			) : catalog && catalog.length === 0 ? (
-				<p className="text-muted-foreground text-sm">
-					Every scope the vendor offers is already granted.
-				</p>
-			) : catalog ? (
-				<ScopeChooseField
-					label="Scopes to add"
-					loading={false}
-					error={null}
-					scopes={catalog}
-					selected={pickedScopes}
-					onToggle={(name: string): void =>
-						setPickedScopes((picked) => {
-							const next = new Set(picked);
-							if (next.has(name)) next.delete(name);
-							else next.add(name);
-							return next;
-						})
-					}
-				/>
 			) : (
-				<div className="space-y-1">
-					<Label htmlFor={scopesId}>Scopes to add</Label>
-					<Input
-						id={scopesId}
-						value={scopes}
-						onChange={(e) => setScopes(e.target.value)}
-						placeholder="Separate scopes with spaces or commas"
-					/>
-				</div>
-			)}
-			{data.scopes_addable && (
-				<p className="text-muted-foreground text-xs">
-					Granted today: {granted.length > 0 ? granted.join(', ') : 'none'}. You sign in
-					to the vendor again to grant new ones; every agent using this credential gets
-					them.
-				</p>
+				<>
+					{options.length > 0 && (
+						<ScopeChooseField
+							label="Scopes"
+							loading={false}
+							error={null}
+							scopes={options}
+							selected={chosen}
+							onToggle={toggle}
+						/>
+					)}
+					{!data.scope_catalog && (
+						<div className="space-y-1">
+							<Label htmlFor={scopesId}>Scopes to add</Label>
+							<Input
+								id={scopesId}
+								value={typed}
+								onChange={(e) => setTyped(e.target.value)}
+								placeholder="Separate scopes with spaces or commas"
+							/>
+						</div>
+					)}
+					<p className="text-muted-foreground text-xs">
+						Granted today: {granted.length > 0 ? granted.join(', ') : 'none'}. Saving
+						signs in to the vendor again for the new set; every agent using this
+						credential gets the change.
+					</p>
+				</>
 			)}
 
 			<div className="space-y-1">
@@ -2241,10 +2274,10 @@ function AddScopesFlow({
 					type="button"
 					variant="primary"
 					loading={start.isPending}
-					disabled={toAdd.length === 0}
+					disabled={!changed}
 					onClick={(): void => void submit()}
 				>
-					Sign in and add
+					Sign in and save
 				</Button>
 			</div>
 		</div>

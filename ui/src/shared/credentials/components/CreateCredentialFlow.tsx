@@ -148,10 +148,10 @@ interface CreateCredentialFlowProps {
 	 */
 	approvalSession?: { sessionId: string; pollToken?: string };
 	/**
-	 * When provided, the flow opens on adding scopes to one binding's
+	 * When provided, the flow opens on changing the scopes on one binding's
 	 * credential: the person's own change, applied via the vendor sign-in.
 	 */
-	addScopes?: {
+	editScopes?: {
 		agentId: string;
 		credentialId: string;
 		credentialName: string;
@@ -244,7 +244,7 @@ export function CreateCredentialFlow({
 	initialVendor,
 	surface = 'sheet',
 	approvalSession,
-	addScopes,
+	editScopes,
 	preselectedAgentId,
 	onVendorConnected,
 	renderPostConnect,
@@ -897,8 +897,8 @@ export function CreateCredentialFlow({
 		approvalSession?.pollToken,
 	);
 	const approvingEdit = approvalSession != null && approvalReview.data?.edit != null;
-	const title = addScopes
-		? 'Add scopes'
+	const title = editScopes
+		? 'Edit scopes'
 		: approvingEdit
 			? 'Review access change'
 			: approvalSession
@@ -917,8 +917,8 @@ export function CreateCredentialFlow({
 		: 'Fill in the credential details';
 	// A pinned API removes the pick step, so the step counter would be lying. The
 	// vendor path is its own two-step flow, so it drops the counter too.
-	const subtitle = addScopes ? (
-		<span>Grant the agent more of what the vendor offers.</span>
+	const subtitle = editScopes ? (
+		<span>Add or remove what the credential can do at the vendor.</span>
 	) : approvingEdit ? (
 		<span>An agent is asking to change its access.</span>
 	) : approvalSession ? (
@@ -976,7 +976,7 @@ export function CreateCredentialFlow({
 	// Approve mode and the vendor step render VendorConnectFlow's own inline
 	// action bar, so the flow's footer stands down for both.
 	const footer =
-		addScopes || approvalSession || step === 'vendor' ? undefined : step === 'pick' ? (
+		editScopes || approvalSession || step === 'vendor' ? undefined : step === 'pick' ? (
 			// Always reachable, not only from no-results: an operator who knows the
 			// API isn't catalogued shouldn't have to search first.
 			<Button
@@ -1045,8 +1045,8 @@ export function CreateCredentialFlow({
 			</>
 		) : undefined;
 
-	const body = addScopes ? (
-		<VendorConnectFlow mode="add-scopes" {...addScopes} onBack={onClose} onDone={onClose} />
+	const body = editScopes ? (
+		<VendorConnectFlow mode="edit-scopes" {...editScopes} onBack={onClose} onDone={onClose} />
 	) : approvalSession ? (
 		<VendorConnectFlow
 			mode="approve"
@@ -1455,7 +1455,7 @@ export function CreateCredentialFlow({
 	);
 
 	/** A connect session is open (created on `VendorConnectFlow` mount). */
-	const connectInPlay = !!addScopes || !!approvalSession || step === 'vendor';
+	const connectInPlay = !!editScopes || !!approvalSession || step === 'vendor';
 
 	if (surface === 'dialog') {
 		return (
@@ -1464,7 +1464,7 @@ export function CreateCredentialFlow({
 				onClose={onClose}
 				title={title}
 				subtitle={subtitle}
-				size={addScopes || approvalSession || step !== 'form' ? 'lg' : 'xl'}
+				size={editScopes || approvalSession || step !== 'form' ? 'lg' : 'xl'}
 				footer={footer}
 				dismissOnBackdrop={false}
 			>

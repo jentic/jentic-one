@@ -161,6 +161,39 @@ describe('VendorConnectFlow approve — edit sessions', () => {
 		);
 	});
 
+	it('lists scopes to remove and runs the sign-in for the narrower set', async () => {
+		const seeded = seedEdit(
+			editBlock({
+				current: {
+					rules: [READ, DENY],
+					rule_set: null,
+					suspended: false,
+					granted_scopes: ['gmail.readonly', 'gmail.modify'],
+				},
+				result: {
+					target: 'binding',
+					rules: [READ, DENY],
+					scopes: ['gmail.readonly'],
+					suspended: false,
+				},
+				widens_access: false,
+				needs_vendor_consent: true,
+			}),
+		);
+		renderApprove(seeded.session_id);
+		const user = userEvent.setup();
+
+		const scopes = await screen.findByRole('region', { name: 'Scope changes' });
+		expect(scopes).toHaveTextContent(/Scopes to remove\s*gmail\.modify/);
+		expect(scopes).not.toHaveTextContent('Scopes to add');
+		await user.click(screen.getByRole('button', { name: 'Approve and sign in' }));
+		await waitFor(() =>
+			expect(getMockConnectSessions()[0].confirmBodies[0]).toMatchObject({
+				confirmed_scopes: ['gmail.readonly'],
+			}),
+		);
+	});
+
 	it('pauses Approve when the request changes under the reviewer', async () => {
 		const seeded = seedEdit(editBlock());
 		renderApprove(seeded.session_id);

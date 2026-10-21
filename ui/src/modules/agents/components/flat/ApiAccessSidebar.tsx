@@ -7,7 +7,7 @@
  * Suspend/resume is the reversible cut-off, so it sits in the header.
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ExternalLink, Info, LogIn, PauseCircle, Pencil, PlayCircle, Plus, X } from 'lucide-react';
+import { ExternalLink, Info, LogIn, PauseCircle, Pencil, PlayCircle, X } from 'lucide-react';
 import {
 	Button,
 	CodeSnippet,
@@ -167,12 +167,12 @@ export function ApiAccessSidebar({
 	// The edit sheet is a SECOND SheetPrimitive: its Escape must not tear down this
 	// sidebar. The confirms are native `<dialog>`s, which SheetPrimitive yields to.
 	const [editOpen, setEditOpen] = useState(false);
-	const [addScopesOpen, setAddScopesOpen] = useState(false);
+	const [editScopesOpen, setEditScopesOpen] = useState(false);
 	const [reviewingEdit, setReviewingEdit] = useState<string | null>(null);
 	const [deleteOpen, setDeleteOpen] = useState(false);
 	const [unbindOpen, setUnbindOpen] = useState(false);
 	const guardedClose = (): void => {
-		if (editOpen || addScopesOpen || reviewingEdit) return;
+		if (editOpen || editScopesOpen || reviewingEdit) return;
 		onClose();
 	};
 
@@ -194,7 +194,7 @@ export function ApiAccessSidebar({
 	const canWriteCredentials = useCanAccess(CREDENTIALS_WRITE);
 	const credentialLocked = credentialReadOnly || !canWriteCredentials;
 	const permissions = useAgentBindingPermissions(open ? agent.id : null, credentialId);
-	// Whether the credential takes more scopes (the Add scopes entry).
+	// Whether the credential's scopes can change (the Edit scopes entry).
 	const access = useBindingAccess(agent.id, credentialId ?? '', {
 		enabled: open && credentialId != null && !credentialLocked,
 	});
@@ -528,9 +528,9 @@ export function ApiAccessSidebar({
 												<Button
 													size="xs"
 													variant="tonal"
-													onClick={() => setAddScopesOpen(true)}
+													onClick={() => setEditScopesOpen(true)}
 												>
-													<Plus className="h-4 w-4" /> Add scopes
+													<Pencil className="h-4 w-4" /> Edit scopes
 												</Button>
 											)}
 											<Button
@@ -721,17 +721,17 @@ export function ApiAccessSidebar({
 				/>
 			)}
 
-			{addScopesOpen && shown && (
+			{editScopesOpen && shown && (
 				<CreateCredentialFlow
 					open
-					addScopes={{
+					editScopes={{
 						agentId: agent.id,
 						credentialId: shown.credentialId,
 						credentialName: shown.credentialName,
 						vendorKey: shown.vendor,
 					}}
-					onClose={() => setAddScopesOpen(false)}
-					onCreated={() => setAddScopesOpen(false)}
+					onClose={() => setEditScopesOpen(false)}
+					onCreated={() => setEditScopesOpen(false)}
 				/>
 			)}
 

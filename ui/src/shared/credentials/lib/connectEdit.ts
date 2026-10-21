@@ -100,6 +100,12 @@ export function addedScopes(edit: ReviewEdit): string[] {
 	return edit.result.scopes.filter((scope) => !granted.has(scope));
 }
 
+/** Scopes the credential's grant holds today that the result drops. */
+export function removedScopes(edit: ReviewEdit): string[] {
+	const result = new Set(edit.result.scopes);
+	return (edit.current.granted_scopes ?? []).filter((scope) => !result.has(scope));
+}
+
 /** Whether approving switches a suspended binding back on. */
 export function resumes(edit: ReviewEdit): boolean {
 	return edit.current.suspended && !edit.result.suspended;

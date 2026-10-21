@@ -380,7 +380,8 @@ export interface EditConnectionBody {
 	credential_id: string;
 	/** The full rule list to replace today's with (the edit's ``set``). */
 	rules?: { set: PermissionRule[] };
-	scopes?: { add: string[] };
+	/** The scope change, shaped like the rule change: ``add``/``remove`` or ``set``. */
+	scopes?: { add?: string[]; remove?: string[]; set?: string[] };
 	resume?: boolean;
 	reason?: string;
 	/** A person approving their own change as they make it: written at once. */

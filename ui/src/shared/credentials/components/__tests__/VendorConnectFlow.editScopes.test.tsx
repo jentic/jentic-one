@@ -12,9 +12,10 @@ import {
 import { resetAgentsStore, seedCredentialBindings } from '@/modules/agents/mocks/handlers';
 
 /**
- * Edit mode: a person adds scopes to a binding's credential. It's their own
- * change, applied at once through an edit session, so it goes straight to the
- * vendor sign-in, the same step an approved agent request runs.
+ * Edit-scopes mode: a person adds and removes scopes on a binding's
+ * credential. It's their own change, applied at once through an edit
+ * session, so it goes straight to the vendor sign-in for the new set, the
+ * same step an approved agent request runs.
  */
 
 const READ = {
@@ -48,7 +49,7 @@ function renderEdit() {
 	const onDone = vi.fn();
 	renderWithProviders(
 		<VendorConnectFlow
-			mode="add-scopes"
+			mode="edit-scopes"
 			agentId="agnt_1"
 			credentialId="cred_gmail"
 			credentialName="Work Gmail"
@@ -71,20 +72,23 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
-describe('VendorConnectFlow edit — a person adding scopes', () => {
-	it('picks from the vendor’s catalog and goes straight to the sign-in', async () => {
+describe('VendorConnectFlow edit-scopes — a person changing scopes', () => {
+	it('ticks and unticks from the vendor’s catalog and goes straight to the sign-in', async () => {
 		seedBinding({ scope_catalog: CATALOG });
 		renderEdit();
 		const user = userEvent.setup();
 
-		await screen.findByText('Add OAuth scopes to Work Gmail.');
-		// Granted scopes aren't offered again.
-		expect(screen.queryByText('gmail.readonly', { selector: 'code' })).not.toBeInTheDocument();
+		await screen.findByText('Change the OAuth scopes on Work Gmail.');
+		// Nothing to save until the set differs from the grant.
+		expect(screen.getByRole('button', { name: 'Sign in and save' })).toBeDisabled();
+		// Swap a granted scope for another.
+		await user.click(screen.getByText('gmail.readonly', { selector: 'code' }));
 		await user.click(screen.getByText('gmail.send', { selector: 'code' }));
-		await user.click(screen.getByRole('button', { name: 'Sign in and add' }));
+		await user.click(screen.getByRole('button', { name: 'Sign in and save' }));
 
 		await waitFor(() => expect(window.open).toHaveBeenCalled());
 		const [session] = getMockConnectSessions();
+		expect(session.edit?.result.scopes).toEqual(['gmail.send']);
 		expect(window.open).toHaveBeenCalledWith(
 			`https://vendor.example.test/oauth/authorize?edit=${session.session_id}`,
 			'_blank',
@@ -116,9 +120,10 @@ describe('VendorConnectFlow edit — a person adding scopes', () => {
 		const user = userEvent.setup();
 
 		const field = await screen.findByLabelText('Scopes to add');
-		expect(screen.getByRole('button', { name: 'Sign in and add' })).toBeDisabled();
+		// The grant's scopes are listed to untick, even without a catalog.
+		expect(screen.getByText('gmail.readonly', { selector: 'code' })).toBeInTheDocument();
 		await user.type(field, 'gmail.sned');
-		await user.click(screen.getByRole('button', { name: 'Sign in and add' }));
+		await user.click(screen.getByRole('button', { name: 'Sign in and save' }));
 		expect(
 			await screen.findByText(/doesn’t offer these scopes: gmail.sned/),
 		).toBeInTheDocument();
@@ -158,7 +163,7 @@ describe('VendorConnectFlow edit — a person adding scopes', () => {
 		renderEdit();
 		const user = userEvent.setup();
 		await user.click(await screen.findByText('gmail.send', { selector: 'code' }));
-		await user.click(screen.getByRole('button', { name: 'Sign in and add' }));
+		await user.click(screen.getByRole('button', { name: 'Sign in and save' }));
 
 		await waitFor(() => expect(window.open).toHaveBeenCalled());
 		// Both are open: the agent's request waits on its review.
@@ -166,11 +171,11 @@ describe('VendorConnectFlow edit — a person adding scopes', () => {
 		expect(getMockConnectSessions()).toHaveLength(2);
 	});
 
-	it('says when the credential can’t take more scopes', async () => {
+	it('says when the credential’s scopes can’t change', async () => {
 		seedBinding({ granted_scopes: null });
 		renderEdit();
 		expect(
-			await screen.findByText('This credential can’t take more scopes here.'),
+			await screen.findByText('This credential’s scopes can’t be changed here.'),
 		).toBeInTheDocument();
 	});
 });

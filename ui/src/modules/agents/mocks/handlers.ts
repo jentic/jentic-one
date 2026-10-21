@@ -2052,7 +2052,15 @@ export const agentsHandlers = [
 		const today = (set?.rules ?? row.permissions).filter((r) => !r._system).map(view);
 		const result = body.rules ? body.rules.set.map((r) => view(r, null)) : today;
 		const granted = row.granted_scopes ?? [];
-		const added = (body.scopes?.add ?? []).filter((s) => !granted.includes(s));
+		// Scopes change like rules: add/remove, or the full list in set.
+		const nextScopes = (
+			body.scopes?.set ??
+			[...new Set([...granted, ...(body.scopes?.add ?? [])])].filter(
+				(s) => !(body.scopes?.remove ?? []).includes(s),
+			)
+		).sort();
+		const added = nextScopes.filter((s) => !granted.includes(s));
+		const scopesChange = JSON.stringify(nextScopes) !== JSON.stringify([...granted].sort());
 		const offered = row.scope_catalog?.map((scope) => scope.name);
 		const unknown = offered ? added.filter((s) => !offered.includes(s)) : [];
 		if (unknown.length > 0) {
@@ -2070,7 +2078,7 @@ export const agentsHandlers = [
 		const content = (rules: EditRuleView[]) =>
 			JSON.stringify(rules.map(({ id: _id, ...rule }) => rule));
 		const rulesChange = body.rules != null && content(result) !== content(today);
-		if (!rulesChange && added.length === 0 && !resume) {
+		if (!rulesChange && !scopesChange && !resume) {
 			return HttpResponse.json(
 				{ type: 'nothing_to_change', status: 422, detail: 'The edit changes nothing.' },
 				{ status: 422, headers: { 'Content-Type': 'application/problem+json' } },
@@ -2080,7 +2088,7 @@ export const agentsHandlers = [
 			const refused = ruleSchemaError(body.rules.set as BindingRule[]);
 			if (refused) return refused;
 		}
-		if (body.apply && added.length === 0) {
+		if (body.apply && !scopesChange) {
 			if (body.rules) {
 				if (set && !set.curated) set.rules = body.rules.set as BindingRule[];
 				else {
@@ -2131,12 +2139,12 @@ export const agentsHandlers = [
 				result: {
 					target: set && !set.curated ? 'rule_set' : 'binding',
 					rules: result,
-					scopes: [...granted, ...added],
+					scopes: nextScopes,
 					suspended: row.suspended && !resume,
 				},
 				widens_access: true,
 				other_bound_agents: [],
-				needs_vendor_consent: added.length > 0,
+				needs_vendor_consent: scopesChange,
 			},
 		});
 		// Applying added scopes goes straight to the vendor sign-in.
