@@ -4,8 +4,8 @@ Part of the always-on, transport-agnostic envelope: the
 breaker wraps *any* ``UpstreamRunner`` rather than living as an inline branch in
 the handler, so the pipeline composes it without the edge knowing it is active.
 It keys on the upstream **host** (parsed from the request URL), reads the latch
-before dispatch, and records the outcome (``5xx`` or transport error ⇒ failure)
-after.
+before dispatch, and records the outcome (``5xx`` or upstream transport error ⇒
+failure; broker-local ``local_only`` errors are skipped) after.
 
 ``observation`` mode is the safe-rollout dry run: on an open circuit it
 increments ``circuit_would_block_total`` and **still calls** the upstream instead
@@ -27,7 +27,12 @@ from jentic_one.broker.adapters.runners.base import (
     StreamingUpstreamRunner,
     UpstreamRunner,
 )
-from jentic_one.broker.core.exceptions import BrokerError, CircuitOpenError
+from jentic_one.broker.core.exceptions import (
+    BrokerError,
+    CircuitOpenError,
+    UpstreamTimeoutError,
+    UpstreamTransportError,
+)
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.resilience.circuit import CircuitBreaker
 
@@ -88,10 +93,12 @@ class CircuitBreakerRunner:
 
         try:
             result = await self._inner.run(request)
-        except BrokerError:
+        except (UpstreamTimeoutError, UpstreamTransportError) as exc:
             # A transport failure (timeout, connect error) the inner runner
-            # mapped to a BrokerError counts against the upstream.
-            await self._breaker.record(host, ok=False)
+            # mapped to an upstream error counts against the upstream, unless
+            # the failure is local to the broker's own shared pool (#1795).
+            if not exc.local_only:
+                await self._breaker.record(host, ok=False)
             raise
         await self._breaker.record(host, ok=result.status_code < 500)
         return result
@@ -129,8 +136,8 @@ class CircuitBreakerRunner:
                 recorded = True
                 await self._breaker.record(host, ok=result.status_code < 500)
                 yield result
-        except BrokerError:
-            if not recorded:
+        except (UpstreamTimeoutError, UpstreamTransportError) as exc:
+            if not recorded and not exc.local_only:
                 await self._breaker.record(host, ok=False)
             raise
 

@@ -36,6 +36,7 @@ from tests.web.auth.conftest import (
     _make_token,
     assert_same_response,
 )
+from tests.web.conftest import seeded_jwt_user
 
 pytestmark = pytest.mark.integration
 
@@ -1024,6 +1025,13 @@ async def test_approve_leaves_other_agents_alerts_untouched(
             await session.commit()
 
 
+@pytest.fixture()
+async def _rotation_user(web_context: Context) -> AsyncGenerator[str, None]:
+    async with seeded_jwt_user(web_context, "user-needs-rotation") as user_id:
+        yield user_id
+
+
+@pytest.mark.usefixtures("_rotation_user")
 def test_password_rotation_required(web_context: Context) -> None:
     """Tokens with must_change_password=True get 403 on permission-gated endpoints."""
     config = web_context.config.admin.auth

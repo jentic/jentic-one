@@ -131,6 +131,19 @@ class CachingCredentialDeriver:
         # NUL-joined so component boundaries are unambiguous (no value contains it).
         return "\x00".join((agent_id, vendor, name, version))
 
+    def invalidate_agent(self, agent_id: str) -> None:
+        """Evict all cached derivations for ``agent_id`` (#1837)."""
+        self.invalidate_agents((agent_id,))
+
+    def invalidate_credential(self, credential_id: str) -> None:
+        """Evict cached derivations when a credential is deleted or changed (#1837).
+
+        A derivation entry's ``api_served`` and ``identity_mismatch`` fields can
+        depend on any covering credential even when ``credential_id`` is not in
+        ``entry.value.credentials``, so a credential mutation clears the cache.
+        """
+        self.clear()
+
     def clear(self) -> None:
         """Drop all cached entries (useful for tests/operational invalidation)."""
         self._generation += 1

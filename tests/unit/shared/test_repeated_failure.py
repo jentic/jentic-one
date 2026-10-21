@@ -30,14 +30,19 @@ from jentic_one.shared.config import SecurityConfig
 from jentic_one.shared.events import emit_event
 from jentic_one.shared.events.repeated_failure import maybe_emit_repeated_failure
 from jentic_one.shared.jobs.execution_handler import ExecutionHandler
-from jentic_one.shared.jobs.protocols import UpstreamExecResult
+from jentic_one.shared.jobs.protocols import (
+    ActorAuthority,
+    InjectedAuth,
+    QueuedExecutionVerdict,
+    UpstreamExecResult,
+)
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.events import EVENT_TYPE_SEVERITIES, EventSeverity, EventType
 from jentic_one.shared.schemas import OperationInfo
 from tests.unit.fake_tx import SessionScope
 
 _ACTOR = "agt_repeat"
-_TOOLKIT = "tk_repeat0000000000000000000"
+_CREDENTIAL = "cred_repeat00000000000000000"
 _OPERATION = "doThing"
 _TRACE = "a" * 32
 
@@ -88,13 +93,16 @@ async def _add_failures(
     started_at: datetime | None = None,
     status: ExecutionStatus = ExecutionStatus.FAILED,
     operation_id: str = _OPERATION,
+    credential_id: str | None = _CREDENTIAL,
+    toolkit_id: str | None = None,
 ) -> None:
     started_at = started_at or datetime.now(UTC)
     for i in range(count):
         session.add(
             ExecutionRecord(
                 id=f"exec_{operation_id}_{status}_{i}_{started_at.timestamp()}",
-                toolkit_id=_TOOLKIT,
+                toolkit_id=toolkit_id,
+                credential_id=credential_id,
                 trace_id=_TRACE,
                 started_at=started_at,
                 status=status,
@@ -116,7 +124,7 @@ async def _emit(
         session,
         actor_id=_ACTOR,
         actor_type="agent",
-        toolkit_id=_TOOLKIT,
+        credential_id=_CREDENTIAL,
         operation=operation or OperationInfo(id=_OPERATION),
         trace_id=_TRACE,
         config=config or SecurityConfig(),
@@ -150,8 +158,9 @@ async def test_at_threshold_emits_one_error(session: AsyncSession) -> None:
     assert events[0].requires_action is True
     assert events[0].data["failure_count"] == 5
     assert events[0].data["actor_id"] == _ACTOR
-    assert events[0].data["toolkit_id"] == _TOOLKIT
+    assert events[0].data["credential_id"] == _CREDENTIAL
     assert events[0].data["operation_id"] == _OPERATION
+    assert f"on credential {_CREDENTIAL}" in events[0].summary
     # Cross-check against the documented severity matrix (issue #907).
     allowed = EVENT_TYPE_SEVERITIES[EventType.EXECUTION_REPEATED_FAILURE]
     assert EventSeverity(events[0].severity) in allowed
@@ -340,18 +349,46 @@ async def test_new_event_after_window_rolls_off(session: AsyncSession) -> None:
     assert len(await _repeated_events(session)) == 2
 
 
-async def test_missing_toolkit_or_operation_is_noop(session: AsyncSession) -> None:
+async def test_missing_credential_or_operation_is_noop(session: AsyncSession) -> None:
     await _add_failures(session, 10)
     await maybe_emit_repeated_failure(
         session,
         actor_id=_ACTOR,
         actor_type="agent",
-        toolkit_id=None,
+        credential_id=None,
         operation=OperationInfo(id=_OPERATION),
         trace_id=_TRACE,
         config=SecurityConfig(execution_repeated_failure_threshold=5),
     )
+    await maybe_emit_repeated_failure(
+        session,
+        actor_id=_ACTOR,
+        actor_type="agent",
+        credential_id=_CREDENTIAL,
+        operation=None,
+        trace_id=_TRACE,
+        config=SecurityConfig(execution_repeated_failure_threshold=5),
+    )
     assert await _repeated_events(session) == []
+
+
+async def test_count_scopes_strictly_to_target_credential(session: AsyncSession) -> None:
+    """Failures on another credential or legacy toolkit-only rows never count
+    toward ``_CREDENTIAL``."""
+    config = SecurityConfig(execution_repeated_failure_threshold=5)
+    await _add_failures(session, 10, credential_id=None, toolkit_id="tk_legacy000000000000000000")
+    await _add_failures(session, 4, credential_id="cred_other0000000000000000")
+    await _add_failures(session, 4, credential_id=_CREDENTIAL)
+
+    await _emit(session, config)
+    assert await _repeated_events(session) == []
+
+    await _add_failures(session, 1, credential_id=_CREDENTIAL)
+    await _emit(session, config)
+    events = await _repeated_events(session)
+    assert len(events) == 1
+    assert events[0].data["credential_id"] == _CREDENTIAL
+    assert events[0].data["failure_count"] == 5
 
 
 async def test_empty_operation_id_is_noop(session: AsyncSession) -> None:
@@ -374,15 +411,35 @@ async def test_execution_handler_emits_repeated_failure(session: AsyncSession) -
                 status_code=500, body=b"boom", content_type="text/plain", duration_ms=1
             )
 
+    class _Authorizer:
+        async def authorize(self, request: object) -> QueuedExecutionVerdict:
+            return QueuedExecutionVerdict(allowed=True)
+
+    class _ActorStatus:
+        async def authority(
+            self, *, actor_id: str, actor_type: str, permission: str
+        ) -> ActorAuthority:
+            return ActorAuthority(active=True, holds_permission=True)
+
+    class _Injector:
+        async def inject(self, **_: object) -> InjectedAuth:
+            return InjectedAuth(headers={}, query_params={}, cookies={}, credential_id=_CREDENTIAL)
+
     config = SecurityConfig(execution_repeated_failure_threshold=3)
-    handler = ExecutionHandler(executor=_FailingExecutor(), security_config=config)
+    handler = ExecutionHandler(
+        executor=_FailingExecutor(),
+        credential_injector=_Injector(),
+        execution_authorizer=_Authorizer(),
+        actor_status=_ActorStatus(),
+        security_config=config,
+    )
 
     payload = {
         "execution_id": "exec_handler",
         "upstream_url": "https://api.example.com/v1/things",
         "method": "GET",
         "trace_id": _TRACE,
-        "toolkit_id": _TOOLKIT,
+        "api_vendor": "example",
         "operation": {"id": _OPERATION},
     }
 
@@ -397,3 +454,4 @@ async def test_execution_handler_emits_repeated_failure(session: AsyncSession) -
     events = await _repeated_events(session)
     assert len(events) == 1
     assert events[0].severity == EventSeverity.ERROR.value
+    assert events[0].data["credential_id"] == _CREDENTIAL

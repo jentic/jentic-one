@@ -23,12 +23,12 @@ from jentic_one.admin.services.errors import (
     InviteTokenAlreadyRedeemedError,
     InviteTokenExpiredError,
     InviteTokenNotFoundError,
-    UserNotFoundError,
 )
 from jentic_one.admin.services.permission_service import PermissionService
 from jentic_one.admin.services.schemas.auth import TokenBundle
 from jentic_one.admin.services.schemas.invites import InviteIssued
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
+from jentic_one.shared.auth.actor_status import SESSION_GENERATION_CLAIM
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType, InviteState
@@ -122,22 +122,31 @@ class InviteService:
             if token is None:
                 raise InviteTokenNotFoundError("unknown")
 
+            # The user row is locked before the token is written, the same
+            # order disable and delete take them (users, then invite_tokens),
+            # so a concurrent disable or delete either commits first and is
+            # seen here, or waits until this redeem commits.
+            user = await UserRepository.get_by_id_for_update(session, token.user_id)
+            if user is None or not user.active or user.deleted_at is not None:
+                # An inactive or deleted user cannot redeem an invite. Answer
+                # like an unknown token so the reply does not distinguish a
+                # deactivated or deleted invitee from a missing token.
+                raise InviteTokenNotFoundError("unknown")
+
             if token.redeemed_at is not None:
                 raise InviteTokenAlreadyRedeemedError(token.id)
 
             if token.expires_at < datetime.now(UTC):
                 raise InviteTokenExpiredError(token.id)
 
-            await InviteTokenRepository.redeem(session, token.id)
+            if not await InviteTokenRepository.redeem(session, token.id):
+                # Redeemed, reissued or cancelled since the read above.
+                raise InviteTokenAlreadyRedeemedError(token.id)
 
             password_hash = hash_password(new_password)
             await UserSecretRepository.set_password_hash(
                 session, token.user_id, password_hash=password_hash, created_by=token.user_id
             )
-
-            user = await UserRepository.get_by_id(session, token.user_id)
-            if user is None:
-                raise UserNotFoundError(token.user_id)
 
             await UserRepository.update(
                 session,
@@ -181,6 +190,7 @@ class InviteService:
             # Redeeming an invite sets the password — a fresh credential proof,
             # so the absolute session window (see AuthService.refresh) starts now.
             "auth_time": int(datetime.now(UTC).timestamp()),
+            SESSION_GENERATION_CLAIM: user.session_generation,
         }
         jwt_token = issue_jwt(
             claims, config.auth.jwt_secret.get_secret_value(), config.auth.jwt_ttl_seconds

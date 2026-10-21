@@ -96,6 +96,9 @@ export class EventsService {
     /**
      * Stream Events
      * Stream events as Server-Sent Events.
+     *
+     * The stream ends once the caller's credential stops verifying (expired,
+     * revoked, or its user disabled or deleted); reconnecting then returns 401.
      * @returns any Successful Response
      * @throws ApiError
      */

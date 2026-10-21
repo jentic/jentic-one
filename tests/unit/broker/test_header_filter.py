@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 
 from jentic_one.broker.core.proxy_headers import (
+    PASSTHROUGH_CACHE_CONTROL,
     forward_headers,
     passthrough_response_headers,
+    passthrough_streaming_headers,
 )
+from jentic_one.shared.web.cache_control import PRIVATE_NO_STORE
 
 
 def test_hop_by_hop_stripped() -> None:
@@ -99,3 +104,32 @@ def test_response_passthrough_strips_decoded_body_headers() -> None:
     assert "content-length" not in lowered
     assert out["content-type"] == "application/json"
     assert out["etag"] == "abc"
+
+
+@pytest.mark.parametrize(
+    "filter_headers", [passthrough_response_headers, passthrough_streaming_headers]
+)
+@pytest.mark.parametrize(
+    "upstream_cache",
+    [
+        {"Cache-Control": "public, max-age=3600"},
+        {"cache-control": "public, max-age=3600"},
+        {},
+    ],
+)
+def test_passthrough_cache_control_is_private_no_store(
+    filter_headers: Callable[[dict[str, str]], dict[str, str]],
+    upstream_cache: dict[str, str],
+) -> None:
+    """Pins #1835: a passthrough body was produced with a credential the broker
+    injected, so whatever the upstream sent, it leaves as ``private, no-store``
+    (exactly one value), while ``ETag`` still passes through."""
+    out = filter_headers({"content-type": "text/csv", "etag": '"abc"', **upstream_cache})
+    cache = [value for key, value in out.items() if key.lower() == "cache-control"]
+    assert cache == [PASSTHROUGH_CACHE_CONTROL] == ["private, no-store"]
+    assert out["etag"] == '"abc"'
+    assert out["content-type"] == "text/csv"
+
+
+def test_passthrough_cache_control_matches_control_plane_directive() -> None:
+    assert PASSTHROUGH_CACHE_CONTROL == PRIVATE_NO_STORE

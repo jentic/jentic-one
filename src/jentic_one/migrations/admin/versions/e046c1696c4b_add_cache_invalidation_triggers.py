@@ -23,7 +23,7 @@ The key columns per table are the ones the broker's caches can be keyed on
 only: SQLite has no notification channel, and its caches rely on their TTLs.
 
 Revision ID: e046c1696c4b
-Revises: a1c3e5f7b9d2
+Revises: d4b8e2f6a901
 Create Date: 2026-10-17
 
 """
@@ -33,7 +33,7 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "e046c1696c4b"  # pragma: allowlist secret
-down_revision: str | None = "a1c3e5f7b9d2"  # pragma: allowlist secret
+down_revision: str | None = "d4b8e2f6a901"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

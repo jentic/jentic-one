@@ -149,6 +149,16 @@ class CachedTokenValidator:
         for key in stale:
             del self._cache[key]
 
+    def invalidate_actor(self, actor_id: str) -> None:
+        """Evict cached token verdicts for ``actor_id`` and any negative entries (#1837).
+
+        Negative entries (``resolved is None``) do not carry an ``actor_id``
+        (e.g. an API key resolved while its agent was disabled), so they are
+        evicted alongside the actor's positive entries so re-enabling an agent
+        takes effect immediately.
+        """
+        self.invalidate_matching(lambda identity: identity.sub == actor_id)
+
     def clear(self) -> None:
         """Clear the entire cache."""
         self._generation += 1
@@ -208,6 +218,12 @@ class CachedActorStatus:
             return active
 
         return await self._single_flight.do(f"{actor_type}:{actor_id}", _load)
+
+    def invalidate_actor(self, actor_id: str) -> None:
+        """Evict cached status verdicts for ``actor_id`` across actor types (#1837)."""
+        stale = [key for key in self._cache if key[1] == actor_id]
+        for key in stale:
+            self._cache.pop(key, None)
 
     def clear(self) -> None:
         """Clear every cached verdict."""

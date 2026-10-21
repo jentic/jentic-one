@@ -391,8 +391,10 @@ def broker_transport_recovery(status: int, problem_type: str) -> str:
     ``runner_scheme_unsupported`` (RunnerSchemeUnsupportedError, 501) needs a
     different operation. Everything else is unknown, including
     ``upstream_response_too_large`` (UpstreamResponseTooLargeError, 502: the
-    upstream answered, so the call ran) and ``upstream_transport_error``
-    (UpstreamTransportError, 502: the connection failed mid-request).
+    upstream answered, so the call ran), ``upstream_transport_error``
+    (UpstreamTransportError, 502: the connection failed mid-request) and
+    ``upstream_request_invalid`` (500: the broker built a request its HTTP
+    client refused to send, so re-sending the same call will fail the same way).
     """
     if status == 429 or problem_type in _BROKER_TRANSIENT_PROBLEM_TYPES:
         return RECOVER_WAIT

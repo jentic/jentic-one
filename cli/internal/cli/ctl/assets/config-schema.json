@@ -208,6 +208,20 @@
           "title": "Rule Cache Ttl S",
           "type": "number"
         },
+        "streaming_persist_acquire_timeout_s": {
+          "default": 5.0,
+          "description": "How long (seconds) a streaming execution persist waits for one of the ``broker.streaming_persist_max_concurrency`` slots. Past it the record is abandoned: logged as ``streaming_execution_persist_abandoned`` and counted on ``broker.streaming_execution.persist_failures`` (``reason=backlog_timeout``). The wait runs after the response is complete or the client has disconnected, when the request no longer holds its admission slot, so the wait delays neither the client nor ``/ready``. The timeout bounds how long a stalled admin database can keep records queued in memory, including at shutdown; it does not bound the write itself once a slot is held.",
+          "exclusiveMinimum": 0,
+          "title": "Streaming Persist Acquire Timeout S",
+          "type": "number"
+        },
+        "streaming_persist_max_concurrency": {
+          "default": 5,
+          "description": "Per-process cap on concurrent post-response persists of streaming execution records (each holds one admin-DB connection). Excess persists wait for a slot, up to ``broker.streaming_persist_acquire_timeout_s``; the waiting and writing counts are exported as ``broker.streaming_execution.persist_pending``. The effective cap is clamped to ``databases.admin.pool_max - 1`` (minimum 1; a ``streaming_persist_limit_clamped`` warning is logged when it applies), so with ``pool_max >= 2`` persists never take every connection of the admin base pool. ``pool_max`` is the base pool size only; SQLAlchemy's default overflow can open up to 10 more connections on top of it.",
+          "exclusiveMinimum": 0,
+          "title": "Streaming Persist Max Concurrency",
+          "type": "integer"
+        },
         "toolkit_cache_ttl_s": {
           "default": 3.0,
           "title": "Toolkit Cache Ttl S",
@@ -1269,7 +1283,7 @@
           "additionalProperties": {
             "$ref": "#/$defs/MemoryNamespaceBudgetConfig"
           },
-          "description": "Per-namespace budget overrides, keyed by namespace (the key prefix before the first ``:``). Unless overridden here, idem (Idempotency-Key records) is 250000 entries / 134217728 bytes (128 MiB) and idem-body (their stored response bodies) 1000000 entries / 33554432 bytes (32 MiB), each with a 0.1 per-caller share; login-csrf (login page CSRF nonces) uses max_entries_per_namespace / max_bytes_per_namespace with a 0.02 per-client share, about 370 live nonces per IPv4 address or IPv6 /64 at the defaults (about 900 bytes each, 5-minute TTL), twice what the default authorize rate limit lets one IP request in that time; every other namespace uses max_entries_per_namespace / max_bytes_per_namespace. The sustained idempotent request rate idem can hold is min(max_entries, max_bytes / record_bytes) / broker.idempotency.ttl_s, where record_bytes is about 1000 bytes plus the response headers (capped at 512 bytes): about 30 req/s at the defaults and a 1 h TTL, and a tenth of that per caller. Above it, Idempotency-Key requests get 503 idempotency_unavailable; bodies (about 830 bytes + body length each) stop being stored for replay sooner, about 5 req/s of 1 KiB bodies, without refusing requests.",
+          "description": "Per-namespace budget overrides, keyed by namespace (the key prefix before the first ``:``). Unless overridden here, idem (Idempotency-Key records) is 250000 entries / 134217728 bytes (128 MiB) and idem-body (their stored response bodies) 1000000 entries / 33554432 bytes (32 MiB), each with a 0.1 per-caller share; login-csrf (login page CSRF nonces) uses max_entries_per_namespace / max_bytes_per_namespace with a 0.02 per-client share, about 370 live nonces per IPv4 address or IPv6 /64 at the defaults (about 900 bytes each, 5-minute TTL), twice what the default authorize rate limit lets one client network request in that time; every other namespace uses max_entries_per_namespace / max_bytes_per_namespace. The sustained idempotent request rate idem can hold is min(max_entries, max_bytes / record_bytes) / broker.idempotency.ttl_s, where record_bytes is about 1000 bytes plus the response headers (capped at 512 bytes): about 30 req/s at the defaults and a 1 h TTL, and a tenth of that per caller. Above it, Idempotency-Key requests get 503 idempotency_unavailable; bodies (about 830 bytes + body length each) stop being stored for replay sooner, about 5 req/s of 1 KiB bodies, without refusing requests.",
           "title": "Namespaces",
           "type": "object"
         }
@@ -1360,7 +1374,7 @@
         },
         "authorize_rpm": {
           "default": 30,
-          "description": "Sustained requests/minute allowed on the unauthenticated ``/authorize`` endpoints, keyed per ``client_id``+IP — except the local-login routes, whose ``client_id`` rides inside the signed login state and which are always keyed by bare IP. Behind a proxy, set ``auth.oauth_rate_limit.trusted_proxies`` or every client shares the proxy's IP bucket.",
+          "description": "Sustained requests/minute allowed per client network (IPv4 address or IPv6 /64) across the unauthenticated authorization flow: ``/authorize``, the IdP callback, the consent page, its submit and inline agent create, and the local-login form share one bucket, whatever ``client_id`` they name. A sign-in spends two to six requests (more after a mistyped password), so the defaults admit at least five back-to-back sign-ins and then at least five a minute per network; raise both for a large shared NAT or egress IP. Behind a proxy, set ``auth.oauth_rate_limit.trusted_proxies`` or every client shares the proxy's bucket.",
           "title": "Authorize Rpm",
           "type": "integer"
         },
@@ -1372,7 +1386,7 @@
         },
         "exchange_rpm": {
           "default": 60,
-          "description": "Sustained requests/minute allowed per ``client_id``+IP on the token endpoint (also reused per-IP for token revocation).",
+          "description": "Sustained requests/minute allowed per ``client_id`` + client network (IPv4 address or IPv6 /64) on the token endpoint (also reused per client network for token revocation).",
           "title": "Exchange Rpm",
           "type": "integer"
         },
@@ -1384,7 +1398,7 @@
         },
         "registration_rpm": {
           "default": 10,
-          "description": "Sustained requests/minute allowed per IP on anonymous dynamic client registration (``POST /oauth-clients``).",
+          "description": "Sustained requests/minute allowed per client network (IPv4 address or IPv6 /64) on anonymous dynamic client registration (``POST /oauth-clients``).",
           "title": "Registration Rpm",
           "type": "integer"
         },
@@ -1532,7 +1546,7 @@
       "type": "object"
     },
     "RetryConfig": {
-      "description": "Idempotency-aware upstream retry.\n\nThe ``RetryRunner`` decorator retries a failed attempt **only** when it is\nsafe to do so: a connect-phase failure (no bytes on the wire) is retryable\nfor any method, while a post-send failure (read timeout, mirrored ``429``/\n``503``) is retried only for idempotent methods or when an\n``Idempotency-Key`` is present — a blind ``POST`` retry is a double-spend.\nEach attempt still flows through the circuit breaker (retry *outside*,\nbreaker *inside*); the whole loop is bounded by the request deadline.",
+      "description": "Idempotency-aware upstream retry.\n\nThe ``RetryRunner`` decorator retries a failed attempt **only** when it is\nsafe to do so: a connect-phase failure (no bytes on the wire) is retryable\nfor any method, while a post-send failure (read timeout, mirrored ``429``/\n``503``) is retried only for idempotent HTTP methods — ``Idempotency-Key``\nis broker-consumed and stripped from outbound headers, so a post-send\n``POST`` or ``PATCH`` retry would double-spend (#1799).\nEach attempt still flows through the circuit breaker (retry *outside*,\nbreaker *inside*); the whole loop is bounded by the request deadline.",
       "properties": {
         "base_backoff_s": {
           "default": 0.2,
@@ -2163,8 +2177,16 @@
       "type": "object"
     },
     "WorkerConfig": {
-      "description": "Background job-worker durability knobs.\n\nThe worker claims a job, sets a **visibility deadline** (``visibility_timeout_s``\nfrom claim), and processes it. A job left ``RUNNING`` past that deadline by a\ncrashed worker/pod is reclaimed on a later poll. A handler failure requeues the\njob with capped exponential backoff up to ``max_attempts`` claims; beyond that\nit is dead-lettered (poison-message handling) rather than looped forever.",
+      "description": "Background job-worker durability knobs.\n\nThe worker claims a job, sets a **visibility deadline** (``visibility_timeout_s``\nfrom claim), and processes it. A job left ``RUNNING`` past that deadline by a\ncrashed worker/pod is reclaimed on a later poll. A handler failure requeues the\njob with capped exponential backoff up to ``max_attempts`` claims; beyond that\nit is dead-lettered (poison-message handling) rather than looped forever.\n\nEach claim is a single atomic ``UPDATE`` (``FOR UPDATE SKIP LOCKED`` on\nPostgres, a serialised write transaction on SQLite), so any number of worker\nloops — across processes or replicas, each running up to ``concurrency``\njobs — can poll the same queue without double-claiming a job.",
       "properties": {
+        "concurrency": {
+          "default": 1,
+          "description": "Maximum jobs one worker process runs at once (1 = serial). Postgres only: SQLite requires 1, because a job's handler holds the database write lock across its upstream call, so a second concurrent job's writes would time out. Each in-flight job holds about 2 admin-DB connections at once (its handler transaction plus the run-time authorization or credential-audit session it opens), so ``2 * concurrency`` must stay below ``databases.admin.pool_max``, leaving the remainder for HTTP requests and other background work in the same process.",
+          "maximum": 64,
+          "minimum": 1,
+          "title": "Concurrency",
+          "type": "integer"
+        },
         "drain_timeout_s": {
           "default": 25.0,
           "title": "Drain Timeout S",
@@ -2174,6 +2196,14 @@
           "default": 5,
           "title": "Max Attempts",
           "type": "integer"
+        },
+        "poll_interval_s": {
+          "default": 2.0,
+          "description": "Idle wait (seconds) between job-queue polls when nothing is claimable. A job enqueued in the same process wakes the worker immediately, so this mainly bounds pickup latency for jobs enqueued by another process and how quickly visibility-expired jobs are reclaimed. Every poll is a write transaction (the claim is an ``UPDATE``) even when the queue is empty — on SQLite it takes the database write lock that request writes also wait on — so each process issues about ``1 / poll_interval_s`` of them per second while idle.",
+          "maximum": 60.0,
+          "minimum": 0.25,
+          "title": "Poll Interval S",
+          "type": "number"
         },
         "reconnect_backoff_base_s": {
           "default": 2.0,
@@ -2199,6 +2229,14 @@
         "retry_backoff_max_s": {
           "default": 60.0,
           "title": "Retry Backoff Max S",
+          "type": "number"
+        },
+        "sweep_interval_s": {
+          "default": 120.0,
+          "description": "Seconds between the worker's retention sweeps, which expire lapsed execution approvals and delete expired job results and long-expired access/refresh token rows. Measured in wall time, independent of ``poll_interval_s`` and wake-ups.",
+          "maximum": 86400.0,
+          "minimum": 1.0,
+          "title": "Sweep Interval S",
           "type": "number"
         },
         "visibility_timeout_s": {

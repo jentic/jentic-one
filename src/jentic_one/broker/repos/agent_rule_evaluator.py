@@ -280,6 +280,30 @@ class AgentRuleEvaluator:
         while len(self._cache) > self._max_entries:
             self._cache.popitem(last=False)
 
+    def invalidate_binding(self, *, agent_id: str, credential_id: str) -> None:
+        """Evict cached inline rules for ``(agent_id, credential_id)`` (#1837)."""
+        self.invalidate_bindings((agent_id,), (credential_id,))
+
+    def invalidate_agent(self, agent_id: str) -> None:
+        """Evict all cached inline rules for ``agent_id`` (#1837)."""
+        self._generation += 1
+        prefix = f"binding\x00{agent_id}\x00"
+        stale = [k for k in self._cache if k.startswith(prefix)]
+        for k in stale:
+            self._cache.pop(k, None)
+
+    def invalidate_credential(self, credential_id: str) -> None:
+        """Evict all cached inline rules for ``credential_id`` (#1837)."""
+        self._generation += 1
+        suffix = f"\x00{credential_id}"
+        stale = [k for k in self._cache if k.startswith("binding\x00") and k.endswith(suffix)]
+        for k in stale:
+            self._cache.pop(k, None)
+
+    def invalidate_rule_set(self, rule_set_id: str) -> None:
+        """Evict cached shared rule-set rules for ``rule_set_id`` (#1837)."""
+        self.invalidate_rule_sets((rule_set_id,))
+
     def clear(self) -> None:
         """Drop all cached entries."""
         self._generation += 1

@@ -15,9 +15,13 @@ import pytest
 from sqlalchemy import delete, select
 from starlette.requests import Request
 
+from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.admin.core.schema.jobs import Job
+from jentic_one.admin.core.schema.users import User
+from jentic_one.admin.repos.agent_repo import AgentRepository
+from jentic_one.admin.repos.user_repo import UserRepository
 from jentic_one.broker.core.exceptions import ApprovalPendingLimitError
 from jentic_one.broker.core.problem import broker_error_problem, status_for_broker_error
 from jentic_one.broker.core.schemas import ExecuteRequestContext
@@ -29,8 +33,10 @@ from jentic_one.shared.broker.protocols import RuleVerdict
 from jentic_one.shared.context import Context
 from jentic_one.shared.jobs.hold import ENCRYPTED_PAYLOAD_KEY, HELD_AGENT_DIRECTIVE
 from jentic_one.shared.models import (
+    ActorStatus,
     ActorType,
     CredentialType,
+    InviteState,
     JobStatus,
     StoredCredentialType,
 )
@@ -111,8 +117,10 @@ def _authorization() -> ExecutionAuthorization:
     )
 
 
-async def _hold(ctx: Context, body: bytes = _BODY, query: str = "") -> dict[str, Any]:
-    response = await _handle_hold(_request(body), _ctx_req(query), ctx, _AGENT, _authorization())
+async def _hold(
+    ctx: Context, body: bytes = _BODY, query: str = "", agent: Identity = _AGENT
+) -> dict[str, Any]:
+    response = await _handle_hold(_request(body), _ctx_req(query), ctx, agent, _authorization())
     assert response.status_code == 202
     assert response.headers["Preference-Applied"] == "respond-async"
     return dict(json.loads(bytes(response.body)))
@@ -174,11 +182,80 @@ async def test_hold_answers_the_held_envelope_and_stores_an_encrypted_payload(
 
     (event,) = events
     assert event.requires_action is True
+    # An identity resolved without a name falls back to the agent's id.
+    assert event.summary == "Agent agnt_holdpath wants to POST /v1/charges"
     assert event.data["review_url"] == envelope["review_url"]
     assert event.data["method"] == "POST"
     assert event.data["path"] == "/v1/charges"
     assert "body" not in json.dumps(event.data)
     assert "amount" not in json.dumps(event.data)
+
+
+async def test_a_nameless_identity_names_the_agent_from_its_row(
+    integration_context: Context, clean: None
+) -> None:
+    # An agent signed in with a JWT resolves without a name; the summary reads
+    # the agent row's name instead of falling back to the id.
+    ctx = integration_context
+    async with ctx.admin_db.transaction() as session:
+        owner = await UserRepository.create(
+            session,
+            email="holdpath-owner@test.local",
+            first_name="Hold",
+            last_name="Owner",
+            invite_state=InviteState.REDEEMED,
+            created_by="usr_test",
+        )
+        agent = await AgentRepository.create(
+            session,
+            name="jwt-bot",
+            owner_id=owner.id,
+            registered_by=owner.id,
+            created_by=owner.id,
+            status=ActorStatus.ACTIVE,
+        )
+        owner_id, agent_id = owner.id, agent.id
+    try:
+        nameless = _AGENT.model_copy(update={"sub": agent_id, "actor_name": ""})
+        await _hold(ctx, agent=nameless)
+        async with ctx.admin_db.session() as session:
+            (event,) = (
+                (
+                    await session.execute(
+                        select(Event).where(Event.type == EventType.EXECUTION_APPROVAL_REQUESTED)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        assert event.summary == "Agent 'jwt-bot' wants to POST /v1/charges"
+        assert event.data["agent_id"] == agent_id
+    finally:
+        async with ctx.admin_db.transaction() as session:
+            await session.execute(delete(HeldExecution).where(HeldExecution.agent_id == agent_id))
+            await session.execute(delete(Agent).where(Agent.id == agent_id))
+            await session.execute(delete(User).where(User.id == owner_id))
+
+
+async def test_the_requested_event_names_the_agent(
+    integration_context: Context, clean: None
+) -> None:
+    ctx = integration_context
+    named = _AGENT.model_copy(update={"actor_name": "billing-bot"})
+    envelope = await _hold(ctx, agent=named)
+    async with ctx.admin_db.session() as session:
+        (event,) = (
+            (
+                await session.execute(
+                    select(Event).where(Event.type == EventType.EXECUTION_APPROVAL_REQUESTED)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert event.summary == "Agent 'billing-bot' wants to POST /v1/charges"
+    assert event.data["agent_id"] == "agnt_holdpath"
+    assert event.data["held_execution_id"] == envelope["held_execution_id"]
 
 
 async def test_held_links_root_on_the_admin_api_origin(

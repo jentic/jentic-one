@@ -43,7 +43,11 @@ _APPROVALS_HEAD = "3306fb9172f1"  # pragma: allowlist secret
 _REPEATED_FAILURE_INDEX_HEAD = "c00de2f5d777"  # pragma: allowlist secret
 #: The events ``(created_by, actor_id)`` index, stacked on the repeated-failure index.
 _EVENTS_CREATED_BY_ACTOR_HEAD = "a1c3e5f7b9d2"  # pragma: allowlist secret
-#: The cache-invalidation triggers, stacked on the events index.
+#: The users login-session columns, stacked on the events index.
+_USER_SESSION_HEAD = "eb3688e956fc"  # pragma: allowlist secret
+#: Drop of ``ix_execution_records_toolkit_started``, stacked on user login sessions.
+_DROP_TOOLKIT_STARTED_INDEX_HEAD = "d4b8e2f6a901"  # pragma: allowlist secret
+#: The cache-invalidation triggers, stacked on the toolkit-started index drop.
 _INVALIDATION_TRIGGERS_HEAD = "e046c1696c4b"  # pragma: allowlist secret
 
 
@@ -214,6 +218,8 @@ def restore_pre_sa_drop_admin(integration_config: AppConfig) -> None:
         [_APPROVALS_HEAD],
         [_REPEATED_FAILURE_INDEX_HEAD],
         [_EVENTS_CREATED_BY_ACTOR_HEAD],
+        [_USER_SESSION_HEAD],
+        [_DROP_TOOLKIT_STARTED_INDEX_HEAD],
         [_INVALIDATION_TRIGGERS_HEAD],
     ), f"extend restore_pre_sa_drop_admin for new heads {heads}"
     if not asyncio.run(_has_service_account_tables(db_config)):
