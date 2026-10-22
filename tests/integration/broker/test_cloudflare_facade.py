@@ -19,6 +19,7 @@ answered in Cloudflare's error envelope with the pipeline's status.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Iterator
@@ -427,12 +428,21 @@ def _assert_no_jentic_token_upstream(request: httpx.Request, *tokens: str) -> No
             assert token not in value, name
 
 
-async def _records(ctx: Context, trace_id: str) -> list[ExecutionRecord]:
-    async with ctx.admin_db.session() as session:
-        rows = await session.execute(
-            select(ExecutionRecord).where(ExecutionRecord.trace_id == trace_id)
-        )
-        return list(rows.scalars().all())
+async def _records(ctx: Context, trace_id: str, *, count: int = 0) -> list[ExecutionRecord]:
+    """The trace's execution records, polling briefly until ``count`` have landed.
+
+    A streamed call's record is written after its response body ends.
+    """
+    for _ in range(100):
+        async with ctx.admin_db.session() as session:
+            rows = await session.execute(
+                select(ExecutionRecord).where(ExecutionRecord.trace_id == trace_id)
+            )
+            records = list(rows.scalars().all())
+        if len(records) >= count:
+            break
+        await asyncio.sleep(0.05)
+    return records
 
 
 # ── success path ─────────────────────────────────────────────────────────────
@@ -461,7 +471,7 @@ async def test_get_and_post_reach_cloudflare_with_the_stored_credential(env: _En
         assert "x-debug" not in request.headers
     assert listed.headers["jentic-credential-id"] == env.main_credential_id
 
-    records = await _records(env.ctx, trace_id)
+    records = await _records(env.ctx, trace_id, count=2)
     assert [r.http_status for r in records] == [200, 200]
     assert {r.actor_id for r in records} == {env.agent_id}
     assert {(r.operation_method, r.operation_path) for r in records} == {
@@ -482,7 +492,7 @@ async def test_calls_group_under_the_token_trace_even_with_a_client_traceparent(
         )
         assert response.status_code == 200, response.text
 
-    assert len(await _records(env.ctx, trace_id)) == 2
+    assert len(await _records(env.ctx, trace_id, count=2)) == 2
     assert await _records(env.ctx, _CLIENT_TRACE) == []
     for request in env.upstream.requests:
         assert _CLIENT_TRACE not in request.headers.get("traceparent", "")

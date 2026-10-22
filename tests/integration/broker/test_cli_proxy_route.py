@@ -21,6 +21,7 @@ Details otherwise): an ``at_`` token (401), a URL of another vendor's API
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Iterator
@@ -433,12 +434,21 @@ def _assert_no_jentic_token_upstream(request: httpx.Request, *tokens: str) -> No
             assert token not in value, name
 
 
-async def _records(ctx: Context, trace_id: str) -> list[ExecutionRecord]:
-    async with ctx.admin_db.session() as session:
-        rows = await session.execute(
-            select(ExecutionRecord).where(ExecutionRecord.trace_id == trace_id)
-        )
-        return list(rows.scalars().all())
+async def _records(ctx: Context, trace_id: str, *, count: int = 0) -> list[ExecutionRecord]:
+    """The trace's execution records, polling briefly until ``count`` have landed.
+
+    A streamed call's record is written after its response body ends.
+    """
+    for _ in range(100):
+        async with ctx.admin_db.session() as session:
+            rows = await session.execute(
+                select(ExecutionRecord).where(ExecutionRecord.trace_id == trace_id)
+            )
+            records = list(rows.scalars().all())
+        if len(records) >= count:
+            break
+        await asyncio.sleep(0.05)
+    return records
 
 
 # ── success path ─────────────────────────────────────────────────────────────
@@ -474,7 +484,7 @@ async def test_call_reaches_the_vendor_with_the_stored_credential(env: _Env) -> 
     assert fetched.headers["link"] == '<https://api.github.com/user/repos?page=2>; rel="next"'
     assert fetched.headers["x-github-request-id"] == "ABCD:1234"
 
-    records = await _records(env.ctx, trace_id)
+    records = await _records(env.ctx, trace_id, count=2)
     assert sorted((r.operation_method, r.http_status) for r in records) == [
         ("GET", 200),
         ("POST", 200),
@@ -498,7 +508,7 @@ async def test_calls_group_under_the_token_trace_even_with_a_client_traceparent(
         )
         assert response.status_code == 200, response.text
 
-    assert len(await _records(env.ctx, trace_id)) == 2
+    assert len(await _records(env.ctx, trace_id, count=2)) == 2
     assert await _records(env.ctx, _CLIENT_TRACE) == []
     for request in env.upstream.requests:
         assert _CLIENT_TRACE not in request.headers.get("traceparent", "")

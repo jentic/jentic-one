@@ -23,6 +23,7 @@ mutations, and requests that cannot be inspected.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Iterator
@@ -460,12 +461,21 @@ def _assert_only_the_stored_credential_upstream(request: httpx.Request, *tokens:
             assert token not in value, name
 
 
-async def _records(ctx: Context, trace_id: str) -> list[ExecutionRecord]:
-    async with ctx.admin_db.session() as session:
-        rows = await session.execute(
-            select(ExecutionRecord).where(ExecutionRecord.trace_id == trace_id)
-        )
-        return list(rows.scalars().all())
+async def _records(ctx: Context, trace_id: str, *, count: int = 0) -> list[ExecutionRecord]:
+    """The trace's execution records, polling briefly until ``count`` have landed.
+
+    A streamed call's record is written after its response body ends.
+    """
+    for _ in range(100):
+        async with ctx.admin_db.session() as session:
+            rows = await session.execute(
+                select(ExecutionRecord).where(ExecutionRecord.trace_id == trace_id)
+            )
+            records = list(rows.scalars().all())
+        if len(records) >= count:
+            break
+        await asyncio.sleep(0.05)
+    return records
 
 
 # ── success paths ────────────────────────────────────────────────────────────
@@ -507,7 +517,7 @@ async def test_rest_get_reaches_github_with_link_pointed_at_the_facade(env: _Env
     assert request.headers["accept"] == "application/vnd.github.merge-info-preview+json"
     assert "x-debug" not in request.headers
     _assert_only_the_stored_credential_upstream(request, token, access)
-    (record,) = await _records(env.ctx, trace_id)
+    (record,) = await _records(env.ctx, trace_id, count=1)
     assert (record.operation_method, record.operation_path) == (
         "GET",
         "/repos/{owner}/{repo}/pulls",
@@ -525,7 +535,7 @@ async def test_following_the_next_link_reaches_the_next_page(env: _Env) -> None:
 
     assert second.status_code == 200, second.text
     assert str(env.upstream.requests[-1].url) == "https://api.github.com/repos/o/r/pulls?page=2"
-    assert len(await _records(env.ctx, trace_id)) == 2
+    assert len(await _records(env.ctx, trace_id, count=2)) == 2
 
 
 async def test_graphql_post_reaches_the_graphql_endpoint(env: _Env) -> None:
@@ -540,7 +550,7 @@ async def test_graphql_post_reaches_the_graphql_endpoint(env: _Env) -> None:
     assert str(request.url) == "https://api.github.com/graphql"
     assert json.loads(request.content) == query
     _assert_only_the_stored_credential_upstream(request, token, access)
-    (record,) = await _records(env.ctx, trace_id)
+    (record,) = await _records(env.ctx, trace_id, count=1)
     assert (record.operation_method, record.operation_path, record.api_name) == (
         "POST",
         "/graphql",
@@ -567,7 +577,7 @@ async def test_upload_post_reaches_uploads_github_com(env: _Env) -> None:
     assert request.content == b"PK\x03\x04 zip bytes"
     assert request.headers["content-type"] == "application/octet-stream"
     _assert_only_the_stored_credential_upstream(request, token, access)
-    (record,) = await _records(env.ctx, trace_id)
+    (record,) = await _records(env.ctx, trace_id, count=1)
     assert record.api_name == "uploads"
 
 
@@ -595,7 +605,7 @@ async def test_calls_group_under_the_token_trace(env: _Env) -> None:
 
     assert rest.status_code == 200, rest.text
     assert graphql.status_code == 200, graphql.text
-    assert {record.api_name for record in await _records(env.ctx, trace_id)} == {
+    assert {record.api_name for record in await _records(env.ctx, trace_id, count=2)} == {
         "rest",
         "graphql",
     }
@@ -764,7 +774,7 @@ async def test_read_only_preset_allows_a_query(env: _Env) -> None:
 
     assert response.status_code == 200, response.text
     assert len(env.upstream.requests) == 1
-    assert len(await _records(env.ctx, trace_id)) == 1
+    assert len(await _records(env.ctx, trace_id, count=1)) == 1
 
 
 async def test_read_only_preset_denies_a_mutation_naming_the_field(env: _Env) -> None:
