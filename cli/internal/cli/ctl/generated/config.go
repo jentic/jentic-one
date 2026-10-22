@@ -587,42 +587,42 @@ func (j *CircuitBreakerConfig) UnmarshalJSON(value []byte) error {
 // ref by ref, and the upstream is always “https://github.com“.
 type CliFacadeGitConfig struct {
 	// Seconds one GitHub compare call of the force-push check may take.
-	CompareTimeoutS float64 `json:"compare_timeout_s,omitempty,omitzero" yaml:"compare_timeout_s,omitempty" mapstructure:"compare_timeout_s,omitempty"`
+	CompareTimeoutS float64 `json:"compare_timeout_s" yaml:"compare_timeout_s" mapstructure:"compare_timeout_s"`
 
 	// Seconds to connect to github.com.
-	ConnectTimeoutS float64 `json:"connect_timeout_s,omitempty,omitzero" yaml:"connect_timeout_s,omitempty" mapstructure:"connect_timeout_s,omitempty"`
+	ConnectTimeoutS float64 `json:"connect_timeout_s" yaml:"connect_timeout_s" mapstructure:"connect_timeout_s"`
 
 	// Whether git requests are served. Requires the GitHub facade
 	// (``cli_facades.enabled`` and ``cli_facades.vendors.github.enabled``); while
 	// off, a git URL at the CLI proxy route answers 404.
-	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`
+	Enabled bool `json:"enabled" yaml:"enabled" mapstructure:"enabled"`
 
 	// Seconds a git transfer may go without a byte in either direction, client or
 	// upstream, before it is cut off.
-	IdleTimeoutS float64 `json:"idle_timeout_s,omitempty,omitzero" yaml:"idle_timeout_s,omitempty" mapstructure:"idle_timeout_s,omitempty"`
+	IdleTimeoutS float64 `json:"idle_timeout_s" yaml:"idle_timeout_s" mapstructure:"idle_timeout_s"`
 
 	// Most GitHub compare calls the force-push check makes for one push. A push whose
 	// ancestry needs more is refused for the refs left unchecked.
-	MaxCompareRequests int `json:"max_compare_requests,omitempty,omitzero" yaml:"max_compare_requests,omitempty" mapstructure:"max_compare_requests,omitempty"`
+	MaxCompareRequests int `json:"max_compare_requests" yaml:"max_compare_requests" mapstructure:"max_compare_requests"`
 
 	// Largest total size of the commit objects of one push the force-push check keeps
 	// in memory while reading the pack, in bytes. A push carrying more is refused.
 	// Defaults to 64 MiB.
-	MaxInspectedCommitBytes int `json:"max_inspected_commit_bytes,omitempty,omitzero" yaml:"max_inspected_commit_bytes,omitempty" mapstructure:"max_inspected_commit_bytes,omitempty"`
+	MaxInspectedCommitBytes int `json:"max_inspected_commit_bytes" yaml:"max_inspected_commit_bytes" mapstructure:"max_inspected_commit_bytes"`
 
 	// Largest request body accepted for a push or fetch, in bytes. A push over it is
 	// refused for every ref it updates. Defaults to 2 GiB, GitHub's own push limit.
-	MaxPushBytes int `json:"max_push_bytes,omitempty,omitzero" yaml:"max_push_bytes,omitempty" mapstructure:"max_push_bytes,omitempty"`
+	MaxPushBytes int `json:"max_push_bytes" yaml:"max_push_bytes" mapstructure:"max_push_bytes"`
 
 	// Most ref updates one push may carry.
-	MaxRefUpdates int `json:"max_ref_updates,omitempty,omitzero" yaml:"max_ref_updates,omitempty" mapstructure:"max_ref_updates,omitempty"`
+	MaxRefUpdates int `json:"max_ref_updates" yaml:"max_ref_updates" mapstructure:"max_ref_updates"`
 
 	// Bytes of a push body kept in memory before it is spooled to a temporary file
 	// while it is checked. Defaults to 8 MiB.
-	SpoolMemoryBytes int `json:"spool_memory_bytes,omitempty,omitzero" yaml:"spool_memory_bytes,omitempty" mapstructure:"spool_memory_bytes,omitempty"`
+	SpoolMemoryBytes int `json:"spool_memory_bytes" yaml:"spool_memory_bytes" mapstructure:"spool_memory_bytes"`
 
 	// Seconds one git request may take from start to finish.
-	TransferTimeoutS float64 `json:"transfer_timeout_s,omitempty,omitzero" yaml:"transfer_timeout_s,omitempty" mapstructure:"transfer_timeout_s,omitempty"`
+	TransferTimeoutS float64 `json:"transfer_timeout_s" yaml:"transfer_timeout_s" mapstructure:"transfer_timeout_s"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
@@ -730,16 +730,16 @@ type CliFacadesConfig struct {
 	// Seconds after minting past which an invocation token cannot be renewed, however
 	// often it is renewed. Must be at least ``invocation_ttl_seconds``. Defaults to 1
 	// hour.
-	InvocationHardCapSeconds int `json:"invocation_hard_cap_seconds,omitempty,omitzero" yaml:"invocation_hard_cap_seconds,omitempty" mapstructure:"invocation_hard_cap_seconds,omitempty"`
+	InvocationHardCapSeconds int `json:"invocation_hard_cap_seconds" yaml:"invocation_hard_cap_seconds" mapstructure:"invocation_hard_cap_seconds"`
 
 	// Seconds an invocation token lives after minting or its last renewal. The CLI
 	// wrapper renews it while the command runs and revokes it on exit, so this bounds
 	// only a wrapper that dies without revoking. Defaults to 10 minutes.
-	InvocationTtlSeconds int `json:"invocation_ttl_seconds,omitempty,omitzero" yaml:"invocation_ttl_seconds,omitempty" mapstructure:"invocation_ttl_seconds,omitempty"`
+	InvocationTtlSeconds int `json:"invocation_ttl_seconds" yaml:"invocation_ttl_seconds" mapstructure:"invocation_ttl_seconds"`
 
 	// Invocation tokens one agent may mint per minute (token bucket; the burst equals
 	// this value). Renewals and revocations are not counted.
-	MintRateLimitPerMinute int `json:"mint_rate_limit_per_minute,omitempty,omitzero" yaml:"mint_rate_limit_per_minute,omitempty" mapstructure:"mint_rate_limit_per_minute,omitempty"`
+	MintRateLimitPerMinute int `json:"mint_rate_limit_per_minute" yaml:"mint_rate_limit_per_minute" mapstructure:"mint_rate_limit_per_minute"`
 
 	// Per-vendor facade settings.
 	Vendors *CliFacadeVendorsConfig `json:"vendors,omitempty,omitzero" yaml:"vendors,omitempty" mapstructure:"vendors,omitempty"`
@@ -1652,7 +1652,7 @@ type HostCliFacadeConfig struct {
 
 	// Facade addressing. Only ``host`` is supported: ``gh`` cannot match a git remote
 	// against a ``host:port`` or path-prefixed host.
-	Mode string `json:"mode,omitempty,omitzero" yaml:"mode,omitempty" mapstructure:"mode,omitempty"`
+	Mode string `json:"mode" yaml:"mode" mapstructure:"mode"`
 
 	// The address agents are told to use, when it differs from what the broker serves
 	// (e.g. behind an ingress that rewrites the host). Unset means agents use
@@ -2389,7 +2389,7 @@ type PathCliFacadeConfig struct {
 	Host interface{} `json:"host,omitempty,omitzero" yaml:"host,omitempty" mapstructure:"host,omitempty"`
 
 	// Facade addressing. Only ``path`` is supported: the CLI takes a base URL.
-	Mode string `json:"mode,omitempty,omitzero" yaml:"mode,omitempty" mapstructure:"mode,omitempty"`
+	Mode string `json:"mode" yaml:"mode" mapstructure:"mode"`
 
 	// The address agents are told to use, when it differs from what the broker serves
 	// (e.g. behind an ingress that rewrites the host). Unset means agents use
@@ -3587,83 +3587,31 @@ type VendorIdentityProbeConfig struct {
 
 type VendorIdentityProbeConfigMethod string
 
-type VendorAuthConfigIdentityProbe_0 = VendorIdentityProbeConfig
+const VendorIdentityProbeConfigMethodGET VendorIdentityProbeConfigMethod = "GET"
+const VendorIdentityProbeConfigMethodPOST VendorIdentityProbeConfigMethod = "POST"
 
-const VendorScopeConfigClassificationRead VendorScopeConfigClassification = "read"
-const VendorScopeConfigClassificationWrite VendorScopeConfigClassification = "write"
-const VendorScopeConfigClassificationAdmin VendorScopeConfigClassification = "admin"
-
-// A single OAuth scope exposed by the vendor.
-//
-// `classification` drives the review-page UX: read scopes are pre-selected by
-// default; write/admin scopes get a warning flag. `description` is
-// human-facing copy displayed on the review page.
-type VendorScopeConfig struct {
-	// Classification corresponds to the JSON schema field "classification".
-	Classification VendorScopeConfigClassification `json:"classification" yaml:"classification" mapstructure:"classification"`
-
-	// Default corresponds to the JSON schema field "default".
-	Default bool `json:"default,omitempty,omitzero" yaml:"default,omitempty" mapstructure:"default,omitempty"`
-
-	// Description corresponds to the JSON schema field "description".
-	Description string `json:"description,omitempty,omitzero" yaml:"description,omitempty" mapstructure:"description,omitempty"`
-
-	// Name corresponds to the JSON schema field "name".
-	Name string `json:"name" yaml:"name" mapstructure:"name"`
+var enumValues_VendorIdentityProbeConfigMethod = []interface{}{
+	"GET",
+	"POST",
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
-	var raw map[string]interface{}
-	if err := json.Unmarshal(value, &raw); err != nil {
-		return err
-	}
-	if _, ok := raw["name"]; raw != nil && !ok {
-		return fmt.Errorf("field name in VendorScopeConfig: required")
-	}
-	type Plain VendorScopeConfig
-	var plain Plain
-	if err := json.Unmarshal(value, &plain); err != nil {
-		return err
-	}
-	if v, ok := raw["classification"]; !ok || v == nil {
-		plain.Classification = "read"
-	}
-	if v, ok := raw["default"]; !ok || v == nil {
-		plain.Default = false
-	}
-	if v, ok := raw["description"]; !ok || v == nil {
-		plain.Description = ""
-	}
-	*j = VendorScopeConfig(plain)
-	return nil
-}
-
-var enumValues_VendorScopeConfigClassification = []interface{}{
-	"read",
-	"write",
-	"admin",
-}
-
-type VendorScopeConfigClassification string
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorScopeConfigClassification) UnmarshalJSON(value []byte) error {
+func (j *VendorIdentityProbeConfigMethod) UnmarshalJSON(value []byte) error {
 	var v string
 	if err := json.Unmarshal(value, &v); err != nil {
 		return err
 	}
 	var ok bool
-	for _, expected := range enumValues_VendorScopeConfigClassification {
+	for _, expected := range enumValues_VendorIdentityProbeConfigMethod {
 		if reflect.DeepEqual(v, expected) {
 			ok = true
 			break
 		}
 	}
 	if !ok {
-		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorScopeConfigClassification, v)
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorIdentityProbeConfigMethod, v)
 	}
-	*j = VendorScopeConfigClassification(v)
+	*j = VendorIdentityProbeConfigMethod(v)
 	return nil
 }
 
@@ -3694,15 +3642,90 @@ func (j *VendorIdentityProbeConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-const VendorIdentityProbeConfigMethodPOST VendorIdentityProbeConfigMethod = "POST"
-const VendorIdentityProbeConfigMethodGET VendorIdentityProbeConfigMethod = "GET"
-
-type VendorRegistryConfigEntries map[string]VendorAuthConfig
-
 // Top-level vendor auth registry.
 type VendorRegistryConfig struct {
 	// Entries corresponds to the JSON schema field "entries".
 	Entries VendorRegistryConfigEntries `json:"entries,omitempty,omitzero" yaml:"entries,omitempty" mapstructure:"entries,omitempty"`
+}
+
+type VendorRegistryConfigEntries map[string]VendorAuthConfig
+
+// A single OAuth scope exposed by the vendor.
+//
+// `classification` drives the review-page UX: read scopes are pre-selected by
+// default; write/admin scopes get a warning flag. `description` is
+// human-facing copy displayed on the review page.
+type VendorScopeConfig struct {
+	// Classification corresponds to the JSON schema field "classification".
+	Classification VendorScopeConfigClassification `json:"classification" yaml:"classification" mapstructure:"classification"`
+
+	// Default corresponds to the JSON schema field "default".
+	Default bool `json:"default,omitempty,omitzero" yaml:"default,omitempty" mapstructure:"default,omitempty"`
+
+	// Description corresponds to the JSON schema field "description".
+	Description string `json:"description,omitempty,omitzero" yaml:"description,omitempty" mapstructure:"description,omitempty"`
+
+	// Name corresponds to the JSON schema field "name".
+	Name string `json:"name" yaml:"name" mapstructure:"name"`
+}
+
+type VendorScopeConfigClassification string
+
+const VendorScopeConfigClassificationAdmin VendorScopeConfigClassification = "admin"
+const VendorScopeConfigClassificationRead VendorScopeConfigClassification = "read"
+const VendorScopeConfigClassificationWrite VendorScopeConfigClassification = "write"
+
+var enumValues_VendorScopeConfigClassification = []interface{}{
+	"read",
+	"write",
+	"admin",
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *VendorScopeConfigClassification) UnmarshalJSON(value []byte) error {
+	var v string
+	if err := json.Unmarshal(value, &v); err != nil {
+		return err
+	}
+	var ok bool
+	for _, expected := range enumValues_VendorScopeConfigClassification {
+		if reflect.DeepEqual(v, expected) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorScopeConfigClassification, v)
+	}
+	*j = VendorScopeConfigClassification(v)
+	return nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["name"]; raw != nil && !ok {
+		return fmt.Errorf("field name in VendorScopeConfig: required")
+	}
+	type Plain VendorScopeConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["classification"]; !ok || v == nil {
+		plain.Classification = "read"
+	}
+	if v, ok := raw["default"]; !ok || v == nil {
+		plain.Default = false
+	}
+	if v, ok := raw["description"]; !ok || v == nil {
+		plain.Description = ""
+	}
+	*j = VendorScopeConfig(plain)
+	return nil
 }
 
 // Background job-worker durability knobs.
@@ -3844,27 +3867,4 @@ func (j *WorkerConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorIdentityProbeConfigMethod) UnmarshalJSON(value []byte) error {
-	var v string
-	if err := json.Unmarshal(value, &v); err != nil {
-		return err
-	}
-	var ok bool
-	for _, expected := range enumValues_VendorIdentityProbeConfigMethod {
-		if reflect.DeepEqual(v, expected) {
-			ok = true
-			break
-		}
-	}
-	if !ok {
-		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorIdentityProbeConfigMethod, v)
-	}
-	*j = VendorIdentityProbeConfigMethod(v)
-	return nil
-}
-
-var enumValues_VendorIdentityProbeConfigMethod = []interface{}{
-	"GET",
-	"POST",
-}
+type VendorAuthConfigIdentityProbe_0 = VendorIdentityProbeConfig
