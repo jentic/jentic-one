@@ -10,6 +10,7 @@ import type {
 	ConnectRequest,
 	ExistingCredential,
 	PermissionRule,
+	ProfileApi,
 	ReviewAgent,
 	ReviewProvenance,
 	ReviewScheme,
@@ -423,6 +424,9 @@ export interface MockConnectSession {
 	confirmProblem?: { status: number; type: string; endsSession?: boolean };
 	/** How the session ended once its row went (`:reject`, `:cancel`, an existing credential). */
 	outcome?: MockSessionOutcome;
+	/** The CLI profile the session connects; null/absent for any other session. */
+	cli_profile?: string | null;
+	profile_apis?: ProfileApi[];
 }
 
 type MockSessionOutcome = 'rejected' | 'cancelled' | 'connected';
@@ -726,6 +730,8 @@ const connectSessionsHandlers = [
 			reason: gated.reason,
 			requested_permission_rules: gated.requested_permission_rules,
 			api_reference: { vendor: gated.vendor_key, name: gated.vendor_key, version: '1.0.0' },
+			cli_profile: gated.cli_profile ?? null,
+			profile_apis: gated.profile_apis ?? [],
 		});
 	}),
 

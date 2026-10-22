@@ -1630,3 +1630,144 @@ describe('VendorConnectFlow — token-less approve (owner / org admin)', () => {
 		);
 	});
 });
+
+/**
+ * A CLI-profile session (one credential covering the vendor's REST, GraphQL
+ * and git APIs): the rules page groups the rules per profile API, and the
+ * confirm sends each rule with the API it applies to.
+ */
+describe('VendorConnectFlow — CLI-profile approve', () => {
+	const profileApis = [
+		{
+			role: 'rest' as const,
+			api_vendor: 'github-com',
+			api_name: 'api-github-com',
+			api_version: null,
+			description: 'GitHub REST API',
+		},
+		{
+			role: 'graphql' as const,
+			api_vendor: 'github-com',
+			api_name: 'github-graphql',
+			api_version: '1',
+			description: 'GitHub GraphQL API',
+		},
+		{
+			role: 'git' as const,
+			api_vendor: 'github-com',
+			api_name: 'github-git',
+			api_version: '1',
+			description: 'git over HTTPS',
+		},
+		{
+			role: 'uploads' as const,
+			api_vendor: 'github-com',
+			api_name: 'uploads-github-com',
+			api_version: null,
+			description: 'Release asset uploads',
+		},
+	];
+	const restRule: PermissionRule = {
+		effect: 'allow',
+		methods: ['GET'],
+		path: '/repos',
+		match_mode: 'prefix',
+		api_role: 'rest',
+	};
+	const graphqlRule: PermissionRule = {
+		effect: 'allow',
+		path: 'query',
+		match_mode: 'graphql',
+		api_role: 'graphql',
+	};
+	// No ``api_role``: a git rule applies to the git API by its kind.
+	const gitRule: PermissionRule = {
+		effect: 'allow',
+		path: 'fetch:octo-org/app',
+		match_mode: 'git',
+	};
+
+	beforeEach(() => {
+		resetConnectSessionsStore();
+		resetCredentialsStore();
+		stubAgents();
+		vi.spyOn(window, 'open').mockReturnValue(null);
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+		resetConnectSessionsStore();
+		resetCredentialsStore();
+	});
+
+	async function openRules(sessionId: string): Promise<void> {
+		renderWithProviders(
+			<VendorConnectFlow
+				mode="approve"
+				sessionId={sessionId}
+				onBack={vi.fn()}
+				onDone={vi.fn()}
+			/>,
+		);
+		const user = userEvent.setup();
+		await screen.findByText(/an agent is asking to connect/i);
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
+		);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		expect(await screen.findByText('Permission rules')).toBeInTheDocument();
+	}
+
+	it('groups the rules per profile API and sends them back with their API', async () => {
+		const seeded = seedMockAgentConnectSession({
+			agent_id: 'agnt_1',
+			vendor_key: 'github',
+			cli_profile: 'github',
+			profile_apis: profileApis,
+			requested_permission_rules: [gitRule, restRule, graphqlRule],
+		});
+		await openRules(seeded.session_id);
+
+		const rest = screen.getByRole('region', { name: /REST API/ });
+		const graphql = screen.getByRole('region', { name: /GraphQL/ });
+		const git = screen.getByRole('region', { name: /^git/ });
+		const uploads = screen.getByRole('region', { name: /Uploads/ });
+		expect(within(rest).getByText('api-github-com')).toBeInTheDocument();
+		expect(within(rest).getByText(/\/repos/)).toBeInTheDocument();
+		expect(within(rest).queryByText(/fetch:octo-org/)).not.toBeInTheDocument();
+		expect(within(graphql).getByText(/^query/)).toBeInTheDocument();
+		expect(within(graphql).queryByText(/\/repos/)).not.toBeInTheDocument();
+		expect(within(git).getByText(/fetch:octo-org\/app/)).toBeInTheDocument();
+		expect(within(git).queryByText(/^query/)).not.toBeInTheDocument();
+		expect(within(uploads).getByText('No rules — denied by default.')).toBeInTheDocument();
+		// GraphQL and git rules are not path rules: no "Add rule" there.
+		expect(within(rest).getByRole('button', { name: /add rule/i })).toBeInTheDocument();
+		expect(within(graphql).queryByRole('button', { name: /add rule/i })).toBeNull();
+		expect(within(git).queryByRole('button', { name: /add rule/i })).toBeNull();
+
+		// An edit in one section keeps each rule's API, the edited one included.
+		const user = userEvent.setup();
+		await user.click(within(rest).getByRole('button', { name: 'Edit rule' }));
+		await user.click(within(rest).getByRole('button', { name: 'Save' }));
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		await waitFor(() => expect(getMockConnectSessions()[0].confirmBodies).toHaveLength(1));
+		expect(getMockConnectSessions()[0].confirmBodies[0].permission_rules).toEqual([
+			restRule,
+			graphqlRule,
+			gitRule,
+		]);
+	});
+
+	it('renders a non-profile session flat', async () => {
+		const seeded = seedMockAgentConnectSession({
+			agent_id: 'agnt_1',
+			vendor_key: 'github',
+			requested_permission_rules: [restRule],
+		});
+		await openRules(seeded.session_id);
+
+		expect(screen.getByText(/\/repos/)).toBeInTheDocument();
+		expect(screen.queryByRole('region', { name: /REST API/ })).toBeNull();
+		expect(screen.queryByText('No rules — denied by default.')).toBeNull();
+	});
+});
