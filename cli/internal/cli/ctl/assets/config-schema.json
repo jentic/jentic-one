@@ -3,6 +3,22 @@
     "AdminAuthConfig": {
       "description": "Admin authentication settings.",
       "properties": {
+        "argon2_acquire_timeout_s": {
+          "default": 5.0,
+          "description": "Maximum seconds a password or OAuth client-secret hash or verification waits for one of the ``argon2_max_concurrency`` slots before failing with HTTP 503 and a ``Retry-After`` header.",
+          "exclusiveMinimum": 0,
+          "maximum": 60.0,
+          "title": "Argon2 Acquire Timeout S",
+          "type": "number"
+        },
+        "argon2_max_concurrency": {
+          "default": 4,
+          "description": "Per-process cap on concurrent argon2id password and OAuth client-secret hashes and verifications across all surfaces. Each argon2id call allocates 64 MiB (``memory_cost=65536``), so the default of 4 bounds peak argon2 memory at 256 MiB per process. Calls beyond the cap wait up to ``argon2_acquire_timeout_s`` for a slot and then fail with HTTP 503 + ``Retry-After`` instead of allocating another 64 MiB buffer.",
+          "maximum": 64,
+          "minimum": 1,
+          "title": "Argon2 Max Concurrency",
+          "type": "integer"
+        },
         "failed_login_lockout_seconds": {
           "default": 900,
           "description": "How long a locked admin account stays locked before logins are accepted again.",

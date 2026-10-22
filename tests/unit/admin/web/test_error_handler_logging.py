@@ -12,6 +12,7 @@ from jentic_one.admin.services.errors import (
     AdminServiceError,
     InvalidCredentialsError,
     InvalidInputError,
+    PasswordHasherBusyError,
     UserNotFoundError,
 )
 from jentic_one.admin.web.errors import database_error_handler, service_error_handler
@@ -169,3 +170,26 @@ async def test_db_integrity_returns_409_without_leaking_sql() -> None:
     warn_logs = [log for log in logs if log["log_level"] == "warning"]
     assert len(warn_logs) == 1
     assert warn_logs[0]["raw_detail"] == _LEAKY_DETAIL
+
+
+@pytest.mark.asyncio
+async def test_password_hasher_busy_returns_503_with_retry_after_and_logs_warning() -> None:
+    request = _make_request("/auth/login")
+    exc = PasswordHasherBusyError(retry_after_s=3)
+
+    with structlog.testing.capture_logs() as logs:
+        response = await service_error_handler(request, exc)
+
+    assert response.status_code == 503
+    assert response.media_type == "application/problem+json"
+    assert response.headers["Retry-After"] == "3"
+    body = bytes(response.body).decode()
+    assert "password_hasher_busy" in body
+
+    [entry] = logs
+    assert entry["log_level"] == "warning"
+    assert entry["event"] == "service_at_capacity"
+    assert entry["status"] == 503
+    assert entry["type"] == "password_hasher_busy"
+    assert entry["retry_after_s"] == 3
+    assert "exc_info" not in entry
