@@ -93,6 +93,7 @@ from jentic_one.shared.audit import (
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import ORG_ADMIN, OWNER_AGENTS_READ
+from jentic_one.shared.cli_profiles import PresetError, assign_rule_roles, load_profiles
 from jentic_one.shared.config import DirectOAuth2ProviderConfig, resolved_control_egress
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort, summary_label
@@ -189,6 +190,20 @@ def _scope_reference(scope: CredentialScope) -> str:
     to ``stripe-com/2024-04-10``, which reads as a name.
     """
     return f"{scope.vendor}/{scope.name or '*'}/{scope.version or '*'}"
+
+
+def _refuse_rule_set_roles(rules: list[dict[str, object]]) -> None:
+    """Refuse an ``api_role`` on a shared rule set's rule (400).
+
+    A rule set stores no API role: attached to a CLI-profile credential's
+    binding, each of its rules applies to the role its kind implies (a git
+    rule to git, a GraphQL rule to GraphQL, any other to REST).
+    """
+    if any(rule.get("api_role") for rule in rules):
+        raise InvalidCredentialInputError(
+            "a rule set's rules take no api_role: each applies to the API its kind implies "
+            "(git, graphql, else rest); put role-specific rules on the binding instead"
+        )
 
 
 class CredentialService:
@@ -795,6 +810,36 @@ class CredentialService:
                 exc_info=True,
             )
 
+    async def _credential_cli_profile(self, credential_id: str) -> str | None:
+        """The CLI profile of a credential the caller was already checked to see."""
+        async with self._ctx.control_db.session() as session:
+            credential = await CredentialRepository.get_by_id(session, credential_id)
+        return credential.cli_profile if credential is not None else None
+
+    async def _binding_rules(
+        self, credential_id: str, rules: list[dict[str, object]] | None
+    ) -> list[dict[str, object]] | None:
+        """``rules`` for the binding, each tagged with its API role on a CLI-profile credential.
+
+        A rule naming no role gets the one its kind implies; a role the
+        profile does not declare, or one whose API takes another kind of
+        rule, is refused (400). Unchanged on any other credential.
+        """
+        if not rules:
+            return rules
+        cli_profile = await self._credential_cli_profile(credential_id)
+        if cli_profile is None:
+            return rules
+        profile = load_profiles().get(cli_profile)
+        if profile is None:
+            raise InvalidCredentialInputError(
+                f"CLI profile {cli_profile!r} is not shipped by this release"
+            )
+        try:
+            return assign_rule_roles(profile, list(rules), origin="permission rule")
+        except PresetError as exc:
+            raise InvalidCredentialInputError(str(exc)) from exc
+
     async def list_agent_permissions(
         self, credential_id: str, agent_id: str, *, identity: Identity
     ) -> list[AgentPermissionRule]:
@@ -815,6 +860,7 @@ class CredentialService:
         binding = await self._require_visible_binding(
             credential_id, agent_id, identity=identity, for_write=True
         )
+        rules = await self._binding_rules(credential_id, rules) or []
         async with self._ctx.control_db.transaction() as session:
             result = await AgentPermissionRuleRepository.replace_user_rules(
                 session, agent_id, credential_id, rules, created_by=identity.sub
@@ -838,6 +884,7 @@ class CredentialService:
         binding = await self._require_visible_binding(
             credential_id, agent_id, identity=identity, for_write=True
         )
+        add = await self._binding_rules(credential_id, add)
         async with self._ctx.control_db.transaction() as session:
             result = await AgentPermissionRuleRepository.patch_rules(
                 session, agent_id, credential_id, add=add, remove=remove, created_by=identity.sub
@@ -902,18 +949,25 @@ class CredentialService:
                 path=rule.path,
                 match_mode=str(rule.match_mode or "regex"),
                 operations=rule.operations,
+                api_role=rule.api_role if isinstance(rule, AgentPermissionRule) else None,
             )
             for rule in rules
         ]
+        # A method/path dry-run is a REST call: on a CLI-profile credential's
+        # binding only the rules for its REST API decide it, as at the broker.
+        positions = list(range(len(compiled)))
+        if await self._credential_cli_profile(credential_id) is not None:
+            positions = [i for i in positions if compiled[i].api_role == "rest"]
         # The broker enforces on the normalized server-relative path; normalize
         # the dry-run input the same way so ``/%61dmin`` previews as ``/admin``.
-        idx = first_matching_rule(
-            compiled,
+        found = first_matching_rule(
+            [compiled[i] for i in positions],
             method=method,
             path=normalize_path(path),
             operation_id=operation_id,
             binding=f"{agent_id}:{credential_id}",
         )
+        idx = positions[found] if found is not None else None
         if idx is not None:
             rule = rules[idx]
             return PermissionTestResult(
@@ -1048,6 +1102,7 @@ class CredentialService:
         A set an ``org:admin`` creates is recorded as curated (see
         :meth:`_may_attach_rule_set`).
         """
+        _refuse_rule_set_roles(rules)
         async with self._ctx.control_db.transaction() as session:
             if await PermissionRuleSetRepository.get_by_name(session, name) is not None:
                 raise RuleSetNameConflictError(name)
@@ -1196,6 +1251,7 @@ class CredentialService:
         This is the single-place edit rule grouping exists for: every binding
         pointing at the set picks the new list up at once.
         """
+        _refuse_rule_set_roles(rules)
         async with self._ctx.control_db.transaction() as session:
             rule_set = await PermissionRuleSetRepository.get_by_id(session, rule_set_id)
             if rule_set is None:

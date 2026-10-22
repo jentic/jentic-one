@@ -54,6 +54,11 @@ class Credential(AuditableMixin, ControlBase):
     # stays the (api_vendor, api_name, api_version) tuple. NULL for credentials
     # created before this column or against manually-imported APIs.
     catalog_api_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # The CLI profile (``github``) a profile-scoped credential belongs to: it
+    # covers exactly the APIs that profile's shipped manifest declares, read
+    # at use time (``shared.cli_profiles.declaring_profile``), on top of the
+    # vendor axis above. NULL for every other credential.
+    cli_profile: Mapped[str | None] = mapped_column(String(64), nullable=True)
     provider: Mapped[str] = mapped_column(
         String(50), nullable=False, default="static", server_default=text("'static'")
     )

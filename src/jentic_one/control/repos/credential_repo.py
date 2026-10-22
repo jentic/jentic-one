@@ -91,6 +91,7 @@ class CredentialRepository:
         provider_account_ref: str | None = None,
         server_variables: dict[str, str] | None = None,
         state: str = "connected",
+        cli_profile: str | None = None,
     ) -> Credential:
         credential = Credential(
             type=type,
@@ -106,6 +107,8 @@ class CredentialRepository:
             server_variables=server_variables,
             state=state,
         )
+        if cli_profile is not None:
+            credential.cli_profile = cli_profile
         session.add(credential)
         await session.flush()
         return credential
@@ -368,12 +371,15 @@ class CredentialRepository:
         exclude_ids: Sequence[str] = (),
         filters: Sequence[ColumnElement[bool]] | None = None,
         limit: int = 50,
+        cli_profile: str | None = None,
     ) -> list[Credential]:
         """Connected, active credentials whose API scope covers the identity.
 
         A NULL ``api_name`` / ``api_version`` on the credential is a wildcard;
         a ``None`` reference axis matches any value. ``filters`` carries the
-        caller's access scoping.
+        caller's access scoping. With ``cli_profile`` only that profile's
+        profile-scoped credentials are listed; without it, none are (a
+        profile credential covers its profile's APIs, never "the vendor").
 
         An interactive OAuth grant (authorization_code / device_code) counts
         as connected only while it can mint a token, matching the redacted
@@ -410,6 +416,9 @@ class CredentialRepository:
                 ),
                 live_grant,
             ),
+            Credential.cli_profile == cli_profile
+            if cli_profile is not None
+            else Credential.cli_profile.is_(None),
         )
         if name is not None:
             stmt = stmt.where(or_(Credential.api_name.is_(None), Credential.api_name == name))

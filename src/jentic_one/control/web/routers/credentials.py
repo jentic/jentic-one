@@ -570,6 +570,7 @@ def _to_permission_rule(rule: AgentPermissionRule) -> PermissionRuleReadSchema:
             "path": rule.path,
             "match_mode": rule.match_mode,
             "operations": rule.operations,
+            "api_role": rule.api_role,
             "_system": rule.is_system,
             "_comment": rule.comment,
         }

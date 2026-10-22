@@ -58,6 +58,11 @@ class AgentPermissionRule(AuditableMixin, ControlBase):
         String(10), nullable=False, default="regex", server_default=text("'regex'")
     )
     operations: Mapped[list[str] | None] = mapped_column(json_variant(), nullable=True)
+    # The CLI-profile API (``rest``, ``graphql``, ``git``, ``uploads``) the rule
+    # applies to on a profile-scoped credential's binding; NULL takes the role
+    # the rule's kind implies (``shared.permissions.api_roles``). Ignored on
+    # any other credential.
+    api_role: Mapped[str | None] = mapped_column(String(16), nullable=True)
     is_system: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     comment: Mapped[str | None] = mapped_column(String(500), nullable=True)
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)

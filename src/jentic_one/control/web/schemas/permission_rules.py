@@ -16,6 +16,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from jentic_one.shared.permissions.api_roles import ROLE_MATCH_MODES, ApiRoleName
 from jentic_one.shared.permissions.git_rules import GIT_MATCH_MODE
 from jentic_one.shared.permissions.matching import MatchMode, validate_path
 from jentic_one.shared.web import openapi_examples as ex
@@ -72,6 +73,28 @@ class BasePermissionRuleSchema(BaseModel):
         examples=[[ex.OPERATION_ID]],
         description="OpenAPI operation IDs to match. None matches all operations.",
     )
+    api_role: ApiRoleName | None = Field(
+        default=None,
+        examples=["rest"],
+        description=(
+            "On the binding of a CLI-profile credential (one connect covering several APIs "
+            "of a vendor, e.g. `jentic connect github`): the profile API the rule applies "
+            "to — `rest` and `uploads` take path rules, `graphql` GraphQL rules and `git` "
+            "git rules. Omitted, the rule's kind decides: a `git` rule applies to `git`, a "
+            "`graphql` rule to `graphql`, any other rule to `rest`. Ignored on any other "
+            "credential."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_api_role(self) -> BasePermissionRuleSchema:
+        if self.api_role is not None and self.match_mode not in ROLE_MATCH_MODES[self.api_role]:
+            allowed = ", ".join(sorted(ROLE_MATCH_MODES[self.api_role]))
+            raise ValueError(
+                f"A rule for the '{self.api_role}' API takes match_mode {allowed}, "
+                f"not '{self.match_mode}'"
+            )
+        return self
 
     @model_validator(mode="after")
     def _validate_path(self) -> BasePermissionRuleSchema:
@@ -171,6 +194,14 @@ class PermissionRuleReadSchema(BaseModel):
         default=None,
         description="OpenAPI operation IDs the rule matches; null matches all.",
         examples=[[ex.OPERATION_ID]],
+    )
+    api_role: ApiRoleName | None = Field(
+        default=None,
+        examples=["rest"],
+        description=(
+            "The CLI-profile API the rule applies to on a CLI-profile credential's binding; "
+            "null takes the role the rule's kind implies (`git`, `graphql`, else `rest`)."
+        ),
     )
     is_system: bool = Field(
         alias="_system",
