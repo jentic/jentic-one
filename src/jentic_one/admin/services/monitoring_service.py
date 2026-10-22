@@ -134,6 +134,9 @@ class MonitoringService:
 
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
+        # `_cache`, `_usage_cache`, and `_grouped_totals_cache` store org-wide
+        # totals (unscoped by caller identity) and must remain gated behind
+        # `org:admin`.
         self._cache: dict[int, _CacheEntry] = {}
         self._locks: dict[int, asyncio.Lock] = {}
         self._usage_cache: dict[tuple[Any, ...], _UsageCacheEntry] = {}
