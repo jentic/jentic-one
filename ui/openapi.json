@@ -34910,7 +34910,7 @@
     "/connect-sessions/{session_id}:confirm": {
       "description": "`POST`: Confirm a connect session.",
       "post": {
-        "description": "Called by the review page after the human confirms selections.\n\nThe body's ``kind`` picks the variant (no ``kind`` is the OAuth\nvariant): OAuth scopes, a secret for a ``manual_*`` session\n(``api_key`` / ``bearer`` / ``basic``), the approver's own OAuth client\nfor an ``awaiting_app`` session, or a credential the approver already\nholds (``existing_credential``, ``reauthorize``). Secrets are write-only:\nthey never appear in a response, audit entry or log.\n\nShares the ``:connect`` per-actor rate bucket — this is the endpoint\nthat actually fires the vendor's device-authorization call, and a\nfailed ``begin`` leaves the session retryable, so it must not be\nfree to hammer during a vendor incident. Gated like the review read\n(``poll_token`` or owner / ``org:admin``; 403 otherwise).\n\nA response carrying an ``authorize_url`` also sets a short-lived\n``HttpOnly`` cookie scoped to the OAuth callback path: the vendor\nsign-in completes only in the approver's browser that called this\nendpoint, whoever opened the session.",
+        "description": "Called by the review page after the human confirms selections.\n\nThe body's ``kind`` picks the variant (no ``kind`` is the OAuth\nvariant): OAuth scopes, a secret for a ``manual_*`` session\n(``api_key`` / ``bearer`` / ``basic``), the approver's own OAuth client\nfor an ``awaiting_app`` session, or a credential the approver already\nholds (``existing_credential``, ``reauthorize``). Secrets are write-only:\nthey never appear in a response, audit entry or log.\n\nShares the ``:connect`` per-actor rate bucket — this is the endpoint\nthat actually fires the vendor's device-authorization call, and a\nfailed ``begin`` leaves the session retryable, so it must not be\nfree to hammer during a vendor incident. Gated like the review read\n(``poll_token`` or owner / ``org:admin``; 403 otherwise). An agent\nwhose binding to a credential covering the session's API is suspended\n(including one picked at confirm) is refused with 409\n``connect_session_binding_suspended``.\n\nA response carrying an ``authorize_url`` also sets a short-lived\n``HttpOnly`` cookie scoped to the OAuth callback path: the vendor\nsign-in completes only in the approver's browser that called this\nendpoint, whoever opened the session.",
         "operationId": "confirmConnectSession",
         "parameters": [
           {
@@ -35103,7 +35103,7 @@
                 }
               }
             },
-            "description": "Session not awaiting confirmation, its OAuth app, scheme or hosts changed, or the review is stale"
+            "description": "Session not awaiting confirmation, its OAuth app, scheme or hosts changed, the review is stale, or the agent's binding for the API is suspended"
           },
           "422": {
             "content": {
@@ -41841,7 +41841,7 @@
     "/integrations:connect": {
       "description": "`POST`: Start an integration connect session.",
       "post": {
-        "description": "Both entrypoints (agent + UI) use this endpoint.\n\nAgent callers: `agent_id` in the payload is refused (the caller *is*\nthe agent — spoofing another agent's id is a permission-boundary\nviolation). The caller's own identity is injected instead. UI / user\ncallers: `agent_id` is optional and must name an agent the caller owns\n(`org:admin` may name any agent); any other id is refused with 400\n`connect_session_agent_not_found`, the same as an unknown agent. Naming\nan owned agent also takes `agents:write`, which confirming for it needs\n(403 `connect_session_confirmation_forbidden` otherwise), and an active\nagent (409 `connect_session_agent_inactive` otherwise). When\nnamed, confirm creates the direct agent-credential binding + permission\nrules; when omitted, the credential connects unbound and an agent can\nbe bound later through the credentials API.",
+        "description": "Both entrypoints (agent + UI) use this endpoint.\n\nAgent callers: `agent_id` in the payload is refused (the caller *is*\nthe agent — spoofing another agent's id is a permission-boundary\nviolation). The caller's own identity is injected instead. UI / user\ncallers: `agent_id` is optional and must name an agent the caller owns\n(`org:admin` may name any agent); any other id is refused with 400\n`connect_session_agent_not_found`, the same as an unknown agent. Naming\nan owned agent also takes `agents:write`, which confirming for it needs\n(403 `connect_session_confirmation_forbidden` otherwise), and an active\nagent (409 `connect_session_agent_inactive` otherwise). An agent whose\nbinding to a credential covering the requested API is suspended gets\n409 `connect_session_binding_suspended`: only the operator can resume\nthat binding, so a new connect for the same API is refused. When\nnamed, confirm creates the direct agent-credential binding + permission\nrules; when omitted, the credential connects unbound and an agent can\nbe bound later through the credentials API.",
         "operationId": "integrationsConnect",
         "requestBody": {
           "content": {
@@ -41977,7 +41977,7 @@
                 }
               }
             },
-            "description": "The API declares no supported scheme, or its hosts cannot be pinned"
+            "description": "The API declares no supported scheme, its hosts cannot be pinned, the agent is inactive, or the agent's binding for the API is suspended"
           },
           "422": {
             "content": {
