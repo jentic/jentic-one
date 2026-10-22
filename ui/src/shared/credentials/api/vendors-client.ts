@@ -22,7 +22,7 @@ import {
 	type RuleSetResponse,
 } from '@/shared/api';
 import type {
-	AmendEditBody,
+	AmendSessionBody,
 	AmendedSession,
 	ConfirmSessionBody,
 	ConfirmSessionResponse,
@@ -222,7 +222,7 @@ export async function listConnectSessionRevisions(
 /** Change an open session's ask as a new revision (``POST …:amend``). */
 export function amendConnectSession(
 	sessionId: string,
-	body: AmendEditBody,
+	body: AmendSessionBody,
 ): Promise<AmendedSession> {
 	return request(sessionUrl(sessionId, ':amend'), {
 		method: 'POST',

@@ -424,7 +424,10 @@ async def test_create_session_writes_revision_one_as_the_current_revision(
         "scopes": ["repo", "read:user"],
         "reason": "Needs to read repos",
     }
-    assert first.result == {"rules": requested, "scopes": ["read:user", "repo"]}
+    assert first.result == {
+        "rules": [{**rule, "added_by": _USER_ID} for rule in requested],
+        "scopes": ["read:user", "repo"],
+    }
     assert first.digest == revision_digest(
         baseline=None, result=first.result, reason="Needs to read repos"
     )
@@ -2522,6 +2525,57 @@ async def test_amending_a_create_session_replaces_its_ask(
             identity=_AGENT_IDENTITY,
             amend=SessionAmend(fields=frozenset({"resume"}), resume=True),
         )
+
+
+async def test_the_reviewer_edits_a_new_connection_request_as_a_revision_of_their_own(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+) -> None:
+    # The approver's rule changes land as a revision they made; each rule
+    # records who asked for it, and only an approver may amend.
+    svc = ConnectSessionService(integration_context)
+    issues: dict[str, object] = {
+        "effect": "allow",
+        "methods": ["GET"],
+        "path": "/issues",
+        "match_mode": "prefix",
+    }
+    pulls: dict[str, object] = {**issues, "path": "/pulls"}
+    created = await svc.create_session(
+        vendor_key="testauth",
+        agent_id=_AGENT_ID,
+        identity=_AGENT_IDENTITY,
+        requested_scopes=["repo"],
+        requested_permission_rules=[issues],
+    )
+    with pytest.raises(InvalidPollTokenError):
+        await svc.amend_session(
+            created.session_id,
+            identity=_OTHER_USER_IDENTITY,
+            amend=SessionAmend(
+                fields=frozenset({"requested_permission_rules"}),
+                requested_permission_rules=[pulls],
+            ),
+        )
+    amended = await svc.amend_session(
+        created.session_id,
+        identity=_USER_IDENTITY,
+        amend=SessionAmend(
+            fields=frozenset({"requested_permission_rules"}),
+            requested_permission_rules=[issues, pulls],
+        ),
+    )
+    async with integration_context.control_db.session() as session:
+        revision = await ConnectSessionRevisionRepository.get_by_id(session, amended.revision_id)
+    assert revision is not None and revision.created_by == _USER_ID
+    assert [r["added_by"] for r in revision.result["rules"]] == [_AGENT_ID, _USER_ID]
+
+    review = await svc.get_review_data(created.session_id, poll_token=None, identity=_USER_IDENTITY)
+    assert review.requested_permission_rules == [issues, pulls]
+    assert review.requested_scopes == ["repo"]
+    assert review.revision_id == amended.revision_id
 
 
 # ---------------------------------------------------------------------------

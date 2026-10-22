@@ -1332,6 +1332,14 @@ describe('VendorConnectFlow — connect-wizard regressions', () => {
 		let confirmToken: string | null = null;
 		worker.use(
 			http.get('/connect-sessions/sess_ops', () => HttpResponse.json(session)),
+			// The edited rules are saved as the approver's revision first.
+			http.post('/connect-sessions/sess_ops\\:amend', () =>
+				HttpResponse.json({
+					session_id: 'sess_ops',
+					revision_id: 'csr_ops_2',
+					revision_number: 2,
+				}),
+			),
 			http.get('/agents', () =>
 				HttpResponse.json({ data: [], has_more: false, next_cursor: null }),
 			),

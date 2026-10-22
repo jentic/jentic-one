@@ -285,6 +285,42 @@ describe('VendorConnectFlow approve — manual_* sessions', () => {
 		});
 	});
 
+	it('saves the approver’s rule changes as a revision and confirms that revision', async () => {
+		const seeded = seedManualSession();
+		renderApprove(seeded.session_id);
+		const user = userEvent.setup();
+
+		await continueFromReview(user);
+		await user.click(screen.getByRole('button', { name: /add rule/i }));
+		await user.type(screen.getByLabelText('Path pattern'), '/v1/refunds');
+		await user.click(screen.getByRole('button', { name: /^add$/i }));
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+
+		await user.type(await screen.findByLabelText(/^API key/), 'sk_1');
+		const amends = mutatingRequests().filter((r) => r.url.endsWith(':amend'));
+		expect(amends).toHaveLength(1);
+		await user.click(screen.getByRole('button', { name: 'Connect' }));
+		expect(await screen.findByText('Connected to acme-com')).toBeInTheDocument();
+
+		const [body] = getMockConnectSessions()[0].confirmBodies;
+		expect(body).toMatchObject({
+			digest: `dig_${seeded.session_id}_2`,
+			revision_id: `csr_${seeded.session_id}_2`,
+			permission_rules: [SUGGESTED_RULE, expect.objectContaining({ path: '/v1/refunds' })],
+		});
+	});
+
+	it('confirms the agent’s own revision when the approver keeps its rules', async () => {
+		const seeded = seedManualSession();
+		renderApprove(seeded.session_id);
+		const user = userEvent.setup();
+
+		await continueFromReview(user);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		await screen.findByLabelText(/^API key/);
+		expect(mutatingRequests().filter((r) => r.url.endsWith(':amend'))).toEqual([]);
+	});
+
 	it('requires at least one rule and adds no fallback rule', async () => {
 		const seeded = seedManualSession({ requested_permission_rules: [] });
 		renderApprove(seeded.session_id);
@@ -647,10 +683,12 @@ describe('VendorConnectFlow approve — awaiting_app', () => {
 		await continueFromReview(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 
-		expect(getMockConnectSessions()[0].confirmBodies[0]).toMatchObject({
-			kind: 'existing_credential',
-			credential_id: 'cred_gh_personal',
-		});
+		await waitFor(() =>
+			expect(getMockConnectSessions()[0].confirmBodies[0]).toMatchObject({
+				kind: 'existing_credential',
+				credential_id: 'cred_gh_personal',
+			}),
+		);
 		expect(window.open).toHaveBeenCalledWith(
 			'https://vendor.example.test/oauth/authorize?consent=cred_gh_personal',
 			'_blank',
@@ -717,7 +755,8 @@ describe('VendorConnectFlow approve — existing credential on a vendor session'
 		expect(getEndedMockConnectSessions()[0].confirmBodies[0]).toMatchObject({
 			kind: 'existing_credential',
 			credential_id: 'cred_gh_personal',
-			digest: `dig_${seeded.session_id}`,
+			// The fallback rule is the approver's, so it is confirmed as their revision.
+			digest: `dig_${seeded.session_id}_2`,
 		});
 	});
 });

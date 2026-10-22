@@ -413,6 +413,13 @@ export interface AmendEditBody {
 	scopes?: { set: string[] };
 }
 
+/** ``:amend`` on a new connection request: the rules sent replace the ask's. */
+export interface AmendCreateBody {
+	requested_permission_rules?: PermissionRule[];
+}
+
+export type AmendSessionBody = AmendEditBody | AmendCreateBody;
+
 /** ``:amend``'s answer: the session's new current revision. */
 export interface AmendedSession {
 	session_id: string;

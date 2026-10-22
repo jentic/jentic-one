@@ -30,6 +30,11 @@ function ruleKey(rule: PermissionRule): string {
 	]);
 }
 
+/** Whether two rule lists match rule for rule, in order (first match wins). */
+export function sameRules(a: readonly PermissionRule[], b: readonly PermissionRule[]): boolean {
+	return a.length === b.length && a.every((rule, i) => ruleKey(rule) === ruleKey(b[i]));
+}
+
 const GRANTING: ReadonlySet<PermissionRule['effect']> = new Set(['allow', 'require-approval']);
 
 /** The rule list today: the attached shared set's when there is one. */

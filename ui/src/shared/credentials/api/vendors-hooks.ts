@@ -47,7 +47,7 @@ import type {
 import { sharedQueryKeys } from '@/shared/api/queryKeys';
 import { credentialKeys } from './keys';
 import type {
-	AmendEditBody,
+	AmendSessionBody,
 	AmendedSession,
 	ConfirmSessionBody,
 	ConfirmSessionResponse,
@@ -218,13 +218,13 @@ export function useStartIntegrationConnect() {
 }
 
 /**
- * A reviewer's change to an edit's rules or scopes, saved as a revision of
- * the request. The review and its history are re-read so the new revision
- * shows as the one to approve.
+ * A reviewer's change to a request's rules (or an edit's scopes), saved as a
+ * revision of the request. The review and its history are re-read so the new
+ * revision shows as the one to approve.
  */
-export function useAmendEditSession(sessionId: string) {
+export function useAmendConnectSession(sessionId: string) {
 	const client = useQueryClient();
-	return useMutation<AmendedSession, Error, AmendEditBody>({
+	return useMutation<AmendedSession, Error, AmendSessionBody>({
 		mutationFn: (body) => amendConnectSession(sessionId, body),
 		onSuccess: () => {
 			void client.invalidateQueries({ queryKey: ['integrations', 'session', sessionId] });

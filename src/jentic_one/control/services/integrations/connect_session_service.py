@@ -1518,6 +1518,7 @@ class ConnectSessionService:
             permission_rules=row.requested_permission_rules or [],
             scopes=row.requested_scopes or [],
             reason=row.reason,
+            actor=row.initiator_actor_id,
         )
         revision = await ConnectSessionRevisionRepository.append(
             session,
@@ -1706,9 +1707,9 @@ class ConnectSessionService:
     ) -> AmendedSession:
         """Change what an open session asks for, as a new revision.
 
-        The session's initiator, or for an edit session a human who may
-        confirm it (its reviewer editing the request: the revision records
-        who made it), and only while it is open: a create
+        The session's initiator, or a human who may confirm it (its reviewer
+        editing the request: the revision records who made it), and only
+        while it is open: a create
         session before it is confirmed (``created`` or ``awaiting_app``), an
         edit session in ``created``. A confirmed or ended session is
         :class:`SessionClosedError`. Anyone else gets the uniform 403.
@@ -1733,9 +1734,8 @@ class ConnectSessionService:
                 closed.point_at(outcome.credential_id, outcome.agent_id)
                 raise closed
             raise InvalidPollTokenError("invalid poll_token")
-        if row.initiator_actor_id != identity.sub and not (
-            row.intent == INTENT_EDIT
-            and await self._can_confirm(row, identity, await self._agent_view(row.agent_id))
+        if row.initiator_actor_id != identity.sub and not await self._can_confirm(
+            row, identity, await self._agent_view(row.agent_id)
         ):
             raise InvalidPollTokenError("invalid poll_token")
         open_states: tuple[str, ...] = (
@@ -1801,7 +1801,11 @@ class ConnectSessionService:
             ) or []
             reason = amend.reason if "reason" in amend.fields else row.reason
             payload = create_revision(
-                permission_rules=permission_rules, scopes=scopes, reason=reason
+                permission_rules=permission_rules,
+                scopes=scopes,
+                reason=reason,
+                previous=current.result,
+                actor=identity.sub,
             )
             proposal, result, digest = payload.proposal, payload.result, payload.digest
             fields = {

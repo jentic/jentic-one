@@ -40,7 +40,7 @@ import {
 	useCancelConnectSession,
 	useConfirmConnectSession,
 	useConnectSession,
-	useAmendEditSession,
+	useAmendConnectSession,
 	useBindingAccess,
 	useConnectSessionRevisions,
 	usePollConnectSessionStatus,
@@ -92,6 +92,7 @@ import {
 	revisionChanges,
 	ruleChanges,
 	rulesToConfirm,
+	sameRules,
 	type RuleChange,
 } from '@/shared/credentials/lib/connectEdit';
 import { isHttpsVendorUrl, openVendorUrl } from '@/shared/credentials/lib/safe-navigation';
@@ -918,6 +919,7 @@ function VendorApproveFlow({
 	const [rejectOpen, setRejectOpen] = useState(false);
 
 	const confirmMutation = useConfirmConnectSession(sessionId, pollToken);
+	const amendMutation = useAmendConnectSession(sessionId);
 	const cancelMutation = useCancelConnectSession();
 	const rejectMutation = useRejectConnectSession();
 	const phaseRef = useRef<ApprovePhase>('configure');
@@ -1106,12 +1108,36 @@ function VendorApproveFlow({
 	};
 
 	/** The review the approver saw, echoed so the server can refuse a stale one. */
-	const reviewed = (finalRules: PermissionRule[]) => ({
+	const reviewed = (
+		finalRules: PermissionRule[],
+		review: ReviewSession | undefined = session,
+	) => ({
 		permission_rules: finalRules,
-		expected_agent_id: session?.agent?.agent_id ?? null,
-		digest: session?.digest ?? '',
-		revision_id: session?.revision?.id ?? null,
+		expected_agent_id: review?.agent?.agent_id ?? null,
+		digest: review?.digest ?? '',
+		revision_id: review?.revision?.id ?? null,
 	});
+
+	/**
+	 * The approver's rules, saved as a revision of the request (recorded as
+	 * theirs) when they differ from what it asks. Resolves to the review to
+	 * confirm against, re-read after a save; null when the save failed.
+	 */
+	const saveRules = async (finalRules: PermissionRule[]): Promise<ReviewSession | null> => {
+		if (!session) return null;
+		if (sameRules(finalRules, session.requested_permission_rules ?? [])) return session;
+		try {
+			await amendMutation.mutateAsync({ requested_permission_rules: finalRules });
+			const fresh = await sessionQuery.refetch();
+			return fresh.data ?? null;
+		} catch (err) {
+			setStepError({
+				phase: 'rules',
+				message: err instanceof Error ? err.message : 'Your rules couldn’t be saved.',
+			});
+			return null;
+		}
+	};
 
 	const afterFailedConfirm = (err: unknown, from: ApprovePhase): void => {
 		const copy = describeConfirmError(err);
@@ -1192,13 +1218,15 @@ function VendorApproveFlow({
 	const afterRules = async (finalRules: PermissionRule[]): Promise<void> => {
 		setStepError(null);
 		setRules(finalRules);
+		const review = await saveRules(finalRules);
+		if (!review) return;
 		if (method.kind === 'existing') {
 			handleResult(
 				await sendConfirm(
 					{
 						kind: 'existing_credential',
 						credential_id: method.credentialId,
-						...reviewed(finalRules),
+						...reviewed(finalRules, review),
 					},
 					'rules',
 					false,
@@ -1218,7 +1246,7 @@ function VendorApproveFlow({
 			await sendConfirm(
 				{
 					confirmed_scopes: Array.from(selectedScopes ?? []),
-					...reviewed(finalRules),
+					...reviewed(finalRules, review),
 				},
 				'rules',
 				false,
@@ -1344,7 +1372,7 @@ function VendorApproveFlow({
 				onChange={setRules}
 				onBack={(): void => goToPhase('configure')}
 				onContinue={(finalRules: PermissionRule[]) => void afterRules(finalRules)}
-				submitting={confirmMutation.isPending}
+				submitting={confirmMutation.isPending || amendMutation.isPending}
 				error={errorFor('rules')}
 				apiReference={session.api_reference}
 				// An API target always takes the approver's own rules: an
@@ -1620,7 +1648,7 @@ function EditApproveFlow({
 	const phaseRef = useRef<EditPhase>('review');
 	const [resume, setResume] = useState<boolean>(() => resumes(latest));
 	// The reviewer's own edit, saved as a revision: shown once it's read back.
-	const amendMutation = useAmendEditSession(sessionId);
+	const amendMutation = useAmendConnectSession(sessionId);
 	const [ownRevision, setOwnRevision] = useState<string | null>(null);
 	// The rules while the reviewer edits them, before they're saved.
 	const [draftRules, setDraftRules] = useState<PermissionRule[]>([]);

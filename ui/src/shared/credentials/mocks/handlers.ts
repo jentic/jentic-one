@@ -6,6 +6,7 @@ import {
 	type CredentialUpdateRequest,
 } from '@/shared/credentials/api';
 import type {
+	AmendCreateBody,
 	AmendEditBody,
 	ConfirmSessionBody,
 	ConnectRequest,
@@ -434,6 +435,8 @@ export interface MockConnectSession {
 	edit?: ReviewEdit | null;
 	/** An edit session's revision history (defaults to its current revision alone). */
 	revisions?: SessionRevision[];
+	/** A create session's current revision (defaults to revision 1); `:amend` moves it. */
+	revision?: { id: string; number: number };
 }
 
 type MockSessionOutcome = 'rejected' | 'cancelled' | 'connected' | 'applied';
@@ -529,6 +532,10 @@ function allowedConfirmKinds(session: MockConnectSession): string[] {
 			? 'own_oauth_client'
 			: (MANUAL_CONFIRM_KINDS[session.resolved_flow ?? ''] ?? 'oauth');
 	return [primary, 'existing_credential'];
+}
+
+function createRevision(session: MockConnectSession): { id: string; number: number } {
+	return session.revision ?? { id: `csr_${session.session_id}_1`, number: 1 };
 }
 
 function reviewDigest(session: MockConnectSession): string {
@@ -729,7 +736,7 @@ const connectSessionsHandlers = [
 			scheme: gated.scheme ?? null,
 			pinned_hosts: gated.pinned_hosts ?? null,
 			digest: reviewDigest(gated),
-			revision: gated.edit?.revision ?? { id: `csr_${gated.session_id}_1`, number: 1 },
+			revision: gated.edit?.revision ?? createRevision(gated),
 			edit: gated.edit ?? null,
 			can_confirm: gated.can_confirm ?? true,
 			existing_credentials: gated.existing_credentials ?? [],
@@ -752,7 +759,21 @@ const connectSessionsHandlers = [
 		const gated = gateSession(params.sessionId, request.url);
 		if (!isMockSession(gated)) return gated;
 		const edit = gated.edit;
-		if (!edit) return new HttpResponse(null, { status: 422 });
+		if (!edit) {
+			// A new connection request: the rules sent replace the ask (and the digest).
+			const body = (await request.json()) as AmendCreateBody;
+			const number = createRevision(gated).number + 1;
+			gated.revision = { id: `csr_${gated.session_id}_${number}`, number };
+			gated.digest = `dig_${gated.session_id}_${number}`;
+			if (body.requested_permission_rules) {
+				gated.requested_permission_rules = body.requested_permission_rules;
+			}
+			return HttpResponse.json({
+				session_id: gated.session_id,
+				revision_id: gated.revision.id,
+				revision_number: number,
+			});
+		}
 		const body = (await request.json()) as AmendEditBody;
 		const granted = edit.current.granted_scopes ?? [];
 		// A rule the binding has keeps its id; one the agent asked for keeps who asked.
@@ -793,7 +814,7 @@ const connectSessionsHandlers = [
 	http.get('/connect-sessions/:sessionId/revisions', ({ params, request }) => {
 		const gated = gateSession(params.sessionId, request.url);
 		if (!isMockSession(gated)) return gated;
-		const current = gated.edit?.revision ?? { id: `csr_${gated.session_id}_1`, number: 1 };
+		const current = gated.edit?.revision ?? createRevision(gated);
 		return HttpResponse.json({
 			data: gated.revisions ?? [
 				{
