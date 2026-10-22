@@ -1,0 +1,779 @@
+{
+  "$defs": {
+    "AgentWiring": {
+      "additionalProperties": false,
+      "description": "Agent-side wiring of the vendor CLI.",
+      "properties": {
+        "container": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ContainerWiring"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "`jentic run --container`; unset: nothing to set."
+        },
+        "wrapper": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WrapperWiring"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "`jentic <cli>` on the agent's machine; unset: not wrapped."
+        }
+      },
+      "title": "AgentWiring",
+      "type": "object"
+    },
+    "ApiIdentity": {
+      "additionalProperties": false,
+      "description": "The registry identity an API resolves to (slug form, as the registry stores it).",
+      "properties": {
+        "name": {
+          "description": "Registry API name slug, e.g. `api-github-com`.",
+          "title": "Name",
+          "type": "string"
+        },
+        "vendor": {
+          "description": "Registry vendor slug, e.g. `github-com`.",
+          "title": "Vendor",
+          "type": "string"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "API version. Required for `shipped` and `builtin` sources; unset for a `catalog` source, whose version is the imported spec's.",
+          "title": "Version"
+        }
+      },
+      "required": [
+        "vendor",
+        "name"
+      ],
+      "title": "ApiIdentity",
+      "type": "object"
+    },
+    "ApiRole": {
+      "description": "What one of a profile's APIs is to the vendor's CLI.\n\nThe role decides which rule kind applies to the API's binding: ``rest``\nand ``uploads`` take path rules (``regex``, ``prefix``, ``exact``),\n``graphql`` takes GraphQL top-level-field rules and ``git`` takes git\nrepository/ref rules.",
+      "enum": [
+        "rest",
+        "graphql",
+        "git",
+        "uploads"
+      ],
+      "title": "ApiRole",
+      "type": "string"
+    },
+    "CliBinary": {
+      "additionalProperties": false,
+      "description": "The vendor CLI the profile governs.",
+      "properties": {
+        "binary": {
+          "description": "Executable name looked up on PATH, e.g. `gh`.",
+          "title": "Binary",
+          "type": "string"
+        },
+        "supported_range": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "CLI versions the profile is written for, e.g. `>=2.40.0,<3`.",
+          "examples": [
+            ">=2.40.0,<3"
+          ],
+          "title": "Supported Range"
+        }
+      },
+      "required": [
+        "binary"
+      ],
+      "title": "CliBinary",
+      "type": "object"
+    },
+    "ContainerWiring": {
+      "additionalProperties": false,
+      "description": "The environment ``jentic run --container`` gives the agent for this vendor.",
+      "properties": {
+        "env_set": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Variables to set; a value is a literal or `{placeholder}`.",
+          "title": "Env Set",
+          "type": "object"
+        },
+        "env_strip": {
+          "default": [],
+          "description": "Variables removed from the agent's environment.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Env Strip",
+          "type": "array"
+        },
+        "tunnel_hosts": {
+          "default": [],
+          "description": "Hosts the vendor's tools need reached directly (tunnelled, never decrypted); an exact host or one with `*` for one whole label.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Tunnel Hosts",
+          "type": "array"
+        }
+      },
+      "title": "ContainerWiring",
+      "type": "object"
+    },
+    "CredentialPolicy": {
+      "additionalProperties": false,
+      "description": "How credentials for the profile's APIs are held.",
+      "properties": {
+        "mode": {
+          "default": "per_api",
+          "description": "`per_api`: each API has its own credential, created by its own `connect` entry. `profile_scoped` (reserved, not accepted yet): one credential covering exactly the profile's APIs, created by the profile's `connect`.",
+          "enum": [
+            "per_api",
+            "profile_scoped"
+          ],
+          "title": "Mode",
+          "type": "string"
+        }
+      },
+      "title": "CredentialPolicy",
+      "type": "object"
+    },
+    "EgressRouting": {
+      "additionalProperties": false,
+      "description": "How the egress proxy of ``jentic run --container`` treats the vendor.",
+      "properties": {
+        "governed_domains": {
+          "description": "Domains whose hosts the proxy TLS-terminates and relays to the broker with the vendor's invocation token.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Governed Domains",
+          "type": "array"
+        }
+      },
+      "required": [
+        "governed_domains"
+      ],
+      "title": "EgressRouting",
+      "type": "object"
+    },
+    "FacadeRoute": {
+      "additionalProperties": false,
+      "description": "One request layout the vendor facade maps to an upstream.",
+      "properties": {
+        "api": {
+          "$ref": "#/$defs/ApiRole",
+          "description": "The role of the API the route's calls resolve to."
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "An exact path that maps to `upstream` itself.",
+          "title": "Path"
+        },
+        "prefix": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "A path prefix: `<prefix>/<rest>` maps to `<upstream>/<rest>`. In `path` mode it is below the facade's own `/_facade/<vendor>`; `/` is that root.",
+          "title": "Prefix"
+        },
+        "upstream": {
+          "description": "The `https://` upstream the route forwards to.",
+          "title": "Upstream",
+          "type": "string"
+        }
+      },
+      "required": [
+        "api",
+        "upstream"
+      ],
+      "title": "FacadeRoute",
+      "type": "object"
+    },
+    "FacadeRouting": {
+      "additionalProperties": false,
+      "description": "How the broker's facade for the vendor is laid out.",
+      "properties": {
+        "mode": {
+          "description": "`host`: on a hostname of its own; `path`: under `/_facade/<vendor>`.",
+          "enum": [
+            "host",
+            "path"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "routes": {
+          "description": "Request layouts served.",
+          "items": {
+            "$ref": "#/$defs/FacadeRoute"
+          },
+          "minItems": 1,
+          "title": "Routes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "mode",
+        "routes"
+      ],
+      "title": "FacadeRouting",
+      "type": "object"
+    },
+    "HardDenySource": {
+      "additionalProperties": false,
+      "description": "A hard-deny list that applies to one of the profile's APIs.\n\nThe list itself lives in code (``source`` names it); the manifest only\nreferences it, so there is one source of truth for what no rule can allow.",
+      "properties": {
+        "api": {
+          "$ref": "#/$defs/ApiRole",
+          "description": "The role of the API the list applies to."
+        },
+        "description": {
+          "default": "",
+          "description": "What the list guards, for operators.",
+          "title": "Description",
+          "type": "string"
+        },
+        "kind": {
+          "description": "`graphql_mutation`: top-level mutations always denied; `graphql_held_mutation`: mutations always held for approval; `git_ref`: refs no push may touch.",
+          "enum": [
+            "graphql_mutation",
+            "graphql_held_mutation",
+            "git_ref"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "source": {
+          "description": "The code that holds the list, as `<module>:<attribute>`.",
+          "examples": [
+            "jentic_one.shared.permissions.github_graphql:HARD_DENIED_MUTATIONS"
+          ],
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "api",
+        "kind",
+        "source"
+      ],
+      "title": "HardDenySource",
+      "type": "object"
+    },
+    "Preset": {
+      "additionalProperties": false,
+      "description": "A named set of rules across the profile's APIs.",
+      "properties": {
+        "description": {
+          "description": "What the preset grants, shown to agent and approver.",
+          "title": "Description",
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": {
+            "$ref": "#/$defs/PresetParam"
+          },
+          "title": "Params",
+          "type": "object"
+        },
+        "rules": {
+          "items": {
+            "$ref": "#/$defs/PresetRule"
+          },
+          "minItems": 1,
+          "title": "Rules",
+          "type": "array"
+        }
+      },
+      "required": [
+        "description",
+        "rules"
+      ],
+      "title": "Preset",
+      "type": "object"
+    },
+    "PresetParam": {
+      "additionalProperties": false,
+      "description": "A parameter a preset's rules are filled in with.",
+      "properties": {
+        "default": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Value used when the parameter is not given.",
+          "title": "Default"
+        },
+        "description": {
+          "description": "What the parameter means, shown to the agent.",
+          "title": "Description",
+          "type": "string"
+        },
+        "kind": {
+          "description": "`repo_list`: comma-separated `<owner>/<repo>` globs; `ref_glob`: a branch glob below `refs/heads/` (e.g. `agent/*`); `flag`: `true` or `false`.",
+          "enum": [
+            "repo_list",
+            "ref_glob",
+            "flag"
+          ],
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "description"
+      ],
+      "title": "PresetParam",
+      "type": "object"
+    },
+    "PresetRule": {
+      "additionalProperties": false,
+      "description": "One rule (or rule set) a preset expands into, for one of the profile's APIs.\n\nEither a rule of its own (``effect`` plus ``methods``/``path``/\n``match_mode``/``operations``, with ``${param}`` references) or an\n``include`` of a named rule set kept in code.",
+      "properties": {
+        "api": {
+          "$ref": "#/$defs/ApiRole",
+          "description": "The role of the API whose binding gets the rule."
+        },
+        "effect": {
+          "anyOf": [
+            {
+              "enum": [
+                "allow",
+                "deny",
+                "require-approval"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Effect"
+        },
+        "for_each": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "A `repo_list` parameter: the rule is repeated once per listed repository, with `${<param>}` standing for one repository.",
+          "title": "For Each"
+        },
+        "include": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "A named rule set kept in code, e.g. `github_graphql:pr_write`.",
+          "title": "Include"
+        },
+        "match_mode": {
+          "anyOf": [
+            {
+              "enum": [
+                "regex",
+                "prefix",
+                "exact",
+                "graphql",
+                "git"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Match Mode"
+        },
+        "methods": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Methods"
+        },
+        "operations": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Operations"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "when": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "A `flag` parameter: the rule applies only when it is true.",
+          "title": "When"
+        }
+      },
+      "required": [
+        "api"
+      ],
+      "title": "PresetRule",
+      "type": "object"
+    },
+    "ProfileApi": {
+      "additionalProperties": false,
+      "description": "One API of the vendor that the CLI reaches through Jentic.",
+      "properties": {
+        "api_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The catalog-style api_id (`<domain>/<name>`) a vendor entry names the API by. Required for a `shipped` source; for `catalog` and `builtin` it is the source's own id and may be omitted.",
+          "title": "Api Id"
+        },
+        "connect": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The `vendors.entries` key whose connect flow creates this API's credential (per-API credential mode). Unset when the API is connected another way (an API-target connect or a hand-entered credential).",
+          "title": "Connect"
+        },
+        "description": {
+          "default": "",
+          "description": "What the API covers, for operators.",
+          "title": "Description",
+          "type": "string"
+        },
+        "identity": {
+          "$ref": "#/$defs/ApiIdentity",
+          "description": "The registry identity the API resolves to."
+        },
+        "role": {
+          "$ref": "#/$defs/ApiRole",
+          "description": "What the API is to the CLI; stable across releases."
+        },
+        "source": {
+          "description": "Where the API comes from: `catalog:<catalog api_id>`, `shipped:specs/<file>` (a spec in this package) or `builtin:<catalog api_id>`.",
+          "examples": [
+            "catalog:github.com/api.github.com"
+          ],
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "source",
+        "identity"
+      ],
+      "title": "ProfileApi",
+      "type": "object"
+    },
+    "ProfileConnect": {
+      "additionalProperties": false,
+      "description": "The single connect that covers the whole profile (``profile_scoped`` credentials).",
+      "properties": {
+        "flow": {
+          "anyOf": [
+            {
+              "enum": [
+                "device_authorization",
+                "authorization_code"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The flow to use; unset takes the entry's first flow.",
+          "title": "Flow"
+        },
+        "vendor_entry": {
+          "description": "The `vendors.entries` key the profile connects with.",
+          "title": "Vendor Entry",
+          "type": "string"
+        }
+      },
+      "required": [
+        "vendor_entry"
+      ],
+      "title": "ProfileConnect",
+      "type": "object"
+    },
+    "Routing": {
+      "additionalProperties": false,
+      "description": "Facade and proxy routing for the vendor.",
+      "properties": {
+        "egress": {
+          "$ref": "#/$defs/EgressRouting"
+        },
+        "facade": {
+          "$ref": "#/$defs/FacadeRouting"
+        }
+      },
+      "required": [
+        "facade",
+        "egress"
+      ],
+      "title": "Routing",
+      "type": "object"
+    },
+    "VendorSpec": {
+      "additionalProperties": false,
+      "description": "The vendor whose CLI the profile governs.",
+      "properties": {
+        "display_name": {
+          "description": "How the vendor is named to people.",
+          "title": "Display Name",
+          "type": "string"
+        },
+        "error_shape": {
+          "anyOf": [
+            {
+              "enum": [
+                "github",
+                "cloudflare"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The error body shape the vendor's CLI understands; unset keeps RFC 9457.",
+          "title": "Error Shape"
+        },
+        "id": {
+          "description": "The vendor's `cli_facades.vendors` key and invocation-token vendor, e.g. `github`.",
+          "title": "Id",
+          "type": "string"
+        },
+        "registry_domains": {
+          "description": "Registry vendor domains whose APIs this vendor's invocation tokens reach at the proxy route; errors on a host at or below one take the vendor's error shape.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Registry Domains",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "display_name",
+        "registry_domains"
+      ],
+      "title": "VendorSpec",
+      "type": "object"
+    },
+    "WrapperWiring": {
+      "additionalProperties": false,
+      "description": "The environment the CLI wrapper (``jentic <cli>``) gives the vendor CLI.",
+      "properties": {
+        "env_set": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Variables to set; a value is a literal or one of `{address}`, `{address_host}`, `{token}`.",
+          "title": "Env Set",
+          "type": "object"
+        },
+        "env_strip": {
+          "default": [],
+          "description": "Credential variables the CLI could authenticate with instead; removed so only the invocation token is presented.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Env Strip",
+          "type": "array"
+        }
+      },
+      "required": [
+        "env_set"
+      ],
+      "title": "WrapperWiring",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One vendor CLI's manifest.",
+  "properties": {
+    "agent": {
+      "$ref": "#/$defs/AgentWiring"
+    },
+    "apis": {
+      "items": {
+        "$ref": "#/$defs/ProfileApi"
+      },
+      "minItems": 1,
+      "title": "Apis",
+      "type": "array"
+    },
+    "cli": {
+      "$ref": "#/$defs/CliBinary"
+    },
+    "connect": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ProfileConnect"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The single connect for the whole profile. Used by `profile_scoped` credentials; with `per_api`, each API's own `connect` is used."
+    },
+    "credential": {
+      "$ref": "#/$defs/CredentialPolicy"
+    },
+    "display_name": {
+      "description": "How the profile is named to people.",
+      "title": "Display Name",
+      "type": "string"
+    },
+    "format_version": {
+      "const": 1,
+      "description": "Manifest format version.",
+      "title": "Format Version",
+      "type": "integer"
+    },
+    "hard_deny": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/HardDenySource"
+      },
+      "title": "Hard Deny",
+      "type": "array"
+    },
+    "presets": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Preset"
+      },
+      "title": "Presets",
+      "type": "object"
+    },
+    "profile": {
+      "description": "The profile's name, e.g. `github`.",
+      "title": "Profile",
+      "type": "string"
+    },
+    "routing": {
+      "$ref": "#/$defs/Routing"
+    },
+    "vendor": {
+      "$ref": "#/$defs/VendorSpec"
+    }
+  },
+  "required": [
+    "format_version",
+    "profile",
+    "display_name",
+    "cli",
+    "vendor",
+    "apis",
+    "routing"
+  ],
+  "title": "CliProfile",
+  "type": "object"
+}

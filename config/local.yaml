@@ -127,6 +127,33 @@ vendors:
         method: GET
         identity_field: login
         display_template: "@{login}"
+    # The GitHub GraphQL endpoint (POST api.github.com/graphql), shipped with
+    # the GitHub CLI profile as its own API (`github-com/github-graphql`):
+    # `jentic connect github-graphql` creates a credential for GraphQL only,
+    # whose binding takes GraphQL rules. Connecting it imports the shipped
+    # spec on demand. The same OAuth app (client_id) serves every GitHub entry.
+    github-graphql:
+      vendor: github.com/github-graphql
+      display_name: GitHub (GraphQL)
+      flows:
+        - kind: device_authorization
+          client_id: "CHANGE_ME_LOCAL_ONLY"
+          authorization_endpoint: https://github.com/login/device/code
+          token_endpoint: https://github.com/login/oauth/access_token
+      scopes:
+        - name: "repo"
+          classification: write
+          default: true
+          description: "Query and change repositories, issues and pull requests"
+        - name: "read:org"
+          classification: read
+          default: false
+          description: "Read organization membership and teams"
+      identity_probe:
+        endpoint: https://api.github.com/user
+        method: GET
+        identity_field: login
+        display_template: "@{login}"
     # git to github.com through Jentic (clone, fetch, push from
     # `jentic run --container`): a credential scoped to the broker's built-in
     # GitHub git API only (`github-com/github-git`), connected with
