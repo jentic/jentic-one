@@ -391,8 +391,10 @@ def broker_transport_recovery(status: int, problem_type: str) -> str:
     ``runner_scheme_unsupported`` (RunnerSchemeUnsupportedError, 501) needs a
     different operation. Everything else is unknown, including
     ``upstream_response_too_large`` (UpstreamResponseTooLargeError, 502: the
-    upstream answered, so the call ran) and ``upstream_transport_error``
-    (UpstreamTransportError, 502: the connection failed mid-request).
+    upstream answered, so the call ran), ``upstream_transport_error``
+    (UpstreamTransportError, 502: the connection failed mid-request) and
+    ``upstream_request_invalid`` (500: the broker built a request its HTTP
+    client refused to send, so re-sending the same call will fail the same way).
     """
     if status == 429 or problem_type in _BROKER_TRANSIENT_PROBLEM_TYPES:
         return RECOVER_WAIT
@@ -607,6 +609,8 @@ def classify_denial(status: int, headers: httpx.Headers, body: bytes) -> ToolErr
 #: Everything else — ``action_denied`` (a permission rule forbids the op;
 #: connecting a fresh credential must NOT be taught as a way around it),
 #: ``credential_identity_mismatch`` (an operator fixes the credential),
+#: ``credential_binding_suspended`` (only the operator resumes the binding;
+#: a new connect is refused),
 #: ``credential_undecryptable`` (operator re-adds it), and any unknown type —
 #: keeps ``whoami``.
 _PROVISIONING_PROBLEM_TYPES = frozenset(

@@ -32,7 +32,7 @@ from pydantic import (
     model_validator,
 )
 
-from jentic_one.shared.state.factory import BackendKind, StateBackendConfig
+from jentic_one.shared.state.factory import MEMORY_BACKEND, StateBackendConfig
 from jentic_one.shared.url import (
     is_loopback_host,
     is_loopback_url,
@@ -329,6 +329,17 @@ class ServicesConfig(BaseModel):
     request_timeout_s: float = 30.0
     retry_max: int = 3
     retry_backoff_s: float = 1.0
+    background_task_drain_timeout_s: float = Field(
+        default=10.0,
+        ge=0,
+        description=(
+            "On shutdown, how long (seconds) the app waits for work requests "
+            "handed off after their response (e.g. streaming execution records) "
+            "before cancelling what is still running. Runs before the databases "
+            "close; each cancelled task is logged and counted on "
+            "``app.background_tasks`` (``outcome=cancelled``)."
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -383,6 +394,11 @@ class WorkerConfig(BaseModel):
     crashed worker/pod is reclaimed on a later poll. A handler failure requeues the
     job with capped exponential backoff up to ``max_attempts`` claims; beyond that
     it is dead-lettered (poison-message handling) rather than looped forever.
+
+    Each claim is a single atomic ``UPDATE`` (``FOR UPDATE SKIP LOCKED`` on
+    Postgres, a serialised write transaction on SQLite), so any number of worker
+    loops — across processes or replicas, each running up to ``concurrency``
+    jobs — can poll the same queue without double-claiming a job.
     """
 
     # How long a claimed (RUNNING) job stays invisible to other workers. Size it
@@ -417,6 +433,48 @@ class WorkerConfig(BaseModel):
         description=(
             "Cap, in seconds, on the worker's reconnect delay while the database "
             "is unreachable — a recovered database is picked up within this long."
+        ),
+    )
+    poll_interval_s: float = Field(
+        default=2.0,
+        ge=0.25,
+        le=60.0,
+        description=(
+            "Idle wait (seconds) between job-queue polls when nothing is claimable. "
+            "A job enqueued in the same process wakes the worker immediately, so "
+            "this mainly bounds pickup latency for jobs enqueued by another process "
+            "and how quickly visibility-expired jobs are reclaimed. Every poll is a "
+            "write transaction (the claim is an ``UPDATE``) even when the queue is "
+            "empty — on SQLite it takes the database write lock that request writes "
+            "also wait on — so each process issues about ``1 / poll_interval_s`` of "
+            "them per second while idle."
+        ),
+    )
+    concurrency: int = Field(
+        default=1,
+        ge=1,
+        le=64,
+        description=(
+            "Maximum jobs one worker process runs at once (1 = serial). Postgres "
+            "only: SQLite requires 1, because a job's handler holds the database "
+            "write lock across its upstream call, so a second concurrent job's "
+            "writes would time out. Each in-flight job holds about 2 admin-DB "
+            "connections at once (its handler transaction plus the run-time "
+            "authorization or credential-audit session it opens), so "
+            "``2 * concurrency`` must stay below ``databases.admin.pool_max``, "
+            "leaving the remainder for HTTP requests and other background work "
+            "in the same process."
+        ),
+    )
+    sweep_interval_s: float = Field(
+        default=120.0,
+        ge=1.0,
+        le=86_400.0,
+        description=(
+            "Seconds between the worker's retention sweeps, which expire lapsed "
+            "execution approvals and delete expired job results and long-expired "
+            "access/refresh token rows. Measured in wall time, independent of "
+            "``poll_interval_s`` and wake-ups."
         ),
     )
 
@@ -577,11 +635,37 @@ class AdminInviteConfig(BaseModel):
         return self
 
 
+class AdminEventsConfig(BaseModel):
+    """Admin event-stream settings."""
+
+    stream_recheck_seconds: float = Field(
+        default=5.0,
+        gt=0,
+        description=(
+            "Minimum seconds between re-verifications of an open "
+            "``GET /events/stream``: its credential, ``events:read`` / "
+            "``org:admin`` permission, and the scope of the events it delivers. "
+            "Checks run only at a poll or page boundary, so a check happens at "
+            "the first poll or page after the interval elapses; an idle stream "
+            "polls every few seconds, so a value below its poll interval behaves "
+            "as that interval. A disabled caller, a revoked or expired token, or "
+            "a revoked permission ends the stream at that check; a narrower "
+            "permission set narrows it. Permissions are those the credential "
+            "carries: API keys and user ``at_`` access tokens resolve them live, "
+            "while a login session JWT and an agent ``at_`` access token carry "
+            "the set they were issued with; the stream re-verifies the token it "
+            "was opened with, so for those a change applies once that token "
+            "expires and the client reconnects."
+        ),
+    )
+
+
 class AdminConfig(BaseModel):
     """Admin surface configuration."""
 
     auth: AdminAuthConfig = Field(default_factory=AdminAuthConfig)
     invite: AdminInviteConfig = Field(default_factory=AdminInviteConfig)
+    events: AdminEventsConfig = Field(default_factory=AdminEventsConfig)
 
 
 class SigningKeyConfig(BaseModel):
@@ -788,12 +872,18 @@ class OAuthRateLimitConfig(BaseModel):
     authorize_rpm: int = Field(
         default=30,
         description=(
-            "Sustained requests/minute allowed on the unauthenticated "
-            "``/authorize`` endpoints, keyed per ``client_id``+IP — except "
-            "the local-login routes, whose ``client_id`` rides inside the signed "
-            "login state and which are always keyed by bare IP. Behind a proxy, set "
+            "Sustained requests/minute allowed per client network (IPv4 "
+            "address or IPv6 /64) across the unauthenticated authorization "
+            "flow: ``/authorize``, the IdP callback, the consent page, its "
+            "submit and inline agent create, and the local-login form share "
+            "one bucket, whatever "
+            "``client_id`` they name. A sign-in spends two to six requests "
+            "(more after a mistyped password), so the defaults admit at "
+            "least five back-to-back sign-ins and then at least five a minute "
+            "per network; raise both for a large shared NAT or egress IP. "
+            "Behind a proxy, set "
             "``auth.oauth_rate_limit.trusted_proxies`` or every client "
-            "shares the proxy's IP bucket."
+            "shares the proxy's bucket."
         ),
     )
     authorize_burst: int = Field(
@@ -803,8 +893,9 @@ class OAuthRateLimitConfig(BaseModel):
     exchange_rpm: int = Field(
         default=60,
         description=(
-            "Sustained requests/minute allowed per ``client_id``+IP on the "
-            "token endpoint (also reused per-IP for token revocation)."
+            "Sustained requests/minute allowed per ``client_id`` + client "
+            "network (IPv4 address or IPv6 /64) on the token endpoint (also "
+            "reused per client network for token revocation)."
         ),
     )
     exchange_burst: int = Field(
@@ -814,8 +905,9 @@ class OAuthRateLimitConfig(BaseModel):
     registration_rpm: int = Field(
         default=10,
         description=(
-            "Sustained requests/minute allowed per IP on anonymous dynamic "
-            "client registration (``POST /oauth-clients``)."
+            "Sustained requests/minute allowed per client network (IPv4 "
+            "address or IPv6 /64) on anonymous dynamic client registration "
+            "(``POST /oauth-clients``)."
         ),
     )
     registration_burst: int = Field(
@@ -1604,8 +1696,9 @@ class RetryConfig(BaseModel):
     The ``RetryRunner`` decorator retries a failed attempt **only** when it is
     safe to do so: a connect-phase failure (no bytes on the wire) is retryable
     for any method, while a post-send failure (read timeout, mirrored ``429``/
-    ``503``) is retried only for idempotent methods or when an
-    ``Idempotency-Key`` is present — a blind ``POST`` retry is a double-spend.
+    ``503``) is retried only for idempotent HTTP methods — ``Idempotency-Key``
+    is broker-consumed and stripped from outbound headers, so a post-send
+    ``POST`` or ``PATCH`` retry would double-spend (#1799).
     Each attempt still flows through the circuit breaker (retry *outside*,
     breaker *inside*); the whole loop is bounded by the request deadline.
     """
@@ -1735,9 +1828,9 @@ class ControlEgressConfig(BaseModel):
 class BrokerResilienceConfig(BaseModel):
     """Resilience envelope: admission + rate limit / circuit.
 
-    The shared-state ``backend`` selection drives *both* the rate limiter and
-    the circuit breaker (memory default; Redis is cluster-wide). Queue
-    backpressure / async-credential / retention knobs are future work.
+    The rate limiter and circuit breaker run on the process's shared-state
+    backend (the top-level ``state:`` section). Queue backpressure /
+    async-credential / retention knobs are future work.
     """
 
     max_in_flight: int = Field(
@@ -1778,21 +1871,20 @@ class BrokerResilienceConfig(BaseModel):
         ),
     )
     upstream: UpstreamClientConfig = Field(default_factory=UpstreamClientConfig)
-    backend: StateBackendConfig = Field(default_factory=StateBackendConfig)
     rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
     circuit_breaker: CircuitBreakerConfig = Field(default_factory=CircuitBreakerConfig)
     retry: RetryConfig = Field(default_factory=RetryConfig)
 
 
 MEMORY_IDEMPOTENCY_TTL_S = 3_600.0
-REDIS_IDEMPOTENCY_TTL_S = 86_400.0
+SHARED_IDEMPOTENCY_TTL_S = 86_400.0
 
 
 class IdempotencyConfig(BaseModel):
     """``Idempotency-Key`` replay store.
 
-    Sync ``FULL``-mode replay over the shared-state ``AtomicStore`` (memory
-    default; Redis ⇒ cross-instance). Two TTLs: a *short* ``pending_ttl_s`` claim
+    Sync ``FULL``-mode replay over the shared-state ``AtomicStore`` (the
+    ``state:`` backend). Two TTLs: a *short* ``pending_ttl_s`` claim
     (sized to the request deadline + buffer, so a crash mid-flight frees the key
     in seconds rather than the full replay window) promoted to the *long*
     ``ttl_s`` only once the response is stored. Responses over
@@ -1810,7 +1902,7 @@ class IdempotencyConfig(BaseModel):
         description=(
             "Replay window of a completed Idempotency-Key record, in seconds. Unset, "
             f"it is {MEMORY_IDEMPOTENCY_TTL_S:.0f} (1 h) on the memory shared-state "
-            f"backend and {REDIS_IDEMPOTENCY_TTL_S:.0f} (24 h) on redis. On memory, "
+            f"backend and {SHARED_IDEMPOTENCY_TTL_S:.0f} (24 h) on any other backend. On memory, "
             "every record is held in process for this long, so the TTL divides the "
             "sustained idempotent request rate the idem budget can hold."
         ),
@@ -1820,13 +1912,13 @@ class IdempotencyConfig(BaseModel):
     # Bodies larger than this are NOT stored for byte-for-byte replay.
     max_response_bytes: int = 256 * 1024
 
-    def replay_ttl_s(self, backend: BackendKind) -> float:
-        """``ttl_s``, or the default for *backend* when it is unset."""
+    def replay_ttl_s(self, backend: str) -> float:
+        """``ttl_s``, or the default for the *backend* name when it is unset."""
         if self.ttl_s is not None:
             return self.ttl_s
-        if backend is BackendKind.MEMORY:
+        if backend == MEMORY_BACKEND:
             return MEMORY_IDEMPOTENCY_TTL_S
-        return REDIS_IDEMPOTENCY_TTL_S
+        return SHARED_IDEMPOTENCY_TTL_S
 
 
 # Asymmetric signature algs are the only ones the hardened JWT path accepts.
@@ -1928,7 +2020,7 @@ class SecurityConfig(BaseModel):
     # scale of hours, so a sweep per minute is ample). One tick ≈ the worker
     # poll interval (~2s), so the default ~60 ticks is roughly every 2 minutes.
     credential_expiry_sweep_interval_ticks: int = Field(default=60, ge=1)
-    # Number of failed executions for one actor+toolkit+operation within the
+    # Number of failed executions for one actor+credential+operation within the
     # rolling window before an ``execution.repeated_failure`` event is emitted.
     execution_repeated_failure_threshold: int = Field(default=5, ge=1)
     # Rolling window (seconds) over which repeated failures are counted and over
@@ -2011,6 +2103,52 @@ class BrokerConfig(BaseModel):
         default=10_000,
         ge=1,
         description="LRU bound on entries in the per-process route-discovery cache.",
+    )
+    streaming_persist_timeout_s: float = Field(
+        default=10.0,
+        gt=0,
+        description=(
+            "Budget (seconds) for writing one streaming execution's record and "
+            "lifecycle event. The write runs after the response, off the request, "
+            "so it never delays the client; past the budget it is abandoned, "
+            "logged and counted on ``app.background_tasks`` "
+            "(``kind=streaming_execution_persist``, ``outcome=timed_out``)."
+        ),
+    )
+    streaming_persist_max_concurrency: int = Field(
+        default=5,
+        gt=0,
+        description=(
+            "Per-process cap on concurrent post-response persists of streaming "
+            "execution records (each holds one admin-DB connection). Excess "
+            "persists wait for a slot, up to "
+            "``broker.streaming_persist_acquire_timeout_s``; the waiting and "
+            "writing counts are exported as "
+            "``broker.streaming_execution.persist_pending``. The effective cap "
+            "is clamped to ``databases.admin.pool_max - 1`` (minimum 1; a "
+            "``streaming_persist_limit_clamped`` warning is logged when it "
+            "applies), so with ``pool_max >= 2`` persists never take every "
+            "connection of the admin base pool. ``pool_max`` is the base pool "
+            "size only; SQLAlchemy's default overflow can open up to 10 more "
+            "connections on top of it."
+        ),
+    )
+    streaming_persist_acquire_timeout_s: float = Field(
+        default=5.0,
+        gt=0,
+        description=(
+            "How long (seconds) a streaming execution persist waits for one of "
+            "the ``broker.streaming_persist_max_concurrency`` slots. Past it the "
+            "record is abandoned: logged as "
+            "``streaming_execution_persist_abandoned`` and counted on "
+            "``broker.streaming_execution.persist_failures`` "
+            "(``reason=backlog_timeout``). The wait runs after the response is "
+            "complete or the client has disconnected, when the request no "
+            "longer holds its admission slot, so the wait delays neither the "
+            "client nor ``/ready``. The timeout bounds how long a stalled "
+            "admin database can keep records queued in memory, including at "
+            "shutdown; it does not bound the write itself once a slot is held."
+        ),
     )
     # Absolute public base URL of the admin jobs API, used to build the 202
     # `_links.self` pointer for async executions (e.g. "https://api.example.com").
@@ -2135,6 +2273,120 @@ def _warn_retired_account_linking_base_url_once() -> None:
         actionable_step=(
             f"Remove broker.{_RETIRED_ACCOUNT_LINKING_KEY} from the config file or "
             "JENTIC__BROKER__ACCOUNT_LINKING_BASE_URL from the environment."
+        ),
+    )
+
+
+_DEPRECATED_STATE_PATH = "broker.resilience.backend"
+_deprecated_state_section_warned = threading.Event()
+
+
+def _fold_deprecated_state_section(data: Any) -> Any:
+    """Read ``broker.resilience.backend`` into ``state`` for one deprecation release.
+
+    The old section and the new one are merged leaf by leaf, so a config may
+    set some keys under either. A key set under both must agree (after type
+    coercion, so the env var string ``"500"`` agrees with a YAML ``500``);
+    when they disagree the config fails to load, naming both paths, rather
+    than silently picking a shared-state backend the operator did not mean.
+    """
+    if not isinstance(data, dict):
+        return data
+    broker = data.get("broker")
+    if not isinstance(broker, dict):
+        return data
+    resilience = broker.get("resilience")
+    if not isinstance(resilience, dict) or "backend" not in resilience:
+        return data
+    legacy = resilience["backend"]
+    data = dict(data)
+    data["broker"] = {
+        **broker,
+        "resilience": {k: v for k, v in resilience.items() if k != "backend"},
+    }
+    current = data.get("state")
+    # A programmatic caller may pass model instances rather than mappings.
+    if isinstance(legacy, BaseModel):
+        legacy = legacy.model_dump(exclude_unset=True)
+    if isinstance(current, BaseModel):
+        current = current.model_dump(exclude_unset=True)
+    if not isinstance(legacy, dict):
+        raise ValueError(
+            f"{_DEPRECATED_STATE_PATH} must be a mapping; move it to the top-level state section"
+        )
+    if not (current is None or isinstance(current, dict)):
+        raise ValueError("state must be a mapping")
+    current = current or {}
+    if current:
+        _reject_conflicting_state_sections(current, legacy)
+    _warn_deprecated_state_section_once(both=bool(current))
+    data["state"] = _deep_merge(legacy, current)
+    return data
+
+
+def _reject_conflicting_state_sections(current: dict[str, Any], legacy: dict[str, Any]) -> None:
+    """Raise when a key set under both ``state`` and the old section disagrees.
+
+    Both merge orders are validated: they produce the same backend config only
+    when every key set in both agrees. When exactly one order validates, a key
+    set in both carries a value that is invalid on one side, which is a
+    disagreement too: letting ``state`` win would silently drop it. When
+    neither validates, the config is invalid whichever side wins, and the main
+    validation reports it under ``state``.
+    """
+    merged_new_wins = _deep_merge(legacy, current)
+    merged_old_wins = _deep_merge(current, legacy)
+    new_wins = _validated_state_section(merged_new_wins)
+    old_wins = _validated_state_section(merged_old_wins)
+    if new_wins is None and old_wins is None:
+        return
+    if new_wins is not None and old_wins is not None:
+        if new_wins == old_wins:
+            return
+        differing = sorted(
+            name
+            for name in StateBackendConfig.model_fields
+            if getattr(new_wins, name) != getattr(old_wins, name)
+        )
+    else:
+        differing = sorted(
+            name
+            for name in current.keys() & legacy.keys()
+            if merged_new_wins.get(name) != merged_old_wins.get(name)
+        )
+    raise ValueError(
+        f"state and the deprecated {_DEPRECATED_STATE_PATH} both set "
+        f"{', '.join(differing)} to different values (check the config file and the "
+        "JENTIC__STATE__* / JENTIC__BROKER__RESILIENCE__BACKEND__* env vars); remove "
+        f"{_DEPRECATED_STATE_PATH} and keep the value under state"
+    )
+
+
+def _validated_state_section(data: dict[str, Any]) -> StateBackendConfig | None:
+    """``data`` as a :class:`StateBackendConfig`, or None when it does not validate."""
+    try:
+        return StateBackendConfig.model_validate(data)
+    except ValidationError:
+        return None
+
+
+def _warn_deprecated_state_section_once(*, both: bool) -> None:
+    """One deprecation WARNING per process (config is validated more than once)."""
+    if _deprecated_state_section_warned.is_set():
+        return
+    _deprecated_state_section_warned.set()
+    _logger.warning(
+        "config_deprecated_setting",
+        setting=_DEPRECATED_STATE_PATH,
+        replacement="state",
+        merged_with_state=both,
+        detail=(
+            "the shared-state backend moved to the top-level state section; the old "
+            "section is still read into it for one release"
+        ),
+        actionable_step=(
+            f"Move {_DEPRECATED_STATE_PATH}.* to state.* in the config file, and rename "
+            "JENTIC__BROKER__RESILIENCE__BACKEND__* env vars to JENTIC__STATE__*."
         ),
     )
 
@@ -2499,11 +2751,26 @@ class AppConfig(BaseModel):
     entitlement: EntitlementConfig = Field(default_factory=EntitlementConfig)
     held_executions: HeldExecutionsConfig = Field(default_factory=HeldExecutionsConfig)
     apps: list[str] = Field(default_factory=lambda: ["registry", "admin", "control", "auth"])
+    state: StateBackendConfig = Field(
+        default_factory=StateBackendConfig,
+        description=(
+            "The process's shared-state backend, built once and shared by every "
+            "surface the process serves. The deprecated broker.resilience.backend "
+            "section (and its JENTIC__BROKER__RESILIENCE__BACKEND__* env vars) is "
+            "still read into it for one release."
+        ),
+    )
 
     # Validated extension sub-configs, keyed by their registered section name.
     # Populated by load_config() from top-level keys matching the registry
     # (see register_config). Empty unless a section has been registered.
     extensions: dict[str, BaseModel] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _read_deprecated_state_backend_section(cls, data: Any) -> Any:
+        """Fold the deprecated ``broker.resilience.backend`` section into ``state``."""
+        return _fold_deprecated_state_section(data)
 
     @model_validator(mode="after")
     def _ensure_spa_platform_client(self) -> AppConfig:
@@ -2539,6 +2806,38 @@ class AppConfig(BaseModel):
                 # public_base_url; ``_serve`` warns via has_spa_platform_client.
                 return self
             self.auth.platform_clients.append(spa_client)
+        return self
+
+    @model_validator(mode="after")
+    def _worker_concurrency_fits_admin_db(self) -> AppConfig:
+        """Refuse a ``worker.concurrency`` the admin database cannot sustain.
+
+        SQLite: a job's handler transaction holds the write lock across its
+        upstream call, so a second concurrent job's claim and outcome writes
+        time out — a finished job's outcome is lost and the job re-runs on
+        reclaim. Postgres: each in-flight job holds about two admin
+        connections at once (handler transaction plus its authorization or
+        credential-audit session); at ``2 * concurrency >= pool_max`` every
+        connection can be held by an outer transaction while its inner one
+        waits, so jobs and HTTP requests sharing the pool time out together.
+        """
+        concurrency = self.worker.concurrency
+        if concurrency <= 1:
+            return self
+        admin = self.databases.admin
+        if admin.backend == "sqlite":
+            raise ValueError(
+                f"worker.concurrency={concurrency} is not supported with a sqlite "
+                "admin database; set worker.concurrency to 1"
+            )
+        if 2 * concurrency >= admin.pool_max:
+            raise ValueError(
+                f"worker.concurrency={concurrency} needs about {2 * concurrency} "
+                "admin-DB connections (2 per in-flight job), which does not fit "
+                f"databases.admin.pool_max={admin.pool_max}; raise pool_max above "
+                f"{2 * concurrency} or lower worker.concurrency to "
+                f"{max(1, (admin.pool_max - 1) // 2)}"
+            )
         return self
 
     def extension(self, name: str) -> BaseModel | None:

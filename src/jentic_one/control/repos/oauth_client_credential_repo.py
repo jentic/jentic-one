@@ -2,9 +2,20 @@
 
 from __future__ import annotations
 
+from enum import Enum, auto
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from jentic_one.control.core.schema.credentials import Credential
+from jentic_one.control.core.schema.oauth_app_registrations import OAuthAppRegistration
 from jentic_one.control.core.schema.oauth_client_credentials import OAuthClientCredential
+
+
+class _Unset(Enum):
+    TOKEN = auto()
+
+
+UNSET = _Unset.TOKEN
 
 
 class OAuthClientCredentialRepository:
@@ -42,14 +53,37 @@ class OAuthClientCredentialRepository:
         return await session.get(OAuthClientCredential, credential_id)
 
     @staticmethod
+    async def current_token_url(session: AsyncSession, credential: Credential) -> str | None:
+        """The token endpoint an authorization-code *credential* resolves to now.
+
+        The shared app registration's when the credential references one, else
+        the embedded client config's; ``None`` when there is none. Device-flow
+        credentials are not covered: their token_url cannot move to another
+        origin, and is frozen while a flow is pending.
+        """
+        if credential.oauth_app_registration_id is not None:
+            registration = await session.get(
+                OAuthAppRegistration, credential.oauth_app_registration_id
+            )
+            details = registration.authorization_code_details if registration else None
+            return details.token_url if details else None
+        occ = await session.get(OAuthClientCredential, credential.id)
+        return occ.token_url if occ else None
+
+    @staticmethod
     async def update(
         session: AsyncSession,
         credential_id: str,
         *,
         encrypted_client_secret: str | None = None,
         token_url: str | None = None,
-        scope: str | None = None,
+        scope: str | _Unset | None = UNSET,
     ) -> OAuthClientCredential | None:
+        """Apply each provided field independently.
+
+        ``scope`` is tri-state: ``UNSET`` keeps the stored scope, ``None``
+        (or ``""``) clears it, and any other string replaces it.
+        """
         row = await OAuthClientCredentialRepository.get_by_credential(session, credential_id)
         if row is None:
             return None
@@ -57,8 +91,9 @@ class OAuthClientCredentialRepository:
             row.encrypted_client_secret = encrypted_client_secret
         if token_url is not None:
             row.token_url = token_url
-        if scope is not None:
-            row.scope = scope
+        if not isinstance(scope, _Unset):
+            # "" carries no scope-token; store it as cleared, never as "".
+            row.scope = scope or None
         await session.flush()
         return row
 

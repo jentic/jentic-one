@@ -221,6 +221,11 @@ func TestMCPExecute_DenialNextToolKeysOnProblemType(t *testing.T) {
 			`{"type":"credential_identity_mismatch","detail":"denied"}`, "whoami",
 		},
 		{
+			// A suspended binding is the operator's to lift: never a connect pointer.
+			"credential_binding_suspended", http.StatusForbidden,
+			`{"type":"credential_binding_suspended","detail":"denied","agent_directive":{"strategy":"prompt_human","parameters":{"api":{"vendor":"acme","name":"pets","version":"v1"}},"human_readable_instruction":"Your operator has suspended your access to 'acme/pets'. Ask your operator whether they will resume it."}}`, "whoami",
+		},
+		{
 			"credential_undecryptable", http.StatusFailedDependency,
 			`{"type":"credential_undecryptable","detail":"denied"}`, "whoami",
 		},

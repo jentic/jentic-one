@@ -235,7 +235,7 @@ auth:
 
 > **Warning: the default `memory` shared-state backend is bounded and fails
 > closed.**
-> `broker.resilience.backend.backend: memory` keeps `Idempotency-Key`
+> `state.backend: memory` keeps `Idempotency-Key`
 > records, rate-limit buckets, circuit-breaker counters and the auth
 > surface's single-use markers in the process, with a fixed budget per key
 > namespace. It never evicts a live entry. When a namespace (or one caller's
@@ -244,7 +244,8 @@ auth:
 > `Retry-After` of when its earliest entry expires.
 >
 > With the defaults (`broker.idempotency.ttl_s` unset, which is a 1 h replay
-> window on memory and 24 h on redis; the `idem` budget of 128 MiB; about
+> window on memory and 24 h on any other
+> backend; the `idem` budget of 128 MiB; about
 > 1.2 KiB budgeted per record with typical response headers), one broker
 > process sustains about **30 idempotent requests per second**, and about
 > **3 per second per caller**, because each caller may hold at most 10% of
@@ -258,28 +259,29 @@ auth:
 > `Content-Location` and `Retry-After` first, so a replay may lack the
 > others.
 >
-> Every other namespace defaults to 16 MiB, and all namespaces of one
+> Every other namespace defaults to 16 MiB, and all namespaces of the
 > backend together are capped at
-> `broker.resilience.backend.memory.max_total_bytes` (192 MiB), refused the
+> `state.memory.max_total_bytes` (192 MiB), refused the
 > same way. The budgets track real memory to within about 15% (measured
 > with `tracemalloc`), so on the defaults the broker's state stays under
 > about 192 MiB on top of a ~130 MiB process baseline, which the broker
 > chart's 512Mi memory limit holds. The broker always runs as its own
-> process; the combined app holds one such backend each for the auth and
-> control surfaces.
+> process. A process builds one such backend, shared by every surface it
+> serves, so in the combined app the auth and control surfaces share one
+> backend and the cap covers the whole process.
 >
 > The local login page stores one CSRF nonce per page load in `login-csrf`
 > (16 MiB, about 18,600 nonces of about 900 bytes for their 5-minute TTL).
 > Each client, an IPv4 address or an IPv6 /64, may hold 2% of it, about 370
-> nonces: twice what the default authorize rate limit lets one IP request in
-> that time. A client flooding the page gets 503 with `Retry-After` while
+> nonces: twice what the default authorize rate limit lets one client network
+> request in that time. A client flooding the page gets 503 with `Retry-After` while
 > other clients still sign in; a flood spread over about 50 or more networks
-> at once (one IPv6 /56 alone holds 256 /64s) can still fill it, which the
-> redis backend or a larger budget absorbs. Behind a reverse proxy, list it in
+> at once (one IPv6 /56 alone holds 256 /64s) can still fill it, which a
+> shared backend or a larger budget absorbs. Behind a reverse proxy, list it in
 > `auth.oauth_rate_limit.trusted_proxies`, or every client shares the
 > proxy's address and its share.
 >
-> To raise it: raise `broker.resilience.backend.memory.namespaces.idem`
+> To raise it: raise `state.memory.namespaces.idem`
 > (and its `max_owner_share`) together with `max_total_bytes`, or lower
 > `broker.idempotency.ttl_s`. Raise the container memory limit by at least
 > as much as you raise the budgets.

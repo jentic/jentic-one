@@ -272,12 +272,16 @@ def test_refresh_past_absolute_window_rejected(
 def test_refresh_unknown_user_rejected(
     unauthed_client: TestClient, web_context: Context, admin_user_id: str
 ) -> None:
-    """A token whose subject no longer exists cannot be refreshed."""
+    """A token whose subject no longer exists cannot be refreshed.
+
+    The auth gate's per-request user re-check (#1139) refuses it before the
+    refresh service runs, so the answer is the gate's uniform 401.
+    """
     now = int(datetime.now(UTC).timestamp())
     token = _mint_login_jwt(web_context, sub="usr_00000000000000000000000000", auth_time=now)
     resp = unauthed_client.post("/auth/refresh", headers=_bearer(token))
     assert resp.status_code == 401
-    assert resp.json()["type"] == "invalid_credentials"
+    assert resp.json()["type"] == "unauthorized"
 
 
 def test_refresh_token_without_auth_time_rejected(

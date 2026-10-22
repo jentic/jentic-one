@@ -32,6 +32,10 @@ class StaticProvider:
         return False
 
     @property
+    def mints_from_account_ref(self) -> bool:
+        return False
+
+    @property
     def supported_types(self) -> list[CredentialType]:
         return list(CredentialType)
 

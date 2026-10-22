@@ -25,6 +25,7 @@ from jentic_one.control.services.integrations.connect_session_service import (
     DeviceAuthorizationConfirmResult,
     ExistingCredentialConfirm,
     OwnClientConfirm,
+    ReauthorizeConfirmResult,
     ReviewData,
     SecretConfirm,
 )
@@ -32,6 +33,10 @@ from jentic_one.control.services.integrations.flow_handlers.manual import (
     ApiKeySecret,
     BasicSecret,
     BearerSecret,
+)
+from jentic_one.control.web.connect_binding import (
+    mint_browser_binding,
+    set_browser_binding_cookie,
 )
 from jentic_one.control.web.connect_limits import ROUTE_LIMITER_ATTR, connect_limiter
 from jentic_one.control.web.deps import get_connect_session_service
@@ -65,9 +70,10 @@ from jentic_one.control.web.schemas.integrations import (
 )
 from jentic_one.control.web.schemas.permission_rules import PermissionRuleSchema
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.resilience import RateLimiter
-from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web import get_ctx, get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.openapi_responses import (
     conflict,
@@ -138,7 +144,10 @@ async def _enforce_connect_rate_limit(request: Request, identity: Identity) -> N
     response_model=None,
     responses=with_responses(
         not_found("Unknown vendor or API, or API targets are not enabled"),
-        conflict("The API declares no supported scheme, or its hosts cannot be pinned"),
+        conflict(
+            "The API declares no supported scheme, its hosts cannot be pinned, the agent "
+            "is inactive, or the agent's binding for the API is suspended"
+        ),
         too_many_requests("Rate limit, open-session cap, or a recent rejection"),
     ),
 )
@@ -160,7 +169,10 @@ async def integrations_connect(
     `connect_session_agent_not_found`, the same as an unknown agent. Naming
     an owned agent also takes `agents:write`, which confirming for it needs
     (403 `connect_session_confirmation_forbidden` otherwise), and an active
-    agent (409 `connect_session_agent_inactive` otherwise). When
+    agent (409 `connect_session_agent_inactive` otherwise). An agent whose
+    binding to a credential covering the requested API is suspended gets
+    409 `connect_session_binding_suspended`: only the operator can resume
+    that binding, so a new connect for the same API is refused. When
     named, confirm creates the direct agent-credential binding + permission
     rules; when omitted, the credential connects unbound and an agent can
     be bound later through the credentials API.
@@ -413,7 +425,7 @@ def _review_response(data: ReviewData) -> ReviewSessionResponse:
         not_found(),
         conflict(
             "Session not awaiting confirmation, its OAuth app, scheme or hosts changed, "
-            "or the review is stale"
+            "the review is stale, or the agent's binding for the API is suspended"
         ),
     ),
 )
@@ -426,6 +438,7 @@ async def confirm_connect_session(
         ),
     ],
     request: Request,
+    response: Response,
     body: Annotated[
         ConfirmSessionRequest,
         Body(
@@ -442,6 +455,7 @@ async def confirm_connect_session(
     ),
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: ConnectSessionService = Depends(get_connect_session_service),
+    ctx: Context = Depends(get_ctx),
 ) -> ConfirmSessionResponse:
     """Called by the review page after the human confirms selections.
 
@@ -456,9 +470,18 @@ async def confirm_connect_session(
     that actually fires the vendor's device-authorization call, and a
     failed ``begin`` leaves the session retryable, so it must not be
     free to hammer during a vendor incident. Gated like the review read
-    (``poll_token`` or owner / ``org:admin``; 403 otherwise).
+    (``poll_token`` or owner / ``org:admin``; 403 otherwise). An agent
+    whose binding to a credential covering the session's API is suspended
+    (including one picked at confirm) is refused with 409
+    ``connect_session_binding_suspended``.
+
+    A response carrying an ``authorize_url`` also sets a short-lived
+    ``HttpOnly`` cookie scoped to the OAuth callback path: the vendor
+    sign-in completes only in the approver's browser that called this
+    endpoint, whoever opened the session.
     """
     await _enforce_connect_rate_limit(request, identity)
+    binding = mint_browser_binding(request)
 
     if isinstance(body, OAuthConfirmSessionRequest):
         result = await svc.confirm(
@@ -470,10 +493,19 @@ async def confirm_connect_session(
             identity=identity,
             expected_agent_id=body.expected_agent_id,
             digest=body.digest,
+            browser_binding=binding.claim,
         )
     else:
         result = await svc.confirm_variant(
-            session_id, poll_token=poll_token, variant=_to_variant(body), identity=identity
+            session_id,
+            poll_token=poll_token,
+            variant=_to_variant(body),
+            identity=identity,
+            browser_binding=binding.claim,
+        )
+    if isinstance(result, AuthCodeConfirmResult | ReauthorizeConfirmResult):
+        set_browser_binding_cookie(
+            response, request, ctx, binding, authorize_url=result.authorize_url
         )
 
     if isinstance(result, DeviceAuthorizationConfirmResult):
@@ -625,7 +657,8 @@ async def cancel_connect_session(
     """Terminate a still-active session at the user's request.
 
     Gated like ``/status`` — the ``poll_token`` the SPA already holds, or
-    the target agent's owner / ``org:admin`` without it.
+    the target agent's owner / ``org:admin`` without it. The audit entry
+    for the cancel names the caller, with the session's initiator alongside.
 
     A still-existing but already-terminal session is a 204 no-op — a
     "Cancel" click racing the poll scanner doesn't error. A session

@@ -22,7 +22,13 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
-from jentic_one.auth.web.flow import derive_key, sign_payload
+from jentic_one.auth.web.flow import (
+    IdpBrowserBinding,
+    derive_key,
+    idp_binding_cookie_name,
+    mint_idp_browser_binding,
+    sign_payload,
+)
 from jentic_one.auth.web.routers import authorize
 from jentic_one.shared.config import AuthConfig
 from jentic_one.shared.state.backend import MemoryStateBackend
@@ -71,8 +77,9 @@ def _make_app() -> tuple[TestClient, MemoryStateBackend]:
     return TestClient(app), backend
 
 
-def _signed_state() -> str:
-    return sign_payload(
+def _signed_state(binding: IdpBrowserBinding | None = None) -> tuple[str, IdpBrowserBinding]:
+    binding = binding or mint_idp_browser_binding()
+    state = sign_payload(
         {
             "client_id": _CLIENT_ID,
             "redirect_uri": _REDIRECT_URI,
@@ -80,11 +87,14 @@ def _signed_state() -> str:
             "scope": "openid",
             "nonce": None,
             "original_state": None,
+            "idp_nonce": "idp-nonce-test",
+            "bnd": binding.digest,
             "iat": str(int(time.time())),
         },
         derive_key(_JWT_SECRET, "state"),
         purpose="state",
     )
+    return state, binding
 
 
 def _seed_consent_handle(backend: MemoryStateBackend, handle: str = _HANDLE) -> None:
@@ -145,9 +155,12 @@ def test_callback_rejects_client_gated_mid_flow(
     mock_authorize_svc.handle_idp_callback_with_email = AsyncMock()
     mock_authorize_cls.return_value = mock_authorize_svc
 
+    state, binding = _signed_state()
+    cookie_name = idp_binding_cookie_name(binding.digest, secure=False)
+    client.cookies.set(cookie_name, binding.value)
     resp = client.get(
         "/oauth/callback",
-        params={"code": "idp_code", "state": _signed_state()},
+        params={"code": "idp_code", "state": state},
         follow_redirects=False,
     )
 

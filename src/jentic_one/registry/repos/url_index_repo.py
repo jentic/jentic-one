@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import cast
 
 from sqlalchemy import Select, and_, delete, func, select, text
 from sqlalchemy.dialects.postgresql import insert
@@ -56,8 +54,7 @@ class UrlIndexCandidate:
         )
 
 
-_CandidateRow = tuple[OperationURLIndex, str, str, str, str, str]
-_CandidateSelect = Select[_CandidateRow]
+_CandidateSelect = Select[OperationURLIndex, str, str, str, str, str]
 
 
 @dataclass(frozen=True)
@@ -149,11 +146,9 @@ async def _fetch_candidates(
 
     Rows are unpacked directly rather than through ``Result.tuples()``: that is
     deprecated in SQLAlchemy 2.1 and emits a warning on every call, whose stack
-    walk shows up in broker CPU since this runs on every URL lookup (#1820). The
-    ``cast`` only restores the column types for mypy; ``Row`` unpacks as a tuple.
+    walk shows up in broker CPU since this runs on every URL lookup (#1820).
     """
     result = await session.execute(stmt)
-    rows = cast("Iterable[_CandidateRow]", result)
     return [
         UrlIndexCandidate(
             row=row,
@@ -163,7 +158,7 @@ async def _fetch_candidates(
             operation_path=path,
             operation_method=method,
         )
-        for row, vendor, name, version, path, method in rows
+        for row, vendor, name, version, path, method in result
     ]
 
 

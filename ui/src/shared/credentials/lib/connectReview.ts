@@ -142,6 +142,12 @@ export function describeConfirmError(error: unknown): ConfirmErrorCopy {
 				message:
 					"The agent is archived, disabled or gone, so it can't be given this credential.",
 			};
+		case 'connect_session_binding_suspended':
+			return {
+				action: 'ended',
+				message:
+					"This agent's access to this API is suspended. Resume or remove that binding before approving a new connection.",
+			};
 		case 'connect_session_invalid_state':
 			return {
 				action: 'ended',

@@ -12,6 +12,17 @@ class ExternalIdentityRepository:
     """Data access layer for ExternalIdentity entities — flush-only, never commits."""
 
     @staticmethod
+    async def get_by_issuer_subject(
+        session: AsyncSession, issuer: str, external_subject: str
+    ) -> ExternalIdentity | None:
+        stmt = select(ExternalIdentity).where(
+            ExternalIdentity.issuer == issuer,
+            ExternalIdentity.external_subject == external_subject,
+        )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    @staticmethod
     async def get_by_provider_subject(
         session: AsyncSession, provider: str, external_subject: str
     ) -> ExternalIdentity | None:
@@ -29,11 +40,18 @@ class ExternalIdentityRepository:
         provider: str,
         external_subject: str,
         user_id: str,
+        issuer: str | None = None,
         email: str | None = None,
         created_by: str,
     ) -> ExternalIdentity:
+        resolved_issuer = (
+            issuer
+            if issuer is not None
+            else ("https://accounts.google.com" if provider == "google" else provider)
+        )
         ext_id = ExternalIdentity(
             provider=provider,
+            issuer=resolved_issuer,
             external_subject=external_subject,
             user_id=user_id,
             email=email,

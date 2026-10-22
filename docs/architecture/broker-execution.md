@@ -131,7 +131,8 @@ DeadlineRunner( RetryRunner( CircuitBreakerRunner( SigV4SigningRunner( HttpRunne
   bulkhead, mid-stream response-size cap, raw-byte streaming.
 
 At the web edge, admission control sheds load when too many requests are in
-flight ([`broker/web/middleware.py`](../../src/jentic_one/broker/web/middleware.py)) and a per-caller rate limiter answers
+flight ([`broker/web/middleware.py`](../../src/jentic_one/broker/web/middleware.py); a request counts until its
+response is complete, not through any post-response background work) and a per-caller rate limiter answers
 `429` with `RateLimit-*` headers ([`broker/web/deps.py`](../../src/jentic_one/broker/web/deps.py)).
 
 ## Egress controls
@@ -199,7 +200,8 @@ credentials the caller may use for the call — a single cross-DB lookup
 intersecting the agent's credential bindings (admin DB) with the active
 credentials covering the API (control DB); none → `403
 no_credential_binding` (or `403 credential_identity_mismatch` when a bound
-credential is a near-miss), several → resolution disambiguates (or asks for
+credential is a near-miss, `403 credential_binding_suspended` when the
+agent's binding covering the API is suspended), several → resolution disambiguates (or asks for
 `Jentic-Credential-Id` with a `409`) — and the winning binding's permission
 rules are evaluated **default-deny**: no matching rule, no call
 ([`broker/repos/agent_rule_evaluator.py`](../../src/jentic_one/broker/repos/agent_rule_evaluator.py)).
@@ -226,17 +228,72 @@ Authorization is direct-only: the retired toolkit path and its
 `broker.direct_bindings_enabled` fallback were removed with the phase-6b
 table drops (setting the flag to `false` now fails config validation).
 
+### Cache invalidation and staleness bounds
+
+The broker's hot path caches three kinds of authorization lookups in memory per
+process:
+
+- **Token and actor-status verdicts** ([`broker/core/token_validation.py`](../../src/jentic_one/broker/core/token_validation.py),
+  bounded by `broker.resolve_cache_ttl_seconds`, default `30` s).
+- **Direct credential-binding derivations** ([`broker/repos/caching_credential_deriver.py`](../../src/jentic_one/broker/repos/caching_credential_deriver.py),
+  bounded by `broker.toolkit_cache_ttl_s`, default `30` s).
+- **Permission-rule lists** ([`broker/repos/agent_rule_evaluator.py`](../../src/jentic_one/broker/repos/agent_rule_evaluator.py),
+  bounded by `broker.rule_cache_ttl_s`, default `30` s).
+
+`install_broker_auth` ([`broker/core/setup.py`](../../src/jentic_one/broker/core/setup.py)) registers a
+`BrokerCacheInvalidator` on the shared `Context` (`ctx.invalidate_broker_caches(...)`).
+When an agent's credential binding is bound/unbound/resumed, an agent is
+disabled/enabled/archived/purged, an API key or OAuth token is rotated or
+revoked, or a credential or permission rule set is updated/deactivated/deleted
+in the **same process** (e.g. single-process harnesses and in-process tests),
+the hook immediately evicts the affected deriver, rule-evaluator, and
+token/actor-status cache entries with zero wait for the TTL.
+
+In **multi-process deployments** (where the broker runs in its own process or
+across multiple stateless replicas), each broker instance holds its own
+in-memory LRU caches and does not share the control plane's `Context`. Cross-process
+propagation is bounded by the configured TTLs above (default `30` s; set the
+respective TTL to `0` to disable caching). Queued async executions bypass these
+caches and re-authorize against live database state when the worker claims the
+job (`build_queued_execution_authorizer`).
+
 ## What gets recorded
 
 Executions land as append-only `ExecutionRecord` rows in the admin DB
 ([`shared/executions/ingest.py`](../../src/jentic_one/shared/executions/ingest.py)): status, duration, operation and API
 identity, HTTP status, actor, origin, and the credential used (by id and
 name, never the secret). On the buffered and async paths the write happens
-before the response; on the streaming fast path it is a post-response
-background task and **best-effort** — a database failure there is logged and
-counted (`broker.streaming_execution.persist_failures`,
-[monitoring.md](../operations/monitoring.md)) but does not fail the call, so
-a completed call can, rarely, lack its record. Lifecycle events (`EXECUTION_COMPLETED` /
+before the response. On the streaming fast path every outcome — completed,
+failed partway through the body, or cut off by a client disconnect — writes
+exactly one record, and the write is **best-effort** and never holds the
+response: it is handed to the app's background-task registry
+([`shared/web/background_tasks.py`](../../src/jentic_one/shared/web/background_tasks.py))
+and bounded by `broker.streaming_persist_timeout_s`; on shutdown the registry
+drains for up to `services.background_task_drain_timeout_s` before the
+databases close. A database failure, timeout, or shutdown cancellation is
+logged and counted (`broker.streaming_execution.persist_failures`,
+`app.background_tasks`, [monitoring.md](../operations/monitoring.md)) but does
+not fail the call, so a call can, rarely, lack its record. Concurrent streaming
+persists are capped per process (`broker.streaming_persist_max_concurrency`,
+clamped to `databases.admin.pool_max - 1`, the admin base pool less one;
+SQLAlchemy's default overflow can open up to 10 connections beyond `pool_max`).
+An excess persist waits for a slot for at most
+`broker.streaming_persist_acquire_timeout_s` and is then abandoned and counted
+(`reason="backlog_timeout"`); the queue is visible as
+`broker.streaming_execution.persist_pending`. The wait never touches admission:
+a request releases its admission slot as soon as its response is complete or its
+client disconnects, so persists queued behind a stalled admin database count
+neither toward `broker.admission.in_flight` nor toward `/ready` saturation. The
+acquire timeout bounds how many records such a stall keeps queued in memory and
+how long a *queued* record holds up shutdown; a persist that already holds a
+slot and is writing runs under the task registry's
+`broker.streaming_persist_timeout_s` budget and the admin pool's checkout
+timeout. When the upstream fails partway through a streamed body, the status
+line has already been sent: the broker logs one `upstream_network_failure` (or
+`streaming_response_aborted` for a size-cap or transfer-deadline cut-off) and
+closes the connection without the final chunk, so an HTTP/1.1 chunked or HTTP/2
+client sees a truncated body (an HTTP/1.0 client reads a close-delimited body
+and cannot tell). Lifecycle events (`EXECUTION_COMPLETED` /
 `EXECUTION_FAILED`), permission denials (`PBAC_DENIED`), and credential
 incidents each emit typed events into the monitor.
 

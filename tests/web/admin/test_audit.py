@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -9,8 +11,22 @@ from jentic_one.admin.repos import AuditRepository
 from jentic_one.admin.services._support.tokens import issue_jwt
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
+from tests.web.conftest import seeded_jwt_user
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.fixture()
+async def _nonadmin_user(web_context: Context) -> AsyncGenerator[str, None]:
+    async with seeded_jwt_user(web_context, "nonadmin-user") as user_id:
+        yield user_id
+
+
+@pytest.fixture()
+async def _audit_reader_user(web_context: Context) -> AsyncGenerator[str, None]:
+    """The active user row behind the ``actor-a`` audit-reader JWT."""
+    async with seeded_jwt_user(web_context, "actor-a") as user_id:
+        yield user_id
 
 
 def test_list_without_auth(unauthed_client: TestClient) -> None:
@@ -18,6 +34,7 @@ def test_list_without_auth(unauthed_client: TestClient) -> None:
     assert resp.status_code == 401
 
 
+@pytest.mark.usefixtures("_nonadmin_user")
 def test_list_without_admin(unauthed_client: TestClient, web_context: Context) -> None:
     config = web_context.config.admin.auth
     claims = {
@@ -127,7 +144,7 @@ def _audit_reader_headers(web_context: Context, sub: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-@pytest.mark.usefixtures("_seed_audit_entries")
+@pytest.mark.usefixtures("_seed_audit_entries", "_audit_reader_user")
 def test_list_is_scoped_to_non_admin_caller(
     unauthed_client: TestClient, authed_client: TestClient, web_context: Context
 ) -> None:
@@ -148,7 +165,7 @@ def test_list_is_scoped_to_non_admin_caller(
     assert {"actor-a", "actor-b"} <= admin_actors
 
 
-@pytest.mark.usefixtures("_seed_audit_entries")
+@pytest.mark.usefixtures("_seed_audit_entries", "_audit_reader_user")
 def test_get_other_users_entry_is_not_found(
     unauthed_client: TestClient, authed_client: TestClient, web_context: Context
 ) -> None:

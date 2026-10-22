@@ -61,6 +61,9 @@ def _make_ctx(
     provider_mock = MagicMock()
     provider_mock._expiry_skew_seconds = 60
     ctx.providers.get.return_value = provider_mock
+    # A provider that keeps its grant in ``oauth_tokens`` unless a test says
+    # otherwise.
+    ctx.providers.mints_from_account_ref.return_value = False
 
     mock_backend = MagicMock()
     mock_backend.dialect_name = "sqlite"
@@ -76,6 +79,16 @@ def _setup_transaction(ctx: MagicMock, row: object | None = None) -> None:
         yield session
 
     ctx.control_db.transaction = _txn
+
+
+def _row_like(resolved: ResolvedCredential, *, revoked: bool = False) -> MagicMock:
+    """The token row as the snapshot saw it (nothing rewrote it since)."""
+    row = MagicMock()
+    row.encrypted_access_token = resolved.encrypted_access_token
+    row.encrypted_refresh_token = resolved.encrypted_refresh_token
+    row.expires_at = resolved.token_expires_at
+    row.revoked_at = datetime.now(UTC) if revoked else None
+    return row
 
 
 @pytest.mark.asyncio
@@ -127,7 +140,7 @@ async def test_expired_token_triggers_refresh() -> None:
     ctx.providers.get.return_value = provider_mock
 
     with patch("jentic_one.broker.services.credentials.refresh.OAuthTokenRepository") as mock_repo:
-        mock_repo.get_by_credential = AsyncMock(return_value=None)
+        mock_repo.get_by_credential = AsyncMock(return_value=_row_like(resolved))
         mock_repo.update_tokens = AsyncMock(return_value=MagicMock())
 
         refresher = TokenRefresher(ctx)
@@ -138,9 +151,13 @@ async def test_expired_token_triggers_refresh() -> None:
 
 @pytest.mark.asyncio
 async def test_no_access_token_triggers_refresh() -> None:
+    """A managed provider holds no local token row and mints from its
+    account reference."""
     resolved = _make_resolved(
         encrypted_access_token=None,
+        encrypted_refresh_token=None,
         token_expires_at=None,
+        provider_account_ref="acct_managed",
     )
     ctx = _make_ctx()
     _setup_transaction(ctx)
@@ -153,15 +170,52 @@ async def test_no_access_token_triggers_refresh() -> None:
     provider_mock._expiry_skew_seconds = 60
     provider_mock.refresh = AsyncMock(return_value=refresh_result)
     ctx.providers.get.return_value = provider_mock
+    ctx.providers.mints_from_account_ref.return_value = True
 
     with patch("jentic_one.broker.services.credentials.refresh.OAuthTokenRepository") as mock_repo:
         mock_repo.get_by_credential = AsyncMock(return_value=None)
-        mock_repo.update_tokens = AsyncMock(return_value=MagicMock())
+        mock_repo.update_tokens = AsyncMock(return_value=None)
 
         refresher = TokenRefresher(ctx)
         token = await refresher.ensure_fresh(resolved=resolved, caller="test")
 
     assert token == "minted-token"
+    ctx.providers.mints_from_account_ref.assert_called_with("direct_oauth2")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("revoked", [False, True], ids=["row-missing", "row-revoked"])
+@pytest.mark.parametrize("provider_account_ref", [None, "alice"], ids=["no-ref", "echo-ref"])
+async def test_missing_grant_under_lock_needs_reconnect(
+    revoked: bool, provider_account_ref: str | None
+) -> None:
+    """A token row gone (or revoked) by the time the lock is held means the
+    grant was dropped: the refresh fails as needs-reconnect and the
+    snapshot's refresh token is never handed to the provider. An
+    identity-echo ``provider_account_ref`` on a provider that keeps its grant
+    in ``oauth_tokens`` does not change that."""
+    resolved = _make_resolved(
+        encrypted_access_token="enc:expired",
+        encrypted_refresh_token="enc:old-rt",
+        token_expires_at=datetime.now(UTC) - timedelta(minutes=5),
+        provider_account_ref=provider_account_ref,
+    )
+    ctx = _make_ctx()
+    _setup_transaction(ctx)
+    provider_mock = AsyncMock()
+    provider_mock._expiry_skew_seconds = 60
+    ctx.providers.get.return_value = provider_mock
+
+    with patch("jentic_one.broker.services.credentials.refresh.OAuthTokenRepository") as mock_repo:
+        mock_repo.get_by_credential = AsyncMock(
+            return_value=_row_like(resolved, revoked=True) if revoked else None
+        )
+
+        with pytest.raises(RefreshInvalidGrantError):
+            await TokenRefresher(ctx).ensure_fresh(resolved=resolved, caller="test")
+
+    provider_mock.refresh.assert_not_called()
+    ctx.encryption.decrypt.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -183,7 +237,7 @@ async def test_within_skew_triggers_refresh() -> None:
     ctx.providers.get.return_value = provider_mock
 
     with patch("jentic_one.broker.services.credentials.refresh.OAuthTokenRepository") as mock_repo:
-        mock_repo.get_by_credential = AsyncMock(return_value=None)
+        mock_repo.get_by_credential = AsyncMock(return_value=_row_like(resolved))
         mock_repo.update_tokens = AsyncMock(return_value=MagicMock())
 
         refresher = TokenRefresher(ctx)
@@ -207,7 +261,7 @@ async def test_invalid_grant_raises_refresh_invalid_grant() -> None:
     ctx.providers.get.return_value = provider_mock
 
     with patch("jentic_one.broker.services.credentials.refresh.OAuthTokenRepository") as mock_repo:
-        mock_repo.get_by_credential = AsyncMock(return_value=None)
+        mock_repo.get_by_credential = AsyncMock(return_value=_row_like(resolved))
 
         refresher = TokenRefresher(ctx)
         with pytest.raises(RefreshInvalidGrantError):
@@ -229,7 +283,7 @@ async def test_provider_error_raises_refresh_transient() -> None:
     ctx.providers.get.return_value = provider_mock
 
     with patch("jentic_one.broker.services.credentials.refresh.OAuthTokenRepository") as mock_repo:
-        mock_repo.get_by_credential = AsyncMock(return_value=None)
+        mock_repo.get_by_credential = AsyncMock(return_value=_row_like(resolved))
 
         refresher = TokenRefresher(ctx)
         with pytest.raises(RefreshTransientError):
@@ -257,7 +311,7 @@ async def test_refresh_transient_detail_omits_exception_message(raised: Exceptio
     ctx.providers.get.return_value = provider_mock
 
     with patch("jentic_one.broker.services.credentials.refresh.OAuthTokenRepository") as mock_repo:
-        mock_repo.get_by_credential = AsyncMock(return_value=None)
+        mock_repo.get_by_credential = AsyncMock(return_value=_row_like(resolved))
 
         refresher = TokenRefresher(ctx)
         with pytest.raises(RefreshTransientError) as excinfo:
@@ -281,6 +335,7 @@ async def test_double_check_skips_refresh_when_another_worker_refreshed() -> Non
     already_refreshed_row = MagicMock()
     already_refreshed_row.encrypted_access_token = "enc:fresh-by-other"
     already_refreshed_row.expires_at = datetime.now(UTC) + timedelta(hours=1)
+    already_refreshed_row.revoked_at = None
 
     with patch("jentic_one.broker.services.credentials.refresh.OAuthTokenRepository") as mock_repo:
         mock_repo.get_by_credential = AsyncMock(return_value=already_refreshed_row)
@@ -312,7 +367,7 @@ async def test_rotated_refresh_token_persisted_only_when_returned() -> None:
     ctx.providers.get.return_value = provider_mock
 
     with patch("jentic_one.broker.services.credentials.refresh.OAuthTokenRepository") as mock_repo:
-        mock_repo.get_by_credential = AsyncMock(return_value=None)
+        mock_repo.get_by_credential = AsyncMock(return_value=_row_like(resolved))
         mock_repo.update_tokens = AsyncMock(return_value=MagicMock())
 
         refresher = TokenRefresher(ctx)

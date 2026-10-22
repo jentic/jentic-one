@@ -4,8 +4,8 @@ The pieces of the ``/authorize`` flow that more than one router needs —
 ``authorize.py`` (the flow itself: IdP redirect, callback, consent) and
 ``local_login.py`` (the local-account form that rejoins that flow, #1276):
 
-- the per-client+IP rate-limit dependency for unauthenticated flow endpoints
-  (plus the approval-status poll's own per-IP bucket),
+- the per-client-network rate-limit dependency for unauthenticated flow
+  endpoints (plus the approval-status poll's own bucket),
 - the platform/registered client gate (D7) helpers,
 - the HMAC-signed, purpose-discriminated, TTL'd internal-state tokens
   (purposes: ``state``, ``approval``, ``login``, ``session``, ``agent-create``,
@@ -28,17 +28,17 @@ import secrets
 import time
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from dataclasses import dataclass
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 import structlog
-from fastapi import Depends, Request
+from fastapi import Depends, Request, Response
 from fastapi.responses import RedirectResponse
 
 from jentic_one.admin.services.oauth_client_service import OAuthClientService
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
 from jentic_one.auth.core.idp import IdpClaims
 from jentic_one.auth.services.errors import InvalidGrantError, RateLimitExceededError
-from jentic_one.auth.web.ratelimit import client_ip, get_auth_backend
+from jentic_one.auth.web.ratelimit import client_rate_limit_key, get_auth_backend
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.oauth_clients import OAuthClientApprovalStatus
 from jentic_one.shared.resilience import RateLimiter
@@ -88,37 +88,33 @@ def _get_authorize_limiter(request: Request, ctx: Context) -> RateLimiter:
         return limiter
     cfg = ctx.config.auth.oauth_rate_limit
     backend = get_auth_backend(request)
-    limiter = RateLimiter(backend, default_rpm=cfg.authorize_rpm, burst=cfg.authorize_burst)
+    # Own bucket namespace: every limiter on the auth surface keys on the
+    # client network, so sharing a namespace would hand two limiters with
+    # different rate/burst params the same bucket (the token endpoint's
+    # client_id-less key is the same bare network).
+    limiter = RateLimiter(
+        backend,
+        default_rpm=cfg.authorize_rpm,
+        burst=cfg.authorize_burst,
+        namespace="oauth-authorize",
+    )
     request.app.state._authorize_limiter = limiter
     return limiter
 
 
 async def check_rate_limit(request: Request, ctx: Context = Depends(get_ctx)) -> None:
-    """Per-client+IP rate limiter for unauthenticated authorization endpoints.
+    """Per-client-network rate limiter for the unauthenticated authorization flow.
 
-    Keyed ``client_id:ip`` when a ``client_id`` query parameter is present,
-    plain IP otherwise.
+    One bucket per client network (IPv4 address or IPv6 /64, see
+    :func:`client_rate_limit_key`) shared by every step of the flow:
+    ``/authorize``, the IdP callback, the consent page and submit, the
+    consent-page agent create, and the local-login form. Nothing else from
+    the request goes into the key: ``client_id`` (and every other parameter)
+    is caller-chosen until verified, so keying on it would hand a caller a
+    fresh bucket per value (#1874).
     """
-    client_id = request.query_params.get("client_id")
-    await _acquire_authorize_bucket(request, ctx, client_id=client_id)
-
-
-async def check_login_rate_limit(request: Request, ctx: Context = Depends(get_ctx)) -> None:
-    """The authorize rate limiter for the local-login routes, keyed by plain IP.
-
-    Their ``client_id`` rides inside the signed ``ls``, so any ``client_id``
-    query parameter on them is caller-chosen: keying on it would hand a
-    caller a fresh bucket per value.
-    """
-    await _acquire_authorize_bucket(request, ctx, client_id=None)
-
-
-async def _acquire_authorize_bucket(
-    request: Request, ctx: Context, *, client_id: str | None
-) -> None:
     trusted = ctx.config.auth.oauth_rate_limit.trusted_networks
-    ip = client_ip(request, trusted)
-    key = f"{client_id}:{ip}" if client_id else ip
+    key = client_rate_limit_key(request, trusted)
     limiter = _get_authorize_limiter(request, ctx)
     outcome = await limiter.acquire(key)
     if not outcome.allowed:
@@ -132,9 +128,9 @@ def _get_approval_status_limiter(request: Request, ctx: Context) -> RateLimiter:
     cfg = ctx.config.auth.oauth_rate_limit
     backend = get_auth_backend(request)
     # Own bucket namespace (mirrors the DCR door): the approval-pending page
-    # polls this endpoint for minutes at a time, and a bare-IP key in the
-    # shared store would otherwise collide with /authorize's fallback bucket —
-    # steady polling must not drain the /authorize quota or vice versa.
+    # polls this endpoint for minutes at a time, and its client-network key
+    # in a shared namespace would collide with /authorize's bucket — steady
+    # polling must not drain the /authorize quota or vice versa.
     limiter = RateLimiter(
         backend,
         default_rpm=cfg.approval_status_rpm,
@@ -148,16 +144,17 @@ def _get_approval_status_limiter(request: Request, ctx: Context) -> RateLimiter:
 async def check_approval_status_rate_limit(
     request: Request, ctx: Context = Depends(get_ctx)
 ) -> None:
-    """Per-IP rate limiter for the anonymous approval-status poll.
+    """Per-client-network rate limiter for the anonymous approval-status poll.
 
-    Keyed by bare IP: the only other request input is the signed state blob,
-    and a self-chosen key component would let one host sidestep the bucket by
-    re-minting blobs (every /authorize render hands out a fresh one).
+    Keyed by client network only: the only other request input is the signed
+    state blob, and a self-chosen key component would let one host sidestep
+    the bucket by re-minting blobs (every /authorize render hands out a fresh
+    one).
     """
     trusted = ctx.config.auth.oauth_rate_limit.trusted_networks
-    ip = client_ip(request, trusted)
+    key = client_rate_limit_key(request, trusted)
     limiter = _get_approval_status_limiter(request, ctx)
-    outcome = await limiter.acquire(ip)
+    outcome = await limiter.acquire(key)
     if not outcome.allowed:
         raise RateLimitExceededError(retry_after=outcome.retry_after_s)
 
@@ -417,6 +414,117 @@ def agent_status_signing_key(ctx: Context) -> str:
     return derive_key(ctx.config.admin.auth.jwt_secret.get_secret_value(), "agent-status")
 
 
+def idp_pkce_signing_key(ctx: Context) -> str:
+    """Signing key used to deterministically derive the upstream IdP PKCE verifier."""
+    return derive_key(ctx.config.admin.auth.jwt_secret.get_secret_value(), "idp-pkce")
+
+
+def derive_idp_pkce_verifier(ctx: Context, idp_nonce: str) -> str:
+    """Derive a 43-char RFC 7636 PKCE code_verifier from the flow's idp_nonce."""
+    key = idp_pkce_signing_key(ctx)
+    digest = hmac.HMAC(key.encode(), idp_nonce.encode(), hashlib.sha256).digest()
+    return urlsafe_b64encode(digest).rstrip(b"=").decode()
+
+
+def compute_s256_code_challenge(code_verifier: str) -> str:
+    """Compute the RFC 7636 S256 code_challenge for a code_verifier."""
+    digest = hashlib.sha256(code_verifier.encode()).digest()
+    return urlsafe_b64encode(digest).rstrip(b"=").decode()
+
+
+# --- IdP callback browser-binding cookie ---------------------------------------
+
+IDP_BINDING_COOKIE_PREFIX = "jentic_login_"
+SECURE_IDP_COOKIE_PREFIX = "__Secure-"
+
+
+@dataclass(frozen=True, slots=True)
+class IdpBrowserBinding:
+    """Per-flow browser-binding secret and its SHA-256 hex digest."""
+
+    value: str
+    digest: str
+
+
+def mint_idp_browser_binding() -> IdpBrowserBinding:
+    """Mint a random browser-binding value and its SHA-256 hex digest."""
+    value = secrets.token_urlsafe(32)
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
+    return IdpBrowserBinding(value=value, digest=digest)
+
+
+def _idp_cookie_secure(request: Request) -> bool:
+    forwarded = (request.headers.get("x-forwarded-proto") or "").split(",", 1)[0].strip().lower()
+    return request.url.scheme == "https" or forwarded == "https"
+
+
+def _idp_cookie_path(callback_uri: str) -> str:
+    return urlsplit(callback_uri).path or "/oauth/callback"
+
+
+def idp_binding_cookie_name(digest: str, *, secure: bool) -> str:
+    base = f"{IDP_BINDING_COOKIE_PREFIX}{digest[:16]}"
+    return f"{SECURE_IDP_COOKIE_PREFIX}{base}" if secure else base
+
+
+def set_idp_binding_cookie(
+    response: Response,
+    request: Request,
+    binding: IdpBrowserBinding,
+    *,
+    callback_uri: str,
+) -> None:
+    """Set the per-flow browser-binding cookie on the /authorize redirect response."""
+    secure = _idp_cookie_secure(request)
+    response.set_cookie(
+        key=idp_binding_cookie_name(binding.digest, secure=secure),
+        value=binding.value,
+        max_age=STATE_MAX_AGE_SECONDS,
+        path=_idp_cookie_path(callback_uri),
+        secure=secure,
+        httponly=True,
+        samesite="lax",
+    )
+
+
+def verify_idp_binding_cookie(
+    request: Request,
+    expected_digest: str | None,
+    *,
+    callback_uri: str,
+) -> bool:
+    """Verify the request carries the browser-binding cookie matching expected_digest."""
+    _ = callback_uri
+    if not expected_digest:
+        return False
+    secure = _idp_cookie_secure(request)
+    cookie_val = request.cookies.get(idp_binding_cookie_name(expected_digest, secure=secure))
+    if not cookie_val:
+        return False
+    actual_digest = hashlib.sha256(cookie_val.encode("utf-8")).hexdigest()
+    return hmac.compare_digest(actual_digest, expected_digest)
+
+
+def clear_idp_binding_cookie(
+    response: Response,
+    request: Request,
+    expected_digest: str | None,
+    *,
+    callback_uri: str,
+) -> None:
+    """Expire the flow's browser-binding cookie on the callback response."""
+    if not expected_digest:
+        return
+    secure = _idp_cookie_secure(request)
+    response.delete_cookie(
+        key=idp_binding_cookie_name(expected_digest, secure=secure),
+        path=_idp_cookie_path(callback_uri),
+        secure=secure,
+        httponly=True,
+        samesite="lax",
+    )
+
+
 def sign_payload(payload: dict[str, str | None], secret: str, *, purpose: str) -> str:
     """Encode and HMAC-sign a payload with a purpose discriminator."""
     payload["_purpose"] = purpose
@@ -528,6 +636,7 @@ async def write_idp_consent_handle(
             # on the direct callback path — dropping it here rebuilds the
             # claims with hosted_domain=None and rejects every Workspace user.
             "hosted_domain": claims.hosted_domain,
+            "issuer": claims.issuer,
         }
     }
     common = _consent_common(

@@ -1194,6 +1194,7 @@
               "path": "jentic apis revisions",
               "use": "revisions \u003cvendor/name/version\u003e",
               "short": "List the revisions of an API",
+              "long": "revisions lists an API's revisions, newest first, with each revision's\nstate and whether it is the current (live) one.\nA listed revision_id pins broker calls to that revision (e.g. to try a\ndraft before promoting it): send the header\n`Jentic-Revision: \u003cvendor\u003e:\u003cname\u003e:\u003cversion\u003e=\u003crevision_id\u003e`.",
               "aliases": [
                 "revs"
               ],

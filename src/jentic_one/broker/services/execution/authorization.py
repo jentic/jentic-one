@@ -26,7 +26,9 @@ from jentic_one.broker.core.denial import DenialReason
 from jentic_one.broker.core.exceptions import (
     ActionDeniedError,
     BrokerError,
+    CredentialBindingSuspendedError,
     CredentialIdentityMismatchError,
+    credential_binding_suspended_directive,
     direct_action_denied_directive,
     direct_credential_identity_mismatch_directive,
     no_credential_binding_directive,
@@ -140,6 +142,31 @@ def _empty_credential_derivation_denial(
     )
 
 
+def _suspended_binding_denial(api: APIReference, *, instance: str) -> BrokerError:
+    """The denial for an agent whose binding covering the API is suspended.
+
+    Checked before the other empty-set cases: the suspension is why the call
+    has no credential, and its recovery is the operator's alone, so the
+    directive carries no connect suggestion (and no connect target or open
+    session is looked up for it).
+    """
+    _authz_denied.add(
+        1,
+        {
+            "reason": DenialReason.CREDENTIAL_BINDING_SUSPENDED.value,
+            "mode": "direct",
+            "vendor": api.vendor,
+        },
+    )
+    return CredentialBindingSuspendedError(
+        "The credential binding for this API is suspended",
+        instance=instance,
+        directive=credential_binding_suspended_directive(
+            vendor=api.vendor, name=api.name, version=api.version
+        ),
+    )
+
+
 async def _emit_credential_binding_unserved(
     ctx: Context, *, api: APIReference, identity: Identity, trace_id: str | None = None
 ) -> None:
@@ -194,12 +221,12 @@ async def derive_credential_bindings(
 ) -> CredentialDerivation:
     """Derive the caller's credential-binding candidates for this execution.
 
-    ``0 → 403`` (no binding / credential identity mismatch — with the
-    operator-visible ``CREDENTIAL_BINDING_UNSERVED`` emit for the pre-binding
-    nothing-serves case). Candidate *selection* among ``N ≥ 1`` (name header →
-    most-specific-wins → ``Jentic-Credential-Id`` tie-breaker → 409) is owned
-    by ``CredentialService.select``, which shares the resolver with injection
-    so selection and injection can never disagree.
+    ``0 → 403`` (no binding / suspended binding / credential identity
+    mismatch — with the operator-visible ``CREDENTIAL_BINDING_UNSERVED`` emit
+    for the pre-binding nothing-serves case). Candidate *selection* among
+    ``N ≥ 1`` (name header → most-specific-wins → ``Jentic-Credential-Id``
+    tie-breaker → 409) is owned by ``CredentialService.select``, which shares
+    the resolver with injection so selection and injection can never disagree.
 
     Non-agent actors (users) follow the **same** derivation rule — no
     implicit bypass. Retired toolkit keys resolve as their successor agents
@@ -220,6 +247,8 @@ async def derive_credential_bindings(
         version=api.version,
     )
     if not derivation.credentials:
+        if derivation.binding_suspended:
+            raise _suspended_binding_denial(api, instance=instance)
         denial = _empty_credential_derivation_denial(
             derivation,
             api,
