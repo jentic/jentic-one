@@ -62,17 +62,21 @@ def install_connect_limiters(app: FastAPI, ctx: Context) -> None:
 def connect_limiter(app: FastAPI, attr: str) -> RateLimiter:
     """Return the installed limiter ``attr`` from ``app.state``.
 
-    An app assembled without :func:`install_connect_limiters` (a bare test app)
-    gets an in-process limiter, cached on the app across both attributes so
-    HTTP and MCP share the same per-actor bucket.
+    ``ROUTE_LIMITER_ATTR`` is the authoritative attribute for the shared
+    per-actor connect bucket; ``MCP_LIMITER_ATTR`` mirrors it (unless a test
+    explicitly installed a limiter on ``MCP_LIMITER_ATTR`` without setting
+    ``ROUTE_LIMITER_ATTR``). An app assembled without
+    :func:`install_connect_limiters` (a bare test app) gets an in-process
+    limiter cached on ``app.state`` across both attributes so HTTP and MCP
+    share the same per-actor bucket.
     """
-    limiter: RateLimiter | None = getattr(app.state, attr, None)
-    if limiter is not None:
-        return limiter
-    for other_attr in _NAMESPACES:
-        existing: RateLimiter | None = getattr(app.state, other_attr, None)
+    route_limiter: RateLimiter | None = getattr(app.state, ROUTE_LIMITER_ATTR, None)
+    if route_limiter is not None:
+        setattr(app.state, MCP_LIMITER_ATTR, route_limiter)
+        return route_limiter
+    if attr != ROUTE_LIMITER_ATTR:
+        existing: RateLimiter | None = getattr(app.state, attr, None)
         if existing is not None:
-            setattr(app.state, attr, existing)
             return existing
     _logger.warning("control_connect_limiter_missing_using_in_memory_fallback", limiter=attr)
     limiter = _limiter(MemoryStateBackend(), _NAMESPACES[attr])

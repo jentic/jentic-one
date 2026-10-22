@@ -19,9 +19,7 @@ runs against a **control-database** session handed in by the caller.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-from sqlalchemy import bindparam, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # Every credential stored for an exact ``(vendor, name, version)`` identity,
@@ -34,27 +32,6 @@ _CREDENTIALS_FOR_API = text(
     "ORDER BY id"
 )
 
-_CREDENTIAL_VISIBILITY_ROW = text(
-    "SELECT id, created_by, state FROM credentials WHERE id = :credential_id"
-)
-
-_OPEN_CONNECT_SESSION_FOR_AGENTS = text(
-    "SELECT 1 FROM connect_sessions "
-    "WHERE credential_id = :credential_id "
-    "AND agent_id IN :agent_ids "
-    "AND state IN ('created', 'awaiting_app', 'polling') "
-    "LIMIT 1"
-).bindparams(bindparam("agent_ids", expanding=True))
-
-
-@dataclass(frozen=True)
-class CredentialVisibilityRow:
-    """Minimal control-DB credential fields needed to check note target visibility."""
-
-    id: str
-    created_by: str | None
-    state: str
-
 
 class ControlCredentialBoundaryRepository:
     """Deactivates control credentials stranded by a registry API delete.
@@ -63,35 +40,6 @@ class ControlCredentialBoundaryRepository:
     ``api_version`` are matched exactly when given; a ``None`` component matches
     any value, mirroring the broker resolver's identity matching.
     """
-
-    @staticmethod
-    async def get_credential_visibility_row(
-        session: AsyncSession, *, credential_id: str
-    ) -> CredentialVisibilityRow | None:
-        """Return ``(id, created_by, state)`` for ``credential_id``, or ``None`` if absent."""
-        row = (
-            await session.execute(_CREDENTIAL_VISIBILITY_ROW, {"credential_id": credential_id})
-        ).one_or_none()
-        if row is None:
-            return None
-        return CredentialVisibilityRow(
-            id=str(row[0]),
-            created_by=str(row[1]) if row[1] is not None else None,
-            state=str(row[2]),
-        )
-
-    @staticmethod
-    async def has_open_connect_session_for_agents(
-        session: AsyncSession, *, credential_id: str, agent_ids: list[str]
-    ) -> bool:
-        """Return True if an open connect session references ``credential_id`` for ``agent_ids``."""
-        if not agent_ids:
-            return False
-        result = await session.execute(
-            _OPEN_CONNECT_SESSION_FOR_AGENTS,
-            {"credential_id": credential_id, "agent_ids": list(agent_ids)},
-        )
-        return result.scalar_one_or_none() is not None
 
     @staticmethod
     async def credentials_for_api(

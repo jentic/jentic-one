@@ -8,9 +8,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from jentic_one.registry.repos.control_credential_boundary_repo import (
-    CredentialVisibilityRow,
-)
 from jentic_one.registry.services.errors import (
     InvalidNoteResourceError,
     NoteNotFoundError,
@@ -18,7 +15,6 @@ from jentic_one.registry.services.errors import (
 )
 from jentic_one.registry.services.note_service import NoteService
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.models import ActorType
 
 _IDENTITY = Identity(sub="usr_test", email="test@example.com")
 
@@ -337,139 +333,3 @@ async def test_list_page_resolves_api_filter_to_ids() -> None:
     assert len(page.data) == 1
     assert mock_resolve.call_args.kwargs == {"vendor": "stripe", "name": None, "version": None}
     assert mock_list.call_args.kwargs["api_ids"] == ids
-
-
-def _make_full_ctx() -> MagicMock:
-    ctx = _make_ctx()
-    mock_control_session = AsyncMock()
-    mock_admin_session = AsyncMock()
-    ctx.control_db.session.return_value.__aenter__ = AsyncMock(return_value=mock_control_session)
-    ctx.control_db.session.return_value.__aexit__ = AsyncMock(return_value=False)
-    ctx.admin_db.session.return_value.__aenter__ = AsyncMock(return_value=mock_admin_session)
-    ctx.admin_db.session.return_value.__aexit__ = AsyncMock(return_value=False)
-    ctx.is_db_allowed.return_value = True
-    return ctx
-
-
-@pytest.mark.asyncio
-async def test_create_credential_note_rejects_missing_credential() -> None:
-    ctx = _make_full_ctx()
-    with patch(
-        "jentic_one.registry.services.note_service."
-        "ControlCredentialBoundaryRepository.get_credential_visibility_row",
-        new_callable=AsyncMock,
-        return_value=None,
-    ):
-        svc = NoteService(ctx)
-        with pytest.raises(NoteNotFoundError):
-            await svc.create(resource_credential_id="cred_missing", body="Test", identity=_IDENTITY)
-
-
-@pytest.mark.asyncio
-async def test_create_credential_note_rejects_foreign_private_credential() -> None:
-    ctx = _make_full_ctx()
-    row = CredentialVisibilityRow(id="cred_other", created_by="usr_other", state="connected")
-    with (
-        patch(
-            "jentic_one.registry.services.note_service."
-            "ControlCredentialBoundaryRepository.get_credential_visibility_row",
-            new_callable=AsyncMock,
-            return_value=row,
-        ),
-        patch(
-            "jentic_one.registry.services.note_service."
-            "AgentOwnershipBoundaryRepository.list_agent_ids_owned_by",
-            new_callable=AsyncMock,
-            return_value=[],
-        ),
-    ):
-        svc = NoteService(ctx)
-        with pytest.raises(NoteNotFoundError):
-            await svc.create(resource_credential_id="cred_other", body="Test", identity=_IDENTITY)
-
-
-@pytest.mark.asyncio
-async def test_create_credential_note_allows_creator() -> None:
-    ctx = _make_full_ctx()
-    row = CredentialVisibilityRow(id="cred_own", created_by=_IDENTITY.sub, state="connected")
-    note = _make_note()
-    with (
-        patch(
-            "jentic_one.registry.services.note_service."
-            "ControlCredentialBoundaryRepository.get_credential_visibility_row",
-            new_callable=AsyncMock,
-            return_value=row,
-        ),
-        patch(
-            "jentic_one.registry.services.note_service.NoteRepository.create",
-            new_callable=AsyncMock,
-            return_value=note,
-        ) as mock_create,
-    ):
-        svc = NoteService(ctx)
-        await svc.create(resource_credential_id="cred_own", body="Test", identity=_IDENTITY)
-
-    assert mock_create.call_args.kwargs["resource_credential_id"] == "cred_own"
-
-
-@pytest.mark.asyncio
-async def test_create_credential_note_allows_bound_agent() -> None:
-    ctx = _make_full_ctx()
-    row = CredentialVisibilityRow(id="cred_bound", created_by="usr_owner", state="connected")
-    note = _make_note()
-    agent_identity = Identity(sub="agnt_caller", actor_type=ActorType.AGENT)
-    with (
-        patch(
-            "jentic_one.registry.services.note_service."
-            "ControlCredentialBoundaryRepository.get_credential_visibility_row",
-            new_callable=AsyncMock,
-            return_value=row,
-        ),
-        patch(
-            "jentic_one.registry.services.note_service."
-            "AgentOwnershipBoundaryRepository.has_active_credential_binding",
-            new_callable=AsyncMock,
-            return_value=True,
-        ),
-        patch(
-            "jentic_one.registry.services.note_service.NoteRepository.create",
-            new_callable=AsyncMock,
-            return_value=note,
-        ) as mock_create,
-    ):
-        svc = NoteService(ctx)
-        await svc.create(resource_credential_id="cred_bound", body="Test", identity=agent_identity)
-
-    assert mock_create.call_args.kwargs["resource_credential_id"] == "cred_bound"
-
-
-@pytest.mark.asyncio
-async def test_create_credential_note_allows_owner_delegated_agent() -> None:
-    ctx = _make_full_ctx()
-    row = CredentialVisibilityRow(id="cred_delegated", created_by="usr_owner", state="connected")
-    note = _make_note()
-    agent_identity = Identity(
-        sub="agnt_caller",
-        actor_type=ActorType.AGENT,
-        parent_actor_id="usr_owner",
-        permissions=["owner:credentials:read"],
-    )
-    with (
-        patch(
-            "jentic_one.registry.services.note_service."
-            "ControlCredentialBoundaryRepository.get_credential_visibility_row",
-            new_callable=AsyncMock,
-            return_value=row,
-        ),
-        patch(
-            "jentic_one.registry.services.note_service.NoteRepository.create",
-            new_callable=AsyncMock,
-            return_value=note,
-        ) as mock_create,
-    ):
-        svc = NoteService(ctx)
-        await svc.create(
-            resource_credential_id="cred_delegated", body="Test", identity=agent_identity
-        )
-
-    assert mock_create.call_args.kwargs["resource_credential_id"] == "cred_delegated"

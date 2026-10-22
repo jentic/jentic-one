@@ -17,13 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # Archived agents are included: their notes stay readable to the owner.
 _OWNED_AGENT_IDS = text("SELECT id FROM agents WHERE owner_id = :owner_id")
 
-# Direct, active (non-suspended) credential bindings for an agent.
-_ACTIVE_AGENT_BINDING_EXISTS = text(
-    "SELECT 1 FROM agent_credential_bindings "
-    "WHERE agent_id = :agent_id AND credential_id = :credential_id AND suspended = false "
-    "LIMIT 1"
-)
-
 
 class AgentOwnershipBoundaryRepository:
     """Reads agent ownership from the admin DB without importing admin ORM."""
@@ -33,14 +26,3 @@ class AgentOwnershipBoundaryRepository:
         """Return the ids of every agent whose ``owner_id`` is ``owner_id``."""
         result = await session.execute(_OWNED_AGENT_IDS, {"owner_id": owner_id})
         return [str(row[0]) for row in result.fetchall()]
-
-    @staticmethod
-    async def has_active_credential_binding(
-        session: AsyncSession, *, agent_id: str, credential_id: str
-    ) -> bool:
-        """Return True if ``agent_id`` holds a non-suspended binding to ``credential_id``."""
-        result = await session.execute(
-            _ACTIVE_AGENT_BINDING_EXISTS,
-            {"agent_id": agent_id, "credential_id": credential_id},
-        )
-        return result.scalar_one_or_none() is not None

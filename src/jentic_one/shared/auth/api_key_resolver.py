@@ -210,7 +210,7 @@ class ApiKeyResolver:
             " (u.active AND u.deleted_at IS NULL) AS owner_active"
             " FROM agent_credentials ac"
             " JOIN agents a ON a.id = ac.agent_id"
-            " LEFT JOIN users u ON u.id = a.owner_id AND u.deleted_at IS NULL"
+            " LEFT JOIN users u ON u.id = a.owner_id"
             " WHERE ac.api_key_hash = :key_hash"
         ).columns(owner_active=Boolean)
         return (await session.execute(stmt, {"key_hash": key_hash})).one_or_none()
@@ -227,8 +227,7 @@ class ApiKeyResolver:
                 return _InactiveAgent(agent_id=row.agent_id)
             if row.owner_id is not None and not row.owner_active:
                 # The owner is disabled or deleted, or its row is missing:
-                # fail closed. A soft-deleted user has ``active`` false, so
-                # this covers delete too.
+                # fail closed.
                 log_agent_owner_inactive(row.agent_id, row.owner_id)
                 return _InactiveAgent(agent_id=row.agent_id, owner_inactive=True)
             permissions = await self._load_permissions(session, row.agent_id, ActorType.AGENT)

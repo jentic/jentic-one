@@ -13,10 +13,8 @@ from collections.abc import AsyncGenerator
 import pytest
 from sqlalchemy import delete, select
 
-from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.users import User
-from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.notes import Note
 from jentic_one.registry.services.errors import NoteNotFoundError
@@ -144,29 +142,17 @@ def _agent(agent_id: str, *, delegated: bool = False) -> Identity:
     )
 
 
-async def _wipe_agents(admin_db: DatabaseSession, control_db: DatabaseSession) -> None:
+async def _wipe_agents(admin_db: DatabaseSession) -> None:
     async with admin_db.session() as session:
-        await session.execute(
-            delete(AgentCredentialBinding).where(
-                AgentCredentialBinding.agent_id.in_(list(_AGENT_OWNERS))
-            )
-        )
         await session.execute(delete(Agent).where(Agent.id.in_(list(_AGENT_OWNERS))))
         await session.execute(delete(User).where(User.id.in_([_OWNER.sub, _OTHER.sub])))
-        await session.commit()
-    async with control_db.session() as session:
-        await session.execute(
-            delete(Credential).where(Credential.id.in_([_CREDENTIAL_ID, "cred_note_owner_private"]))
-        )
         await session.commit()
 
 
 @pytest.fixture()
-async def owned_agents(
-    admin_db: DatabaseSession, control_db: DatabaseSession
-) -> AsyncGenerator[None, None]:
+async def owned_agents(admin_db: DatabaseSession) -> AsyncGenerator[None, None]:
     """``_OWNER`` owns ``_OWNER_AGENT``; ``_OTHER`` owns ``_OTHER_AGENT``."""
-    await _wipe_agents(admin_db, control_db)
+    await _wipe_agents(admin_db)
     async with admin_db.transaction() as session:
         for user in (_OWNER, _OTHER):
             session.add(
@@ -177,34 +163,8 @@ async def owned_agents(
             session.add(
                 Agent(id=agent_id, name=agent_id, owner_id=owner_id, registered_by=owner_id)
             )
-            session.add(
-                AgentCredentialBinding(
-                    agent_id=agent_id,
-                    credential_id=_CREDENTIAL_ID,
-                    created_by=owner_id,
-                )
-            )
-    async with control_db.transaction() as session:
-        session.add(
-            Credential(
-                id=_CREDENTIAL_ID,
-                type="customer_api_key",
-                name="shared-test-cred",
-                api_vendor="note-test.com",
-                created_by=_OWNER.sub,
-            )
-        )
-        session.add(
-            Credential(
-                id="cred_note_owner_private",
-                type="customer_api_key",
-                name="owner-private-cred",
-                api_vendor="note-test.com",
-                created_by=_OWNER.sub,
-            )
-        )
     yield
-    await _wipe_agents(admin_db, control_db)
+    await _wipe_agents(admin_db)
 
 
 async def _agent_note(ctx: Context, agent_id: str, body: str) -> NoteView:
@@ -334,46 +294,3 @@ async def test_agent_sees_only_its_own_notes(
     assert await _listed(integration_context, agent) == {own.id}
     with pytest.raises(NoteNotFoundError):
         await NoteService(integration_context).get(owner_note.id, identity=agent)
-
-
-async def test_create_credential_note_requires_visible_target(
-    integration_context: Context, owned_agents: None
-) -> None:
-    svc = NoteService(integration_context)
-
-    # _OTHER cannot attach a note to _OWNER's private credential or a missing credential.
-    with pytest.raises(NoteNotFoundError):
-        await svc.create(
-            resource_credential_id="cred_note_owner_private",
-            body="Foreign credential note",
-            identity=_OTHER,
-        )
-    with pytest.raises(NoteNotFoundError):
-        await svc.create(
-            resource_credential_id="cred_note_nonexistent",
-            body="Missing credential note",
-            identity=_OWNER,
-        )
-
-    # Unbound agent of _OTHER cannot attach a note to _OWNER's private credential.
-    with pytest.raises(NoteNotFoundError):
-        await svc.create(
-            resource_credential_id="cred_note_owner_private",
-            body="Unbound agent note",
-            identity=_agent(_OTHER_AGENT),
-        )
-
-    # _OWNER (creator) and org:admin can attach a note to the private credential.
-    owner_view = await svc.create(
-        resource_credential_id="cred_note_owner_private",
-        body="Owner credential note",
-        identity=_OWNER,
-    )
-    assert owner_view.resource_credential_id == "cred_note_owner_private"
-
-    admin_view = await svc.create(
-        resource_credential_id="cred_note_owner_private",
-        body="Admin credential note",
-        identity=_ADMIN,
-    )
-    assert admin_view.resource_credential_id == "cred_note_owner_private"

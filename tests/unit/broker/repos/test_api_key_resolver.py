@@ -280,7 +280,7 @@ async def test_resolve_agent_key_deleted_owner_fails_closed(
     resolver: ApiKeyResolver, admin_db: MagicMock
 ) -> None:
     """An owned agent whose owner has ``deleted_at IS NOT NULL`` evaluates
-    ``owner_active`` to ``False`` (or ``None`` on outer join) and fails closed."""
+    ``owner_active`` to ``False`` and fails closed."""
     agent_row = AgentRow(
         agent_id="agnt_123", status="active", owner_id="usr_deleted", owner_active=False
     )
@@ -304,7 +304,8 @@ async def test_resolve_agent_key_deleted_owner_fails_closed(
 
     assert identity is None
     assert len(captured_sql) == 1
-    assert "deleted_at IS NULL" in captured_sql[0]
+    assert "(u.active AND u.deleted_at IS NULL) AS owner_active" in captured_sql[0]
+    assert "LEFT JOIN users u ON u.id = a.owner_id WHERE" in captured_sql[0]
     owner_inactive = [log for log in logs if log["event"] == "agent_owner_inactive"]
     assert len(owner_inactive) == 1
     assert owner_inactive[0]["agent_id"] == "agnt_123"

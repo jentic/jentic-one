@@ -56,3 +56,10 @@ async def test_fallback_connect_limiter_shares_budget_across_http_and_mcp() -> N
     mcp_lim = connect_limiter(app, MCP_LIMITER_ATTR)
     assert route_lim is mcp_lim
     assert route_lim._key_prefix == "rl:integrations_connect:"
+
+    # Clearing ROUTE_LIMITER_ATTR resets the shared limiter instead of
+    # resurrecting the stale instance from MCP_LIMITER_ATTR.
+    delattr(app.state, ROUTE_LIMITER_ATTR)
+    reset_route_lim = connect_limiter(app, ROUTE_LIMITER_ATTR)
+    assert reset_route_lim is not route_lim
+    assert connect_limiter(app, MCP_LIMITER_ATTR) is reset_route_lim
