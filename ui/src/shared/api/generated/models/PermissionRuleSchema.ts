@@ -11,6 +11,10 @@
  */
 export type PermissionRuleSchema = {
     /**
+     * On the binding of a CLI-profile credential (one connect covering several APIs of a vendor, e.g. `jentic connect github`): the profile API the rule applies to — `rest` and `uploads` take path rules, `graphql` GraphQL rules and `git` git rules. Omitted, the rule's kind decides: a `git` rule applies to `git`, a `graphql` rule to `graphql`, any other rule to `rest`. Ignored on any other credential.
+     */
+    api_role?: ('rest' | 'graphql' | 'git' | 'uploads' | null);
+    /**
      * Whether this rule allows the matched request, denies it, or holds it for human approval before the broker executes it.
      */
     effect: PermissionRuleSchema.effect;

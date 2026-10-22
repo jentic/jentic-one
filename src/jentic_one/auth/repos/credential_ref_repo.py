@@ -31,9 +31,11 @@ class CredentialRef:
     api_vendor: str
     api_name: str | None
     api_version: str | None
+    #: The CLI profile of a profile-scoped credential, else ``None``.
+    cli_profile: str | None = None
 
 
-_COLUMNS = "id, name, created_by, active, api_vendor, api_name, api_version"
+_COLUMNS = "id, name, created_by, active, api_vendor, api_name, api_version, cli_profile"
 
 
 def _to_ref(row: Sequence[object]) -> CredentialRef:
@@ -45,6 +47,7 @@ def _to_ref(row: Sequence[object]) -> CredentialRef:
         api_vendor=str(row[4]),
         api_name=str(row[5]) if row[5] is not None else None,
         api_version=str(row[6]) if row[6] is not None else None,
+        cli_profile=str(row[7]) if row[7] is not None else None,
     )
 
 

@@ -64,6 +64,7 @@ from jentic_one.shared.auth.permission_catalog import (
     ORG_ADMIN,
     OWNER_CREDENTIALS_READ,
 )
+from jentic_one.shared.cli_profiles import load_profiles
 from jentic_one.shared.context import Context
 from jentic_one.shared.db import DatabaseIntegrityError
 from jentic_one.shared.events import (
@@ -92,6 +93,32 @@ _ROW_LOCKED_VERBS: frozenset[ActorVerb] = frozenset({ActorVerb.APPROVE, ActorVer
 
 #: The ``reason`` on the audit entries an agent purge writes.
 _PURGE_AUDIT_REASON = "agent purged"
+
+
+def _served_apis(ref: CredentialRef) -> list[ServedApiRef]:
+    """The APIs a bound credential serves: its stored scope, or a CLI profile's declared APIs.
+
+    A profile-scoped credential covers exactly the APIs its profile's shipped
+    manifest declares (never "every API of the vendor"), so it lists those,
+    each with its role.
+    """
+    profile = load_profiles().get(ref.cli_profile) if ref.cli_profile is not None else None
+    if profile is not None:
+        return [
+            ServedApiRef(
+                api_vendor=api.identity.vendor,
+                api_name=api.identity.name,
+                api_version=api.identity.version,
+                api_role=api.role.value,
+            )
+            for api in profile.apis
+        ]
+    if ref.cli_profile is not None:
+        # A profile this release does not ship covers nothing.
+        return []
+    return [
+        ServedApiRef(api_vendor=ref.api_vendor, api_name=ref.api_name, api_version=ref.api_version)
+    ]
 
 
 class AgentService:
@@ -778,13 +805,7 @@ class AgentService:
                 if ref is None:
                     continue
                 view.name = ref.name
-                view.serves = [
-                    ServedApiRef(
-                        api_vendor=ref.api_vendor,
-                        api_name=ref.api_name,
-                        api_version=ref.api_version,
-                    )
-                ]
+                view.serves = _served_apis(ref)
         return views
 
     async def _load_binding_agent(self, agent_id: str, *, identity: Identity) -> AgentView:
@@ -854,11 +875,7 @@ class AgentService:
         self._ctx.invalidate_broker_caches(agent_id=agent_id, credential_id=credential_id)
         view = CredentialBindingView.model_validate(binding)
         view.name = ref.name
-        view.serves = [
-            ServedApiRef(
-                api_vendor=ref.api_vendor, api_name=ref.api_name, api_version=ref.api_version
-            )
-        ]
+        view.serves = _served_apis(ref)
         return view
 
     async def unbind_credential(

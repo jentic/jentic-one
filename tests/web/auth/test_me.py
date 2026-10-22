@@ -292,7 +292,7 @@ def test_me_agent(web_context: Context, approved_agent_id: str) -> None:
     # No shared rule set attached — inline rules govern this binding (Q-04).
     assert named["rule_set_id"] is None
     assert named["serves"] == [
-        {"api_vendor": "stripe", "api_name": "payments", "api_version": "v1"}
+        {"api_vendor": "stripe", "api_name": "payments", "api_version": "v1", "api_role": None}
     ]
     # …and graceful degradation (name=None, empty serves) for the orphan.
     orphan = cred_bindings[ORPHAN_CREDENTIAL_ID]

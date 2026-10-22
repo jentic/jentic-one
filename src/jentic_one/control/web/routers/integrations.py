@@ -62,6 +62,7 @@ from jentic_one.control.web.schemas.integrations import (
     ReauthorizeConfirmSessionRequest,
     ReauthorizeConfirmSessionResponse,
     ReviewAgentResponse,
+    ReviewProfileApiResponse,
     ReviewProvenanceResponse,
     ReviewSchemeResponse,
     ReviewScopeResponse,
@@ -205,6 +206,9 @@ async def integrations_connect(
             preset=body.preset,
             params=body.preset_params,
         )
+    if body.vendor is not None:
+        # A CLI-profile connect: each rule carries the profile API it applies to.
+        requested_rules = svc.profile_rules(svc.connect_profile(body.vendor), requested_rules)
     if len(requested_rules) > _MAX_REQUESTED_RULES:
         raise BadRequest(
             detail=(
@@ -430,6 +434,17 @@ def _review_response(data: ReviewData) -> ReviewSessionResponse:
                 can_reauthorize=c.can_reauthorize,
             )
             for c in data.existing_credentials
+        ],
+        cli_profile=data.cli_profile,
+        profile_apis=[
+            ReviewProfileApiResponse(
+                role=a.role,  # type: ignore[arg-type]
+                api_vendor=a.api_vendor,
+                api_name=a.api_name,
+                api_version=a.api_version,
+                description=a.description,
+            )
+            for a in data.profile_apis
         ],
     )
 

@@ -341,7 +341,7 @@ def test_credential_binding_lifecycle(
     assert binding["name"] == "Binding Test Credential"
     assert binding["suspended"] is False
     assert binding["serves"] == [
-        {"api_vendor": "stripe", "api_name": "payments", "api_version": "v1"}
+        {"api_vendor": "stripe", "api_name": "payments", "api_version": "v1", "api_role": None}
     ]
 
     # List

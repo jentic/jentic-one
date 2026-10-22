@@ -97,6 +97,7 @@ from jentic_one.control.services.integrations.errors import (
     ReauthorizeUnavailableError,
     RecentlyRejectedError,
     ReviewStaleError,
+    RuleApiRoleError,
     RulesRequiredError,
     SchemeChangedError,
     ScopeValidationError,
@@ -153,11 +154,17 @@ from jentic_one.shared.catalog import (
     SecuritySchemesLookupProtocol,
 )
 from jentic_one.shared.cli_profiles import (
+    ApiRole,
+    CliProfile,
     PresetError,
+    assign_rule_roles,
     expand_preset,
+    expand_preset_for_profile,
+    load_profiles,
     profile_api_for_catalog_api_id,
     profile_api_for_connect,
     profile_api_for_identity,
+    profile_for_connect,
 )
 from jentic_one.shared.config import connect_approval_url, resolved_control_egress
 from jentic_one.shared.context import Context
@@ -272,6 +279,21 @@ class ReviewData:
     # Credentials the viewer already holds for the target, with the
     # granted-scope comparison.
     existing_credentials: list[ExistingCredentialView] = field(default_factory=list)
+    # A CLI-profile connect (``jentic connect github``): the profile and the
+    # APIs its one credential covers, so the rules review groups per API.
+    cli_profile: str | None = None
+    profile_apis: list[ProfileApiView] = field(default_factory=list)
+
+
+@dataclass(slots=True, frozen=True)
+class ProfileApiView:
+    """One API a CLI-profile credential covers, as the review page shows it."""
+
+    role: str
+    api_vendor: str
+    api_name: str
+    api_version: str | None
+    description: str
 
 
 @dataclass(slots=True, frozen=True)
@@ -830,6 +852,18 @@ def _terminal_status(
     )
 
 
+def _profile_scope(profile: CliProfile) -> CredentialScope:
+    """The stored scope of a profile credential: the profile's one vendor, narrowed by profile.
+
+    Name and version stay unscoped; coverage is exactly the APIs the shipped
+    manifest declares (``shared.cli_profiles.declaring_profile``), so the
+    credential never covers another API of the vendor.
+    """
+    return canonical_credential_scope(
+        vendor=profile.identity_vendor, name=None, version=None, cli_profile=profile.profile
+    )
+
+
 class ConnectSessionService:
     """Orchestrates connect sessions across their state machine."""
 
@@ -876,6 +910,14 @@ class ConnectSessionService:
         for git); the approver sees these concrete rules on the review page,
         as if the agent had listed them itself.
         """
+        profile = profile_for_connect(vendor_key or "") if api_target is None else None
+        if profile is not None:
+            # The profile's own connect: one credential and one binding for all
+            # of its APIs, so every role's rules, each tagged with its role.
+            try:
+                return expand_preset_for_profile(profile, preset, params)
+            except PresetError as exc:
+                raise PresetInvalidError(str(exc)) from exc
         found = None
         if api_target is not None:
             found = profile_api_for_identity(api_target.vendor, api_target.name)
@@ -893,6 +935,33 @@ class ConnectSessionService:
             return expand_preset(profile, preset, params, role=api.role)
         except PresetError as exc:
             raise PresetInvalidError(str(exc)) from exc
+
+    @staticmethod
+    def profile_rules(
+        cli_profile: str | None, rules: list[dict[str, object]]
+    ) -> list[dict[str, object]]:
+        """``rules`` for a CLI-profile credential's binding, each with its ``api_role``.
+
+        Unchanged for any other credential (``cli_profile`` ``None``). A rule
+        naming no role gets the one its kind implies (``git``, ``graphql``,
+        else ``rest``); a role the profile does not declare, or one whose API
+        takes another kind of rule, raises :class:`RuleApiRoleError`.
+        """
+        if cli_profile is None:
+            return rules
+        profile = load_profiles().get(cli_profile)
+        if profile is None:
+            raise RuleApiRoleError(f"CLI profile {cli_profile!r} is not shipped by this release")
+        try:
+            return assign_rule_roles(profile, list(rules), origin="permission rule")
+        except PresetError as exc:
+            raise RuleApiRoleError(str(exc)) from exc
+
+    @staticmethod
+    def connect_profile(vendor_key: str | None) -> str | None:
+        """The CLI profile whose own connect ``vendor_key`` is (``profile_scoped``), or ``None``."""
+        profile = profile_for_connect(vendor_key or "")
+        return profile.profile if profile is not None else None
 
     async def create_session(
         self,
@@ -965,6 +1034,16 @@ class ConnectSessionService:
                 oauth_app_registration_id=oauth_app_registration_id,
             )
 
+        # A profile_scoped CLI profile's own connect (``github``): one
+        # credential for exactly the profile's APIs, through the profile's flow.
+        profile = profile_for_connect(vendor_key)
+        if profile is not None and preferred_flow is None and profile.connect is not None:
+            preferred_flow = profile.connect.flow
+        if profile is not None:
+            requested_permission_rules = self.profile_rules(
+                profile.profile, requested_permission_rules or []
+            )
+
         # Entry, flow and minting app come from one source — the pinned
         # registration, the config entry, or the vendor's single active
         # registration — so the credential's identity and scope catalog can
@@ -982,7 +1061,11 @@ class ConnectSessionService:
             raise NoOpForFlowError(flow.kind) from exc
         handler = handler_cls(self._ctx)
 
-        api_scope = await self._vendor_api_scope(entry.vendor)
+        api_scope = (
+            _profile_scope(profile)
+            if profile is not None
+            else await self._vendor_api_scope(entry.vendor)
+        )
         await self._refuse_suspended_binding(agent_id, api_scope)
         await self._check_rejection_cooldown(
             agent_id, target_kind=TARGET_KIND_VENDOR, vendor=vendor_key
@@ -1032,6 +1115,7 @@ class ConnectSessionService:
                     created_by=initiator_actor_id,
                     provider=handler.provider_id,
                     state="pending",
+                    cli_profile=api_scope.cli_profile,
                 )
                 await handler.prepare(
                     session,
@@ -1692,6 +1776,28 @@ class ConnectSessionService:
             if self._catalog_auto_importer is not None:
                 api_version = await self._catalog_auto_importer.current_version(api_id=entry.vendor)
 
+        profile = (
+            load_profiles().get(credential.cli_profile)
+            if credential is not None and credential.cli_profile is not None
+            else None
+        )
+        profile_apis: list[ProfileApiView] = []
+        if profile is not None:
+            profile_apis = [
+                ProfileApiView(
+                    role=a.role.value,
+                    api_vendor=a.identity.vendor,
+                    api_name=a.identity.name,
+                    api_version=a.identity.version,
+                    description=a.description,
+                )
+                for a in profile.apis
+            ]
+            # The rules-page operation preview reads the REST API's operations.
+            rest = profile.api(ApiRole.REST)
+            if rest is not None and api_name is None:
+                api_name = rest.identity.name
+
         agent = await self._agent_view(row.agent_id)
         endpoints = catalog_oauth_endpoints(view) if row.scheme_type == SCHEME_OAUTH2 else None
         return ReviewData(
@@ -1726,6 +1832,8 @@ class ConnectSessionService:
             digest=_review_digest(row, agent, view),
             can_confirm=await self._can_confirm(row, identity, agent),
             existing_credentials=await self._existing_candidates(row, identity, credential),
+            cli_profile=profile.profile if profile is not None else None,
+            profile_apis=profile_apis,
         )
 
     async def _agent_view(self, agent_id: str | None) -> AgentView | None:
@@ -1785,6 +1893,7 @@ class ConnectSessionService:
                 exclude_ids=[row.credential_id],
                 filters=filters,
                 account_ref_providers=self._ctx.providers.account_ref_provider_names(),
+                cli_profile=pending.cli_profile,
             )
             tokens = {
                 c.id: await OAuthTokenRepository.get_by_credential(session, c.id)
@@ -2135,6 +2244,11 @@ class ConnectSessionService:
             permission_rules=permission_rules,
             require_digest=api_target,
             require_rules=api_target,
+        )
+        # A CLI-profile credential's one binding takes rules for each of the
+        # profile's APIs: every rule is stored with the role it applies to.
+        permission_rules = self.profile_rules(
+            credential.cli_profile if credential is not None else None, permission_rules
         )
 
         # CAS ``created`` → ``polling`` BEFORE the vendor call: without
@@ -2587,6 +2701,10 @@ class ConnectSessionService:
         chosen = next((c for c in candidates if c.credential_id == variant.credential_id), None)
         if chosen is None:
             raise ExistingCredentialNotFoundError(variant.credential_id)
+        # The candidates of a CLI-profile session are that profile's credentials.
+        rules = self.profile_rules(
+            pending.cli_profile if pending is not None else None, variant.checks.permission_rules
+        )
 
         authorize_url: str | None = None
         if variant.reauthorize:
@@ -2640,7 +2758,7 @@ class ConnectSessionService:
                         session,
                         agent_id,
                         chosen.credential_id,
-                        variant.checks.permission_rules,
+                        rules,
                         created_by=identity.sub,
                     )
                     current = await ConnectSessionRepository.get_by_id(session, row.id)

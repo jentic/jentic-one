@@ -112,13 +112,27 @@ async def test_preset_rules_follow_the_agents_own(github_entries: Context) -> No
     own = {"effect": "deny", "methods": ["GET"], "path": "/user/emails", "match_mode": "exact"}
     status, body = await _connect(
         ctx,
-        {"vendor": "github", "preset": "read_only", "requested_permission_rules": [own]},
+        {
+            "vendor": "github",
+            "preset": "read_only",
+            "preset_params": {"repo": "octo-org/app"},
+            "requested_permission_rules": [own],
+        },
     )
     assert status == 201, body
-    assert _rules(body) == [
-        own,
-        {"effect": "allow", "methods": ["GET"], "path": "/", "match_mode": "prefix"},
+    # The profile's own connect: every role's rules, each tagged with its role.
+    rules = _rules(body)
+    assert rules[:2] == [
+        {**own, "api_role": "rest"},
+        {
+            "effect": "allow",
+            "methods": ["GET"],
+            "path": "/",
+            "match_mode": "prefix",
+            "api_role": "rest",
+        },
     ]
+    assert {r["api_role"] for r in rules} == {"rest", "graphql", "git"}
 
 
 async def test_graphql_connect_expands_and_provisions_the_shipped_spec(

@@ -47,6 +47,7 @@ from jentic_one.control.services.integrations.errors import (
     RecentlyRejectedError,
     ReservedAuthFieldError,
     ReviewStaleError,
+    RuleApiRoleError,
     RulesRequiredError,
     SchemeChangedError,
     ScopeValidationError,
@@ -148,6 +149,7 @@ _CONNECT_SESSION_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     OwnClientInvalidError: (400, "own_oauth_client_invalid"),
     PresetNotApplicableError: (400, "connect_preset_not_applicable"),
     PresetInvalidError: (400, "connect_preset_invalid"),
+    RuleApiRoleError: (400, "connect_rule_api_role_invalid"),
     ConnectSessionServiceError: (500, "connect_session_error"),
 }
 
@@ -160,6 +162,10 @@ _CONNECT_SESSION_SAFE_DETAILS: dict[type[Exception], str] = {
     PresetInvalidError: (
         "The preset does not expand into rules for this target; preset_error says why "
         "(see GET /cli-profiles for the presets and their parameters)."
+    ),
+    RuleApiRoleError: (
+        "A permission rule names an API the CLI profile does not have, or a role whose API "
+        "takes another kind of rule; rule_error says which (see GET /cli-profiles)."
     ),
     ConnectSessionServiceError: "Internal error handling the connect session.",
 }
@@ -182,6 +188,10 @@ def _connect_session_response_hook(
         extra["variables"] = exc.variables
     elif isinstance(exc, TooManyOpenSessionsError):
         extra.update(scope=exc.scope, limit=exc.limit)
+    elif isinstance(exc, RuleApiRoleError):
+        # The rule index, role and profile APIs: the caller's own input plus
+        # manifest data, which it needs to correct the rule.
+        extra["rule_error"] = str(exc)
     elif isinstance(exc, PresetInvalidError):
         # The preset's own reason: manifest data plus the caller's preset name
         # and parameter values, which it needs to correct the call.

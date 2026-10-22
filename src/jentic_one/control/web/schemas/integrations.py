@@ -16,6 +16,7 @@ from pydantic import (
 )
 
 from jentic_one.control.web.schemas.permission_rules import PermissionRuleSchema
+from jentic_one.shared.permissions.api_roles import ApiRoleName
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.sensitive import SENSITIVE
 
@@ -460,6 +461,18 @@ class ExistingCredentialResponse(BaseModel):
     can_reauthorize: bool
 
 
+class ReviewProfileApiResponse(BaseModel):
+    """One API a CLI-profile credential covers: the rules of its ``role`` apply to it."""
+
+    role: ApiRoleName = Field(description="The API's role in the profile.", examples=["git"])
+    api_vendor: str = Field(examples=["github-com"])
+    api_name: str = Field(examples=["github-git"])
+    api_version: str | None = Field(
+        default=None, description="Null for a catalog API: any imported version.", examples=["1"]
+    )
+    description: str = Field(default="", description="What the API covers.")
+
+
 class ReviewSessionResponse(BaseModel):
     session_id: str
     state: str
@@ -487,6 +500,19 @@ class ReviewSessionResponse(BaseModel):
     digest: str
     can_confirm: bool
     existing_credentials: list[ExistingCredentialResponse] = Field(default_factory=list)
+    cli_profile: str | None = Field(
+        default=None,
+        description=(
+            "Set for a CLI-profile connect (`jentic connect github`): the profile whose APIs "
+            "the one credential covers. Each requested rule applies to the API of its "
+            "`api_role` only."
+        ),
+        examples=["github"],
+    )
+    profile_apis: list[ReviewProfileApiResponse] = Field(
+        default_factory=list,
+        description="The APIs the CLI-profile credential covers, to group the rules by.",
+    )
 
 
 # ---------------------------------------------------------------------------

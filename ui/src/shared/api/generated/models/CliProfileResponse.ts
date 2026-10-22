@@ -18,7 +18,11 @@ export type CliProfileResponse = {
      */
     cli: string;
     /**
-     * `per_api`: each API is connected with its own credential.
+     * With `profile_scoped`: the `jentic connect <vendor>` key whose one connect covers every API of the profile. Null with `per_api`.
+     */
+    connect?: (string | null);
+    /**
+     * `per_api`: each API is connected with its own credential. `profile_scoped`: `jentic connect <connect>` creates one credential covering exactly the profile's APIs, each binding rule applying to the API of its role.
      */
     credential_mode: CliProfileResponse.credential_mode;
     /**
@@ -52,7 +56,7 @@ export type CliProfileResponse = {
 };
 export namespace CliProfileResponse {
     /**
-     * `per_api`: each API is connected with its own credential.
+     * `per_api`: each API is connected with its own credential. `profile_scoped`: `jentic connect <connect>` creates one credential covering exactly the profile's APIs, each binding rule applying to the API of its role.
      */
     export enum credential_mode {
         PER_API = 'per_api',

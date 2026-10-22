@@ -1173,6 +1173,30 @@ func (e OwnOAuthClientConfirmSessionRequestKind) Valid() bool {
 	}
 }
 
+// Defines values for PermissionRuleReadSchemaApiRole.
+const (
+	PermissionRuleReadSchemaApiRoleGit     PermissionRuleReadSchemaApiRole = "git"
+	PermissionRuleReadSchemaApiRoleGraphql PermissionRuleReadSchemaApiRole = "graphql"
+	PermissionRuleReadSchemaApiRoleRest    PermissionRuleReadSchemaApiRole = "rest"
+	PermissionRuleReadSchemaApiRoleUploads PermissionRuleReadSchemaApiRole = "uploads"
+)
+
+// Valid indicates whether the value is a known member of the PermissionRuleReadSchemaApiRole enum.
+func (e PermissionRuleReadSchemaApiRole) Valid() bool {
+	switch e {
+	case PermissionRuleReadSchemaApiRoleGit:
+		return true
+	case PermissionRuleReadSchemaApiRoleGraphql:
+		return true
+	case PermissionRuleReadSchemaApiRoleRest:
+		return true
+	case PermissionRuleReadSchemaApiRoleUploads:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PermissionRuleReadSchemaEffect.
 const (
 	PermissionRuleReadSchemaEffectAllow           PermissionRuleReadSchemaEffect = "allow"
@@ -1215,6 +1239,30 @@ func (e PermissionRuleReadSchemaMatchMode) Valid() bool {
 	case PermissionRuleReadSchemaMatchModePrefix:
 		return true
 	case PermissionRuleReadSchemaMatchModeRegex:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PermissionRuleSchemaApiRole.
+const (
+	PermissionRuleSchemaApiRoleGit     PermissionRuleSchemaApiRole = "git"
+	PermissionRuleSchemaApiRoleGraphql PermissionRuleSchemaApiRole = "graphql"
+	PermissionRuleSchemaApiRoleRest    PermissionRuleSchemaApiRole = "rest"
+	PermissionRuleSchemaApiRoleUploads PermissionRuleSchemaApiRole = "uploads"
+)
+
+// Valid indicates whether the value is a known member of the PermissionRuleSchemaApiRole enum.
+func (e PermissionRuleSchemaApiRole) Valid() bool {
+	switch e {
+	case PermissionRuleSchemaApiRoleGit:
+		return true
+	case PermissionRuleSchemaApiRoleGraphql:
+		return true
+	case PermissionRuleSchemaApiRoleRest:
+		return true
+	case PermissionRuleSchemaApiRoleUploads:
 		return true
 	default:
 		return false
@@ -1773,7 +1821,7 @@ type ApiInfoResponse struct {
 
 // ApiKeyConfirmSessionRequest Confirm a “manual_api_key“ session with the API key to store.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","key":"example-secret","kind":"api_key","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","key":"example-secret","kind":"api_key","permission_rules":[{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
 type ApiKeyConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
 	//
@@ -1802,7 +1850,7 @@ type ApiKeyConfirmSessionRequest struct {
 
 	// PermissionRules Permission rules to bind for the agent (at most 100).
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
 }
 
@@ -2553,7 +2601,7 @@ type BasicAuthUpdateRequestType string
 
 // BasicConfirmSessionRequest Confirm a “manual_basic“ session with the username and password to store.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"basic","password":"example-secret","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"username":"svc-reporting"}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"basic","password":"example-secret","permission_rules":[{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"username":"svc-reporting"}
 type BasicConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
 	//
@@ -2582,7 +2630,7 @@ type BasicConfirmSessionRequest struct {
 
 	// PermissionRules Permission rules to bind for the agent (at most 100).
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
 
 	// Username Username to store.
@@ -2598,7 +2646,7 @@ type BasicConfirmSessionRequestKind string
 
 // BearerConfirmSessionRequest Confirm a “manual_bearer“ session with the bearer token to store.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"bearer","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"token":"example-secret"}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"bearer","permission_rules":[{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"token":"example-secret"}
 type BearerConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
 	//
@@ -2622,7 +2670,7 @@ type BearerConfirmSessionRequest struct {
 
 	// PermissionRules Permission rules to bind for the agent (at most 100).
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
 
 	// Token Bearer token to store; write-only.
@@ -3208,11 +3256,11 @@ type CliProfileHardDenyResponseRole string
 
 // CliProfileListResponse The CLI profiles this Jentic ships.
 //
-// Examples: {"data":[{"apis":[{"api_id":"github.com/api.github.com","connect":"github","live":true,"name":"api-github-com","role":"rest","source":"catalog:github.com/api.github.com","vendor":"github-com","version":"1.1.4"}],"cli":"gh","credential_mode":"per_api","display_name":"GitHub","hard_deny":[{"description":"Mutations that grant access or change repository protections.","kind":"graphql_mutation","role":"graphql"}],"presets":[{"description":"Read everything: REST GETs, every GraphQL query, git fetch.","name":"read_only","params":[{"default":"false","description":"Repositories git may fetch, comma-separated '\u003cowner\u003e/\u003crepo\u003e' globs.","kind":"repo_list","name":"repo"}],"roles":["rest","graphql"]}],"profile":"github","supported_range":"\u003e=2.40.0,\u003c3","vendor":"github","vendor_enabled":true}]}
+// Examples: {"data":[{"apis":[{"api_id":"github.com/api.github.com","connect":"github","live":true,"name":"api-github-com","role":"rest","source":"catalog:github.com/api.github.com","vendor":"github-com","version":"1.1.4"}],"cli":"gh","connect":"github","credential_mode":"profile_scoped","display_name":"GitHub","hard_deny":[{"description":"Mutations that grant access or change repository protections.","kind":"graphql_mutation","role":"graphql"}],"presets":[{"description":"Read everything: REST GETs, every GraphQL query, git fetch.","name":"read_only","params":[{"default":"false","description":"Repositories git may fetch, comma-separated '\u003cowner\u003e/\u003crepo\u003e' globs.","kind":"repo_list","name":"repo"}],"roles":["rest","graphql"]}],"profile":"github","supported_range":"\u003e=2.40.0,\u003c3","vendor":"github","vendor_enabled":true}]}
 type CliProfileListResponse struct {
 	// Data Shipped profiles, by name.
 	//
-	// Examples: [{"apis":[{"api_id":"github.com/api.github.com","connect":"github","live":true,"name":"api-github-com","role":"rest","source":"catalog:github.com/api.github.com","vendor":"github-com","version":"1.1.4"}],"cli":"gh","credential_mode":"per_api","display_name":"GitHub","hard_deny":[{"description":"Mutations that grant access or change repository protections.","kind":"graphql_mutation","role":"graphql"}],"presets":[{"description":"Read everything: REST GETs, every GraphQL query, git fetch.","name":"read_only","params":[{"default":"false","description":"Repositories git may fetch, comma-separated '\u003cowner\u003e/\u003crepo\u003e' globs.","kind":"repo_list","name":"repo"}],"roles":["rest","graphql"]}],"profile":"github","supported_range":"\u003e=2.40.0,\u003c3","vendor":"github","vendor_enabled":true}]
+	// Examples: [{"apis":[{"api_id":"github.com/api.github.com","connect":"github","live":true,"name":"api-github-com","role":"rest","source":"catalog:github.com/api.github.com","vendor":"github-com","version":"1.1.4"}],"cli":"gh","connect":"github","credential_mode":"profile_scoped","display_name":"GitHub","hard_deny":[{"description":"Mutations that grant access or change repository protections.","kind":"graphql_mutation","role":"graphql"}],"presets":[{"description":"Read everything: REST GETs, every GraphQL query, git fetch.","name":"read_only","params":[{"default":"false","description":"Repositories git may fetch, comma-separated '\u003cowner\u003e/\u003crepo\u003e' globs.","kind":"repo_list","name":"repo"}],"roles":["rest","graphql"]}],"profile":"github","supported_range":"\u003e=2.40.0,\u003c3","vendor":"github","vendor_enabled":true}]
 	Data []CliProfileResponse `json:"data"`
 }
 
@@ -3359,7 +3407,7 @@ type CliProfileProvisionedApiResponseStatus string
 
 // CliProfileResponse One shipped CLI profile.
 //
-// Examples: {"apis":[{"api_id":"github.com/api.github.com","connect":"github","live":true,"name":"api-github-com","role":"rest","source":"catalog:github.com/api.github.com","vendor":"github-com","version":"1.1.4"}],"cli":"gh","credential_mode":"per_api","display_name":"GitHub","hard_deny":[{"description":"Mutations that grant access or change repository protections.","kind":"graphql_mutation","role":"graphql"}],"presets":[{"description":"Read everything: REST GETs, every GraphQL query, git fetch.","name":"read_only","params":[{"default":"false","description":"Repositories git may fetch, comma-separated '\u003cowner\u003e/\u003crepo\u003e' globs.","kind":"repo_list","name":"repo"}],"roles":["rest","graphql"]}],"profile":"github","supported_range":"\u003e=2.40.0,\u003c3","vendor":"github","vendor_enabled":true}
+// Examples: {"apis":[{"api_id":"github.com/api.github.com","connect":"github","live":true,"name":"api-github-com","role":"rest","source":"catalog:github.com/api.github.com","vendor":"github-com","version":"1.1.4"}],"cli":"gh","connect":"github","credential_mode":"profile_scoped","display_name":"GitHub","hard_deny":[{"description":"Mutations that grant access or change repository protections.","kind":"graphql_mutation","role":"graphql"}],"presets":[{"description":"Read everything: REST GETs, every GraphQL query, git fetch.","name":"read_only","params":[{"default":"false","description":"Repositories git may fetch, comma-separated '\u003cowner\u003e/\u003crepo\u003e' globs.","kind":"repo_list","name":"repo"}],"roles":["rest","graphql"]}],"profile":"github","supported_range":"\u003e=2.40.0,\u003c3","vendor":"github","vendor_enabled":true}
 type CliProfileResponse struct {
 	// Apis The APIs the profile declares.
 	//
@@ -3371,9 +3419,14 @@ type CliProfileResponse struct {
 	// Examples: gh
 	Cli string `json:"cli"`
 
-	// CredentialMode `per_api`: each API is connected with its own credential.
+	// Connect With `profile_scoped`: the `jentic connect <vendor>` key whose one connect covers every API of the profile. Null with `per_api`.
 	//
-	// Examples: per_api
+	// Examples: github
+	Connect *string `json:"connect,omitempty"`
+
+	// CredentialMode `per_api`: each API is connected with its own credential. `profile_scoped`: `jentic connect <connect>` creates one credential covering exactly the profile's APIs, each binding rule applying to the API of its role.
+	//
+	// Examples: profile_scoped
 	CredentialMode CliProfileResponseCredentialMode `json:"credential_mode"`
 
 	// DisplayName How the profile is named.
@@ -3412,9 +3465,9 @@ type CliProfileResponse struct {
 	VendorEnabled bool `json:"vendor_enabled"`
 }
 
-// CliProfileResponseCredentialMode `per_api`: each API is connected with its own credential.
+// CliProfileResponseCredentialMode `per_api`: each API is connected with its own credential. `profile_scoped`: `jentic connect <connect>` creates one credential covering exactly the profile's APIs, each binding rule applying to the API of its role.
 //
-// Examples: per_api
+// Examples: profile_scoped
 type CliProfileResponseCredentialMode string
 
 // ConnectRequestBody Request body for initiating a credential connect flow.
@@ -3636,7 +3689,7 @@ type CredentialBindRequest struct {
 
 // CredentialBindingEntry Direct agent↔credential binding summary for the /me response (theme 5 phase 1).
 //
-// Examples: {"bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}
+// Examples: {"bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_role":"git","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}
 type CredentialBindingEntry struct {
 	// BoundAt When the credential was bound (RFC 3339).
 	//
@@ -3660,7 +3713,7 @@ type CredentialBindingEntry struct {
 
 	// Serves The APIs the bound credential serves; empty if unresolvable.
 	//
-	// Examples: [{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}]
+	// Examples: [{"api_name":"stripe","api_role":"git","api_vendor":"stripe.com","api_version":"2024-04-10"}]
 	Serves *[]ServedApiRef `json:"serves,omitempty"`
 
 	// Suspended Whether the binding is suspended; the agent cannot execute through it until resumed.
@@ -3676,17 +3729,17 @@ type CredentialBindingEntry struct {
 
 // CredentialBindingListResponse List of direct credential bindings.
 //
-// Examples: {"data":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","id":"acb_6968b3989a4f1c2e7d3b5a60","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}]}
+// Examples: {"data":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","id":"acb_6968b3989a4f1c2e7d3b5a60","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_role":"git","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}]}
 type CredentialBindingListResponse struct {
 	// Data The agent's direct credential bindings.
 	//
-	// Examples: [{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","id":"acb_6968b3989a4f1c2e7d3b5a60","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}]
+	// Examples: [{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","id":"acb_6968b3989a4f1c2e7d3b5a60","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_role":"git","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}]
 	Data []CredentialBindingResponse `json:"data"`
 }
 
 // CredentialBindingResponse Direct agent↔credential binding representation in API responses.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","id":"acb_6968b3989a4f1c2e7d3b5a60","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","id":"acb_6968b3989a4f1c2e7d3b5a60","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_role":"git","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}
 type CredentialBindingResponse struct {
 	// AgentId ID of the agent the credential is bound to.
 	//
@@ -3720,7 +3773,7 @@ type CredentialBindingResponse struct {
 
 	// Serves The APIs the bound credential serves; empty if unresolvable.
 	//
-	// Examples: [{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}]
+	// Examples: [{"api_name":"stripe","api_role":"git","api_vendor":"stripe.com","api_version":"2024-04-10"}]
 	Serves *[]ServedApiRef `json:"serves,omitempty"`
 
 	// Suspended Whether the binding is suspended, cutting off the agent's access to it.
@@ -4338,7 +4391,7 @@ type ExecutionStatsResponse struct {
 
 // ExistingCredentialConfirmSessionRequest Bind a credential the approver already holds (OAuth only if its grant covers the ask).
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"existing_credential","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"existing_credential","permission_rules":[{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
 type ExistingCredentialConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
 	//
@@ -4367,7 +4420,7 @@ type ExistingCredentialConfirmSessionRequest struct {
 
 	// PermissionRules Permission rules to bind for the agent (at most 100).
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
 }
 
@@ -4802,7 +4855,7 @@ type InstanceIdentityResponseBackend string
 
 // IntegrationsConnectRequest Start connecting a credential for a vendor or a registry API.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","api":{"name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"auth_type":"oauth2","name":"GitHub (work)","oauth_app_registration_id":"oar_6968b39821e5f89a6975f501","preferred_flow":"authorization_code","preset":"read_only","preset_params":{"branches":"agent/*","repo":"octo-org/app"},"reason":"Needs read access to triage issues in the platform repo.","requested_permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"requested_scopes":["repo","read:user"],"vendor":"github"}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","api":{"name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"auth_type":"oauth2","name":"GitHub (work)","oauth_app_registration_id":"oar_6968b39821e5f89a6975f501","preferred_flow":"authorization_code","preset":"read_only","preset_params":{"branches":"agent/*","repo":"octo-org/app"},"reason":"Needs read access to triage issues in the platform repo.","requested_permission_rules":[{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"requested_scopes":["repo","read:user"],"vendor":"github"}
 type IntegrationsConnectRequest struct {
 	// AgentId ID of the agent to bind the credential to on confirm; it must be an active agent the caller owns and may approve for (`agents:write`), or any agent for `org:admin`. Agent callers must omit it, and when omitted by a user the credential connects unbound.
 	//
@@ -4851,7 +4904,7 @@ type IntegrationsConnectRequest struct {
 
 	// RequestedPermissionRules Permission rules proposed for the agent, shown pre-filled on the review page; nothing is bound until confirm.
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	RequestedPermissionRules *[]PermissionRuleSchema `json:"requested_permission_rules,omitempty"`
 
 	// RequestedScopes Upstream scopes to request (at most 100).
@@ -5096,7 +5149,7 @@ type McpConfigRuntime string
 
 // MeAgent Identity response for an agent actor.
 //
-// Examples: {"approved_by":"usr_6968b3987ee4c3ec0b4ee3b9","credential_bindings":[{"bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}],"id":"agnt_6968b3984d1c238dbe7e2e29","name":"invoice-reconciler","parent_agent_id":"agnt_6968b3984d1c238dbe7e2e29","permissions":["apis:read","capabilities:execute"],"status":"active","token_permissions":["apis:read","capabilities:execute"],"type":"agent"}
+// Examples: {"approved_by":"usr_6968b3987ee4c3ec0b4ee3b9","credential_bindings":[{"bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_role":"git","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}],"id":"agnt_6968b3984d1c238dbe7e2e29","name":"invoice-reconciler","parent_agent_id":"agnt_6968b3984d1c238dbe7e2e29","permissions":["apis:read","capabilities:execute"],"status":"active","token_permissions":["apis:read","capabilities:execute"],"type":"agent"}
 type MeAgent struct {
 	// ApprovedBy ID of the user who approved the agent; null if not approved.
 	//
@@ -5105,7 +5158,7 @@ type MeAgent struct {
 
 	// CredentialBindings Credentials bound directly to the agent.
 	//
-	// Examples: [{"bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}]
+	// Examples: [{"bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_role":"git","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}]
 	CredentialBindings *[]CredentialBindingEntry `json:"credential_bindings,omitempty"`
 
 	// Id Unique ID of the agent.
@@ -6174,7 +6227,7 @@ type OAuthClientUpdateRequest struct {
 //
 // The default variant — a body without “kind“ is this one.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","confirmed_scopes":["repo","read:user"],"digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"oauth","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","confirmed_scopes":["repo","read:user"],"digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"oauth","permission_rules":[{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
 type OAuthConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
 	//
@@ -6203,7 +6256,7 @@ type OAuthConfirmSessionRequest struct {
 
 	// PermissionRules Permission rules to bind for the agent (at most 100).
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules *[]PermissionRuleSchema `json:"permission_rules,omitempty"`
 }
 
@@ -6795,7 +6848,7 @@ type OverlayUpdateRequest struct {
 // the spec may be agent-submitted and the token endpoint receives the
 // client secret.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","authorize_url":"https://github.com/login/oauth/authorize","client_id":"Iv1.a1b2c3d4","client_secret":"example-secret","confirmed_scopes":["repo","read:user"],"digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"own_oauth_client","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"token_url":"https://github.com/login/oauth/access_token"}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","authorize_url":"https://github.com/login/oauth/authorize","client_id":"Iv1.a1b2c3d4","client_secret":"example-secret","confirmed_scopes":["repo","read:user"],"digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"own_oauth_client","permission_rules":[{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"token_url":"https://github.com/login/oauth/access_token"}
 type OwnOAuthClientConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
 	//
@@ -6839,7 +6892,7 @@ type OwnOAuthClientConfirmSessionRequest struct {
 
 	// PermissionRules Permission rules to bind for the agent (at most 100).
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
 
 	// TokenUrl Token endpoint URL of the OAuth app.
@@ -6890,17 +6943,17 @@ type PermissionResponse struct {
 
 // PermissionRuleListResponse List of permission rules.
 //
-// Examples: {"data":[{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+// Examples: {"data":[{"_comment":"Read-only access to charges.","_system":false,"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
 type PermissionRuleListResponse struct {
 	// Data The binding's permission rules, in evaluation order.
 	//
-	// Examples: [{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"_comment":"Read-only access to charges.","_system":false,"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	Data []PermissionRuleReadSchema `json:"data"`
 }
 
 // PermissionRuleReadSchema Permission rule response (includes system fields).
 //
-// Examples: {"_comment":"Read-only access to charges.","_system":false,"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}
+// Examples: {"_comment":"Read-only access to charges.","_system":false,"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}
 type PermissionRuleReadSchema struct {
 	// UnderscoreComment Optional note attached to the rule.
 	//
@@ -6911,6 +6964,11 @@ type PermissionRuleReadSchema struct {
 	//
 	// Examples: false
 	UnderscoreSystem *bool `json:"_system,omitempty"`
+
+	// ApiRole The CLI-profile API the rule applies to on a CLI-profile credential's binding; null takes the role the rule's kind implies (`git`, `graphql`, else `rest`).
+	//
+	// Examples: rest
+	ApiRole *PermissionRuleReadSchemaApiRole `json:"api_role,omitempty"`
 
 	// Effect Whether this rule allows, denies, or holds the matched request for human approval (`require-approval`).
 	//
@@ -6938,6 +6996,9 @@ type PermissionRuleReadSchema struct {
 	Path *string `json:"path,omitempty"`
 }
 
+// PermissionRuleReadSchemaApiRole defines model for PermissionRuleReadSchema.ApiRole.
+type PermissionRuleReadSchemaApiRole string
+
 // PermissionRuleReadSchemaEffect Whether this rule allows, denies, or holds the matched request for human approval (`require-approval`).
 //
 // Examples: allow
@@ -6954,8 +7015,13 @@ type PermissionRuleReadSchemaMatchMode string
 // denied (default-deny). A binding with zero rules therefore blocks all
 // operations — users must explicitly add at least one allow rule.
 //
-// Examples: {"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}
+// Examples: {"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}
 type PermissionRuleSchema struct {
+	// ApiRole On the binding of a CLI-profile credential (one connect covering several APIs of a vendor, e.g. `jentic connect github`): the profile API the rule applies to — `rest` and `uploads` take path rules, `graphql` GraphQL rules and `git` git rules. Omitted, the rule's kind decides: a `git` rule applies to `git`, a `graphql` rule to `graphql`, any other rule to `rest`. Ignored on any other credential.
+	//
+	// Examples: rest
+	ApiRole *PermissionRuleSchemaApiRole `json:"api_role,omitempty"`
+
 	// Effect Whether this rule allows the matched request, denies it, or holds it for human approval before the broker executes it.
 	//
 	// Examples: allow
@@ -6981,6 +7047,9 @@ type PermissionRuleSchema struct {
 	// Examples: /v1/charges
 	Path *string `json:"path,omitempty"`
 }
+
+// PermissionRuleSchemaApiRole defines model for PermissionRuleSchema.ApiRole.
+type PermissionRuleSchemaApiRole string
 
 // PermissionRuleSchemaEffect Whether this rule allows the matched request, denies it, or holds it for human approval before the broker executes it.
 //
@@ -7064,11 +7133,11 @@ type Permissions struct {
 
 // PermissionsPatchRequest Patch permission rules — add and/or remove.
 //
-// Examples: {"add":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"remove":[0,2]}
+// Examples: {"add":[{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"remove":[0,2]}
 type PermissionsPatchRequest struct {
 	// Add Rules to append after the existing user rules.
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	Add *[]PermissionRuleSchema `json:"add,omitempty"`
 
 	// Remove Zero-based indexes of user rules (excluding system rules) to delete; applied before `add`.
@@ -7309,7 +7378,7 @@ type ProviderDiscoveryResponse struct {
 //
 // Refused when another agent is bound to the credential.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"reauthorize","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"reauthorize","permission_rules":[{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
 type ReauthorizeConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
 	//
@@ -7338,7 +7407,7 @@ type ReauthorizeConfirmSessionRequest struct {
 
 	// PermissionRules Permission rules to bind for the agent (at most 100).
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
 }
 
@@ -7527,7 +7596,7 @@ type RuleSetAttachRequest struct {
 
 // RuleSetCreateRequest Create a shared permission rule set (theme 5 phase 1, Q-04).
 //
-// Examples: {"description":"Allows GET requests to the Stripe API; denies everything else.","name":"Stripe read-only","rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+// Examples: {"description":"Allows GET requests to the Stripe API; denies everything else.","name":"Stripe read-only","rules":[{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
 type RuleSetCreateRequest struct {
 	// Description Optional free-text description of the set.
 	//
@@ -7541,7 +7610,7 @@ type RuleSetCreateRequest struct {
 
 	// Rules Initial ordered rule list (first-match-wins, default-deny).
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	Rules *[]PermissionRuleSchema `json:"rules,omitempty"`
 }
 
@@ -7567,7 +7636,7 @@ type RuleSetListResponse struct {
 
 // RuleSetResponse Rule set detail — the ordered rules plus its referencing-binding count.
 //
-// Examples: {"binding_count":3,"created_at":"2026-01-15T09:30:00Z","created_by":"usr_6968b3987ee4c3ec0b4ee3b9","curated":true,"description":"Allows GET requests to the Stripe API; denies everything else.","name":"Stripe read-only","rule_set_id":"prs_6968b3987c22b63e87e79f05","rules":[{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+// Examples: {"binding_count":3,"created_at":"2026-01-15T09:30:00Z","created_by":"usr_6968b3987ee4c3ec0b4ee3b9","curated":true,"description":"Allows GET requests to the Stripe API; denies everything else.","name":"Stripe read-only","rule_set_id":"prs_6968b3987c22b63e87e79f05","rules":[{"_comment":"Read-only access to charges.","_system":false,"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
 type RuleSetResponse struct {
 	// BindingCount How many agent-credential bindings currently point at this set.
 	//
@@ -7606,7 +7675,7 @@ type RuleSetResponse struct {
 
 	// Rules Ordered rule list (first-match-wins, default-deny).
 	//
-	// Examples: [{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"_comment":"Read-only access to charges.","_system":false,"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	Rules []PermissionRuleReadSchema `json:"rules"`
 }
 
@@ -7838,12 +7907,17 @@ type SecuritySchemeResponse struct {
 // all-required “APIReference“. Shared so the auth service schema and the
 // “/me“ web schema use ONE model instead of two identical copies.
 //
-// Examples: {"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}
+// Examples: {"api_name":"stripe","api_role":"git","api_vendor":"stripe.com","api_version":"2024-04-10"}
 type ServedApiRef struct {
 	// ApiName Name of the served API; null means every API of the vendor.
 	//
 	// Examples: stripe
 	ApiName *string `json:"api_name,omitempty"`
+
+	// ApiRole Set when the credential is a CLI-profile credential (one connect covering several APIs of a vendor): the API's role in the profile (`rest`, `graphql`, `git`, `uploads`). The binding's rules for that role apply to it.
+	//
+	// Examples: git
+	ApiRole *string `json:"api_role,omitempty"`
 
 	// ApiVendor Vendor of the served API.
 	//

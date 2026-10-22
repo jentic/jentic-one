@@ -1010,6 +1010,7 @@
             "kind": "api_key",
             "permission_rules": [
               {
+                "api_role": "rest",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -1091,6 +1092,7 @@
             "examples": [
               [
                 {
+                  "api_role": "rest",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -3328,6 +3330,7 @@
             "password": "example-secret",
             "permission_rules": [
               {
+                "api_role": "rest",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -3410,6 +3413,7 @@
             "examples": [
               [
                 {
+                  "api_role": "rest",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -3461,6 +3465,7 @@
             "kind": "bearer",
             "permission_rules": [
               {
+                "api_role": "rest",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -3530,6 +3535,7 @@
             "examples": [
               [
                 {
+                  "api_role": "rest",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -5186,7 +5192,8 @@
                   }
                 ],
                 "cli": "gh",
-                "credential_mode": "per_api",
+                "connect": "github",
+                "credential_mode": "profile_scoped",
                 "display_name": "GitHub",
                 "hard_deny": [
                   {
@@ -5240,7 +5247,8 @@
                     }
                   ],
                   "cli": "gh",
-                  "credential_mode": "per_api",
+                  "connect": "github",
+                  "credential_mode": "profile_scoped",
                   "display_name": "GitHub",
                   "hard_deny": [
                     {
@@ -5663,7 +5671,8 @@
               }
             ],
             "cli": "gh",
-            "credential_mode": "per_api",
+            "connect": "github",
+            "credential_mode": "profile_scoped",
             "display_name": "GitHub",
             "hard_deny": [
               {
@@ -5727,14 +5736,29 @@
             "title": "Cli",
             "type": "string"
           },
+          "connect": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "With `profile_scoped`: the `jentic connect <vendor>` key whose one connect covers every API of the profile. Null with `per_api`.",
+            "examples": [
+              "github"
+            ],
+            "title": "Connect"
+          },
           "credential_mode": {
-            "description": "`per_api`: each API is connected with its own credential.",
+            "description": "`per_api`: each API is connected with its own credential. `profile_scoped`: `jentic connect <connect>` creates one credential covering exactly the profile's APIs, each binding rule applying to the API of its role.",
             "enum": [
               "per_api",
               "profile_scoped"
             ],
             "examples": [
-              "per_api"
+              "profile_scoped"
             ],
             "title": "Credential Mode",
             "type": "string"
@@ -6417,6 +6441,7 @@
             "serves": [
               {
                 "api_name": "stripe",
+                "api_role": "git",
                 "api_vendor": "stripe.com",
                 "api_version": "2024-04-10"
               }
@@ -6480,6 +6505,7 @@
               [
                 {
                   "api_name": "stripe",
+                  "api_role": "git",
                   "api_vendor": "stripe.com",
                   "api_version": "2024-04-10"
                 }
@@ -6538,6 +6564,7 @@
                 "serves": [
                   {
                     "api_name": "stripe",
+                    "api_role": "git",
                     "api_vendor": "stripe.com",
                     "api_version": "2024-04-10"
                   }
@@ -6563,6 +6590,7 @@
                   "serves": [
                     {
                       "api_name": "stripe",
+                      "api_role": "git",
                       "api_vendor": "stripe.com",
                       "api_version": "2024-04-10"
                     }
@@ -6598,6 +6626,7 @@
             "serves": [
               {
                 "api_name": "stripe",
+                "api_role": "git",
                 "api_vendor": "stripe.com",
                 "api_version": "2024-04-10"
               }
@@ -6677,6 +6706,7 @@
               [
                 {
                   "api_name": "stripe",
+                  "api_role": "git",
                   "api_vendor": "stripe.com",
                   "api_version": "2024-04-10"
                 }
@@ -8584,6 +8614,7 @@
             "kind": "existing_credential",
             "permission_rules": [
               {
+                "api_role": "rest",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -8662,6 +8693,7 @@
             "examples": [
               [
                 {
+                  "api_role": "rest",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -9839,6 +9871,7 @@
             "reason": "Needs read access to triage issues in the platform repo.",
             "requested_permission_rules": [
               {
+                "api_role": "rest",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -10006,6 +10039,7 @@
             "examples": [
               [
                 {
+                  "api_role": "rest",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -10692,6 +10726,7 @@
                 "serves": [
                   {
                     "api_name": "stripe",
+                    "api_role": "git",
                     "api_vendor": "stripe.com",
                     "api_version": "2024-04-10"
                   }
@@ -10744,6 +10779,7 @@
                   "serves": [
                     {
                       "api_name": "stripe",
+                      "api_role": "git",
                       "api_vendor": "stripe.com",
                       "api_version": "2024-04-10"
                     }
@@ -13757,6 +13793,7 @@
             "kind": "oauth",
             "permission_rules": [
               {
+                "api_role": "rest",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -13847,6 +13884,7 @@
             "examples": [
               [
                 {
+                  "api_role": "rest",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -15670,6 +15708,7 @@
             "kind": "own_oauth_client",
             "permission_rules": [
               {
+                "api_role": "rest",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -15787,6 +15826,7 @@
             "examples": [
               [
                 {
+                  "api_role": "rest",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -15941,6 +15981,7 @@
               {
                 "_comment": "Read-only access to charges.",
                 "_system": false,
+                "api_role": "rest",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -15962,6 +16003,7 @@
                 {
                   "_comment": "Read-only access to charges.",
                   "_system": false,
+                  "api_role": "rest",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -15993,6 +16035,7 @@
           {
             "_comment": "Read-only access to charges.",
             "_system": false,
+            "api_role": "rest",
             "effect": "allow",
             "match_mode": "prefix",
             "methods": [
@@ -16028,6 +16071,27 @@
             ],
             "title": "System",
             "type": "boolean"
+          },
+          "api_role": {
+            "anyOf": [
+              {
+                "enum": [
+                  "rest",
+                  "graphql",
+                  "git",
+                  "uploads"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The CLI-profile API the rule applies to on a CLI-profile credential's binding; null takes the role the rule's kind implies (`git`, `graphql`, else `rest`).",
+            "examples": [
+              "rest"
+            ],
+            "title": "Api Role"
           },
           "effect": {
             "description": "Whether this rule allows, denies, or holds the matched request for human approval (`require-approval`).",
@@ -16125,6 +16189,7 @@
         "description": "Permission rule for an agent↔credential binding.\n\nRules are evaluated first-match-wins. If no rule matches, the request is\ndenied (default-deny). A binding with zero rules therefore blocks all\noperations — users must explicitly add at least one allow rule.",
         "examples": [
           {
+            "api_role": "rest",
             "effect": "allow",
             "match_mode": "prefix",
             "methods": [
@@ -16137,6 +16202,27 @@
           }
         ],
         "properties": {
+          "api_role": {
+            "anyOf": [
+              {
+                "enum": [
+                  "rest",
+                  "graphql",
+                  "git",
+                  "uploads"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "On the binding of a CLI-profile credential (one connect covering several APIs of a vendor, e.g. `jentic connect github`): the profile API the rule applies to — `rest` and `uploads` take path rules, `graphql` GraphQL rules and `git` git rules. Omitted, the rule's kind decides: a `git` rule applies to `git`, a `graphql` rule to `graphql`, any other rule to `rest`. Ignored on any other credential.",
+            "examples": [
+              "rest"
+            ],
+            "title": "Api Role"
+          },
           "effect": {
             "description": "Whether this rule allows the matched request, denies it, or holds it for human approval before the broker executes it.",
             "enum": [
@@ -16436,6 +16522,7 @@
           {
             "add": [
               {
+                "api_role": "rest",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -16470,6 +16557,7 @@
             "examples": [
               [
                 {
+                  "api_role": "rest",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -17194,6 +17282,7 @@
             "kind": "reauthorize",
             "permission_rules": [
               {
+                "api_role": "rest",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -17272,6 +17361,7 @@
             "examples": [
               [
                 {
+                  "api_role": "rest",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -17774,6 +17864,7 @@
             "name": "Stripe read-only",
             "rules": [
               {
+                "api_role": "rest",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -17818,6 +17909,7 @@
             "examples": [
               [
                 {
+                  "api_role": "rest",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -17931,6 +18023,7 @@
               {
                 "_comment": "Read-only access to charges.",
                 "_system": false,
+                "api_role": "rest",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -18023,6 +18116,7 @@
                 {
                   "_comment": "Read-only access to charges.",
                   "_system": false,
+                  "api_role": "rest",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -18801,6 +18895,7 @@
         "examples": [
           {
             "api_name": "stripe",
+            "api_role": "git",
             "api_vendor": "stripe.com",
             "api_version": "2024-04-10"
           }
@@ -18820,6 +18915,21 @@
               "stripe"
             ],
             "title": "Api Name"
+          },
+          "api_role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Set when the credential is a CLI-profile credential (one connect covering several APIs of a vendor): the API's role in the profile (`rest`, `graphql`, `git`, `uploads`). The binding's rules for that role apply to it.",
+            "examples": [
+              "git"
+            ],
+            "title": "Api Role"
           },
           "api_vendor": {
             "description": "Vendor of the served API.",
@@ -25144,6 +25254,7 @@
                       "serves": [
                         {
                           "api_name": "stripe",
+                          "api_role": "git",
                           "api_vendor": "stripe.com",
                           "api_version": "2024-04-10"
                         }
@@ -25335,6 +25446,7 @@
                   "serves": [
                     {
                       "api_name": "stripe",
+                      "api_role": "git",
                       "api_vendor": "stripe.com",
                       "api_version": "2024-04-10"
                     }
@@ -25730,6 +25842,7 @@
                   "serves": [
                     {
                       "api_name": "stripe",
+                      "api_role": "git",
                       "api_vendor": "stripe.com",
                       "api_version": "2024-04-10"
                     }
@@ -36441,7 +36554,8 @@
                         }
                       ],
                       "cli": "gh",
-                      "credential_mode": "per_api",
+                      "connect": "github",
+                      "credential_mode": "profile_scoped",
                       "display_name": "GitHub",
                       "hard_deny": [
                         {
@@ -39593,6 +39707,7 @@
                     {
                       "_comment": "Read-only access to charges.",
                       "_system": false,
+                      "api_role": "rest",
                       "effect": "allow",
                       "match_mode": "prefix",
                       "methods": [
@@ -39802,6 +39917,7 @@
               "example": {
                 "add": [
                   {
+                    "api_role": "rest",
                     "effect": "allow",
                     "match_mode": "prefix",
                     "methods": [
@@ -39835,6 +39951,7 @@
                     {
                       "_comment": "Read-only access to charges.",
                       "_system": false,
+                      "api_role": "rest",
                       "effect": "allow",
                       "match_mode": "prefix",
                       "methods": [
@@ -40063,6 +40180,7 @@
                     {
                       "_comment": "Read-only access to charges.",
                       "_system": false,
+                      "api_role": "rest",
                       "effect": "allow",
                       "match_mode": "prefix",
                       "methods": [
@@ -44622,6 +44740,7 @@
                 "reason": "Needs read access to triage issues in the platform repo.",
                 "requested_permission_rules": [
                   {
+                    "api_role": "rest",
                     "effect": "allow",
                     "match_mode": "prefix",
                     "methods": [
@@ -50732,6 +50851,7 @@
                 "name": "Stripe read-only",
                 "rules": [
                   {
+                    "api_role": "rest",
                     "effect": "allow",
                     "match_mode": "prefix",
                     "methods": [
@@ -50768,6 +50888,7 @@
                     {
                       "_comment": "Read-only access to charges.",
                       "_system": false,
+                      "api_role": "rest",
                       "effect": "allow",
                       "match_mode": "prefix",
                       "methods": [
@@ -51156,6 +51277,7 @@
                     {
                       "_comment": "Read-only access to charges.",
                       "_system": false,
+                      "api_role": "rest",
                       "effect": "allow",
                       "match_mode": "prefix",
                       "methods": [
@@ -51370,6 +51492,7 @@
                     {
                       "_comment": "Read-only access to charges.",
                       "_system": false,
+                      "api_role": "rest",
                       "effect": "allow",
                       "match_mode": "prefix",
                       "methods": [
@@ -51582,6 +51705,7 @@
                     {
                       "_comment": "Read-only access to charges.",
                       "_system": false,
+                      "api_role": "rest",
                       "effect": "allow",
                       "match_mode": "prefix",
                       "methods": [

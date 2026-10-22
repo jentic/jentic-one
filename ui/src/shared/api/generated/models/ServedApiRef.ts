@@ -17,6 +17,10 @@ export type ServedApiRef = {
      */
     api_name?: (string | null);
     /**
+     * Set when the credential is a CLI-profile credential (one connect covering several APIs of a vendor): the API's role in the profile (`rest`, `graphql`, `git`, `uploads`). The binding's rules for that role apply to it.
+     */
+    api_role?: (string | null);
+    /**
      * Vendor of the served API.
      */
     api_vendor: string;

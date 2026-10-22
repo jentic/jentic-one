@@ -357,3 +357,7 @@ class PresetNotApplicableError(ConnectSessionServiceError):
 
 class PresetInvalidError(ConnectSessionServiceError):
     """The preset name or its parameters do not expand into rules for the target."""
+
+
+class RuleApiRoleError(ConnectSessionServiceError):
+    """A rule for a CLI-profile credential names an API role the profile cannot take."""

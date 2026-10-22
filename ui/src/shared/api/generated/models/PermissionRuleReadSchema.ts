@@ -15,6 +15,10 @@ export type PermissionRuleReadSchema = {
      */
     _system?: boolean;
     /**
+     * The CLI-profile API the rule applies to on a CLI-profile credential's binding; null takes the role the rule's kind implies (`git`, `graphql`, else `rest`).
+     */
+    api_role?: ('rest' | 'graphql' | 'git' | 'uploads' | null);
+    /**
      * Whether this rule allows, denies, or holds the matched request for human approval (`require-approval`).
      */
     effect: PermissionRuleReadSchema.effect;
