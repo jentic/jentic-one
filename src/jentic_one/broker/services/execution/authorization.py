@@ -37,15 +37,19 @@ from jentic_one.broker.core.exceptions import (
 from jentic_one.broker.services.credentials.connect_target import resolve_connect_target
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
 from jentic_one.broker.services.credentials.provisioning import open_session_provisioning_url
-from jentic_one.broker.services.credentials.resolver import ResolvedCredential
+from jentic_one.broker.services.credentials.resolver import (
+    CredentialCandidates,
+    SelectedCredential,
+)
 from jentic_one.shared.access_guidance import ConnectTarget
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import (
+    AgentBindings,
     AgentRuleEvaluatorProtocol,
     ConnectableRegistrationSourceProtocol,
-    CredentialDerivation,
     CredentialDeriverProtocol,
     RuleVerdict,
+    UnservedDiagnosis,
 )
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort, valid_trace_id_or_none
@@ -79,8 +83,8 @@ def _api_connect_enabled(ctx: Context) -> bool:
     return ctx.config.control.connect.manual_flows_enabled
 
 
-def _empty_credential_derivation_denial(
-    d: CredentialDerivation,
+def _unserved_denial(
+    d: UnservedDiagnosis,
     api: APIReference,
     *,
     instance: str,
@@ -89,7 +93,7 @@ def _empty_credential_derivation_denial(
     provisioning_url: str | None = None,
     connect_api: bool = False,
 ) -> BrokerError:
-    """Pick the right denial for an empty credential derivation (direct path).
+    """Pick the right denial when no bound credential serves the API (direct path).
 
     Two cases, each with its own ``detail`` so the problem+json ``type`` and ``detail``
     never tell different stories:
@@ -102,7 +106,7 @@ def _empty_credential_derivation_denial(
       :func:`no_credential_binding_directive` from whether any credential
       serves the API at all.
     """
-    if d.agent_bound_any and not d.api_served and d.identity_mismatch is not None:
+    if d.agent_bound_any and not d.api_served and d.scope_miss is not None:
         _authz_denied.add(
             1,
             {
@@ -115,7 +119,7 @@ def _empty_credential_derivation_denial(
             "A bound credential's identity does not cover this API",
             type="credential_identity_mismatch",
             instance=instance,
-            directive=direct_credential_identity_mismatch_directive(mismatch=d.identity_mismatch),
+            directive=direct_credential_identity_mismatch_directive(miss=d.scope_miss),
         )
     _authz_denied.add(
         1,
@@ -207,6 +211,14 @@ async def _emit_credential_binding_unserved(
         )
 
 
+@dataclass(frozen=True, slots=True)
+class DerivedCredentials:
+    """The caller's bindings and the live candidates they yield for one API."""
+
+    bindings: AgentBindings
+    candidates: CredentialCandidates
+
+
 async def derive_credential_bindings(
     *,
     deriver: CredentialDeriverProtocol,
@@ -218,9 +230,11 @@ async def derive_credential_bindings(
     path: str = "",
     trace_id: str | None = None,
     connect_registrations: ConnectableRegistrationSourceProtocol | None = None,
-) -> CredentialDerivation:
-    """Derive the caller's credential-binding candidates for this execution.
+) -> DerivedCredentials:
+    """Derive the caller's credential candidates for this execution.
 
+    The caller's active bindings (admin DB, cached) bound one live read of the
+    active, connected credentials covering the API (control DB, never cached).
     ``0 → 403`` (no binding / suspended binding / credential identity
     mismatch — with the operator-visible ``CREDENTIAL_BINDING_UNSERVED`` emit
     for the pre-binding nothing-serves case). Candidate *selection* among
@@ -233,24 +247,23 @@ async def derive_credential_bindings(
     and derive here like any other caller.
 
     ``method`` / ``path`` are the denied request's, for the directive's
-    ``suggested_rules``. The connect target is resolved (``config`` entries,
-    then active shared OAuth-app registrations via ``connect_registrations``)
-    only on the denial path, before the denial is built.
+    ``suggested_rules``. The denial diagnosis and the connect target (``config``
+    entries, then active shared OAuth-app registrations via
+    ``connect_registrations``) are resolved only on the denial path.
     """
     assert api.vendor and api.name and api.version, (
         "derive_credential_bindings requires a concrete discovered API identity"
     )
-    derivation = await deriver.derive_credentials(
-        agent_id=identity.sub,
-        vendor=api.vendor,
-        name=api.name,
-        version=api.version,
-    )
-    if not derivation.credentials:
-        if derivation.binding_suspended:
+    bindings = await deriver.derive_bindings(agent_id=identity.sub)
+    candidates = await CredentialService(ctx).covering(api=api, credential_ids=bindings.active_ids)
+    if not candidates.credentials:
+        diagnosis = await deriver.diagnose_unserved(
+            bindings=bindings, vendor=api.vendor, name=api.name, version=api.version
+        )
+        if diagnosis.binding_suspended:
             raise _suspended_binding_denial(api, instance=instance)
-        denial = _empty_credential_derivation_denial(
-            derivation,
+        denial = _unserved_denial(
+            diagnosis,
             api,
             instance=instance,
             connect=await resolve_connect_target(ctx, api, registrations=connect_registrations),
@@ -261,12 +274,12 @@ async def derive_credential_bindings(
         # The operator-visible pre-binding signal fires only for the plain
         # no-binding + nothing-serves case — an identity mismatch already has
         # its own actionable diagnostic.
-        if not derivation.api_served and isinstance(denial, ActionDeniedError):
+        if not diagnosis.api_served and isinstance(denial, ActionDeniedError):
             await _emit_credential_binding_unserved(
                 ctx, api=api, identity=identity, trace_id=trace_id
             )
         raise denial
-    return derivation
+    return DerivedCredentials(bindings=bindings, candidates=candidates)
 
 
 @dataclass(frozen=True, slots=True)
@@ -287,7 +300,7 @@ class ExecutionAuthorization:
     """
 
     allowed_credential_ids: list[str]
-    selected_credential: ResolvedCredential
+    selected_credential: SelectedCredential
     verdict: RuleVerdict = RuleVerdict.ALLOW
     matched_rule_id: str | None = None
 
@@ -470,7 +483,7 @@ async def authorize_execution(
     # single credential (name header → most-specific-wins →
     # Jentic-Credential-Id tie-breaker; genuine tie → 409), then enforce the
     # binding's rules — all before any secret is decrypted or audited.
-    derivation = await derive_credential_bindings(
+    derived = await derive_credential_bindings(
         deriver=credential_deriver,
         identity=identity,
         api=api,
@@ -480,23 +493,18 @@ async def authorize_execution(
         path=path,
         trace_id=trace_id,
     )
-    allowed_credential_ids = [bc.credential_id for bc in derivation.credentials]
-    rule_set_ids = {bc.credential_id: bc.rule_set_id for bc in derivation.credentials}
+    allowed_credential_ids = list(derived.candidates.ids)
     selected_credential = await CredentialService(ctx).select(
-        api_vendor=api.vendor,
-        api_name=api.name,
-        api_version=api.version,
+        candidates=derived.candidates,
         identity=identity,
         credential_name=credential_name,
         credential_id=credential_id,
-        allowed_credential_ids=allowed_credential_ids,
         request_server_variables=request_server_variables,
         server_variables_unresolved=server_variables_unresolved,
         method=method,
         path=path,
     )
-    assert selected_credential is not None  # api.vendor is concrete (asserted above)
-    rule_set_id = rule_set_ids.get(selected_credential.credential_id)
+    rule_set_id = derived.bindings.rule_set_id(selected_credential.credential_id)
     raw_upstream_path = urlparse(upstream_url).path if upstream_url is not None else None
     if has_ambiguous_traversal(path) or (
         raw_upstream_path is not None and has_ambiguous_traversal(raw_upstream_path)

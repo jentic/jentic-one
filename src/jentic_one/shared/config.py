@@ -2067,9 +2067,10 @@ class BrokerConfig(BaseModel):
     )
     resolve_cache_ttl_seconds: float = 3.0
     # Short TTL (seconds) for the per-instance credential-binding derivation
-    # cache. Wraps the cross-DB `derive_credentials` lookup so the per-request
-    # Admin+Control double hit is served from cache. Agent/credential bindings
-    # change infrequently, so a short TTL bounds revocation staleness (the
+    # cache. Wraps the admin-DB `derive_bindings` lookup (and the denial-path
+    # `diagnose_unserved` guidance) so the per-request binding read is served
+    # from cache; covering-credential state is always read live. Agent/credential
+    # bindings change infrequently, so a short TTL bounds revocation staleness (the
     # cache is per instance, so a grant/revoke is consistent cluster-wide only
     # after the TTL lapses on each node) while removing the hot-path lookup.
     # Authorization correctness never depends on the cache — it is a latency

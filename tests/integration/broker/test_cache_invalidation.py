@@ -28,6 +28,9 @@ from jentic_one.auth.services.agent_auth_service import AgentAuthService
 from jentic_one.auth.services.agent_service import AgentService
 from jentic_one.auth.services.schemas.agents import AgentCreatePayload
 from jentic_one.broker.core.setup import install_broker_auth
+from jentic_one.broker.services.credentials.orchestrator import (
+    CredentialService as BrokerCredentialService,
+)
 from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.token_value_credentials import TokenValueCredential
@@ -40,9 +43,10 @@ from jentic_one.control.services.credentials.service import CredentialService
 from jentic_one.shared.auth.errors import TokenValidationError
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION, ORG_ADMIN
-from jentic_one.shared.broker.protocols import RuleVerdict
+from jentic_one.shared.broker.protocols import CredentialDeriverProtocol, RuleVerdict
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.credentials import CredentialType
+from jentic_one.shared.schemas import APIReference as BrokerAPIReference
 
 pytestmark = pytest.mark.integration
 
@@ -85,6 +89,18 @@ async def clean_state(integration_context: Context) -> AsyncGenerator[None, None
         await session.commit()
     yield
     await _clean()
+
+
+async def _candidates(
+    ctx: Context, deriver: CredentialDeriverProtocol, agent_id: str
+) -> tuple[str, ...]:
+    """The agent's candidates for acme-com/widgets/v1: cached bindings ∩ live covering read."""
+    bindings = await deriver.derive_bindings(agent_id=agent_id)
+    candidates = await BrokerCredentialService(ctx).covering(
+        api=BrokerAPIReference(vendor="acme-com", name="widgets", version="v1"),
+        credential_ids=bindings.active_ids,
+    )
+    return candidates.ids
 
 
 async def test_unbind_disable_revoke_and_credential_delete_immediately_invalidate_broker_caches(
@@ -151,11 +167,8 @@ async def test_unbind_disable_revoke_and_credential_delete_immediately_invalidat
         identity=_OWNER,
     )
 
-    derived = await deriver.derive_credentials(
-        agent_id=agent.id, vendor="acme-com", name="widgets", version="v1"
-    )
-    assert len(derived.credentials) == 1
-    assert derived.credentials[0].credential_id == cred.credential_id
+    derived = await _candidates(integration_context, deriver, agent.id)
+    assert derived == (cred.credential_id,)
 
     eval_ok = await rule_evaluator.evaluate(
         agent_id=agent.id,
@@ -188,28 +201,22 @@ async def test_unbind_disable_revoke_and_credential_delete_immediately_invalidat
     await agent_svc.unbind_credential(
         agent.id, credential_id=cred.credential_id, purge=False, identity=_OWNER
     )
-    derived_after_unbind = await deriver.derive_credentials(
-        agent_id=agent.id, vendor="acme-com", name="widgets", version="v1"
-    )
-    assert derived_after_unbind.credentials == ()
+    derived_after_unbind = await _candidates(integration_context, deriver, agent.id)
+    assert derived_after_unbind == ()
 
     # Resume binding -> deriver cache invalidated immediately.
     await agent_svc.resume_credential(agent.id, credential_id=cred.credential_id, identity=_OWNER)
-    derived_after_resume = await deriver.derive_credentials(
-        agent_id=agent.id, vendor="acme-com", name="widgets", version="v1"
-    )
-    assert len(derived_after_resume.credentials) == 1
+    derived_after_resume = await _candidates(integration_context, deriver, agent.id)
+    assert derived_after_resume == (cred.credential_id,)
 
-    # 4. Deactivate credential -> deriver cache invalidated immediately.
+    # 4. Deactivate credential -> no longer a candidate (credential state is read live).
     await cred_svc.update(
         cred.credential_id,
         CredentialUpdate(type=CredentialType.BEARER_TOKEN, active=False),
         identity=_OWNER,
     )
-    derived_after_deactivate = await deriver.derive_credentials(
-        agent_id=agent.id, vendor="acme-com", name="widgets", version="v1"
-    )
-    assert derived_after_deactivate.credentials == ()
+    derived_after_deactivate = await _candidates(integration_context, deriver, agent.id)
+    assert derived_after_deactivate == ()
 
     # Re-activate credential, warm cache, then delete credential -> invalidated immediately.
     await cred_svc.update(
@@ -217,18 +224,7 @@ async def test_unbind_disable_revoke_and_credential_delete_immediately_invalidat
         CredentialUpdate(type=CredentialType.BEARER_TOKEN, active=True),
         identity=_OWNER,
     )
-    assert (
-        len(
-            (
-                await deriver.derive_credentials(
-                    agent_id=agent.id, vendor="acme-com", name="widgets", version="v1"
-                )
-            ).credentials
-        )
-        == 1
-    )
+    assert await _candidates(integration_context, deriver, agent.id) == (cred.credential_id,)
     await cred_svc.delete(cred.credential_id, identity=_OWNER)
-    derived_after_delete = await deriver.derive_credentials(
-        agent_id=agent.id, vendor="acme-com", name="widgets", version="v1"
-    )
-    assert derived_after_delete.credentials == ()
+    derived_after_delete = await _candidates(integration_context, deriver, agent.id)
+    assert derived_after_delete == ()

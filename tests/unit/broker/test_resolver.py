@@ -12,7 +12,12 @@ from jentic_one.broker.services.credentials.errors import (
     AmbiguousCredentialError,
     CredentialNotProvisionedError,
 )
-from jentic_one.broker.services.credentials.resolver import CredentialResolver, ResolvedCredential
+from jentic_one.broker.services.credentials.resolver import (
+    CredentialCandidates,
+    CredentialResolver,
+    ResolvedCredential,
+)
+from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.shared.models.credentials import CredentialType, StoredCredentialType
 from jentic_one.shared.schemas import APIReference
 
@@ -566,3 +571,35 @@ async def test_resolve_failure_loads_no_material(
         await CredentialResolver(ctx).resolve(api=api, caller="caller_1")
 
     load_material_spy.assert_not_awaited()
+
+
+def test_select_runs_in_memory_and_reads_no_material(load_material_spy: AsyncMock) -> None:
+    """Pins #1943: selection over live covering candidates opens no session and
+    reads no secret material; most-specific-wins picks the pinned credential."""
+    ctx = MagicMock()
+    ctx.control_db.read_session.side_effect = AssertionError("read_session must not be opened")
+    api = APIReference(vendor="stripe", name="payments", version="v1")
+    wildcard = Credential(
+        id="cred_wild",
+        type=StoredCredentialType.STATIC_BEARER_TOKEN.value,
+        name="wildcard",
+        api_vendor="stripe",
+        active=True,
+    )
+    pinned = Credential(
+        id="cred_pin",
+        type=StoredCredentialType.API_KEY.value,
+        name="pinned",
+        api_vendor="stripe",
+        api_name="payments",
+        api_version="v1",
+        active=True,
+    )
+
+    selected = CredentialResolver(ctx).select(
+        CredentialCandidates(api=api, credentials=(pinned, wildcard))
+    )
+
+    load_material_spy.assert_not_awaited()
+    assert (selected.credential_id, selected.name) == ("cred_pin", "pinned")
+    assert selected.header is pinned

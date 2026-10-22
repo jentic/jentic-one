@@ -20,9 +20,10 @@ from starlette.requests import Request
 from jentic_one.broker.core.exceptions import ApprovalHoldUnavailableError
 from jentic_one.broker.core.problem import status_for_broker_error
 from jentic_one.broker.core.schemas import ExecuteRequestContext
-from jentic_one.broker.services.credentials.resolver import ResolvedCredential
+from jentic_one.broker.services.credentials.resolver import SelectedCredential
 from jentic_one.broker.services.execution.authorization import ExecutionAuthorization
 from jentic_one.broker.web.routers.execute import _handle_hold
+from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import RuleVerdict
 from jentic_one.shared.config import load_config
@@ -30,7 +31,7 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.jobs.execution_handler import ExecutionHandler
 from jentic_one.shared.jobs.hold import ENCRYPTED_PAYLOAD_KEY
 from jentic_one.shared.jobs.protocols import UpstreamExecRequest, UpstreamExecResult
-from jentic_one.shared.models import ActorType, CredentialType, StoredCredentialType
+from jentic_one.shared.models import ActorType, StoredCredentialType
 from tests.unit.fake_tx import SessionScope
 
 _KEY = "vF7VWq2NJLr+uGDBFy9boIXfSJJIzqnTSF7iDDMKR5U="  # pragma: allowlist secret
@@ -76,12 +77,15 @@ async def test_the_broker_refuses_to_hold_without_a_keyset(
     ctx = _ctx(tmp_path, sample_config_dict, keyset=False)
     authorization = ExecutionAuthorization(
         allowed_credential_ids=["cred_1"],
-        selected_credential=ResolvedCredential(
+        selected_credential=SelectedCredential(
             credential_id="cred_1",
             name="key",
-            wire_type=CredentialType.API_KEY,
-            stored_type=StoredCredentialType.API_KEY,
-            provider="api.example.com",
+            header=Credential(
+                id="cred_1",
+                name="key",
+                type=StoredCredentialType.API_KEY.value,
+                api_vendor="api.example.com",
+            ),
         ),
         verdict=RuleVerdict.REQUIRE_APPROVAL,
     )

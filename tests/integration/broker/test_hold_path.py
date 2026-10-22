@@ -25,9 +25,10 @@ from jentic_one.admin.repos.user_repo import UserRepository
 from jentic_one.broker.core.exceptions import ApprovalPendingLimitError
 from jentic_one.broker.core.problem import broker_error_problem, status_for_broker_error
 from jentic_one.broker.core.schemas import ExecuteRequestContext
-from jentic_one.broker.services.credentials.resolver import ResolvedCredential
+from jentic_one.broker.services.credentials.resolver import SelectedCredential
 from jentic_one.broker.services.execution.authorization import ExecutionAuthorization
 from jentic_one.broker.web.routers.execute import _handle_hold
+from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import RuleVerdict
 from jentic_one.shared.context import Context
@@ -35,7 +36,6 @@ from jentic_one.shared.jobs.hold import ENCRYPTED_PAYLOAD_KEY, HELD_AGENT_DIRECT
 from jentic_one.shared.models import (
     ActorStatus,
     ActorType,
-    CredentialType,
     InviteState,
     JobStatus,
     StoredCredentialType,
@@ -102,12 +102,15 @@ def _ctx_req(query: str = "") -> ExecuteRequestContext:
 
 
 def _authorization() -> ExecutionAuthorization:
-    credential = ResolvedCredential(
+    credential = SelectedCredential(
         credential_id="cred_holdpath",
         name="payments-key",
-        wire_type=CredentialType.API_KEY,
-        stored_type=StoredCredentialType.API_KEY,
-        provider="api.example.com",
+        header=Credential(
+            id="cred_holdpath",
+            name="payments-key",
+            type=StoredCredentialType.API_KEY.value,
+            api_vendor="api.example.com",
+        ),
     )
     return ExecutionAuthorization(
         allowed_credential_ids=["cred_holdpath"],

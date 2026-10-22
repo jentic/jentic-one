@@ -7,7 +7,7 @@ from collections.abc import Collection, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import lazyload, raiseload
 from sqlalchemy.orm.attributes import set_committed_value
@@ -16,7 +16,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.oauth_app_registrations import OAuthAppRegistration
 from jentic_one.control.core.schema.oauth_tokens import OAuthToken
-from jentic_one.shared.models.api_identity import slugify_api_field
+from jentic_one.shared.models.api_identity import credential_coverage_where, slugify_api_field
 from jentic_one.shared.models.credentials import StoredCredentialType
 
 # Secret-material child relationships on ``Credential`` (one row per credential).
@@ -132,6 +132,48 @@ class CredentialRepository:
         result = await session.execute(
             select(Credential)
             .where(Credential.api_vendor.in_({api_vendor, normalized}))
+            .options(*(raiseload(getattr(Credential, rel)) for rel in _CHILD_RELATIONSHIPS))
+            .order_by(Credential.id)
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def list_covering(
+        session: AsyncSession,
+        *,
+        credential_ids: Collection[str],
+        vendor: str,
+        name: str,
+        version: str,
+    ) -> list[Credential]:
+        """Fetch the active, connected credentials among ``credential_ids`` covering an API.
+
+        Headers only, as for :meth:`list_by_vendor`: every secret-material
+        child ``raise``s on access until :meth:`load_material` reads it. This
+        is the broker's per-call candidate read on the direct-binding path, so
+        ``credential_ids`` (the caller's bound credentials) bounds it to the
+        caller's own rows. Coverage uses the shared SQL seam
+        (``credential_coverage_where``), the same one the binding derivation
+        and bind-time selection use; ``vendor``/``name``/``version`` are the
+        concrete operation identity. A ``pending`` credential (minted by the
+        connect flow before its token arrives) or a disabled one is never a
+        candidate.
+
+        Rows are ordered by ``id`` so the ambiguity 409's candidate list and the
+        id its directive suggests are stable across calls.
+        """
+        if not credential_ids:
+            return []
+        result = await session.execute(
+            select(Credential)
+            .where(
+                Credential.id.in_(sorted(credential_ids)),
+                text(credential_coverage_where(alias=Credential.__tablename__)).bindparams(
+                    vendor=vendor, name=name, version=version
+                ),
+                Credential.active.is_(True),
+                Credential.state == "connected",
+            )
             .options(*(raiseload(getattr(Credential, rel)) for rel in _CHILD_RELATIONSHIPS))
             .order_by(Credential.id)
         )

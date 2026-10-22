@@ -19,14 +19,23 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
-from sqlalchemy import delete, event, text
+from sqlalchemy import delete, event, text, update
 from sqlalchemy.exc import InvalidRequestError
 
+from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
+from jentic_one.admin.core.schema.agents import Agent
+from jentic_one.admin.core.schema.events import Event
+from jentic_one.broker.core.exceptions import ActionDeniedError
+from jentic_one.broker.repos import AgentRuleEvaluator, CredentialBindingResolver
+from jentic_one.broker.repos.caching_credential_deriver import CachingCredentialDeriver
 from jentic_one.broker.services.credentials.errors import (
     AmbiguousCredentialError,
     CredentialNotProvisionedError,
 )
+from jentic_one.broker.services.credentials.orchestrator import CredentialService
 from jentic_one.broker.services.credentials.resolver import CredentialResolver, ResolvedCredential
+from jentic_one.broker.services.execution.authorization import authorize_execution
+from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
 from jentic_one.control.core.schema.basic_credentials import BasicCredential
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.customer_api_keys import CustomerAPIKey
@@ -34,9 +43,12 @@ from jentic_one.control.core.schema.oauth_tokens import OAuthToken
 from jentic_one.control.core.schema.sigv4_credentials import Sigv4Credential
 from jentic_one.control.core.schema.token_value_credentials import TokenValueCredential
 from jentic_one.control.repos import CredentialRepository
+from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.broker.protocols import RuleVerdict
 from jentic_one.shared.context import Context
+from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.db.session import DatabaseSession
-from jentic_one.shared.models import StoredCredentialType
+from jentic_one.shared.models import ActorType, StoredCredentialType
 from jentic_one.shared.models.credentials import CredentialLocation, CredentialType
 from jentic_one.shared.schemas import APIReference
 from tests.harness.db_round_trips import trace_round_trips
@@ -62,11 +74,19 @@ class _Statement:
 
 
 @pytest.fixture()
-async def clean_vendor(control_db: DatabaseSession) -> AsyncGenerator[None, None]:
-    """Remove this module's credentials (children go via ``ON DELETE CASCADE``)."""
+async def clean_vendor(
+    admin_db: DatabaseSession, control_db: DatabaseSession
+) -> AsyncGenerator[None, None]:
+    """Remove this module's credentials and bindings (children go via ``ON DELETE CASCADE``)."""
 
     async def _truncate() -> None:
+        async with admin_db.session() as session:
+            await session.execute(delete(AgentCredentialBinding))
+            await session.execute(delete(Agent).where(Agent.name == "agent-1943"))
+            await session.execute(delete(Event))
+            await session.commit()
         async with control_db.session() as session:
+            await session.execute(delete(AgentPermissionRule))
             await session.execute(delete(Credential).where(Credential.api_vendor == _VENDOR))
             await session.commit()
 
@@ -513,3 +533,194 @@ async def test_resolve_reads_without_begin_or_rollback(
 
     assert len(trace.statements) == (2 if outcome == "resolved" else 1), trace.statements
     trace.assert_no_begin_or_rollback()
+
+
+async def _seed_bound_bearer(
+    ctx: Context, *, rule_effect: str
+) -> tuple[Identity, CredentialBindingResolver, AgentRuleEvaluator]:
+    """Seed one bound bearer credential and one permission rule for ``_API``."""
+    cred_id = "cred_1943_bearer"
+    encrypted = ctx.encryption.encrypt("sk-1943-secret")
+    async with ctx.control_db.session() as session:
+        session.add(
+            Credential(
+                id=cred_id,
+                type=StoredCredentialType.STATIC_BEARER_TOKEN,
+                name="bearer-1943",
+                api_vendor=_VENDOR,
+                api_name=_API.name,
+                api_version=_API.version,
+                created_by="usr_owner",
+                active=True,
+            )
+        )
+        await session.flush()
+        session.add(TokenValueCredential(credential_id=cred_id, encrypted_token_value=encrypted))
+        await session.commit()
+
+    agent = Agent(name="agent-1943", registered_by="usr_owner", status="active")
+    async with ctx.admin_db.session() as session:
+        session.add(agent)
+        await session.flush()
+        agent_id = agent.id
+        session.add(
+            AgentCredentialBinding(
+                id=generate_ksuid("acb"), agent_id=agent_id, credential_id=cred_id
+            )
+        )
+        await session.commit()
+
+    async with ctx.control_db.session() as session:
+        session.add(
+            AgentPermissionRule(
+                agent_id=agent_id,
+                credential_id=cred_id,
+                effect=rule_effect,
+                methods=["GET"],
+                path="/charges",
+                match_mode="exact",
+                sequence=1,
+            )
+        )
+        await session.commit()
+
+    identity = Identity(
+        sub=agent_id,
+        actor_type=ActorType.AGENT,
+        permissions=["capabilities:execute"],
+        active=True,
+    )
+    return (
+        identity,
+        CredentialBindingResolver(ctx.admin_db, ctx.control_db),
+        AgentRuleEvaluator(ctx.control_db, cache_ttl_seconds=0),
+    )
+
+
+async def test_cold_authorize_and_inject_queries_credentials_table_once(
+    integration_context: Context, clean_vendor: None
+) -> None:
+    """Pins #1943: a cold allowed call queries ``credentials`` once (the live,
+    id-scoped ``CredentialService.covering`` read), selects in memory, and loads
+    ``token_value_credentials`` only at ``CredentialService.inject``."""
+    identity, deriver, evaluator = await _seed_bound_bearer(
+        integration_context, rule_effect="allow"
+    )
+    await _warm_pool(integration_context)
+
+    with _counted(integration_context) as authz_statements:
+        authz = await authorize_execution(
+            ctx=integration_context,
+            identity=identity,
+            api=_API,
+            operation_id="listCharges",
+            method="GET",
+            path="/charges",
+            instance="/charges",
+            credential_deriver=deriver,
+            agent_rule_evaluator=evaluator,
+        )
+
+    # authorize_execution issues 1 credentials query (covering) + 1
+    # agent_permission_rules query (in evaluate); 0 list_by_vendor and 0 child queries.
+    header_stmts = [s for s in authz_statements if s.is_header]
+    assert len(header_stmts) == 1, authz_statements
+    assert len(authz_statements) == 2, authz_statements
+    assert all("token_value_credentials" not in s.sql for s in authz_statements), authz_statements
+
+    with _counted(integration_context) as inject_statements:
+        injected = await CredentialService(integration_context).inject(
+            api_vendor=_API.vendor,
+            api_name=_API.name,
+            api_version=_API.version,
+            identity=identity,
+            selected=authz.selected_credential,
+        )
+
+    assert len(inject_statements) == 1, inject_statements
+    assert not inject_statements[0].is_header, inject_statements
+    assert "token_value_credentials" in inject_statements[0].sql
+    assert injected.headers == {"Authorization": "Bearer sk-1943-secret"}
+
+
+@pytest.mark.parametrize("rule_effect", ["deny", "require-approval"])
+async def test_cold_denied_or_held_call_never_queries_secret_material(
+    integration_context: Context, clean_vendor: None, rule_effect: str
+) -> None:
+    """Pins #1943: when ``agent_rule_evaluator.evaluate`` returns ``DENY`` or
+    ``REQUIRE_APPROVAL``, the secret child table is never queried."""
+    identity, deriver, evaluator = await _seed_bound_bearer(
+        integration_context, rule_effect=rule_effect
+    )
+    await _warm_pool(integration_context)
+
+    with _counted(integration_context) as statements:
+        if rule_effect == "deny":
+            with pytest.raises(ActionDeniedError):
+                await authorize_execution(
+                    ctx=integration_context,
+                    identity=identity,
+                    api=_API,
+                    operation_id="listCharges",
+                    method="GET",
+                    path="/charges",
+                    instance="/charges",
+                    credential_deriver=deriver,
+                    agent_rule_evaluator=evaluator,
+                )
+        else:
+            authz = await authorize_execution(
+                ctx=integration_context,
+                identity=identity,
+                api=_API,
+                operation_id="listCharges",
+                method="GET",
+                path="/charges",
+                instance="/charges",
+                credential_deriver=deriver,
+                agent_rule_evaluator=evaluator,
+            )
+            assert authz.verdict == RuleVerdict.REQUIRE_APPROVAL
+
+    header_stmts = [s for s in statements if s.is_header]
+    assert len(header_stmts) == 1, statements
+    assert len(statements) == 2, statements
+    assert all("token_value_credentials" not in s.sql for s in statements), statements
+
+
+async def test_cached_bindings_never_serve_a_disabled_credential(
+    integration_context: Context, clean_vendor: None
+) -> None:
+    """The binding cache holds bindings only: credential state is read live.
+
+    A credential disabled after its binding was cached must stop being
+    selectable on the very next request, without any cache invalidation.
+    """
+    identity, deriver, evaluator = await _seed_bound_bearer(
+        integration_context, rule_effect="allow"
+    )
+    cached = CachingCredentialDeriver(deriver, cache_ttl_seconds=300.0)
+
+    async def _authorize() -> None:
+        await authorize_execution(
+            ctx=integration_context,
+            identity=identity,
+            api=_API,
+            operation_id="listCharges",
+            method="GET",
+            path="/charges",
+            instance="/charges",
+            credential_deriver=cached,
+            agent_rule_evaluator=evaluator,
+        )
+
+    await _authorize()
+    async with integration_context.control_db.session() as session:
+        await session.execute(
+            update(Credential).where(Credential.id == "cred_1943_bearer").values(active=False)
+        )
+        await session.commit()
+
+    with pytest.raises(ActionDeniedError) as exc:
+        await _authorize()
+    assert exc.value.type == "no_credential_binding"

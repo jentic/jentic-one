@@ -25,6 +25,7 @@ from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.auth.services.agent_service import AgentService
 from jentic_one.broker.repos.credential_binding_resolver import CredentialBindingResolver
+from jentic_one.broker.services.credentials.orchestrator import CredentialService
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.services.api_service import ApiService
@@ -34,6 +35,7 @@ from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType, StoredCredentialType
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
 from jentic_one.shared.models.events import EventType
+from jentic_one.shared.schemas import APIReference
 
 pytestmark = pytest.mark.integration
 
@@ -179,11 +181,14 @@ async def _set_credential_active(control_db: DatabaseSession, cred_id: str) -> N
 
 
 async def _derived_ids(ctx: Context, agent_id: str) -> set[str]:
-    resolver = CredentialBindingResolver(ctx.admin_db, ctx.control_db)
-    derivation = await resolver.derive_credentials(
-        agent_id=agent_id, vendor=_VENDOR, name=_NAME, version=_VERSION
+    bindings = await CredentialBindingResolver(ctx.admin_db, ctx.control_db).derive_bindings(
+        agent_id=agent_id
     )
-    return {c.credential_id for c in derivation.credentials}
+    candidates = await CredentialService(ctx).covering(
+        api=APIReference(vendor=_VENDOR, name=_NAME, version=_VERSION),
+        credential_ids=bindings.active_ids,
+    )
+    return set(candidates.ids)
 
 
 async def test_delete_api_suspends_agent_bindings(

@@ -12,7 +12,7 @@ call-sites get identical problem+json semantics.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Collection, Mapping
+from collections.abc import Awaitable, Callable, Collection, Mapping
 from typing import Any
 
 import structlog
@@ -45,7 +45,11 @@ from jentic_one.broker.services.credentials.errors import (
 )
 from jentic_one.broker.services.credentials.provisioning import open_session_provisioning_url
 from jentic_one.broker.services.credentials.refresh import TokenRefresher
-from jentic_one.broker.services.credentials.resolver import CredentialResolver, ResolvedCredential
+from jentic_one.broker.services.credentials.resolver import (
+    CredentialCandidates,
+    CredentialResolver,
+    SelectedCredential,
+)
 from jentic_one.shared.access_guidance import ConnectTarget
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import ConnectableRegistrationSourceProtocol
@@ -96,7 +100,7 @@ class CredentialService:
         credential_id: str | None = None,
         allowed_credential_ids: Collection[str] | None = None,
         trace_id: str | None = None,
-        preresolved: ResolvedCredential | None = None,
+        selected: SelectedCredential | None = None,
         request_server_variables: Mapping[str, str] | None = None,
         server_variables_unresolved: bool = False,
     ) -> InjectedAuth:
@@ -123,28 +127,33 @@ class CredentialService:
         have to fabricate one. A malformed value degrades to an uncorrelated
         event rather than failing the injection (#903).
 
-        ``preresolved`` short-circuits resolution: the sync router's direct
-        path already ran :meth:`select` (it needed the credential id for rule
-        evaluation *before* any secret is decrypted), so injection reuses that
-        result instead of resolving twice.
+        ``selected`` short-circuits resolution: the direct path already ran
+        :meth:`select` (it needed the credential id for rule evaluation
+        *before* any secret is read), so injection only reads that
+        credential's secret material.
         """
         if not api_vendor:
             return _EMPTY
 
         api = APIReference(vendor=api_vendor, name=api_name or "", version=api_version or "")
-        resolved = (
-            preresolved
-            if preresolved is not None
-            else await self._resolve_mapped(
+        resolver = CredentialResolver(self._ctx)
+        if selected is not None:
+            resolved = await resolver.load(selected)
+        else:
+            resolved = await self._mapped(
                 api,
                 identity,
-                credential_name=credential_name,
-                credential_id=credential_id,
-                allowed_credential_ids=allowed_credential_ids,
-                request_server_variables=request_server_variables,
-                server_variables_unresolved=server_variables_unresolved,
+                lambda: resolver.resolve(
+                    api=api,
+                    caller=identity.sub,
+                    credential_name=credential_name,
+                    credential_id=credential_id,
+                    allowed_credential_ids=allowed_credential_ids,
+                    request_server_variables=request_server_variables,
+                    server_variables_unresolved=server_variables_unresolved,
+                ),
+                boundary=allowed_credential_ids is not None,
             )
-        )
         try:
             try:
                 access_token: str | None = None
@@ -235,7 +244,7 @@ class CredentialService:
                 signing=result.signing,
             )
         except CredentialNotProvisionedError as exc:
-            # Defensive: resolve-phase mapping lives in ``_resolve_mapped``; kept
+            # Defensive: resolve-phase mapping lives in ``_mapped``; kept
             # here so a downstream raise (e.g. an unknown wire type surfacing
             # late) still renders the canonical 424 instead of a 500.
             await self._emit_credential_failure(
@@ -282,80 +291,77 @@ class CredentialService:
                 detail=str(exc), type="refresh_transient_error"
             ) from None
 
+    async def covering(
+        self, *, api: APIReference, credential_ids: Collection[str]
+    ) -> CredentialCandidates:
+        """Read the live covering candidates among the caller's bound ``credential_ids``.
+
+        Headers only — see :meth:`CredentialResolver.covering`. Empty when none
+        of them is an active, connected credential covering ``api``.
+        """
+        return await CredentialResolver(self._ctx).covering(api=api, credential_ids=credential_ids)
+
     async def select(
         self,
         *,
-        api_vendor: str,
-        api_name: str,
-        api_version: str,
+        candidates: CredentialCandidates,
         identity: Identity,
         credential_name: str | None = None,
         credential_id: str | None = None,
-        allowed_credential_ids: Collection[str] | None = None,
         request_server_variables: Mapping[str, str] | None = None,
         server_variables_unresolved: bool = False,
         method: str = "",
         path: str = "",
-    ) -> ResolvedCredential | None:
-        """Resolve-only credential selection — no refresh, decrypt, or audit.
+    ) -> SelectedCredential:
+        """Select one credential among ``candidates`` — no secret read, refresh, or audit.
 
         The direct-binding path (theme-5 Phase 2) must know *which* credential
         was selected **before** permission rules can be evaluated (rules are
         keyed on the ``(agent, credential)`` binding) — and enforcement must
         happen before any secret is touched or a ``CREDENTIAL_ACCESSED`` audit
-        event fires. This runs the same resolution + error mapping as
-        :meth:`inject` and returns the resolved metadata; pass it back to
-        :meth:`inject` as ``preresolved`` to avoid resolving twice.
+        event fires. Selection runs in memory over the candidates from
+        :meth:`covering`, with the same error mapping as :meth:`inject`; pass
+        the result to :meth:`inject` as ``selected``, which reads only that
+        credential's secret material.
 
         ``method`` / ``path`` are the request's, for the 424 directive's
         ``suggested_rules``.
-
-        Returns ``None`` when the API tuple has no vendor (no credential path).
         """
-        if not api_vendor:
-            return None
-        api = APIReference(vendor=api_vendor, name=api_name or "", version=api_version or "")
-        return await self._resolve_mapped(
-            api,
-            identity,
-            credential_name=credential_name,
-            credential_id=credential_id,
-            allowed_credential_ids=allowed_credential_ids,
-            request_server_variables=request_server_variables,
-            server_variables_unresolved=server_variables_unresolved,
-            method=method,
-            path=path,
-        )
+        resolver = CredentialResolver(self._ctx)
 
-    async def _resolve_mapped(
-        self,
-        api: APIReference,
-        identity: Identity,
-        *,
-        credential_name: str | None,
-        credential_id: str | None,
-        allowed_credential_ids: Collection[str] | None,
-        request_server_variables: Mapping[str, str] | None = None,
-        server_variables_unresolved: bool = False,
-        method: str = "",
-        path: str = "",
-    ) -> ResolvedCredential:
-        """Resolve via ``CredentialResolver``, mapping errors to the broker taxonomy.
-
-        Shared by :meth:`inject` and :meth:`select` so both surfaces render
-        identical problem+json for the resolve-phase failures
-        (424/400/409).
-        """
-        try:
-            return await CredentialResolver(self._ctx).resolve(
-                api=api,
-                caller=identity.sub,
+        async def _select() -> SelectedCredential:
+            return resolver.select(
+                candidates,
                 credential_name=credential_name,
                 credential_id=credential_id,
-                allowed_credential_ids=allowed_credential_ids,
                 request_server_variables=request_server_variables,
                 server_variables_unresolved=server_variables_unresolved,
             )
+
+        return await self._mapped(
+            candidates.api, identity, _select, boundary=True, method=method, path=path
+        )
+
+    async def _mapped[T](
+        self,
+        api: APIReference,
+        identity: Identity,
+        run: Callable[[], Awaitable[T]],
+        *,
+        boundary: bool,
+        method: str = "",
+        path: str = "",
+    ) -> T:
+        """Run a resolve-phase step, mapping its errors to the broker taxonomy.
+
+        Shared by :meth:`inject` and :meth:`select` so both surfaces render
+        identical problem+json for the resolve-phase failures
+        (424/400/409). ``boundary`` is whether the candidates are the caller's
+        own bound credentials (the direct-binding path), which picks the
+        ambiguity 409's vocabulary.
+        """
+        try:
+            return await run()
         except CredentialNotProvisionedError as exc:
             await self._emit_credential_failure(
                 type=EventType.CREDENTIAL_NOT_PROVISIONED,
@@ -389,7 +395,7 @@ class CredentialService:
             # the caller's own bound credentials — a *binding* ambiguity resolved
             # with the Jentic-Credential-Id header — so it gets the Phase-2 wire
             # type + directive. The legacy unfiltered path keeps its vocabulary.
-            if allowed_credential_ids is not None:
+            if boundary:
                 raise AmbiguousMatchError(
                     detail=str(exc),
                     type="ambiguous_credential_binding",

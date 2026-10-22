@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, update
 
 from jentic_one.broker.core.exceptions import (
     AmbiguousMatchError,
@@ -23,7 +23,7 @@ from jentic_one.broker.services.credentials.errors import (
     CredentialIdNotFoundError,
 )
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
-from jentic_one.broker.services.credentials.resolver import CredentialResolver
+from jentic_one.broker.services.credentials.resolver import CredentialResolver, SelectedCredential
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.customer_api_keys import CustomerAPIKey
 from jentic_one.shared.auth.identity import Identity
@@ -83,6 +83,24 @@ async def _seed_api_key(ctx: Context, *, cred_id: str, name: str, secret: str) -
             )
         )
         await session.commit()
+
+
+async def _select(
+    ctx: Context,
+    credential_ids: list[str],
+    *,
+    credential_id: str | None = None,
+    credential_name: str | None = None,
+) -> SelectedCredential:
+    """Run the direct path's covering read + in-memory selection for ``_API``."""
+    service = CredentialService(ctx)
+    candidates = await service.covering(api=_API, credential_ids=credential_ids)
+    return await service.select(
+        candidates=candidates,
+        identity=_IDENTITY,
+        credential_id=credential_id,
+        credential_name=credential_name,
+    )
 
 
 async def test_unbound_but_covering_credential_never_injected(
@@ -150,12 +168,9 @@ async def test_two_bound_credentials_ambiguity_names_binding_type(
     )
 
     with pytest.raises(AmbiguousMatchError) as exc:
-        await CredentialService(integration_context).select(
-            api_vendor=_VENDOR,
-            api_name=_API_NAME,
-            api_version=_API_VERSION,
-            identity=_IDENTITY,
-            allowed_credential_ids=["cred_a", "cred_b"],
+        await _select(
+            integration_context,
+            ["cred_a", "cred_b"],
         )
     assert exc.value.type == "ambiguous_credential_binding"
     candidate_ids = {c["id"] for c in exc.value.extra["candidates"]}
@@ -181,15 +196,11 @@ async def test_credential_id_header_breaks_tie(
         secret="sk-b",  # pragma: allowlist secret
     )
 
-    selected = await CredentialService(integration_context).select(
-        api_vendor=_VENDOR,
-        api_name=_API_NAME,
-        api_version=_API_VERSION,
-        identity=_IDENTITY,
+    selected = await _select(
+        integration_context,
+        ["cred_a", "cred_b"],
         credential_id="cred_b",
-        allowed_credential_ids=["cred_a", "cred_b"],
     )
-    assert selected is not None
     assert selected.credential_id == "cred_b"
 
 
@@ -210,15 +221,11 @@ async def test_credential_name_header_breaks_tie(
         secret="sk-b",  # pragma: allowlist secret
     )
 
-    selected = await CredentialService(integration_context).select(
-        api_vendor=_VENDOR,
-        api_name=_API_NAME,
-        api_version=_API_VERSION,
-        identity=_IDENTITY,
+    selected = await _select(
+        integration_context,
+        ["cred_a", "cred_b"],
         credential_name="account-a",
-        allowed_credential_ids=["cred_a", "cred_b"],
     )
-    assert selected is not None
     assert selected.credential_id == "cred_a"
 
 
@@ -234,13 +241,10 @@ async def test_unknown_credential_id_maps_to_domain_error_with_candidates(
     )
 
     with pytest.raises(InvalidCredentialNameError) as exc:
-        await CredentialService(integration_context).select(
-            api_vendor=_VENDOR,
-            api_name=_API_NAME,
-            api_version=_API_VERSION,
-            identity=_IDENTITY,
+        await _select(
+            integration_context,
+            ["cred_a"],
             credential_id="cred_missing",
-            allowed_credential_ids=["cred_a"],
         )
     assert exc.value.type == "credential_id_not_found"
     assert [c["id"] for c in exc.value.extra["candidates"]] == ["cred_a"]
@@ -265,10 +269,10 @@ async def test_resolver_raw_id_filter(
         await resolver.resolve(api=_API, caller="agent_42", credential_id="cred_nope")
 
 
-async def test_inject_with_preresolved_skips_reresolution(
+async def test_inject_with_selected_reads_only_its_material(
     integration_context: Context, clean_credentials: None
 ) -> None:
-    """``preresolved`` injects the selected credential without a second resolve."""
+    """``selected`` injects the selected credential without a second resolve."""
     await _seed_api_key(
         integration_context,
         cred_id="cred_a",
@@ -276,21 +280,74 @@ async def test_inject_with_preresolved_skips_reresolution(
         secret="sk-a",  # pragma: allowlist secret
     )
     service = CredentialService(integration_context)
-    selected = await service.select(
-        api_vendor=_VENDOR,
-        api_name=_API_NAME,
-        api_version=_API_VERSION,
-        identity=_IDENTITY,
-        allowed_credential_ids=["cred_a"],
+    selected = await _select(
+        integration_context,
+        ["cred_a"],
     )
-    assert selected is not None
 
     injected = await service.inject(
         api_vendor=_VENDOR,
         api_name=_API_NAME,
         api_version=_API_VERSION,
         identity=_IDENTITY,
-        preresolved=selected,
+        selected=selected,
     )
     assert injected.credential_id == "cred_a"
     assert injected.headers == {"X-Api-Key": "sk-a"}
+
+
+async def test_covering_reads_live_credential_state(
+    integration_context: Context, clean_credentials: None
+) -> None:
+    """A bound credential that is disabled or not yet connected is never a candidate.
+
+    ``covering`` is the per-request live read, so a credential disabled after
+    its binding was cached stops being selectable on the next request.
+    """
+    await _seed_api_key(
+        integration_context,
+        cred_id="cred_live",
+        name="live",
+        secret="sk-live",  # pragma: allowlist secret
+    )
+    await _seed_api_key(
+        integration_context,
+        cred_id="cred_pending",
+        name="pending",
+        secret="sk-pending",  # pragma: allowlist secret
+    )
+    service = CredentialService(integration_context)
+    async with integration_context.control_db.session() as session:
+        await session.execute(
+            update(Credential).where(Credential.id == "cred_pending").values(state="pending")
+        )
+        await session.commit()
+
+    candidates = await service.covering(api=_API, credential_ids=["cred_live", "cred_pending"])
+    assert candidates.ids == ("cred_live",)
+
+    async with integration_context.control_db.session() as session:
+        await session.execute(
+            update(Credential).where(Credential.id == "cred_live").values(active=False)
+        )
+        await session.commit()
+
+    candidates = await service.covering(api=_API, credential_ids=["cred_live", "cred_pending"])
+    assert candidates.ids == ()
+
+
+async def test_covering_excludes_credentials_for_another_api(
+    integration_context: Context, clean_credentials: None
+) -> None:
+    """A bound credential pinned to another API version does not cover this one."""
+    await _seed_api_key(
+        integration_context,
+        cred_id="cred_a",
+        name="account-a",
+        secret="sk-a",  # pragma: allowlist secret
+    )
+    candidates = await CredentialService(integration_context).covering(
+        api=APIReference(vendor=_VENDOR, name=_API_NAME, version="other-version"),
+        credential_ids=["cred_a"],
+    )
+    assert candidates.ids == ()

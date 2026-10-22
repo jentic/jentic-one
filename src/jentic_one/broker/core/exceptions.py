@@ -22,7 +22,7 @@ from pydantic import BaseModel
 
 from jentic_one.shared.access_guidance import ConnectTarget
 from jentic_one.shared.broker.execution import ErrorOrigin as ErrorOrigin
-from jentic_one.shared.broker.protocols import IdentityMismatch
+from jentic_one.shared.broker.protocols import CredentialScopeMiss
 from jentic_one.shared.permissions.matching import validate_path
 
 AgentStrategy = Literal[
@@ -393,7 +393,7 @@ def _render_identity(vendor: str, name: str | None, version: str | None) -> str:
     return "/".join((vendor, name or "*", version or "*"))
 
 
-def credential_identity_mismatch_directive(*, mismatch: IdentityMismatch) -> AgentDirective:
+def credential_identity_mismatch_directive(*, miss: CredentialScopeMiss) -> AgentDirective:
     """Directive for a ``credential_identity_mismatch`` 403 — fix the credential.
 
     The agent is bound and a credential exists behind that binding, but the
@@ -409,11 +409,9 @@ def credential_identity_mismatch_directive(*, mismatch: IdentityMismatch) -> Age
     contract. Unset identity axes render as ``*`` (e.g. ``vendor/*/1.1``) so the
     caller never confuses a missing name for a version.
     """
-    expected = _render_identity(
-        mismatch.expected_vendor, mismatch.expected_name, mismatch.expected_version
-    )
-    found = _render_identity(mismatch.found_vendor, mismatch.found_name, mismatch.found_version)
-    if mismatch.would_match_if_normalized:
+    expected = _render_identity(miss.expected_vendor, miss.expected_name, miss.expected_version)
+    found = _render_identity(miss.found_vendor, miss.found_name, miss.found_version)
+    if miss.would_match_if_normalized:
         instruction = (
             f"A binding exists for this API, but the bound credential's stored identity "
             f"'{found}' only matches '{expected}' after normalization — it was stored in a "
@@ -432,16 +430,16 @@ def credential_identity_mismatch_directive(*, mismatch: IdentityMismatch) -> Age
         strategy="prompt_human",
         parameters={
             "expected": {
-                "vendor": mismatch.expected_vendor,
-                "name": mismatch.expected_name,
-                "version": mismatch.expected_version,
+                "vendor": miss.expected_vendor,
+                "name": miss.expected_name,
+                "version": miss.expected_version,
             },
             "found": {
-                "vendor": mismatch.found_vendor,
-                "name": mismatch.found_name,
-                "version": mismatch.found_version,
+                "vendor": miss.found_vendor,
+                "name": miss.found_name,
+                "version": miss.found_version,
             },
-            "would_match_if_normalized": mismatch.would_match_if_normalized,
+            "would_match_if_normalized": miss.would_match_if_normalized,
         },
         human_readable_instruction=instruction,
     )
@@ -654,7 +652,7 @@ def credential_binding_suspended_directive(
     )
 
 
-def direct_credential_identity_mismatch_directive(*, mismatch: IdentityMismatch) -> AgentDirective:
+def direct_credential_identity_mismatch_directive(*, miss: CredentialScopeMiss) -> AgentDirective:
     """Directive for the direct-binding ``credential_identity_mismatch`` 403.
 
     Same diagnostic contract as :func:`credential_identity_mismatch_directive`
@@ -662,11 +660,9 @@ def direct_credential_identity_mismatch_directive(*, mismatch: IdentityMismatch)
     but none of their stored identities cover the resolved operation. The fix is
     the **credential**, never a new binding request (the binding already exists).
     """
-    expected = _render_identity(
-        mismatch.expected_vendor, mismatch.expected_name, mismatch.expected_version
-    )
-    found = _render_identity(mismatch.found_vendor, mismatch.found_name, mismatch.found_version)
-    if mismatch.would_match_if_normalized:
+    expected = _render_identity(miss.expected_vendor, miss.expected_name, miss.expected_version)
+    found = _render_identity(miss.found_vendor, miss.found_name, miss.found_version)
+    if miss.would_match_if_normalized:
         instruction = (
             f"You are bound to a credential whose stored identity '{found}' only matches "
             f"'{expected}' after normalization — it was stored in a non-canonical form. Ask "
@@ -685,16 +681,16 @@ def direct_credential_identity_mismatch_directive(*, mismatch: IdentityMismatch)
         strategy="prompt_human",
         parameters={
             "expected": {
-                "vendor": mismatch.expected_vendor,
-                "name": mismatch.expected_name,
-                "version": mismatch.expected_version,
+                "vendor": miss.expected_vendor,
+                "name": miss.expected_name,
+                "version": miss.expected_version,
             },
             "found": {
-                "vendor": mismatch.found_vendor,
-                "name": mismatch.found_name,
-                "version": mismatch.found_version,
+                "vendor": miss.found_vendor,
+                "name": miss.found_name,
+                "version": miss.found_version,
             },
-            "would_match_if_normalized": mismatch.would_match_if_normalized,
+            "would_match_if_normalized": miss.would_match_if_normalized,
         },
         human_readable_instruction=instruction,
     )
