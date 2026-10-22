@@ -11,7 +11,12 @@ from fastapi import APIRouter, Depends
 
 from jentic_one.control.services.cli_facades import CliFacadeService
 from jentic_one.control.web.deps import get_cli_facade_service
-from jentic_one.control.web.schemas.cli_facades import CliFacadeListResponse, CliFacadeResponse
+from jentic_one.control.web.schemas.cli_facades import (
+    CliFacadeContainerWiringResponse,
+    CliFacadeListResponse,
+    CliFacadeResponse,
+    CliFacadeWrapperWiringResponse,
+)
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import CAPABILITIES_READ
 from jentic_one.shared.web import get_current_identity
@@ -32,6 +37,11 @@ async def list_cli_facades(
     `enabled`) and implemented by the Broker. Whether the caller holds a
     credential for the vendor is not checked here: a call without one fails
     at the facade with the usual Broker problem.
+
+    Each facade also carries the agent-side wiring from the vendor's CLI
+    profile: the binary and supported versions, the environment `jentic
+    <cli>` sets and strips, and what `jentic run --container` sets and
+    governs, so no CLI hard-codes them.
     """
     return CliFacadeListResponse(
         data=[
@@ -41,6 +51,26 @@ async def list_cli_facades(
                 mode=v.mode,
                 address=v.address,
                 protocols=list(v.protocols),
+                display_name=v.display_name,
+                binary=v.cli,
+                supported_range=v.supported_range,
+                wrapper=(
+                    CliFacadeWrapperWiringResponse(
+                        env_set=dict(v.wrapper.env_set), env_strip=list(v.wrapper.env_strip)
+                    )
+                    if v.wrapper is not None
+                    else None
+                ),
+                container=(
+                    CliFacadeContainerWiringResponse(
+                        env_set=dict(v.container.env_set),
+                        env_strip=list(v.container.env_strip),
+                        tunnel_hosts=list(v.container.tunnel_hosts),
+                    )
+                    if v.container is not None
+                    else None
+                ),
+                governed_domains=list(v.governed_domains),
             )
             for v in svc.list_served()
         ]

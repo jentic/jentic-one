@@ -20,6 +20,8 @@ from jentic_one.shared.cli_facades import (
     FacadeProtocol,
     facade_path_prefix,
 )
+from jentic_one.shared.cli_profiles import profile_for_vendor
+from jentic_one.shared.cli_profiles.models import ContainerWiring, WrapperWiring
 from jentic_one.shared.config import CLI_FACADE_VENDORS
 from jentic_one.shared.context import Context
 from jentic_one.shared.web.instance_identity import advertised_broker_url
@@ -36,6 +38,15 @@ class CliFacadeView:
     mode: Literal["host", "path"]
     address: str | None
     protocols: tuple[FacadeProtocol, ...]
+    display_name: str
+    supported_range: str | None
+    #: How the CLI wrapper (``jentic <cli>``) wires the vendor CLI, from the
+    #: vendor's CLI profile; ``None`` when the profile has no wrapper.
+    wrapper: WrapperWiring | None
+    #: What ``jentic run --container`` sets for the vendor, from the profile.
+    container: ContainerWiring | None
+    #: The domains the container egress proxy governs for the vendor.
+    governed_domains: tuple[str, ...]
 
 
 class CliFacadeService:
@@ -76,6 +87,8 @@ class CliFacadeService:
                 for p in FACADE_PROTOCOLS.get(vendor, ("rest",))
                 if p != GIT_PROTOCOL or facades.git_enabled()
             )
+            profile = profile_for_vendor(vendor)
+            assert profile is not None  # every served vendor has a profile
             views.append(
                 CliFacadeView(
                     vendor=vendor,
@@ -83,6 +96,11 @@ class CliFacadeService:
                     mode=settings.mode,
                     address=address,
                     protocols=protocols,
+                    display_name=profile.vendor.display_name,
+                    supported_range=profile.cli.supported_range,
+                    wrapper=profile.agent.wrapper,
+                    container=profile.agent.container,
+                    governed_domains=profile.routing.egress.governed_domains,
                 )
             )
         return views

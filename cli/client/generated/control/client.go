@@ -2898,29 +2898,69 @@ type ClaimRequest struct {
 	Token string `json:"token"`
 }
 
+// CliFacadeContainerWiringResponse What `jentic run --container` sets for the vendor's tools.
+//
+// Examples: {"env_set":{"GH_TOKEN":"{placeholder}","GIT_TERMINAL_PROMPT":"0"},"env_strip":["GITHUB_TOKEN"],"tunnel_hosts":[]}
+type CliFacadeContainerWiringResponse struct {
+	// EnvSet Variables to set on the agent container. A value is a literal or `{placeholder}`, the egress proxy's fixed non-secret placeholder token.
+	//
+	// Examples: {"GH_TOKEN":"{placeholder}","GIT_TERMINAL_PROMPT":"0"}
+	EnvSet map[string]string `json:"env_set"`
+
+	// EnvStrip Variables removed from the agent container's environment.
+	//
+	// Examples: ["GITHUB_TOKEN"]
+	EnvStrip []string `json:"env_strip"`
+
+	// TunnelHosts Hosts the vendor's tools need reached directly (tunnelled by the egress proxy, never decrypted).
+	//
+	// Examples: []
+	TunnelHosts []string `json:"tunnel_hosts"`
+}
+
 // CliFacadeListResponse The vendor CLI facades this deployment serves.
 //
-// Examples: {"data":[{"address":"https://broker.jentic.example.com/_facade/cloudflare","cli":"cf","mode":"path","protocols":["rest"],"vendor":"cloudflare"}]}
+// Examples: {"data":[{"address":"https://broker.jentic.example.com/_facade/cloudflare","binary":"cf","cli":"cf","container":{"env_set":{"GH_TOKEN":"{placeholder}","GIT_TERMINAL_PROMPT":"0"},"env_strip":["GITHUB_TOKEN"],"tunnel_hosts":[]},"display_name":"Cloudflare","governed_domains":["api.cloudflare.com"],"mode":"path","protocols":["rest"],"supported_range":"\u003e=2.40.0,\u003c3","vendor":"cloudflare","wrapper":{"env_set":{"CLOUDFLARE_API_BASE_URL":"{address}","CLOUDFLARE_API_TOKEN":"{token}"},"env_strip":["CLOUDFLARE_API_KEY","CF_API_TOKEN"]}}]}
 type CliFacadeListResponse struct {
 	// Data Served facades, one per vendor; empty when none is enabled.
 	//
-	// Examples: [{"address":"https://broker.jentic.example.com/_facade/cloudflare","cli":"cf","mode":"path","protocols":["rest"],"vendor":"cloudflare"}]
+	// Examples: [{"address":"https://broker.jentic.example.com/_facade/cloudflare","binary":"cf","cli":"cf","container":{"env_set":{"GH_TOKEN":"{placeholder}","GIT_TERMINAL_PROMPT":"0"},"env_strip":["GITHUB_TOKEN"],"tunnel_hosts":[]},"display_name":"Cloudflare","governed_domains":["api.cloudflare.com"],"mode":"path","protocols":["rest"],"supported_range":"\u003e=2.40.0,\u003c3","vendor":"cloudflare","wrapper":{"env_set":{"CLOUDFLARE_API_BASE_URL":"{address}","CLOUDFLARE_API_TOKEN":"{token}"},"env_strip":["CLOUDFLARE_API_KEY","CF_API_TOKEN"]}}]
 	Data []CliFacadeResponse `json:"data"`
 }
 
 // CliFacadeResponse One vendor CLI facade an agent's CLI can be pointed at.
 //
-// Examples: {"address":"https://broker.jentic.example.com/_facade/cloudflare","cli":"cf","mode":"path","protocols":["rest"],"vendor":"cloudflare"}
+// Examples: {"address":"https://broker.jentic.example.com/_facade/cloudflare","binary":"cf","cli":"cf","container":{"env_set":{"GH_TOKEN":"{placeholder}","GIT_TERMINAL_PROMPT":"0"},"env_strip":["GITHUB_TOKEN"],"tunnel_hosts":[]},"display_name":"Cloudflare","governed_domains":["api.cloudflare.com"],"mode":"path","protocols":["rest"],"supported_range":"\u003e=2.40.0,\u003c3","vendor":"cloudflare","wrapper":{"env_set":{"CLOUDFLARE_API_BASE_URL":"{address}","CLOUDFLARE_API_TOKEN":"{token}"},"env_strip":["CLOUDFLARE_API_KEY","CF_API_TOKEN"]}}
 type CliFacadeResponse struct {
 	// Address Base URL to point the CLI at (e.g. `CLOUDFLARE_API_BASE_URL`). Null when the deployment cannot advertise one: a `remote` backend whose Broker URL is a loopback address and no `public_address` set for the vendor.
 	//
 	// Examples: https://broker.jentic.example.com/_facade/cloudflare
 	Address *string `json:"address,omitempty"`
 
+	// Binary The vendor CLI's executable, looked up on PATH.
+	//
+	// Examples: cf
+	Binary *string `json:"binary,omitempty"`
+
 	// Cli The vendor CLI the facade speaks to, e.g. `cf` for `jentic cf`.
 	//
 	// Examples: cf
 	Cli string `json:"cli"`
+
+	// Container What `jentic run --container` sets for the vendor; null when nothing.
+	//
+	// Examples: {"env_set":{"GH_TOKEN":"{placeholder}","GIT_TERMINAL_PROMPT":"0"},"env_strip":["GITHUB_TOKEN"],"tunnel_hosts":[]}
+	Container *CliFacadeContainerWiringResponse `json:"container,omitempty"`
+
+	// DisplayName How the vendor is named to people, e.g. in a wrapper's directives.
+	//
+	// Examples: Cloudflare
+	DisplayName *string `json:"display_name,omitempty"`
+
+	// GovernedDomains Domains whose hosts the egress proxy of `jentic run --container` relays to the Broker for this vendor.
+	//
+	// Examples: ["api.cloudflare.com"]
+	GovernedDomains *[]string `json:"governed_domains,omitempty"`
 
 	// Mode How the facade is addressed: `host` on a hostname of its own, `path` under a path prefix on the Broker's own address.
 	//
@@ -2932,10 +2972,20 @@ type CliFacadeResponse struct {
 	// Examples: ["rest"]
 	Protocols []CliFacadeResponseProtocols `json:"protocols"`
 
+	// SupportedRange CLI versions the vendor's CLI profile is written for, e.g. `>=2.40.0,<3`.
+	//
+	// Examples: >=2.40.0,<3
+	SupportedRange *string `json:"supported_range,omitempty"`
+
 	// Vendor Vendor the facade serves, as passed to `POST /cli-invocations`.
 	//
 	// Examples: cloudflare
 	Vendor string `json:"vendor"`
+
+	// Wrapper How `jentic <cli>` wires the vendor CLI (from its CLI profile); null when the CLI is not wrapped.
+	//
+	// Examples: {"env_set":{"CLOUDFLARE_API_BASE_URL":"{address}","CLOUDFLARE_API_TOKEN":"{token}"},"env_strip":["CLOUDFLARE_API_KEY","CF_API_TOKEN"]}
+	Wrapper *CliFacadeWrapperWiringResponse `json:"wrapper,omitempty"`
 }
 
 // CliFacadeResponseMode How the facade is addressed: `host` on a hostname of its own, `path` under a path prefix on the Broker's own address.
@@ -2945,6 +2995,21 @@ type CliFacadeResponseMode string
 
 // CliFacadeResponseProtocols defines model for CliFacadeResponse.Protocols.
 type CliFacadeResponseProtocols string
+
+// CliFacadeWrapperWiringResponse How `jentic <cli>` wires the vendor CLI on the agent's machine.
+//
+// Examples: {"env_set":{"CLOUDFLARE_API_BASE_URL":"{address}","CLOUDFLARE_API_TOKEN":"{token}"},"env_strip":["CLOUDFLARE_API_KEY","CF_API_TOKEN"]}
+type CliFacadeWrapperWiringResponse struct {
+	// EnvSet Variables to set for the CLI. A value is a literal or a placeholder the wrapper fills in: `{address}` (the facade address), `{address_host}` (its hostname) or `{token}` (the command's invocation token).
+	//
+	// Examples: {"CLOUDFLARE_API_BASE_URL":"{address}","CLOUDFLARE_API_TOKEN":"{token}"}
+	EnvSet map[string]string `json:"env_set"`
+
+	// EnvStrip Credential variables the CLI could authenticate with instead of the invocation token; removed from its environment.
+	//
+	// Examples: ["CLOUDFLARE_API_KEY","CF_API_TOKEN"]
+	EnvStrip []string `json:"env_strip"`
+}
 
 // CliInvocationCreateRequest Request body for minting a CLI invocation token.
 //
@@ -11476,6 +11541,11 @@ type ClientInterface interface {
 	// credential for the vendor is not checked here: a call without one fails
 	// at the facade with the usual Broker problem.
 	//
+	// Each facade also carries the agent-side wiring from the vendor's CLI
+	// profile: the binary and supported versions, the environment `jentic
+	// <cli>` sets and strips, and what `jentic run --container` sets and
+	// governs, so no CLI hard-codes them.
+	//
 	// Corresponds with GET /cli-facades (the `ListCliFacades` operationId).
 	ListCliFacades(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -15340,6 +15410,11 @@ func (c *Client) RefreshCatalog(ctx context.Context, reqEditors ...RequestEditor
 // `enabled`) and implemented by the Broker. Whether the caller holds a
 // credential for the vendor is not checked here: a call without one fails
 // at the facade with the usual Broker problem.
+//
+// Each facade also carries the agent-side wiring from the vendor's CLI
+// profile: the binary and supported versions, the environment `jentic
+// <cli>` sets and strips, and what `jentic run --container` sets and
+// governs, so no CLI hard-codes them.
 //
 // Corresponds with GET /cli-facades (the `ListCliFacades` operationId).
 func (c *Client) ListCliFacades(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -28559,6 +28634,11 @@ type ClientWithResponsesInterface interface {
 	// `enabled`) and implemented by the Broker. Whether the caller holds a
 	// credential for the vendor is not checked here: a call without one fails
 	// at the facade with the usual Broker problem.
+	//
+	// Each facade also carries the agent-side wiring from the vendor's CLI
+	// profile: the binary and supported versions, the environment `jentic
+	// <cli>` sets and strips, and what `jentic run --container` sets and
+	// governs, so no CLI hard-codes them.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -47649,6 +47729,11 @@ func (c *ClientWithResponses) RefreshCatalogWithResponse(ctx context.Context, re
 // `enabled`) and implemented by the Broker. Whether the caller holds a
 // credential for the vendor is not checked here: a call without one fails
 // at the facade with the usual Broker problem.
+//
+// Each facade also carries the agent-side wiring from the vendor's CLI
+// profile: the binary and supported versions, the environment `jentic
+// <cli>` sets and strips, and what `jentic run --container` sets and
+// governs, so no CLI hard-codes them.
 //
 // Returns a wrapper object for the known response body format(s).
 //

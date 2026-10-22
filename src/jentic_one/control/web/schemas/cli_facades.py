@@ -45,6 +45,83 @@ class CliFacadeResponse(BaseModel):
         ),
         examples=[["rest"]],
     )
+    display_name: str | None = Field(
+        default=None,
+        description="How the vendor is named to people, e.g. in a wrapper's directives.",
+        examples=["Cloudflare"],
+    )
+    binary: str | None = Field(
+        default=None,
+        description="The vendor CLI's executable, looked up on PATH.",
+        examples=["cf"],
+    )
+    supported_range: str | None = Field(
+        default=None,
+        description="CLI versions the vendor's CLI profile is written for, e.g. `>=2.40.0,<3`.",
+        examples=[">=2.40.0,<3"],
+    )
+    wrapper: CliFacadeWrapperWiringResponse | None = Field(
+        default=None,
+        description=(
+            "How `jentic <cli>` wires the vendor CLI (from its CLI profile); null when the CLI "
+            "is not wrapped."
+        ),
+    )
+    container: CliFacadeContainerWiringResponse | None = Field(
+        default=None,
+        description="What `jentic run --container` sets for the vendor; null when nothing.",
+    )
+    governed_domains: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Domains whose hosts the egress proxy of `jentic run --container` relays to the "
+            "Broker for this vendor."
+        ),
+        examples=[["api.cloudflare.com"]],
+    )
+
+
+class CliFacadeWrapperWiringResponse(BaseModel):
+    """How `jentic <cli>` wires the vendor CLI on the agent's machine."""
+
+    env_set: dict[str, str] = Field(
+        description=(
+            "Variables to set for the CLI. A value is a literal or a placeholder the wrapper "
+            "fills in: `{address}` (the facade address), `{address_host}` (its hostname) or "
+            "`{token}` (the command's invocation token)."
+        ),
+        examples=[{"CLOUDFLARE_API_BASE_URL": "{address}", "CLOUDFLARE_API_TOKEN": "{token}"}],
+    )
+    env_strip: list[str] = Field(
+        description=(
+            "Credential variables the CLI could authenticate with instead of the invocation "
+            "token; removed from its environment."
+        ),
+        examples=[["CLOUDFLARE_API_KEY", "CF_API_TOKEN"]],
+    )
+
+
+class CliFacadeContainerWiringResponse(BaseModel):
+    """What `jentic run --container` sets for the vendor's tools."""
+
+    env_set: dict[str, str] = Field(
+        description=(
+            "Variables to set on the agent container. A value is a literal or `{placeholder}`, "
+            "the egress proxy's fixed non-secret placeholder token."
+        ),
+        examples=[{"GH_TOKEN": "{placeholder}", "GIT_TERMINAL_PROMPT": "0"}],
+    )
+    env_strip: list[str] = Field(
+        description="Variables removed from the agent container's environment.",
+        examples=[["GITHUB_TOKEN"]],
+    )
+    tunnel_hosts: list[str] = Field(
+        description=(
+            "Hosts the vendor's tools need reached directly (tunnelled by the egress proxy, "
+            "never decrypted)."
+        ),
+        examples=[[]],
+    )
 
 
 class CliFacadeListResponse(BaseModel):

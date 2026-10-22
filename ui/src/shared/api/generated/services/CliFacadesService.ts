@@ -19,6 +19,11 @@ export class CliFacadesService {
      * `enabled`) and implemented by the Broker. Whether the caller holds a
      * credential for the vendor is not checked here: a call without one fails
      * at the facade with the usual Broker problem.
+     *
+     * Each facade also carries the agent-side wiring from the vendor's CLI
+     * profile: the binary and supported versions, the environment `jentic
+     * <cli>` sets and strips, and what `jentic run --container` sets and
+     * governs, so no CLI hard-codes them.
      * @returns CliFacadeListResponse Successful Response
      * @throws ApiError
      */

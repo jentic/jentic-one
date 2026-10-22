@@ -8,10 +8,25 @@ from typing import Any, cast
 import pytest
 
 from jentic_one.control.services.cli_facades import CliFacadeService, CliFacadeView
+from jentic_one.shared.cli_profiles import profile_for_vendor
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
 
 _DATABASES = {"registry": {"name": "reg"}, "admin": {"name": "admin"}, "control": {"name": "ctrl"}}
+
+
+def _view(**fields: Any) -> CliFacadeView:
+    """A served view, with the wiring every served vendor takes from its CLI profile."""
+    profile = profile_for_vendor(fields["vendor"])
+    assert profile is not None
+    return CliFacadeView(
+        **fields,
+        display_name=profile.vendor.display_name,
+        supported_range=profile.cli.supported_range,
+        wrapper=profile.agent.wrapper,
+        container=profile.agent.container,
+        governed_domains=profile.routing.egress.governed_domains,
+    )
 
 
 def _service(**overrides: Any) -> CliFacadeService:
@@ -27,7 +42,7 @@ def _service(**overrides: Any) -> CliFacadeService:
 
 def test_path_mode_address_is_the_advertised_broker_url_plus_the_facade_prefix() -> None:
     assert _service().list_served() == [
-        CliFacadeView(
+        _view(
             vendor="cloudflare",
             cli="cf",
             mode="path",
@@ -76,7 +91,7 @@ def test_host_mode_address_is_https_on_the_facade_host() -> None:
         }
     )
     assert svc.list_served() == [
-        CliFacadeView(
+        _view(
             vendor="github",
             cli="gh",
             mode="host",

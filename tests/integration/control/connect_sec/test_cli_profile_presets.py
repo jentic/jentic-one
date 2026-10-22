@@ -1,4 +1,4 @@
-"""Connect with a CLI-profile preset: expanded server-side into the concrete rules the approver sees.
+"""Connect with a CLI-profile preset: expanded server-side into the rules the approver sees.
 
 ``POST /integrations:connect`` with ``preset`` (and ``preset_params``) for a
 vendor entry a CLI profile declares stores the preset's rules for that API's

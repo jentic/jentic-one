@@ -47,17 +47,26 @@ def test_list_cli_facades_wire_shape() -> None:
     resp = _client(_AGENT).get("/cli-facades")
 
     assert resp.status_code == 200
-    assert resp.json() == {
-        "data": [
-            {
-                "vendor": "cloudflare",
-                "cli": "cf",
-                "mode": "path",
-                "address": "http://127.0.0.1:8100/_facade/cloudflare",
-                "protocols": ["rest"],
-            }
-        ]
+    [facade] = resp.json()["data"]
+    wiring = {k: facade.pop(k) for k in ("wrapper", "container", "governed_domains")}
+    assert facade == {
+        "vendor": "cloudflare",
+        "cli": "cf",
+        "mode": "path",
+        "address": "http://127.0.0.1:8100/_facade/cloudflare",
+        "protocols": ["rest"],
+        "display_name": "Cloudflare",
+        "binary": "cf",
+        "supported_range": None,
     }
+    # The agent-side wiring comes from the Cloudflare CLI profile.
+    assert wiring["wrapper"]["env_set"] == {
+        "CLOUDFLARE_API_BASE_URL": "{address}",
+        "CLOUDFLARE_API_TOKEN": "{token}",
+    }
+    assert "CF_API_TOKEN" in wiring["wrapper"]["env_strip"]
+    assert wiring["container"] is None
+    assert wiring["governed_domains"] == ["api.cloudflare.com"]
 
 
 def test_list_cli_facades_requires_capabilities_read() -> None:

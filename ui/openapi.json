@@ -4273,6 +4273,68 @@
         "title": "ClaimRequest",
         "type": "object"
       },
+      "CliFacadeContainerWiringResponse": {
+        "description": "What `jentic run --container` sets for the vendor's tools.",
+        "examples": [
+          {
+            "env_set": {
+              "GH_TOKEN": "{placeholder}",
+              "GIT_TERMINAL_PROMPT": "0"
+            },
+            "env_strip": [
+              "GITHUB_TOKEN"
+            ],
+            "tunnel_hosts": []
+          }
+        ],
+        "properties": {
+          "env_set": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Variables to set on the agent container. A value is a literal or `{placeholder}`, the egress proxy's fixed non-secret placeholder token.",
+            "examples": [
+              {
+                "GH_TOKEN": "{placeholder}",
+                "GIT_TERMINAL_PROMPT": "0"
+              }
+            ],
+            "title": "Env Set",
+            "type": "object"
+          },
+          "env_strip": {
+            "description": "Variables removed from the agent container's environment.",
+            "examples": [
+              [
+                "GITHUB_TOKEN"
+              ]
+            ],
+            "items": {
+              "type": "string"
+            },
+            "title": "Env Strip",
+            "type": "array"
+          },
+          "tunnel_hosts": {
+            "description": "Hosts the vendor's tools need reached directly (tunnelled by the egress proxy, never decrypted).",
+            "examples": [
+              []
+            ],
+            "items": {
+              "type": "string"
+            },
+            "title": "Tunnel Hosts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "env_set",
+          "env_strip",
+          "tunnel_hosts"
+        ],
+        "title": "CliFacadeContainerWiringResponse",
+        "type": "object"
+      },
       "CliFacadeListResponse": {
         "description": "The vendor CLI facades this deployment serves.",
         "examples": [
@@ -4280,12 +4342,38 @@
             "data": [
               {
                 "address": "https://broker.jentic.example.com/_facade/cloudflare",
+                "binary": "cf",
                 "cli": "cf",
+                "container": {
+                  "env_set": {
+                    "GH_TOKEN": "{placeholder}",
+                    "GIT_TERMINAL_PROMPT": "0"
+                  },
+                  "env_strip": [
+                    "GITHUB_TOKEN"
+                  ],
+                  "tunnel_hosts": []
+                },
+                "display_name": "Cloudflare",
+                "governed_domains": [
+                  "api.cloudflare.com"
+                ],
                 "mode": "path",
                 "protocols": [
                   "rest"
                 ],
-                "vendor": "cloudflare"
+                "supported_range": ">=2.40.0,<3",
+                "vendor": "cloudflare",
+                "wrapper": {
+                  "env_set": {
+                    "CLOUDFLARE_API_BASE_URL": "{address}",
+                    "CLOUDFLARE_API_TOKEN": "{token}"
+                  },
+                  "env_strip": [
+                    "CLOUDFLARE_API_KEY",
+                    "CF_API_TOKEN"
+                  ]
+                }
               }
             ]
           }
@@ -4297,12 +4385,38 @@
               [
                 {
                   "address": "https://broker.jentic.example.com/_facade/cloudflare",
+                  "binary": "cf",
                   "cli": "cf",
+                  "container": {
+                    "env_set": {
+                      "GH_TOKEN": "{placeholder}",
+                      "GIT_TERMINAL_PROMPT": "0"
+                    },
+                    "env_strip": [
+                      "GITHUB_TOKEN"
+                    ],
+                    "tunnel_hosts": []
+                  },
+                  "display_name": "Cloudflare",
+                  "governed_domains": [
+                    "api.cloudflare.com"
+                  ],
                   "mode": "path",
                   "protocols": [
                     "rest"
                   ],
-                  "vendor": "cloudflare"
+                  "supported_range": ">=2.40.0,<3",
+                  "vendor": "cloudflare",
+                  "wrapper": {
+                    "env_set": {
+                      "CLOUDFLARE_API_BASE_URL": "{address}",
+                      "CLOUDFLARE_API_TOKEN": "{token}"
+                    },
+                    "env_strip": [
+                      "CLOUDFLARE_API_KEY",
+                      "CF_API_TOKEN"
+                    ]
+                  }
                 }
               ]
             ],
@@ -4324,12 +4438,38 @@
         "examples": [
           {
             "address": "https://broker.jentic.example.com/_facade/cloudflare",
+            "binary": "cf",
             "cli": "cf",
+            "container": {
+              "env_set": {
+                "GH_TOKEN": "{placeholder}",
+                "GIT_TERMINAL_PROMPT": "0"
+              },
+              "env_strip": [
+                "GITHUB_TOKEN"
+              ],
+              "tunnel_hosts": []
+            },
+            "display_name": "Cloudflare",
+            "governed_domains": [
+              "api.cloudflare.com"
+            ],
             "mode": "path",
             "protocols": [
               "rest"
             ],
-            "vendor": "cloudflare"
+            "supported_range": ">=2.40.0,<3",
+            "vendor": "cloudflare",
+            "wrapper": {
+              "env_set": {
+                "CLOUDFLARE_API_BASE_URL": "{address}",
+                "CLOUDFLARE_API_TOKEN": "{token}"
+              },
+              "env_strip": [
+                "CLOUDFLARE_API_KEY",
+                "CF_API_TOKEN"
+              ]
+            }
           }
         ],
         "properties": {
@@ -4348,6 +4488,21 @@
             ],
             "title": "Address"
           },
+          "binary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The vendor CLI's executable, looked up on PATH.",
+            "examples": [
+              "cf"
+            ],
+            "title": "Binary"
+          },
           "cli": {
             "description": "The vendor CLI the facade speaks to, e.g. `cf` for `jentic cf`.",
             "examples": [
@@ -4355,6 +4510,57 @@
             ],
             "title": "Cli",
             "type": "string"
+          },
+          "container": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CliFacadeContainerWiringResponse"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What `jentic run --container` sets for the vendor; null when nothing.",
+            "examples": [
+              {
+                "env_set": {
+                  "GH_TOKEN": "{placeholder}",
+                  "GIT_TERMINAL_PROMPT": "0"
+                },
+                "env_strip": [
+                  "GITHUB_TOKEN"
+                ],
+                "tunnel_hosts": []
+              }
+            ]
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How the vendor is named to people, e.g. in a wrapper's directives.",
+            "examples": [
+              "Cloudflare"
+            ],
+            "title": "Display Name"
+          },
+          "governed_domains": {
+            "description": "Domains whose hosts the egress proxy of `jentic run --container` relays to the Broker for this vendor.",
+            "examples": [
+              [
+                "api.cloudflare.com"
+              ]
+            ],
+            "items": {
+              "type": "string"
+            },
+            "title": "Governed Domains",
+            "type": "array"
           },
           "mode": {
             "description": "How the facade is addressed: `host` on a hostname of its own, `path` under a path prefix on the Broker's own address.",
@@ -4386,6 +4592,21 @@
             "title": "Protocols",
             "type": "array"
           },
+          "supported_range": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "CLI versions the vendor's CLI profile is written for, e.g. `>=2.40.0,<3`.",
+            "examples": [
+              ">=2.40.0,<3"
+            ],
+            "title": "Supported Range"
+          },
           "vendor": {
             "description": "Vendor the facade serves, as passed to `POST /cli-invocations`.",
             "examples": [
@@ -4393,6 +4614,29 @@
             ],
             "title": "Vendor",
             "type": "string"
+          },
+          "wrapper": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CliFacadeWrapperWiringResponse"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How `jentic <cli>` wires the vendor CLI (from its CLI profile); null when the CLI is not wrapped.",
+            "examples": [
+              {
+                "env_set": {
+                  "CLOUDFLARE_API_BASE_URL": "{address}",
+                  "CLOUDFLARE_API_TOKEN": "{token}"
+                },
+                "env_strip": [
+                  "CLOUDFLARE_API_KEY",
+                  "CF_API_TOKEN"
+                ]
+              }
+            ]
           }
         },
         "required": [
@@ -4402,6 +4646,57 @@
           "protocols"
         ],
         "title": "CliFacadeResponse",
+        "type": "object"
+      },
+      "CliFacadeWrapperWiringResponse": {
+        "description": "How `jentic <cli>` wires the vendor CLI on the agent's machine.",
+        "examples": [
+          {
+            "env_set": {
+              "CLOUDFLARE_API_BASE_URL": "{address}",
+              "CLOUDFLARE_API_TOKEN": "{token}"
+            },
+            "env_strip": [
+              "CLOUDFLARE_API_KEY",
+              "CF_API_TOKEN"
+            ]
+          }
+        ],
+        "properties": {
+          "env_set": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Variables to set for the CLI. A value is a literal or a placeholder the wrapper fills in: `{address}` (the facade address), `{address_host}` (its hostname) or `{token}` (the command's invocation token).",
+            "examples": [
+              {
+                "CLOUDFLARE_API_BASE_URL": "{address}",
+                "CLOUDFLARE_API_TOKEN": "{token}"
+              }
+            ],
+            "title": "Env Set",
+            "type": "object"
+          },
+          "env_strip": {
+            "description": "Credential variables the CLI could authenticate with instead of the invocation token; removed from its environment.",
+            "examples": [
+              [
+                "CLOUDFLARE_API_KEY",
+                "CF_API_TOKEN"
+              ]
+            ],
+            "items": {
+              "type": "string"
+            },
+            "title": "Env Strip",
+            "type": "array"
+          }
+        },
+        "required": [
+          "env_set",
+          "env_strip"
+        ],
+        "title": "CliFacadeWrapperWiringResponse",
         "type": "object"
       },
       "CliInvocationCreateRequest": {
@@ -35366,7 +35661,7 @@
     "/cli-facades": {
       "description": "`GET`: List vendor CLI facades.",
       "get": {
-        "description": "The vendor CLI facades this deployment serves, and the address of each.\n\n`jentic cf` (and `jentic cli list`) read this to learn where to point the\nvendor's own CLI, so no agent hard-codes a facade address. Lists only\nfacades that are switched on (`cli_facades.enabled` and the vendor's\n`enabled`) and implemented by the Broker. Whether the caller holds a\ncredential for the vendor is not checked here: a call without one fails\nat the facade with the usual Broker problem.",
+        "description": "The vendor CLI facades this deployment serves, and the address of each.\n\n`jentic cf` (and `jentic cli list`) read this to learn where to point the\nvendor's own CLI, so no agent hard-codes a facade address. Lists only\nfacades that are switched on (`cli_facades.enabled` and the vendor's\n`enabled`) and implemented by the Broker. Whether the caller holds a\ncredential for the vendor is not checked here: a call without one fails\nat the facade with the usual Broker problem.\n\nEach facade also carries the agent-side wiring from the vendor's CLI\nprofile: the binary and supported versions, the environment `jentic\n<cli>` sets and strips, and what `jentic run --container` sets and\ngoverns, so no CLI hard-codes them.",
         "operationId": "listCliFacades",
         "responses": {
           "200": {
@@ -35376,12 +35671,38 @@
                   "data": [
                     {
                       "address": "https://broker.jentic.example.com/_facade/cloudflare",
+                      "binary": "cf",
                       "cli": "cf",
+                      "container": {
+                        "env_set": {
+                          "GH_TOKEN": "{placeholder}",
+                          "GIT_TERMINAL_PROMPT": "0"
+                        },
+                        "env_strip": [
+                          "GITHUB_TOKEN"
+                        ],
+                        "tunnel_hosts": []
+                      },
+                      "display_name": "Cloudflare",
+                      "governed_domains": [
+                        "api.cloudflare.com"
+                      ],
                       "mode": "path",
                       "protocols": [
                         "rest"
                       ],
-                      "vendor": "cloudflare"
+                      "supported_range": ">=2.40.0,<3",
+                      "vendor": "cloudflare",
+                      "wrapper": {
+                        "env_set": {
+                          "CLOUDFLARE_API_BASE_URL": "{address}",
+                          "CLOUDFLARE_API_TOKEN": "{token}"
+                        },
+                        "env_strip": [
+                          "CLOUDFLARE_API_KEY",
+                          "CF_API_TOKEN"
+                        ]
+                      }
                     }
                   ]
                 },

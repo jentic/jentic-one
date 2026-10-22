@@ -88,10 +88,16 @@ func (CatalogRefreshResponse) RequiredFields() []string { return []string{"count
 func (ChangePasswordRequest) RequiredFields() []string {
 	return []string{"current_password", "new_password"}
 }
-func (ClaimRequest) RequiredFields() []string          { return []string{"token"} }
+func (ClaimRequest) RequiredFields() []string { return []string{"token"} }
+func (CliFacadeContainerWiringResponse) RequiredFields() []string {
+	return []string{"env_set", "env_strip", "tunnel_hosts"}
+}
 func (CliFacadeListResponse) RequiredFields() []string { return []string{"data"} }
 func (CliFacadeResponse) RequiredFields() []string {
 	return []string{"cli", "mode", "protocols", "vendor"}
+}
+func (CliFacadeWrapperWiringResponse) RequiredFields() []string {
+	return []string{"env_set", "env_strip"}
 }
 func (CliInvocationCreateRequest) RequiredFields() []string { return []string{"vendor"} }
 func (CliInvocationCreatedResponse) RequiredFields() []string {
