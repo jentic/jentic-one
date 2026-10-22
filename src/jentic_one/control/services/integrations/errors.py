@@ -281,17 +281,6 @@ class TooManyOpenSessionsError(ConnectSessionServiceError):
         self.limit = limit
 
 
-class RecentlyRejectedError(ConnectSessionServiceError):
-    """A human rejected the agent's request for this target within the cooldown."""
-
-    def __init__(self, retry_after_seconds: int) -> None:
-        super().__init__(
-            "a human rejected this agent's request for the same target recently; "
-            "do not ask again — tell the user"
-        )
-        self.retry_after_seconds = retry_after_seconds
-
-
 class ExistingCredentialNotFoundError(ConnectSessionServiceError):
     """The credential picked to satisfy the session is missing or not the approver's to use."""
 

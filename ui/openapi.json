@@ -36723,7 +36723,7 @@
     "/connect-sessions/{session_id}:reject": {
       "description": "`POST`: Reject an agent's connect request.",
       "post": {
-        "description": "End the session as rejected — the approve dialog's explicit Reject.\n\nOnly the target agent's owner (holding ``credentials:write`` and\n``agents:write``) or ``org:admin``; there is no poll-token path and an\nagent can never reject. Everyone else gets the uniform 403. The agent's\n``/status`` then reports ``failed`` with ``error_code: rejected``, and\nits repeat ``:connect`` for the same target answers 429\n``recently_rejected`` for the rejection cooldown. Closing the dialog\nwithout rejecting makes no call; an unmount cancel stays ``cancelled``.",
+        "description": "End the session as rejected — the approve dialog's explicit Reject.\n\nOnly the target agent's owner (holding ``credentials:write`` and\n``agents:write``) or ``org:admin``; there is no poll-token path and an\nagent can never reject. Everyone else gets the uniform 403. The agent's\n``/status`` then reports ``failed`` with ``error_code: rejected``. Closing the dialog\nwithout rejecting makes no call; an unmount cancel stays ``cancelled``.",
         "operationId": "rejectConnectSession",
         "parameters": [
           {

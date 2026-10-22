@@ -53,7 +53,6 @@ from jentic_one.control.services.integrations.errors import (
     OAuthAppChangedError,
     OwnClientInvalidError,
     PointsAtAccessError,
-    RecentlyRejectedError,
     ReservedAuthFieldError,
     ReviewStaleError,
     RevisionChangedError,
@@ -160,7 +159,6 @@ _CONNECT_SESSION_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     RulesRequiredError: (422, "rules_required"),
     ConfirmKindMismatchError: (400, "confirm_kind_mismatch"),
     TooManyOpenSessionsError: (429, "too_many_open_sessions"),
-    RecentlyRejectedError: (429, "recently_rejected"),
     ExistingCredentialNotFoundError: (404, "existing_credential_not_found"),
     InsufficientGrantedScopesError: (409, "insufficient_granted_scopes"),
     OwnClientInvalidError: (400, "own_oauth_client_invalid"),
@@ -282,8 +280,6 @@ def _connect_session_response_hook(
         extra.update(scope=exc.scope, limit=exc.limit)
     elif isinstance(exc, ConfirmKindMismatchError):
         extra["allowed_kinds"] = exc.allowed
-    elif isinstance(exc, RecentlyRejectedError):
-        headers["Retry-After"] = str(exc.retry_after_seconds)
     elif isinstance(exc, EditOpenError | SessionClosedError):
         extra["session_id"] = exc.session_id
     elif isinstance(exc, ConnectOpenError):

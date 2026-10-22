@@ -47,7 +47,6 @@ from jentic_one.control.services.integrations.errors import (
     EditOpenError,
     InvalidPollTokenError,
     NothingToChangeError,
-    RecentlyRejectedError,
     RevisionChangedError,
     RuleSetConfirmForbiddenError,
     SessionClosedError,
@@ -279,12 +278,8 @@ async def test_an_ended_edit_never_touches_the_credential_or_binding(
         created.session_id, poll_token=created.poll_token, identity=_AGENT_IDENTITY
     )
     assert status.status in ("failed", "expired")
-    # The binding is free for a new edit, except for the cooldown after a rejection.
-    if how == "reject":
-        with pytest.raises(RecentlyRejectedError):
-            await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
-    else:
-        await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+    # The binding is free for a new edit, however the last one ended.
+    await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
 
 
 async def test_confirm_must_name_the_current_revision(
@@ -542,27 +537,16 @@ async def test_only_the_initiator_or_its_reviewer_amends_and_only_with_the_sessi
         )
 
 
-async def test_a_rejected_edit_holds_back_the_next_one_for_the_cooldown(
+async def test_the_agent_asks_again_right_after_a_rejection(
     integration_context: Context, binding: str
 ) -> None:
     ctx = integration_context
     svc = ConnectSessionService(ctx)
     created = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
     await svc.reject_session(created.session_id, identity=_OWNER)
-    with pytest.raises(RecentlyRejectedError):
-        await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
-
-    # The hold is on the agent: its owner can still ask for the change.
-    by_owner = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]), identity=_OWNER)
-    await svc.cancel_session(by_owner.session_id, poll_token=by_owner.poll_token, identity=_OWNER)
-
-    # The cooldown is the same setting as for connect requests.
-    hours = ctx.config.control.connect.rejection_cooldown_hours
-    ctx.config.control.connect.rejection_cooldown_hours = 0
-    try:
-        await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
-    finally:
-        ctx.config.control.connect.rejection_cooldown_hours = hours
+    # A reviewer who rejects can ask for a revised request at once.
+    again = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_READ | {"path": "/v1/drafts"})]))
+    assert again.session_id != created.session_id
 
 
 async def test_a_cancelled_edit_does_not_hold_back_the_next_one(

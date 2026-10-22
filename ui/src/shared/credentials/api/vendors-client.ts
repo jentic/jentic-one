@@ -270,8 +270,7 @@ export function cancelConnectSessionOnUnload(sessionId: string, pollToken?: stri
 
 /**
  * Reject an agent's request — the approve dialog's explicit Reject. The agent
- * sees ``failed`` with ``error_code: rejected`` and may not ask again for the
- * same target during the rejection cooldown. Owner (``credentials:write`` and
+ * sees ``failed`` with ``error_code: rejected``. Owner (``credentials:write`` and
  * ``agents:write``) or ``org:admin`` only; there is no poll-token path, so the
  * route takes none. Closing the dialog without rejecting sends nothing.
  */

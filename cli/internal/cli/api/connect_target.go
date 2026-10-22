@@ -208,14 +208,6 @@ func apiTargetCoded(he *HTTPError, target string, err error, lane connectLane) (
 			Actionable: "Do not open more. Relay the approval URLs you already have to your human user, " +
 				"end your turn, and retry the blocked calls once they act.",
 		}, ""
-	case "recently_rejected":
-		coded := &ux.CodedError{
-			Code: ux.CodeBrokerDenied,
-			Msg:  fmt.Sprintf("a human recently rejected this agent's request to connect %s: %v", target, err),
-			Actionable: "Do not ask again. Tell your human user the request was rejected and what you " +
-				"needed it for; continue without this API unless they say otherwise.",
-		}
-		return coded, ""
 	}
 	return nil, ""
 }

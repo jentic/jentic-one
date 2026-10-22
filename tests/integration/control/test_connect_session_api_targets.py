@@ -8,7 +8,7 @@ and its re-resolution, the review payload and digest, every confirm variant
 (secret, own OAuth client, existing credential, re-authorize) with the
 granted-scope check, scheme/host re-checks at confirm, the compensating unbind,
 the archive race, dedupe and token rotation, open-session caps, ``:reject``
-with its cooldown, and ``/status`` answering from recorded outcomes.
+and ``/status`` answering from recorded outcomes.
 """
 
 from __future__ import annotations
@@ -66,7 +66,6 @@ from jentic_one.control.services.integrations.errors import (
     InvalidPollTokenError,
     InvalidStateTransitionError,
     NoDeclaredSchemeError,
-    RecentlyRejectedError,
     ReservedAuthFieldError,
     ReviewStaleError,
     RulesRequiredError,
@@ -1299,11 +1298,11 @@ async def test_api_target_keeps_its_ttl_after_resolving_to_oauth(env: Context) -
 
 
 # ---------------------------------------------------------------------------
-# :reject, cooldown, /status from outcomes
+# :reject, /status from outcomes
 # ---------------------------------------------------------------------------
 
 
-async def test_reject_ends_the_session_and_starts_the_cooldown(env: Context) -> None:
+async def test_reject_ends_the_session_and_the_agent_can_ask_again(env: Context) -> None:
     await _import(env, _KEY_SCHEME)
     created = await _connect(env)
     svc = _svc(env)
@@ -1325,31 +1324,12 @@ async def test_reject_ends_the_session_and_starts_the_cooldown(env: Context) -> 
     with pytest.raises(InvalidPollTokenError):
         await svc.get_status(created.session_id, poll_token="wrong", identity=_AGENT)
 
-    with pytest.raises(RecentlyRejectedError) as cooldown:
-        await _connect(env)
-    assert 0 < cooldown.value.retry_after_seconds <= 24 * 3600
-    # Another agent, or the same agent for another target, is unaffected.
-    assert (await _connect(env, agent_id=_OTHER_AGENT_ID)).resolved_flow == "manual_api_key"
-    # The hold is on the agent: a person can still connect for it.
-    by_owner = await _svc(env).create_session(
-        vendor_key="",
-        agent_id=_AGENT_ID,
-        identity=_OWNER,
-        api_target=_TARGET,
-        requested_permission_rules=_RULES,
-    )
-    assert by_owner.resolved_flow == "manual_api_key"
+    # Nothing holds the agent back: it asks again, e.g. for what the reviewer asked for.
+    again = await _connect(env)
+    assert again.session_id != created.session_id
 
 
-async def test_cooldown_zero_disables_it(env: Context, monkeypatch: pytest.MonkeyPatch) -> None:
-    await _import(env, _KEY_SCHEME)
-    created = await _connect(env)
-    await _svc(env).reject_session(created.session_id, identity=_ADMIN)
-    monkeypatch.setattr(env.config.control.connect, "rejection_cooldown_hours", 0)
-    assert (await _connect(env)).session_id != created.session_id
-
-
-async def test_cancel_stays_cancelled_and_never_cools_down(env: Context) -> None:
+async def test_cancel_stays_cancelled(env: Context) -> None:
     await _import(env, _KEY_SCHEME)
     created = await _connect(env)
     svc = _svc(env)
@@ -1467,7 +1447,7 @@ async def test_http_confirm_secret_variant_and_hidden_input(env: Context) -> Non
         assert _SECRET not in ok.text
 
 
-async def test_http_reject_status_and_cooldown(env: Context) -> None:
+async def test_http_reject_and_status(env: Context) -> None:
     await _import(env, _KEY_SCHEME)
     created = await _connect(env)
     async with _client(env, _AGENT) as agent_client:
@@ -1489,8 +1469,7 @@ async def test_http_reject_status_and_cooldown(env: Context) -> None:
         assert status.status_code == 200
         assert (status.json()["status"], status.json()["error_code"]) == ("failed", "rejected")
         again = await agent_client.post("/integrations:connect", json=_API_BODY)
-        assert (again.status_code, again.json()["type"]) == (429, "recently_rejected")
-        assert int(again.headers["Retry-After"]) > 0
+        assert again.status_code == 201, again.text
 
 
 async def test_connect_options_list_what_connect_would_ask_for(env: Context) -> None:

@@ -810,7 +810,6 @@ func TestConnect_APITargetErrorCodes(t *testing.T) {
 			http.StatusTooManyRequests, `{"type":"too_many_open_sessions","detail":"cap","scope":"agent","limit":10}`,
 			ux.CodeBrokerDenied, "Do not open more",
 		},
-		{http.StatusTooManyRequests, `{"type":"recently_rejected","detail":"rejected"}`, ux.CodeBrokerDenied, "Do not ask again"},
 	} {
 		t.Run(tc.body, func(t *testing.T) {
 			withXDG(t)

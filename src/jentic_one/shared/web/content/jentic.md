@@ -127,9 +127,9 @@ approval — and retry the blocked call.
   `manual_*` or `awaiting_app`): relay the URL, **end your turn**, and retry
   the original call later — don't wait or poll. Asking again for the same
   API returns the same request.
-- **Rejected means stop.** If a request comes back rejected (or
-  `recently_rejected`), don't ask again — tell your user what was rejected
-  and why you needed it.
+- **Rejected means stop.** If a request comes back rejected, don't ask again
+  on your own: tell your user what was rejected and why you needed it, and
+  ask again only if they tell you to (with the change they asked for).
 - **Where API connect requests aren't available** (the error says so), or
   the spec declares no auth the flow can collect, fall back to reporting the
   gap — once, richly, as above.

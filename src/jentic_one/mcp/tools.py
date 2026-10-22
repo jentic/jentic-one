@@ -77,7 +77,6 @@ from jentic_one.control.services.integrations.errors import (
     NoDeclaredSchemeError,
     NoOpForFlowError,
     PointsAtAccessError,
-    RecentlyRejectedError,
     ReservedAuthFieldError,
     ScopesNotSupportedError,
     ScopeValidationError,
@@ -1718,14 +1717,6 @@ def _api_target_tool_error(exc: Exception, target: str) -> ToolError | None:
             "human user, end your turn, and retry the blocked calls once they act.",
             extra={"retryable": False},
         )
-    if isinstance(exc, RecentlyRejectedError):
-        return ToolError(
-            CODE_BROKER_DENIED,
-            f"a human recently rejected this agent's request to connect {target}: {exc}",
-            actionable="Do not ask again. Tell your human user the request was rejected and "
-            "what you needed it for; continue without this API unless they say otherwise.",
-            extra={"retryable": False},
-        )
     return None
 
 
@@ -1855,7 +1846,6 @@ async def handle_request_connection(
         ReservedAuthFieldError,
         SecuritySchemesLookupUnavailableError,
         TooManyOpenSessionsError,
-        RecentlyRejectedError,
     ) as exc:
         mapped = _api_target_tool_error(exc, target)
         assert mapped is not None
@@ -2176,7 +2166,6 @@ def _edit_refusal(env: CallEnv, exc: Exception, what: str) -> ToolError:
 
 _EDIT_REFUSALS = (
     PointsAtAccessError,
-    RecentlyRejectedError,
     EditBindingNotFoundError,
     ScopesNotSupportedError,
     ScopeValidationError,

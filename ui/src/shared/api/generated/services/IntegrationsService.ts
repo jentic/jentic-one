@@ -382,9 +382,7 @@ export class IntegrationsService {
      * Only the target agent's owner (holding ``credentials:write`` and
      * ``agents:write``) or ``org:admin``; there is no poll-token path and an
      * agent can never reject. Everyone else gets the uniform 403. The agent's
-     * ``/status`` then reports ``failed`` with ``error_code: rejected``, and
-     * its repeat ``:connect`` for the same target answers 429
-     * ``recently_rejected`` for the rejection cooldown. Closing the dialog
+     * ``/status`` then reports ``failed`` with ``error_code: rejected``. Closing the dialog
      * without rejecting makes no call; an unmount cancel stays ``cancelled``.
      * @returns void
      * @throws ApiError
