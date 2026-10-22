@@ -93,7 +93,7 @@ type AdminEventsConfig struct {
 	// token carry the set they were issued with; the stream re-verifies the token it
 	// was opened with, so for those a change applies once that token expires and the
 	// client reconnects.
-	StreamRecheckSeconds float64 `json:"stream_recheck_seconds,omitempty,omitzero" yaml:"stream_recheck_seconds,omitempty" mapstructure:"stream_recheck_seconds,omitempty"`
+	StreamRecheckSeconds float64 `json:"stream_recheck_seconds" yaml:"stream_recheck_seconds" mapstructure:"stream_recheck_seconds"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
