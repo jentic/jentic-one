@@ -252,12 +252,39 @@ class IntegrationsConnectRequest(BaseModel):
         ),
     )
 
+    # A CLI-profile preset (``GET /cli-profiles``), expanded server-side into
+    # concrete rules for the target API's role and appended to
+    # ``requested_permission_rules``, so the approver reviews concrete rules.
+    preset: str | None = Field(
+        default=None,
+        max_length=64,
+        examples=["read_only"],
+        description=(
+            "A rule preset of the CLI profile that declares the target (see `GET /cli-profiles`), "
+            "expanded into concrete permission rules for the target API and appended to "
+            "`requested_permission_rules`."
+        ),
+    )
+    preset_params: dict[str, str] = Field(
+        default_factory=dict,
+        max_length=10,
+        examples=[{"repo": "octo-org/app", "branches": "agent/*"}],
+        description=(
+            "Values for the preset's parameters, e.g. `repo` (comma-separated `<owner>/<repo>` "
+            "globs) and `branches` (a branch glob below `refs/heads/`)."
+        ),
+    )
+
     @model_validator(mode="after")
     def _one_target(self) -> IntegrationsConnectRequest:
         if (self.vendor is None) == (self.api is None):
             raise ValueError("pass exactly one of vendor or api")
         if self.auth_type is not None and self.api is None:
             raise ValueError("auth_type applies to an api target only")
+        if self.preset_params and self.preset is None:
+            raise ValueError("preset_params applies with a preset only")
+        if any(len(v) > 1000 for v in self.preset_params.values()):
+            raise ValueError("a preset_params value is at most 1000 characters")
         return self
 
 
@@ -266,6 +293,13 @@ class IntegrationsConnectResponse(BaseModel):
     approval_url: str
     poll_token: str
     resolved_flow: str
+    requested_permission_rules: list[PermissionRuleSchema] = Field(
+        default_factory=list,
+        description=(
+            "The permission rules the session asks for, with a `preset` already expanded: what "
+            "the approver reviews."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

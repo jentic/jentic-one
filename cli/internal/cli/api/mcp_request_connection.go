@@ -116,6 +116,9 @@ type connectResponse struct {
 	ApprovalURL  string `json:"approval_url"`
 	PollToken    string `json:"poll_token"`
 	ResolvedFlow string `json:"resolved_flow"`
+	// RequestedPermissionRules are the rules the session asks for, with a
+	// --preset already expanded server-side (what the approver reviews).
+	RequestedPermissionRules []control.PermissionRuleSchema `json:"requested_permission_rules,omitempty"`
 }
 
 // connectScopesMax mirrors the route's requested_scopes bound

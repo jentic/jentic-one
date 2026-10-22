@@ -41,6 +41,8 @@ from jentic_one.control.services.integrations.errors import (
     NoOpForFlowError,
     OAuthAppChangedError,
     OwnClientInvalidError,
+    PresetInvalidError,
+    PresetNotApplicableError,
     ReauthorizeUnavailableError,
     RecentlyRejectedError,
     ReservedAuthFieldError,
@@ -144,11 +146,21 @@ _CONNECT_SESSION_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     InsufficientGrantedScopesError: (409, "insufficient_granted_scopes"),
     ReauthorizeUnavailableError: (409, "reauthorize_unavailable"),
     OwnClientInvalidError: (400, "own_oauth_client_invalid"),
+    PresetNotApplicableError: (400, "connect_preset_not_applicable"),
+    PresetInvalidError: (400, "connect_preset_invalid"),
     ConnectSessionServiceError: (500, "connect_session_error"),
 }
 
 _CONNECT_SESSION_SAFE_DETAILS: dict[type[Exception], str] = {
     InvalidPollTokenError: "Connect session not found or not accessible to the caller",
+    PresetNotApplicableError: (
+        "The connect target is not an API of a CLI profile, so it has no presets; pass "
+        "requested_permission_rules instead (see GET /cli-profiles)."
+    ),
+    PresetInvalidError: (
+        "The preset does not expand into rules for this target; preset_error says why "
+        "(see GET /cli-profiles for the presets and their parameters)."
+    ),
     ConnectSessionServiceError: "Internal error handling the connect session.",
 }
 
@@ -170,6 +182,10 @@ def _connect_session_response_hook(
         extra["variables"] = exc.variables
     elif isinstance(exc, TooManyOpenSessionsError):
         extra.update(scope=exc.scope, limit=exc.limit)
+    elif isinstance(exc, PresetInvalidError):
+        # The preset's own reason: manifest data plus the caller's preset name
+        # and parameter values, which it needs to correct the call.
+        extra["preset_error"] = str(exc)
     elif isinstance(exc, ConfirmKindMismatchError):
         extra["allowed_kinds"] = exc.allowed
     elif isinstance(exc, RecentlyRejectedError):

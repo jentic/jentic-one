@@ -13,7 +13,7 @@ from typing import Annotated
 
 import structlog
 from fastapi import APIRouter, Body, Depends, Path, Query, Request, Response
-from jentic.problem_details import Forbidden, TooManyRequests
+from jentic.problem_details import BadRequest, Forbidden, TooManyRequests
 
 from jentic_one.control.services.integrations.connect_session_service import (
     ApiTarget,
@@ -95,6 +95,9 @@ _POLL_TOKEN_DESCRIPTION = (
 )
 
 _logger = structlog.get_logger(__name__)
+
+#: Cap on the rules a session asks for, a preset expanded (the binding write takes 100).
+_MAX_REQUESTED_RULES = 100
 
 router = APIRouter(tags=["Integrations"])
 
@@ -189,20 +192,36 @@ async def integrations_connect(
     else:
         agent_id = body.agent_id or None
 
+    api_target = (
+        ApiTarget(vendor=body.api.vendor, name=body.api.name, version=body.api.version)
+        if body.api is not None
+        else None
+    )
+    requested_rules = [r.model_dump(exclude_none=True) for r in body.requested_permission_rules]
+    if body.preset is not None:
+        requested_rules += svc.preset_rules(
+            vendor_key=body.vendor,
+            api_target=api_target,
+            preset=body.preset,
+            params=body.preset_params,
+        )
+    if len(requested_rules) > _MAX_REQUESTED_RULES:
+        raise BadRequest(
+            detail=(
+                f"the request asks for {len(requested_rules)} permission rules with its preset "
+                f"expanded; at most {_MAX_REQUESTED_RULES} are accepted"
+            ),
+            type="too_many_requested_rules",
+            instance="/integrations:connect",
+        )
     created = await svc.create_session(
         vendor_key=body.vendor or "",
-        api_target=(
-            ApiTarget(vendor=body.api.vendor, name=body.api.name, version=body.api.version)
-            if body.api is not None
-            else None
-        ),
+        api_target=api_target,
         auth_type=body.auth_type,
         agent_id=agent_id,
         identity=identity,
         requested_scopes=body.requested_scopes,
-        requested_permission_rules=[
-            r.model_dump(exclude_none=True) for r in body.requested_permission_rules
-        ],
+        requested_permission_rules=requested_rules,
         preferred_flow=body.preferred_flow,
         reason=body.reason,
         credential_name=body.name,
@@ -214,6 +233,9 @@ async def integrations_connect(
         approval_url=created.approval_url,
         poll_token=created.poll_token,
         resolved_flow=created.resolved_flow,
+        requested_permission_rules=[
+            PermissionRuleSchema.model_validate(r) for r in requested_rules
+        ],
     )
 
 

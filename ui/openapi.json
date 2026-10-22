@@ -9536,6 +9536,11 @@
             "name": "GitHub (work)",
             "oauth_app_registration_id": "oar_6968b39821e5f89a6975f501",
             "preferred_flow": "authorization_code",
+            "preset": "read_only",
+            "preset_params": {
+              "branches": "agent/*",
+              "repo": "octo-org/app"
+            },
             "reason": "Needs read access to triage issues in the platform repo.",
             "requested_permission_rules": [
               {
@@ -9653,6 +9658,37 @@
               "authorization_code"
             ],
             "title": "Preferred Flow"
+          },
+          "preset": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A rule preset of the CLI profile that declares the target (see `GET /cli-profiles`), expanded into concrete permission rules for the target API and appended to `requested_permission_rules`.",
+            "examples": [
+              "read_only"
+            ],
+            "title": "Preset"
+          },
+          "preset_params": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Values for the preset's parameters, e.g. `repo` (comma-separated `<owner>/<repo>` globs) and `branches` (a branch glob below `refs/heads/`).",
+            "examples": [
+              {
+                "branches": "agent/*",
+                "repo": "octo-org/app"
+              }
+            ],
+            "maxProperties": 10,
+            "title": "Preset Params",
+            "type": "object"
           },
           "reason": {
             "anyOf": [
@@ -44257,6 +44293,11 @@
                 "name": "GitHub (work)",
                 "oauth_app_registration_id": "oar_6968b39821e5f89a6975f501",
                 "preferred_flow": "authorization_code",
+                "preset": "read_only",
+                "preset_params": {
+                  "branches": "agent/*",
+                  "repo": "octo-org/app"
+                },
                 "reason": "Needs read access to triage issues in the platform repo.",
                 "requested_permission_rules": [
                   {

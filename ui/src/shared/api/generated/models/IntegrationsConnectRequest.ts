@@ -33,6 +33,14 @@ export type IntegrationsConnectRequest = {
      */
     preferred_flow?: (string | null);
     /**
+     * A rule preset of the CLI profile that declares the target (see `GET /cli-profiles`), expanded into concrete permission rules for the target API and appended to `requested_permission_rules`.
+     */
+    preset?: (string | null);
+    /**
+     * Values for the preset's parameters, e.g. `repo` (comma-separated `<owner>/<repo>` globs) and `branches` (a branch glob below `refs/heads/`).
+     */
+    preset_params?: Record<string, string>;
+    /**
      * Free-text reason for the request, shown to the approver.
      */
     reason?: (string | null);

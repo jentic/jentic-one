@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import math
 import secrets
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -92,6 +92,8 @@ from jentic_one.control.services.integrations.errors import (
     NoOpForFlowError,
     OAuthAppChangedError,
     OwnClientInvalidError,
+    PresetInvalidError,
+    PresetNotApplicableError,
     ReauthorizeUnavailableError,
     RecentlyRejectedError,
     ReviewStaleError,
@@ -149,6 +151,13 @@ from jentic_one.shared.catalog import (
     ApiSecurityView,
     CatalogAutoImportProtocol,
     SecuritySchemesLookupProtocol,
+)
+from jentic_one.shared.cli_profiles import (
+    PresetError,
+    expand_preset,
+    profile_api_for_catalog_api_id,
+    profile_api_for_connect,
+    profile_api_for_identity,
 )
 from jentic_one.shared.config import connect_approval_url, resolved_control_egress
 from jentic_one.shared.context import Context
@@ -849,6 +858,41 @@ class ConnectSessionService:
         return self._ctx.config.control.connect.manual_flows_enabled
 
     # ---- create -----------------------------------------------------------
+
+    def preset_rules(
+        self,
+        *,
+        vendor_key: str | None,
+        api_target: ApiTarget | None,
+        preset: str,
+        params: Mapping[str, str],
+    ) -> list[dict[str, Any]]:
+        """The concrete rules ``preset`` expands into for the connect's target.
+
+        The target is a CLI-profile API: a vendor entry (by its key, or by the
+        catalog api_id its ``vendor`` names) or a registry API identity. Each
+        API keeps its own credential, so the preset is expanded for that API's
+        role only (path rules for REST, GraphQL rules for GraphQL, git rules
+        for git); the approver sees these concrete rules on the review page,
+        as if the agent had listed them itself.
+        """
+        found = None
+        if api_target is not None:
+            found = profile_api_for_identity(api_target.vendor, api_target.name)
+            target = f"{api_target.vendor}/{api_target.name}/{api_target.version}"
+        else:
+            target = vendor_key or ""
+            found = profile_api_for_connect(target)
+            entry = self._ctx.config.vendors.entries.get(target)
+            if found is None and entry is not None:
+                found = profile_api_for_catalog_api_id(entry.vendor)
+        if found is None:
+            raise PresetNotApplicableError(target)
+        profile, api = found
+        try:
+            return expand_preset(profile, preset, params, role=api.role)
+        except PresetError as exc:
+            raise PresetInvalidError(str(exc)) from exc
 
     async def create_session(
         self,

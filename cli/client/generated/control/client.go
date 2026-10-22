@@ -4737,7 +4737,7 @@ type InstanceIdentityResponseBackend string
 
 // IntegrationsConnectRequest Start connecting a credential for a vendor or a registry API.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","api":{"name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"auth_type":"oauth2","name":"GitHub (work)","oauth_app_registration_id":"oar_6968b39821e5f89a6975f501","preferred_flow":"authorization_code","reason":"Needs read access to triage issues in the platform repo.","requested_permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"requested_scopes":["repo","read:user"],"vendor":"github"}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","api":{"name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"auth_type":"oauth2","name":"GitHub (work)","oauth_app_registration_id":"oar_6968b39821e5f89a6975f501","preferred_flow":"authorization_code","preset":"read_only","preset_params":{"branches":"agent/*","repo":"octo-org/app"},"reason":"Needs read access to triage issues in the platform repo.","requested_permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"requested_scopes":["repo","read:user"],"vendor":"github"}
 type IntegrationsConnectRequest struct {
 	// AgentId ID of the agent to bind the credential to on confirm; it must be an active agent the caller owns and may approve for (`agents:write`), or any agent for `org:admin`. Agent callers must omit it, and when omitted by a user the credential connects unbound.
 	//
@@ -4768,6 +4768,16 @@ type IntegrationsConnectRequest struct {
 	//
 	// Examples: authorization_code
 	PreferredFlow *string `json:"preferred_flow,omitempty"`
+
+	// Preset A rule preset of the CLI profile that declares the target (see `GET /cli-profiles`), expanded into concrete permission rules for the target API and appended to `requested_permission_rules`.
+	//
+	// Examples: read_only
+	Preset *string `json:"preset,omitempty"`
+
+	// PresetParams Values for the preset's parameters, e.g. `repo` (comma-separated `<owner>/<repo>` globs) and `branches` (a branch glob below `refs/heads/`).
+	//
+	// Examples: {"branches":"agent/*","repo":"octo-org/app"}
+	PresetParams *map[string]string `json:"preset_params,omitempty"`
 
 	// Reason Free-text reason for the request, shown to the approver.
 	//
