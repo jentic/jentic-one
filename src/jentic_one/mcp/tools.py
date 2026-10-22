@@ -101,6 +101,7 @@ from jentic_one.mcp import execute as ex
 from jentic_one.mcp.envelopes import (
     CODE_BROKER_DENIED,
     CODE_INTERNAL_ERROR,
+    CODE_MISSING_ARGUMENT,
     CODE_NOT_AUTHENTICATED,
     CODE_RESOLVE_FAILED,
     CODE_TRANSPORT_ERROR,
@@ -2310,8 +2311,11 @@ async def dispatch_mcp_tool_call(
     """Route one authenticated tools/call to its handler.
 
     ``ToolError`` renders as the coded ``isError`` result (diagnosable
-    states are data the model acts on); unexpected failures degrade to
-    INTERNAL_ERROR instead of a protocol error, matching the Go posture.
+    states are data the model acts on); so do malformed arguments
+    (``MISSING_ARGUMENT``), since a client may show the model a protocol
+    error only as a generic failure, hiding what to fix. Unexpected failures
+    degrade to INTERNAL_ERROR instead of a protocol error, matching the Go
+    posture.
     """
     handler = HANDLERS.get(name)
     if handler is None:
@@ -2321,8 +2325,17 @@ async def dispatch_mcp_tool_call(
         return await handler(env, arguments or {})
     except ToolError as err:
         return soft_error_result(env.ctx, err)
-    except MCPError:
-        raise
+    except MCPError as err:
+        if err.error.code != _INVALID_PARAMS:
+            raise
+        return soft_error_result(
+            env.ctx,
+            ToolError(
+                CODE_MISSING_ARGUMENT,
+                err.error.message,
+                actionable="Fix the argument the error names and call the tool again.",
+            ),
+        )
     except Exception as exc:
         # The exception text can carry request material (headers, credential
         # values), so it never reaches the agent — only the class name does.

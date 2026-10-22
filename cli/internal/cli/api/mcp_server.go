@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
@@ -349,7 +350,26 @@ func (s *mcpServer) registerTools() {
 			s.logger.Info("tool withheld by --read-only", "tool", spec.tool.Name)
 			continue
 		}
-		s.server.AddTool(spec.tool, spec.handler)
+		s.server.AddTool(spec.tool, s.argumentErrorsAsToolErrors(spec.handler))
+	}
+}
+
+// argumentErrorsAsToolErrors returns a handler's malformed-arguments error as a
+// coded tool result (MISSING_ARGUMENT, naming what to fix) instead of a
+// protocol error: a client may show the model a protocol error only as a
+// generic failure, hiding the reason it needs to fix the call.
+func (s *mcpServer) argumentErrorsAsToolErrors(handler mcp.ToolHandler) mcp.ToolHandler {
+	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		res, err := handler(ctx, req)
+		var rpcErr *jsonrpc.Error
+		if err != nil && errors.As(err, &rpcErr) && rpcErr.Code == jsonrpc.CodeInvalidParams {
+			return s.softError(ctx, &ux.CodedError{
+				Code:       ux.CodeMissingArgument,
+				Msg:        rpcErr.Message,
+				Actionable: "Fix the argument the error names and call the tool again.",
+			}), nil
+		}
+		return res, err
 	}
 }
 

@@ -173,3 +173,23 @@ async def test_an_amend_carries_only_the_fields_sent() -> None:
     assert amend.fields == frozenset({"requested_scopes", "reason"})
     assert (amend.requested_scopes, amend.reason) == (["repo"], "also labels")
     assert _payload(result)["revision_number"] == 2
+
+
+async def test_a_refused_rule_comes_back_as_a_tool_error_naming_it() -> None:
+    # The client may show a protocol error only as a generic failure, so the
+    # reason has to ride the tool result.
+    result = await dispatch_tool_call(
+        _env(),
+        "request_access_change",
+        {
+            "credential_id": "cred_1",
+            "rules": {
+                "add": [{"effect": "allow", "methods": ["POST"], "path": "/drafts(/[^/]+)+"}]
+            },
+        },
+    )
+    assert result.is_error
+    payload = _payload(result)
+    assert payload["error_code"] == "MISSING_ARGUMENT"
+    assert "rules.add[0]" in payload["error"]
+    assert _FakeService.edits == []

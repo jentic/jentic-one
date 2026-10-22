@@ -354,11 +354,11 @@ func TestMCPSession_FullRoundTrip(t *testing.T) {
 	}
 }
 
-// TestMCPSession_MissingQueryIsProtocolError proves the invalid-params
-// contract over a real client session, not just a direct handler call: the
-// *jsonrpc.Error a handler returns must reach the CLIENT as a protocol error
-// (the SDK's error propagation), never be flattened into a tool result.
-func TestMCPSession_MissingQueryIsProtocolError(t *testing.T) {
+// TestMCPSession_MissingQueryIsAToolError proves the invalid-params contract
+// over a real client session: a handler's malformed-arguments error reaches
+// the CLIENT as a coded tool result (MISSING_ARGUMENT, naming what to fix), not
+// a protocol error a client might show the model only as a generic failure.
+func TestMCPSession_MissingQueryIsAToolError(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
@@ -369,13 +369,19 @@ func TestMCPSession_MissingQueryIsProtocolError(t *testing.T) {
 		Name:      "search_apis",
 		Arguments: map[string]any{},
 	})
-	if err == nil {
-		t.Fatalf("want a protocol error at the client, got a result: %v", res)
+	if err != nil {
+		t.Fatalf("want a tool result, got a protocol error: %v", err)
 	}
-	// The invalid-params message must survive the round trip so the model can
-	// correct the call.
-	if !strings.Contains(err.Error(), "query") {
-		t.Errorf("client-side error %q must name the missing parameter", err.Error())
+	if !res.IsError {
+		t.Fatalf("want an error result, got %v", res)
+	}
+	payload := decodeToolJSON(t, res)
+	if payload["error_code"] != "MISSING_ARGUMENT" {
+		t.Errorf("error_code = %v, want MISSING_ARGUMENT", payload["error_code"])
+	}
+	// The message must name the parameter so the model can correct the call.
+	if msg, _ := payload["error"].(string); !strings.Contains(msg, "query") {
+		t.Errorf("error %q must name the missing parameter", msg)
 	}
 }
 
