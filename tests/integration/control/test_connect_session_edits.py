@@ -37,7 +37,7 @@ from jentic_one.control.services.integrations.connect_session_service import (
     ConnectSessionService,
     SessionAmend,
 )
-from jentic_one.control.services.integrations.edits import EditRequest, RuleAdd
+from jentic_one.control.services.integrations.edits import EditRequest, RuleAdd, rule_to_write
 from jentic_one.control.services.integrations.errors import (
     AmendFieldsMismatchError,
     BaselineChangedError,
@@ -516,7 +516,7 @@ async def test_amending_an_edit_makes_a_new_revision_the_confirm_must_name(
         )
 
 
-async def test_only_the_initiator_amends_and_only_with_the_sessions_fields(
+async def test_only_the_initiator_or_its_reviewer_amends_and_only_with_the_sessions_fields(
     integration_context: Context, binding: str
 ) -> None:
     ctx = integration_context
@@ -525,7 +525,7 @@ async def test_only_the_initiator_amends_and_only_with_the_sessions_fields(
     with pytest.raises(InvalidPollTokenError):
         await svc.amend_session(
             created.session_id,
-            identity=_OWNER,
+            identity=_OTHER,
             amend=SessionAmend(fields=frozenset({"reason"}), reason="not mine"),
         )
     with pytest.raises(AmendFieldsMismatchError):
@@ -713,3 +713,59 @@ async def test_a_full_replacement_follows_the_binding_without_a_conflict(
         resume=False,
     )
     assert await _rules(ctx, binding) == [("allow", "/v1/send")]
+
+
+async def test_the_reviewer_edits_the_request_as_a_revision_of_their_own(
+    integration_context: Context, binding: str
+) -> None:
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    created = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+    review = await svc.get_review_data(created.session_id, poll_token=None, identity=_OWNER)
+    assert review.edit is not None
+    agent_rules = [rule_to_write(r) for r in review.edit.result["rules"]]
+
+    # Someone who can't approve it can't edit it either.
+    with pytest.raises(InvalidPollTokenError):
+        await svc.amend_session(
+            created.session_id,
+            identity=_OTHER,
+            amend=SessionAmend(fields=frozenset({"rules"}), rules=EditRequest(set_rules=[_READ])),
+        )
+
+    # The owner adds a rule of their own to the request.
+    extra = _READ | {"path": "/v2/", "comment": "Also the new API"}
+    revised = await svc.amend_session(
+        created.session_id,
+        identity=_OWNER,
+        amend=SessionAmend(
+            fields=frozenset({"rules"}), rules=EditRequest(set_rules=[*agent_rules, extra])
+        ),
+    )
+    assert revised.revision_number == 2
+    review = await svc.get_review_data(created.session_id, poll_token=None, identity=_OWNER)
+    assert review.edit is not None
+    assert [(r["path"], r["added_by"]) for r in review.edit.result["rules"]] == [
+        ("/v1/", None),
+        ("/v1/send", _AGENT),
+        ("/v2/", _OWNER_SUB),
+    ]
+    async with ctx.control_db.session() as session:
+        revisions = await ConnectSessionRevisionRepository.list_for_session(
+            session, created.session_id
+        )
+    assert [r.created_by for r in revisions] == [_AGENT, _OWNER_SUB]
+
+    await svc.confirm_edit(
+        created.session_id,
+        poll_token=None,
+        identity=_OWNER,
+        revision_id=revised.revision_id,
+        permission_rules=[rule_to_write(r) for r in review.edit.result["rules"]],
+        resume=False,
+    )
+    assert await _rules(ctx, binding) == [
+        ("allow", "/v1/"),
+        ("allow", "/v1/send"),
+        ("allow", "/v2/"),
+    ]

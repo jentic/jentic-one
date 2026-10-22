@@ -1722,7 +1722,9 @@ class ConnectSessionService:
     ) -> AmendedSession:
         """Change what an open session asks for, as a new revision.
 
-        Only the session's initiator, and only while it is open: a create
+        The session's initiator, or for an edit session a human who may
+        confirm it (its reviewer editing the request: the revision records
+        who made it), and only while it is open: a create
         session before it is confirmed (``created`` or ``awaiting_app``), an
         edit session in ``created``. A confirmed or ended session is
         :class:`SessionClosedError`. Anyone else gets the uniform 403.
@@ -1747,7 +1749,10 @@ class ConnectSessionService:
                 closed.point_at(outcome.credential_id, outcome.agent_id)
                 raise closed
             raise InvalidPollTokenError("invalid poll_token")
-        if row.initiator_actor_id != identity.sub:
+        if row.initiator_actor_id != identity.sub and not (
+            row.intent == INTENT_EDIT
+            and await self._can_confirm(row, identity, await self._agent_view(row.agent_id))
+        ):
             raise InvalidPollTokenError("invalid poll_token")
         open_states: tuple[str, ...] = (
             ("created",) if row.intent == INTENT_EDIT else ("created", AWAITING_APP)
@@ -1915,8 +1920,10 @@ class ConnectSessionService:
                         "number": revision.number,
                     },
                     created_by=row.agent_id,
-                    actor_id=row.initiator_actor_id,
-                    actor_type=actor_type_label_from_id(row.initiator_actor_id),
+                    actor_id=revision.created_by or row.initiator_actor_id,
+                    actor_type=actor_type_label_from_id(
+                        revision.created_by or row.initiator_actor_id
+                    ),
                 )
         except Exception:
             _logger.warning(

@@ -11055,8 +11055,10 @@ type ClientInterface interface {
 	//
 	// Change what an open session asks for; the reviewer sees the new revision.
 	//
-	// Only the session's initiator, while it is open (not yet confirmed or
-	// ended); a closed session is 409 `session_closed`. The fields sent replace
+	// The session's initiator, or for an edit session a human who may confirm
+	// it (a reviewer editing the request; the revision records who made it),
+	// while it is open (not yet confirmed or ended); a closed session is 409
+	// `session_closed`. The fields sent replace
 	// those parts of the ask and the rest stay. Edit sessions take `rules` and
 	// `resume`, relative to the binding as it was when the edit opened; create
 	// sessions take `requested_permission_rules` and `requested_scopes`, which
@@ -11073,8 +11075,10 @@ type ClientInterface interface {
 	//
 	// Change what an open session asks for; the reviewer sees the new revision.
 	//
-	// Only the session's initiator, while it is open (not yet confirmed or
-	// ended); a closed session is 409 `session_closed`. The fields sent replace
+	// The session's initiator, or for an edit session a human who may confirm
+	// it (a reviewer editing the request; the revision records who made it),
+	// while it is open (not yet confirmed or ended); a closed session is 409
+	// `session_closed`. The fields sent replace
 	// those parts of the ask and the rest stay. Edit sessions take `rules` and
 	// `resume`, relative to the binding as it was when the edit opened; create
 	// sessions take `requested_permission_rules` and `requested_scopes`, which
@@ -14916,8 +14920,10 @@ func (c *Client) PollConnectSessionStatus(ctx context.Context, sessionId string,
 //
 // Change what an open session asks for; the reviewer sees the new revision.
 //
-// Only the session's initiator, while it is open (not yet confirmed or
-// ended); a closed session is 409 `session_closed`. The fields sent replace
+// The session's initiator, or for an edit session a human who may confirm
+// it (a reviewer editing the request; the revision records who made it),
+// while it is open (not yet confirmed or ended); a closed session is 409
+// `session_closed`. The fields sent replace
 // those parts of the ask and the rest stay. Edit sessions take `rules` and
 // `resume`, relative to the binding as it was when the edit opened; create
 // sessions take `requested_permission_rules` and `requested_scopes`, which
@@ -14944,8 +14950,10 @@ func (c *Client) AmendConnectSessionWithBody(ctx context.Context, sessionId stri
 //
 // Change what an open session asks for; the reviewer sees the new revision.
 //
-// Only the session's initiator, while it is open (not yet confirmed or
-// ended); a closed session is 409 `session_closed`. The fields sent replace
+// The session's initiator, or for an edit session a human who may confirm
+// it (a reviewer editing the request; the revision records who made it),
+// while it is open (not yet confirmed or ended); a closed session is 409
+// `session_closed`. The fields sent replace
 // those parts of the ask and the rest stay. Edit sessions take `rules` and
 // `resume`, relative to the binding as it was when the edit opened; create
 // sessions take `requested_permission_rules` and `requested_scopes`, which
@@ -27991,8 +27999,10 @@ type ClientWithResponsesInterface interface {
 	//
 	// Change what an open session asks for; the reviewer sees the new revision.
 	//
-	// Only the session's initiator, while it is open (not yet confirmed or
-	// ended); a closed session is 409 `session_closed`. The fields sent replace
+	// The session's initiator, or for an edit session a human who may confirm
+	// it (a reviewer editing the request; the revision records who made it),
+	// while it is open (not yet confirmed or ended); a closed session is 409
+	// `session_closed`. The fields sent replace
 	// those parts of the ask and the rest stay. Edit sessions take `rules` and
 	// `resume`, relative to the binding as it was when the edit opened; create
 	// sessions take `requested_permission_rules` and `requested_scopes`, which
@@ -28009,8 +28019,10 @@ type ClientWithResponsesInterface interface {
 	//
 	// Change what an open session asks for; the reviewer sees the new revision.
 	//
-	// Only the session's initiator, while it is open (not yet confirmed or
-	// ended); a closed session is 409 `session_closed`. The fields sent replace
+	// The session's initiator, or for an edit session a human who may confirm
+	// it (a reviewer editing the request; the revision records who made it),
+	// while it is open (not yet confirmed or ended); a closed session is 409
+	// `session_closed`. The fields sent replace
 	// those parts of the ask and the rest stay. Edit sessions take `rules` and
 	// `resume`, relative to the binding as it was when the edit opened; create
 	// sessions take `requested_permission_rules` and `requested_scopes`, which
@@ -46776,8 +46788,10 @@ func (c *ClientWithResponses) PollConnectSessionStatusWithResponse(ctx context.C
 //
 // Change what an open session asks for; the reviewer sees the new revision.
 //
-// Only the session's initiator, while it is open (not yet confirmed or
-// ended); a closed session is 409 `session_closed`. The fields sent replace
+// The session's initiator, or for an edit session a human who may confirm
+// it (a reviewer editing the request; the revision records who made it),
+// while it is open (not yet confirmed or ended); a closed session is 409
+// `session_closed`. The fields sent replace
 // those parts of the ask and the rest stay. Edit sessions take `rules` and
 // `resume`, relative to the binding as it was when the edit opened; create
 // sessions take `requested_permission_rules` and `requested_scopes`, which
@@ -46800,8 +46814,10 @@ func (c *ClientWithResponses) AmendConnectSessionWithBodyWithResponse(ctx contex
 //
 // Change what an open session asks for; the reviewer sees the new revision.
 //
-// Only the session's initiator, while it is open (not yet confirmed or
-// ended); a closed session is 409 `session_closed`. The fields sent replace
+// The session's initiator, or for an edit session a human who may confirm
+// it (a reviewer editing the request; the revision records who made it),
+// while it is open (not yet confirmed or ended); a closed session is 409
+// `session_closed`. The fields sent replace
 // those parts of the ask and the rest stay. Edit sessions take `rules` and
 // `resume`, relative to the binding as it was when the edit opened; create
 // sessions take `requested_permission_rules` and `requested_scopes`, which

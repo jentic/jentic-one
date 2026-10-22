@@ -36007,7 +36007,7 @@
     "/connect-sessions/{session_id}:amend": {
       "description": "`POST`: Amend an open connect session's request.",
       "post": {
-        "description": "Change what an open session asks for; the reviewer sees the new revision.\n\nOnly the session's initiator, while it is open (not yet confirmed or\nended); a closed session is 409 `session_closed`. The fields sent replace\nthose parts of the ask and the rest stay. Edit sessions take `rules` and\n`resume`, relative to the binding as it was when the edit opened; create\nsessions take `requested_permission_rules` and `requested_scopes`, which\nreplace the ask outright; both take `reason`. The session id, approval\nURL and poll token stay the same, and any confirm must name the new\n`revision_id`.",
+        "description": "Change what an open session asks for; the reviewer sees the new revision.\n\nThe session's initiator, or for an edit session a human who may confirm\nit (a reviewer editing the request; the revision records who made it),\nwhile it is open (not yet confirmed or ended); a closed session is 409\n`session_closed`. The fields sent replace\nthose parts of the ask and the rest stay. Edit sessions take `rules` and\n`resume`, relative to the binding as it was when the edit opened; create\nsessions take `requested_permission_rules` and `requested_scopes`, which\nreplace the ask outright; both take `reason`. The session id, approval\nURL and poll token stay the same, and any confirm must name the new\n`revision_id`.",
         "operationId": "amendConnectSession",
         "parameters": [
           {
