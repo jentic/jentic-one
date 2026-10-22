@@ -185,6 +185,7 @@ class CredentialBindingResolver:
                         "vendor": vendor,
                         "name": name,
                         "version": version,
+                        "cli_profile": declaring_profile(vendor, name, version),
                     },
                 )
             ).first()
