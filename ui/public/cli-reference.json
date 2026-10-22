@@ -1827,6 +1827,12 @@
                   "usage": "switch a suspended binding back on"
                 },
                 {
+                  "name": "scope-comment",
+                  "type": "stringToString",
+                  "default": "[]",
+                  "usage": "why you ask for a scope change, as scope=reason (repeatable; shown to the approver)"
+                },
+                {
                   "name": "set",
                   "type": "string",
                   "usage": "the full rule list to replace the current one with, as JSON (not combined with --add/--remove)"
@@ -1922,6 +1928,12 @@
                   "type": "bool",
                   "default": "false",
                   "usage": "switch a suspended binding back on"
+                },
+                {
+                  "name": "scope-comment",
+                  "type": "stringToString",
+                  "default": "[]",
+                  "usage": "why you ask for a scope change, as scope=reason (repeatable; shown to the approver)"
                 },
                 {
                   "name": "set",

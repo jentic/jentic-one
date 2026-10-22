@@ -234,3 +234,20 @@ func TestAccessEdit_SetScopesIsNotCombinedWithAddOrRemove(t *testing.T) {
 		t.Errorf("scopes = %v, want the full set", cp.seen["scopes"])
 	}
 }
+
+func TestAccessEdit_ScopeCommentsSayWhy(t *testing.T) {
+	withXDG(t)
+	cp := &editControlPlane{status: http.StatusCreated, body: editCreatedBody}
+	srv := cp.server(t)
+	defer srv.Close()
+
+	if _, err := runConnectTree(t, srv.URL, "access", "edit", "cred_1",
+		"--add-scopes", "gmail.send", "--scope-comment", "gmail.send=to send drafted replies"); err != nil {
+		t.Fatalf("access edit: %v", err)
+	}
+	scopes, _ := cp.seen["scopes"].(map[string]any)
+	comments, _ := scopes["comments"].(map[string]any)
+	if comments["gmail.send"] != "to send drafted replies" {
+		t.Errorf("scopes = %v, want the reason by scope", cp.seen["scopes"])
+	}
+}

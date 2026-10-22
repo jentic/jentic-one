@@ -358,12 +358,23 @@ class EditScopesRequest(BaseModel):
         ),
     )
 
+    comments: dict[str, str] = Field(
+        default_factory=dict,
+        max_length=100,
+        examples=[{"gmail.send": "To send the replies I draft"}],
+        description=(
+            "Why each scope is asked for (added or removed), by scope name. Shown to the reviewer."
+        ),
+    )
+
     @model_validator(mode="after")
     def _set_alone(self) -> EditScopesRequest:
         if self.set_scopes is not None and (self.add or self.remove):
             raise ValueError("pass either add/remove or set, not both")
         if set(self.add) & set(self.remove):
             raise ValueError("a scope can't be both added and removed")
+        if any(len(reason) > 500 for reason in self.comments.values()):
+            raise ValueError("a scope's comment must be at most 500 characters")
         return self
 
 
@@ -703,6 +714,25 @@ class EditRuleView(BaseModel):
     match_mode: str = Field(default="regex", examples=["prefix"])
     operations: list[str] | None = Field(default=None)
     comment: str | None = Field(default=None)
+    added_by: str | None = Field(
+        default=None,
+        description=(
+            "In a result: who put the rule in the request (the agent, or a reviewer); "
+            "null for a rule the binding already has."
+        ),
+        examples=[ex.AGENT_ID],
+    )
+
+
+class EditScopeNote(BaseModel):
+    """Who asked for one scope change, and why."""
+
+    added_by: str | None = Field(
+        default=None, description="Who put the change in the request.", examples=[ex.AGENT_ID]
+    )
+    comment: str | None = Field(
+        default=None, description="Why, as they said.", examples=["To send drafted replies"]
+    )
 
 
 class EditRuleSetView(BaseModel):
@@ -734,6 +764,10 @@ class EditResultAccess(BaseModel):
     )
     rules: list[EditRuleView]
     scopes: list[str]
+    scope_notes: dict[str, EditScopeNote] = Field(
+        default_factory=dict,
+        description="Each scope the change adds or removes: who asked for it, and why.",
+    )
     suspended: bool
 
 

@@ -60,6 +60,8 @@ class EditRequest:
     add_scopes: list[str] = field(default_factory=list)
     remove_scopes: list[str] = field(default_factory=list)
     set_scopes: list[str] | None = None
+    # Why each scope is asked for (added or removed), by scope name.
+    scope_comments: dict[str, str] = field(default_factory=dict)
     resume: bool = False
     reason: str | None = None
 
@@ -78,6 +80,7 @@ class EditRequest:
             add_scopes=list(scopes.get("add", [])),
             remove_scopes=list(scopes.get("remove", [])),
             set_scopes=list(scopes["set"]) if scopes.get("set") is not None else None,
+            scope_comments=dict(scopes.get("comments") or {}),
             resume=bool(proposal.get("resume", False)),
             reason=proposal.get("reason"),
         )
@@ -97,6 +100,8 @@ class EditRequest:
             if self.set_scopes is not None
             else {"add": list(self.add_scopes), "remove": list(self.remove_scopes)}
         )
+        if self.scope_comments:
+            scopes["comments"] = dict(self.scope_comments)
         return {
             "rules": rules,
             "scopes": scopes,
@@ -130,7 +135,12 @@ def target_rules(baseline: Mapping[str, Any]) -> tuple[str, list[dict[str, Any]]
 
 
 def resolve_edit(
-    baseline: Mapping[str, Any], request: EditRequest, *, lenient: bool = False
+    baseline: Mapping[str, Any],
+    request: EditRequest,
+    *,
+    lenient: bool = False,
+    previous: Mapping[str, Any] | None = None,
+    actor: str | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     """Resolve ``request`` against ``baseline`` into the result to review.
 
@@ -139,6 +149,11 @@ def resolve_edit(
     ``lenient`` (a rebase onto a changed binding), where that part is dropped
     and its rule id listed in ``dropped``. Each rule in the result keeps the
     ``id`` it had in the baseline; added rules carry ``id: None``.
+
+    Each added rule and each scope change records who put it in the request
+    (``added_by``): carried from the ``previous`` revision's result when it
+    was already there, else ``actor``, the one making this revision.
+    Scope changes are in ``scope_notes``, with the reason given for each.
     """
     target, rules = target_rules(baseline)
     known = {r["id"] for r in rules}
@@ -186,11 +201,67 @@ def resolve_edit(
         scopes = (set(granted or []) | set(request.add_scopes)) - set(request.remove_scopes)
     result = {
         "target": target,
-        "rules": resolved,
+        "rules": _attribute_rules(resolved, rules, previous, actor),
         "scopes": sorted(scopes),
+        "scope_notes": _scope_notes(set(granted or []), scopes, request, previous, actor),
         "suspended": bool(baseline["suspended"]) and not request.resume,
     }
     return result, dropped
+
+
+def _attribute_rules(
+    rules: list[dict[str, Any]],
+    baseline_rules: list[dict[str, Any]],
+    previous: Mapping[str, Any] | None,
+    actor: str | None,
+) -> list[dict[str, Any]]:
+    """Each rule with ``added_by``: none for one the binding has, else who added it.
+
+    A rule sent again in a full list (``set``) counts as the binding's own
+    when it matches one; one already in the request keeps who added it.
+    """
+    own = [rule_content(r) for r in baseline_rules]
+    earlier = [
+        (rule_content(r), r.get("added_by"))
+        for r in (previous or {}).get("rules", [])
+        if r.get("added_by") is not None
+    ]
+    out: list[dict[str, Any]] = []
+    for rule in rules:
+        added_by = None
+        content = rule_content(rule)
+        if rule["id"] is None:
+            if content in own:
+                own.remove(content)
+            else:
+                match = next((i for i, (c, _) in enumerate(earlier) if c == content), None)
+                added_by = earlier.pop(match)[1] if match is not None else actor
+        elif content in own:
+            own.remove(content)
+        out.append({**rule, "added_by": added_by})
+    return out
+
+
+def _scope_notes(
+    granted: set[str],
+    scopes: set[str],
+    request: EditRequest,
+    previous: Mapping[str, Any] | None,
+    actor: str | None,
+) -> dict[str, dict[str, Any]]:
+    """Who asked for each scope change (added or removed), and why."""
+    earlier: Mapping[str, Any] = (previous or {}).get("scope_notes") or {}
+    earlier_scopes = set((previous or {}).get("scopes") or [])
+    notes: dict[str, dict[str, Any]] = {}
+    for scope in sorted((scopes - granted) | (granted - scopes)):
+        # The same change was already asked for: keep who asked, and why.
+        same = previous is not None and (scope in earlier_scopes) == (scope in scopes)
+        note = earlier.get(scope) if same else None
+        notes[scope] = {
+            "added_by": note["added_by"] if note else actor,
+            "comment": request.scope_comments.get(scope) or (note or {}).get("comment"),
+        }
+    return notes
 
 
 def _follows(rules: Sequence[Mapping[str, Any]], rule: Mapping[str, Any], anchor: str) -> bool:

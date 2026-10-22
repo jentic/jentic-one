@@ -14,6 +14,10 @@ export type EditScopesRequest = {
      */
     add?: Array<string>;
     /**
+     * Why each scope is asked for (added or removed), by scope name. Shown to the reviewer.
+     */
+    comments?: Record<string, string>;
+    /**
      * Scopes to remove (at most 100).
      */
     remove?: Array<string>;

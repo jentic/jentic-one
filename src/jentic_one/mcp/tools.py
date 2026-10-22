@@ -2074,6 +2074,11 @@ def _edit_scopes(raw: Any) -> dict[str, Any]:
         return {}
     if not isinstance(raw, dict):
         raise invalid_params('scopes must be an object {"add": […], "remove": […]} or {"set": […]}')
+    comments = raw.get("comments") or {}
+    if not isinstance(comments, dict) or not all(
+        isinstance(k, str) and isinstance(v, str) for k, v in comments.items()
+    ):
+        raise invalid_params("scopes.comments must map scope names to reasons")
     for key in ("add", "remove", "set"):
         value = raw.get(key)
         if value is not None and (
@@ -2086,6 +2091,7 @@ def _edit_scopes(raw: Any) -> dict[str, Any]:
         "add_scopes": list(raw.get("add") or []),
         "remove_scopes": list(raw.get("remove") or []),
         "set_scopes": list(raw["set"]) if raw.get("set") is not None else None,
+        "scope_comments": dict(comments),
     }
 
 

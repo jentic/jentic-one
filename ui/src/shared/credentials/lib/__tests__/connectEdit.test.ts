@@ -9,6 +9,7 @@ import {
 	diffRules,
 	revisionChanges,
 	ruleChanges,
+	rulesToConfirm,
 } from '@/shared/credentials/lib/connectEdit';
 
 const READ: EditRuleView = { id: 'apr_r', effect: 'allow', methods: ['GET'], path: '/v1/' };
@@ -68,5 +69,13 @@ describe('connectEdit', () => {
 		expect(first.addedScopes).toEqual([]);
 		expect(second.rules.map((c) => [c.kind, c.rule.path])).toEqual([['added', '/v1/labels']]);
 		expect(second.addedScopes).toEqual(['send']);
+	});
+});
+
+describe('rulesToConfirm', () => {
+	it('sends the rules as written, without the review-only id and added_by', () => {
+		expect(rulesToConfirm([{ ...READ, comment: 'Read mail', added_by: 'agnt_1' }])).toEqual([
+			{ effect: 'allow', methods: ['GET'], path: '/v1/', comment: 'Read mail' },
+		]);
 	});
 });

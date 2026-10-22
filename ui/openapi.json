@@ -875,6 +875,9 @@
               "add": [
                 "gmail.send"
               ],
+              "comments": {
+                "gmail.send": "To send the replies I draft"
+              },
               "remove": [
                 "gmail.modify"
               ],
@@ -1034,6 +1037,9 @@
                 "add": [
                   "gmail.send"
                 ],
+                "comments": {
+                  "gmail.send": "To send the replies I draft"
+                },
                 "remove": [
                   "gmail.modify"
                 ],
@@ -6717,6 +6723,9 @@
               "add": [
                 "gmail.send"
               ],
+              "comments": {
+                "gmail.send": "To send the replies I draft"
+              },
               "remove": [
                 "gmail.modify"
               ],
@@ -6849,6 +6858,9 @@
                 "add": [
                   "gmail.send"
                 ],
+                "comments": {
+                  "gmail.send": "To send the replies I draft"
+                },
                 "remove": [
                   "gmail.modify"
                 ],
@@ -7056,6 +7068,9 @@
             "add": [
               "gmail.send"
             ],
+            "comments": {
+              "gmail.send": "To send the replies I draft"
+            },
             "remove": [
               "gmail.modify"
             ],
@@ -7079,6 +7094,20 @@
             "maxItems": 100,
             "title": "Add",
             "type": "array"
+          },
+          "comments": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Why each scope is asked for (added or removed), by scope name. Shown to the reviewer.",
+            "examples": [
+              {
+                "gmail.send": "To send the replies I draft"
+              }
+            ],
+            "maxProperties": 100,
+            "title": "Comments",
+            "type": "object"
           },
           "remove": {
             "description": "Scopes to remove (at most 100).",
@@ -36065,6 +36094,9 @@
                   "add": [
                     "gmail.send"
                   ],
+                  "comments": {
+                    "gmail.send": "To send the replies I draft"
+                  },
                   "remove": [
                     "gmail.modify"
                   ],
@@ -43667,6 +43699,9 @@
                   "add": [
                     "gmail.send"
                   ],
+                  "comments": {
+                    "gmail.send": "To send the replies I draft"
+                  },
                   "remove": [
                     "gmail.modify"
                   ],

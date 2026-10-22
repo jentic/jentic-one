@@ -129,6 +129,10 @@ var editScopesSchema = map[string]any{
 			"type": "array", "items": map[string]any{"type": "string"},
 			"description": "The full scope list to replace the grant's with. Not combined with add or remove.",
 		},
+		"comments": map[string]any{
+			"type": "object", "additionalProperties": map[string]any{"type": "string"},
+			"description": "Why you ask for each scope change, by scope name (max 500 chars each). Shown to the approver.",
+		},
 	},
 }
 
@@ -215,14 +219,16 @@ func editInputFromArgs(args map[string]any) (editInput, error) {
 	}
 	if raw, ok := args["scopes"].(json.RawMessage); ok {
 		var scopes struct {
-			Add    []string `json:"add"`
-			Remove []string `json:"remove"`
-			Set    []string `json:"set"`
+			Add      []string          `json:"add"`
+			Remove   []string          `json:"remove"`
+			Set      []string          `json:"set"`
+			Comments map[string]string `json:"comments"`
 		}
 		if err := json.Unmarshal(raw, &scopes); err != nil {
 			return in, fmt.Errorf(`scopes must be an object {"add": […], "remove": […]} or {"set": […]}: %w`, err)
 		}
 		in.addScopes, in.removeScopes, in.setScopes = scopes.Add, scopes.Remove, scopes.Set
+		in.scopeComments = scopes.Comments
 	}
 	if raw, ok := args["resume"].(json.RawMessage); ok {
 		var resume bool

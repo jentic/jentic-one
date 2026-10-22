@@ -39,8 +39,10 @@ type editInput struct {
 	addScopes    []string
 	removeScopes []string
 	setScopes    []string
-	resume       *bool
-	reason       *string
+	// scopeComments says why each scope is asked for, by scope name.
+	scopeComments map[string]string
+	resume        *bool
+	reason        *string
 	// Create sessions only (amend).
 	requestedRulesJSON json.RawMessage
 	requestedScopes    []string
@@ -139,14 +141,25 @@ func (in editInput) editScopes() (*control.EditScopesRequest, error) {
 	if in.setScopes != nil && (len(in.addScopes) > 0 || len(in.removeScopes) > 0) {
 		return nil, errors.New("pass either add/remove or set for scopes, not both")
 	}
+	var comments *map[string]string
+	if len(in.scopeComments) > 0 {
+		copied := make(map[string]string, len(in.scopeComments))
+		for scope, reason := range in.scopeComments {
+			copied[scope] = reason
+		}
+		comments = &copied
+	}
 	if in.setScopes != nil {
 		set := append([]string{}, in.setScopes...)
-		return &control.EditScopesRequest{Set: &set}, nil
+		return &control.EditScopesRequest{Set: &set, Comments: comments}, nil
 	}
 	if len(in.addScopes) == 0 && len(in.removeScopes) == 0 {
+		if comments != nil {
+			return nil, errors.New("--scope-comment explains a scope change: pass --add-scopes, --remove-scopes or --set-scopes too")
+		}
 		return nil, nil
 	}
-	out := &control.EditScopesRequest{}
+	out := &control.EditScopesRequest{Comments: comments}
 	if len(in.addScopes) > 0 {
 		add := append([]string(nil), in.addScopes...)
 		out.Add = &add
@@ -341,6 +354,7 @@ func editFlags(cmd *cobra.Command, in *editInput, addJSON, setJSON *string, resu
 	cmd.Flags().StringSliceVar(&in.addScopes, "add-scopes", nil, "OAuth scopes to add (the approver signs in to the vendor again)")
 	cmd.Flags().StringSliceVar(&in.removeScopes, "remove-scopes", nil, "OAuth scopes to remove")
 	cmd.Flags().StringSliceVar(&in.setScopes, "set-scopes", nil, "the full OAuth scope list to replace the grant's with (not combined with --add-scopes/--remove-scopes)")
+	cmd.Flags().StringToStringVar(&in.scopeComments, "scope-comment", nil, "why you ask for a scope change, as scope=reason (repeatable; shown to the approver)")
 	cmd.Flags().BoolVar(resume, "resume", false, "switch a suspended binding back on")
 	cmd.Flags().StringVar(reason, "reason", "", "why you need the change (shown to the approver; max 1024 chars)")
 }

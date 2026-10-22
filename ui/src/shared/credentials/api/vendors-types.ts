@@ -111,6 +111,14 @@ export interface ReviewScheme {
 /** A rule in an edit's current or resulting access; ``id`` is null for one the edit adds. */
 export interface EditRuleView extends PermissionRule {
 	id: string | null;
+	/** In a result: who put the rule in the request; null for one the binding has. */
+	added_by?: string | null;
+}
+
+/** Who asked for one scope change (added or removed), and why. */
+export interface EditScopeNote {
+	added_by: string | null;
+	comment: string | null;
 }
 
 /** The shared rule set a binding points at; its rules apply instead of the binding's own. */
@@ -136,6 +144,8 @@ export interface EditResultAccess {
 	target: 'binding' | 'rule_set';
 	rules: EditRuleView[];
 	scopes: string[];
+	/** Each scope the change adds or removes: who asked for it, and why. */
+	scope_notes?: Record<string, EditScopeNote>;
 	suspended: boolean;
 }
 

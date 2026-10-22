@@ -1585,7 +1585,10 @@ def test_edit_connection_round_trip(
     assert edit["widens_access"] is True
 
     # Confirm with the rules exactly as the review returned them (ids aside).
-    reviewed = [{k: v for k, v in r.items() if k != "id"} for r in edit["result"]["rules"]]
+    reviewed = [
+        {k: v for k, v in r.items() if k not in ("id", "added_by")} for r in edit["result"]["rules"]
+    ]
+    assert [r["added_by"] for r in edit["result"]["rules"]] == [CRED_WRITER_IDENTITY.sub, None]
     resp = cred_writer_client.post(
         f"/connect-sessions/{created['session_id']}:confirm",
         json={

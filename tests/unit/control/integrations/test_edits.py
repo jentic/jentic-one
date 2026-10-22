@@ -194,3 +194,44 @@ def test_a_proposal_round_trips_its_scopes() -> None:
     assert EditRequest.from_proposal(request.as_proposal()) == request
     for scopes in (EditRequest(remove_scopes=["gist"]), EditRequest(set_scopes=["repo"])):
         assert EditRequest.from_proposal(scopes.as_proposal()) == scopes
+
+
+def test_each_added_rule_and_scope_change_records_who_asked() -> None:
+    base = _baseline() | {"granted_scopes": ["gist", "repo"]}
+    asked, _ = resolve_edit(
+        base,
+        EditRequest(
+            add=[RuleAdd(_SEND)],
+            add_scopes=["read:org"],
+            remove_scopes=["gist"],
+            scope_comments={"read:org": "to list the team"},
+        ),
+        actor="agnt_1",
+    )
+    assert [r["added_by"] for r in asked["rules"]] == [None, None, "agnt_1"]
+    assert asked["scope_notes"] == {
+        "gist": {"added_by": "agnt_1", "comment": None},
+        "read:org": {"added_by": "agnt_1", "comment": "to list the team"},
+    }
+
+    # A reviewer's revision keeps who asked for what was already there.
+    reviewed, _ = resolve_edit(
+        base,
+        EditRequest(
+            set_rules=[_DENY, _READ, _SEND, _SEND | {"path": "/repos/x"}],
+            set_scopes=["read:org", "repo", "write:org"],
+        ),
+        previous=asked,
+        actor="usr_1",
+    )
+    assert [r["added_by"] for r in reviewed["rules"]] == [None, None, "agnt_1", "usr_1"]
+    assert reviewed["scope_notes"] == {
+        "gist": {"added_by": "agnt_1", "comment": None},
+        "read:org": {"added_by": "agnt_1", "comment": "to list the team"},
+        "write:org": {"added_by": "usr_1", "comment": None},
+    }
+
+
+def test_a_scope_comment_round_trips_on_its_proposal() -> None:
+    request = EditRequest(add_scopes=["gist"], scope_comments={"gist": "to save notes"})
+    assert EditRequest.from_proposal(request.as_proposal()) == request

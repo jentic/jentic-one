@@ -211,7 +211,8 @@ conflicts. Read your access again and amend the request to fit. After the human 
 - `jentic access edit <credential_id>` — ask for a change to that binding
   (`--add` rules, optionally `--before <rule id>`; `--remove <rule id>`;
   `--set` the whole list; scopes the same way with `--add-scopes`,
-  `--remove-scopes` or `--set-scopes`; `--resume`); prints the
+  `--remove-scopes` or `--set-scopes`, and `--scope-comment scope=reason` to
+  say why; `--resume`); give a rule a `comment` to say why you need it; prints the
   `approval_url` a human approves. `jentic access amend <session_id>` changes
   an open request instead of asking again.
 - `jentic connect <vendor>` / `jentic connect --api <vendor/name/version>`

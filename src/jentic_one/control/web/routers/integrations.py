@@ -240,6 +240,7 @@ def _scope_change(scopes: EditScopesRequest | None) -> dict[str, Any]:
         "add_scopes": list(scopes.add),
         "remove_scopes": list(scopes.remove),
         "set_scopes": list(scopes.set_scopes) if scopes.set_scopes is not None else None,
+        "scope_comments": dict(scopes.comments),
     }
 
 

@@ -1776,11 +1776,14 @@ class ConnectSessionService:
                 add_scopes=scope_ask.add_scopes,
                 remove_scopes=scope_ask.remove_scopes,
                 set_scopes=scope_ask.set_scopes,
+                scope_comments=scope_ask.scope_comments,
                 resume=amend.resume if "resume" in amend.fields else previous.resume,
                 reason=amend.reason if "reason" in amend.fields else previous.reason,
             )
             try:
-                result, _ = resolve_edit(row.baseline, request)
+                result, _ = resolve_edit(
+                    row.baseline, request, previous=current.result, actor=identity.sub
+                )
                 require_change(row.baseline, result)
             except (UnknownRuleError, NothingToChangeError) as exc:
                 exc.point_at(row.credential_id, row.agent_id)
@@ -1987,7 +1990,7 @@ class ConnectSessionService:
         baseline = await self._binding_snapshot(agent_id, credential_id, binding.rule_set_id)
         baseline["suspended"] = binding.suspended
         try:
-            result, _ = resolve_edit(baseline, request)
+            result, _ = resolve_edit(baseline, request, actor=identity.sub)
             require_change(baseline, result)
         except (UnknownRuleError, NothingToChangeError) as exc:
             exc.point_at(credential_id, agent_id)
@@ -2668,7 +2671,7 @@ class ConnectSessionService:
             if current is None:
                 raise SessionNotFoundError(row.id)
             request = EditRequest.from_proposal(current.proposal)
-            result, dropped = resolve_edit(live, request, lenient=True)
+            result, dropped = resolve_edit(live, request, lenient=True, previous=current.result)
             proposal = {
                 **request.as_proposal(),
                 "rebased_from": current.number,

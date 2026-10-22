@@ -113,7 +113,7 @@ export function resumes(edit: ReviewEdit): boolean {
 
 /** The rules to send on ``:confirm`` (the result's, without ids). */
 export function rulesToConfirm(rules: readonly EditRuleView[]): PermissionRule[] {
-	return rules.map(({ id: _id, ...rule }) => rule);
+	return rules.map(({ id: _id, added_by: _addedBy, ...rule }) => rule);
 }
 
 /** "GET, POST /v1/x (prefix)": one rule's match in words. */

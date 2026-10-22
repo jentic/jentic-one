@@ -433,6 +433,13 @@
                 },
                 "type": "array"
               },
+              "comments": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Why you ask for each scope change, by scope name (max 500 chars each). Shown to the approver.",
+                "type": "object"
+              },
               "remove": {
                 "description": "Scopes to remove.",
                 "items": {
@@ -593,6 +600,13 @@
                   "type": "string"
                 },
                 "type": "array"
+              },
+              "comments": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Why you ask for each scope change, by scope name (max 500 chars each). Shown to the approver.",
+                "type": "object"
               },
               "remove": {
                 "description": "Scopes to remove.",
