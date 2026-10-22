@@ -363,6 +363,195 @@ func (e CliFacadeResponseProtocols) Valid() bool {
 	}
 }
 
+// Defines values for CliProfileApiResponseRole.
+const (
+	CliProfileApiResponseRoleGit     CliProfileApiResponseRole = "git"
+	CliProfileApiResponseRoleGraphql CliProfileApiResponseRole = "graphql"
+	CliProfileApiResponseRoleRest    CliProfileApiResponseRole = "rest"
+	CliProfileApiResponseRoleUploads CliProfileApiResponseRole = "uploads"
+)
+
+// Valid indicates whether the value is a known member of the CliProfileApiResponseRole enum.
+func (e CliProfileApiResponseRole) Valid() bool {
+	switch e {
+	case CliProfileApiResponseRoleGit:
+		return true
+	case CliProfileApiResponseRoleGraphql:
+		return true
+	case CliProfileApiResponseRoleRest:
+		return true
+	case CliProfileApiResponseRoleUploads:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CliProfileHardDenyResponseKind.
+const (
+	GitRef              CliProfileHardDenyResponseKind = "git_ref"
+	GraphqlHeldMutation CliProfileHardDenyResponseKind = "graphql_held_mutation"
+	GraphqlMutation     CliProfileHardDenyResponseKind = "graphql_mutation"
+)
+
+// Valid indicates whether the value is a known member of the CliProfileHardDenyResponseKind enum.
+func (e CliProfileHardDenyResponseKind) Valid() bool {
+	switch e {
+	case GitRef:
+		return true
+	case GraphqlHeldMutation:
+		return true
+	case GraphqlMutation:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CliProfileHardDenyResponseRole.
+const (
+	CliProfileHardDenyResponseRoleGit     CliProfileHardDenyResponseRole = "git"
+	CliProfileHardDenyResponseRoleGraphql CliProfileHardDenyResponseRole = "graphql"
+	CliProfileHardDenyResponseRoleRest    CliProfileHardDenyResponseRole = "rest"
+	CliProfileHardDenyResponseRoleUploads CliProfileHardDenyResponseRole = "uploads"
+)
+
+// Valid indicates whether the value is a known member of the CliProfileHardDenyResponseRole enum.
+func (e CliProfileHardDenyResponseRole) Valid() bool {
+	switch e {
+	case CliProfileHardDenyResponseRoleGit:
+		return true
+	case CliProfileHardDenyResponseRoleGraphql:
+		return true
+	case CliProfileHardDenyResponseRoleRest:
+		return true
+	case CliProfileHardDenyResponseRoleUploads:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CliProfilePresetParamResponseKind.
+const (
+	Flag     CliProfilePresetParamResponseKind = "flag"
+	RefGlob  CliProfilePresetParamResponseKind = "ref_glob"
+	RepoList CliProfilePresetParamResponseKind = "repo_list"
+)
+
+// Valid indicates whether the value is a known member of the CliProfilePresetParamResponseKind enum.
+func (e CliProfilePresetParamResponseKind) Valid() bool {
+	switch e {
+	case Flag:
+		return true
+	case RefGlob:
+		return true
+	case RepoList:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CliProfilePresetResponseRoles.
+const (
+	CliProfilePresetResponseRolesGit     CliProfilePresetResponseRoles = "git"
+	CliProfilePresetResponseRolesGraphql CliProfilePresetResponseRoles = "graphql"
+	CliProfilePresetResponseRolesRest    CliProfilePresetResponseRoles = "rest"
+	CliProfilePresetResponseRolesUploads CliProfilePresetResponseRoles = "uploads"
+)
+
+// Valid indicates whether the value is a known member of the CliProfilePresetResponseRoles enum.
+func (e CliProfilePresetResponseRoles) Valid() bool {
+	switch e {
+	case CliProfilePresetResponseRolesGit:
+		return true
+	case CliProfilePresetResponseRolesGraphql:
+		return true
+	case CliProfilePresetResponseRolesRest:
+		return true
+	case CliProfilePresetResponseRolesUploads:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CliProfileProvisionedApiResponseRole.
+const (
+	CliProfileProvisionedApiResponseRoleGit     CliProfileProvisionedApiResponseRole = "git"
+	CliProfileProvisionedApiResponseRoleGraphql CliProfileProvisionedApiResponseRole = "graphql"
+	CliProfileProvisionedApiResponseRoleRest    CliProfileProvisionedApiResponseRole = "rest"
+	CliProfileProvisionedApiResponseRoleUploads CliProfileProvisionedApiResponseRole = "uploads"
+)
+
+// Valid indicates whether the value is a known member of the CliProfileProvisionedApiResponseRole enum.
+func (e CliProfileProvisionedApiResponseRole) Valid() bool {
+	switch e {
+	case CliProfileProvisionedApiResponseRoleGit:
+		return true
+	case CliProfileProvisionedApiResponseRoleGraphql:
+		return true
+	case CliProfileProvisionedApiResponseRoleRest:
+		return true
+	case CliProfileProvisionedApiResponseRoleUploads:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CliProfileProvisionedApiResponseStatus.
+const (
+	CliProfileProvisionedApiResponseStatusBuiltin       CliProfileProvisionedApiResponseStatus = "builtin"
+	CliProfileProvisionedApiResponseStatusFailed        CliProfileProvisionedApiResponseStatus = "failed"
+	CliProfileProvisionedApiResponseStatusHeldForReview CliProfileProvisionedApiResponseStatus = "held_for_review"
+	CliProfileProvisionedApiResponseStatusImportQueued  CliProfileProvisionedApiResponseStatus = "import_queued"
+	CliProfileProvisionedApiResponseStatusImported      CliProfileProvisionedApiResponseStatus = "imported"
+	CliProfileProvisionedApiResponseStatusLive          CliProfileProvisionedApiResponseStatus = "live"
+	CliProfileProvisionedApiResponseStatusNotInCatalog  CliProfileProvisionedApiResponseStatus = "not_in_catalog"
+)
+
+// Valid indicates whether the value is a known member of the CliProfileProvisionedApiResponseStatus enum.
+func (e CliProfileProvisionedApiResponseStatus) Valid() bool {
+	switch e {
+	case CliProfileProvisionedApiResponseStatusBuiltin:
+		return true
+	case CliProfileProvisionedApiResponseStatusFailed:
+		return true
+	case CliProfileProvisionedApiResponseStatusHeldForReview:
+		return true
+	case CliProfileProvisionedApiResponseStatusImportQueued:
+		return true
+	case CliProfileProvisionedApiResponseStatusImported:
+		return true
+	case CliProfileProvisionedApiResponseStatusLive:
+		return true
+	case CliProfileProvisionedApiResponseStatusNotInCatalog:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CliProfileResponseCredentialMode.
+const (
+	PerApi        CliProfileResponseCredentialMode = "per_api"
+	ProfileScoped CliProfileResponseCredentialMode = "profile_scoped"
+)
+
+// Valid indicates whether the value is a known member of the CliProfileResponseCredentialMode enum.
+func (e CliProfileResponseCredentialMode) Valid() bool {
+	switch e {
+	case PerApi:
+		return true
+	case ProfileScoped:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ConnectSessionSummaryResponseState.
 const (
 	ConnectSessionSummaryResponseStateAwaitingApp ConnectSessionSummaryResponseState = "awaiting_app"
@@ -2871,6 +3060,297 @@ type CliInvocationResponse struct {
 	// Examples: github
 	Vendor string `json:"vendor"`
 }
+
+// CliProfileApiResponse One API a CLI profile declares, and whether it is live in the registry.
+//
+// Examples: {"api_id":"github.com/api.github.com","connect":"github","live":true,"name":"api-github-com","role":"rest","source":"catalog:github.com/api.github.com","vendor":"github-com","version":"1.1.4"}
+type CliProfileApiResponse struct {
+	// ApiId The api_id a vendor entry names the API by.
+	//
+	// Examples: github.com/api.github.com
+	ApiId string `json:"api_id"`
+
+	// Connect The `jentic connect <vendor>` key that creates this API's credential; null when it is connected another way.
+	//
+	// Examples: github
+	Connect *string `json:"connect,omitempty"`
+
+	// Live Whether the registry serves the API now.
+	//
+	// Examples: true
+	Live bool `json:"live"`
+
+	// Name Registry API name.
+	//
+	// Examples: api-github-com
+	Name string `json:"name"`
+
+	// Role What the API is to the CLI. It decides the rule kind its binding takes: path rules for `rest`/`uploads`, `graphql` rules for `graphql`, `git` rules for `git`.
+	//
+	// Examples: rest
+	Role CliProfileApiResponseRole `json:"role"`
+
+	// Source Where the API comes from: `catalog:<api_id>` (public catalog), `shipped:specs/<file>` (a spec shipped with Jentic) or `builtin:<api_id>` (served by the Broker itself).
+	//
+	// Examples: catalog:github.com/api.github.com
+	Source string `json:"source"`
+
+	// Vendor Registry vendor of the API.
+	//
+	// Examples: github-com
+	Vendor string `json:"vendor"`
+
+	// Version API version; null for a catalog API that is not imported yet.
+	//
+	// Examples: 1.1.4
+	Version *string `json:"version,omitempty"`
+}
+
+// CliProfileApiResponseRole What the API is to the CLI. It decides the rule kind its binding takes: path rules for `rest`/`uploads`, `graphql` rules for `graphql`, `git` rules for `git`.
+//
+// Examples: rest
+type CliProfileApiResponseRole string
+
+// CliProfileHardDenyResponse A hard-deny list that applies to one of the profile's APIs.
+//
+// Examples: {"description":"Mutations that grant access or change repository protections.","kind":"graphql_mutation","role":"graphql"}
+type CliProfileHardDenyResponse struct {
+	// Description What the list guards.
+	//
+	// Examples: Mutations that grant access or change repository protections.
+	Description string `json:"description"`
+
+	// Kind What the list holds.
+	//
+	// Examples: graphql_mutation
+	Kind CliProfileHardDenyResponseKind `json:"kind"`
+
+	// Role The API the list applies to.
+	//
+	// Examples: graphql
+	Role CliProfileHardDenyResponseRole `json:"role"`
+}
+
+// CliProfileHardDenyResponseKind What the list holds.
+//
+// Examples: graphql_mutation
+type CliProfileHardDenyResponseKind string
+
+// CliProfileHardDenyResponseRole The API the list applies to.
+//
+// Examples: graphql
+type CliProfileHardDenyResponseRole string
+
+// CliProfileListResponse The CLI profiles this Jentic ships.
+//
+// Examples: {"data":[{"apis":[{"api_id":"github.com/api.github.com","connect":"github","live":true,"name":"api-github-com","role":"rest","source":"catalog:github.com/api.github.com","vendor":"github-com","version":"1.1.4"}],"cli":"gh","credential_mode":"per_api","display_name":"GitHub","hard_deny":[{"description":"Mutations that grant access or change repository protections.","kind":"graphql_mutation","role":"graphql"}],"presets":[{"description":"Read everything: REST GETs, every GraphQL query, git fetch.","name":"read_only","params":[{"default":"false","description":"Repositories git may fetch, comma-separated '\u003cowner\u003e/\u003crepo\u003e' globs.","kind":"repo_list","name":"repo"}],"roles":["rest","graphql"]}],"profile":"github","supported_range":"\u003e=2.40.0,\u003c3","vendor":"github","vendor_enabled":true}]}
+type CliProfileListResponse struct {
+	// Data Shipped profiles, by name.
+	//
+	// Examples: [{"apis":[{"api_id":"github.com/api.github.com","connect":"github","live":true,"name":"api-github-com","role":"rest","source":"catalog:github.com/api.github.com","vendor":"github-com","version":"1.1.4"}],"cli":"gh","credential_mode":"per_api","display_name":"GitHub","hard_deny":[{"description":"Mutations that grant access or change repository protections.","kind":"graphql_mutation","role":"graphql"}],"presets":[{"description":"Read everything: REST GETs, every GraphQL query, git fetch.","name":"read_only","params":[{"default":"false","description":"Repositories git may fetch, comma-separated '\u003cowner\u003e/\u003crepo\u003e' globs.","kind":"repo_list","name":"repo"}],"roles":["rest","graphql"]}],"profile":"github","supported_range":"\u003e=2.40.0,\u003c3","vendor":"github","vendor_enabled":true}]
+	Data []CliProfileResponse `json:"data"`
+}
+
+// CliProfilePresetParamResponse A parameter a preset is filled in with.
+//
+// Examples: {"default":"false","description":"Repositories git may fetch, comma-separated '\u003cowner\u003e/\u003crepo\u003e' globs.","kind":"repo_list","name":"repo"}
+type CliProfilePresetParamResponse struct {
+	// Default Value used when it is not given.
+	//
+	// Examples: false
+	Default *string `json:"default,omitempty"`
+
+	// Description What the parameter means.
+	//
+	// Examples: Repositories git may fetch, comma-separated '<owner>/<repo>' globs.
+	Description string `json:"description"`
+
+	// Kind `repo_list`: comma-separated `<owner>/<repo>` globs; `ref_glob`: a branch glob below `refs/heads/`; `flag`: `true` or `false`.
+	//
+	// Examples: repo_list
+	Kind CliProfilePresetParamResponseKind `json:"kind"`
+
+	// Name Parameter name, for `--preset-param <name>=…`.
+	//
+	// Examples: repo
+	Name string `json:"name"`
+}
+
+// CliProfilePresetParamResponseKind `repo_list`: comma-separated `<owner>/<repo>` globs; `ref_glob`: a branch glob below `refs/heads/`; `flag`: `true` or `false`.
+//
+// Examples: repo_list
+type CliProfilePresetParamResponseKind string
+
+// CliProfilePresetResponse A named rule preset, expanded into concrete rules at connect time.
+//
+// Examples: {"description":"Read everything: REST GETs, every GraphQL query, git fetch.","name":"read_only","params":[{"default":"false","description":"Repositories git may fetch, comma-separated '\u003cowner\u003e/\u003crepo\u003e' globs.","kind":"repo_list","name":"repo"}],"roles":["rest","graphql"]}
+type CliProfilePresetResponse struct {
+	// Description What the preset grants.
+	//
+	// Examples: Read everything: REST GETs, every GraphQL query, git fetch.
+	Description string `json:"description"`
+
+	// Name Preset name, for `jentic connect --preset`.
+	//
+	// Examples: read_only
+	Name string `json:"name"`
+
+	// Params The preset's parameters.
+	//
+	// Examples: [{"default":"false","description":"Repositories git may fetch, comma-separated '\u003cowner\u003e/\u003crepo\u003e' globs.","kind":"repo_list","name":"repo"}]
+	Params []CliProfilePresetParamResponse `json:"params"`
+
+	// Roles The API roles the preset has rules for.
+	//
+	// Examples: ["rest","graphql"]
+	Roles []CliProfilePresetResponseRoles `json:"roles"`
+}
+
+// CliProfilePresetResponseRoles defines model for CliProfilePresetResponse.Roles.
+type CliProfilePresetResponseRoles string
+
+// CliProfileProvisionResponse The outcome of provisioning a CLI profile.
+//
+// Examples: {"apis":[{"api_id":"github.com/github-graphql","job_id":"job_2a…","name":"github-graphql","role":"graphql","source":"shipped:specs/github-graphql.openapi.yaml","status":"imported","vendor":"github-com","version":"1"}],"profile":"github","vendor":"github","vendor_enabled":true}
+type CliProfileProvisionResponse struct {
+	// Apis One entry per declared API.
+	//
+	// Examples: [{"api_id":"github.com/github-graphql","job_id":"job_2a…","name":"github-graphql","role":"graphql","source":"shipped:specs/github-graphql.openapi.yaml","status":"imported","vendor":"github-com","version":"1"}]
+	Apis []CliProfileProvisionedApiResponse `json:"apis"`
+
+	// Profile Profile name.
+	//
+	// Examples: github
+	Profile string `json:"profile"`
+
+	// Vendor CLI facade vendor.
+	//
+	// Examples: github
+	Vendor string `json:"vendor"`
+
+	// VendorEnabled Whether the vendor's facade is switched on. Provisioning runs either way; agents reach the APIs through the vendor's CLI only while it is on.
+	//
+	// Examples: true
+	VendorEnabled bool `json:"vendor_enabled"`
+}
+
+// CliProfileProvisionedApiResponse What provisioning did for one API.
+//
+// Examples: {"api_id":"github.com/github-graphql","job_id":"job_2a…","name":"github-graphql","role":"graphql","source":"shipped:specs/github-graphql.openapi.yaml","status":"imported","vendor":"github-com","version":"1"}
+type CliProfileProvisionedApiResponse struct {
+	// ApiId The api_id.
+	//
+	// Examples: github.com/github-graphql
+	ApiId string `json:"api_id"`
+
+	// Detail Why, for `failed` and the other non-live states.
+	Detail *string `json:"detail,omitempty"`
+
+	// JobId The enqueued import job, for `import_queued`.
+	//
+	// Examples: job_2a…
+	JobId *string `json:"job_id,omitempty"`
+
+	// Name Registry API name.
+	//
+	// Examples: github-graphql
+	Name string `json:"name"`
+
+	// Role The API's role.
+	//
+	// Examples: graphql
+	Role CliProfileProvisionedApiResponseRole `json:"role"`
+
+	// Source Where the API comes from.
+	//
+	// Examples: shipped:specs/github-graphql.openapi.yaml
+	Source string `json:"source"`
+
+	// Status `live`: already served, nothing done; `imported`: the shipped spec was imported and is live; `import_queued`: a catalog import was enqueued (see `job_id`); `builtin`: served by the Broker, nothing to import; `held_for_review`: imported as a draft because it changes the API's hosts; `not_in_catalog`: the catalog has no such entry; `failed`: see `detail`.
+	//
+	// Examples: imported
+	Status CliProfileProvisionedApiResponseStatus `json:"status"`
+
+	// Vendor Registry vendor.
+	//
+	// Examples: github-com
+	Vendor string `json:"vendor"`
+
+	// Version API version, when known.
+	//
+	// Examples: 1
+	Version *string `json:"version,omitempty"`
+}
+
+// CliProfileProvisionedApiResponseRole The API's role.
+//
+// Examples: graphql
+type CliProfileProvisionedApiResponseRole string
+
+// CliProfileProvisionedApiResponseStatus `live`: already served, nothing done; `imported`: the shipped spec was imported and is live; `import_queued`: a catalog import was enqueued (see `job_id`); `builtin`: served by the Broker, nothing to import; `held_for_review`: imported as a draft because it changes the API's hosts; `not_in_catalog`: the catalog has no such entry; `failed`: see `detail`.
+//
+// Examples: imported
+type CliProfileProvisionedApiResponseStatus string
+
+// CliProfileResponse One shipped CLI profile.
+//
+// Examples: {"apis":[{"api_id":"github.com/api.github.com","connect":"github","live":true,"name":"api-github-com","role":"rest","source":"catalog:github.com/api.github.com","vendor":"github-com","version":"1.1.4"}],"cli":"gh","credential_mode":"per_api","display_name":"GitHub","hard_deny":[{"description":"Mutations that grant access or change repository protections.","kind":"graphql_mutation","role":"graphql"}],"presets":[{"description":"Read everything: REST GETs, every GraphQL query, git fetch.","name":"read_only","params":[{"default":"false","description":"Repositories git may fetch, comma-separated '\u003cowner\u003e/\u003crepo\u003e' globs.","kind":"repo_list","name":"repo"}],"roles":["rest","graphql"]}],"profile":"github","supported_range":"\u003e=2.40.0,\u003c3","vendor":"github","vendor_enabled":true}
+type CliProfileResponse struct {
+	// Apis The APIs the profile declares.
+	//
+	// Examples: [{"api_id":"github.com/api.github.com","connect":"github","live":true,"name":"api-github-com","role":"rest","source":"catalog:github.com/api.github.com","vendor":"github-com","version":"1.1.4"}]
+	Apis []CliProfileApiResponse `json:"apis"`
+
+	// Cli The vendor CLI binary.
+	//
+	// Examples: gh
+	Cli string `json:"cli"`
+
+	// CredentialMode `per_api`: each API is connected with its own credential.
+	//
+	// Examples: per_api
+	CredentialMode CliProfileResponseCredentialMode `json:"credential_mode"`
+
+	// DisplayName How the profile is named.
+	//
+	// Examples: GitHub
+	DisplayName string `json:"display_name"`
+
+	// HardDeny Lists no rule can override, kept in code.
+	//
+	// Examples: [{"description":"Mutations that grant access or change repository protections.","kind":"graphql_mutation","role":"graphql"}]
+	HardDeny []CliProfileHardDenyResponse `json:"hard_deny"`
+
+	// Presets Rule presets.
+	//
+	// Examples: [{"description":"Read everything: REST GETs, every GraphQL query, git fetch.","name":"read_only","params":[{"default":"false","description":"Repositories git may fetch, comma-separated '\u003cowner\u003e/\u003crepo\u003e' globs.","kind":"repo_list","name":"repo"}],"roles":["rest","graphql"]}]
+	Presets []CliProfilePresetResponse `json:"presets"`
+
+	// Profile Profile name.
+	//
+	// Examples: github
+	Profile string `json:"profile"`
+
+	// SupportedRange CLI versions the profile is written for.
+	//
+	// Examples: >=2.40.0,<3
+	SupportedRange *string `json:"supported_range,omitempty"`
+
+	// Vendor CLI facade vendor (`cli_facades.vendors` key).
+	//
+	// Examples: github
+	Vendor string `json:"vendor"`
+
+	// VendorEnabled Whether the vendor's facade is switched on in this deployment.
+	//
+	// Examples: true
+	VendorEnabled bool `json:"vendor_enabled"`
+}
+
+// CliProfileResponseCredentialMode `per_api`: each API is connected with its own credential.
+//
+// Examples: per_api
+type CliProfileResponseCredentialMode string
 
 // ConnectRequestBody Request body for initiating a credential connect flow.
 //
@@ -11056,6 +11536,33 @@ type ClientInterface interface {
 	// Corresponds with POST /cli-invocations/{invocation_id}:revoke (the `RevokeCliInvocation` operationId).
 	RevokeCliInvocation(ctx context.Context, invocationId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListCliProfiles List CLI profiles
+	//
+	// The vendor CLI profiles this Jentic ships.
+	//
+	// A profile declares a vendor CLI's APIs (with the `jentic connect` key of
+	// each), its rule presets (for `jentic connect --preset`) and the hard-deny
+	// lists no rule can override. Each API says whether the registry serves it
+	// now; `POST /cli-profiles/{profile}:provision` makes them all live.
+	//
+	// Corresponds with GET /cli-profiles (the `ListCliProfiles` operationId).
+	ListCliProfiles(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ProvisionCliProfile Provision a CLI profile's APIs
+	//
+	// Make every API the profile declares exist and be live. Idempotent.
+	//
+	// A `catalog` API is imported from the public catalog (enqueued; nothing
+	// when it is already registered), a `shipped` API is imported from the spec
+	// shipped with Jentic and goes live at once, and a `builtin` API needs
+	// nothing. A connect for one of the profile's APIs runs the same
+	// provisioning on demand, so this is for an operator who wants the APIs
+	// in place before any agent connects. Runs whether or not the vendor's
+	// facade is enabled (`vendor_enabled`).
+	//
+	// Corresponds with POST /cli-profiles/{profile}:provision (the `ProvisionCliProfile` operationId).
+	ProvisionCliProfile(ctx context.Context, profile string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListConnectSessions List connect sessions
 	//
 	// List connect sessions with cursor-based pagination.
@@ -14934,6 +15441,53 @@ func (c *Client) RenewCliInvocation(ctx context.Context, invocationId string, re
 // Corresponds with POST /cli-invocations/{invocation_id}:revoke (the `RevokeCliInvocation` operationId).
 func (c *Client) RevokeCliInvocation(ctx context.Context, invocationId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeCliInvocationRequest(c.Server, invocationId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListCliProfiles List CLI profiles
+//
+// The vendor CLI profiles this Jentic ships.
+//
+// A profile declares a vendor CLI's APIs (with the `jentic connect` key of
+// each), its rule presets (for `jentic connect --preset`) and the hard-deny
+// lists no rule can override. Each API says whether the registry serves it
+// now; `POST /cli-profiles/{profile}:provision` makes them all live.
+//
+// Corresponds with GET /cli-profiles (the `ListCliProfiles` operationId).
+func (c *Client) ListCliProfiles(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListCliProfilesRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ProvisionCliProfile Provision a CLI profile's APIs
+//
+// Make every API the profile declares exist and be live. Idempotent.
+//
+// A `catalog` API is imported from the public catalog (enqueued; nothing
+// when it is already registered), a `shipped` API is imported from the spec
+// shipped with Jentic and goes live at once, and a `builtin` API needs
+// nothing. A connect for one of the profile's APIs runs the same
+// provisioning on demand, so this is for an operator who wants the APIs
+// in place before any agent connects. Runs whether or not the vendor's
+// facade is enabled (`vendor_enabled`).
+//
+// Corresponds with POST /cli-profiles/{profile}:provision (the `ProvisionCliProfile` operationId).
+func (c *Client) ProvisionCliProfile(ctx context.Context, profile string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewProvisionCliProfileRequest(c.Server, profile)
 	if err != nil {
 		return nil, err
 	}
@@ -21931,6 +22485,67 @@ func NewRevokeCliInvocationRequest(server string, invocationId string) (*http.Re
 	return req, nil
 }
 
+// NewListCliProfilesRequest constructs an http.Request for the ListCliProfiles method
+func NewListCliProfilesRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/cli-profiles")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewProvisionCliProfileRequest constructs an http.Request for the ProvisionCliProfile method
+func NewProvisionCliProfileRequest(server string, profile string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "profile", profile, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/cli-profiles/%s:provision", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListConnectSessionsRequest constructs an http.Request for the ListConnectSessions method
 func NewListConnectSessionsRequest(server string, params *ListConnectSessionsParams) (*http.Request, error) {
 	var err error
@@ -28010,6 +28625,37 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /cli-invocations/{invocation_id}:revoke (the `RevokeCliInvocation` operationId).
 	RevokeCliInvocationWithResponse(ctx context.Context, invocationId string, reqEditors ...RequestEditorFn) (*RevokeCliInvocationHTTPResp, error)
+
+	// ListCliProfilesWithResponse List CLI profiles
+	//
+	// The vendor CLI profiles this Jentic ships.
+	//
+	// A profile declares a vendor CLI's APIs (with the `jentic connect` key of
+	// each), its rule presets (for `jentic connect --preset`) and the hard-deny
+	// lists no rule can override. Each API says whether the registry serves it
+	// now; `POST /cli-profiles/{profile}:provision` makes them all live.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /cli-profiles (the `ListCliProfiles` operationId).
+	ListCliProfilesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListCliProfilesHTTPResp, error)
+
+	// ProvisionCliProfileWithResponse Provision a CLI profile's APIs
+	//
+	// Make every API the profile declares exist and be live. Idempotent.
+	//
+	// A `catalog` API is imported from the public catalog (enqueued; nothing
+	// when it is already registered), a `shipped` API is imported from the spec
+	// shipped with Jentic and goes live at once, and a `builtin` API needs
+	// nothing. A connect for one of the profile's APIs runs the same
+	// provisioning on demand, so this is for an operator who wants the APIs
+	// in place before any agent connects. Runs whether or not the vendor's
+	// facade is enabled (`vendor_enabled`).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /cli-profiles/{profile}:provision (the `ProvisionCliProfile` operationId).
+	ProvisionCliProfileWithResponse(ctx context.Context, profile string, reqEditors ...RequestEditorFn) (*ProvisionCliProfileHTTPResp, error)
 
 	// ListConnectSessionsWithResponse List connect sessions
 	//
@@ -36682,6 +37328,193 @@ func (r RevokeCliInvocationHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RevokeCliInvocationHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListCliProfilesHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CliProfileListResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListCliProfilesHTTPResp) GetJSON200() *CliProfileListResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListCliProfilesHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListCliProfilesHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListCliProfilesHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ListCliProfilesHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ListCliProfilesHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListCliProfilesHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListCliProfilesHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListCliProfilesHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListCliProfilesHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListCliProfilesHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListCliProfilesHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ProvisionCliProfileHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CliProfileProvisionResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ProvisionCliProfileHTTPResp) GetJSON200() *CliProfileProvisionResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ProvisionCliProfileHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ProvisionCliProfileHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ProvisionCliProfileHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ProvisionCliProfileHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ProvisionCliProfileHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ProvisionCliProfileHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ProvisionCliProfileHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ProvisionCliProfileHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ProvisionCliProfileHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ProvisionCliProfileHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ProvisionCliProfileHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ProvisionCliProfileHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -46913,6 +47746,49 @@ func (c *ClientWithResponses) RevokeCliInvocationWithResponse(ctx context.Contex
 	return ParseRevokeCliInvocationHTTPResp(rsp)
 }
 
+// ListCliProfilesWithResponse List CLI profiles
+//
+// The vendor CLI profiles this Jentic ships.
+//
+// A profile declares a vendor CLI's APIs (with the `jentic connect` key of
+// each), its rule presets (for `jentic connect --preset`) and the hard-deny
+// lists no rule can override. Each API says whether the registry serves it
+// now; `POST /cli-profiles/{profile}:provision` makes them all live.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /cli-profiles (the `ListCliProfiles` operationId).
+func (c *ClientWithResponses) ListCliProfilesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListCliProfilesHTTPResp, error) {
+	rsp, err := c.ListCliProfiles(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListCliProfilesHTTPResp(rsp)
+}
+
+// ProvisionCliProfileWithResponse Provision a CLI profile's APIs
+//
+// Make every API the profile declares exist and be live. Idempotent.
+//
+// A `catalog` API is imported from the public catalog (enqueued; nothing
+// when it is already registered), a `shipped` API is imported from the spec
+// shipped with Jentic and goes live at once, and a `builtin` API needs
+// nothing. A connect for one of the profile's APIs runs the same
+// provisioning on demand, so this is for an operator who wants the APIs
+// in place before any agent connects. Runs whether or not the vendor's
+// facade is enabled (`vendor_enabled`).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /cli-profiles/{profile}:provision (the `ProvisionCliProfile` operationId).
+func (c *ClientWithResponses) ProvisionCliProfileWithResponse(ctx context.Context, profile string, reqEditors ...RequestEditorFn) (*ProvisionCliProfileHTTPResp, error) {
+	rsp, err := c.ProvisionCliProfile(ctx, profile, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseProvisionCliProfileHTTPResp(rsp)
+}
+
 // ListConnectSessionsWithResponse List connect sessions
 //
 // List connect sessions with cursor-based pagination.
@@ -55197,6 +56073,163 @@ func ParseRevokeCliInvocationHTTPResp(rsp *http.Response) (*RevokeCliInvocationH
 	switch {
 	case rsp.StatusCode == 204:
 		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListCliProfilesHTTPResp parses an HTTP response from a ListCliProfilesWithResponse call
+func ParseListCliProfilesHTTPResp(rsp *http.Response) (*ListCliProfilesHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListCliProfilesHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CliProfileListResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseProvisionCliProfileHTTPResp parses an HTTP response from a ProvisionCliProfileWithResponse call
+func ParseProvisionCliProfileHTTPResp(rsp *http.Response) (*ProvisionCliProfileHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ProvisionCliProfileHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CliProfileProvisionResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest ProblemDetail

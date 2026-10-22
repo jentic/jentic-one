@@ -388,3 +388,13 @@ class NothingToSnoozeError(RegistryServiceError):
     def __init__(self, api_id: str) -> None:
         super().__init__(f"Catalog entry '{api_id}' has no outstanding update to snooze")
         self.api_id = api_id
+
+
+class CliProfileNotFoundError(RegistryServiceError):
+    """Raised when no shipped CLI profile has the requested name."""
+
+    def __init__(self, profile: str, known: list[str]) -> None:
+        super().__init__(
+            f"No CLI profile named {profile!r}; shipped profiles: {', '.join(known) or 'none'}"
+        )
+        self.profile = profile

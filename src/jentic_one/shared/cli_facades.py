@@ -24,6 +24,7 @@ FacadeProtocol = Literal["rest", "graphql", "git"]
 #: never shadows a URL the forward-proxy catch-all could otherwise serve.
 FACADE_PATH_PREFIX = "/_facade"
 
+
 def _protocols(profile: CliProfile) -> tuple[FacadeProtocol, ...]:
     seen: dict[FacadeProtocol, None] = {}
     for api in profile.apis:

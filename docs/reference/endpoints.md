@@ -28,10 +28,10 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the permission family. They are **not** an enforced restriction: access is gated by the **permission**, not the actor kind, so any actor holding the required permission can call the endpoint.
 
-_Total endpoints: **174**._
+_Total endpoints: **176**._
 
 
-## Agent-facing (typically an agent) (36)
+## Agent-facing (typically an agent) (38)
 
 
 ### `apis`
@@ -82,6 +82,13 @@ _Total endpoints: **174**._
 | POST | `/cli-invocations` | `capabilities:execute` | agent | Mint a CLI invocation token |
 | POST | `/cli-invocations/{invocation_id}:renew` | _any authenticated_ | agent | Renew a CLI invocation token |
 | POST | `/cli-invocations/{invocation_id}:revoke` | _any authenticated_ | agent | Revoke a CLI invocation token |
+
+### `cli-profiles`
+
+| Method | Path | Permission(s) | Typical caller | Summary |
+|---|---|---|---|---|
+| GET | `/cli-profiles` | `capabilities:read` | agent | List CLI profiles |
+| POST | `/cli-profiles/{profile}:provision` | `catalog:import` | agent | Provision a CLI profile's APIs |
 
 ### `events`
 

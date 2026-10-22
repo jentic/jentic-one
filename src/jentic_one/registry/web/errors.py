@@ -12,6 +12,7 @@ from jentic_one.registry.services.errors import (
     ArchivedRevisionPinError,
     CatalogEntryNotFoundError,
     CatalogUnavailableError,
+    CliProfileNotFoundError,
     GovernedHostsUnavailableError,
     HostChangeRequiresOperatorError,
     HostOwnedByOtherVendorError,
@@ -48,6 +49,7 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     OperationNotFoundError: (404, "operation_not_found"),
     OverlayNotFoundError: (404, "overlay_not_found"),
     CatalogEntryNotFoundError: (404, "catalog_entry_not_found"),
+    CliProfileNotFoundError: (404, "cli_profile_not_found"),
     MethodNotAllowedError: (405, "method_not_allowed"),
     AmbiguousMatchError: (409, "ambiguous_match"),
     # An API delete refused by a non-cascading reference into the API or its

@@ -1731,6 +1731,52 @@
       ],
       "auth_note": null,
       "authenticated": true,
+      "group": "Agent-facing (typically an agent)",
+      "implied_permissions": {
+        "capabilities:read": []
+      },
+      "method": "GET",
+      "operation_id": "listCliProfiles",
+      "path": "/cli-profiles",
+      "public": false,
+      "required_permissions": [
+        "capabilities:read"
+      ],
+      "summary": "List CLI profiles",
+      "surface": "cli-profiles",
+      "typical_caller": "agent"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Agent-facing (typically an agent)",
+      "implied_permissions": {
+        "catalog:import": [
+          "apis:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "provisionCliProfile",
+      "path": "/cli-profiles/{profile}:provision",
+      "public": false,
+      "required_permissions": [
+        "catalog:import"
+      ],
+      "summary": "Provision a CLI profile's APIs",
+      "surface": "cli-profiles",
+      "typical_caller": "agent"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
       "group": "Any authenticated actor",
       "implied_permissions": {
         "credentials:read": [],
@@ -4832,5 +4878,5 @@
     "total": 27
   },
   "schema": "jentic.endpoint-permission-tree/v1",
-  "total": 174
+  "total": 176
 }

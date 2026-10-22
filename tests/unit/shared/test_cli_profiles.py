@@ -14,6 +14,11 @@ from typing import Any
 
 import pytest
 import yaml
+from tools.cli_profile_schema_export import (
+    CLI_PROFILE_SCHEMA_PATH,
+    build_cli_profile_schema,
+    dump_schema_json,
+)
 
 from jentic_one.broker.core.facades import (
     CLOUDFLARE_FACADE,
@@ -41,11 +46,6 @@ from jentic_one.shared.cli_profiles.rule_sets import RULE_SETS
 from jentic_one.shared.permissions.github_graphql import (
     GITHUB_GRAPHQL_PRESETS,
     PR_WRITE_MUTATIONS,
-)
-from tools.cli_profile_schema_export import (
-    CLI_PROFILE_SCHEMA_PATH,
-    build_cli_profile_schema,
-    dump_schema_json,
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -170,7 +170,10 @@ def test_facade_tables_come_from_the_manifests() -> None:
     )
     assert PROXY_API_VENDORS["github"] == frozenset({"github.com"})
     assert PROXY_API_VENDORS["aws"] == frozenset({"amazonaws.com"})
-    assert dict(PROXY_ERROR_SHAPE_DOMAINS) == {"github.com": "github", "cloudflare.com": "cloudflare"}
+    assert dict(PROXY_ERROR_SHAPE_DOMAINS) == {
+        "github.com": "github",
+        "cloudflare.com": "cloudflare",
+    }
 
 
 # ── preset expansion ─────────────────────────────────────────────────────────
@@ -240,9 +243,7 @@ def test_push_branches_with_optional_force(force: str | None, expected: list[str
         ("push_branches", {"repo": "o/r", "branches": "x"}, ApiRole.REST, "grants nothing"),
     ],
 )
-def test_preset_errors(
-    preset: str, params: dict[str, str], role: ApiRole, message: str
-) -> None:
+def test_preset_errors(preset: str, params: dict[str, str], role: ApiRole, message: str) -> None:
     with pytest.raises(PresetError, match=message):
         expand_preset(_github(), preset, params, role=role)
 

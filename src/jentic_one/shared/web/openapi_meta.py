@@ -1071,6 +1071,7 @@ _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/agents"), "Agents"),
     (re.compile(r"^/cli-invocations"), "CLI Invocations"),
     (re.compile(r"^/cli-facades"), "CLI Facades"),
+    (re.compile(r"^/cli-profiles"), "CLI Facades"),
     (re.compile(r"^/oauth"), "OAuth"),
     (re.compile(r"^/authorize"), "OAuth"),
     (re.compile(r"^/error"), "OAuth"),

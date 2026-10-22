@@ -4707,6 +4707,850 @@
         "title": "CliInvocationResponse",
         "type": "object"
       },
+      "CliProfileApiResponse": {
+        "description": "One API a CLI profile declares, and whether it is live in the registry.",
+        "examples": [
+          {
+            "api_id": "github.com/api.github.com",
+            "connect": "github",
+            "live": true,
+            "name": "api-github-com",
+            "role": "rest",
+            "source": "catalog:github.com/api.github.com",
+            "vendor": "github-com",
+            "version": "1.1.4"
+          }
+        ],
+        "properties": {
+          "api_id": {
+            "description": "The api_id a vendor entry names the API by.",
+            "examples": [
+              "github.com/api.github.com"
+            ],
+            "title": "Api Id",
+            "type": "string"
+          },
+          "connect": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The `jentic connect <vendor>` key that creates this API's credential; null when it is connected another way.",
+            "examples": [
+              "github"
+            ],
+            "title": "Connect"
+          },
+          "live": {
+            "description": "Whether the registry serves the API now.",
+            "examples": [
+              true
+            ],
+            "title": "Live",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "Registry API name.",
+            "examples": [
+              "api-github-com"
+            ],
+            "title": "Name",
+            "type": "string"
+          },
+          "role": {
+            "description": "What the API is to the CLI. It decides the rule kind its binding takes: path rules for `rest`/`uploads`, `graphql` rules for `graphql`, `git` rules for `git`.",
+            "enum": [
+              "rest",
+              "graphql",
+              "git",
+              "uploads"
+            ],
+            "examples": [
+              "rest"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "source": {
+            "description": "Where the API comes from: `catalog:<api_id>` (public catalog), `shipped:specs/<file>` (a spec shipped with Jentic) or `builtin:<api_id>` (served by the Broker itself).",
+            "examples": [
+              "catalog:github.com/api.github.com"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "vendor": {
+            "description": "Registry vendor of the API.",
+            "examples": [
+              "github-com"
+            ],
+            "title": "Vendor",
+            "type": "string"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "API version; null for a catalog API that is not imported yet.",
+            "examples": [
+              "1.1.4"
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "role",
+          "source",
+          "api_id",
+          "vendor",
+          "name",
+          "live"
+        ],
+        "title": "CliProfileApiResponse",
+        "type": "object"
+      },
+      "CliProfileHardDenyResponse": {
+        "description": "A hard-deny list that applies to one of the profile's APIs.",
+        "examples": [
+          {
+            "description": "Mutations that grant access or change repository protections.",
+            "kind": "graphql_mutation",
+            "role": "graphql"
+          }
+        ],
+        "properties": {
+          "description": {
+            "description": "What the list guards.",
+            "examples": [
+              "Mutations that grant access or change repository protections."
+            ],
+            "title": "Description",
+            "type": "string"
+          },
+          "kind": {
+            "description": "What the list holds.",
+            "enum": [
+              "graphql_mutation",
+              "graphql_held_mutation",
+              "git_ref"
+            ],
+            "examples": [
+              "graphql_mutation"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "role": {
+            "description": "The API the list applies to.",
+            "enum": [
+              "rest",
+              "graphql",
+              "git",
+              "uploads"
+            ],
+            "examples": [
+              "graphql"
+            ],
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "kind",
+          "description"
+        ],
+        "title": "CliProfileHardDenyResponse",
+        "type": "object"
+      },
+      "CliProfileListResponse": {
+        "description": "The CLI profiles this Jentic ships.",
+        "examples": [
+          {
+            "data": [
+              {
+                "apis": [
+                  {
+                    "api_id": "github.com/api.github.com",
+                    "connect": "github",
+                    "live": true,
+                    "name": "api-github-com",
+                    "role": "rest",
+                    "source": "catalog:github.com/api.github.com",
+                    "vendor": "github-com",
+                    "version": "1.1.4"
+                  }
+                ],
+                "cli": "gh",
+                "credential_mode": "per_api",
+                "display_name": "GitHub",
+                "hard_deny": [
+                  {
+                    "description": "Mutations that grant access or change repository protections.",
+                    "kind": "graphql_mutation",
+                    "role": "graphql"
+                  }
+                ],
+                "presets": [
+                  {
+                    "description": "Read everything: REST GETs, every GraphQL query, git fetch.",
+                    "name": "read_only",
+                    "params": [
+                      {
+                        "default": "false",
+                        "description": "Repositories git may fetch, comma-separated '<owner>/<repo>' globs.",
+                        "kind": "repo_list",
+                        "name": "repo"
+                      }
+                    ],
+                    "roles": [
+                      "rest",
+                      "graphql"
+                    ]
+                  }
+                ],
+                "profile": "github",
+                "supported_range": ">=2.40.0,<3",
+                "vendor": "github",
+                "vendor_enabled": true
+              }
+            ]
+          }
+        ],
+        "properties": {
+          "data": {
+            "description": "Shipped profiles, by name.",
+            "examples": [
+              [
+                {
+                  "apis": [
+                    {
+                      "api_id": "github.com/api.github.com",
+                      "connect": "github",
+                      "live": true,
+                      "name": "api-github-com",
+                      "role": "rest",
+                      "source": "catalog:github.com/api.github.com",
+                      "vendor": "github-com",
+                      "version": "1.1.4"
+                    }
+                  ],
+                  "cli": "gh",
+                  "credential_mode": "per_api",
+                  "display_name": "GitHub",
+                  "hard_deny": [
+                    {
+                      "description": "Mutations that grant access or change repository protections.",
+                      "kind": "graphql_mutation",
+                      "role": "graphql"
+                    }
+                  ],
+                  "presets": [
+                    {
+                      "description": "Read everything: REST GETs, every GraphQL query, git fetch.",
+                      "name": "read_only",
+                      "params": [
+                        {
+                          "default": "false",
+                          "description": "Repositories git may fetch, comma-separated '<owner>/<repo>' globs.",
+                          "kind": "repo_list",
+                          "name": "repo"
+                        }
+                      ],
+                      "roles": [
+                        "rest",
+                        "graphql"
+                      ]
+                    }
+                  ],
+                  "profile": "github",
+                  "supported_range": ">=2.40.0,<3",
+                  "vendor": "github",
+                  "vendor_enabled": true
+                }
+              ]
+            ],
+            "items": {
+              "$ref": "#/components/schemas/CliProfileResponse"
+            },
+            "title": "Data",
+            "type": "array"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "CliProfileListResponse",
+        "type": "object"
+      },
+      "CliProfilePresetParamResponse": {
+        "description": "A parameter a preset is filled in with.",
+        "examples": [
+          {
+            "default": "false",
+            "description": "Repositories git may fetch, comma-separated '<owner>/<repo>' globs.",
+            "kind": "repo_list",
+            "name": "repo"
+          }
+        ],
+        "properties": {
+          "default": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Value used when it is not given.",
+            "examples": [
+              "false"
+            ],
+            "title": "Default"
+          },
+          "description": {
+            "description": "What the parameter means.",
+            "examples": [
+              "Repositories git may fetch, comma-separated '<owner>/<repo>' globs."
+            ],
+            "title": "Description",
+            "type": "string"
+          },
+          "kind": {
+            "description": "`repo_list`: comma-separated `<owner>/<repo>` globs; `ref_glob`: a branch glob below `refs/heads/`; `flag`: `true` or `false`.",
+            "enum": [
+              "repo_list",
+              "ref_glob",
+              "flag"
+            ],
+            "examples": [
+              "repo_list"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "description": "Parameter name, for `--preset-param <name>=…`.",
+            "examples": [
+              "repo"
+            ],
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "kind",
+          "description"
+        ],
+        "title": "CliProfilePresetParamResponse",
+        "type": "object"
+      },
+      "CliProfilePresetResponse": {
+        "description": "A named rule preset, expanded into concrete rules at connect time.",
+        "examples": [
+          {
+            "description": "Read everything: REST GETs, every GraphQL query, git fetch.",
+            "name": "read_only",
+            "params": [
+              {
+                "default": "false",
+                "description": "Repositories git may fetch, comma-separated '<owner>/<repo>' globs.",
+                "kind": "repo_list",
+                "name": "repo"
+              }
+            ],
+            "roles": [
+              "rest",
+              "graphql"
+            ]
+          }
+        ],
+        "properties": {
+          "description": {
+            "description": "What the preset grants.",
+            "examples": [
+              "Read everything: REST GETs, every GraphQL query, git fetch."
+            ],
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "description": "Preset name, for `jentic connect --preset`.",
+            "examples": [
+              "read_only"
+            ],
+            "title": "Name",
+            "type": "string"
+          },
+          "params": {
+            "description": "The preset's parameters.",
+            "examples": [
+              [
+                {
+                  "default": "false",
+                  "description": "Repositories git may fetch, comma-separated '<owner>/<repo>' globs.",
+                  "kind": "repo_list",
+                  "name": "repo"
+                }
+              ]
+            ],
+            "items": {
+              "$ref": "#/components/schemas/CliProfilePresetParamResponse"
+            },
+            "title": "Params",
+            "type": "array"
+          },
+          "roles": {
+            "description": "The API roles the preset has rules for.",
+            "examples": [
+              [
+                "rest",
+                "graphql"
+              ]
+            ],
+            "items": {
+              "enum": [
+                "rest",
+                "graphql",
+                "git",
+                "uploads"
+              ],
+              "type": "string"
+            },
+            "title": "Roles",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "roles",
+          "params"
+        ],
+        "title": "CliProfilePresetResponse",
+        "type": "object"
+      },
+      "CliProfileProvisionResponse": {
+        "description": "The outcome of provisioning a CLI profile.",
+        "examples": [
+          {
+            "apis": [
+              {
+                "api_id": "github.com/github-graphql",
+                "job_id": "job_2a…",
+                "name": "github-graphql",
+                "role": "graphql",
+                "source": "shipped:specs/github-graphql.openapi.yaml",
+                "status": "imported",
+                "vendor": "github-com",
+                "version": "1"
+              }
+            ],
+            "profile": "github",
+            "vendor": "github",
+            "vendor_enabled": true
+          }
+        ],
+        "properties": {
+          "apis": {
+            "description": "One entry per declared API.",
+            "examples": [
+              [
+                {
+                  "api_id": "github.com/github-graphql",
+                  "job_id": "job_2a…",
+                  "name": "github-graphql",
+                  "role": "graphql",
+                  "source": "shipped:specs/github-graphql.openapi.yaml",
+                  "status": "imported",
+                  "vendor": "github-com",
+                  "version": "1"
+                }
+              ]
+            ],
+            "items": {
+              "$ref": "#/components/schemas/CliProfileProvisionedApiResponse"
+            },
+            "title": "Apis",
+            "type": "array"
+          },
+          "profile": {
+            "description": "Profile name.",
+            "examples": [
+              "github"
+            ],
+            "title": "Profile",
+            "type": "string"
+          },
+          "vendor": {
+            "description": "CLI facade vendor.",
+            "examples": [
+              "github"
+            ],
+            "title": "Vendor",
+            "type": "string"
+          },
+          "vendor_enabled": {
+            "description": "Whether the vendor's facade is switched on. Provisioning runs either way; agents reach the APIs through the vendor's CLI only while it is on.",
+            "examples": [
+              true
+            ],
+            "title": "Vendor Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "profile",
+          "vendor",
+          "vendor_enabled",
+          "apis"
+        ],
+        "title": "CliProfileProvisionResponse",
+        "type": "object"
+      },
+      "CliProfileProvisionedApiResponse": {
+        "description": "What provisioning did for one API.",
+        "examples": [
+          {
+            "api_id": "github.com/github-graphql",
+            "job_id": "job_2a…",
+            "name": "github-graphql",
+            "role": "graphql",
+            "source": "shipped:specs/github-graphql.openapi.yaml",
+            "status": "imported",
+            "vendor": "github-com",
+            "version": "1"
+          }
+        ],
+        "properties": {
+          "api_id": {
+            "description": "The api_id.",
+            "examples": [
+              "github.com/github-graphql"
+            ],
+            "title": "Api Id",
+            "type": "string"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why, for `failed` and the other non-live states.",
+            "title": "Detail"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The enqueued import job, for `import_queued`.",
+            "examples": [
+              "job_2a…"
+            ],
+            "title": "Job Id"
+          },
+          "name": {
+            "description": "Registry API name.",
+            "examples": [
+              "github-graphql"
+            ],
+            "title": "Name",
+            "type": "string"
+          },
+          "role": {
+            "description": "The API's role.",
+            "enum": [
+              "rest",
+              "graphql",
+              "git",
+              "uploads"
+            ],
+            "examples": [
+              "graphql"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "source": {
+            "description": "Where the API comes from.",
+            "examples": [
+              "shipped:specs/github-graphql.openapi.yaml"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "description": "`live`: already served, nothing done; `imported`: the shipped spec was imported and is live; `import_queued`: a catalog import was enqueued (see `job_id`); `builtin`: served by the Broker, nothing to import; `held_for_review`: imported as a draft because it changes the API's hosts; `not_in_catalog`: the catalog has no such entry; `failed`: see `detail`.",
+            "enum": [
+              "live",
+              "imported",
+              "import_queued",
+              "builtin",
+              "held_for_review",
+              "not_in_catalog",
+              "failed"
+            ],
+            "examples": [
+              "imported"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "vendor": {
+            "description": "Registry vendor.",
+            "examples": [
+              "github-com"
+            ],
+            "title": "Vendor",
+            "type": "string"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "API version, when known.",
+            "examples": [
+              "1"
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "role",
+          "source",
+          "api_id",
+          "vendor",
+          "name",
+          "status"
+        ],
+        "title": "CliProfileProvisionedApiResponse",
+        "type": "object"
+      },
+      "CliProfileResponse": {
+        "description": "One shipped CLI profile.",
+        "examples": [
+          {
+            "apis": [
+              {
+                "api_id": "github.com/api.github.com",
+                "connect": "github",
+                "live": true,
+                "name": "api-github-com",
+                "role": "rest",
+                "source": "catalog:github.com/api.github.com",
+                "vendor": "github-com",
+                "version": "1.1.4"
+              }
+            ],
+            "cli": "gh",
+            "credential_mode": "per_api",
+            "display_name": "GitHub",
+            "hard_deny": [
+              {
+                "description": "Mutations that grant access or change repository protections.",
+                "kind": "graphql_mutation",
+                "role": "graphql"
+              }
+            ],
+            "presets": [
+              {
+                "description": "Read everything: REST GETs, every GraphQL query, git fetch.",
+                "name": "read_only",
+                "params": [
+                  {
+                    "default": "false",
+                    "description": "Repositories git may fetch, comma-separated '<owner>/<repo>' globs.",
+                    "kind": "repo_list",
+                    "name": "repo"
+                  }
+                ],
+                "roles": [
+                  "rest",
+                  "graphql"
+                ]
+              }
+            ],
+            "profile": "github",
+            "supported_range": ">=2.40.0,<3",
+            "vendor": "github",
+            "vendor_enabled": true
+          }
+        ],
+        "properties": {
+          "apis": {
+            "description": "The APIs the profile declares.",
+            "examples": [
+              [
+                {
+                  "api_id": "github.com/api.github.com",
+                  "connect": "github",
+                  "live": true,
+                  "name": "api-github-com",
+                  "role": "rest",
+                  "source": "catalog:github.com/api.github.com",
+                  "vendor": "github-com",
+                  "version": "1.1.4"
+                }
+              ]
+            ],
+            "items": {
+              "$ref": "#/components/schemas/CliProfileApiResponse"
+            },
+            "title": "Apis",
+            "type": "array"
+          },
+          "cli": {
+            "description": "The vendor CLI binary.",
+            "examples": [
+              "gh"
+            ],
+            "title": "Cli",
+            "type": "string"
+          },
+          "credential_mode": {
+            "description": "`per_api`: each API is connected with its own credential.",
+            "enum": [
+              "per_api",
+              "profile_scoped"
+            ],
+            "examples": [
+              "per_api"
+            ],
+            "title": "Credential Mode",
+            "type": "string"
+          },
+          "display_name": {
+            "description": "How the profile is named.",
+            "examples": [
+              "GitHub"
+            ],
+            "title": "Display Name",
+            "type": "string"
+          },
+          "hard_deny": {
+            "description": "Lists no rule can override, kept in code.",
+            "examples": [
+              [
+                {
+                  "description": "Mutations that grant access or change repository protections.",
+                  "kind": "graphql_mutation",
+                  "role": "graphql"
+                }
+              ]
+            ],
+            "items": {
+              "$ref": "#/components/schemas/CliProfileHardDenyResponse"
+            },
+            "title": "Hard Deny",
+            "type": "array"
+          },
+          "presets": {
+            "description": "Rule presets.",
+            "examples": [
+              [
+                {
+                  "description": "Read everything: REST GETs, every GraphQL query, git fetch.",
+                  "name": "read_only",
+                  "params": [
+                    {
+                      "default": "false",
+                      "description": "Repositories git may fetch, comma-separated '<owner>/<repo>' globs.",
+                      "kind": "repo_list",
+                      "name": "repo"
+                    }
+                  ],
+                  "roles": [
+                    "rest",
+                    "graphql"
+                  ]
+                }
+              ]
+            ],
+            "items": {
+              "$ref": "#/components/schemas/CliProfilePresetResponse"
+            },
+            "title": "Presets",
+            "type": "array"
+          },
+          "profile": {
+            "description": "Profile name.",
+            "examples": [
+              "github"
+            ],
+            "title": "Profile",
+            "type": "string"
+          },
+          "supported_range": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "CLI versions the profile is written for.",
+            "examples": [
+              ">=2.40.0,<3"
+            ],
+            "title": "Supported Range"
+          },
+          "vendor": {
+            "description": "CLI facade vendor (`cli_facades.vendors` key).",
+            "examples": [
+              "github"
+            ],
+            "title": "Vendor",
+            "type": "string"
+          },
+          "vendor_enabled": {
+            "description": "Whether the vendor's facade is switched on in this deployment.",
+            "examples": [
+              true
+            ],
+            "title": "Vendor Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "profile",
+          "display_name",
+          "vendor",
+          "vendor_enabled",
+          "cli",
+          "credential_mode",
+          "apis",
+          "presets",
+          "hard_deny"
+        ],
+        "title": "CliProfileResponse",
+        "type": "object"
+      },
       "ConnectRequestBody": {
         "description": "Request body for initiating a credential connect flow.",
         "examples": [
@@ -35214,6 +36058,392 @@
         ]
       },
       "summary": "Revoke a CLI invocation token"
+    },
+    "/cli-profiles": {
+      "description": "`GET`: List CLI profiles.",
+      "get": {
+        "description": "The vendor CLI profiles this Jentic ships.\n\nA profile declares a vendor CLI's APIs (with the `jentic connect` key of\neach), its rule presets (for `jentic connect --preset`) and the hard-deny\nlists no rule can override. Each API says whether the registry serves it\nnow; `POST /cli-profiles/{profile}:provision` makes them all live.",
+        "operationId": "listCliProfiles",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": [
+                    {
+                      "apis": [
+                        {
+                          "api_id": "github.com/api.github.com",
+                          "connect": "github",
+                          "live": true,
+                          "name": "api-github-com",
+                          "role": "rest",
+                          "source": "catalog:github.com/api.github.com",
+                          "vendor": "github-com",
+                          "version": "1.1.4"
+                        }
+                      ],
+                      "cli": "gh",
+                      "credential_mode": "per_api",
+                      "display_name": "GitHub",
+                      "hard_deny": [
+                        {
+                          "description": "Mutations that grant access or change repository protections.",
+                          "kind": "graphql_mutation",
+                          "role": "graphql"
+                        }
+                      ],
+                      "presets": [
+                        {
+                          "description": "Read everything: REST GETs, every GraphQL query, git fetch.",
+                          "name": "read_only",
+                          "params": [
+                            {
+                              "default": "false",
+                              "description": "Repositories git may fetch, comma-separated '<owner>/<repo>' globs.",
+                              "kind": "repo_list",
+                              "name": "repo"
+                            }
+                          ],
+                          "roles": [
+                            "rest",
+                            "graphql"
+                          ]
+                        }
+                      ],
+                      "profile": "github",
+                      "supported_range": ">=2.40.0,<3",
+                      "vendor": "github",
+                      "vendor_enabled": true
+                    }
+                  ]
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/CliProfileListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "OAuth2": []
+          }
+        ],
+        "summary": "List CLI profiles",
+        "tags": [
+          "CLI Facades"
+        ]
+      },
+      "summary": "List CLI profiles"
+    },
+    "/cli-profiles/{profile}:provision": {
+      "description": "`POST`: Provision a CLI profile's APIs.",
+      "post": {
+        "description": "Make every API the profile declares exist and be live. Idempotent.\n\nA `catalog` API is imported from the public catalog (enqueued; nothing\nwhen it is already registered), a `shipped` API is imported from the spec\nshipped with Jentic and goes live at once, and a `builtin` API needs\nnothing. A connect for one of the profile's APIs runs the same\nprovisioning on demand, so this is for an operator who wants the APIs\nin place before any agent connects. Runs whether or not the vendor's\nfacade is enabled (`vendor_enabled`).",
+        "operationId": "provisionCliProfile",
+        "parameters": [
+          {
+            "description": "Profile name, e.g. `github`.",
+            "examples": {
+              "example": {
+                "summary": "Vendor registry key",
+                "value": "github"
+              }
+            },
+            "in": "path",
+            "name": "profile",
+            "required": true,
+            "schema": {
+              "description": "Profile name, e.g. `github`.",
+              "examples": [
+                "github"
+              ],
+              "title": "Profile",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "apis": [
+                    {
+                      "api_id": "github.com/github-graphql",
+                      "job_id": "job_2a…",
+                      "name": "github-graphql",
+                      "role": "graphql",
+                      "source": "shipped:specs/github-graphql.openapi.yaml",
+                      "status": "imported",
+                      "vendor": "github-com",
+                      "version": "1"
+                    }
+                  ],
+                  "profile": "github",
+                  "vendor": "github",
+                  "vendor_enabled": true
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/CliProfileProvisionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The requested resource does not exist or is not visible to you.",
+                  "instance": "/example/path",
+                  "status": 404,
+                  "title": "Not Found",
+                  "type": "not_found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "No shipped CLI profile has this name"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "OAuth2": []
+          }
+        ],
+        "summary": "Provision a CLI profile's APIs",
+        "tags": [
+          "CLI Facades"
+        ]
+      },
+      "summary": "Provision a CLI profile's APIs"
     },
     "/connect-sessions": {
       "description": "`GET`: List connect sessions.",
