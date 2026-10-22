@@ -22,6 +22,8 @@ import {
 	type RuleSetResponse,
 } from '@/shared/api';
 import type {
+	AmendEditBody,
+	AmendedSession,
 	ConfirmSessionBody,
 	ConfirmSessionResponse,
 	ConnectRequest,
@@ -215,6 +217,17 @@ export async function listConnectSessionRevisions(
 		sessionUrl(sessionId, '/revisions', pollToken),
 	);
 	return body.data;
+}
+
+/** Change an open session's ask as a new revision (``POST …:amend``). */
+export function amendConnectSession(
+	sessionId: string,
+	body: AmendEditBody,
+): Promise<AmendedSession> {
+	return request(sessionUrl(sessionId, ':amend'), {
+		method: 'POST',
+		body: JSON.stringify(body),
+	});
 }
 
 export function pollConnectSessionStatus(

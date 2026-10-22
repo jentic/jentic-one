@@ -40,6 +40,7 @@ import {
 	useCancelConnectSession,
 	useConfirmConnectSession,
 	useConnectSession,
+	useAmendEditSession,
 	useBindingAccess,
 	useConnectSessionRevisions,
 	usePollConnectSessionStatus,
@@ -85,6 +86,8 @@ import {
 	removedScopes,
 	describeConflict,
 	describeRuleMatch,
+	scopeChanges,
+	type ScopeChange,
 	resumes,
 	revisionChanges,
 	ruleChanges,
@@ -95,6 +98,7 @@ import { isHttpsVendorUrl, openVendorUrl } from '@/shared/credentials/lib/safe-n
 import { EffectBadge } from '@/shared/credentials/components/EffectBadge';
 import { useSharedAppSurface } from '@/shared/credentials/lib/sharedAppSurface';
 import type {
+	AmendEditBody,
 	AuthCodeConfirmResponse,
 	ConfirmResponse,
 	ConfirmSessionBody,
@@ -1582,7 +1586,7 @@ function VendorApproveFlow({
 // ---------------------------------------------------------------------------
 
 /** The edit review's steps. */
-type EditPhase = 'review' | 'rules' | 'awaiting' | 'terminal';
+type EditPhase = 'review' | 'rules' | 'scopes' | 'awaiting' | 'terminal';
 
 /**
  * The approve dialog for an edit session: the combined diff between the
@@ -1614,8 +1618,12 @@ function EditApproveFlow({
 	const [shown, setShown] = useState<ReviewEdit>(latest);
 	const [phase, setPhase] = useState<EditPhase>('review');
 	const phaseRef = useRef<EditPhase>('review');
-	const [rules, setRules] = useState<PermissionRule[]>(() => rulesToConfirm(latest.result.rules));
 	const [resume, setResume] = useState<boolean>(() => resumes(latest));
+	// The reviewer's own edit, saved as a revision: shown once it's read back.
+	const amendMutation = useAmendEditSession(sessionId);
+	const [ownRevision, setOwnRevision] = useState<string | null>(null);
+	// The rules while the reviewer edits them, before they're saved.
+	const [draftRules, setDraftRules] = useState<PermissionRule[]>([]);
 	const [challenge, setChallenge] = useState<ConfirmResponse | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [failure, setFailure] = useState<string | null>(null);
@@ -1626,13 +1634,18 @@ function EditApproveFlow({
 		phaseRef.current = next;
 		setPhase(next);
 	};
-	const changed = latest.revision.id !== shown.revision.id;
+	useEffect(() => {
+		if (ownRevision !== null && latest.revision.id === ownRevision) {
+			setShown(latest);
+			setOwnRevision(null);
+		}
+	}, [latest, ownRevision]);
+	const changed = latest.revision.id !== shown.revision.id && latest.revision.id !== ownRevision;
 	const conflicts = shown.conflicts ?? [];
 	const changes = useMemo(() => ruleChanges(shown), [shown]);
 	const newScopes = useMemo(() => addedScopes(shown), [shown]);
 	const droppedScopes = useMemo(() => removedScopes(shown), [shown]);
-	const editedRules =
-		JSON.stringify(rules) !== JSON.stringify(rulesToConfirm(shown.result.rules));
+	const scopes = useMemo(() => scopeChanges(shown), [shown]);
 	const credentialName = shown.binding.credential_name ?? session.vendor_display_name;
 	const display: VendorDisplay = { displayName: credentialName, iconKey: session.vendor_key };
 	// A person's own change (the human Edit access flow): no agent asked, so
@@ -1641,7 +1654,6 @@ function EditApproveFlow({
 
 	const showLatest = (): void => {
 		setShown(latest);
-		setRules(rulesToConfirm(latest.result.rules));
 		setResume(resumes(latest));
 		setError(null);
 	};
@@ -1693,7 +1705,7 @@ function EditApproveFlow({
 		const body: EditConfirmRequest = {
 			kind: 'edit',
 			revision_id: shown.revision.id,
-			permission_rules: rules,
+			permission_rules: rulesToConfirm(shown.result.rules),
 			resume,
 			confirmed_scopes: shown.needs_vendor_consent ? shown.result.scopes : null,
 			resolve_conflicts: conflicts.length > 0,
@@ -1778,22 +1790,48 @@ function EditApproveFlow({
 			/>
 		);
 	}
+	// A reviewer's change becomes a revision of the request, recorded as theirs.
+	const saveRevision = async (body: AmendEditBody): Promise<void> => {
+		setError(null);
+		try {
+			const amended = await amendMutation.mutateAsync(body);
+			setOwnRevision(amended.revision_id);
+			onReload();
+			goTo('review');
+		} catch (err) {
+			setError(err instanceof Error ? err.message : 'Your change couldn’t be saved.');
+		}
+	};
+
 	if (phase === 'rules') {
 		return (
 			<RulesStep
 				display={display}
-				requestedRules={rulesToConfirm(shown.result.rules)}
-				currentRules={rules}
-				onChange={setRules}
+				requestedRules={rulesToConfirm(
+					shown.result.rules.filter((r) => r.added_by === shown.binding.agent_id),
+				)}
+				currentRules={draftRules}
+				onChange={setDraftRules}
 				onBack={(): void => goTo('review')}
-				onContinue={(finalRules: PermissionRule[]): void => {
-					setRules(finalRules);
-					goTo('review');
-				}}
-				submitting={false}
-				error={null}
+				onContinue={(finalRules: PermissionRule[]): void =>
+					void saveRevision({ rules: { set: finalRules } })
+				}
+				submitting={amendMutation.isPending}
+				error={error}
 				apiReference={session.api_reference}
 				requireRule
+			/>
+		);
+	}
+	if (phase === 'scopes') {
+		return (
+			<EditReviewScopesStep
+				display={display}
+				edit={shown}
+				saving={amendMutation.isPending}
+				error={error}
+				onBack={(): void => goTo('review')}
+				onSave={(next: string[]): void => void saveRevision({ scopes: { set: next } })}
 			/>
 		);
 	}
@@ -1901,54 +1939,61 @@ function EditApproveFlow({
 							type="button"
 							variant="ghost"
 							size="sm"
-							onClick={(): void => goTo('rules')}
+							onClick={(): void => {
+								setDraftRules(rulesToConfirm(shown.result.rules));
+								setError(null);
+								goTo('rules');
+							}}
 						>
 							Edit rules
 						</Button>
 					)}
 				</div>
-				{editedRules ? (
-					<p className="text-muted-foreground text-xs">
-						You edited the rules: your list is what gets applied.
-					</p>
-				) : null}
-				<RuleChangeList changes={changes} />
+				<RuleChangeList changes={changes} agentId={shown.binding.agent_id} />
 			</section>
 
-			{(newScopes.length > 0 || droppedScopes.length > 0) && (
-				<section aria-label="Scope changes" className="space-y-1 text-sm">
-					{newScopes.length > 0 && (
-						<>
-							<h3 className="font-medium">Scopes to add</h3>
-							<p className="font-mono text-xs">{newScopes.join(', ')}</p>
-						</>
-					)}
-					{droppedScopes.length > 0 && (
-						<>
-							<h3 className="font-medium">Scopes to remove</h3>
-							<p className="font-mono text-xs">{droppedScopes.join(', ')}</p>
-						</>
-					)}
-					<p className="text-muted-foreground text-xs">
-						Approving asks you to sign in to the vendor again for the new set of scopes;
-						nothing changes until you do.
-					</p>
-					{otherAgents.length > 0 && (
+			{shown.current.granted_scopes != null && (
+				<section aria-label="Scope changes" className="space-y-2 text-sm">
+					<div className="flex items-center justify-between">
+						<h3 className="font-medium">Scopes</h3>
+						{canConfirm && (
+							<Button
+								type="button"
+								variant="ghost"
+								size="sm"
+								onClick={(): void => {
+									setError(null);
+									goTo('scopes');
+								}}
+							>
+								Edit scopes
+							</Button>
+						)}
+					</div>
+					<ScopeChangeList changes={scopes} agentId={shown.binding.agent_id} />
+					{(newScopes.length > 0 || droppedScopes.length > 0) && (
 						<p className="text-muted-foreground text-xs">
-							The changes also reach{' '}
-							{otherAgents.length === 1
-								? '1 other agent'
-								: `${otherAgents.length} other agents`}{' '}
-							using this credential:{' '}
-							{otherAgents.map((agent, i) => (
-								<span key={agent.agent_id}>
-									{i > 0 && ', '}
-									<ActorLabel actorId={agent.agent_id} />
-								</span>
-							))}
-							.
+							Approving asks you to sign in to the vendor again for the new set of
+							scopes; nothing changes until you do.
 						</p>
 					)}
+					{(newScopes.length > 0 || droppedScopes.length > 0) &&
+						otherAgents.length > 0 && (
+							<p className="text-muted-foreground text-xs">
+								The changes also reach{' '}
+								{otherAgents.length === 1
+									? '1 other agent'
+									: `${otherAgents.length} other agents`}{' '}
+								using this credential:{' '}
+								{otherAgents.map((agent, i) => (
+									<span key={agent.agent_id}>
+										{i > 0 && ', '}
+										<ActorLabel actorId={agent.agent_id} />
+									</span>
+								))}
+								.
+							</p>
+						)}
 				</section>
 			)}
 
@@ -2293,7 +2338,14 @@ function EditScopesFlow({
 }
 
 /** Rule-by-rule change rows: added, removed and kept, with widening flagged. */
-function RuleChangeList({ changes }: { changes: readonly RuleChange[] }) {
+function RuleChangeList({
+	changes,
+	agentId,
+}: {
+	changes: readonly RuleChange[];
+	/** The binding's agent: whose asks read "Requested by agent". */
+	agentId?: string;
+}) {
 	if (changes.length === 0) {
 		return <p className="text-muted-foreground text-xs">No rule changes.</p>;
 	}
@@ -2303,22 +2355,200 @@ function RuleChangeList({ changes }: { changes: readonly RuleChange[] }) {
 				<li
 					key={`${change.kind}-${change.rule.id ?? i}`}
 					className={cn(
-						'flex items-center gap-2 rounded px-2 py-1 text-sm',
+						'rounded px-2 py-1 text-sm',
 						change.kind === 'added' && 'bg-success/10',
-						change.kind === 'removed' && 'bg-danger/10 line-through',
+						change.kind === 'removed' && 'bg-danger/10',
 					)}
 				>
-					<EffectBadge effect={change.rule.effect}>{change.rule.effect}</EffectBadge>
-					<span className="font-mono text-xs">{describeRuleMatch(change.rule)}</span>
-					{change.kind !== 'kept' && (
-						<Badge variant={change.kind === 'added' ? 'success' : 'danger'}>
-							{change.kind === 'added' ? 'Added' : 'Removed'}
-						</Badge>
+					<div className="flex flex-wrap items-center gap-2">
+						<EffectBadge effect={change.rule.effect}>{change.rule.effect}</EffectBadge>
+						<span
+							className={cn(
+								'font-mono text-xs',
+								change.kind === 'removed' && 'line-through',
+							)}
+						>
+							{describeRuleMatch(change.rule)}
+						</span>
+						{change.kind !== 'kept' && (
+							<Badge variant={change.kind === 'added' ? 'success' : 'danger'}>
+								{change.kind === 'added' ? 'Added' : 'Removed'}
+							</Badge>
+						)}
+						{change.widens && <Badge variant="warning">Widens</Badge>}
+						{change.kind === 'added' && change.rule.added_by && (
+							<AddedBy actorId={change.rule.added_by} agentId={agentId} />
+						)}
+					</div>
+					{change.rule.comment && (
+						<p className="text-foreground-sub mt-0.5 text-[11px] italic">
+							{change.rule.comment}
+						</p>
 					)}
-					{change.widens && <Badge variant="warning">Widens</Badge>}
 				</li>
 			))}
 		</ul>
+	);
+}
+
+/** Scope-by-scope rows, like the rule rows: added, removed and kept, with who asked and why. */
+function ScopeChangeList({
+	changes,
+	agentId,
+}: {
+	changes: readonly ScopeChange[];
+	agentId?: string;
+}) {
+	if (changes.length === 0) {
+		return <p className="text-muted-foreground text-xs">No scopes.</p>;
+	}
+	return (
+		<ul className="space-y-1">
+			{changes.map((change) => (
+				<li
+					key={change.scope}
+					className={cn(
+						'rounded px-2 py-1 text-sm',
+						change.kind === 'added' && 'bg-success/10',
+						change.kind === 'removed' && 'bg-danger/10',
+					)}
+				>
+					<div className="flex flex-wrap items-center gap-2">
+						<span
+							className={cn(
+								'font-mono text-xs',
+								change.kind === 'removed' && 'line-through',
+							)}
+						>
+							{change.scope}
+						</span>
+						{change.kind === 'kept' ? (
+							<Badge variant="default">Granted</Badge>
+						) : (
+							<Badge variant={change.kind === 'added' ? 'success' : 'danger'}>
+								{change.kind === 'added' ? 'Added' : 'Removed'}
+							</Badge>
+						)}
+						{change.kind !== 'kept' && change.addedBy && (
+							<AddedBy actorId={change.addedBy} agentId={agentId} />
+						)}
+					</div>
+					{change.comment && (
+						<p className="text-foreground-sub mt-0.5 text-[11px] italic">
+							{change.comment}
+						</p>
+					)}
+				</li>
+			))}
+		</ul>
+	);
+}
+
+/** Who put a change in the request: the agent asking, or a reviewer by name. */
+function AddedBy({ actorId, agentId }: { actorId: string; agentId?: string }) {
+	if (actorId === agentId) return <Badge variant="default">Requested by agent</Badge>;
+	return (
+		<span className="text-muted-foreground text-[11px]">
+			Added by <ActorLabel actorId={actorId} />
+		</span>
+	);
+}
+
+/**
+ * The reviewer's view of the scopes: what the agent has today and what the
+ * request asks for, ticked, beside the rest the vendor offers. Saving makes
+ * the new set a revision of the request.
+ */
+function EditReviewScopesStep({
+	display,
+	edit,
+	saving,
+	error,
+	onBack,
+	onSave,
+}: {
+	display: VendorDisplay;
+	edit: ReviewEdit;
+	saving: boolean;
+	error: string | null;
+	onBack: () => void;
+	onSave: (scopes: string[]) => void;
+}) {
+	const access = useBindingAccess(edit.binding.agent_id, edit.binding.credential_id);
+	const [picked, setPicked] = useState<Set<string>>(() => new Set(edit.result.scopes));
+	const [typed, setTyped] = useState('');
+	const typedId = useId();
+	const granted = edit.current.granted_scopes ?? [];
+	const catalog = access.data?.scope_catalog ?? null;
+	const listed = new Set(catalog?.map((scope) => scope.name) ?? []);
+	const options = [
+		...(catalog ?? []).map((scope) => ({ ...scope, default: false })),
+		...[...new Set([...granted, ...edit.result.scopes])]
+			.filter((name) => !listed.has(name))
+			.map((name) => ({
+				name,
+				classification: 'read' as const,
+				default: false,
+				description: '',
+			})),
+	];
+	const next = [
+		...new Set([...picked, ...(catalog ? [] : typed.split(/[\s,]+/).filter(Boolean))]),
+	].sort();
+	const unchanged = JSON.stringify(next) === JSON.stringify([...edit.result.scopes].sort());
+
+	return (
+		<div className="space-y-5">
+			<VendorHeader
+				display={display}
+				subtitle="Change the scopes this request asks for. Saving makes it a new revision."
+			/>
+			<ScopeChooseField
+				label="Scopes"
+				loading={access.isPending}
+				error={null}
+				scopes={options}
+				selected={picked}
+				onToggle={(name: string): void =>
+					setPicked((current) => {
+						const updated = new Set(current);
+						if (updated.has(name)) updated.delete(name);
+						else updated.add(name);
+						return updated;
+					})
+				}
+			/>
+			{!access.isPending && !catalog && (
+				<div className="space-y-1">
+					<Label htmlFor={typedId}>Scopes to add</Label>
+					<Input
+						id={typedId}
+						value={typed}
+						onChange={(e) => setTyped(e.target.value)}
+						placeholder="Separate scopes with spaces or commas"
+					/>
+				</div>
+			)}
+			<p className="text-muted-foreground text-xs">
+				Granted today: {granted.length > 0 ? granted.join(', ') : 'none'}.
+			</p>
+			{error && <ErrorAlert message={error} />}
+			<div className="bg-surface-sheet-foot border-hairline-field sticky -bottom-4 z-10 -mx-5 mt-auto -mb-4 flex items-center justify-between border-t px-5 py-3.5">
+				<Button type="button" variant="ghost" size="sm" onClick={onBack} disabled={saving}>
+					<ArrowLeft className="h-4 w-4" />
+					Back
+				</Button>
+				<Button
+					type="button"
+					variant="primary"
+					loading={saving}
+					disabled={unchanged}
+					onClick={(): void => onSave(next)}
+				>
+					Save scopes
+				</Button>
+			</div>
+		</div>
 	);
 }
 

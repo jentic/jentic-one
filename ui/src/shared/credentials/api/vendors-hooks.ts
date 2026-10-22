@@ -15,6 +15,7 @@ import {
 } from '@tanstack/react-query';
 import { useCallback, useMemo } from 'react';
 import {
+	amendConnectSession,
 	bindCredentialToAgentBlocked,
 	getBindingAccess,
 	getPermissionRuleSet,
@@ -46,6 +47,8 @@ import type {
 import { sharedQueryKeys } from '@/shared/api/queryKeys';
 import { credentialKeys } from './keys';
 import type {
+	AmendEditBody,
+	AmendedSession,
 	ConfirmSessionBody,
 	ConfirmSessionResponse,
 	ConnectRequest,
@@ -211,6 +214,24 @@ export function useVendorOperations(
 export function useStartIntegrationConnect() {
 	return useMutation<ConnectResponse, Error, ConnectRequest>({
 		mutationFn: (body) => startIntegrationConnect(body),
+	});
+}
+
+/**
+ * A reviewer's change to an edit's rules or scopes, saved as a revision of
+ * the request. The review and its history are re-read so the new revision
+ * shows as the one to approve.
+ */
+export function useAmendEditSession(sessionId: string) {
+	const client = useQueryClient();
+	return useMutation<AmendedSession, Error, AmendEditBody>({
+		mutationFn: (body) => amendConnectSession(sessionId, body),
+		onSuccess: () => {
+			void client.invalidateQueries({ queryKey: ['integrations', 'session', sessionId] });
+			void client.invalidateQueries({
+				queryKey: ['integrations', 'session-revisions', sessionId],
+			});
+		},
 	});
 }
 

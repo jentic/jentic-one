@@ -407,6 +407,19 @@ export interface ConnectResponse {
 	revision_id?: string | null;
 }
 
+/** ``:amend`` on an edit session: the parts sent replace those of the ask. */
+export interface AmendEditBody {
+	rules?: { set: PermissionRule[] };
+	scopes?: { set: string[] };
+}
+
+/** ``:amend``'s answer: the session's new current revision. */
+export interface AmendedSession {
+	session_id: string;
+	revision_id: string;
+	revision_number: number;
+}
+
 /** ``:edit-connection``'s answer: with ``apply``, whether it landed or waits on the vendor. */
 export interface EditConnectionResult extends ConnectResponse {
 	status: 'pending' | 'applied' | 'consenting';

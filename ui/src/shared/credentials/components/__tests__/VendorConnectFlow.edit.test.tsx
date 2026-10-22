@@ -11,6 +11,7 @@ import {
 	resetCredentialsStore,
 	seedMockAgentConnectSession,
 } from '@/shared/credentials/mocks/handlers';
+import { seedCredentialBindings } from '@/modules/agents/mocks/handlers';
 import type { EditRuleView, ReviewEdit } from '@/shared/credentials/api/vendors-types';
 
 /**
@@ -184,8 +185,11 @@ describe('VendorConnectFlow approve — edit sessions', () => {
 		const user = userEvent.setup();
 
 		const scopes = await screen.findByRole('region', { name: 'Scope changes' });
-		expect(scopes).toHaveTextContent(/Scopes to remove\s*gmail\.modify/);
-		expect(scopes).not.toHaveTextContent('Scopes to add');
+		const rows = within(scopes).getAllByRole('listitem');
+		expect(rows.map((r) => r.textContent)).toEqual([
+			expect.stringMatching(/gmail\.modify.*Removed/),
+			expect.stringMatching(/gmail\.readonly.*Granted/),
+		]);
 		await user.click(screen.getByRole('button', { name: 'Approve and sign in' }));
 		await waitFor(() =>
 			expect(getMockConnectSessions()[0].confirmBodies[0]).toMatchObject({
@@ -324,6 +328,100 @@ describe('VendorConnectFlow approve — edit sessions', () => {
 			resolve_conflicts: true,
 		});
 	});
+
+	it('shows who asked for each change, and why', async () => {
+		const seeded = seedEdit(
+			editBlock({
+				result: {
+					target: 'binding',
+					rules: [
+						READ,
+						{ ...SEND, comment: 'To send drafted replies', added_by: 'agnt_1' },
+					],
+					scopes: ['gmail.readonly', 'gmail.send'],
+					scope_notes: {
+						'gmail.send': { added_by: 'agnt_1', comment: 'Needed to send' },
+					},
+					suspended: false,
+				},
+				needs_vendor_consent: true,
+			}),
+		);
+		renderApprove(seeded.session_id);
+
+		const rules = await screen.findByRole('region', { name: 'Rule changes' });
+		const added = within(rules)
+			.getAllByRole('listitem')
+			.find((r) => r.textContent?.includes('/v1/send'));
+		expect(added).toHaveTextContent(/Requested by agent.*To send drafted replies/);
+		const scopes = screen.getByRole('region', { name: 'Scope changes' });
+		const send = within(scopes)
+			.getAllByRole('listitem')
+			.find((r) => r.textContent?.startsWith('gmail.send'));
+		expect(send).toHaveTextContent(/Added.*Requested by agent.*Needed to send/);
+	});
+
+	it('saves the reviewer’s scope change as a revision and approves it', async () => {
+		seedCredentialBindings([
+			{
+				agent_id: 'agnt_1',
+				credential_id: 'cred_gmail',
+				name: 'Work Gmail',
+				granted_scopes: ['gmail.readonly'],
+				scope_catalog: [
+					{ name: 'gmail.readonly', classification: 'read', description: 'Read mail.' },
+					{ name: 'gmail.labels', classification: 'write', description: 'Labels.' },
+				],
+			},
+		]);
+		const seeded = seedEdit(editBlock());
+		renderApprove(seeded.session_id);
+		const user = userEvent.setup();
+
+		await user.click(await screen.findByRole('button', { name: 'Edit scopes' }));
+		await user.click(await screen.findByText('gmail.labels', { selector: 'code' }));
+		await user.click(screen.getByRole('button', { name: 'Save scopes' }));
+
+		// The front page shows the reviewer's revision.
+		const scopes = await screen.findByRole('region', { name: 'Scope changes' });
+		await waitFor(() => expect(scopes).toHaveTextContent(/gmail\.labels.*Added by/), {
+			timeout: 10_000,
+		});
+		expect(screen.getByText('Revision 2')).toBeInTheDocument();
+		expect(screen.queryByText(/This request changed while you were reviewing it/)).toBeNull();
+
+		await user.click(screen.getByRole('button', { name: 'Approve and sign in' }));
+		await waitFor(() =>
+			expect(getMockConnectSessions()[0].confirmBodies[0]).toMatchObject({
+				revision_id: `csr_${seeded.session_id}_2`,
+				confirmed_scopes: ['gmail.labels', 'gmail.readonly'],
+			}),
+		);
+	}, 20_000);
+
+	it('saves the reviewer’s rule change as a revision shown on the front page', async () => {
+		const seeded = seedEdit(editBlock());
+		renderApprove(seeded.session_id);
+		const user = userEvent.setup();
+
+		await user.click(await screen.findByRole('button', { name: 'Edit rules' }));
+		// Drop the agent's send rule, the last one.
+		const remove = await screen.findAllByRole('button', { name: 'Delete rule' });
+		await user.click(remove[remove.length - 1]);
+		await user.click(screen.getByRole('button', { name: 'Continue' }));
+
+		const rules = await screen.findByRole('region', { name: 'Rule changes' });
+		await waitFor(() => expect(rules).not.toHaveTextContent('/v1/send'), { timeout: 10_000 });
+		expect(screen.getByText('Revision 2')).toBeInTheDocument();
+		await user.click(screen.getByRole('button', { name: 'Approve' }));
+		await screen.findByText('Access to Work Gmail updated');
+		expect(getEndedMockConnectSessions()[0].confirmBodies[0]).toMatchObject({
+			revision_id: `csr_${seeded.session_id}_2`,
+			permission_rules: [
+				{ effect: 'allow', methods: ['GET'], path: '/v1/', match_mode: 'prefix' },
+			],
+		});
+	}, 20_000);
 
 	it('offers to resume a suspended binding', async () => {
 		const seeded = seedEdit(

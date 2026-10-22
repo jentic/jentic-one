@@ -106,6 +106,27 @@ export function removedScopes(edit: ReviewEdit): string[] {
 	return (edit.current.granted_scopes ?? []).filter((scope) => !result.has(scope));
 }
 
+/** How one scope fares in the change, with who asked for it and why. */
+export interface ScopeChange {
+	scope: string;
+	kind: 'kept' | 'added' | 'removed';
+	addedBy: string | null;
+	comment: string | null;
+}
+
+/** Every scope the grant holds today or the change leaves: added, removed and kept. */
+export function scopeChanges(edit: ReviewEdit): ScopeChange[] {
+	const granted = new Set(edit.current.granted_scopes ?? []);
+	const result = new Set(edit.result.scopes);
+	const notes = edit.result.scope_notes ?? {};
+	return [...new Set([...granted, ...result])].sort().map((scope) => ({
+		scope,
+		kind: granted.has(scope) ? (result.has(scope) ? 'kept' : 'removed') : 'added',
+		addedBy: notes[scope]?.added_by ?? null,
+		comment: notes[scope]?.comment ?? null,
+	}));
+}
+
 /** Whether approving switches a suspended binding back on. */
 export function resumes(edit: ReviewEdit): boolean {
 	return edit.current.suspended && !edit.result.suspended;

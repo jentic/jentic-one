@@ -6,8 +6,10 @@ import {
 	type CredentialUpdateRequest,
 } from '@/shared/credentials/api';
 import type {
+	AmendEditBody,
 	ConfirmSessionBody,
 	ConnectRequest,
+	EditRuleView,
 	ExistingCredential,
 	PermissionRule,
 	ReviewAgent,
@@ -21,6 +23,9 @@ import type {
 	VendorSummary,
 } from '@/shared/credentials/api/vendors-types';
 import type { ApiResponse, CatalogEntryResponse } from '@/shared/api';
+
+/** The mock caller: the agent's owner, who reviews its requests. */
+const MOCK_REVIEWER_ID = 'usr_mock_owner';
 
 /**
  * In-memory credentials store for MSW (mocked dev — Mode A — and browser/e2e
@@ -739,6 +744,49 @@ const connectSessionsHandlers = [
 			reason: gated.reason,
 			requested_permission_rules: gated.requested_permission_rules,
 			api_reference: { vendor: gated.vendor_key, name: gated.vendor_key, version: '1.0.0' },
+		});
+	}),
+
+	// An edit's reviewer changing the request: a new revision recorded as theirs.
+	http.post('/connect-sessions/:sessionId\\:amend', async ({ params, request }) => {
+		const gated = gateSession(params.sessionId, request.url);
+		if (!isMockSession(gated)) return gated;
+		const edit = gated.edit;
+		if (!edit) return new HttpResponse(null, { status: 422 });
+		const body = (await request.json()) as AmendEditBody;
+		const granted = edit.current.granted_scopes ?? [];
+		// A rule the binding has keeps its id; one the agent asked for keeps who asked.
+		const key = (r: PermissionRule) =>
+			JSON.stringify([r.effect, r.methods ?? null, r.path ?? null, r.match_mode ?? 'regex']);
+		const own = new Map(edit.current.rules.map((r) => [key(r), r]));
+		const asked = new Map(edit.result.rules.filter((r) => r.added_by).map((r) => [key(r), r]));
+		const rules: EditRuleView[] = body.rules
+			? body.rules.set.map((rule) => {
+					const mine = own.get(key(rule));
+					if (mine) return { ...rule, id: mine.id, added_by: null };
+					return {
+						...rule,
+						id: null,
+						added_by: asked.get(key(rule))?.added_by ?? MOCK_REVIEWER_ID,
+					};
+				})
+			: edit.result.rules;
+		const scopes = body.scopes ? [...body.scopes.set].sort() : edit.result.scopes;
+		const notes = { ...(edit.result.scope_notes ?? {}) };
+		for (const scope of scopes.filter((s) => !granted.includes(s))) {
+			notes[scope] ??= { added_by: MOCK_REVIEWER_ID, comment: null };
+		}
+		const number = edit.revision.number + 1;
+		gated.edit = {
+			...edit,
+			revision: { id: `csr_${gated.session_id}_${number}`, number },
+			result: { ...edit.result, rules, scopes, scope_notes: notes },
+			needs_vendor_consent: JSON.stringify([...granted].sort()) !== JSON.stringify(scopes),
+		};
+		return HttpResponse.json({
+			session_id: gated.session_id,
+			revision_id: gated.edit.revision.id,
+			revision_number: number,
 		});
 	}),
 
