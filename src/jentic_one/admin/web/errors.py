@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from fastapi import Request
+from fastapi.responses import JSONResponse
+
 from jentic_one.admin.services.errors import (
     AccountLockedError,
     AuditEntryNotFoundError,
@@ -29,6 +32,7 @@ from jentic_one.admin.services.errors import (
     LastActiveAdminError,
     NotFoundError,
     OrgAdminGrantForbiddenError,
+    PasswordHasherBusyError,
     PermissionNotGrantableError,
     SessionExpiredError,
     SetupAlreadyCompleteError,
@@ -79,6 +83,7 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     UserManagementForbiddenError: (403, "user_management_forbidden"),
     InvalidInputError: (400, "invalid_input"),
     InvalidCursorError: (400, "invalid_cursor"),
+    PasswordHasherBusyError: (503, "password_hasher_busy"),
 }
 
 # ``str(AccountLockedError)`` names the user id; the client gets the same
@@ -87,7 +92,24 @@ _SERVICE_SAFE_DETAILS: dict[type[Exception], str] = {
     AccountLockedError: str(InvalidCredentialsError()),
 }
 
-service_error_handler = make_service_error_handler(_ERROR_MAP, safe_details=_SERVICE_SAFE_DETAILS)
+
+def _response_hook(
+    _request: Request,
+    exc: Exception,
+    _status_code: int,
+    response: JSONResponse,
+) -> JSONResponse:
+    """Attach Retry-After when an argon2 operation times out waiting for a slot."""
+    if isinstance(exc, PasswordHasherBusyError):
+        response.headers["Retry-After"] = str(exc.retry_after_s)
+    return response
+
+
+service_error_handler = make_service_error_handler(
+    _ERROR_MAP,
+    response_hook=_response_hook,
+    safe_details=_SERVICE_SAFE_DETAILS,
+)
 
 # A DB constraint violation that escapes a service unmapped (e.g. a unique-index
 # collision the service didn't anticipate) is a conflict, not a server fault.

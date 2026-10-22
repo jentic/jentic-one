@@ -628,6 +628,31 @@ class AdminAuthConfig(BaseModel):
             "How long a locked admin account stays locked before logins are accepted again."
         ),
     )
+    argon2_max_concurrency: int = Field(
+        default=4,
+        ge=1,
+        le=64,
+        description=(
+            "Per-process cap on concurrent argon2id password and OAuth "
+            "client-secret hashes and verifications across all surfaces. Each "
+            "argon2id call allocates 64 MiB (``memory_cost=65536``), so the "
+            "default of 4 bounds peak argon2 memory at 256 MiB per process. "
+            "Calls beyond the cap wait up to ``argon2_acquire_timeout_s`` for "
+            "a slot and then fail with HTTP 503 + ``Retry-After`` instead of "
+            "allocating another 64 MiB buffer."
+        ),
+    )
+    argon2_acquire_timeout_s: float = Field(
+        default=5.0,
+        gt=0,
+        le=60.0,
+        allow_inf_nan=False,
+        description=(
+            "Maximum seconds a password or OAuth client-secret hash or "
+            "verification waits for one of the ``argon2_max_concurrency`` "
+            "slots before failing with HTTP 503 and a ``Retry-After`` header."
+        ),
+    )
 
     @model_validator(mode="after")
     def _require_or_generate_secret_in_dev(self) -> AdminAuthConfig:

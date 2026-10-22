@@ -2598,6 +2598,55 @@ def test_streaming_persist_and_drain_budgets_from_yaml_and_env(tmp_path: Path):
     assert config.services.background_task_drain_timeout_s == 7.5
 
 
+def test_admin_auth_argon2_bounds_default(tmp_path: Path):
+    config = _load(tmp_path, {})
+    assert config.admin.auth.argon2_max_concurrency == 4
+    assert config.admin.auth.argon2_acquire_timeout_s == 5.0
+
+
+def test_admin_auth_argon2_bounds_from_yaml_and_env(tmp_path: Path):
+    config = _load(
+        tmp_path,
+        {
+            "admin": {
+                "auth": {
+                    "argon2_max_concurrency": 6,
+                    "argon2_acquire_timeout_s": 2.5,
+                }
+            }
+        },
+    )
+    assert config.admin.auth.argon2_max_concurrency == 6
+    assert config.admin.auth.argon2_acquire_timeout_s == 2.5
+
+    env = {
+        "JENTIC__ADMIN__AUTH__ARGON2_MAX_CONCURRENCY": "8",
+        "JENTIC__ADMIN__AUTH__ARGON2_ACQUIRE_TIMEOUT_S": "1.25",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        config = _load(tmp_path, {})
+    assert config.admin.auth.argon2_max_concurrency == 8
+    assert config.admin.auth.argon2_acquire_timeout_s == 1.25
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"argon2_max_concurrency": 0},
+        {"argon2_max_concurrency": -1},
+        {"argon2_max_concurrency": 65},
+        {"argon2_acquire_timeout_s": 0},
+        {"argon2_acquire_timeout_s": -0.5},
+        {"argon2_acquire_timeout_s": 61.0},
+        {"argon2_acquire_timeout_s": float("inf")},
+        {"argon2_acquire_timeout_s": float("nan")},
+    ],
+)
+def test_admin_auth_argon2_bounds_validation(tmp_path: Path, overrides: dict[str, Any]):
+    with pytest.raises(ConfigError):
+        _load(tmp_path, {"admin": {"auth": overrides}})
+
+
 @pytest.mark.parametrize(
     "extra",
     [
