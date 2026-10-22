@@ -819,6 +819,7 @@
             "reason": "Also needs to label issues",
             "requested_permission_rules": [
               {
+                "comment": "Lets the agent draft replies, never send them.",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -839,6 +840,7 @@
                 {
                   "before": "apr_6968b3987c22b63e87e79f06",
                   "rule": {
+                    "comment": "Lets the agent draft replies, never send them.",
                     "effect": "allow",
                     "match_mode": "prefix",
                     "methods": [
@@ -856,6 +858,7 @@
               ],
               "set": [
                 {
+                  "comment": "Lets the agent draft replies, never send them.",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -916,6 +919,7 @@
             "examples": [
               [
                 {
+                  "comment": "Lets the agent draft replies, never send them.",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -982,6 +986,7 @@
                   {
                     "before": "apr_6968b3987c22b63e87e79f06",
                     "rule": {
+                      "comment": "Lets the agent draft replies, never send them.",
                       "effect": "allow",
                       "match_mode": "prefix",
                       "methods": [
@@ -999,6 +1004,7 @@
                 ],
                 "set": [
                   {
+                    "comment": "Lets the agent draft replies, never send them.",
                     "effect": "allow",
                     "match_mode": "prefix",
                     "methods": [
@@ -1241,6 +1247,7 @@
             "kind": "api_key",
             "permission_rules": [
               {
+                "comment": "Lets the agent draft replies, never send them.",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -1323,6 +1330,7 @@
             "examples": [
               [
                 {
+                  "comment": "Lets the agent draft replies, never send them.",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -3571,6 +3579,7 @@
             "password": "example-secret",
             "permission_rules": [
               {
+                "comment": "Lets the agent draft replies, never send them.",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -3654,6 +3663,7 @@
             "examples": [
               [
                 {
+                  "comment": "Lets the agent draft replies, never send them.",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -3721,6 +3731,7 @@
             "kind": "bearer",
             "permission_rules": [
               {
+                "comment": "Lets the agent draft replies, never send them.",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -3791,6 +3802,7 @@
             "examples": [
               [
                 {
+                  "comment": "Lets the agent draft replies, never send them.",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -6545,6 +6557,7 @@
             "kind": "edit",
             "permission_rules": [
               {
+                "comment": "Lets the agent draft replies, never send them.",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -6598,6 +6611,7 @@
             "examples": [
               [
                 {
+                  "comment": "Lets the agent draft replies, never send them.",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -6668,6 +6682,7 @@
                 {
                   "before": "apr_6968b3987c22b63e87e79f06",
                   "rule": {
+                    "comment": "Lets the agent draft replies, never send them.",
                     "effect": "allow",
                     "match_mode": "prefix",
                     "methods": [
@@ -6685,6 +6700,7 @@
               ],
               "set": [
                 {
+                  "comment": "Lets the agent draft replies, never send them.",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -6785,6 +6801,7 @@
                   {
                     "before": "apr_6968b3987c22b63e87e79f06",
                     "rule": {
+                      "comment": "Lets the agent draft replies, never send them.",
                       "effect": "allow",
                       "match_mode": "prefix",
                       "methods": [
@@ -6802,6 +6819,7 @@
                 ],
                 "set": [
                   {
+                    "comment": "Lets the agent draft replies, never send them.",
                     "effect": "allow",
                     "match_mode": "prefix",
                     "methods": [
@@ -6855,6 +6873,7 @@
           {
             "before": "apr_6968b3987c22b63e87e79f06",
             "rule": {
+              "comment": "Lets the agent draft replies, never send them.",
               "effect": "allow",
               "match_mode": "prefix",
               "methods": [
@@ -6889,6 +6908,7 @@
             "description": "The rule to add.",
             "examples": [
               {
+                "comment": "Lets the agent draft replies, never send them.",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -6917,6 +6937,7 @@
               {
                 "before": "apr_6968b3987c22b63e87e79f06",
                 "rule": {
+                  "comment": "Lets the agent draft replies, never send them.",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -6934,6 +6955,7 @@
             ],
             "set": [
               {
+                "comment": "Lets the agent draft replies, never send them.",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -6955,6 +6977,7 @@
                 {
                   "before": "apr_6968b3987c22b63e87e79f06",
                   "rule": {
+                    "comment": "Lets the agent draft replies, never send them.",
                     "effect": "allow",
                     "match_mode": "prefix",
                     "methods": [
@@ -7006,6 +7029,7 @@
             "examples": [
               [
                 {
+                  "comment": "Lets the agent draft replies, never send them.",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -8138,6 +8162,7 @@
             "kind": "existing_credential",
             "permission_rules": [
               {
+                "comment": "Lets the agent draft replies, never send them.",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -8217,6 +8242,7 @@
             "examples": [
               [
                 {
+                  "comment": "Lets the agent draft replies, never send them.",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -9405,6 +9431,7 @@
             "reason": "Needs read access to triage issues in the platform repo.",
             "requested_permission_rules": [
               {
+                "comment": "Lets the agent draft replies, never send them.",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -9541,6 +9568,7 @@
             "examples": [
               [
                 {
+                  "comment": "Lets the agent draft replies, never send them.",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -13180,6 +13208,7 @@
             "kind": "oauth",
             "permission_rules": [
               {
+                "comment": "Lets the agent draft replies, never send them.",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -13271,6 +13300,7 @@
             "examples": [
               [
                 {
+                  "comment": "Lets the agent draft replies, never send them.",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -15110,6 +15140,7 @@
             "kind": "own_oauth_client",
             "permission_rules": [
               {
+                "comment": "Lets the agent draft replies, never send them.",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -15228,6 +15259,7 @@
             "examples": [
               [
                 {
+                  "comment": "Lets the agent draft replies, never send them.",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -15598,6 +15630,7 @@
         "description": "Permission rule for an agent↔credential binding.\n\nRules are evaluated first-match-wins. If no rule matches, the request is\ndenied (default-deny). A binding with zero rules therefore blocks all\noperations — users must explicitly add at least one allow rule.",
         "examples": [
           {
+            "comment": "Lets the agent draft replies, never send them.",
             "effect": "allow",
             "match_mode": "prefix",
             "methods": [
@@ -15610,6 +15643,22 @@
           }
         ],
         "properties": {
+          "comment": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why the rule is there, in words. Shown wherever the rule is listed.",
+            "examples": [
+              "Lets the agent draft replies, never send them."
+            ],
+            "title": "Comment"
+          },
           "effect": {
             "description": "Whether this rule allows the matched request, denies it, or holds it for human approval before the broker executes it.",
             "enum": [
@@ -15907,6 +15956,7 @@
           {
             "add": [
               {
+                "comment": "Lets the agent draft replies, never send them.",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -15941,6 +15991,7 @@
             "examples": [
               [
                 {
+                  "comment": "Lets the agent draft replies, never send them.",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -17126,6 +17177,7 @@
             "name": "Stripe read-only",
             "rules": [
               {
+                "comment": "Lets the agent draft replies, never send them.",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -17170,6 +17222,7 @@
             "examples": [
               [
                 {
+                  "comment": "Lets the agent draft replies, never send them.",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -35956,6 +36009,7 @@
                 "reason": "Also needs to label issues",
                 "requested_permission_rules": [
                   {
+                    "comment": "Lets the agent draft replies, never send them.",
                     "effect": "allow",
                     "match_mode": "prefix",
                     "methods": [
@@ -35976,6 +36030,7 @@
                     {
                       "before": "apr_6968b3987c22b63e87e79f06",
                       "rule": {
+                        "comment": "Lets the agent draft replies, never send them.",
                         "effect": "allow",
                         "match_mode": "prefix",
                         "methods": [
@@ -35993,6 +36048,7 @@
                   ],
                   "set": [
                     {
+                      "comment": "Lets the agent draft replies, never send them.",
                       "effect": "allow",
                       "match_mode": "prefix",
                       "methods": [
@@ -38530,6 +38586,7 @@
               "example": {
                 "add": [
                   {
+                    "comment": "Lets the agent draft replies, never send them.",
                     "effect": "allow",
                     "match_mode": "prefix",
                     "methods": [
@@ -43347,6 +43404,7 @@
                 "reason": "Needs read access to triage issues in the platform repo.",
                 "requested_permission_rules": [
                   {
+                    "comment": "Lets the agent draft replies, never send them.",
                     "effect": "allow",
                     "match_mode": "prefix",
                     "methods": [
@@ -43574,6 +43632,7 @@
                     {
                       "before": "apr_6968b3987c22b63e87e79f06",
                       "rule": {
+                        "comment": "Lets the agent draft replies, never send them.",
                         "effect": "allow",
                         "match_mode": "prefix",
                         "methods": [
@@ -43591,6 +43650,7 @@
                   ],
                   "set": [
                     {
+                      "comment": "Lets the agent draft replies, never send them.",
                       "effect": "allow",
                       "match_mode": "prefix",
                       "methods": [
@@ -49709,6 +49769,7 @@
                 "name": "Stripe read-only",
                 "rules": [
                   {
+                    "comment": "Lets the agent draft replies, never send them.",
                     "effect": "allow",
                     "match_mode": "prefix",
                     "methods": [

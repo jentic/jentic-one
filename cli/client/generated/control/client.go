@@ -1487,7 +1487,7 @@ type AgentResponse struct {
 
 // AmendSessionRequest Change an open session's ask; fields sent replace those parts, the rest stay.
 //
-// Examples: {"reason":"Also needs to label issues","requested_permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"requested_scopes":["repo"],"resume":true,"rules":{"add":[{"before":"apr_6968b3987c22b63e87e79f06","rule":{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}}],"remove":["apr_6968b3987c22b63e87e79f06"],"set":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]},"scopes":{"add":["gmail.send"],"remove":["gmail.modify"],"set":["gmail.readonly","gmail.send"]}}
+// Examples: {"reason":"Also needs to label issues","requested_permission_rules":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"requested_scopes":["repo"],"resume":true,"rules":{"add":[{"before":"apr_6968b3987c22b63e87e79f06","rule":{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}}],"remove":["apr_6968b3987c22b63e87e79f06"],"set":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]},"scopes":{"add":["gmail.send"],"remove":["gmail.modify"],"set":["gmail.readonly","gmail.send"]}}
 type AmendSessionRequest struct {
 	// Reason Why, shown to the reviewer.
 	//
@@ -1496,7 +1496,7 @@ type AmendSessionRequest struct {
 
 	// RequestedPermissionRules Create sessions: the rules to ask for, replacing the current ask.
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	RequestedPermissionRules *[]PermissionRuleSchema `json:"requested_permission_rules,omitempty"`
 
 	// RequestedScopes Create sessions: the scopes to ask for, replacing the current ask.
@@ -1511,7 +1511,7 @@ type AmendSessionRequest struct {
 
 	// Rules Edit sessions: the rule change, relative to the baseline.
 	//
-	// Examples: {"add":[{"before":"apr_6968b3987c22b63e87e79f06","rule":{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}}],"remove":["apr_6968b3987c22b63e87e79f06"],"set":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+	// Examples: {"add":[{"before":"apr_6968b3987c22b63e87e79f06","rule":{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}}],"remove":["apr_6968b3987c22b63e87e79f06"],"set":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
 	Rules *EditRulesRequest `json:"rules,omitempty"`
 
 	// Scopes Edit sessions: the scope change, replacing the current ask.
@@ -1592,7 +1592,7 @@ type ApiInfoResponse struct {
 
 // ApiKeyConfirmSessionRequest Confirm a “manual_api_key“ session with the API key to store.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","key":"example-secret","kind":"api_key","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"revision_id":"csr_6968b3983b8b91c75627bee6"}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","key":"example-secret","kind":"api_key","permission_rules":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"revision_id":"csr_6968b3983b8b91c75627bee6"}
 type ApiKeyConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
 	//
@@ -1621,7 +1621,7 @@ type ApiKeyConfirmSessionRequest struct {
 
 	// PermissionRules Permission rules to bind for the agent (at most 100).
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
 
 	// RevisionId The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.
@@ -2377,7 +2377,7 @@ type BasicAuthUpdateRequestType string
 
 // BasicConfirmSessionRequest Confirm a “manual_basic“ session with the username and password to store.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"basic","password":"example-secret","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"revision_id":"csr_6968b3983b8b91c75627bee6","username":"svc-reporting"}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"basic","password":"example-secret","permission_rules":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"revision_id":"csr_6968b3983b8b91c75627bee6","username":"svc-reporting"}
 type BasicConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
 	//
@@ -2406,7 +2406,7 @@ type BasicConfirmSessionRequest struct {
 
 	// PermissionRules Permission rules to bind for the agent (at most 100).
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
 
 	// RevisionId The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.
@@ -2427,7 +2427,7 @@ type BasicConfirmSessionRequestKind string
 
 // BearerConfirmSessionRequest Confirm a “manual_bearer“ session with the bearer token to store.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"bearer","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"revision_id":"csr_6968b3983b8b91c75627bee6","token":"example-secret"}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"bearer","permission_rules":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"revision_id":"csr_6968b3983b8b91c75627bee6","token":"example-secret"}
 type BearerConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
 	//
@@ -2451,7 +2451,7 @@ type BearerConfirmSessionRequest struct {
 
 	// PermissionRules Permission rules to bind for the agent (at most 100).
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
 
 	// RevisionId The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.
@@ -3398,7 +3398,7 @@ type DeviceAuthorizationRegistrationCreateRequestFlowKind string
 
 // EditConfirmSessionRequest Approve an edit session's change with the final rules the reviewer chose.
 //
-// Examples: {"confirmed_scopes":["gmail.readonly","gmail.send"],"kind":"edit","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"resolve_conflicts":false,"resume":false,"revision_id":"csr_6968b3983b8b91c75627bee6"}
+// Examples: {"confirmed_scopes":["gmail.readonly","gmail.send"],"kind":"edit","permission_rules":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"resolve_conflicts":false,"resume":false,"revision_id":"csr_6968b3983b8b91c75627bee6"}
 type EditConfirmSessionRequest struct {
 	// ConfirmedScopes The final scope set (at most 100). Scopes beyond the credential's grant start a vendor consent; the rules and scopes land together when it completes. Omit to keep the grant as it is.
 	//
@@ -3412,7 +3412,7 @@ type EditConfirmSessionRequest struct {
 
 	// PermissionRules The final rule list to apply, in order (at most 100). Replaces the binding's own rules, or its shared rule set's rules while one is attached.
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
 
 	// ResolveConflicts Approve a revision that lists `conflicts`: the reviewer's `permission_rules` settle them. Without it, such a confirm is 409 edit_conflicted.
@@ -3438,7 +3438,7 @@ type EditConfirmSessionRequestKind string
 
 // EditConnectionRequest Ask to change an existing credential binding; a human approves the change.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","apply":true,"credential_id":"cred_6968b39855d91a3561684b32","reason":"Needs to send replies, not just read","rules":{"add":[{"before":"apr_6968b3987c22b63e87e79f06","rule":{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}}],"remove":["apr_6968b3987c22b63e87e79f06"],"set":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]},"scopes":{"add":["gmail.send"],"remove":["gmail.modify"],"set":["gmail.readonly","gmail.send"]}}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","apply":true,"credential_id":"cred_6968b39855d91a3561684b32","reason":"Needs to send replies, not just read","rules":{"add":[{"before":"apr_6968b3987c22b63e87e79f06","rule":{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}}],"remove":["apr_6968b3987c22b63e87e79f06"],"set":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]},"scopes":{"add":["gmail.send"],"remove":["gmail.modify"],"set":["gmail.readonly","gmail.send"]}}
 type EditConnectionRequest struct {
 	// AgentId The binding's agent. Required for humans; agent callers must omit it.
 	//
@@ -3465,7 +3465,7 @@ type EditConnectionRequest struct {
 
 	// Rules The rule change. While the binding points at a shared rule set, it changes that set's rules.
 	//
-	// Examples: {"add":[{"before":"apr_6968b3987c22b63e87e79f06","rule":{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}}],"remove":["apr_6968b3987c22b63e87e79f06"],"set":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+	// Examples: {"add":[{"before":"apr_6968b3987c22b63e87e79f06","rule":{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}}],"remove":["apr_6968b3987c22b63e87e79f06"],"set":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
 	Rules *EditRulesRequest `json:"rules,omitempty"`
 
 	// Scopes The scope change. OAuth credentials connected through an authorization-code or device-authorization app only; others are 422 scopes_not_supported.
@@ -3476,7 +3476,7 @@ type EditConnectionRequest struct {
 
 // EditRuleAdd One rule to add to the binding.
 //
-// Examples: {"before":"apr_6968b3987c22b63e87e79f06","rule":{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}}
+// Examples: {"before":"apr_6968b3987c22b63e87e79f06","rule":{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}}
 type EditRuleAdd struct {
 	// Before ID of the rule to insert this one before (first match wins); appended when omitted.
 	//
@@ -3485,17 +3485,17 @@ type EditRuleAdd struct {
 
 	// Rule The rule to add.
 	//
-	// Examples: {"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}
+	// Examples: {"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}
 	Rule PermissionRuleSchema `json:"rule"`
 }
 
 // EditRulesRequest A change to the binding's rules: `add`/`remove`, or the full list in `set`.
 //
-// Examples: {"add":[{"before":"apr_6968b3987c22b63e87e79f06","rule":{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}}],"remove":["apr_6968b3987c22b63e87e79f06"],"set":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+// Examples: {"add":[{"before":"apr_6968b3987c22b63e87e79f06","rule":{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}}],"remove":["apr_6968b3987c22b63e87e79f06"],"set":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
 type EditRulesRequest struct {
 	// Add Rules to add (at most 100).
 	//
-	// Examples: [{"before":"apr_6968b3987c22b63e87e79f06","rule":{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}}]
+	// Examples: [{"before":"apr_6968b3987c22b63e87e79f06","rule":{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}}]
 	Add *[]EditRuleAdd `json:"add,omitempty"`
 
 	// Remove IDs of rules to remove (at most 100).
@@ -3505,7 +3505,7 @@ type EditRulesRequest struct {
 
 	// Set The full rule list to replace the current one with, in order (at most 100). Not combined with add or remove.
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	Set *[]PermissionRuleSchema `json:"set,omitempty"`
 }
 
@@ -3862,7 +3862,7 @@ type ExecutionStatsResponse struct {
 // When its OAuth grant lacks scopes the session asks for, the response is
 // the vendor challenge for them and the bind lands with the grant.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"existing_credential","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"revision_id":"csr_6968b3983b8b91c75627bee6"}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"existing_credential","permission_rules":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"revision_id":"csr_6968b3983b8b91c75627bee6"}
 type ExistingCredentialConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
 	//
@@ -3891,7 +3891,7 @@ type ExistingCredentialConfirmSessionRequest struct {
 
 	// PermissionRules Permission rules to bind for the agent (at most 100).
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
 
 	// RevisionId The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.
@@ -4331,7 +4331,7 @@ type InstanceIdentityResponseBackend string
 
 // IntegrationsConnectRequest Start connecting a credential for a vendor or a registry API.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","api":{"name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"auth_type":"oauth2","name":"GitHub (work)","oauth_app_registration_id":"oar_6968b39821e5f89a6975f501","preferred_flow":"authorization_code","reason":"Needs read access to triage issues in the platform repo.","requested_permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"requested_scopes":["repo","read:user"],"vendor":"github"}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","api":{"name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"auth_type":"oauth2","name":"GitHub (work)","oauth_app_registration_id":"oar_6968b39821e5f89a6975f501","preferred_flow":"authorization_code","reason":"Needs read access to triage issues in the platform repo.","requested_permission_rules":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"requested_scopes":["repo","read:user"],"vendor":"github"}
 type IntegrationsConnectRequest struct {
 	// AgentId ID of the agent to bind the credential to on confirm; it must be an active agent the caller owns and may approve for (`agents:write`), or any agent for `org:admin`. Agent callers must omit it, and when omitted by a user the credential connects unbound.
 	//
@@ -4370,7 +4370,7 @@ type IntegrationsConnectRequest struct {
 
 	// RequestedPermissionRules Permission rules proposed for the agent, shown pre-filled on the review page; nothing is bound until confirm.
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	RequestedPermissionRules *[]PermissionRuleSchema `json:"requested_permission_rules,omitempty"`
 
 	// RequestedScopes Upstream scopes to request (at most 100).
@@ -5658,7 +5658,7 @@ type OAuthClientUpdateRequest struct {
 //
 // The default variant — a body without “kind“ is this one.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","confirmed_scopes":["repo","read:user"],"digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"oauth","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"revision_id":"csr_6968b3983b8b91c75627bee6"}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","confirmed_scopes":["repo","read:user"],"digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"oauth","permission_rules":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"revision_id":"csr_6968b3983b8b91c75627bee6"}
 type OAuthConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
 	//
@@ -5687,7 +5687,7 @@ type OAuthConfirmSessionRequest struct {
 
 	// PermissionRules Permission rules to bind for the agent (at most 100).
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules *[]PermissionRuleSchema `json:"permission_rules,omitempty"`
 
 	// RevisionId The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.
@@ -6284,7 +6284,7 @@ type OverlayUpdateRequest struct {
 // the spec may be agent-submitted and the token endpoint receives the
 // client secret.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","authorize_url":"https://github.com/login/oauth/authorize","client_id":"Iv1.a1b2c3d4","client_secret":"example-secret","confirmed_scopes":["repo","read:user"],"digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"own_oauth_client","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"revision_id":"csr_6968b3983b8b91c75627bee6","token_url":"https://github.com/login/oauth/access_token"}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","authorize_url":"https://github.com/login/oauth/authorize","client_id":"Iv1.a1b2c3d4","client_secret":"example-secret","confirmed_scopes":["repo","read:user"],"digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"own_oauth_client","permission_rules":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"revision_id":"csr_6968b3983b8b91c75627bee6","token_url":"https://github.com/login/oauth/access_token"}
 type OwnOAuthClientConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
 	//
@@ -6328,7 +6328,7 @@ type OwnOAuthClientConfirmSessionRequest struct {
 
 	// PermissionRules Permission rules to bind for the agent (at most 100).
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
 
 	// RevisionId The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.
@@ -6453,8 +6453,13 @@ type PermissionRuleReadSchemaMatchMode string
 // denied (default-deny). A binding with zero rules therefore blocks all
 // operations — users must explicitly add at least one allow rule.
 //
-// Examples: {"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}
+// Examples: {"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}
 type PermissionRuleSchema struct {
+	// Comment Why the rule is there, in words. Shown wherever the rule is listed.
+	//
+	// Examples: Lets the agent draft replies, never send them.
+	Comment *string `json:"comment,omitempty"`
+
 	// Effect Whether this rule allows the matched request, denies it, or holds it for human approval before the broker executes it.
 	//
 	// Examples: allow
@@ -6563,11 +6568,11 @@ type Permissions struct {
 
 // PermissionsPatchRequest Patch permission rules — add and/or remove.
 //
-// Examples: {"add":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"remove":[0,2]}
+// Examples: {"add":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"remove":[0,2]}
 type PermissionsPatchRequest struct {
 	// Add Rules to append after the existing user rules.
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	Add *[]PermissionRuleSchema `json:"add,omitempty"`
 
 	// Remove Zero-based indexes of user rules (excluding system rules) to delete; applied before `add`.
@@ -6984,7 +6989,7 @@ type RuleSetAttachRequest struct {
 
 // RuleSetCreateRequest Create a shared permission rule set (theme 5 phase 1, Q-04).
 //
-// Examples: {"description":"Allows GET requests to the Stripe API; denies everything else.","name":"Stripe read-only","rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+// Examples: {"description":"Allows GET requests to the Stripe API; denies everything else.","name":"Stripe read-only","rules":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
 type RuleSetCreateRequest struct {
 	// Description Optional free-text description of the set.
 	//
@@ -6998,7 +7003,7 @@ type RuleSetCreateRequest struct {
 
 	// Rules Initial ordered rule list (first-match-wins, default-deny).
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	Rules *[]PermissionRuleSchema `json:"rules,omitempty"`
 }
 

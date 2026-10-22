@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 from jentic_one.shared.permissions.matching import MatchMode, validate_path
 from jentic_one.shared.web import openapi_examples as ex
@@ -59,6 +59,15 @@ class BasePermissionRuleSchema(BaseModel):
         default=None,
         examples=[[ex.OPERATION_ID]],
         description="OpenAPI operation IDs to match. None matches all operations.",
+    )
+    comment: str | None = Field(
+        default=None,
+        max_length=500,
+        # Also ``_comment``, the name reads return it under, so a rule read
+        # back can be sent as is.
+        validation_alias=AliasChoices("comment", "_comment"),
+        examples=["Lets the agent draft replies, never send them."],
+        description="Why the rule is there, in words. Shown wherever the rule is listed.",
     )
 
     @model_validator(mode="after")

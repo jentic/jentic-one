@@ -1584,12 +1584,14 @@ def test_edit_connection_round_trip(
     assert [r["path"] for r in edit["result"]["rules"]] == ["/v1/send", "/v1/.*"]
     assert edit["widens_access"] is True
 
+    # Confirm with the rules exactly as the review returned them (ids aside).
+    reviewed = [{k: v for k, v in r.items() if k != "id"} for r in edit["result"]["rules"]]
     resp = cred_writer_client.post(
         f"/connect-sessions/{created['session_id']}:confirm",
         json={
             "kind": "edit",
             "revision_id": created["revision_id"],
-            "permission_rules": [send, read],
+            "permission_rules": reviewed,
         },
     )
     assert resp.status_code == 200, resp.text
@@ -1650,3 +1652,23 @@ def test_edit_connection_apply_and_conflicts(
         f"/connect-sessions/{open_id}:confirm", json=confirm | {"resolve_conflicts": True}
     )
     assert resp.status_code == 200, resp.text
+
+
+def test_a_rule_comment_is_saved_and_read_back(
+    cred_writer_client: TestClient, bound_agents: tuple[str, list[str]]
+) -> None:
+    """A rule keeps its comment, sent as ``comment`` or as the ``_comment`` reads use."""
+    credential_id, (agent_id, _) = bound_agents
+    base = f"/credentials/{credential_id}/agents/{agent_id}/permissions"
+    rules = [
+        {"effect": "allow", "methods": ["GET"], "path": "/v1/.*", "comment": "Read anything"},
+        {"effect": "deny", "path": "/v1/admin", "match_mode": "prefix", "_comment": "Never admin"},
+    ]
+    assert cred_writer_client.put(base, json=rules).status_code == 200
+    read = cred_writer_client.get(base).json()["data"]
+    assert [r["_comment"] for r in read] == ["Read anything", "Never admin"]
+    # A rule read back is accepted as is.
+    echoed = [{k: v for k, v in r.items() if k not in ("id", "_system")} for r in read]
+    assert cred_writer_client.put(base, json=echoed).status_code == 200
+    too_long = [{"effect": "deny", "path": "/x", "comment": "x" * 501}]
+    assert cred_writer_client.put(base, json=too_long).status_code == 422

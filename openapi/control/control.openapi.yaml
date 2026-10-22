@@ -541,7 +541,8 @@ components:
       - &id245
         reason: Also needs to label issues
         requested_permission_rules: &id009
-        - effect: allow
+        - comment: Lets the agent draft replies, never send them.
+          effect: allow
           match_mode: prefix
           methods: &id007
           - GET
@@ -555,6 +556,7 @@ components:
           add:
           - before: apr_6968b3987c22b63e87e79f06
             rule:
+              comment: Lets the agent draft replies, never send them.
               effect: allow
               match_mode: prefix
               methods: *id007
@@ -563,7 +565,8 @@ components:
           remove: &id063
           - apr_6968b3987c22b63e87e79f06
           set:
-          - effect: allow
+          - comment: Lets the agent draft replies, never send them.
+            effect: allow
             match_mode: prefix
             methods: *id007
             operations: *id008
@@ -762,7 +765,8 @@ components:
         key: example-secret
         kind: api_key
         permission_rules: &id015
-        - effect: allow
+        - comment: Lets the agent draft replies, never send them.
+          effect: allow
           match_mode: prefix
           methods: *id007
           operations: *id008
@@ -2182,7 +2186,8 @@ components:
         kind: basic
         password: example-secret
         permission_rules: &id035
-        - effect: allow
+        - comment: Lets the agent draft replies, never send them.
+          effect: allow
           match_mode: prefix
           methods: *id007
           operations: *id008
@@ -2275,7 +2280,8 @@ components:
         expected_agent_id: agnt_6968b3984d1c238dbe7e2e29
         kind: bearer
         permission_rules: &id036
-        - effect: allow
+        - comment: Lets the agent draft replies, never send them.
+          effect: allow
           match_mode: prefix
           methods: *id007
           operations: *id008
@@ -4052,7 +4058,8 @@ components:
         - gmail.send
         kind: edit
         permission_rules: &id062
-        - effect: allow
+        - comment: Lets the agent draft replies, never send them.
+          effect: allow
           match_mode: prefix
           methods: *id007
           operations: *id008
@@ -4129,6 +4136,7 @@ components:
           add:
           - before: apr_6968b3987c22b63e87e79f06
             rule:
+              comment: Lets the agent draft replies, never send them.
               effect: allow
               match_mode: prefix
               methods: *id007
@@ -4136,7 +4144,8 @@ components:
               path: /v1/charges
           remove: *id063
           set:
-          - effect: allow
+          - comment: Lets the agent draft replies, never send them.
+            effect: allow
             match_mode: prefix
             methods: *id007
             operations: *id008
@@ -4209,6 +4218,7 @@ components:
       - &id070
         before: apr_6968b3987c22b63e87e79f06
         rule: &id069
+          comment: Lets the agent draft replies, never send them.
           effect: allow
           match_mode: prefix
           methods: *id007
@@ -4241,7 +4251,8 @@ components:
         - *id070
         remove: *id063
         set: &id072
-        - effect: allow
+        - comment: Lets the agent draft replies, never send them.
+          effect: allow
           match_mode: prefix
           methods: *id007
           operations: *id008
@@ -4939,7 +4950,8 @@ components:
         expected_agent_id: agnt_6968b3984d1c238dbe7e2e29
         kind: existing_credential
         permission_rules: &id083
-        - effect: allow
+        - comment: Lets the agent draft replies, never send them.
+          effect: allow
           match_mode: prefix
           methods: *id007
           operations: *id008
@@ -5768,7 +5780,8 @@ components:
         preferred_flow: authorization_code
         reason: Needs read access to triage issues in the platform repo.
         requested_permission_rules: &id090
-        - effect: allow
+        - comment: Lets the agent draft replies, never send them.
+          effect: allow
           match_mode: prefix
           methods: *id007
           operations: *id008
@@ -8132,7 +8145,8 @@ components:
         expected_agent_id: agnt_6968b3984d1c238dbe7e2e29
         kind: oauth
         permission_rules: &id124
-        - effect: allow
+        - comment: Lets the agent draft replies, never send them.
+          effect: allow
           match_mode: prefix
           methods: *id007
           operations: *id008
@@ -9292,7 +9306,8 @@ components:
         expected_agent_id: agnt_6968b3984d1c238dbe7e2e29
         kind: own_oauth_client
         permission_rules: &id139
-        - effect: allow
+        - comment: Lets the agent draft replies, never send them.
+          effect: allow
           match_mode: prefix
           methods: *id007
           operations: *id008
@@ -9592,12 +9607,22 @@ components:
         operations — users must explicitly add at least one allow rule.
       examples:
       - &id146
+        comment: Lets the agent draft replies, never send them.
         effect: allow
         match_mode: prefix
         methods: *id007
         operations: *id008
         path: /v1/charges
       properties:
+        comment:
+          anyOf:
+          - maxLength: 500
+            type: string
+          - type: 'null'
+          description: Why the rule is there, in words. Shown wherever the rule is listed.
+          examples:
+          - Lets the agent draft replies, never send them.
+          title: Comment
         effect:
           description: Whether this rule allows the matched request, denies it, or holds it for human approval before the broker executes it.
           enum:
