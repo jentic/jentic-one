@@ -50,8 +50,8 @@ vendor:
   registry_domains: [github.com]   # registry vendors this vendor's tokens reach
   error_shape: github        # github | cloudflare | unset (RFC 9457)
 credential:
-  mode: per_api              # per_api; profile_scoped is reserved
-connect:                     # the single profile-wide connect (profile_scoped only)
+  mode: profile_scoped       # per_api | profile_scoped (see "Credential modes")
+connect:                     # the profile's own connect (profile_scoped)
   vendor_entry: github
   flow: device_authorization
 apis: [...]                  # see below
@@ -77,12 +77,11 @@ apis:
   - role: rest
     source: catalog:github.com/api.github.com     # the public API catalog
     identity: {vendor: github-com, name: api-github-com}
-    connect: github                                # vendors.entries key
   - role: graphql
     source: shipped:specs/github-graphql.openapi.yaml   # a spec in this package
     api_id: github.com/github-graphql              # required for shipped
     identity: {vendor: github-com, name: github-graphql, version: "1"}
-    connect: github-graphql
+    connect: github-graphql                        # vendors.entries key (per-API credential)
   - role: git
     source: builtin:github.com/github-git          # served by the Broker itself
     identity: {vendor: github-com, name: github-git, version: "1"}
@@ -99,8 +98,10 @@ apis:
   covers the imported API exactly. A `catalog` API has no version (the
   imported spec decides it); `shipped` and `builtin` APIs declare theirs, and a
   shipped spec's `info.version` must match it.
-- `connect` is the `vendors.entries` key whose connect creates this API's
-  credential (`jentic connect <key>`). Two APIs never share one.
+- `connect` is the `vendors.entries` key whose connect creates a credential
+  for this API alone (`jentic connect <key>`). Two APIs never share one, and
+  none is the profile's own `connect.vendor_entry`. An identity belongs to one
+  profile only.
 
 ### `routing`
 
@@ -209,6 +210,11 @@ The shipped GitHub presets:
 | `read_only` | `GET` prefix `/` | every query; no mutation | `fetch:<repo>` |
 | `read_and_prs` | `read_only` + `POST` pull requests and issue comments | every query, the PR mutations, any other mutation held | `fetch:<repo>` |
 | `push_branches` | — | — | `push:<repo>:refs/heads/<branches>`, plus `force:` on the same pattern with `force=true` |
+| `read_and_push` | `GET` prefix `/` | every query; no mutation | `fetch:<repo>`, `push:<repo>:refs/heads/<branches>` (and `force:` with `force=true`) |
+
+For the profile's own connect (`jentic connect github`, `profile_scoped`) the
+preset expands for every role at once, asking for every parameter its rules
+use, and each rule carries the `api_role` it applies to (see below).
 
 ## Provisioning
 
@@ -228,15 +234,56 @@ reads it back as live (the registry's uniqueness on the API identity and on
 `(api, spec digest)` decides the race). Nothing provisions at boot. The same
 provisioning runs on demand whenever a connect starts or finishes for one of
 the profile's APIs (the catalog auto-import seam): the connected API always,
-and the profile's other APIs too while the vendor's facade is enabled.
+and the profile's other APIs too while the vendor's facade is enabled or when
+the profile is `profile_scoped` (its one connect covers all of them).
 
-## Credentials today, and a profile-scoped credential
+## Credential modes
 
-`credential.mode: per_api` keeps one credential per API: each API's
-`connect` entry runs its own flow and the credential covers that API alone,
-with its own binding and rules. `profile_scoped` is reserved for one
-credential per profile connect (the profile's `connect` block: one flow, one
-stored secret) covering exactly the APIs the profile declares and nothing else
-of the vendor, with each rule kind applying only to the API of the matching
-role. The manifest already carries what that needs: a stable `role` and
-resolved `identity` per API, and the single `connect` entry.
+`credential.mode` decides how many credentials an agent needs for the profile.
+
+**`per_api`** (Cloudflare): each API's `connect` entry runs its own flow and
+creates a credential scoped to that API alone (`vendor`/`name`), with its own
+binding and rules. Every rule on that binding is evaluated for every call to
+the API, as for any other credential.
+
+**`profile_scoped`** (GitHub): the profile's `connect` block is one connect,
+`jentic connect github`, with one vendor flow (one device-flow session) and one
+stored grant (one access token and one refresh token). It creates one
+credential and one binding per agent:
+
+- The credential row carries `cli_profile: github`, `api_vendor` the profile's
+  one identity vendor (`github-com`; a `profile_scoped` profile's APIs must
+  share it) and no name or version. Its coverage is exactly the identities the
+  shipped manifest declares under `apis` (a `catalog` API at any version, a
+  `shipped`/`builtin` API at its declared version), read at use time
+  (`shared.cli_profiles.declaring_profile`): every coverage matcher (broker
+  derivation and injection, the open-session lookup, the registry's
+  host-change guard) passes the declaring profile, and a profile credential
+  covers an API only when it is its own. Any other API of the vendor
+  (`github-com/gists`) is not covered at all, and a release that adds or drops
+  an API in the manifest widens or narrows every such credential with it.
+- Each rule on the binding is stored with an `api_role` (`rest`, `graphql`,
+  `git`, `uploads`). A rule given without one gets the role its kind implies:
+  a `git` rule `git`, a `graphql` rule `graphql`, any other rule `rest`. A role
+  the profile does not declare, or one whose API takes another kind of rule
+  (a path rule for `graphql`), is refused (`connect_rule_api_role_invalid`, or
+  400 on the binding's rule routes). Shared rule sets store no role: attached
+  to such a binding, their rules go by kind.
+- The broker evaluates only the rules of the requested API's role: path rules
+  for the REST API, GraphQL rules for the GraphQL endpoint, git rules for git.
+  An API with no rule of its own is denied by default. On the GraphQL endpoint
+  a plain path rule (`allow POST /graphql`) therefore decides nothing for a
+  profile credential, unlike on any other credential, where a path rule still
+  applies to every field: a profile binding's GraphQL access is its `graphql`
+  rules alone. The hard-deny lists apply as before.
+- One grant means one refresh token: GitHub App refresh tokens are single-use,
+  so the one credential is the only thing that ever refreshes it, whichever
+  API the call is for.
+- The approver's review (`GET /connect-sessions/{id}`) carries `cli_profile`
+  and `profile_apis`, so the rules are shown per API. An agent's credential
+  bindings list every declared API under `serves`, each with its `api_role`.
+- A denial for any of the profile's APIs suggests the profile's connect
+  (`jentic connect github`) when the deployment configures that entry.
+
+The per-API connects (`github-graphql`, `github-git`) stay available for a
+credential of one API only; such a credential is an ordinary one.

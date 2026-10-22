@@ -410,12 +410,12 @@ remotes (`git@github.com:…`) do not work: only HTTPS leaves the container.
 serves it (`cli_facades.git.enabled`, on by default with the GitHub facade).
 
 The agent needs a credential that covers the built-in git API
-(`github-com/github-git`) and git rules on its binding. The GitHub REST
-credential `jentic connect github` creates (scoped to `api-github-com`) does
-not cover git, and a git credential covers no REST or GraphQL call: each
-binding has its own rules. To connect one through the normal flow, the
-operator adds a vendor entry that targets the git API (same OAuth app as the
-`github` entry; `config/local.yaml` ships it):
+(`github-com/github-git`) and git rules on its binding. The GitHub profile
+credential `jentic connect github` creates covers git together with the REST
+and GraphQL APIs ([CLI profiles](#cli-profiles)); only its `git` rules decide
+a git request. For a credential of git alone, the operator adds a vendor entry
+that targets the git API (same OAuth app as the `github` entry;
+`config/local.yaml` ships it):
 
 ```yaml
 vendors:
@@ -454,7 +454,8 @@ A vendor-wide credential (vendor `github.com`, no API name, entered by hand)
 also covers git, but it covers every GitHub API of the deployment, including
 ones imported later, under one rule list: REST, GraphQL and git rules still
 each decide only their own kind of request, but a broad REST rule then
-reaches every GitHub REST API. Prefer the per-API `github-git` credential.
+reaches every GitHub REST API. Prefer the profile credential (`jentic connect
+github`) or the per-API `github-git` credential.
 
 #### Testing with your own provider login
 
@@ -523,14 +524,22 @@ run --container` give the CLI, and rule presets. `jentic cli profiles` lists
 them (`GET /cli-profiles`); `jentic cli list` shows what each served facade
 wires.
 
-The GitHub profile has three APIs, each with its own credential and its own
-rules today:
+The GitHub profile has three APIs. `jentic connect github` connects all three
+at once: one device-flow sign-in, one stored grant (so one refresh token), one
+credential covering exactly these APIs and no other GitHub API, and one
+binding whose rules each apply to one API only:
 
-| API | Source | Connect | Rules |
-| --- | ------ | ------- | ----- |
-| REST (`api.github.com`, `uploads.github.com`) | the public API catalog | `jentic connect github` | path rules |
-| GraphQL (`POST api.github.com/graphql`) | a spec shipped with Jentic | `jentic connect github-graphql` | GraphQL rules |
-| git (clone, fetch, push to `github.com`) | built into the Broker | `jentic connect github-git` | git rules |
+| API | Source | Rules (`api_role`) | One-API connect |
+| --- | ------ | ------------------ | --------------- |
+| REST (`api.github.com`, `uploads.github.com`) | the public API catalog | path rules (`rest`) | — |
+| GraphQL (`POST api.github.com/graphql`) | a spec shipped with Jentic | GraphQL rules (`graphql`) | `jentic connect github-graphql` |
+| git (clone, fetch, push to `github.com`) | built into the Broker | git rules (`git`) | `jentic connect github-git` |
+
+A call to one of the APIs is decided by that API's rules alone, and an API
+with no rule of its own is denied: a REST path rule never lets a GraphQL
+mutation or a git push through. `jentic connect github-graphql` and `jentic
+connect github-git` still create a credential for that one API, if you want
+one.
 
 ### Enabling GitHub end to end
 
@@ -561,13 +570,11 @@ rules today:
    Without this, the first connect for any of the three provisions the whole
    profile on demand.
 
-3. Agent: ask for each API with a preset; the human approves each in the
-   browser and sees the concrete rules:
+3. Agent: ask for the profile with a preset; the human approves once in the
+   browser and sees the concrete rules grouped per API:
 
    ```bash
-   jentic connect github --preset read_and_prs --wait
-   jentic connect github-graphql --preset read_and_prs --wait
-   jentic connect github-git --preset push_branches \
+   jentic connect github --scopes repo --preset read_and_push \
      --preset-param repo=octo-org/app --preset-param branches='agent/*' --wait
    ```
 
@@ -575,19 +582,22 @@ rules today:
    (host-mode facade), or `gh`, `git` and `curl` as usual inside `jentic run
    --container`.
 
-Presets expand server-side into rules of the API's own kind, so each connect
-asks only for the parameters its API uses (`repo` for git, nothing for REST
-and GraphQL):
+Presets expand server-side into rules for each API, tagged with its role
+(`jentic connect github` asks for every parameter the preset's rules use; a
+one-API connect only for that API's):
 
 | Preset | REST | GraphQL | git |
 | ------ | ---- | ------- | --- |
 | `read_only` | `GET` everything | every query, no mutation | `fetch:<repo>` |
 | `read_and_prs` | `GET` everything, open PRs, comment | queries, PR mutations; other mutations held | `fetch:<repo>` |
 | `push_branches` | | | `push:<repo>:refs/heads/<branches>`; `force:` too with `--preset-param force=true` |
+| `read_and_push` | `GET` everything | every query, no mutation | `fetch:<repo>` and `push:<repo>:refs/heads/<branches>` |
 
 `--preset-param repo=` takes comma-separated `<owner>/<repo>` globs; repeating
 the flag adds to the list. A preset's rules come after any `--rules` the agent
-lists itself. The hard-deny lists (GraphQL mutations that grant access or
+lists itself; with `jentic connect github` each `--rules` entry may name its
+`api_role` (`rest`, `graphql`, `git`), and one that names none goes by kind (a
+`git` rule to git, a `graphql` rule to GraphQL, any other to REST). The hard-deny lists (GraphQL mutations that grant access or
 change protections, refs outside `refs/heads/` and `refs/tags/`) apply under
 every preset.
 

@@ -62,6 +62,14 @@ credential-centric view.
   `(api_vendor, api_name, api_version)` (control DB, `credentials`). The
   `name` and `version` axes may be unset — an unset axis is a wildcard, so a
   vendor-wide credential covers every API under that vendor.
+- A **CLI-profile credential** is the exception: the one credential a
+  `profile_scoped` CLI profile's connect creates (`jentic connect github`)
+  carries `cli_profile` and covers exactly the APIs the profile's shipped
+  manifest declares (GitHub: REST, GraphQL, git), never the rest of the vendor.
+  Each rule on its binding names the API role it applies to (`api_role`, or
+  the role its kind implies), and a call to one of the APIs is decided by that
+  API's rules alone. See
+  [Credential modes](../architecture/cli-profiles.md#credential-modes).
 - An **agent-credential binding** (admin DB, `agent_credential_bindings`)
   grants one agent the use of one credential. A binding
   optionally points at a shared **rule set** (`rule_set_id` → control DB
