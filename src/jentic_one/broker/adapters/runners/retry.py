@@ -10,14 +10,15 @@ wall-clock budget bounds the whole loop, including the backoff sleeps).
 **Retryability is gated by the failure *phase*, not just the method:**
 
 - A connect-phase failure (``BrokerError.pre_send`` — no request bytes hit the
-  wire) is safe to retry for **any** method, including a key-less ``POST``: the
+  wire) is safe to retry for **any** method, including ``POST``: the
   upstream cannot have acted.
 - A post-send failure (read timeout, connection drop after send, or a mirrored
-  ``429``/``5xx`` status) is retried **only** for idempotent methods or when an
-  ``Idempotency-Key`` is present — blind-retrying a non-idempotent ``POST`` here
-  is a guaranteed double-spend.
+  ``429``/``5xx`` status) is retried **only** for idempotent HTTP methods —
+  ``Idempotency-Key`` is broker-consumed for caller-level replay and stripped
+  from outbound headers (``BROKER_CONSUMED_HEADERS``), so the upstream has no
+  way to deduplicate a re-sent ``POST`` or ``PATCH`` (#1799).
 
-So the gate is ``pre_send OR idempotent_method OR has_idempotency_key``. Backoff
+So the gate is ``pre_send OR idempotent_method``. Backoff
 is exponential with full jitter; an upstream ``Retry-After`` (or
 ``X-RateLimit-Reset``) on a ``429``/``503`` is honored, normalized to integer
 seconds, and capped at the remaining deadline budget.
@@ -42,7 +43,11 @@ from jentic_one.broker.adapters.runners.base import (
     StreamingUpstreamRunner,
     UpstreamRunner,
 )
-from jentic_one.broker.core.exceptions import BrokerError
+from jentic_one.broker.core.exceptions import (
+    BrokerError,
+    UpstreamTimeoutError,
+    UpstreamTransportError,
+)
 from jentic_one.broker.core.retry_after import parse_retry_after_seconds
 from jentic_one.shared.metrics import get_meter
 
@@ -56,23 +61,19 @@ _retry_exhausted_total = _meter.create_counter(
     description="Calls that exhausted the retry budget (attempts or deadline).",
 )
 
-# Methods whose semantics make a retry safe even after the request reached the
-# upstream (RFC 7231 idempotent set). POST/PATCH are absent: they need an
-# Idempotency-Key (or a pre-send failure) to be retryable post-send.
+# Methods whose HTTP semantics make a retry safe even after the request reached
+# the upstream (RFC 7231 idempotent set). POST and PATCH are excluded: the
+# broker consumes Idempotency-Key for caller-level replay and strips it from
+# forwarded headers, so the upstream cannot deduplicate a post-send retry
+# (#1799); they retry only on pre-send failures.
 _IDEMPOTENT_METHODS: frozenset[str] = frozenset(
     {"GET", "HEAD", "PUT", "DELETE", "OPTIONS", "TRACE"}
 )
 
 
 def _is_idempotent(request: RunnerRequest) -> bool:
-    """Whether a *post-send* retry is safe for this request (method or key).
-
-    The key signal is ``RunnerRequest.has_idempotency_key``, set by the handler
-    that read the inbound request: the ``Idempotency-Key`` header is
-    broker-consumed and stripped before the runner request is built, so it is
-    never in ``request.headers``.
-    """
-    return request.method.upper() in _IDEMPOTENT_METHODS or request.has_idempotency_key
+    """Whether a *post-send* retry is safe for this request."""
+    return request.method.upper() in _IDEMPOTENT_METHODS
 
 
 class RetryRunner:
@@ -138,7 +139,9 @@ class RetryRunner:
             yield result
 
     def _should_retry_error(self, exc: BrokerError, *, idempotent: bool) -> bool:
-        """A connect-phase error retries for any method; post-send only if idempotent."""
+        """An upstream transport/timeout error retries pre-send or when idempotent."""
+        if not isinstance(exc, UpstreamTimeoutError | UpstreamTransportError):
+            return False
         return bool(exc.pre_send) or idempotent
 
     def _should_retry_status(self, status_code: int, *, idempotent: bool) -> bool:

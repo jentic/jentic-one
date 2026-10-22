@@ -99,6 +99,7 @@ Service-level settings (immutable after boot).
 | `services.request_timeout_s` | number | `30.0` | `JENTIC__SERVICES__REQUEST_TIMEOUT_S` |  |
 | `services.retry_max` | integer | `3` | `JENTIC__SERVICES__RETRY_MAX` |  |
 | `services.retry_backoff_s` | number | `1.0` | `JENTIC__SERVICES__RETRY_BACKOFF_S` |  |
+| `services.background_task_drain_timeout_s` | number (>= 0) | `10.0` | `JENTIC__SERVICES__BACKGROUND_TASK_DRAIN_TIMEOUT_S` | On shutdown, how long (seconds) the app waits for work requests handed off after their response (e.g. streaming execution records) before cancelling what is still running. Runs before the databases close; each cancelled task is logged and counted on `app.background_tasks` (`outcome=cancelled`). |
 
 ## `worker`
 
@@ -181,6 +182,7 @@ Admin surface configuration.
 | `admin.auth.failed_login_lockout_seconds` | integer | `900` | `JENTIC__ADMIN__AUTH__FAILED_LOGIN_LOCKOUT_SECONDS` | How long a locked admin account stays locked before logins are accepted again. |
 | `admin.invite.ttl_days` | integer | `7` | `JENTIC__ADMIN__INVITE__TTL_DAYS` |  |
 | `admin.invite.pepper` | string (secret) | `""` | `JENTIC__ADMIN__INVITE__PEPPER` |  |
+| `admin.events.stream_recheck_seconds` | number (> 0) | `5.0` | `JENTIC__ADMIN__EVENTS__STREAM_RECHECK_SECONDS` | Minimum seconds between re-verifications of an open `GET /events/stream`: its credential, `events:read` / `org:admin` permission, and the scope of the events it delivers. Checks run only at a poll or page boundary, so a check happens at the first poll or page after the interval elapses; an idle stream polls every few seconds, so a value below its poll interval behaves as that interval. A disabled caller, a revoked or expired token, or a revoked permission ends the stream at that check; a narrower permission set narrows it. Permissions are those the credential carries: API keys and user `at_` access tokens resolve them live, while a login session JWT and an agent `at_` access token carry the set they were issued with; the stream re-verifies the token it was opened with, so for those a change applies once that token expires and the client reconnects. |
 
 ## `auth`
 
@@ -233,6 +235,9 @@ Broker surface configuration.
 | `broker.toolkit_cache_ttl_s` | number | `3.0` | `JENTIC__BROKER__TOOLKIT_CACHE_TTL_S` |  |
 | `broker.rule_cache_ttl_s` | number | `3.0` | `JENTIC__BROKER__RULE_CACHE_TTL_S` |  |
 | `broker.rule_cache_max_entries` | integer | `5000` | `JENTIC__BROKER__RULE_CACHE_MAX_ENTRIES` |  |
+| `broker.streaming_persist_timeout_s` | number (> 0) | `10.0` | `JENTIC__BROKER__STREAMING_PERSIST_TIMEOUT_S` | Budget (seconds) for writing one streaming execution's record and lifecycle event. The write runs after the response, off the request, so it never delays the client; past the budget it is abandoned, logged and counted on `app.background_tasks` (`kind=streaming_execution_persist`, `outcome=timed_out`). |
+| `broker.streaming_persist_max_concurrency` | integer (> 0) | `5` | `JENTIC__BROKER__STREAMING_PERSIST_MAX_CONCURRENCY` | Per-process cap on concurrent post-response persists of streaming execution records (each holds one admin-DB connection). Excess persists wait for a slot, up to `broker.streaming_persist_acquire_timeout_s`; the waiting and writing counts are exported as `broker.streaming_execution.persist_pending`. The effective cap is clamped to `databases.admin.pool_max - 1` (minimum 1; a `streaming_persist_limit_clamped` warning is logged when it applies), so with `pool_max >= 2` persists never take every connection of the admin base pool. `pool_max` is the base pool size only; SQLAlchemy's default overflow can open up to 10 more connections on top of it. |
+| `broker.streaming_persist_acquire_timeout_s` | number (> 0) | `5.0` | `JENTIC__BROKER__STREAMING_PERSIST_ACQUIRE_TIMEOUT_S` | How long (seconds) a streaming execution persist waits for one of the `broker.streaming_persist_max_concurrency` slots. Past it the record is abandoned: logged as `streaming_execution_persist_abandoned` and counted on `broker.streaming_execution.persist_failures` (`reason=backlog_timeout`). The wait runs after the response is complete or the client has disconnected, when the request no longer holds its admission slot, so the wait delays neither the client nor `/ready`. The timeout bounds how long a stalled admin database can keep records queued in memory, including at shutdown; it does not bound the write itself once a slot is held. |
 | `broker.jobs_api_base_url` | string \| null | `null` | `JENTIC__BROKER__JOBS_API_BASE_URL` |  |
 | `broker.jwt_secret` | string (secret) \| null | `null` | `JENTIC__BROKER__JWT_SECRET` |  |
 | `broker.jwt_verification.audience` | string \| null | `null` | `JENTIC__BROKER__JWT_VERIFICATION__AUDIENCE` |  |

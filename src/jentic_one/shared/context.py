@@ -17,6 +17,7 @@ from jentic_one.shared.state import SharedStateBackend, build_state_backend
 
 if TYPE_CHECKING:
     from jentic_one.control.services.credentials.providers.registry import ProviderRegistry
+    from jentic_one.shared.broker.protocols import BrokerCacheInvalidatorProtocol
     from jentic_one.shared.telemetry.sink import TelemetrySink
 
 logger = structlog.get_logger(__name__)
@@ -70,6 +71,9 @@ class Context:
         # telemetry is enabled; both stay None otherwise (the single consent gate).
         self._instance_id: str | None = None
         self._telemetry: TelemetrySink | None = None
+        # In-process broker cache invalidators (#1837). Populated by
+        # ``install_broker_auth`` when a broker app shares this Context.
+        self._broker_cache_invalidators: list[BrokerCacheInvalidatorProtocol] = []
 
     def _is_allowed(self, name: str) -> bool:
         return self._allowed_dbs is None or name in self._allowed_dbs
@@ -189,6 +193,38 @@ class Context:
     @telemetry.setter
     def telemetry(self, value: TelemetrySink | None) -> None:
         self._telemetry = value
+
+    def register_broker_cache_invalidator(
+        self, invalidator: BrokerCacheInvalidatorProtocol
+    ) -> None:
+        """Register an in-process broker cache invalidator on this Context (#1837).
+
+        Called by ``install_broker_auth``. Idempotent for the same instance.
+        """
+        if invalidator not in self._broker_cache_invalidators:
+            self._broker_cache_invalidators.append(invalidator)
+
+    def invalidate_broker_caches(
+        self,
+        *,
+        agent_id: str | None = None,
+        credential_id: str | None = None,
+        rule_set_id: str | None = None,
+        token: str | None = None,
+    ) -> None:
+        """Notify registered in-process broker caches to evict stale entries (#1837).
+
+        No-op when no broker cache is wired onto this ``Context`` (e.g. a
+        control-plane process in a multi-process deployment, where the broker's
+        short TTL bounds staleness).
+        """
+        for invalidator in list(self._broker_cache_invalidators):
+            invalidator.invalidate(
+                agent_id=agent_id,
+                credential_id=credential_id,
+                rule_set_id=rule_set_id,
+                token=token,
+            )
 
     @property
     def registry_db(self) -> DatabaseSession:

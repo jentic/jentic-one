@@ -21,6 +21,7 @@ from jentic_one.broker.core.exceptions import (
     ApprovalPendingLimitError,
     BrokerError,
     CircuitOpenError,
+    CredentialBindingSuspendedError,
     CredentialIdentityMismatchError,
     CredentialNeedsReconnectError,
     CredentialNotProvisionedError,
@@ -43,6 +44,7 @@ from jentic_one.broker.core.exceptions import (
     TooManyCandidatesError,
     UnauthorizedRevisionPinError,
     UpgradeNotSupportedError,
+    UpstreamBodyInterruptedError,
     UpstreamResponseTooLargeError,
     UpstreamTimeoutError,
     UpstreamTransportError,
@@ -55,6 +57,7 @@ STATUS_BY_ERROR: dict[type[BrokerError], int] = {
     ApprovalPendingLimitError: 403,
     ApprovalHoldUnavailableError: 503,
     CredentialIdentityMismatchError: 403,
+    CredentialBindingSuspendedError: 403,
     OperationNotFoundError: 404,
     AmbiguousMatchError: 409,
     MethodNotAllowedError: 405,
@@ -79,6 +82,9 @@ STATUS_BY_ERROR: dict[type[BrokerError], int] = {
     UpstreamTransportError: 502,
     DeadlineExceededError: 504,
     UpstreamResponseTooLargeError: 502,
+    # Raised after the status line is sent, so normally never rendered; a
+    # transport failure on the upstream leg is a gateway error if it ever is.
+    UpstreamBodyInterruptedError: 502,
     RunnerSchemeUnsupportedError: 501,
     RunnerUnavailableError: 503,
 }

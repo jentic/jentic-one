@@ -1,9 +1,9 @@
 """The sync/streaming broker path emits ``execution.repeated_failure``.
 
 The async-worker path is covered in ``tests/unit/shared/test_repeated_failure.py``;
-this suite closes the gap the plan (step 4.3) called for — asserting the event
-fires through the broker service's ``run_execution`` (BrokerError path) and
-``persist_streaming_execution`` (streaming path) on a FAILED outcome.
+this suite asserts the event fires through the broker service's ``run_execution``
+(BrokerError path) and ``persist_streaming_execution`` (streaming path) on a
+FAILED outcome.
 
 These run against a real in-memory SQLite admin DB (no DB mocking —
 ``tests/arch/test_no_db_mocking.py``) so they exercise the real ``_persist`` →
@@ -46,7 +46,7 @@ from jentic_one.shared.schemas import OperationInfo
 from tests.unit.fake_tx import SessionScope
 
 _ACTOR = "agt_broker"
-_TOOLKIT = "tk_broker00000000000000000"
+_CREDENTIAL = "cred_broker000000000000000"
 _OPERATION = "doThing"
 _TRACE = "b" * 32
 
@@ -91,7 +91,7 @@ def _ctx_req() -> ExecuteRequestContext:
         upstream_url="https://api.example.com/v1/test",
         method="GET",
         trace_id=_TRACE,
-        toolkit_id=_TOOLKIT,
+        credential_id=_CREDENTIAL,
         operation=OperationInfo(id=_OPERATION),
         api_vendor="example",
         api_name="api",
@@ -113,7 +113,7 @@ async def _seed_prior_failures(session: AsyncSession, count: int) -> None:
         session.add(
             ExecutionRecord(
                 id=f"exec_prior_{i}",
-                toolkit_id=_TOOLKIT,
+                credential_id=_CREDENTIAL,
                 trace_id=_TRACE,
                 started_at=now,
                 status=ExecutionStatus.FAILED,
@@ -160,7 +160,7 @@ async def test_run_execution_emits_repeated_failure_on_broker_error(session: Asy
     assert len(events) == 1
     assert events[0].severity == EventSeverity.ERROR.value
     assert events[0].data["actor_id"] == _ACTOR
-    assert events[0].data["toolkit_id"] == _TOOLKIT
+    assert events[0].data["credential_id"] == _CREDENTIAL
     assert events[0].data["operation_id"] == _OPERATION
 
 

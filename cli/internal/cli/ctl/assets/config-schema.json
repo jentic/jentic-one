@@ -47,11 +47,28 @@
         "auth": {
           "$ref": "#/$defs/AdminAuthConfig"
         },
+        "events": {
+          "$ref": "#/$defs/AdminEventsConfig"
+        },
         "invite": {
           "$ref": "#/$defs/AdminInviteConfig"
         }
       },
       "title": "AdminConfig",
+      "type": "object"
+    },
+    "AdminEventsConfig": {
+      "description": "Admin event-stream settings.",
+      "properties": {
+        "stream_recheck_seconds": {
+          "default": 5.0,
+          "description": "Minimum seconds between re-verifications of an open ``GET /events/stream``: its credential, ``events:read`` / ``org:admin`` permission, and the scope of the events it delivers. Checks run only at a poll or page boundary, so a check happens at the first poll or page after the interval elapses; an idle stream polls every few seconds, so a value below its poll interval behaves as that interval. A disabled caller, a revoked or expired token, or a revoked permission ends the stream at that check; a narrower permission set narrows it. Permissions are those the credential carries: API keys and user ``at_`` access tokens resolve them live, while a login session JWT and an agent ``at_`` access token carry the set they were issued with; the stream re-verifies the token it was opened with, so for those a change applies once that token expires and the client reconnects.",
+          "exclusiveMinimum": 0,
+          "title": "Stream Recheck Seconds",
+          "type": "number"
+        }
+      },
+      "title": "AdminEventsConfig",
       "type": "object"
     },
     "AdminInviteConfig": {
@@ -197,6 +214,27 @@
         "rule_cache_ttl_s": {
           "default": 3.0,
           "title": "Rule Cache Ttl S",
+          "type": "number"
+        },
+        "streaming_persist_acquire_timeout_s": {
+          "default": 5.0,
+          "description": "How long (seconds) a streaming execution persist waits for one of the ``broker.streaming_persist_max_concurrency`` slots. Past it the record is abandoned: logged as ``streaming_execution_persist_abandoned`` and counted on ``broker.streaming_execution.persist_failures`` (``reason=backlog_timeout``). The wait runs after the response is complete or the client has disconnected, when the request no longer holds its admission slot, so the wait delays neither the client nor ``/ready``. The timeout bounds how long a stalled admin database can keep records queued in memory, including at shutdown; it does not bound the write itself once a slot is held.",
+          "exclusiveMinimum": 0,
+          "title": "Streaming Persist Acquire Timeout S",
+          "type": "number"
+        },
+        "streaming_persist_max_concurrency": {
+          "default": 5,
+          "description": "Per-process cap on concurrent post-response persists of streaming execution records (each holds one admin-DB connection). Excess persists wait for a slot, up to ``broker.streaming_persist_acquire_timeout_s``; the waiting and writing counts are exported as ``broker.streaming_execution.persist_pending``. The effective cap is clamped to ``databases.admin.pool_max - 1`` (minimum 1; a ``streaming_persist_limit_clamped`` warning is logged when it applies), so with ``pool_max >= 2`` persists never take every connection of the admin base pool. ``pool_max`` is the base pool size only; SQLAlchemy's default overflow can open up to 10 more connections on top of it.",
+          "exclusiveMinimum": 0,
+          "title": "Streaming Persist Max Concurrency",
+          "type": "integer"
+        },
+        "streaming_persist_timeout_s": {
+          "default": 10.0,
+          "description": "Budget (seconds) for writing one streaming execution's record and lifecycle event. The write runs after the response, off the request, so it never delays the client; past the budget it is abandoned, logged and counted on ``app.background_tasks`` (``kind=streaming_execution_persist``, ``outcome=timed_out``).",
+          "exclusiveMinimum": 0,
+          "title": "Streaming Persist Timeout S",
           "type": "number"
         },
         "toolkit_cache_ttl_s": {
@@ -1486,7 +1524,7 @@
       "type": "object"
     },
     "RetryConfig": {
-      "description": "Idempotency-aware upstream retry.\n\nThe ``RetryRunner`` decorator retries a failed attempt **only** when it is\nsafe to do so: a connect-phase failure (no bytes on the wire) is retryable\nfor any method, while a post-send failure (read timeout, mirrored ``429``/\n``503``) is retried only for idempotent methods or when an\n``Idempotency-Key`` is present — a blind ``POST`` retry is a double-spend.\nEach attempt still flows through the circuit breaker (retry *outside*,\nbreaker *inside*); the whole loop is bounded by the request deadline.",
+      "description": "Idempotency-aware upstream retry.\n\nThe ``RetryRunner`` decorator retries a failed attempt **only** when it is\nsafe to do so: a connect-phase failure (no bytes on the wire) is retryable\nfor any method, while a post-send failure (read timeout, mirrored ``429``/\n``503``) is retried only for idempotent HTTP methods — ``Idempotency-Key``\nis broker-consumed and stripped from outbound headers, so a post-send\n``POST`` or ``PATCH`` retry would double-spend (#1799).\nEach attempt still flows through the circuit breaker (retry *outside*,\nbreaker *inside*); the whole loop is bounded by the request deadline.",
       "properties": {
         "base_backoff_s": {
           "default": 0.2,
@@ -1648,6 +1686,13 @@
     "ServicesConfig": {
       "description": "Service-level settings (immutable after boot).",
       "properties": {
+        "background_task_drain_timeout_s": {
+          "default": 10.0,
+          "description": "On shutdown, how long (seconds) the app waits for work requests handed off after their response (e.g. streaming execution records) before cancelling what is still running. Runs before the databases close; each cancelled task is logged and counted on ``app.background_tasks`` (``outcome=cancelled``).",
+          "minimum": 0,
+          "title": "Background Task Drain Timeout S",
+          "type": "number"
+        },
         "request_timeout_s": {
           "default": 30.0,
           "title": "Request Timeout S",

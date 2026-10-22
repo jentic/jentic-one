@@ -486,7 +486,7 @@ async def test_route_pinned_revision_miss_never_invokes_handler() -> None:
     request = _asgi_request(
         _PinnedMissResolver(),
         spy,
-        headers=[(b"jentic-revision", b"acme:payments:v1=rev_abc123")],
+        headers=[(b"jentic-revision", b"acme:payments:v1=rev_3f2b8c1e7d4a4e9ba6c51d2e3f4a5b6c")],
     )
     with pytest.raises(OperationNotFoundError) as exc_info:
         await _run_handle(request)

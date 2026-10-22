@@ -43,6 +43,8 @@ from jentic_one.shared.telemetry.sink import TelemetrySink, set_active_sink
 from jentic_one.shared.tracing import instrument_inbound_app
 from jentic_one.shared.web.agent_discovery import get_agent_discovery_router
 from jentic_one.shared.web.auth import API_KEY_HEADER
+from jentic_one.shared.web.background_tasks import install_background_tasks
+from jentic_one.shared.web.cache_control import AuthenticatedResponseCacheMiddleware
 from jentic_one.shared.web.container import AppContainer, RouterSpec
 from jentic_one.shared.web.deps import TokenVerifier
 from jentic_one.shared.web.errors import (
@@ -244,7 +246,10 @@ def instrument_databases(ctx: Context) -> None:
         if ctx.has_db(name)
     ]
     if engines:
-        SQLAlchemyInstrumentor().instrument(engines=engines)
+        # skip_dep_check keeps DB tracing active when SQLAlchemy 2.1 is installed
+        # alongside opentelemetry-instrumentation-sqlalchemy releases whose
+        # metadata upper-bounds sqlalchemy at <2.1.0.
+        SQLAlchemyInstrumentor().instrument(engines=engines, skip_dep_check=True)
 
 
 def _start_worker(
@@ -254,6 +259,7 @@ def _start_worker(
     upstream_executor: Any | None = None,
     credential_injector: Any | None = None,
     execution_authorizer: Any | None = None,
+    actor_status: Any | None = None,
 ) -> tuple[WorkerLoop, asyncio.Task[None]] | None:
     """Start the background worker if the admin DB is available.
 
@@ -280,7 +286,9 @@ def _start_worker(
     ``execution_authorizer`` is the broker's run-time re-authorizer: every
     queued execution is re-checked with the sync route's policy before any
     credential is resolved (the handler refuses a credential injector without
-    one).
+    one). ``actor_status`` is the broker's ``ActorStatusResolver``: the handler
+    builds the identity it injects for from a live read of the actor row (and
+    likewise refuses an injector without it).
 
     Returns the ``(worker, task)`` pair so the lifespan can **drain** the worker
     (let the in-flight job finish or be reclaimed) before tearing the shared
@@ -302,6 +310,7 @@ def _start_worker(
                 upstream_timeout_s=ctx.config.broker.upstream_timeout_s,
                 credential_injector=credential_injector,
                 execution_authorizer=execution_authorizer,
+                actor_status=actor_status,
                 egress=ctx.config.broker.egress,
                 security_config=ctx.config.security,
                 # Same predicate the broker's hold path files under, so a held
@@ -664,6 +673,7 @@ def create_surface_app(
                 upstream_executor=getattr(app.state, "broker_upstream_executor", None),
                 credential_injector=getattr(app.state, "broker_credential_injector", None),
                 execution_authorizer=getattr(app.state, "broker_execution_authorizer", None),
+                actor_status=getattr(app.state, "broker_actor_status", None),
             )
             scanner_task = _start_expiry_scanner(ctx, enabled_apps)
             catalog_scanner_task = _start_catalog_update_scanner(ctx, enabled_apps)
@@ -687,6 +697,9 @@ def create_surface_app(
                 await _stop_catalog_update_scanner(catalog_scanner_task)
                 await _stop_expiry_scanner(scanner_task)
                 await _stop_worker(worker_task)
+                # Work requests handed off after their response (it may write to
+                # the databases) drains before ctx.shutdown() closes them.
+                await background_tasks.drain(ctx.config.services.background_task_drain_timeout_s)
                 await _stop_telemetry(telemetry_handle)
                 await _run_shutdown_handlers(app)
                 await ctx.shutdown()
@@ -698,6 +711,7 @@ def create_surface_app(
     meta["title"] = title
     app = FastAPI(lifespan=lifespan, **meta)
     app.state.ctx = ctx
+    background_tasks = install_background_tasks(app)
     if container.broker is not None:
         # Wire the injected broker into BOTH data-plane paths: the sync router
         # reads app.state.broker, while the async worker builds its broker via
@@ -771,6 +785,8 @@ def create_surface_app(
         app.include_router(
             catch_all_router, tags=list(catch_all_tags), responses=COMMON_ERROR_RESPONSES
         )
+    # Authenticated JSON is caller-specific: keep it out of shared caches (#1835).
+    app.add_middleware(AuthenticatedResponseCacheMiddleware)
     app.add_middleware(RequestIDMiddleware)
     app.add_exception_handler(ProblemDetailException, spa_aware_problem_detail_handler)  # type: ignore[arg-type]
     app.add_exception_handler(RequestValidationError, request_validation_error_handler)  # type: ignore[arg-type]
@@ -978,12 +994,14 @@ def create_combined_app(
                 await _stop_catalog_update_scanner(catalog_scanner_task)
                 await _stop_expiry_scanner(scanner_task)
                 await _stop_worker(worker_task)
+                await background_tasks.drain(ctx.config.services.background_task_drain_timeout_s)
                 await _stop_telemetry(telemetry_handle)
                 await _run_shutdown_handlers(app)
                 await ctx.shutdown()
 
     root = FastAPI(lifespan=lifespan, **fastapi_metadata_kwargs(ctx.config.server.public_base_url))
     root.state.ctx = ctx
+    background_tasks = install_background_tasks(root)
     # Injected Broker (None by default → broker surface builds its default
     # per request). Wire BOTH data-plane paths: the sync router reads
     # root.state.broker; the async worker builds its broker via
@@ -1035,6 +1053,8 @@ def create_combined_app(
     for installer in container.extra_installers:
         installer(root, ctx)
 
+    # Authenticated JSON is caller-specific: keep it out of shared caches (#1835).
+    root.add_middleware(AuthenticatedResponseCacheMiddleware)
     root.add_middleware(RequestIDMiddleware)
     attach_http_observability(root)
     install_openapi_metadata(root)

@@ -31,7 +31,7 @@ def _make_ctx() -> MagicMock:
     return ctx
 
 
-def _make_agent_row(*, status: str = "active", owner_id: str = "usr_admin") -> MagicMock:
+def _make_agent_row(*, status: str = "active", owner_id: str | None = "usr_admin") -> MagicMock:
     row = MagicMock()
     row.id = "agnt_test123"
     row.status = status
@@ -218,3 +218,70 @@ async def test_revoke_api_key_agent_not_active(
 
     with pytest.raises(InvalidTransitionError):
         await svc.revoke_api_key("agnt_test123", identity=_admin_identity())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["register_api_key", "revoke_api_key"])
+@pytest.mark.parametrize(
+    ("status", "owner_id"),
+    [
+        ("disabled", "usr_other"),
+        ("archived", "usr_other"),
+        ("pending", "usr_other"),
+        ("pending", None),
+    ],
+)
+@patch("jentic_one.auth.services.agent_auth_service.AgentRepository")
+async def test_key_write_not_owner_on_non_active_agent_raises_not_found(
+    mock_agent_repo: MagicMock,
+    method: str,
+    status: str,
+    owner_id: str | None,
+) -> None:
+    """Non-owner gets ActorNotFoundError (404), never InvalidTransitionError (409)."""
+    ctx = _make_ctx()
+    svc = AgentAuthService(ctx)
+
+    mock_agent_repo.get_by_id_for_update = AsyncMock(
+        return_value=_make_agent_row(status=status, owner_id=owner_id)
+    )
+    non_admin = Identity(
+        sub="usr_nonadmin",
+        email="user@example.com",
+        permissions=["agents:write"],
+    )
+
+    with pytest.raises(ActorNotFoundError):
+        await getattr(svc, method)("agnt_test123", identity=non_admin)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["register_api_key", "revoke_api_key"])
+@pytest.mark.parametrize("status", ["disabled", "archived", "pending"])
+@pytest.mark.parametrize("is_admin", [False, True], ids=["owner", "admin"])
+@patch("jentic_one.auth.services.agent_auth_service.AgentRepository")
+async def test_key_write_owner_or_admin_on_non_active_agent_raises_invalid_transition(
+    mock_agent_repo: MagicMock,
+    method: str,
+    status: str,
+    is_admin: bool,
+) -> None:
+    """Owner or org:admin still gets InvalidTransitionError (409) on a non-active agent."""
+    ctx = _make_ctx()
+    svc = AgentAuthService(ctx)
+
+    mock_agent_repo.get_by_id_for_update = AsyncMock(
+        return_value=_make_agent_row(status=status, owner_id="usr_owner")
+    )
+    caller = (
+        _admin_identity()
+        if is_admin
+        else Identity(
+            sub="usr_owner",
+            email="owner@example.com",
+            permissions=["agents:write"],
+        )
+    )
+
+    with pytest.raises(InvalidTransitionError):
+        await getattr(svc, method)("agnt_test123", identity=caller)

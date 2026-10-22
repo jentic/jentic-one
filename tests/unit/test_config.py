@@ -137,6 +137,22 @@ def test_env_coerces_int(config_file: Path):
     assert config.databases.registry.port == 9999
 
 
+@pytest.mark.parametrize("seconds", ["0", "-1"])
+def test_events_stream_recheck_seconds_default_env_and_bounds(config_file: Path, seconds: str):
+    assert load_config(config_file).admin.events.stream_recheck_seconds == 5.0
+
+    env = {"JENTIC__ADMIN__EVENTS__STREAM_RECHECK_SECONDS": "2.5"}
+    with patch.dict(os.environ, env, clear=False):
+        assert load_config(config_file).admin.events.stream_recheck_seconds == 2.5
+
+    env = {"JENTIC__ADMIN__EVENTS__STREAM_RECHECK_SECONDS": seconds}
+    with (
+        patch.dict(os.environ, env, clear=False),
+        pytest.raises(ConfigError, match="stream_recheck_seconds"),
+    ):
+        load_config(config_file)
+
+
 def test_http_wire_trace_defaults_off_and_env_enables(config_file: Path):
     assert load_config(config_file).logging.http_wire_trace is False
     with patch.dict(os.environ, {"JENTIC__LOGGING__HTTP_WIRE_TRACE": "true"}, clear=False):
@@ -1482,6 +1498,65 @@ def test_broker_jobs_api_base_url_env_override(config_file: Path):
     assert config.broker.jobs_api_base_url == "https://env.example.com"
 
 
+def test_broker_streaming_persist_max_concurrency_default(config_file: Path) -> None:
+    assert load_config(config_file).broker.streaming_persist_max_concurrency == 5
+
+
+def test_broker_streaming_persist_max_concurrency_from_yaml(
+    tmp_path: Path, sample_config_dict: dict[str, Any]
+) -> None:
+    sample_config_dict["broker"] = {"streaming_persist_max_concurrency": 3}
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.dump(sample_config_dict))
+    assert load_config(path).broker.streaming_persist_max_concurrency == 3
+
+
+def test_broker_streaming_persist_max_concurrency_env_override(config_file: Path) -> None:
+    env = {"JENTIC__BROKER__STREAMING_PERSIST_MAX_CONCURRENCY": "7"}
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.broker.streaming_persist_max_concurrency == 7
+
+
+@pytest.mark.parametrize("value", ["0", "-1"])
+def test_broker_streaming_persist_max_concurrency_must_be_positive(
+    config_file: Path, value: str
+) -> None:
+    env = {"JENTIC__BROKER__STREAMING_PERSIST_MAX_CONCURRENCY": value}
+    with (
+        patch.dict(os.environ, env, clear=False),
+        pytest.raises(ConfigError, match="streaming_persist_max_concurrency"),
+    ):
+        load_config(config_file)
+
+
+def test_broker_streaming_persist_acquire_timeout_default_and_overrides(
+    tmp_path: Path, sample_config_dict: dict[str, Any], config_file: Path
+) -> None:
+    assert load_config(config_file).broker.streaming_persist_acquire_timeout_s == 5.0
+
+    sample_config_dict["broker"] = {"streaming_persist_acquire_timeout_s": 2.5}
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.dump(sample_config_dict))
+    assert load_config(path).broker.streaming_persist_acquire_timeout_s == 2.5
+
+    env = {"JENTIC__BROKER__STREAMING_PERSIST_ACQUIRE_TIMEOUT_S": "0.75"}
+    with patch.dict(os.environ, env, clear=False):
+        assert load_config(config_file).broker.streaming_persist_acquire_timeout_s == 0.75
+
+
+@pytest.mark.parametrize("value", ["0", "-1"])
+def test_broker_streaming_persist_acquire_timeout_must_be_positive(
+    config_file: Path, value: str
+) -> None:
+    env = {"JENTIC__BROKER__STREAMING_PERSIST_ACQUIRE_TIMEOUT_S": value}
+    with (
+        patch.dict(os.environ, env, clear=False),
+        pytest.raises(ConfigError, match="streaming_persist_acquire_timeout_s"),
+    ):
+        load_config(config_file)
+
+
 @pytest.mark.parametrize("value", [False, "false"])
 def test_broker_retired_direct_bindings_flag_false_is_rejected(
     tmp_path: Path, sample_config_dict: dict[str, Any], value: object
@@ -2482,6 +2557,44 @@ def test_http_jwks_url_env_override_rejected_in_production(config_file: Path):
         pytest.raises(ConfigError, match=r"jwks_url must be https:// in production"),
     ):
         load_config(config_file)
+
+
+def test_streaming_persist_and_drain_budgets_default(tmp_path: Path):
+    config = _load(tmp_path, {})
+    assert config.broker.streaming_persist_timeout_s == 10.0
+    assert config.services.background_task_drain_timeout_s == 10.0
+
+
+def test_streaming_persist_and_drain_budgets_from_yaml_and_env(tmp_path: Path):
+    config = _load(
+        tmp_path,
+        {
+            "broker": {"streaming_persist_timeout_s": 2.5},
+            "services": {"background_task_drain_timeout_s": 0},
+        },
+    )
+    assert config.broker.streaming_persist_timeout_s == 2.5
+    assert config.services.background_task_drain_timeout_s == 0
+    env = {
+        "JENTIC__BROKER__STREAMING_PERSIST_TIMEOUT_S": "4",
+        "JENTIC__SERVICES__BACKGROUND_TASK_DRAIN_TIMEOUT_S": "7.5",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        config = _load(tmp_path, {})
+    assert config.broker.streaming_persist_timeout_s == 4.0
+    assert config.services.background_task_drain_timeout_s == 7.5
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"broker": {"streaming_persist_timeout_s": 0}},
+        {"services": {"background_task_drain_timeout_s": -1}},
+    ],
+)
+def test_streaming_persist_and_drain_budgets_reject_invalid(tmp_path: Path, extra: dict[str, Any]):
+    with pytest.raises(ConfigError):
+        _load(tmp_path, extra)
 
 
 def test_worker_poll_and_concurrency_defaults_keep_serial_2s_poll():
