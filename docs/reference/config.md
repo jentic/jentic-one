@@ -182,6 +182,7 @@ Admin surface configuration.
 | `admin.auth.failed_login_lockout_seconds` | integer | `900` | `JENTIC__ADMIN__AUTH__FAILED_LOGIN_LOCKOUT_SECONDS` | How long a locked admin account stays locked before logins are accepted again. |
 | `admin.invite.ttl_days` | integer | `7` | `JENTIC__ADMIN__INVITE__TTL_DAYS` |  |
 | `admin.invite.pepper` | string (secret) | `""` | `JENTIC__ADMIN__INVITE__PEPPER` |  |
+| `admin.events.stream_recheck_seconds` | number (> 0) | `5.0` | `JENTIC__ADMIN__EVENTS__STREAM_RECHECK_SECONDS` | Minimum seconds between re-verifications of an open `GET /events/stream`: its credential, `events:read` / `org:admin` permission, and the scope of the events it delivers. Checks run only at a poll or page boundary, so a check happens at the first poll or page after the interval elapses; an idle stream polls every few seconds, so a value below its poll interval behaves as that interval. A disabled caller, a revoked or expired token, or a revoked permission ends the stream at that check; a narrower permission set narrows it. Permissions are those the credential carries: API keys and user `at_` access tokens resolve them live, while a login session JWT and an agent `at_` access token carry the set they were issued with; the stream re-verifies the token it was opened with, so for those a change applies once that token expires and the client reconnects. |
 
 ## `auth`
 

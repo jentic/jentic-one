@@ -11,7 +11,6 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import cast
 
 import pytest
 from sqlalchemy import delete, select, update
@@ -175,13 +174,10 @@ async def _listed_ids(ctx: Context, identity: Identity, **filter_kwargs: object)
 
 async def _streamed_ids(ctx: Context, identity: Identity) -> set[str]:
     """Drain one poll of the stream from a point before the seed."""
-    gen = cast(
-        "AsyncGenerator[EventView | Heartbeat, None]",
-        EventStreamService(ctx).stream(
-            identity=identity,
-            since=datetime.now(UTC) - timedelta(minutes=5),
-            poll_interval_seconds=0,
-        ),
+    gen = EventStreamService(ctx).stream(
+        identity=identity,
+        since=datetime.now(UTC) - timedelta(minutes=5),
+        poll_interval_seconds=0,
     )
     ids: set[str] = set()
     try:
@@ -192,6 +188,103 @@ async def _streamed_ids(ctx: Context, identity: Identity) -> set[str]:
     finally:
         await gen.aclose()
     return ids
+
+
+async def test_refreshed_identity_narrows_the_open_stream(
+    integration_context: Context, seed: _Seed
+) -> None:
+    """Pins #1836: an open stream scopes each poll by the identity its refresh
+    returns, so losing ``org:admin`` narrows delivery without a reconnect, and a
+    ``None`` refresh ends the stream."""
+    ctx = integration_context
+    owner_as_admin = _user(seed.owner_id, "org:admin")
+    owner_plain = _user(seed.owner_id, "events:read")
+    late: dict[str, str] = {}
+    calls = 0
+
+    async def _refresh() -> Identity | None:
+        # Poll 1 runs as org:admin. Before poll 2 the caller loses org:admin
+        # and two new events land: one only org:admin may see, one the owner
+        # may. Before poll 3 the credential stops verifying.
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return owner_as_admin
+        if calls == 2:
+            async with ctx.admin_db.session() as session:
+                late["system"] = await EventRepository.create(
+                    session,
+                    type="catalog.update_available",
+                    severity="info",
+                    summary="system event after downgrade",
+                    created_by=None,
+                )
+                late["owner"] = await EventRepository.create(
+                    session,
+                    type="credential.stored",
+                    severity="info",
+                    summary="owner event after downgrade",
+                    created_by=seed.owner_id,
+                    actor_id=seed.owner_id,
+                    actor_type="user",
+                )
+                await session.commit()
+            return owner_plain
+        return None
+
+    delivered: set[str] = set()
+    gen = EventStreamService(ctx).stream(
+        identity=owner_as_admin,
+        since=datetime.now(UTC) - timedelta(minutes=5),
+        poll_interval_seconds=0,
+        refresh_identity=_refresh,
+    )
+    try:
+        async for item in gen:
+            if isinstance(item, EventView):
+                delivered.add(item.id)
+    finally:
+        await gen.aclose()
+
+    assert seed.all <= delivered, "the org:admin poll delivers system events"
+    assert late["owner"] in delivered, "the downgraded poll still delivers the owner's event"
+    assert late["system"] not in delivered, "the downgraded poll drops what only org:admin sees"
+    assert calls == 3, "the stream ends when the refresh returns None"
+
+
+async def test_refusal_mid_burst_stops_before_the_next_page(
+    integration_context: Context, seed: _Seed
+) -> None:
+    """Pins #1836: a burst spanning several pages re-checks the caller before
+    each page, so a refusal after the first page delivers nothing from the second."""
+    ctx = integration_context
+    owner_as_admin = _user(seed.owner_id, "org:admin")
+    calls = 0
+
+    async def _refresh() -> Identity | None:
+        nonlocal calls
+        calls += 1
+        return owner_as_admin if calls == 1 else None
+
+    delivered: list[str] = []
+    gen = EventStreamService(ctx).stream(
+        identity=owner_as_admin,
+        since=datetime.now(UTC) - timedelta(minutes=5),
+        poll_interval_seconds=0,
+        # The four seeded events fill two full pages.
+        page_limit=2,
+        refresh_identity=_refresh,
+    )
+    try:
+        async for item in gen:
+            assert isinstance(item, EventView), "the stream ends before going idle"
+            delivered.append(item.id)
+    finally:
+        await gen.aclose()
+
+    assert len(delivered) == 2, "only the first page is delivered"
+    assert set(delivered) < seed.all
+    assert calls == 2, "the refusal lands before the second page's query"
 
 
 async def test_outsiders_see_nothing(integration_context: Context, seed: _Seed) -> None:
@@ -249,14 +342,11 @@ async def test_stream_ignores_an_invisible_resume_point(
 ) -> None:
     """A Last-Event-ID the caller cannot see does not move their resume point."""
     ctx = integration_context
-    gen = cast(
-        "AsyncGenerator[EventView | Heartbeat, None]",
-        EventStreamService(ctx).stream(
-            identity=_agent(seed.agent_id, parent=seed.owner_id),
-            since=datetime.now(UTC) - timedelta(minutes=5),
-            last_event_id=seed.system_event_id,
-            poll_interval_seconds=0,
-        ),
+    gen = EventStreamService(ctx).stream(
+        identity=_agent(seed.agent_id, parent=seed.owner_id),
+        since=datetime.now(UTC) - timedelta(minutes=5),
+        last_event_id=seed.system_event_id,
+        poll_interval_seconds=0,
     )
     try:
         first = await gen.__anext__()
@@ -304,14 +394,11 @@ async def test_stream_resumes_after_a_visible_event(
         )
         await session.commit()
 
-    gen = cast(
-        "AsyncGenerator[EventView | Heartbeat, None]",
-        EventStreamService(ctx).stream(
-            identity=_user(seed.owner_id, "events:read"),
-            last_event_id=seed.owner_event_id,
-            poll_interval_seconds=0,
-            overlap_seconds=0,
-        ),
+    gen = EventStreamService(ctx).stream(
+        identity=_user(seed.owner_id, "events:read"),
+        last_event_id=seed.owner_event_id,
+        poll_interval_seconds=0,
+        overlap_seconds=0,
     )
     ids: set[str] = set()
     try:

@@ -11138,8 +11138,21 @@ type ClientInterface interface {
 	//
 	// Stream events as Server-Sent Events.
 	//
-	// The stream ends once the caller's credential stops verifying (expired,
-	// revoked, or its user disabled or deleted); reconnecting then returns 401.
+	// The open stream re-verifies the caller at the first poll or page after each
+	// `admin.events.stream_recheck_seconds` interval (default 5 s) elapses. Each
+	// page is scoped by the caller's current permissions, so a narrower
+	// permission set narrows the stream. Permissions are those the credential
+	// carries: API keys and user `at_` access tokens resolve them live, while a
+	// login session JWT and an agent `at_` access token carry the set they were
+	// issued with. The stream keeps re-verifying the token it was opened with,
+	// so for those a permission change applies once that token expires and the
+	// client reconnects. The stream ends
+	// with a `stream_closed` frame (`{"type": "stream_closed", "reason": ...}`)
+	// once the credential stops verifying (`refused`: expired, revoked, or its
+	// user or agent disabled or deleted), the caller no longer holds
+	// `events:read` or `org:admin` or must rotate their password (`forbidden`),
+	// or the check or the event store cannot be answered (`unavailable`).
+	// A reconnect is authenticated afresh.
 	//
 	// Corresponds with GET /events/stream (the `StreamEvents` operationId).
 	StreamEvents(ctx context.Context, params *StreamEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -15169,8 +15182,21 @@ func (c *Client) ListEvents(ctx context.Context, params *ListEventsParams, reqEd
 //
 // Stream events as Server-Sent Events.
 //
-// The stream ends once the caller's credential stops verifying (expired,
-// revoked, or its user disabled or deleted); reconnecting then returns 401.
+// The open stream re-verifies the caller at the first poll or page after each
+// `admin.events.stream_recheck_seconds` interval (default 5 s) elapses. Each
+// page is scoped by the caller's current permissions, so a narrower
+// permission set narrows the stream. Permissions are those the credential
+// carries: API keys and user `at_` access tokens resolve them live, while a
+// login session JWT and an agent `at_` access token carry the set they were
+// issued with. The stream keeps re-verifying the token it was opened with,
+// so for those a permission change applies once that token expires and the
+// client reconnects. The stream ends
+// with a `stream_closed` frame (`{"type": "stream_closed", "reason": ...}`)
+// once the credential stops verifying (`refused`: expired, revoked, or its
+// user or agent disabled or deleted), the caller no longer holds
+// `events:read` or `org:admin` or must rotate their password (`forbidden`),
+// or the check or the event store cannot be answered (`unavailable`).
+// A reconnect is authenticated afresh.
 //
 // Corresponds with GET /events/stream (the `StreamEvents` operationId).
 func (c *Client) StreamEvents(ctx context.Context, params *StreamEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -27716,8 +27742,21 @@ type ClientWithResponsesInterface interface {
 	//
 	// Stream events as Server-Sent Events.
 	//
-	// The stream ends once the caller's credential stops verifying (expired,
-	// revoked, or its user disabled or deleted); reconnecting then returns 401.
+	// The open stream re-verifies the caller at the first poll or page after each
+	// `admin.events.stream_recheck_seconds` interval (default 5 s) elapses. Each
+	// page is scoped by the caller's current permissions, so a narrower
+	// permission set narrows the stream. Permissions are those the credential
+	// carries: API keys and user `at_` access tokens resolve them live, while a
+	// login session JWT and an agent `at_` access token carry the set they were
+	// issued with. The stream keeps re-verifying the token it was opened with,
+	// so for those a permission change applies once that token expires and the
+	// client reconnects. The stream ends
+	// with a `stream_closed` frame (`{"type": "stream_closed", "reason": ...}`)
+	// once the credential stops verifying (`refused`: expired, revoked, or its
+	// user or agent disabled or deleted), the caller no longer holds
+	// `events:read` or `org:admin` or must rotate their password (`forbidden`),
+	// or the check or the event store cannot be answered (`unavailable`).
+	// A reconnect is authenticated afresh.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -46267,8 +46306,21 @@ func (c *ClientWithResponses) ListEventsWithResponse(ctx context.Context, params
 //
 // Stream events as Server-Sent Events.
 //
-// The stream ends once the caller's credential stops verifying (expired,
-// revoked, or its user disabled or deleted); reconnecting then returns 401.
+// The open stream re-verifies the caller at the first poll or page after each
+// `admin.events.stream_recheck_seconds` interval (default 5 s) elapses. Each
+// page is scoped by the caller's current permissions, so a narrower
+// permission set narrows the stream. Permissions are those the credential
+// carries: API keys and user `at_` access tokens resolve them live, while a
+// login session JWT and an agent `at_` access token carry the set they were
+// issued with. The stream keeps re-verifying the token it was opened with,
+// so for those a permission change applies once that token expires and the
+// client reconnects. The stream ends
+// with a `stream_closed` frame (`{"type": "stream_closed", "reason": ...}`)
+// once the credential stops verifying (`refused`: expired, revoked, or its
+// user or agent disabled or deleted), the caller no longer holds
+// `events:read` or `org:admin` or must rotate their password (`forbidden`),
+// or the check or the event store cannot be answered (`unavailable`).
+// A reconnect is authenticated afresh.
 //
 // Returns a wrapper object for the known response body format(s).
 //

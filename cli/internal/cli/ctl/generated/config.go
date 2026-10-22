@@ -72,8 +72,49 @@ type AdminConfig struct {
 	// Auth corresponds to the JSON schema field "auth".
 	Auth *AdminAuthConfig `json:"auth,omitempty,omitzero" yaml:"auth,omitempty" mapstructure:"auth,omitempty"`
 
+	// Events corresponds to the JSON schema field "events".
+	Events *AdminEventsConfig `json:"events,omitempty,omitzero" yaml:"events,omitempty" mapstructure:"events,omitempty"`
+
 	// Invite corresponds to the JSON schema field "invite".
 	Invite *AdminInviteConfig `json:"invite,omitempty,omitzero" yaml:"invite,omitempty" mapstructure:"invite,omitempty"`
+}
+
+// Admin event-stream settings.
+type AdminEventsConfig struct {
+	// Minimum seconds between re-verifications of an open ``GET /events/stream``: its
+	// credential, ``events:read`` / ``org:admin`` permission, and the scope of the
+	// events it delivers. Checks run only at a poll or page boundary, so a check
+	// happens at the first poll or page after the interval elapses; an idle stream
+	// polls every few seconds, so a value below its poll interval behaves as that
+	// interval. A disabled caller, a revoked or expired token, or a revoked
+	// permission ends the stream at that check; a narrower permission set narrows it.
+	// Permissions are those the credential carries: API keys and user ``at_`` access
+	// tokens resolve them live, while a login session JWT and an agent ``at_`` access
+	// token carry the set they were issued with; the stream re-verifies the token it
+	// was opened with, so for those a change applies once that token expires and the
+	// client reconnects.
+	StreamRecheckSeconds float64 `json:"stream_recheck_seconds" yaml:"stream_recheck_seconds" mapstructure:"stream_recheck_seconds"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *AdminEventsConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain AdminEventsConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["stream_recheck_seconds"]; !ok || v == nil {
+		plain.StreamRecheckSeconds = 5.0
+	}
+	if 0 >= plain.StreamRecheckSeconds {
+		return fmt.Errorf("field %s: must be > %v", "stream_recheck_seconds", 0)
+	}
+	*j = AdminEventsConfig(plain)
+	return nil
 }
 
 // Admin invite token settings.
