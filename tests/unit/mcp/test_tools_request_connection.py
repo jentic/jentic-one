@@ -29,6 +29,7 @@ from jentic_one.control.services.integrations.connect_session_service import (
 from jentic_one.control.services.integrations.errors import (
     AuthTypeNotDeclaredError,
     AuthTypeRequiredError,
+    BindingSuspendedError,
     InvalidOAuthAppRegistrationError,
     ManualFlowsDisabledError,
     NoDeclaredSchemeError,
@@ -633,6 +634,7 @@ _TARGET = "stripe-com/stripe-com-api/2024-06-20"
         (SecuritySchemesLookupUnavailableError(), "BROKER_DENIED", None, "registry"),
         (TooManyOpenSessionsError("agent", 10), "BROKER_DENIED", None, "Do not open more"),
         (RecentlyRejectedError(3600), "BROKER_DENIED", None, "Do not ask again"),
+        (BindingSuspendedError("agt_1"), "BROKER_DENIED", None, "ask your operator to resume"),
     ],
 )
 async def test_api_target_errors_map_like_the_go_mount(
@@ -653,3 +655,18 @@ async def test_api_target_errors_map_like_the_go_mount(
         assert payload["details"]["options"] == ["api_key", "oauth2"]
     if isinstance(error, ManualFlowsDisabledError | NoDeclaredSchemeError):
         assert _TARGET in payload["actionable_step"]
+
+
+async def test_suspended_binding_on_a_vendor_target_tells_the_agent_to_ask_its_operator() -> None:
+    _FakeConnectSessionService.error = BindingSuspendedError("agt_1")
+    result = await dispatch_tool_call(
+        _env(["credentials:connect"]), "request_connection", {"vendor": "github"}
+    )
+    assert result.is_error
+
+    payload = _payload(result)
+    assert payload["error_code"] == "BROKER_DENIED"
+    assert payload["retryable"] is False
+    assert "next_tool" not in payload
+    assert "ask your operator to resume" in payload["actionable_step"]
+    assert "request_connection" not in payload["actionable_step"]

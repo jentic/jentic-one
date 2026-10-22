@@ -427,6 +427,35 @@ class CredentialRepository:
         return list(result.scalars().all())
 
     @staticmethod
+    async def any_covering(
+        session: AsyncSession,
+        *,
+        credential_ids: Sequence[str],
+        vendor: str,
+        name: str | None,
+        version: str | None,
+    ) -> bool:
+        """Whether any of ``credential_ids`` has an API scope covering the identity.
+
+        Same coverage as :meth:`list_connected_covering` (a NULL credential
+        axis is a wildcard; a ``None`` reference axis matches any value), but
+        whatever the credential's state.
+        """
+        if not credential_ids:
+            return False
+        stmt = select(Credential.id).where(
+            Credential.id.in_(list(credential_ids)), Credential.api_vendor == vendor
+        )
+        if name is not None:
+            stmt = stmt.where(or_(Credential.api_name.is_(None), Credential.api_name == name))
+        if version is not None:
+            stmt = stmt.where(
+                or_(Credential.api_version.is_(None), Credential.api_version == version)
+            )
+        result = await session.execute(stmt.limit(1))
+        return result.first() is not None
+
+    @staticmethod
     async def delete(session: AsyncSession, credential_id: str) -> bool:
         credential = await session.get(Credential, credential_id)
         if credential is None:
