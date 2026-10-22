@@ -252,7 +252,7 @@ class AgentRepository:
         only the agent row, never the owner's.
         """
         stmt = (
-            select(Agent, User.active & User.deleted_at.is_(None))
+            select(Agent, User.active, User.deleted_at)
             .outerjoin(User, User.id == Agent.owner_id)
             .where(Agent.id == agent_id)
         )
@@ -261,8 +261,8 @@ class AgentRepository:
         row = (await session.execute(stmt)).one_or_none()
         if row is None:
             return None
-        agent, owner_active = row
-        return agent, agent.owner_id is None or bool(owner_active)
+        agent, owner_active, owner_deleted_at = row
+        return agent, agent.owner_id is None or (bool(owner_active) and owner_deleted_at is None)
 
     @staticmethod
     async def set_owner_from_claim(session: AsyncSession, agent: Agent, *, owner_id: str) -> Agent:

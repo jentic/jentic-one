@@ -207,7 +207,7 @@ class ApiKeyResolver:
         key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
         stmt = text(
             "SELECT a.id AS agent_id, a.name, a.status, a.owner_id,"
-            " (u.active AND u.deleted_at IS NULL) AS owner_active"
+            " CASE WHEN u.deleted_at IS NULL THEN u.active ELSE FALSE END AS owner_active"
             " FROM agent_credentials ac"
             " JOIN agents a ON a.id = ac.agent_id"
             " LEFT JOIN users u ON u.id = a.owner_id"
