@@ -75,6 +75,11 @@ class SuccessTokens:
     what the OAuth server actually granted. The service writes it verbatim
     onto ``oauth_token.scope`` so terminal readback works through one
     flow-agnostic column.
+
+    ``token_url`` is the endpoint the code was exchanged at (auth-code); the
+    finalise write re-checks it against the credential's current endpoint
+    and discards the grant when the origin moved meanwhile. Device flow
+    leaves it unset (its token_url cannot change origin).
     """
 
     access_token: str
@@ -82,6 +87,7 @@ class SuccessTokens:
     expires_in: int | None
     scope: str | None
     granted_scopes: list[str] | None = None
+    token_url: str | None = None
 
 
 StatusKind = Literal["pending", "failed", "expired", "success"]

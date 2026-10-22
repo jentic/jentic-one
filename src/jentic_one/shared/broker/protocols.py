@@ -208,12 +208,17 @@ class CredentialDerivation:
       cross-tenant leak into a directive.
     - ``identity_mismatch`` — nearest-miss diagnostic when the agent is bound
       but none of its bound credentials cover the operation identity.
+    - ``binding_suspended`` — the agent holds a *suspended* binding to a
+      credential covering the API. Computed only for an empty
+      ``credentials``; the recovery is the operator's (resume the binding),
+      never a new connect.
     """
 
     credentials: tuple[BoundCredential, ...]
     agent_bound_any: bool
     api_served: bool
     identity_mismatch: IdentityMismatch | None
+    binding_suspended: bool = False
 
 
 @runtime_checkable
@@ -305,6 +310,29 @@ class IdempotencyStore(Protocol):
     async def claim(self, caller: str, key: str, fingerprint: str) -> IdempotencyClaim: ...
 
     async def complete(self, caller: str, key: str, response: bytes) -> None: ...
+
+
+@runtime_checkable
+class BrokerCacheInvalidatorProtocol(Protocol):
+    """In-process invalidation hook for the broker's short-TTL caches (#1837).
+
+    Installed onto :class:`~jentic_one.shared.context.Context` when the broker
+    auth stack is wired in the same process. Mutating paths in ``auth`` and
+    ``control`` call ``ctx.invalidate_broker_caches(...)`` so an unbind, agent
+    disable, API-key rotation/revocation, or credential delete/deactivation
+    evicts stale entries immediately in single-process deployments without
+    importing ``jentic_one.broker``. Multi-process deployments remain bounded
+    by the configured cache TTLs.
+    """
+
+    def invalidate(
+        self,
+        *,
+        agent_id: str | None = None,
+        credential_id: str | None = None,
+        rule_set_id: str | None = None,
+        token: str | None = None,
+    ) -> None: ...
 
 
 @runtime_checkable

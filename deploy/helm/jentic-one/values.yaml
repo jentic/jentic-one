@@ -11,7 +11,7 @@ broker:
     type: ClusterIP
     port: 8000
   # Holds the ~130Mi baseline plus the memory shared-state backend's 192 MiB
-  # cap (broker.resilience.backend.memory.max_total_bytes); see charts/broker.
+  # cap (state.memory.max_total_bytes); see charts/broker.
   resources:
     requests:
       cpu: 100m
@@ -304,7 +304,8 @@ ingress:
   skipTrustedProxiesCheck: false
 
 podDisruptionBudget:
-  # Only useful above `replicas: 1` — at one replica a budget blocks node drains
+  # Only useful above `replicas: 1` (the gateway, or a surface on a registered
+  # shared-state backend) — at one replica a budget blocks node drains
   # instead of protecting availability.
   enabled: false
   minAvailable: 1

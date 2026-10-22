@@ -42,6 +42,7 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.web.app_factory import create_combined_app
 from jentic_one.shared.web.cache_control import PRIVATE_NO_STORE
 from jentic_one.shared.web.deps import (
+    CredentialRecheckOutcome,
     CredentialRecheckResult,
     get_credential_recheck,
     resolve_identity,
@@ -180,8 +181,8 @@ def test_event_stream_keeps_no_cache(ctx: Context, shape: str) -> None:
     app.dependency_overrides[resolve_identity] = lambda: identity
     app.dependency_overrides[get_event_stream_service] = lambda: _EmptyStream()
 
-    async def _valid() -> CredentialRecheckResult:
-        return CredentialRecheckResult.VALID
+    async def _valid(**_: Any) -> CredentialRecheckOutcome:
+        return CredentialRecheckOutcome(CredentialRecheckResult.VALID, identity)
 
     app.dependency_overrides[get_credential_recheck] = lambda: _valid
 

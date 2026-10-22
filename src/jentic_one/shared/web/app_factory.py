@@ -43,6 +43,7 @@ from jentic_one.shared.telemetry.sink import TelemetrySink, set_active_sink
 from jentic_one.shared.tracing import instrument_inbound_app
 from jentic_one.shared.web.agent_discovery import get_agent_discovery_router
 from jentic_one.shared.web.auth import API_KEY_HEADER
+from jentic_one.shared.web.background_tasks import install_background_tasks
 from jentic_one.shared.web.cache_control import AuthenticatedResponseCacheMiddleware
 from jentic_one.shared.web.container import AppContainer, RouterSpec
 from jentic_one.shared.web.deps import TokenVerifier
@@ -572,12 +573,14 @@ async def _run_shutdown_handlers(app: FastAPI) -> None:
 
     FastAPI runs an app's own shutdown handlers only from its default lifespan,
     and every app built here has its own ``lifespan``, so the factory's
-    lifespans run them through this helper. Surface installers use them to
-    close what they built (the auth and control surfaces' shared-state
-    backends). Register on ``app.router`` itself: an included router's
-    handlers already run through that router's lifespan, which FastAPI merges
-    into the app's, and are copied onto ``app.router`` too, so they would run
-    twice. Best-effort: a failing handler is logged and the rest still run.
+    lifespans run them through this helper, for installers (container
+    ``extra_installers`` included) that register one to close what they built.
+    The process's shared-state backend is not closed here; the lifespan closes
+    it last (``ctx.close_state_backend()``). Register on ``app.router`` itself:
+    an included router's handlers already run through that router's lifespan,
+    which FastAPI merges into the app's, and are copied onto ``app.router``
+    too, so they would run twice. Best-effort: a failing handler is logged and
+    the rest still run.
     """
     for handler in list(app.router.on_shutdown):
         try:
@@ -638,6 +641,16 @@ def create_surface_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+        # The process's shared-state backend closes last, after the surface's
+        # own extra_lifespan (the broker's runners) has exited.
+        try:
+            async with _surface_lifespan(app):
+                yield
+        finally:
+            await ctx.close_state_backend()
+
+    @asynccontextmanager
+    async def _surface_lifespan(app: FastAPI) -> AsyncGenerator[None]:
         await ctx.startup()
         instrument_databases(ctx)
         telemetry_handle = await _start_telemetry(ctx)
@@ -684,6 +697,9 @@ def create_surface_app(
                 await _stop_catalog_update_scanner(catalog_scanner_task)
                 await _stop_expiry_scanner(scanner_task)
                 await _stop_worker(worker_task)
+                # Work requests handed off after their response (it may write to
+                # the databases) drains before ctx.shutdown() closes them.
+                await background_tasks.drain(ctx.config.services.background_task_drain_timeout_s)
                 await _stop_telemetry(telemetry_handle)
                 await _run_shutdown_handlers(app)
                 await ctx.shutdown()
@@ -695,6 +711,7 @@ def create_surface_app(
     meta["title"] = title
     app = FastAPI(lifespan=lifespan, **meta)
     app.state.ctx = ctx
+    background_tasks = install_background_tasks(app)
     if container.broker is not None:
         # Wire the injected broker into BOTH data-plane paths: the sync router
         # reads app.state.broker, while the async worker builds its broker via
@@ -945,6 +962,15 @@ def create_combined_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+        try:
+            async with _combined_lifespan(app):
+                yield
+        finally:
+            # The process's shared-state backend closes once, last.
+            await ctx.close_state_backend()
+
+    @asynccontextmanager
+    async def _combined_lifespan(app: FastAPI) -> AsyncGenerator[None]:
         await ctx.startup()
         instrument_databases(ctx)
         telemetry_handle = await _start_telemetry(ctx)
@@ -968,12 +994,14 @@ def create_combined_app(
                 await _stop_catalog_update_scanner(catalog_scanner_task)
                 await _stop_expiry_scanner(scanner_task)
                 await _stop_worker(worker_task)
+                await background_tasks.drain(ctx.config.services.background_task_drain_timeout_s)
                 await _stop_telemetry(telemetry_handle)
                 await _run_shutdown_handlers(app)
                 await ctx.shutdown()
 
     root = FastAPI(lifespan=lifespan, **fastapi_metadata_kwargs(ctx.config.server.public_base_url))
     root.state.ctx = ctx
+    background_tasks = install_background_tasks(root)
     # Injected Broker (None by default → broker surface builds its default
     # per request). Wire BOTH data-plane paths: the sync router reads
     # root.state.broker; the async worker builds its broker via

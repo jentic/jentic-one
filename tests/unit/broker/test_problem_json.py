@@ -27,6 +27,7 @@ from jentic_one.broker.core.exceptions import (
     UpstreamTimeoutError,
     UpstreamTransportError,
     ambiguous_credential_binding_directive,
+    credential_binding_suspended_directive,
     credential_identity_mismatch_directive,
     direct_action_denied_directive,
     direct_credential_identity_mismatch_directive,
@@ -94,9 +95,22 @@ def test_directive_factories_emit_known_strategies() -> None:
             )
         ),
         direct_action_denied_directive(),
+        credential_binding_suspended_directive(vendor="acme", name="widgets", version="1.0.0"),
     ]
     for d in directives:
         assert d.strategy in _ALLOWED_STRATEGIES, d.strategy
+
+
+def test_credential_binding_suspended_directive_asks_the_operator_only() -> None:
+    """A suspended binding is the operator's to lift: no connect leg of any kind."""
+    d = credential_binding_suspended_directive(vendor="acme", name="widgets", version="1.0.0")
+    assert d.strategy == "prompt_human"
+    assert d.parameters == {"api": {"vendor": "acme", "name": "widgets", "version": "1.0.0"}}
+    instruction = d.human_readable_instruction
+    assert "operator" in instruction
+    assert "suspended" in instruction
+    assert "jentic connect" not in instruction
+    assert "request_connection" not in instruction
 
 
 def test_no_credential_binding_directive_names_surviving_commands() -> None:

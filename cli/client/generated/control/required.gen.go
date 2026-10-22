@@ -187,6 +187,7 @@ func (MeUser) RequiredFields() []string {
 	return []string{"admin", "email", "id", "must_change_password", "name", "permissions", "status"}
 }
 func (NoAuthCreateRequest) RequiredFields() []string { return []string{"api", "name", "type"} }
+func (NoAuthUpdateRequest) RequiredFields() []string { return []string{"type"} }
 func (NoteApiReference) RequiredFields() []string    { return []string{"name", "vendor", "version"} }
 func (NoteCreateRequest) RequiredFields() []string   { return []string{"body", "resource"} }
 func (OAuth2CreateRequest) RequiredFields() []string { return []string{"api", "name", "type"} }

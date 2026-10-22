@@ -134,6 +134,9 @@ code:
   retry.
 - **`credential_undecryptable` (424)** — ask your operator to remove and
   re-add the credential, then retry; this is not agent-recoverable.
+- **`credential_binding_suspended` (403)** — your operator suspended your
+  binding for this API. Do not run `jentic connect` for it; ask your
+  operator to resume the binding, then retry.
 - **`credential_identity_mismatch` (403)** — read the directive's
   `parameters.expected` vs `parameters.found` and ask your operator to fix
   or re-provision the credential so it targets `expected`, then retry.

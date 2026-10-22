@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from fastapi import FastAPI, Request
 
 from jentic_one.broker.core.token_validation import CachedActorStatus, CachedTokenValidator
@@ -44,6 +46,48 @@ def build_jwt_verifier(broker: BrokerConfig) -> TokenVerifier | None:
     return None
 
 
+@dataclass(slots=True)
+class BrokerCacheInvalidator:
+    """In-process invalidator for broker token, actor-status, binding and rule caches (#1837)."""
+
+    opaque: CachedTokenValidator
+    api_key: CachedTokenValidator
+    actor_status: CachedActorStatus | None
+    rule_evaluator: AgentRuleEvaluator
+    credential_deriver: CachingCredentialDeriver | None
+
+    def invalidate(
+        self,
+        *,
+        agent_id: str | None = None,
+        credential_id: str | None = None,
+        rule_set_id: str | None = None,
+        token: str | None = None,
+    ) -> None:
+        if token is not None:
+            self.opaque.invalidate(token)
+            self.api_key.invalidate(token)
+        if rule_set_id is not None:
+            self.rule_evaluator.invalidate_rule_set(rule_set_id)
+        if agent_id is not None and credential_id is not None:
+            if self.credential_deriver is not None:
+                self.credential_deriver.invalidate_agent(agent_id)
+            self.rule_evaluator.invalidate_binding(agent_id=agent_id, credential_id=credential_id)
+            return
+        if agent_id is not None:
+            self.opaque.invalidate_actor(agent_id)
+            self.api_key.invalidate_actor(agent_id)
+            if self.actor_status is not None:
+                self.actor_status.invalidate_actor(agent_id)
+            if self.credential_deriver is not None:
+                self.credential_deriver.invalidate_agent(agent_id)
+            self.rule_evaluator.invalidate_agent(agent_id)
+        if credential_id is not None:
+            if self.credential_deriver is not None:
+                self.credential_deriver.invalidate_credential(credential_id)
+            self.rule_evaluator.invalidate_credential(credential_id)
+
+
 def install_broker_auth(app: FastAPI, ctx: Context) -> None:
     """Wire token validation and credential-binding enforcement onto app state."""
     resolver = InProcessTokenResolver(ctx.admin_db)
@@ -57,13 +101,18 @@ def install_broker_auth(app: FastAPI, ctx: Context) -> None:
         cache_ttl_seconds=ctx.config.broker.resolve_cache_ttl_seconds,
     )
     verifier = build_jwt_verifier(ctx.config.broker)
+    actor_status = (
+        CachedActorStatus(
+            resolver=ActorStatusResolver(ctx.admin_db),
+            cache_ttl_seconds=ctx.config.broker.resolve_cache_ttl_seconds,
+        )
+        if verifier is not None
+        else None
+    )
     jwt_validator = (
         JwtTokenValidator(
             verifier=verifier,
-            actor_status=CachedActorStatus(
-                resolver=ActorStatusResolver(ctx.admin_db),
-                cache_ttl_seconds=ctx.config.broker.resolve_cache_ttl_seconds,
-            ),
+            actor_status=actor_status,
         )
         if verifier is not None
         else None
@@ -79,20 +128,33 @@ def install_broker_auth(app: FastAPI, ctx: Context) -> None:
     # Direct-binding authorization (theme-5) — the only path since Phase 6b
     # deleted toolkit derivation. ``toolkit_cache_ttl_s`` keeps its legacy
     # config key name (operator compatibility); it bounds this cache now.
-    app.state.broker_agent_rule_evaluator = AgentRuleEvaluator(
+    rule_evaluator = AgentRuleEvaluator(
         ctx.control_db,
         cache_ttl_seconds=ctx.config.broker.rule_cache_ttl_s,
         max_entries=ctx.config.broker.rule_cache_max_entries,
     )
+    app.state.broker_agent_rule_evaluator = rule_evaluator
     credential_deriver: CredentialDeriverProtocol = CredentialBindingResolver(
         ctx.admin_db, ctx.control_db
     )
+    caching_deriver: CachingCredentialDeriver | None = None
     binding_cache_ttl_s = ctx.config.broker.toolkit_cache_ttl_s
     if binding_cache_ttl_s > 0:
-        credential_deriver = CachingCredentialDeriver(
+        caching_deriver = CachingCredentialDeriver(
             credential_deriver, cache_ttl_seconds=binding_cache_ttl_s
         )
+        credential_deriver = caching_deriver
     app.state.broker_credential_deriver = credential_deriver
+
+    invalidator = BrokerCacheInvalidator(
+        opaque=opaque,
+        api_key=api_key_cached,
+        actor_status=actor_status,
+        rule_evaluator=rule_evaluator,
+        credential_deriver=caching_deriver,
+    )
+    app.state.broker_cache_invalidator = invalidator
+    ctx.register_broker_cache_invalidator(invalidator)
 
     async def _verify_token(token: str, request: Request) -> Identity:
         return await triple.validate(token)

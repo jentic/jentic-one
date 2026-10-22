@@ -68,6 +68,7 @@ from jentic_one.control.services.integrations.errors import (
     AmendFieldsMismatchError,
     AuthTypeNotDeclaredError,
     AuthTypeRequiredError,
+    BindingSuspendedError,
     ConnectOpenError,
     EditBindingNotFoundError,
     EditOpenError,
@@ -1718,6 +1719,14 @@ def _api_target_tool_error(exc: Exception, target: str) -> ToolError | None:
             "human user, end your turn, and retry the blocked calls once they act.",
             extra={"retryable": False},
         )
+    if isinstance(exc, BindingSuspendedError):
+        return ToolError(
+            CODE_BROKER_DENIED,
+            f"this agent's access to {target} is suspended: {exc}",
+            actionable="Your operator suspended your access to this API. Do not ask again; "
+            "ask your operator to resume it.",
+            extra={"retryable": False},
+        )
     return None
 
 
@@ -1847,6 +1856,7 @@ async def handle_request_connection(
         ReservedAuthFieldError,
         SecuritySchemesLookupUnavailableError,
         TooManyOpenSessionsError,
+        BindingSuspendedError,
     ) as exc:
         mapped = _api_target_tool_error(exc, target)
         assert mapped is not None

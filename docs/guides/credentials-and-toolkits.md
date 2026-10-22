@@ -117,6 +117,11 @@ The outcomes:
   *bound* credential is a near-miss (its identity does not cover this
   operation), the refusal is `403 credential_identity_mismatch` instead — the
   operator fixes the credential; a new binding or connect would not help.
+  When the agent's binding to a credential covering the API is *suspended*,
+  the refusal is `403 credential_binding_suspended`: only the operator can
+  resume the binding, so the directive offers no connect, and a new connect
+  for the same agent and API answers `409 connect_session_binding_suspended`
+  until the binding is resumed or removed.
 - **1 winner → use it.** The response carries `Jentic-Credential-Id` and
   `Jentic-Credential-Name` (absent when no stored credential was used), and
   the execution record carries the same attribution — every execution names

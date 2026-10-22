@@ -169,9 +169,10 @@ async def update_agent(
     Only the fields present in the body change; an empty body returns the
     agent unchanged. Allowed for the agent's owner or an `org:admin` (anyone
     else gets 404). Changing `owner_id` transfers ownership, is
-    `org:admin`-only, and revokes every active OAuth client grant bound to
-    the agent, so the new owner must re-consent any connected client. The
-    agent's API key, permissions and credential bindings are unaffected. An
+    `org:admin`-only, revokes every active OAuth client grant bound to the
+    agent (so the new owner must re-consent any connected client), and
+    suspends active credential bindings to credentials outside the new
+    owner's ownership. The agent's API key and permissions are unaffected. An
     archived agent cannot be updated (409). Returns the updated agent.
     """
     update_data = body.model_dump(exclude_unset=True)

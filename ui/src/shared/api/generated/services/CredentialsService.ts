@@ -15,6 +15,7 @@ import type { CredentialCreateResponse } from '../models/CredentialCreateRespons
 import type { CredentialListResponse } from '../models/CredentialListResponse';
 import type { CredentialRedactedResponse } from '../models/CredentialRedactedResponse';
 import type { NoAuthCreateRequest } from '../models/NoAuthCreateRequest';
+import type { NoAuthUpdateRequest } from '../models/NoAuthUpdateRequest';
 import type { OAuth2CreateRequest } from '../models/OAuth2CreateRequest';
 import type { OAuth2UpdateRequest } from '../models/OAuth2UpdateRequest';
 import type { PermissionRuleListResponse } from '../models/PermissionRuleListResponse';
@@ -200,7 +201,7 @@ export class CredentialsService {
         /**
          * Request payload for the `updateCredential` operation.
          */
-        requestBody: (BearerTokenUpdateRequest | ApiKeyUpdateRequest | BasicAuthUpdateRequest | OAuth2UpdateRequest | Sigv4UpdateRequest),
+        requestBody: (BearerTokenUpdateRequest | ApiKeyUpdateRequest | BasicAuthUpdateRequest | OAuth2UpdateRequest | NoAuthUpdateRequest | Sigv4UpdateRequest),
     }): CancelablePromise<CredentialRedactedResponse> {
         return __request(OpenAPI, {
             method: 'PATCH',

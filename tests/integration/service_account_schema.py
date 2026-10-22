@@ -12,17 +12,21 @@ admin back to ``d1e2f3a4b5c6``. From there the chain is walkable again.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+from typing import Any
 
 import sqlalchemy as sa
 from alembic import command
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from alembic.script import ScriptDirectory
-from sqlalchemy import inspect, pool
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy import Boolean, inspect, pool, text
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 
+from jentic_one.shared.auth.api_key_resolver import ApiKeyResolver
 from jentic_one.shared.config import AppConfig, DatabaseConfig
 from jentic_one.shared.db.session import get_database_url
+from jentic_one.shared.models import ActorType
 from tests.harness.postgres import alembic_config_for
 
 #: The revision just below the drop, and the drop itself.
@@ -47,6 +51,8 @@ _EVENTS_CREATED_BY_ACTOR_HEAD = "a1c3e5f7b9d2"  # pragma: allowlist secret
 _USER_SESSION_HEAD = "eb3688e956fc"  # pragma: allowlist secret
 #: Drop of ``ix_execution_records_toolkit_started``, stacked on user login sessions.
 _DROP_TOOLKIT_STARTED_INDEX_HEAD = "d4b8e2f6a901"  # pragma: allowlist secret
+#: External identities ``issuer`` column and ``(issuer, external_subject)`` unique key.
+_EXTERNAL_IDENTITIES_ISSUER_HEAD = "e5c9f3a7b802"  # pragma: allowlist secret
 
 
 def _create_tables(op: Operations, *, pg: bool) -> None:
@@ -218,8 +224,42 @@ def restore_pre_sa_drop_admin(integration_config: AppConfig) -> None:
         [_EVENTS_CREATED_BY_ACTOR_HEAD],
         [_USER_SESSION_HEAD],
         [_DROP_TOOLKIT_STARTED_INDEX_HEAD],
+        [_EXTERNAL_IDENTITIES_ISSUER_HEAD],
     ), f"extend restore_pre_sa_drop_admin for new heads {heads}"
     if not asyncio.run(_has_service_account_tables(db_config)):
         command.downgrade(cfg, _SA_DROP)
     if asyncio.run(_restore_tables(db_config)):
         command.stamp(cfg, ADMIN_PRE_SA_DROP)
+
+
+class PreDropApiKeyResolver(ApiKeyResolver):
+    """The head resolver adapted to the ``d1e2f3a4b5c6`` pre-drop schema.
+
+    The retirement service runs before ``e2f3a4b5c6d7``, which predates both the
+    ``actor_scope_grants`` → ``actor_permission_grants`` rename (``e3f4a5b6c7d8``)
+    and ``users.deleted_at`` (``eb3688e956fc``). Only the schema-dependent SQL
+    clauses are adapted so the key-resolution logic under test is the shipped one.
+    """
+
+    async def _fetch_credential_row(self, session: AsyncSession, raw_key: str) -> Any:
+        key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+        stmt = text(
+            "SELECT a.id AS agent_id, a.name, a.status, a.owner_id, u.active AS owner_active"
+            " FROM agent_credentials ac"
+            " JOIN agents a ON a.id = ac.agent_id"
+            " LEFT JOIN users u ON u.id = a.owner_id"
+            " WHERE ac.api_key_hash = :key_hash"
+        ).columns(owner_active=Boolean)
+        return (await session.execute(stmt, {"key_hash": key_hash})).one_or_none()
+
+    async def _load_permissions(
+        self, session: AsyncSession, actor_id: str, actor_type: ActorType
+    ) -> list[str]:
+        result = await session.execute(
+            text(
+                "SELECT scope FROM actor_scope_grants"
+                " WHERE actor_id = :actor_id AND actor_type = :actor_type"
+            ),
+            {"actor_id": actor_id, "actor_type": actor_type.value},
+        )
+        return [row.scope for row in result.all()]

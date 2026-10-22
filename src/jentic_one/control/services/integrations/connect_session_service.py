@@ -71,6 +71,7 @@ from jentic_one.control.services.credentials.state import (
     BrowserBindingClaim,
     consume_callback_state,
 )
+from jentic_one.control.services.credentials.token_endpoint import minted_at_current_origin
 from jentic_one.control.services.integrations import identity_echo
 from jentic_one.control.services.integrations.api_targets import (
     SCHEME_OAUTH2,
@@ -103,6 +104,7 @@ from jentic_one.control.services.integrations.errors import (
     AgentNotFoundError,
     AmendFieldsMismatchError,
     BaselineChangedError,
+    BindingSuspendedError,
     ConfirmationForbiddenError,
     ConfirmKindMismatchError,
     ConnectOpenError,
@@ -133,6 +135,7 @@ from jentic_one.control.services.integrations.errors import (
     ServersChangedError,
     SessionClosedError,
     SessionNotFoundError,
+    TokenEndpointMovedError,
     TooManyOpenSessionsError,
     UnknownApiError,
     UnknownRuleError,
@@ -1179,6 +1182,8 @@ class ConnectSessionService:
             raise NoOpForFlowError(flow.kind) from exc
         handler = handler_cls(self._ctx)
 
+        api_scope = await self._vendor_api_scope(entry.vendor)
+        await self._refuse_suspended_binding(agent_id, api_scope)
         # One open session per agent-started OAuth request: the same agent
         # asking again for the same vendor, app and scopes gets the open one.
         dedupe_key = (
@@ -1212,8 +1217,6 @@ class ConnectSessionService:
         session_app = self._session_app_for(resolved)
 
         poll_token = secrets.token_urlsafe(32)
-
-        api_scope = await self._vendor_api_scope(entry.vendor)
 
         try:
             async with self._ctx.control_db.transaction() as session:
@@ -1348,6 +1351,12 @@ class ConnectSessionService:
         scheme = select_scheme(view, auth_type)
         require_pinnable_hosts(view)
 
+        # Name and version pinned: the credential covers exactly this API.
+        api_scope = canonical_credential_scope(
+            vendor=view.vendor, name=view.name, version=view.version
+        )
+        await self._refuse_suspended_binding(agent_id, api_scope)
+
         agent_started = agent_id is not None and agent_id == initiator_actor_id
 
         async def _find_open(db: Any) -> ConnectSession | None:
@@ -1409,10 +1418,6 @@ class ConnectSessionService:
                 AWAITING_APP,
             )
 
-        # Name and version pinned: the credential covers exactly this API.
-        api_scope = canonical_credential_scope(
-            vendor=view.vendor, name=view.name, version=view.version
-        )
         poll_token = secrets.token_urlsafe(32)
         try:
             async with self._ctx.control_db.transaction() as session:
@@ -1559,6 +1564,65 @@ class ConnectSessionService:
             agent_id=row.agent_id,
         )
         raise ConnectOpenError(row.id, self._approval_url_for(row.id))
+
+    async def _refuse_suspended_binding(self, agent_id: str | None, scope: CredentialScope) -> None:
+        """Refuse a connect for an agent whose suspended binding covers the requested API.
+
+        A suspended binding is the operator's cut-off for that agent and
+        credential; a new connect for an API the suspended credential covers
+        would hand the agent that access again, so only the operator may lift
+        it (resume or remove the binding). Coverage is the bind-time rule: a
+        NULL credential axis is a wildcard, and an unscoped requested axis
+        matches any credential value. Called only after the caller's right to
+        name the agent is settled, so it says nothing about another owner's
+        agent.
+
+        Accepted semantics:
+
+        - Any suspended binding covering the API refuses the connect, even
+          when another, active binding already covers the same API. The
+          suspension stands until the operator resumes or removes it.
+        - The check reads in its own sessions before the bind transaction,
+          so a suspension that lands in the milliseconds between this check
+          and a ``confirm`` bind is not caught here. A suspension made after
+          the bind is outside this check by design; the broker enforces it
+          per call.
+        """
+        if agent_id is None:
+            return
+        async with self._ctx.admin_db.session() as admin_session:
+            suspended = await EffectsRepository.list_suspended_credential_ids(
+                admin_session, agent_id
+            )
+        if not suspended:
+            return
+        async with self._ctx.control_db.session() as session:
+            covered = await CredentialRepository.any_covering(
+                session,
+                credential_ids=suspended,
+                vendor=scope.vendor,
+                name=scope.name,
+                version=scope.version,
+            )
+        if covered:
+            raise BindingSuspendedError(agent_id)
+
+    async def _refuse_suspended_binding_for_session(
+        self, row: ConnectSession, agent_id: str
+    ) -> None:
+        """:meth:`_refuse_suspended_binding` for the API a session's pending credential targets."""
+        async with self._ctx.control_db.session() as session:
+            credential = await CredentialRepository.get_by_id(session, row.credential_id)
+        if credential is None:
+            return
+        await self._refuse_suspended_binding(
+            agent_id,
+            canonical_credential_scope(
+                vendor=credential.api_vendor,
+                name=credential.api_name,
+                version=credential.api_version,
+            ),
+        )
 
     async def _check_open_session_caps(
         self, agent_id: str | None, identity: Identity, agent: AgentOwnerRow | None
@@ -3188,6 +3252,7 @@ class ConnectSessionService:
                 version=version,
                 exclude_ids=[row.credential_id],
                 filters=filters,
+                account_ref_providers=self._ctx.providers.account_ref_provider_names(),
             )
             tokens = {
                 c.id: await OAuthTokenRepository.get_by_credential(session, c.id)
@@ -3542,6 +3607,9 @@ class ConnectSessionService:
             await self._require_agent_binding_allowed(
                 effective_agent_id, identity, late_bound=late_bound
             )
+            # A late-bound agent was never checked at create, and a binding
+            # may have been suspended since the session opened.
+            await self._refuse_suspended_binding_for_session(row, effective_agent_id)
         api_target = row.target_kind == TARGET_KIND_API
         await self._verify_review(
             row,
@@ -3739,6 +3807,9 @@ class ConnectSessionService:
             await self._require_agent_binding_allowed(
                 effective_agent_id, identity, late_bound=late_bound
             )
+            # A late-bound agent was never checked at create, and a binding
+            # may have been suspended since the session opened.
+            await self._refuse_suspended_binding_for_session(row, effective_agent_id)
         await self._verify_review(
             row,
             effective_agent_id=effective_agent_id,
@@ -4723,6 +4794,8 @@ class ConnectSessionService:
                     created_by=row.initiator_actor_id,
                     close_session_id=row.id,
                 )
+            except TokenEndpointMovedError as exc:
+                return await self._fail_token_endpoint_moved(row, exc)
             except _SessionEndedError:
                 return self._ended_during_finalise(row)
             self._record_connected(row)
@@ -4788,6 +4861,8 @@ class ConnectSessionService:
                 created_by=row.initiator_actor_id,
                 close_session_id=row.id,
             )
+        except TokenEndpointMovedError as exc:
+            return await self._fail_token_endpoint_moved(row, exc)
         except _SessionEndedError:
             return self._ended_during_finalise(row)
 
@@ -4977,6 +5052,13 @@ class ConnectSessionService:
         _sessions_terminal.add(1, {**attrs, "outcome": "connected"})
         _time_to_connected.record((datetime.now(UTC) - row.created_at).total_seconds(), attrs)
 
+    async def _fail_token_endpoint_moved(
+        self, row: ConnectSession, exc: TokenEndpointMovedError
+    ) -> StatusResult:
+        """Fail a session whose grant was discarded by ``_write_finalise``."""
+        await self._mark_terminal(row.id, "failed", str(exc), error_code="token_url_moved")
+        return StatusResult(status="failed", error_code="token_url_moved")
+
     async def _finalise_credential_connected(
         self,
         credential: Credential,
@@ -5046,7 +5128,9 @@ class ConnectSessionService:
         column stays unset.
 
         Raises ``_SessionEndedError`` (nothing written) when
-        ``close_session_id`` is no longer live.
+        ``close_session_id`` is no longer live, and ``TokenEndpointMovedError``
+        (nothing written) when the credential's token endpoint no longer has
+        the origin ``tokens.token_url`` was exchanged at.
         """
         expires_at = (
             datetime.now(UTC) + timedelta(seconds=tokens.expires_in) if tokens.expires_in else None
@@ -5066,6 +5150,12 @@ class ConnectSessionService:
         )
 
         async with self._ctx.control_db.transaction() as session:
+            # Same lock as the broker refresh and a token_url edit. A
+            # cross-origin edit that committed while the code was being
+            # exchanged has moved the credential off the origin this grant
+            # was minted at; storing it would hand its refresh token to the
+            # new origin, so it is discarded and the write rolls back.
+            await OAuthTokenRepository.acquire_refresh_lock(session, credential_id)
             if close_session_id is not None:
                 # Close the session first, compare-and-swap from a live state:
                 # if it was ended meanwhile (the TTL sweep, a cancel), roll the
@@ -5087,6 +5177,15 @@ class ConnectSessionService:
             credential_for_stamp = await CredentialRepository.get_by_id(session, credential_id)
             registration_id_stamp: str | None = None
             if credential_for_stamp is not None:
+                current_token_url = await OAuthClientCredentialRepository.current_token_url(
+                    session, credential_for_stamp
+                )
+                if not minted_at_current_origin(tokens.token_url, current_token_url):
+                    _logger.warning(
+                        "connect_session.finalise_discarded_token_url_moved",
+                        credential_id=credential_id,
+                    )
+                    raise TokenEndpointMovedError(credential_id)
                 registration_id_stamp = credential_for_stamp.oauth_app_registration_id
 
             # Upsert: a re-connect over an existing token row (same
@@ -5200,6 +5299,7 @@ class ConnectSessionService:
         detail: str,
         *,
         error_code: str | None = None,
+        actor: Identity | None = None,
     ) -> bool:
         """Log the terminal outcome, then delete the credential + session.
 
@@ -5227,6 +5327,15 @@ class ConnectSessionService:
 
         The winner records the session's outcome in the same transaction, so
         how it ended outlives the cascade-deleted session row.
+
+        ``actor`` is the caller who ended the session (a cancel or reject
+        request); the REVOKE audit entry names it, with the session's
+        initiator in ``after``. Without it (scanner, callback and expiry
+        paths) the entry is attributed to the initiator with
+        ``origin=system``. A session that ``confirm`` ends because the
+        platform detected drift (``scheme_changed``, ``servers_changed``,
+        ``oauth_app_changed``) is deliberately left system-attributed too:
+        ending it is the platform's decision, not the confirming caller's.
         """
         async with self._ctx.control_db.session() as read_session:
             row = await ConnectSessionRepository.get_by_id(read_session, session_id)
@@ -5283,32 +5392,46 @@ class ConnectSessionService:
         # rows, so they're the most consequential mutation on the
         # lifecycle — an operator needs to be able to say "who / what
         # tore this session down" (scanner-TTL sweep, vendor rejection,
-        # callback error, or user-driven cancel). ``_mark_terminal`` is
-        # called from scanner / callback contexts without a caller
-        # ``Identity``, so attribute the revoke to the session's
-        # ``initiator_actor_id`` — the real actor whose session is
-        # being torn down. The ``reason`` field (``detail``) captures
+        # callback error, or user-driven cancel). A cancel or reject
+        # passes the caller as ``actor``, and the entry names that caller
+        # with the request's origin. The scanner and callback contexts
+        # have no caller ``Identity``, so they attribute the revoke to the
+        # session's ``initiator_actor_id`` — the real actor whose session
+        # is being torn down. The ``reason`` field (``detail``) captures
         # *why* (TTL vs. callback vs. user cancel); the actor field
         # names *whose* session it was, without inventing a "system"
         # sentinel that no longer exists in ``ActorType``.
-        # Tolerant of residual ``sva_`` initiators (theme-8 L4).
-        initiator_actor_type = actor_type_label_from_id(row.initiator_actor_id)
+        after: dict[str, Any] = {
+            "state": state,
+            "error_code": error_code,
+            "credential_id": row.credential_id,
+        }
+        if actor is not None:
+            after["initiator_actor_id"] = row.initiator_actor_id
+            actor_type, actor_id, origin = (
+                actor.actor_type.value,
+                actor.sub,
+                actor.origin.value,
+            )
+        else:
+            # Expiry or a failed poll tears the session down on the
+            # platform's side, attributed to its initiator. Tolerant of
+            # residual ``sva_`` initiators (theme-8 L4).
+            actor_type, actor_id, origin = (
+                actor_type_label_from_id(row.initiator_actor_id),
+                row.initiator_actor_id,
+                Origin.SYSTEM.value,
+            )
         await record_audit_best_effort(
             self._ctx,
             action=AuditAction.REVOKE,
             target_type=AuditTargetType.SESSION,
             target_id=session_id,
-            actor_type=initiator_actor_type,
-            actor_id=row.initiator_actor_id,
-            # Expiry, a failed poll or a cancel tears the session down on the
-            # platform's side, attributed to its initiator.
-            origin=Origin.SYSTEM.value,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            origin=origin,
             before={"state": row.state},
-            after={
-                "state": state,
-                "error_code": error_code,
-                "credential_id": row.credential_id,
-            },
+            after=after,
             reason=detail,
         )
         # Metrics: per-vendor + per-flow + per-outcome unhappy-terminal
@@ -5470,7 +5593,9 @@ class ConnectSessionService:
         row = await self._require_session_access(row, poll_token=poll_token, identity=identity)
         if row.state in ("connected", "failed", "expired"):
             return
-        await self._mark_terminal(session_id, "failed", "user cancelled", error_code="cancelled")
+        await self._mark_terminal(
+            session_id, "failed", "user cancelled", error_code="cancelled", actor=identity
+        )
 
     async def reject_session(self, session_id: str, *, identity: Identity) -> None:
         """A human explicitly turns the agent's request down (the approve dialog's Reject).
@@ -5488,7 +5613,11 @@ class ConnectSessionService:
         if row.state not in LIVE_STATES:
             return
         won = await self._mark_terminal(
-            session_id, "failed", "rejected by approver", error_code=ERROR_REJECTED
+            session_id,
+            "failed",
+            "rejected by approver",
+            error_code=ERROR_REJECTED,
+            actor=identity,
         )
         if won:
             await record_audit_best_effort(

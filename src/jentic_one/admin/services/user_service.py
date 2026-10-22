@@ -442,6 +442,10 @@ class UserService:
             # Ends every login JWT issued so far for good: re-enabling the
             # user restores the account, not the sessions it had (#1139).
             await UserRepository.revoke_login_sessions(session, user_id)
+            # Cancel outstanding invite tokens so a pre-disable invite is no
+            # longer active and stays invalidated if the user is re-enabled.
+            for token in await InviteTokenRepository.get_active_for_user(session, user_id):
+                await InviteTokenRepository.redeem(session, token.id)
             # A queued execution job runs with its creator's authority, so
             # one left queued would run for a user who can no longer act
             # (#1674). Re-enabling does not requeue it.

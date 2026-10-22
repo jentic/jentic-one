@@ -214,11 +214,10 @@ export class IntegrationsService {
      * Amend an open connect session's request
      * Change what an open session asks for; the reviewer sees the new revision.
      *
-     * The session's initiator, or for an edit session a human who may confirm
-     * it (a reviewer editing the request; the revision records who made it),
-     * while it is open (not yet confirmed or ended); a closed session is 409
-     * `session_closed`. The fields sent replace
-     * those parts of the ask and the rest stay. Edit sessions take `rules` and
+     * The session's initiator, or a human who may confirm it (a reviewer
+     * editing the request; the revision records who made it), while it is open
+     * (not yet confirmed or ended); a closed session is 409 `session_closed`.
+     * The fields sent replace those parts of the ask and the rest stay. Edit sessions take `rules` and
      * `resume`, relative to the binding as it was when the edit opened; create
      * sessions take `requested_permission_rules` and `requested_scopes`, which
      * replace the ask outright; both take `reason`. The session id, approval
@@ -264,7 +263,8 @@ export class IntegrationsService {
      * Terminate a still-active session at the user's request.
      *
      * Gated like ``/status`` — the ``poll_token`` the SPA already holds, or
-     * the target agent's owner / ``org:admin`` without it.
+     * the target agent's owner / ``org:admin`` without it. The audit entry
+     * for the cancel names the caller, with the session's initiator alongside.
      *
      * A still-existing but already-terminal session is a 204 no-op — a
      * "Cancel" click racing the poll scanner doesn't error. A session
@@ -325,7 +325,10 @@ export class IntegrationsService {
      * that actually fires the vendor's device-authorization call, and a
      * failed ``begin`` leaves the session retryable, so it must not be
      * free to hammer during a vendor incident. Gated like the review read
-     * (``poll_token`` or owner / ``org:admin``; 403 otherwise).
+     * (``poll_token`` or owner / ``org:admin``; 403 otherwise). An agent
+     * whose binding to a credential covering the session's API is suspended
+     * (including one picked at confirm) is refused with 409
+     * ``connect_session_binding_suspended``.
      *
      * A response carrying an ``authorize_url`` also sets a short-lived
      * ``HttpOnly`` cookie scoped to the OAuth callback path: the vendor
@@ -368,7 +371,7 @@ export class IntegrationsService {
                 401: `Unauthorized`,
                 403: `Forbidden`,
                 404: `Not Found`,
-                409: `Session not awaiting confirmation, its OAuth app, scheme or hosts changed, or the review is stale`,
+                409: `Session not awaiting confirmation, its OAuth app, scheme or hosts changed, the review is stale, or the agent's binding for the API is suspended`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -480,7 +483,10 @@ export class IntegrationsService {
      * `connect_session_agent_not_found`, the same as an unknown agent. Naming
      * an owned agent also takes `agents:write`, which confirming for it needs
      * (403 `connect_session_confirmation_forbidden` otherwise), and an active
-     * agent (409 `connect_session_agent_inactive` otherwise). When
+     * agent (409 `connect_session_agent_inactive` otherwise). An agent whose
+     * binding to a credential covering the requested API is suspended gets
+     * 409 `connect_session_binding_suspended`: only the operator can resume
+     * that binding, so a new connect for the same API is refused. When
      * named, confirm creates the direct agent-credential binding + permission
      * rules; when omitted, the credential connects unbound and an agent can
      * be bound later through the credentials API.
@@ -505,7 +511,7 @@ export class IntegrationsService {
                 401: `Unauthorized`,
                 403: `Forbidden`,
                 404: `Unknown vendor or API, or API targets are not enabled`,
-                409: `The API declares no supported scheme, or its hosts cannot be pinned`,
+                409: `The API declares no supported scheme, its hosts cannot be pinned, the agent is inactive, or the agent's binding for the API is suspended`,
                 422: `Unprocessable Entity`,
                 429: `Rate limit, open-session cap, or a recent rejection`,
                 500: `Internal Server Error`,

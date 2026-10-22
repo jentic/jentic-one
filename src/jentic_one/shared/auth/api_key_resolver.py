@@ -199,13 +199,15 @@ class ApiKeyResolver:
         Columns: ``agent_id, name, status, owner_id, owner_active``.
         ``name`` rides along off the already-joined ``agents`` row (no extra
         query) so the resolved ``Identity`` can carry a human-readable actor
-        name into audit event summaries (#1543). ``owner_active`` is the
-        owner's ``users.active``, read by the same statement (an outer join):
-        NULL for an ownerless agent or a missing owner row.
+        name into audit event summaries (#1543). ``owner_active`` is
+        ``u.active AND u.deleted_at IS NULL``, read by the same statement (an
+        outer join): NULL for an ownerless agent or a missing owner row, and
+        FALSE when the owner is disabled or deleted.
         """
         key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
         stmt = text(
-            "SELECT a.id AS agent_id, a.name, a.status, a.owner_id, u.active AS owner_active"
+            "SELECT a.id AS agent_id, a.name, a.status, a.owner_id,"
+            " CASE WHEN u.deleted_at IS NULL THEN u.active ELSE FALSE END AS owner_active"
             " FROM agent_credentials ac"
             " JOIN agents a ON a.id = ac.agent_id"
             " LEFT JOIN users u ON u.id = a.owner_id"
@@ -225,8 +227,7 @@ class ApiKeyResolver:
                 return _InactiveAgent(agent_id=row.agent_id)
             if row.owner_id is not None and not row.owner_active:
                 # The owner is disabled or deleted, or its row is missing:
-                # fail closed. A soft-deleted user has ``active`` false, so
-                # this covers delete too.
+                # fail closed.
                 log_agent_owner_inactive(row.agent_id, row.owner_id)
                 return _InactiveAgent(agent_id=row.agent_id, owner_inactive=True)
             permissions = await self._load_permissions(session, row.agent_id, ActorType.AGENT)

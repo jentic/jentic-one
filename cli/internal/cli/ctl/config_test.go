@@ -164,7 +164,7 @@ func TestHeuristicClassifiedEntriesStillExist(t *testing.T) {
 func TestBackendConfig_ExplicitZeroValuesSurviveRoundTrip(t *testing.T) {
 	const inputJSON = `{
 		"databases": {
-			"admin": {"name": "jentic", "pool_pre_ping": false, "pool_recycle_s": 0},
+			"admin": {"name": "jentic", "pool_pre_ping": false, "pool_pre_ping_idle_s": 0, "pool_recycle_s": 0},
 			"control": {"name": "jentic"},
 			"registry": {"name": "jentic"}
 		},
@@ -212,6 +212,9 @@ func TestBackendConfig_ExplicitZeroValuesSurviveRoundTrip(t *testing.T) {
 		}
 		if cfg.Databases.Admin.PoolPrePing {
 			t.Errorf("%s: databases.admin.pool_pre_ping = true, want false (reverted to default?)", label)
+		}
+		if got := cfg.Databases.Admin.PoolPrePingIdleS; got != 0 {
+			t.Errorf("%s: databases.admin.pool_pre_ping_idle_s = %v, want 0 (reverted to default?)", label, got)
 		}
 		if got := cfg.Databases.Admin.PoolRecycleS; got != 0 {
 			t.Errorf("%s: databases.admin.pool_recycle_s = %v, want 0 (reverted to default?)", label, got)

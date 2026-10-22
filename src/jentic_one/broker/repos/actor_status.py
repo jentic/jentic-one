@@ -53,13 +53,14 @@ from jentic_one.shared.models import ActorType
 _OWNER_INACTIVE = "owner_inactive"
 # The same owner clause as the broker's ``InProcessTokenResolver``: a queued
 # job or approved hold of an owned agent must not run while the owner is
-# disabled or deleted. A soft-deleted user has ``active`` false, so ``o.active``
-# covers delete too. One PK probe on agents, one on users.
+# disabled or deleted. One PK probe on agents, one on users.
 _AGENT_STATUS_SQL = (
     "CASE"
     " WHEN a.status <> 'active' THEN a.status"
     " WHEN a.owner_id IS NULL THEN 'active'"
-    " WHEN EXISTS (SELECT 1 FROM users o WHERE o.id = a.owner_id AND o.active) THEN 'active'"
+    " WHEN EXISTS ("
+    "SELECT 1 FROM users o WHERE o.id = a.owner_id AND o.active AND o.deleted_at IS NULL"
+    ") THEN 'active'"
     f" ELSE '{_OWNER_INACTIVE}' END"
 )
 _AGENT_STATUS = text(

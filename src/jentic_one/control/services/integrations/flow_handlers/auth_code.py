@@ -321,6 +321,7 @@ class AuthCodeFlowHandler:
             scope=scope,
             # Auth-code: the server tells us what was granted.
             granted_scopes=scope.split() if scope else None,
+            token_url=token_url,
         )
 
     def _redirect_uri(self) -> str:

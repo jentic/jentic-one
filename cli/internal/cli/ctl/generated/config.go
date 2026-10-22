@@ -72,8 +72,49 @@ type AdminConfig struct {
 	// Auth corresponds to the JSON schema field "auth".
 	Auth *AdminAuthConfig `json:"auth,omitempty,omitzero" yaml:"auth,omitempty" mapstructure:"auth,omitempty"`
 
+	// Events corresponds to the JSON schema field "events".
+	Events *AdminEventsConfig `json:"events,omitempty,omitzero" yaml:"events,omitempty" mapstructure:"events,omitempty"`
+
 	// Invite corresponds to the JSON schema field "invite".
 	Invite *AdminInviteConfig `json:"invite,omitempty,omitzero" yaml:"invite,omitempty" mapstructure:"invite,omitempty"`
+}
+
+// Admin event-stream settings.
+type AdminEventsConfig struct {
+	// Minimum seconds between re-verifications of an open ``GET /events/stream``: its
+	// credential, ``events:read`` / ``org:admin`` permission, and the scope of the
+	// events it delivers. Checks run only at a poll or page boundary, so a check
+	// happens at the first poll or page after the interval elapses; an idle stream
+	// polls every few seconds, so a value below its poll interval behaves as that
+	// interval. A disabled caller, a revoked or expired token, or a revoked
+	// permission ends the stream at that check; a narrower permission set narrows it.
+	// Permissions are those the credential carries: API keys and user ``at_`` access
+	// tokens resolve them live, while a login session JWT and an agent ``at_`` access
+	// token carry the set they were issued with; the stream re-verifies the token it
+	// was opened with, so for those a change applies once that token expires and the
+	// client reconnects.
+	StreamRecheckSeconds float64 `json:"stream_recheck_seconds" yaml:"stream_recheck_seconds" mapstructure:"stream_recheck_seconds"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *AdminEventsConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain AdminEventsConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["stream_recheck_seconds"]; !ok || v == nil {
+		plain.StreamRecheckSeconds = 5.0
+	}
+	if 0 >= plain.StreamRecheckSeconds {
+		return fmt.Errorf("field %s: must be > %v", "stream_recheck_seconds", 0)
+	}
+	*j = AdminEventsConfig(plain)
+	return nil
 }
 
 // Admin invite token settings.
@@ -183,36 +224,6 @@ func (j *AuthConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-type BackendKind string
-
-const BackendKindMemory BackendKind = "memory"
-const BackendKindRedis BackendKind = "redis"
-
-var enumValues_BackendKind = []interface{}{
-	"memory",
-	"redis",
-}
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *BackendKind) UnmarshalJSON(value []byte) error {
-	var v string
-	if err := json.Unmarshal(value, &v); err != nil {
-		return err
-	}
-	var ok bool
-	for _, expected := range enumValues_BackendKind {
-		if reflect.DeepEqual(v, expected) {
-			ok = true
-			break
-		}
-	}
-	if !ok {
-		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_BackendKind, v)
-	}
-	*j = BackendKind(v)
-	return nil
-}
-
 type BaseModel map[string]interface{}
 
 // Broker surface configuration.
@@ -268,6 +279,13 @@ type BrokerConfig struct {
 	// up to 10 more connections on top of it.
 	StreamingPersistMaxConcurrency int `json:"streaming_persist_max_concurrency" yaml:"streaming_persist_max_concurrency" mapstructure:"streaming_persist_max_concurrency"`
 
+	// Budget (seconds) for writing one streaming execution's record and lifecycle
+	// event. The write runs after the response, off the request, so it never delays
+	// the client; past the budget it is abandoned, logged and counted on
+	// ``app.background_tasks`` (``kind=streaming_execution_persist``,
+	// ``outcome=timed_out``).
+	StreamingPersistTimeoutS float64 `json:"streaming_persist_timeout_s" yaml:"streaming_persist_timeout_s" mapstructure:"streaming_persist_timeout_s"`
+
 	// ToolkitCacheTtlS corresponds to the JSON schema field "toolkit_cache_ttl_s".
 	ToolkitCacheTtlS float64 `json:"toolkit_cache_ttl_s" yaml:"toolkit_cache_ttl_s" mapstructure:"toolkit_cache_ttl_s"`
 
@@ -314,6 +332,12 @@ func (j *BrokerConfig) UnmarshalJSON(value []byte) error {
 	if 0 >= plain.StreamingPersistMaxConcurrency {
 		return fmt.Errorf("field %s: must be > %v", "streaming_persist_max_concurrency", 0)
 	}
+	if v, ok := raw["streaming_persist_timeout_s"]; !ok || v == nil {
+		plain.StreamingPersistTimeoutS = 10.0
+	}
+	if 0 >= plain.StreamingPersistTimeoutS {
+		return fmt.Errorf("field %s: must be > %v", "streaming_persist_timeout_s", 0)
+	}
 	if v, ok := raw["toolkit_cache_ttl_s"]; !ok || v == nil {
 		plain.ToolkitCacheTtlS = 3.0
 	}
@@ -326,13 +350,10 @@ func (j *BrokerConfig) UnmarshalJSON(value []byte) error {
 
 // Resilience envelope: admission + rate limit / circuit.
 //
-// The shared-state “backend“ selection drives *both* the rate limiter and
-// the circuit breaker (memory default; Redis is cluster-wide). Queue
-// backpressure / async-credential / retention knobs are future work.
+// The rate limiter and circuit breaker run on the process's shared-state
+// backend (the top-level “state:“ section). Queue backpressure /
+// async-credential / retention knobs are future work.
 type BrokerResilienceConfig struct {
-	// Backend corresponds to the JSON schema field "backend".
-	Backend *StateBackendConfig `json:"backend,omitempty,omitzero" yaml:"backend,omitempty" mapstructure:"backend,omitempty"`
-
 	// CircuitBreaker corresponds to the JSON schema field "circuit_breaker".
 	CircuitBreaker *CircuitBreakerConfig `json:"circuit_breaker,omitempty,omitzero" yaml:"circuit_breaker,omitempty" mapstructure:"circuit_breaker,omitempty"`
 
@@ -616,6 +637,12 @@ type ConfigSchemaJson struct {
 	// Services corresponds to the JSON schema field "services".
 	Services *ServicesConfig `json:"services,omitempty,omitzero" yaml:"services,omitempty" mapstructure:"services,omitempty"`
 
+	// The process's shared-state backend, built once and shared by every surface the
+	// process serves. The deprecated broker.resilience.backend section (and its
+	// JENTIC__BROKER__RESILIENCE__BACKEND__* env vars) is still read into it for one
+	// release.
+	State *StateBackendConfig `json:"state,omitempty,omitzero" yaml:"state,omitempty" mapstructure:"state,omitempty"`
+
 	// Telemetry corresponds to the JSON schema field "telemetry".
 	Telemetry *TelemetryConfig `json:"telemetry,omitempty,omitzero" yaml:"telemetry,omitempty" mapstructure:"telemetry,omitempty"`
 
@@ -851,15 +878,25 @@ type DatabaseConfig struct {
 	// Maximum connections in the PostgreSQL connection pool (ignored for SQLite).
 	PoolMax int `json:"pool_max" yaml:"pool_max" mapstructure:"pool_max"`
 
-	// PostgreSQL: test each pooled connection on checkout and transparently replace a
-	// dead one. On asyncpg the ping costs three round trips (``BEGIN``, ``;``,
-	// ``ROLLBACK``) per checkout. With ``false``, ``pool_recycle_s`` and TCP
-	// keepalive do not cover a Postgres restart or failover, a pooler/proxy restart,
-	// or a terminated backend: after such an event the first request on each pool per
-	// process can fail with an HTTP 503 (work run through the retrying transaction
-	// helper is re-run on a fresh connection instead). Only disable it where those
-	// events are rare and that error is acceptable. Ignored for SQLite.
+	// PostgreSQL: test pooled connections on checkout and transparently replace a
+	// dead one. By default the wire ping (three round trips on asyncpg: ``BEGIN``,
+	// ``;``, ``ROLLBACK``) runs only when the connection has sat idle in the pool for
+	// at least ``pool_pre_ping_idle_s`` seconds; active checkouts within that window
+	// skip the wire ping unless the driver connection is already closed. With
+	// ``false``, ``pool_recycle_s`` and TCP keepalive do not cover a Postgres restart
+	// or failover, a pooler/proxy restart, or a terminated backend: after such an
+	// event the first request on each pool per process can fail with an HTTP 503
+	// (work run through the retrying transaction helper is re-run on a fresh
+	// connection instead). Only disable it where those events are rare and that error
+	// is acceptable. Ignored for SQLite.
 	PoolPrePing bool `json:"pool_pre_ping" yaml:"pool_pre_ping" mapstructure:"pool_pre_ping"`
+
+	// PostgreSQL: seconds a connection must sit idle in the pool before checkout runs
+	// the ``pool_pre_ping`` wire check. Active checkouts returning within this window
+	// skip the wire ping unless the driver connection is already closed. ``0`` pings
+	// on every checkout. Only applies when ``pool_pre_ping`` is ``true``. Ignored for
+	// SQLite.
+	PoolPrePingIdleS float64 `json:"pool_pre_ping_idle_s" yaml:"pool_pre_ping_idle_s" mapstructure:"pool_pre_ping_idle_s"`
 
 	// PostgreSQL: replace a pooled connection once it is this many seconds old, on
 	// its next checkout, so a connection silently dropped by a middlebox or left
@@ -968,6 +1005,12 @@ func (j *DatabaseConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["pool_pre_ping"]; !ok || v == nil {
 		plain.PoolPrePing = true
+	}
+	if v, ok := raw["pool_pre_ping_idle_s"]; !ok || v == nil {
+		plain.PoolPrePingIdleS = 1.0
+	}
+	if 0 > plain.PoolPrePingIdleS {
+		return fmt.Errorf("field %s: must be >= %v", "pool_pre_ping_idle_s", 0)
 	}
 	if v, ok := raw["pool_recycle_s"]; !ok || v == nil {
 		plain.PoolRecycleS = 1800
@@ -1397,8 +1440,8 @@ func (j *HeldExecutionsConfig) UnmarshalJSON(value []byte) error {
 
 // “Idempotency-Key“ replay store.
 //
-// Sync “FULL“-mode replay over the shared-state “AtomicStore“ (memory
-// default; Redis ⇒ cross-instance). Two TTLs: a *short* “pending_ttl_s“ claim
+// Sync “FULL“-mode replay over the shared-state “AtomicStore“ (the
+// “state:“ backend). Two TTLs: a *short* “pending_ttl_s“ claim
 // (sized to the request deadline + buffer, so a crash mid-flight frees the key
 // in seconds rather than the full replay window) promoted to the *long*
 // “ttl_s“ only once the response is stored. Responses over
@@ -1418,9 +1461,9 @@ type IdempotencyConfig struct {
 	PendingTtlS float64 `json:"pending_ttl_s" yaml:"pending_ttl_s" mapstructure:"pending_ttl_s"`
 
 	// Replay window of a completed Idempotency-Key record, in seconds. Unset, it is
-	// 3600 (1 h) on the memory shared-state backend and 86400 (24 h) on redis. On
-	// memory, every record is held in process for this long, so the TTL divides the
-	// sustained idempotent request rate the idem budget can hold.
+	// 3600 (1 h) on the memory shared-state backend and 86400 (24 h) on any other
+	// backend. On memory, every record is held in process for this long, so the TTL
+	// divides the sustained idempotent request rate the idem budget can hold.
 	TtlS interface{} `json:"ttl_s,omitempty,omitzero" yaml:"ttl_s,omitempty" mapstructure:"ttl_s,omitempty"`
 }
 
@@ -1786,7 +1829,7 @@ func (j *McpOAuthConfig) UnmarshalJSON(value []byte) error {
 // and so on). Each namespace has its own budget, so one key kind filling up
 // never starves another. A namespace that is full of live entries refuses
 // new writes (the request that needed it gets a 503) rather than evicting a
-// live entry. Ignored by the redis backend.
+// live entry. Ignored by every other backend.
 type MemoryBackendConfig struct {
 	// Default most approximate bytes (key + value + about 750 bytes of per-entry
 	// overhead) one key namespace may hold before its writes are refused.
@@ -1796,11 +1839,11 @@ type MemoryBackendConfig struct {
 	// refused.
 	MaxEntriesPerNamespace int `json:"max_entries_per_namespace" yaml:"max_entries_per_namespace" mapstructure:"max_entries_per_namespace"`
 
-	// Most approximate bytes all namespaces of one memory backend may hold together
+	// Most approximate bytes all namespaces of the memory backend may hold together
 	// (201326592, 192 MiB, by default); a write past it is refused like a full
-	// namespace, never by evicting a live entry. Each surface that keeps shared state
-	// (auth, broker, control) has its own backend, so a process holds up to this much
-	// per such surface. Raise the container memory limit together with it.
+	// namespace, never by evicting a live entry. A process builds one backend shared
+	// by every surface it serves, so this caps the whole process's shared state.
+	// Raise the container memory limit together with it.
 	MaxTotalBytes int `json:"max_total_bytes" yaml:"max_total_bytes" mapstructure:"max_total_bytes"`
 
 	// Per-namespace budget overrides, keyed by namespace (the key prefix before the
@@ -2599,6 +2642,12 @@ func (j *ServerConfig) UnmarshalJSON(value []byte) error {
 
 // Service-level settings (immutable after boot).
 type ServicesConfig struct {
+	// On shutdown, how long (seconds) the app waits for work requests handed off
+	// after their response (e.g. streaming execution records) before cancelling what
+	// is still running. Runs before the databases close; each cancelled task is
+	// logged and counted on ``app.background_tasks`` (``outcome=cancelled``).
+	BackgroundTaskDrainTimeoutS float64 `json:"background_task_drain_timeout_s" yaml:"background_task_drain_timeout_s" mapstructure:"background_task_drain_timeout_s"`
+
 	// RequestTimeoutS corresponds to the JSON schema field "request_timeout_s".
 	RequestTimeoutS float64 `json:"request_timeout_s" yaml:"request_timeout_s" mapstructure:"request_timeout_s"`
 
@@ -2619,6 +2668,12 @@ func (j *ServicesConfig) UnmarshalJSON(value []byte) error {
 	var plain Plain
 	if err := json.Unmarshal(value, &plain); err != nil {
 		return err
+	}
+	if v, ok := raw["background_task_drain_timeout_s"]; !ok || v == nil {
+		plain.BackgroundTaskDrainTimeoutS = 10.0
+	}
+	if 0 > plain.BackgroundTaskDrainTimeoutS {
+		return fmt.Errorf("field %s: must be >= %v", "background_task_drain_timeout_s", 0)
 	}
 	if v, ok := raw["request_timeout_s"]; !ok || v == nil {
 		plain.RequestTimeoutS = 30.0
@@ -2663,20 +2718,38 @@ func (j *SigningKeyConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// Configuration for :func:`build_state_backend`.
+// The process's shared-state backend (top-level “state:“ section).
+//
+// One backend per process holds the rate-limit buckets, circuit-breaker
+// counters, “Idempotency-Key“ records and the auth surface's single-use
+// markers of every surface the process serves.
 type StateBackendConfig struct {
-	// Backend corresponds to the JSON schema field "backend".
-	Backend BackendKind `json:"backend" yaml:"backend" mapstructure:"backend"`
+	// Name of the shared-state backend to build: ``memory`` (in-process, the
+	// default), ``redis`` (deprecated), or a name an extension registered with
+	// ``register_state_backend``. An unregistered name fails at startup with the list
+	// of registered names.
+	Backend string `json:"backend" yaml:"backend" mapstructure:"backend"`
 
 	// Memory corresponds to the JSON schema field "memory".
 	Memory *MemoryBackendConfig `json:"memory,omitempty,omitzero" yaml:"memory,omitempty" mapstructure:"memory,omitempty"`
 
-	// RedisKeyPrefix corresponds to the JSON schema field "redis_key_prefix".
+	// Settings for a backend registered by an extension, passed to its builder
+	// unvalidated (the builder validates them). Ignored by the built-in memory and
+	// redis backends.
+	Options StateBackendConfigOptions `json:"options,omitempty,omitzero" yaml:"options,omitempty" mapstructure:"options,omitempty"`
+
+	// Prefix the deprecated ``redis`` backend puts on every key; set a
+	// per-environment value when deployments share one Redis.
 	RedisKeyPrefix string `json:"redis_key_prefix" yaml:"redis_key_prefix" mapstructure:"redis_key_prefix"`
 
-	// RedisUrl corresponds to the JSON schema field "redis_url".
+	// Connection URL of the deprecated ``redis`` backend; required by it.
 	RedisUrl interface{} `json:"redis_url,omitempty,omitzero" yaml:"redis_url,omitempty" mapstructure:"redis_url,omitempty"`
 }
+
+// Settings for a backend registered by an extension, passed to its builder
+// unvalidated (the builder validates them). Ignored by the built-in memory and
+// redis backends.
+type StateBackendConfigOptions map[string]interface{}
 
 type StateBackendConfigRedisUrl_0 *string
 
@@ -2693,6 +2766,9 @@ func (j *StateBackendConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["backend"]; !ok || v == nil {
 		plain.Backend = "memory"
+	}
+	if matched, _ := regexp.MatchString(`^[a-z0-9][a-z0-9_-]*$`, string(plain.Backend)); !matched {
+		return fmt.Errorf("field %s pattern match: must match %s", "Backend", `^[a-z0-9][a-z0-9_-]*$`)
 	}
 	if v, ok := raw["redis_key_prefix"]; !ok || v == nil {
 		plain.RedisKeyPrefix = "jentic:broker:"
@@ -3213,31 +3289,83 @@ type VendorIdentityProbeConfig struct {
 
 type VendorIdentityProbeConfigMethod string
 
-const VendorIdentityProbeConfigMethodGET VendorIdentityProbeConfigMethod = "GET"
-const VendorIdentityProbeConfigMethodPOST VendorIdentityProbeConfigMethod = "POST"
+type VendorAuthConfigIdentityProbe_0 = VendorIdentityProbeConfig
 
-var enumValues_VendorIdentityProbeConfigMethod = []interface{}{
-	"GET",
-	"POST",
+const VendorScopeConfigClassificationRead VendorScopeConfigClassification = "read"
+const VendorScopeConfigClassificationWrite VendorScopeConfigClassification = "write"
+const VendorScopeConfigClassificationAdmin VendorScopeConfigClassification = "admin"
+
+// A single OAuth scope exposed by the vendor.
+//
+// `classification` drives the review-page UX: read scopes are pre-selected by
+// default; write/admin scopes get a warning flag. `description` is
+// human-facing copy displayed on the review page.
+type VendorScopeConfig struct {
+	// Classification corresponds to the JSON schema field "classification".
+	Classification VendorScopeConfigClassification `json:"classification" yaml:"classification" mapstructure:"classification"`
+
+	// Default corresponds to the JSON schema field "default".
+	Default bool `json:"default,omitempty,omitzero" yaml:"default,omitempty" mapstructure:"default,omitempty"`
+
+	// Description corresponds to the JSON schema field "description".
+	Description string `json:"description,omitempty,omitzero" yaml:"description,omitempty" mapstructure:"description,omitempty"`
+
+	// Name corresponds to the JSON schema field "name".
+	Name string `json:"name" yaml:"name" mapstructure:"name"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorIdentityProbeConfigMethod) UnmarshalJSON(value []byte) error {
+func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["name"]; raw != nil && !ok {
+		return fmt.Errorf("field name in VendorScopeConfig: required")
+	}
+	type Plain VendorScopeConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["classification"]; !ok || v == nil {
+		plain.Classification = "read"
+	}
+	if v, ok := raw["default"]; !ok || v == nil {
+		plain.Default = false
+	}
+	if v, ok := raw["description"]; !ok || v == nil {
+		plain.Description = ""
+	}
+	*j = VendorScopeConfig(plain)
+	return nil
+}
+
+var enumValues_VendorScopeConfigClassification = []interface{}{
+	"read",
+	"write",
+	"admin",
+}
+
+type VendorScopeConfigClassification string
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *VendorScopeConfigClassification) UnmarshalJSON(value []byte) error {
 	var v string
 	if err := json.Unmarshal(value, &v); err != nil {
 		return err
 	}
 	var ok bool
-	for _, expected := range enumValues_VendorIdentityProbeConfigMethod {
+	for _, expected := range enumValues_VendorScopeConfigClassification {
 		if reflect.DeepEqual(v, expected) {
 			ok = true
 			break
 		}
 	}
 	if !ok {
-		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorIdentityProbeConfigMethod, v)
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorScopeConfigClassification, v)
 	}
-	*j = VendorIdentityProbeConfigMethod(v)
+	*j = VendorScopeConfigClassification(v)
 	return nil
 }
 
@@ -3268,90 +3396,15 @@ func (j *VendorIdentityProbeConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
+const VendorIdentityProbeConfigMethodPOST VendorIdentityProbeConfigMethod = "POST"
+const VendorIdentityProbeConfigMethodGET VendorIdentityProbeConfigMethod = "GET"
+
+type VendorRegistryConfigEntries map[string]VendorAuthConfig
+
 // Top-level vendor auth registry.
 type VendorRegistryConfig struct {
 	// Entries corresponds to the JSON schema field "entries".
 	Entries VendorRegistryConfigEntries `json:"entries,omitempty,omitzero" yaml:"entries,omitempty" mapstructure:"entries,omitempty"`
-}
-
-type VendorRegistryConfigEntries map[string]VendorAuthConfig
-
-// A single OAuth scope exposed by the vendor.
-//
-// `classification` drives the review-page UX: read scopes are pre-selected by
-// default; write/admin scopes get a warning flag. `description` is
-// human-facing copy displayed on the review page.
-type VendorScopeConfig struct {
-	// Classification corresponds to the JSON schema field "classification".
-	Classification VendorScopeConfigClassification `json:"classification" yaml:"classification" mapstructure:"classification"`
-
-	// Default corresponds to the JSON schema field "default".
-	Default bool `json:"default,omitempty,omitzero" yaml:"default,omitempty" mapstructure:"default,omitempty"`
-
-	// Description corresponds to the JSON schema field "description".
-	Description string `json:"description,omitempty,omitzero" yaml:"description,omitempty" mapstructure:"description,omitempty"`
-
-	// Name corresponds to the JSON schema field "name".
-	Name string `json:"name" yaml:"name" mapstructure:"name"`
-}
-
-type VendorScopeConfigClassification string
-
-const VendorScopeConfigClassificationAdmin VendorScopeConfigClassification = "admin"
-const VendorScopeConfigClassificationRead VendorScopeConfigClassification = "read"
-const VendorScopeConfigClassificationWrite VendorScopeConfigClassification = "write"
-
-var enumValues_VendorScopeConfigClassification = []interface{}{
-	"read",
-	"write",
-	"admin",
-}
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorScopeConfigClassification) UnmarshalJSON(value []byte) error {
-	var v string
-	if err := json.Unmarshal(value, &v); err != nil {
-		return err
-	}
-	var ok bool
-	for _, expected := range enumValues_VendorScopeConfigClassification {
-		if reflect.DeepEqual(v, expected) {
-			ok = true
-			break
-		}
-	}
-	if !ok {
-		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorScopeConfigClassification, v)
-	}
-	*j = VendorScopeConfigClassification(v)
-	return nil
-}
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
-	var raw map[string]interface{}
-	if err := json.Unmarshal(value, &raw); err != nil {
-		return err
-	}
-	if _, ok := raw["name"]; raw != nil && !ok {
-		return fmt.Errorf("field name in VendorScopeConfig: required")
-	}
-	type Plain VendorScopeConfig
-	var plain Plain
-	if err := json.Unmarshal(value, &plain); err != nil {
-		return err
-	}
-	if v, ok := raw["classification"]; !ok || v == nil {
-		plain.Classification = "read"
-	}
-	if v, ok := raw["default"]; !ok || v == nil {
-		plain.Default = false
-	}
-	if v, ok := raw["description"]; !ok || v == nil {
-		plain.Description = ""
-	}
-	*j = VendorScopeConfig(plain)
-	return nil
 }
 
 // Background job-worker durability knobs.
@@ -3493,4 +3546,27 @@ func (j *WorkerConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-type VendorAuthConfigIdentityProbe_0 = VendorIdentityProbeConfig
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *VendorIdentityProbeConfigMethod) UnmarshalJSON(value []byte) error {
+	var v string
+	if err := json.Unmarshal(value, &v); err != nil {
+		return err
+	}
+	var ok bool
+	for _, expected := range enumValues_VendorIdentityProbeConfigMethod {
+		if reflect.DeepEqual(v, expected) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorIdentityProbeConfigMethod, v)
+	}
+	*j = VendorIdentityProbeConfigMethod(v)
+	return nil
+}
+
+var enumValues_VendorIdentityProbeConfigMethod = []interface{}{
+	"GET",
+	"POST",
+}

@@ -208,6 +208,13 @@ func apiTargetCoded(he *HTTPError, target string, err error, lane connectLane) (
 			Actionable: "Do not open more. Relay the approval URLs you already have to your human user, " +
 				"end your turn, and retry the blocked calls once they act.",
 		}, ""
+	case "connect_session_binding_suspended":
+		return &ux.CodedError{
+			Code: ux.CodeBrokerDenied,
+			Msg:  fmt.Sprintf("this agent's access to %s is suspended: %v", target, err),
+			Actionable: "Your operator suspended your access to this API. Do not ask again; " +
+				"ask your operator to resume it.",
+		}, ""
 	}
 	return nil, ""
 }

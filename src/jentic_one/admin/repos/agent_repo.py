@@ -243,8 +243,8 @@ class AgentRepository:
         The owner flag is:
 
         - ``True`` for an ownerless agent;
-        - the owner's ``users.active`` for an owned agent (a soft-deleted user
-          has ``active`` false, so delete reads ``False``);
+        - ``users.active and users.deleted_at is None`` for an owned agent (a
+          deleted row is refused even if ``active`` still reads true);
         - ``False`` when the owner row is missing, so callers that gate on the
           flag fail closed.
 
@@ -252,7 +252,7 @@ class AgentRepository:
         only the agent row, never the owner's.
         """
         stmt = (
-            select(Agent, User.active)
+            select(Agent, User.active, User.deleted_at)
             .outerjoin(User, User.id == Agent.owner_id)
             .where(Agent.id == agent_id)
         )
@@ -261,8 +261,8 @@ class AgentRepository:
         row = (await session.execute(stmt)).one_or_none()
         if row is None:
             return None
-        agent, owner_active = row
-        return agent, agent.owner_id is None or bool(owner_active)
+        agent, owner_active, owner_deleted_at = row
+        return agent, agent.owner_id is None or (bool(owner_active) and owner_deleted_at is None)
 
     @staticmethod
     async def set_owner_from_claim(session: AsyncSession, agent: Agent, *, owner_id: str) -> Agent:

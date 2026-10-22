@@ -256,6 +256,18 @@ class CredentialIdentityMismatchError(BrokerError):
     """
 
 
+class CredentialBindingSuspendedError(BrokerError):
+    """The agent's binding to a credential covering this API is suspended (403).
+
+    Distinct from the missing-binding denial (``no_credential_binding``): the
+    operator suspended the agent's access, so only the operator can restore
+    it (resume the binding). The directive never suggests a new connect —
+    the connect flow refuses one while the suspension stands.
+    """
+
+    default_type = "credential_binding_suspended"
+
+
 class UpstreamTimeoutError(BrokerError):
     """The upstream did not respond within the deadline, or the pool timed out (504).
 
@@ -310,6 +322,26 @@ class UpstreamResponseTooLargeError(BrokerError):
     """
 
     default_type = "upstream_response_too_large"
+
+
+class UpstreamBodyInterruptedError(BrokerError):
+    """The upstream failed at the transport level partway through a streamed body.
+
+    Raised from the streaming body iterator, after the response status line has
+    been sent, so it never becomes an error response: the streaming edge logs
+    it as ``upstream_network_failure``, aborts the response, and records
+    ``transport_error`` on the execution. ``transport_error`` is the ``httpx``
+    exception class name (never its message, which can quote request
+    material). Typed ``upstream_timeout`` for a read stall, else
+    ``upstream_transport_error``. The streaming edge classifies by this class,
+    never by the problem ``type`` or ``extra`` members.
+    """
+
+    default_type = "upstream_transport_error"
+
+    def __init__(self, detail: str, *, transport_error: str, type: str | None = None) -> None:
+        super().__init__(detail, type=type)
+        self.transport_error = transport_error
 
 
 class RunnerSchemeUnsupportedError(BrokerError):
@@ -596,6 +628,29 @@ def no_credential_binding_directive(
         strategy="prompt_human",
         parameters=parameters,
         human_readable_instruction=instruction,
+    )
+
+
+def credential_binding_suspended_directive(
+    *, vendor: str, name: str, version: str
+) -> AgentDirective:
+    """Directive for a ``credential_binding_suspended`` 403 — only the operator can lift it.
+
+    The agent's binding to a credential covering this API is suspended. The
+    operator made that call, so the recovery is theirs: resume the binding.
+    Deliberately carries no ``suggested_command``, ``connect`` or
+    ``provisioning_url``: a new connect for the same API is refused while the
+    suspension stands, so there is no connect to offer.
+    """
+    api = "/".join(part for part in (vendor, name) if part)
+    return AgentDirective(
+        strategy="prompt_human",
+        parameters={"api": {"vendor": vendor, "name": name, "version": version}},
+        human_readable_instruction=(
+            f"Your operator has suspended your access to '{api}'. Ask your operator "
+            "whether they will resume it — only they can. Do not request a new "
+            "connection for this API. Once they resume it, retry this call."
+        ),
     )
 
 

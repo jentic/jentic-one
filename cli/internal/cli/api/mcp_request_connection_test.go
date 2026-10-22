@@ -580,6 +580,10 @@ func TestMCPRequestConnection_APITargetErrorCodes(t *testing.T) {
 			ux.CodeBrokerDenied, "", "enum",
 		},
 		{http.StatusTooManyRequests, `{"type":"too_many_open_sessions","detail":"cap"}`, ux.CodeBrokerDenied, "", "Do not open more"},
+		{
+			http.StatusConflict, `{"type":"connect_session_binding_suspended","detail":"suspended"}`,
+			ux.CodeBrokerDenied, "", "ask your operator to resume it",
+		},
 	} {
 		t.Run(tc.body, func(t *testing.T) {
 			cp := &connectControlPlane{status: tc.status, body: tc.body, headers: map[string]string{"Retry-After": "3600"}}

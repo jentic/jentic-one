@@ -76,6 +76,22 @@ class AgentInactiveError(ConnectSessionServiceError):
         self.status = status
 
 
+class BindingSuspendedError(ConnectSessionServiceError):
+    """The agent has a suspended binding to a credential that covers the requested API.
+
+    A suspension is the operator's cut-off for that agent and API, so a new
+    connect for the same pair is refused until the operator resumes or
+    removes the suspended binding.
+    """
+
+    def __init__(self, agent_id: str) -> None:
+        super().__init__(
+            f"agent {agent_id!r} has a suspended credential binding for this API; "
+            "only an operator can resume it"
+        )
+        self.agent_id = agent_id
+
+
 class NoOpForFlowError(ConnectSessionServiceError):
     """The resolved flow is not yet implemented in phase 1."""
 
@@ -119,6 +135,24 @@ class OAuthAppChangedError(ConnectSessionServiceError):
             "it was created; start a new session"
         )
         self.session_id = session_id
+
+
+class TokenEndpointMovedError(ConnectSessionServiceError):
+    """The credential's token_url moved to another origin during the code exchange.
+
+    The grant minted at the old origin is discarded, not stored: the next
+    refresh would present its refresh token to the new origin. A connect
+    session ends ``failed`` with ``error_code="token_url_moved"``, and like
+    every failed session its pending credential is deleted
+    (``ConnectSessionService._mark_terminal``).
+    """
+
+    def __init__(self, credential_id: str) -> None:
+        super().__init__(
+            f"credential {credential_id!r} token_url moved to another origin while "
+            "connecting; start a new connect session"
+        )
+        self.credential_id = credential_id
 
 
 class CredentialMissingCreatorError(ConnectSessionServiceError):
