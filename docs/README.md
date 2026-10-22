@@ -75,6 +75,7 @@ Agent runbook: [use](agent/use.md) — discover → check access → execute, as
 - [Composition and processes](architecture/composition-and-processes.md) — boot sequence, `JENTIC__APPS`, deployment topologies, background work
 - [Broker execution](architecture/broker-execution.md) — the life of a brokered call: pipeline, resilience, egress, credential injection
 - [Data model](architecture/data-model.md) — three databases, no cross-database foreign keys, immutable revisions
+- [CLI profile manifests](architecture/cli-profiles.md) — the per-vendor-CLI manifest: APIs, routing, agent wiring, hard-deny references, presets, provisioning
 - [Identity and authorization](architecture/identity-and-authorization.md) — actors, tokens, permissions (and the OAuth2 scopes they travel as), and the default-deny chain
 
 ## Develop

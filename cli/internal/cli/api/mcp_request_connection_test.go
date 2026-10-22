@@ -613,3 +613,119 @@ func TestMCPRequestConnection_APITargetErrorCodes(t *testing.T) {
 		})
 	}
 }
+
+func TestMCPRequestConnection_PresetRidesTheWireAndExpandedRulesReachTheResult(t *testing.T) {
+	cp := &connectControlPlane{
+		status: http.StatusCreated,
+		body: `{"session_id":"cs_pr","approval_url":"https://one.example/c/pr","poll_token":"pt",
+			"resolved_flow":"authorization_code",
+			"requested_permission_rules":[
+				{"effect":"allow","match_mode":"git","path":"push:octo-org/app:refs/heads/agent/*","api_role":"git"},
+				{"effect":"allow","methods":["GET"],"path":"/repos/octo-org/app/.*"}]}`,
+	}
+	srv := httptest.NewServer(cp.handler())
+	defer srv.Close()
+
+	for name, params := range map[string]string{
+		"object":    `{"repo":"octo-org/app","branches":"agent/*"}`,
+		"pair list": `["repo=octo-org/app","branches=agent/*"]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := stampedTestMCPServer(t)
+			res, err := s.handleRequestConnection(activeCtx(srv.URL), callToolRequest("request_connection",
+				`{"vendor":"github","preset":"push_branches","preset_params":`+params+`}`))
+			if err != nil {
+				t.Fatalf("handleRequestConnection: %v", err)
+			}
+			if res.IsError {
+				t.Fatalf("unexpected soft error: %s", toolResultText(res))
+			}
+			var wire map[string]any
+			if err := json.Unmarshal(cp.seen, &wire); err != nil {
+				t.Fatalf("decode wire body: %v", err)
+			}
+			if wire["preset"] != "push_branches" {
+				t.Errorf("preset = %v, want push_branches", wire["preset"])
+			}
+			got, _ := wire["preset_params"].(map[string]any)
+			if got["repo"] != "octo-org/app" || got["branches"] != "agent/*" || len(got) != 2 {
+				t.Errorf("preset_params = %v, want repo + branches", wire["preset_params"])
+			}
+
+			payload := decodeToolJSON(t, res)
+			rules, _ := payload["requested_permission_rules"].([]any)
+			if len(rules) != 2 {
+				t.Fatalf("requested_permission_rules = %v, want the two expanded rules", payload["requested_permission_rules"])
+			}
+			first, _ := rules[0].(map[string]any)
+			if first["match_mode"] != "git" || first["path"] != "push:octo-org/app:refs/heads/agent/*" ||
+				first["api_role"] != "git" {
+				t.Errorf("rules[0] = %v, want the git push rule with its api_role", first)
+			}
+		})
+	}
+}
+
+func TestMCPRequestConnection_RepeatedPresetParamJoinsWithCommas(t *testing.T) {
+	got, err := decodePresetParams(json.RawMessage(`["repo=a/b","branches=agent/*","branches=fix/*"]`))
+	if err != nil {
+		t.Fatalf("decodePresetParams: %v", err)
+	}
+	if got["branches"] != "agent/*,fix/*" || got["repo"] != "a/b" {
+		t.Errorf("preset params = %v, want branches joined with a comma", got)
+	}
+}
+
+func TestMCPRequestConnection_RuleAPIRoleAndRequireApprovalRideTheWire(t *testing.T) {
+	cp := &connectControlPlane{
+		status: http.StatusCreated,
+		body:   `{"session_id":"cs_r","approval_url":"https://one.example/c/r","poll_token":"pt","resolved_flow":"authorization_code"}`,
+	}
+	srv := httptest.NewServer(cp.handler())
+	defer srv.Close()
+
+	s := stampedTestMCPServer(t)
+	res, err := s.handleRequestConnection(activeCtx(srv.URL), callToolRequest("request_connection",
+		`{"vendor":"github","requested_permission_rules":[
+			{"effect":"require-approval","match_mode":"graphql","path":"mutation","api_role":"graphql"}]}`))
+	if err != nil {
+		t.Fatalf("handleRequestConnection: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected soft error: %s", toolResultText(res))
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(cp.seen, &wire); err != nil {
+		t.Fatalf("decode wire body: %v", err)
+	}
+	rules, _ := wire["requested_permission_rules"].([]any)
+	if len(rules) != 1 {
+		t.Fatalf("requested_permission_rules = %v, want one rule", wire["requested_permission_rules"])
+	}
+	rule, _ := rules[0].(map[string]any)
+	if rule["effect"] != "require-approval" || rule["match_mode"] != "graphql" || rule["api_role"] != "graphql" {
+		t.Errorf("rule = %v, want require-approval graphql mutation with api_role graphql", rule)
+	}
+}
+
+func TestMCPRequestConnection_PresetArgumentErrorsAreInvalidParams(t *testing.T) {
+	for name, tc := range map[string]struct{ args, want string }{
+		"params without preset": {`{"vendor":"github","preset_params":{"repo":"octo-org/app"}}`, "preset_params applies with preset only"},
+		"non-string value":      {`{"vendor":"github","preset":"read_only","preset_params":{"repo":1}}`, "preset_params"},
+		"pair without =":        {`{"vendor":"github","preset":"read_only","preset_params":["repo"]}`, "name=value"},
+		"overlong preset":       {`{"vendor":"github","preset":"` + strings.Repeat("p", connectPresetMax+1) + `"}`, "preset must be at most"},
+		"unknown api_role":      {`{"vendor":"github","requested_permission_rules":[{"effect":"allow","path":"/x","api_role":"ftp"}]}`, "api_role"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			// The unreachable base URL proves the refusal happens before any request.
+			s := stampedTestMCPServer(t)
+			res, err := s.handleRequestConnection(activeCtx("http://127.0.0.1:0"), callToolRequest("request_connection", tc.args))
+			if res != nil {
+				t.Fatalf("want a protocol error, got a result: %v", res)
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want an invalid-params error containing %q", err, tc.want)
+			}
+		})
+	}
+}

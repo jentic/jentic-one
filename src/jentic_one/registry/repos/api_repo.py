@@ -84,6 +84,36 @@ class ApiRepository:
         return result.unique().scalar_one_or_none()
 
     @staticmethod
+    async def current_revision_digest(
+        session: AsyncSession, vendor: str, name: str, version: str
+    ) -> tuple[bool, str | None]:
+        """Whether ``(vendor, name, version)`` is live, and its current revision's spec digest.
+
+        ``(False, None)`` when the API does not exist or has no current revision.
+        """
+        result = await session.execute(
+            select(ApiRevision.spec_digest)
+            .join(Api, Api.current_revision_id == ApiRevision.id)
+            .where(Api.vendor == vendor, Api.name == name, Api.version == version)
+        )
+        row = result.first()
+        return (row is not None, row.spec_digest if row is not None else None)
+
+    @staticmethod
+    async def live_identity_for_catalog_api_id(
+        session: AsyncSession, catalog_api_id: str
+    ) -> tuple[str, str, str] | None:
+        """``(vendor, name, version)`` of a live API imported as ``catalog_api_id``, or ``None``."""
+        result = await session.execute(
+            select(Api.vendor, Api.name, Api.version)
+            .where(Api.catalog_api_id == catalog_api_id, Api.current_revision_id.is_not(None))
+            .order_by(Api.created_at, Api.id)
+            .limit(1)
+        )
+        row = result.first()
+        return (row.vendor, row.name, row.version) if row is not None else None
+
+    @staticmethod
     async def list_by_vendor(session: AsyncSession, vendor: str) -> list[Api]:
         result = await session.execute(select(Api).where(Api.vendor == vendor))
         return list(result.scalars().all())

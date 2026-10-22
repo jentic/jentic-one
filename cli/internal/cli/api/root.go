@@ -99,6 +99,12 @@ func newAPIRootCmd(core *cmdcore.App) *cobra.Command {
 	// gh-api-style authenticated passthrough to the control plane, with
 	// self-description (Phase 5 item 7a). Not fenced (server-scope-gated).
 	cmdcore.AddGrouped(root, "agent", newAPICmd(app))
+	// Vendor CLIs through the Broker's facades: `jentic cf …` runs the local
+	// cf with every argument untouched, `jentic cli list|run` the generic
+	// forms. Not fenced: they change no host config; each call is decided by
+	// the broker under the agent's rules.
+	cmdcore.AddGrouped(root, "agent", newCfCmd(app))
+	cmdcore.AddGrouped(root, "agent", newCLICmd(app))
 	// The agent-client commands manage and drive the local coding agent
 	// (generate its skills, launch it under isolation, tear its account down),
 	// distinct from the catalog find/run operations above.

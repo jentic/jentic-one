@@ -342,3 +342,22 @@ class OwnClientInvalidError(ConnectSessionServiceError):
 
     def __init__(self, detail: str) -> None:
         super().__init__(f"own OAuth client is not usable: {detail}")
+
+
+class PresetNotApplicableError(ConnectSessionServiceError):
+    """``preset`` was given for a target that no CLI profile declares."""
+
+    def __init__(self, target: str) -> None:
+        super().__init__(
+            f"no CLI profile declares {target!r}, so it has no presets; pass "
+            "requested_permission_rules instead"
+        )
+        self.target = target
+
+
+class PresetInvalidError(ConnectSessionServiceError):
+    """The preset name or its parameters do not expand into rules for the target."""
+
+
+class RuleApiRoleError(ConnectSessionServiceError):
+    """A rule for a CLI-profile credential names an API role the profile cannot take."""

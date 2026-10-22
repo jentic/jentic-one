@@ -86,6 +86,11 @@ var fencingExemptPrefixes = []string{
 	// Following the agent's own held executions (a held call's outcome): a
 	// server-side-scoped read, no host state.
 	"executions",
+	// Vendor CLIs through the Broker's facades (`jentic cf`, `jentic cli
+	// list|run`): they run the agent's own vendor CLI with a short-lived
+	// invocation token and read the facade list; every call is decided
+	// server-side under the agent's rules, and no host config is touched.
+	"cf", "cli",
 	// Agent-facing self-check (read-only) and login/logout of the agent's own
 	// session (not an operator context switch).
 	"doctor", "whoami", "login", "logout",

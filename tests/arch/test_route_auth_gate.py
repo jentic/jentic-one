@@ -76,12 +76,16 @@ APP_SHAPES: dict[str, list[str]] = {
 }
 
 #: Broker identity dependencies. The broker validates credentials with its own
-#: composite token validator rather than ``get_current_identity``; each of these
-#: calls ``require_broker_identity`` (401 on a missing/invalid credential).
+#: validators rather than ``get_current_identity``: the first three call
+#: ``require_broker_identity`` (the composite validator), and
+#: ``require_cli_invocation`` authenticates the CLI facades' ``cit_`` tokens
+#: (reached through ``require_cli_facade_invocation``). Each answers 401 on a
+#: missing or invalid credential.
 _BROKER_AUTH_DEPENDENCIES: tuple[Callable[..., Any], ...] = (
     broker_deps.require_broker_identity,
     broker_deps.require_execute_permission,
     broker_deps.require_execute_within_rate_limit,
+    broker_deps.require_cli_invocation,
 )
 
 #: Schema-hidden (``include_in_schema=False``) public routes that are not in

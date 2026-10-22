@@ -97,6 +97,8 @@ func CuratedBindings() []CuratedBinding {
 				"requested_permission_rules": "rules",
 				"reason":                     "reason",
 				"oauth_app_registration_id":  "registration",
+				"preset":                     "preset",
+				"preset_params":              "preset-param",
 			},
 			NotExposed: map[string]string{
 				"agent_id":       "never sent: an agent caller IS the agent (identity injected server-side; an override is refused 403); connecting FOR an agent is a dashboard action",

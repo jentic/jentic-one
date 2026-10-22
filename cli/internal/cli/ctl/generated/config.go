@@ -578,6 +578,209 @@ func (j *CircuitBreakerConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
+// The broker's governed git pipeline: git smart-HTTP to github.com through Jentic.
+//
+// Clones, fetches and pushes relayed with a GitHub invocation token run
+// through their own streaming pipeline, not the execute pipeline: request
+// and response bodies are streamed (the execute body caps and upstream
+// timeout do not apply), a push is checked against the binding's git rules
+// ref by ref, and the upstream is always “https://github.com“.
+type CliFacadeGitConfig struct {
+	// Seconds one GitHub compare call of the force-push check may take.
+	CompareTimeoutS float64 `json:"compare_timeout_s" yaml:"compare_timeout_s" mapstructure:"compare_timeout_s"`
+
+	// Seconds to connect to github.com.
+	ConnectTimeoutS float64 `json:"connect_timeout_s" yaml:"connect_timeout_s" mapstructure:"connect_timeout_s"`
+
+	// Whether git requests are served. Requires the GitHub facade
+	// (``cli_facades.enabled`` and ``cli_facades.vendors.github.enabled``); while
+	// off, a git URL at the CLI proxy route answers 404.
+	Enabled bool `json:"enabled" yaml:"enabled" mapstructure:"enabled"`
+
+	// Seconds a git transfer may go without a byte in either direction, client or
+	// upstream, before it is cut off.
+	IdleTimeoutS float64 `json:"idle_timeout_s" yaml:"idle_timeout_s" mapstructure:"idle_timeout_s"`
+
+	// Most GitHub compare calls the force-push check makes for one push. A push whose
+	// ancestry needs more is refused for the refs left unchecked.
+	MaxCompareRequests int `json:"max_compare_requests" yaml:"max_compare_requests" mapstructure:"max_compare_requests"`
+
+	// Largest total size of the commit objects of one push the force-push check keeps
+	// in memory while reading the pack, in bytes. A push carrying more is refused.
+	// Defaults to 64 MiB.
+	MaxInspectedCommitBytes int `json:"max_inspected_commit_bytes" yaml:"max_inspected_commit_bytes" mapstructure:"max_inspected_commit_bytes"`
+
+	// Largest request body accepted for a push or fetch, in bytes. A push over it is
+	// refused for every ref it updates. Defaults to 2 GiB, GitHub's own push limit.
+	MaxPushBytes int `json:"max_push_bytes" yaml:"max_push_bytes" mapstructure:"max_push_bytes"`
+
+	// Most ref updates one push may carry.
+	MaxRefUpdates int `json:"max_ref_updates" yaml:"max_ref_updates" mapstructure:"max_ref_updates"`
+
+	// Bytes of a push body kept in memory before it is spooled to a temporary file
+	// while it is checked. Defaults to 8 MiB.
+	SpoolMemoryBytes int `json:"spool_memory_bytes" yaml:"spool_memory_bytes" mapstructure:"spool_memory_bytes"`
+
+	// Seconds one git request may take from start to finish.
+	TransferTimeoutS float64 `json:"transfer_timeout_s" yaml:"transfer_timeout_s" mapstructure:"transfer_timeout_s"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *CliFacadeGitConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain CliFacadeGitConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["compare_timeout_s"]; !ok || v == nil {
+		plain.CompareTimeoutS = 15.0
+	}
+	if 0 >= plain.CompareTimeoutS {
+		return fmt.Errorf("field %s: must be > %v", "compare_timeout_s", 0)
+	}
+	if v, ok := raw["connect_timeout_s"]; !ok || v == nil {
+		plain.ConnectTimeoutS = 10.0
+	}
+	if 0 >= plain.ConnectTimeoutS {
+		return fmt.Errorf("field %s: must be > %v", "connect_timeout_s", 0)
+	}
+	if v, ok := raw["enabled"]; !ok || v == nil {
+		plain.Enabled = true
+	}
+	if v, ok := raw["idle_timeout_s"]; !ok || v == nil {
+		plain.IdleTimeoutS = 120.0
+	}
+	if 0 >= plain.IdleTimeoutS {
+		return fmt.Errorf("field %s: must be > %v", "idle_timeout_s", 0)
+	}
+	if v, ok := raw["max_compare_requests"]; !ok || v == nil {
+		plain.MaxCompareRequests = 32
+	}
+	if 0 >= plain.MaxCompareRequests {
+		return fmt.Errorf("field %s: must be > %v", "max_compare_requests", 0)
+	}
+	if v, ok := raw["max_inspected_commit_bytes"]; !ok || v == nil {
+		plain.MaxInspectedCommitBytes = 67108864
+	}
+	if 0 >= plain.MaxInspectedCommitBytes {
+		return fmt.Errorf("field %s: must be > %v", "max_inspected_commit_bytes", 0)
+	}
+	if v, ok := raw["max_push_bytes"]; !ok || v == nil {
+		plain.MaxPushBytes = 2147483648
+	}
+	if 0 >= plain.MaxPushBytes {
+		return fmt.Errorf("field %s: must be > %v", "max_push_bytes", 0)
+	}
+	if v, ok := raw["max_ref_updates"]; !ok || v == nil {
+		plain.MaxRefUpdates = 1000
+	}
+	if 0 >= plain.MaxRefUpdates {
+		return fmt.Errorf("field %s: must be > %v", "max_ref_updates", 0)
+	}
+	if v, ok := raw["spool_memory_bytes"]; !ok || v == nil {
+		plain.SpoolMemoryBytes = 8388608
+	}
+	if 0 > plain.SpoolMemoryBytes {
+		return fmt.Errorf("field %s: must be >= %v", "spool_memory_bytes", 0)
+	}
+	if v, ok := raw["transfer_timeout_s"]; !ok || v == nil {
+		plain.TransferTimeoutS = 3600.0
+	}
+	if 0 >= plain.TransferTimeoutS {
+		return fmt.Errorf("field %s: must be > %v", "transfer_timeout_s", 0)
+	}
+	*j = CliFacadeGitConfig(plain)
+	return nil
+}
+
+// Per-vendor facade settings, one explicit field per supported vendor.
+//
+// Vendors are explicit fields rather than a free mapping so each vendor's
+// allowed modes are validated by its type.
+type CliFacadeVendorsConfig struct {
+	// The AWS facade (``aws``). ``path`` mode only.
+	Aws *PathCliFacadeConfig `json:"aws,omitempty,omitzero" yaml:"aws,omitempty" mapstructure:"aws,omitempty"`
+
+	// The Cloudflare facade (``cf``). ``path`` mode only.
+	Cloudflare *PathCliFacadeConfig `json:"cloudflare,omitempty,omitzero" yaml:"cloudflare,omitempty" mapstructure:"cloudflare,omitempty"`
+
+	// The GitHub facade (``gh``). ``host`` mode only.
+	Github *HostCliFacadeConfig `json:"github,omitempty,omitzero" yaml:"github,omitempty" mapstructure:"github,omitempty"`
+}
+
+// Vendor CLIs run through Jentic (“jentic gh“/“cf“/“aws“) in local mode.
+//
+// The agent's own CLI runs on its machine, pointed at a broker vendor facade
+// and authenticated with a short-lived invocation token (“cit_“) minted on
+// the auth surface. The real vendor credential never leaves the broker. A
+// top-level section because the auth surface (minting), the broker (facades)
+// and control (the CLI list) all read it.
+type CliFacadesConfig struct {
+	// Master switch for every CLI facade. While off, minting an invocation token
+	// answers 404 and no facade is served.
+	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`
+
+	// The governed git pipeline (git to github.com with a GitHub invocation token).
+	Git *CliFacadeGitConfig `json:"git,omitempty,omitzero" yaml:"git,omitempty" mapstructure:"git,omitempty"`
+
+	// Seconds after minting past which an invocation token cannot be renewed, however
+	// often it is renewed. Must be at least ``invocation_ttl_seconds``. Defaults to 1
+	// hour.
+	InvocationHardCapSeconds int `json:"invocation_hard_cap_seconds" yaml:"invocation_hard_cap_seconds" mapstructure:"invocation_hard_cap_seconds"`
+
+	// Seconds an invocation token lives after minting or its last renewal. The CLI
+	// wrapper renews it while the command runs and revokes it on exit, so this bounds
+	// only a wrapper that dies without revoking. Defaults to 10 minutes.
+	InvocationTtlSeconds int `json:"invocation_ttl_seconds" yaml:"invocation_ttl_seconds" mapstructure:"invocation_ttl_seconds"`
+
+	// Invocation tokens one agent may mint per minute (token bucket; the burst equals
+	// this value). Renewals and revocations are not counted.
+	MintRateLimitPerMinute int `json:"mint_rate_limit_per_minute" yaml:"mint_rate_limit_per_minute" mapstructure:"mint_rate_limit_per_minute"`
+
+	// Per-vendor facade settings.
+	Vendors *CliFacadeVendorsConfig `json:"vendors,omitempty,omitzero" yaml:"vendors,omitempty" mapstructure:"vendors,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *CliFacadesConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain CliFacadesConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["enabled"]; !ok || v == nil {
+		plain.Enabled = false
+	}
+	if v, ok := raw["invocation_hard_cap_seconds"]; !ok || v == nil {
+		plain.InvocationHardCapSeconds = 3600
+	}
+	if 0 >= plain.InvocationHardCapSeconds {
+		return fmt.Errorf("field %s: must be > %v", "invocation_hard_cap_seconds", 0)
+	}
+	if v, ok := raw["invocation_ttl_seconds"]; !ok || v == nil {
+		plain.InvocationTtlSeconds = 600
+	}
+	if 0 >= plain.InvocationTtlSeconds {
+		return fmt.Errorf("field %s: must be > %v", "invocation_ttl_seconds", 0)
+	}
+	if v, ok := raw["mint_rate_limit_per_minute"]; !ok || v == nil {
+		plain.MintRateLimitPerMinute = 60
+	}
+	if 1 > plain.MintRateLimitPerMinute {
+		return fmt.Errorf("field %s: must be >= %v", "mint_rate_limit_per_minute", 1)
+	}
+	*j = CliFacadesConfig(plain)
+	return nil
+}
+
 // Top-level application configuration.
 type ConfigSchemaJson struct {
 	// Admin corresponds to the JSON schema field "admin".
@@ -594,6 +797,9 @@ type ConfigSchemaJson struct {
 
 	// Catalog corresponds to the JSON schema field "catalog".
 	Catalog *CatalogConfig `json:"catalog,omitempty,omitzero" yaml:"catalog,omitempty" mapstructure:"catalog,omitempty"`
+
+	// CliFacades corresponds to the JSON schema field "cli_facades".
+	CliFacades *CliFacadesConfig `json:"cli_facades,omitempty,omitzero" yaml:"cli_facades,omitempty" mapstructure:"cli_facades,omitempty"`
 
 	// Control corresponds to the JSON schema field "control".
 	Control *ControlSurfaceConfig `json:"control,omitempty,omitzero" yaml:"control,omitempty" mapstructure:"control,omitempty"`
@@ -1449,6 +1655,55 @@ func (j *HeldExecutionsConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
+// A facade served on a hostname of its own (“host“ mode only).
+type HostCliFacadeConfig struct {
+	// Whether this vendor's facade is served. Requires ``cli_facades.enabled``; while
+	// either is off, minting an invocation token for the vendor answers 404.
+	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`
+
+	// The facade hostname in ``host`` mode, e.g. ``github.jentic.example.com`` (a
+	// bare hostname: no scheme, port or path). Required when the vendor is enabled in
+	// ``host`` mode; must be unset in ``path`` mode.
+	Host interface{} `json:"host,omitempty,omitzero" yaml:"host,omitempty" mapstructure:"host,omitempty"`
+
+	// Facade addressing. Only ``host`` is supported: ``gh`` cannot match a git remote
+	// against a ``host:port`` or path-prefixed host.
+	Mode string `json:"mode" yaml:"mode" mapstructure:"mode"`
+
+	// The address agents are told to use, when it differs from what the broker serves
+	// (e.g. behind an ingress that rewrites the host). Unset means agents use
+	// ``host`` (``host`` mode) or the broker's own address (``path`` mode).
+	PublicAddress interface{} `json:"public_address,omitempty,omitzero" yaml:"public_address,omitempty" mapstructure:"public_address,omitempty"`
+}
+
+type HostCliFacadeConfigHost_0 *string
+
+type HostCliFacadeConfigPublicAddress_0 *string
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *HostCliFacadeConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain HostCliFacadeConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["enabled"]; !ok || v == nil {
+		plain.Enabled = false
+	}
+	if v, ok := raw["mode"]; !ok || v == nil {
+		plain.Mode = "host"
+	}
+	if plain.Mode != "host" {
+		return fmt.Errorf("field %s: must be equal to %s", "mode", "host")
+	}
+	*j = HostCliFacadeConfig(plain)
+	return nil
+}
+
 // “Idempotency-Key“ replay store.
 //
 // Sync “FULL“-mode replay over the shared-state “AtomicStore“ (the
@@ -2136,6 +2391,54 @@ type ObservabilityConfig struct {
 
 	// Tracing corresponds to the JSON schema field "tracing".
 	Tracing *TracingConfig `json:"tracing,omitempty,omitzero" yaml:"tracing,omitempty" mapstructure:"tracing,omitempty"`
+}
+
+// A facade served under a path prefix on the broker's host (“path“ mode only).
+type PathCliFacadeConfig struct {
+	// Whether this vendor's facade is served. Requires ``cli_facades.enabled``; while
+	// either is off, minting an invocation token for the vendor answers 404.
+	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`
+
+	// The facade hostname in ``host`` mode, e.g. ``github.jentic.example.com`` (a
+	// bare hostname: no scheme, port or path). Required when the vendor is enabled in
+	// ``host`` mode; must be unset in ``path`` mode.
+	Host interface{} `json:"host,omitempty,omitzero" yaml:"host,omitempty" mapstructure:"host,omitempty"`
+
+	// Facade addressing. Only ``path`` is supported: the CLI takes a base URL.
+	Mode string `json:"mode" yaml:"mode" mapstructure:"mode"`
+
+	// The address agents are told to use, when it differs from what the broker serves
+	// (e.g. behind an ingress that rewrites the host). Unset means agents use
+	// ``host`` (``host`` mode) or the broker's own address (``path`` mode).
+	PublicAddress interface{} `json:"public_address,omitempty,omitzero" yaml:"public_address,omitempty" mapstructure:"public_address,omitempty"`
+}
+
+type PathCliFacadeConfigHost_0 *string
+
+type PathCliFacadeConfigPublicAddress_0 *string
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *PathCliFacadeConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain PathCliFacadeConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["enabled"]; !ok || v == nil {
+		plain.Enabled = false
+	}
+	if v, ok := raw["mode"]; !ok || v == nil {
+		plain.Mode = "path"
+	}
+	if plain.Mode != "path" {
+		return fmt.Errorf("field %s: must be equal to %s", "mode", "path")
+	}
+	*j = PathCliFacadeConfig(plain)
+	return nil
 }
 
 // Configuration for a Pipedream-hosted OAuth provider (full settings land in M6).
@@ -3300,83 +3603,31 @@ type VendorIdentityProbeConfig struct {
 
 type VendorIdentityProbeConfigMethod string
 
-type VendorAuthConfigIdentityProbe_0 = VendorIdentityProbeConfig
+const VendorIdentityProbeConfigMethodGET VendorIdentityProbeConfigMethod = "GET"
+const VendorIdentityProbeConfigMethodPOST VendorIdentityProbeConfigMethod = "POST"
 
-const VendorScopeConfigClassificationRead VendorScopeConfigClassification = "read"
-const VendorScopeConfigClassificationWrite VendorScopeConfigClassification = "write"
-const VendorScopeConfigClassificationAdmin VendorScopeConfigClassification = "admin"
-
-// A single OAuth scope exposed by the vendor.
-//
-// `classification` drives the review-page UX: read scopes are pre-selected by
-// default; write/admin scopes get a warning flag. `description` is
-// human-facing copy displayed on the review page.
-type VendorScopeConfig struct {
-	// Classification corresponds to the JSON schema field "classification".
-	Classification VendorScopeConfigClassification `json:"classification" yaml:"classification" mapstructure:"classification"`
-
-	// Default corresponds to the JSON schema field "default".
-	Default bool `json:"default,omitempty,omitzero" yaml:"default,omitempty" mapstructure:"default,omitempty"`
-
-	// Description corresponds to the JSON schema field "description".
-	Description string `json:"description,omitempty,omitzero" yaml:"description,omitempty" mapstructure:"description,omitempty"`
-
-	// Name corresponds to the JSON schema field "name".
-	Name string `json:"name" yaml:"name" mapstructure:"name"`
+var enumValues_VendorIdentityProbeConfigMethod = []interface{}{
+	"GET",
+	"POST",
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
-	var raw map[string]interface{}
-	if err := json.Unmarshal(value, &raw); err != nil {
-		return err
-	}
-	if _, ok := raw["name"]; raw != nil && !ok {
-		return fmt.Errorf("field name in VendorScopeConfig: required")
-	}
-	type Plain VendorScopeConfig
-	var plain Plain
-	if err := json.Unmarshal(value, &plain); err != nil {
-		return err
-	}
-	if v, ok := raw["classification"]; !ok || v == nil {
-		plain.Classification = "read"
-	}
-	if v, ok := raw["default"]; !ok || v == nil {
-		plain.Default = false
-	}
-	if v, ok := raw["description"]; !ok || v == nil {
-		plain.Description = ""
-	}
-	*j = VendorScopeConfig(plain)
-	return nil
-}
-
-var enumValues_VendorScopeConfigClassification = []interface{}{
-	"read",
-	"write",
-	"admin",
-}
-
-type VendorScopeConfigClassification string
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorScopeConfigClassification) UnmarshalJSON(value []byte) error {
+func (j *VendorIdentityProbeConfigMethod) UnmarshalJSON(value []byte) error {
 	var v string
 	if err := json.Unmarshal(value, &v); err != nil {
 		return err
 	}
 	var ok bool
-	for _, expected := range enumValues_VendorScopeConfigClassification {
+	for _, expected := range enumValues_VendorIdentityProbeConfigMethod {
 		if reflect.DeepEqual(v, expected) {
 			ok = true
 			break
 		}
 	}
 	if !ok {
-		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorScopeConfigClassification, v)
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorIdentityProbeConfigMethod, v)
 	}
-	*j = VendorScopeConfigClassification(v)
+	*j = VendorIdentityProbeConfigMethod(v)
 	return nil
 }
 
@@ -3407,15 +3658,90 @@ func (j *VendorIdentityProbeConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-const VendorIdentityProbeConfigMethodPOST VendorIdentityProbeConfigMethod = "POST"
-const VendorIdentityProbeConfigMethodGET VendorIdentityProbeConfigMethod = "GET"
-
-type VendorRegistryConfigEntries map[string]VendorAuthConfig
-
 // Top-level vendor auth registry.
 type VendorRegistryConfig struct {
 	// Entries corresponds to the JSON schema field "entries".
 	Entries VendorRegistryConfigEntries `json:"entries,omitempty,omitzero" yaml:"entries,omitempty" mapstructure:"entries,omitempty"`
+}
+
+type VendorRegistryConfigEntries map[string]VendorAuthConfig
+
+// A single OAuth scope exposed by the vendor.
+//
+// `classification` drives the review-page UX: read scopes are pre-selected by
+// default; write/admin scopes get a warning flag. `description` is
+// human-facing copy displayed on the review page.
+type VendorScopeConfig struct {
+	// Classification corresponds to the JSON schema field "classification".
+	Classification VendorScopeConfigClassification `json:"classification" yaml:"classification" mapstructure:"classification"`
+
+	// Default corresponds to the JSON schema field "default".
+	Default bool `json:"default,omitempty,omitzero" yaml:"default,omitempty" mapstructure:"default,omitempty"`
+
+	// Description corresponds to the JSON schema field "description".
+	Description string `json:"description,omitempty,omitzero" yaml:"description,omitempty" mapstructure:"description,omitempty"`
+
+	// Name corresponds to the JSON schema field "name".
+	Name string `json:"name" yaml:"name" mapstructure:"name"`
+}
+
+type VendorScopeConfigClassification string
+
+const VendorScopeConfigClassificationAdmin VendorScopeConfigClassification = "admin"
+const VendorScopeConfigClassificationRead VendorScopeConfigClassification = "read"
+const VendorScopeConfigClassificationWrite VendorScopeConfigClassification = "write"
+
+var enumValues_VendorScopeConfigClassification = []interface{}{
+	"read",
+	"write",
+	"admin",
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *VendorScopeConfigClassification) UnmarshalJSON(value []byte) error {
+	var v string
+	if err := json.Unmarshal(value, &v); err != nil {
+		return err
+	}
+	var ok bool
+	for _, expected := range enumValues_VendorScopeConfigClassification {
+		if reflect.DeepEqual(v, expected) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorScopeConfigClassification, v)
+	}
+	*j = VendorScopeConfigClassification(v)
+	return nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["name"]; raw != nil && !ok {
+		return fmt.Errorf("field name in VendorScopeConfig: required")
+	}
+	type Plain VendorScopeConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["classification"]; !ok || v == nil {
+		plain.Classification = "read"
+	}
+	if v, ok := raw["default"]; !ok || v == nil {
+		plain.Default = false
+	}
+	if v, ok := raw["description"]; !ok || v == nil {
+		plain.Description = ""
+	}
+	*j = VendorScopeConfig(plain)
+	return nil
 }
 
 // Background job-worker durability knobs.
@@ -3557,27 +3883,4 @@ func (j *WorkerConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorIdentityProbeConfigMethod) UnmarshalJSON(value []byte) error {
-	var v string
-	if err := json.Unmarshal(value, &v); err != nil {
-		return err
-	}
-	var ok bool
-	for _, expected := range enumValues_VendorIdentityProbeConfigMethod {
-		if reflect.DeepEqual(v, expected) {
-			ok = true
-			break
-		}
-	}
-	if !ok {
-		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorIdentityProbeConfigMethod, v)
-	}
-	*j = VendorIdentityProbeConfigMethod(v)
-	return nil
-}
-
-var enumValues_VendorIdentityProbeConfigMethod = []interface{}{
-	"GET",
-	"POST",
-}
+type VendorAuthConfigIdentityProbe_0 = VendorIdentityProbeConfig

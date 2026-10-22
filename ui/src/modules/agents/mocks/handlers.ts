@@ -116,7 +116,7 @@ let oauthGrants: OAuthGrantRow[] = [];
 /** One permission rule as stored/returned (PermissionRuleReadSchema shape). */
 type BindingRule = {
 	effect: 'allow' | 'deny' | 'require-approval';
-	match_mode?: 'regex' | 'prefix' | 'exact';
+	match_mode?: 'regex' | 'prefix' | 'exact' | 'graphql';
 	methods?: string[] | null;
 	operations?: string[] | null;
 	path?: string | null;

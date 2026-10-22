@@ -127,6 +127,22 @@ unknown, or whose owner is disabled or deleted is refused with the same 401.
 The verdict is cached for `broker.resolve_cache_ttl_seconds`, as on the
 opaque-token path.
 
+Vendor CLIs run through Jentic (`jentic gh`, `cf`, `aws`) authenticate to the
+broker's CLI facades with a **CLI invocation token** (`cit_`), not with the
+agent's own credential. An agent mints one per command on the auth surface
+(`POST /cli-invocations`) with its own opaque `at_` access token, renews it
+while the command runs and revokes it on exit; `cli_facades` in the
+configuration reference sets the lifetimes and the per-agent mint rate limit.
+The token row (`cli_invocations`) stores the hash of the parent access token,
+and the broker resolves the parent on every cache miss
+([`broker/repos/token_resolver.py`](../../src/jentic_one/broker/repos/token_resolver.py)),
+so revoking or expiring the access token, disabling the agent or its owner,
+or removing the agent's execute permission ends the invocation token too.
+The distinct prefix keeps it out of every other resolver: `/execute`, the
+control plane and MCP refuse it, and only the facades' dedicated dependency
+(`require_cli_invocation` in [`broker/web/deps.py`](../../src/jentic_one/broker/web/deps.py))
+accepts it, and only for the vendor it was minted for.
+
 ## Permissions
 
 Two vocabularies meet here, and keeping them apart is what makes the code

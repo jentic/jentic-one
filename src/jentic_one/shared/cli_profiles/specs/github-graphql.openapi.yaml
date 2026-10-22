@@ -1,0 +1,52 @@
+# The GitHub GraphQL API as one operation, shipped with the GitHub CLI profile.
+# Every GraphQL call is one POST to https://api.github.com/graphql; the broker
+# inspects the document and judges each top-level field with GraphQL rules, so
+# the spec only needs to give the endpoint a registry identity and a scheme.
+openapi: 3.0.3
+info:
+  title: GitHub GraphQL API
+  version: "1"
+  x-vendor: github.com
+  description: >-
+    GitHub's GraphQL endpoint. Calls are judged per top-level field by
+    `match_mode: graphql` rules (`query`, `mutation`,
+    `mutation:createPullRequest,addComment`).
+servers:
+  - url: https://api.github.com
+security:
+  - bearer: []
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      description: A GitHub OAuth or personal access token.
+paths:
+  /graphql:
+    post:
+      operationId: graphql
+      summary: Run a GraphQL query or mutation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query:
+                  type: string
+                  description: The GraphQL document (one operation).
+                variables:
+                  type: object
+                  additionalProperties: true
+                operationName:
+                  type: string
+      responses:
+        "200":
+          description: The GraphQL response (`data` and/or `errors`).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true

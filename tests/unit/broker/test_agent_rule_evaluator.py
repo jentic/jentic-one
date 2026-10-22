@@ -15,6 +15,7 @@ import pytest
 
 from jentic_one.broker.repos.agent_rule_evaluator import AgentRuleEvaluator
 from jentic_one.shared.broker.protocols import AgentRuleEvaluatorProtocol, RuleVerdict
+from jentic_one.shared.permissions.git_rules import GitAction, GitItem
 
 
 class _AsyncCtx:
@@ -317,3 +318,65 @@ async def test_coerces_sqlite_json_string_methods() -> None:
     assert denied.allowed is False
     # Non-zero rules_loaded distinguishes "loaded but no match" from "no rules".
     assert denied.rules_loaded == 1
+
+
+# ── git items ────────────────────────────────────────────────────────────────
+
+_GIT_ROWS: list[tuple[object, ...]] = [
+    ("apr_rest", "allow", '["GET", "POST"]', ".*", None, "regex"),
+    (
+        "apr_push",
+        "allow",
+        None,
+        "push:octo-org/app:refs/heads/jentic-e2e/*",
+        None,
+        "git",
+    ),
+    ("apr_fetch", "allow", None, "fetch:octo-org/app", None, "git"),
+    ("apr_methods", "allow", '["POST"]', "force:octo-org/*", None, "git"),
+    ("apr_held", "require-approval", None, "force:octo-org/app", None, "git"),
+]
+
+
+@pytest.mark.asyncio
+async def test_git_items_follow_the_git_rules_only() -> None:
+    """Fetch the repo, push only to jentic-e2e/*, nothing else — whatever the REST rule says."""
+    mock_db, _ = _mock_db(_GIT_ROWS)
+    evaluator = AgentRuleEvaluator(mock_db, cache_ttl_seconds=300.0)
+    repo = ("octo-org", "app")
+    items = [
+        GitItem(GitAction.FETCH, *repo),
+        GitItem(GitAction.PUSH, *repo),
+        GitItem(GitAction.PUSH, *repo, "refs/heads/jentic-e2e/feat"),
+        GitItem(GitAction.PUSH, *repo, "refs/heads/main"),
+        GitItem(GitAction.FORCE, *repo, "refs/heads/jentic-e2e/feat"),
+        GitItem(GitAction.FETCH, "octo-org", "other"),
+    ]
+
+    result = await evaluator.evaluate_git(
+        agent_id="agt_1", credential_id="cred_1", rule_set_id=None, items=items
+    )
+
+    assert result.rules_loaded == len(_GIT_ROWS)
+    assert [e.allowed for e in result.items] == [True, True, True, False, False, False]
+    assert result.items[0].matched_rule_id == "apr_push"
+    assert result.items[2].matched_rule_id == "apr_push"
+    # A held git rule and a git rule with methods both never match.
+    assert result.items[4].matched_rule_id is None
+    assert result.items[5].matched_rule_id is None
+
+
+@pytest.mark.asyncio
+async def test_git_items_with_no_rules_are_denied() -> None:
+    mock_db, _ = _mock_db([])
+    evaluator = AgentRuleEvaluator(mock_db, cache_ttl_seconds=300.0)
+
+    result = await evaluator.evaluate_git(
+        agent_id="agt_1",
+        credential_id="cred_1",
+        rule_set_id=None,
+        items=[GitItem(GitAction.FETCH, "o", "r")],
+    )
+
+    assert result.rules_loaded == 0
+    assert not result.items[0].allowed

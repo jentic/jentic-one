@@ -455,6 +455,39 @@ Require-approval holds: held execution jobs awaiting a human reviewer. An execut
 | `held_executions.max_pending_per_agent` | integer (>= 1) | `10` | `JENTIC__HELD_EXECUTIONS__MAX_PENDING_PER_AGENT` | Maximum pending approvals per agent. An execute call that would file another hold beyond this is denied with the `approval_pending_limit_reached` problem type. |
 | `held_executions.result_retention_seconds` | integer (> 0) | `86400` | `JENTIC__HELD_EXECUTIONS__RESULT_RETENTION_SECONDS` | Seconds the result of an approved execution stays readable via `GET /jobs/{id}/result` before the result sweep removes it. Defaults to 24 hours. |
 
+## `cli_facades`
+
+Vendor CLIs run through Jentic (`jentic gh`/`cf`/`aws`) in local mode. The agent's own CLI runs on its machine, pointed at a broker vendor facade and authenticated with a short-lived invocation token (`cit_`) minted on the auth surface. The real vendor credential never leaves the broker. A top-level section because the auth surface (minting), the broker (facades) and control (the CLI list) all read it.
+
+| Key | Type | Default | Env var | Description |
+| --- | ---- | ------- | ------- | ----------- |
+| `cli_facades.enabled` | boolean | `false` | `JENTIC__CLI_FACADES__ENABLED` | Master switch for every CLI facade. While off, minting an invocation token answers 404 and no facade is served. |
+| `cli_facades.vendors.github.enabled` | boolean | `false` | `JENTIC__CLI_FACADES__VENDORS__GITHUB__ENABLED` | Whether this vendor's facade is served. Requires `cli_facades.enabled`; while either is off, minting an invocation token for the vendor answers 404. |
+| `cli_facades.vendors.github.mode` | "host" | `"host"` | `JENTIC__CLI_FACADES__VENDORS__GITHUB__MODE` | Facade addressing. Only `host` is supported: `gh` cannot match a git remote against a `host:port` or path-prefixed host. |
+| `cli_facades.vendors.github.host` | string \| null | `null` | `JENTIC__CLI_FACADES__VENDORS__GITHUB__HOST` | The facade hostname in `host` mode, e.g. `github.jentic.example.com` (a bare hostname: no scheme, port or path). Required when the vendor is enabled in `host` mode; must be unset in `path` mode. |
+| `cli_facades.vendors.github.public_address` | string \| null | `null` | `JENTIC__CLI_FACADES__VENDORS__GITHUB__PUBLIC_ADDRESS` | The address agents are told to use, when it differs from what the broker serves (e.g. behind an ingress that rewrites the host). Unset means agents use `host` (`host` mode) or the broker's own address (`path` mode). |
+| `cli_facades.vendors.cloudflare.enabled` | boolean | `false` | `JENTIC__CLI_FACADES__VENDORS__CLOUDFLARE__ENABLED` | Whether this vendor's facade is served. Requires `cli_facades.enabled`; while either is off, minting an invocation token for the vendor answers 404. |
+| `cli_facades.vendors.cloudflare.mode` | "path" | `"path"` | `JENTIC__CLI_FACADES__VENDORS__CLOUDFLARE__MODE` | Facade addressing. Only `path` is supported: the CLI takes a base URL. |
+| `cli_facades.vendors.cloudflare.host` | string \| null | `null` | `JENTIC__CLI_FACADES__VENDORS__CLOUDFLARE__HOST` | The facade hostname in `host` mode, e.g. `github.jentic.example.com` (a bare hostname: no scheme, port or path). Required when the vendor is enabled in `host` mode; must be unset in `path` mode. |
+| `cli_facades.vendors.cloudflare.public_address` | string \| null | `null` | `JENTIC__CLI_FACADES__VENDORS__CLOUDFLARE__PUBLIC_ADDRESS` | The address agents are told to use, when it differs from what the broker serves (e.g. behind an ingress that rewrites the host). Unset means agents use `host` (`host` mode) or the broker's own address (`path` mode). |
+| `cli_facades.vendors.aws.enabled` | boolean | `false` | `JENTIC__CLI_FACADES__VENDORS__AWS__ENABLED` | Whether this vendor's facade is served. Requires `cli_facades.enabled`; while either is off, minting an invocation token for the vendor answers 404. |
+| `cli_facades.vendors.aws.mode` | "path" | `"path"` | `JENTIC__CLI_FACADES__VENDORS__AWS__MODE` | Facade addressing. Only `path` is supported: the CLI takes a base URL. |
+| `cli_facades.vendors.aws.host` | string \| null | `null` | `JENTIC__CLI_FACADES__VENDORS__AWS__HOST` | The facade hostname in `host` mode, e.g. `github.jentic.example.com` (a bare hostname: no scheme, port or path). Required when the vendor is enabled in `host` mode; must be unset in `path` mode. |
+| `cli_facades.vendors.aws.public_address` | string \| null | `null` | `JENTIC__CLI_FACADES__VENDORS__AWS__PUBLIC_ADDRESS` | The address agents are told to use, when it differs from what the broker serves (e.g. behind an ingress that rewrites the host). Unset means agents use `host` (`host` mode) or the broker's own address (`path` mode). |
+| `cli_facades.git.enabled` | boolean | `true` | `JENTIC__CLI_FACADES__GIT__ENABLED` | Whether git requests are served. Requires the GitHub facade (`cli_facades.enabled` and `cli_facades.vendors.github.enabled`); while off, a git URL at the CLI proxy route answers 404. |
+| `cli_facades.git.max_push_bytes` | integer (> 0) | `2147483648` | `JENTIC__CLI_FACADES__GIT__MAX_PUSH_BYTES` | Largest request body accepted for a push or fetch, in bytes. A push over it is refused for every ref it updates. Defaults to 2 GiB, GitHub's own push limit. |
+| `cli_facades.git.max_inspected_commit_bytes` | integer (> 0) | `67108864` | `JENTIC__CLI_FACADES__GIT__MAX_INSPECTED_COMMIT_BYTES` | Largest total size of the commit objects of one push the force-push check keeps in memory while reading the pack, in bytes. A push carrying more is refused. Defaults to 64 MiB. |
+| `cli_facades.git.max_ref_updates` | integer (> 0) | `1000` | `JENTIC__CLI_FACADES__GIT__MAX_REF_UPDATES` | Most ref updates one push may carry. |
+| `cli_facades.git.max_compare_requests` | integer (> 0) | `32` | `JENTIC__CLI_FACADES__GIT__MAX_COMPARE_REQUESTS` | Most GitHub compare calls the force-push check makes for one push. A push whose ancestry needs more is refused for the refs left unchecked. |
+| `cli_facades.git.spool_memory_bytes` | integer (>= 0) | `8388608` | `JENTIC__CLI_FACADES__GIT__SPOOL_MEMORY_BYTES` | Bytes of a push body kept in memory before it is spooled to a temporary file while it is checked. Defaults to 8 MiB. |
+| `cli_facades.git.connect_timeout_s` | number (> 0) | `10.0` | `JENTIC__CLI_FACADES__GIT__CONNECT_TIMEOUT_S` | Seconds to connect to github.com. |
+| `cli_facades.git.idle_timeout_s` | number (> 0) | `120.0` | `JENTIC__CLI_FACADES__GIT__IDLE_TIMEOUT_S` | Seconds a git transfer may go without a byte in either direction, client or upstream, before it is cut off. |
+| `cli_facades.git.transfer_timeout_s` | number (> 0) | `3600.0` | `JENTIC__CLI_FACADES__GIT__TRANSFER_TIMEOUT_S` | Seconds one git request may take from start to finish. |
+| `cli_facades.git.compare_timeout_s` | number (> 0) | `15.0` | `JENTIC__CLI_FACADES__GIT__COMPARE_TIMEOUT_S` | Seconds one GitHub compare call of the force-push check may take. |
+| `cli_facades.invocation_ttl_seconds` | integer (> 0) | `600` | `JENTIC__CLI_FACADES__INVOCATION_TTL_SECONDS` | Seconds an invocation token lives after minting or its last renewal. The CLI wrapper renews it while the command runs and revokes it on exit, so this bounds only a wrapper that dies without revoking. Defaults to 10 minutes. |
+| `cli_facades.invocation_hard_cap_seconds` | integer (> 0) | `3600` | `JENTIC__CLI_FACADES__INVOCATION_HARD_CAP_SECONDS` | Seconds after minting past which an invocation token cannot be renewed, however often it is renewed. Must be at least `invocation_ttl_seconds`. Defaults to 1 hour. |
+| `cli_facades.mint_rate_limit_per_minute` | integer (>= 1) | `60` | `JENTIC__CLI_FACADES__MINT_RATE_LIMIT_PER_MINUTE` | Invocation tokens one agent may mint per minute (token bucket; the burst equals this value). Renewals and revocations are not counted. |
+
 ## `apps`
 
 | Key | Type | Default | Env var | Description |

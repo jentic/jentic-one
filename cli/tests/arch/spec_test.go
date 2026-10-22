@@ -364,6 +364,14 @@ var curatedMigrationAllowlist = map[string]string{
 	"control.SetProviderConfigJSONRequestBody": "free-form Config map, no reflectable scalar fields; built from named admin-provider flags",
 	// connect's nested `api` target: --api takes the whole vendor/name/version
 	// identity as one value (the `api` field is bound on the connect binding).
+	// The vendor CLI wrapper (`jentic cf …`) passes every argument to the vendor
+	// CLI (DisableFlagParsing), so the mint body has no flags: vendor comes from
+	// the command, command_title from argv's leading words, credential_name
+	// from $JENTIC_CREDENTIAL.
+	"control.CreateCliInvocationJSONRequestBody": "jentic cf mint body, filled from the command, argv and $JENTIC_CREDENTIAL (no flags under DisableFlagParsing)",
+	// The wrapper's post-exit trace read: a fixed query (trace id + the
+	// denial/hold event types), not a user-facing listing.
+	"control.ListEventsParams": "jentic cf post-exit trace read with a fixed filter; listing events is `jentic api ListEvents`",
 	"control.ApiTargetRequest": "nested api target of IntegrationsConnectRequest, bound whole by connect --api <vendor/name/version>",
 }
 

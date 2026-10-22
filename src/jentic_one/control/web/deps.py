@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import Depends, Request
 
+from jentic_one.control.services.cli_facades import CliFacadeService
 from jentic_one.control.services.credentials.connect_service import ConnectService
 from jentic_one.control.services.credentials.service import CredentialService
 from jentic_one.control.services.integrations.connect_session_service import (
@@ -32,6 +33,11 @@ def get_connect_service(ctx: Context = Depends(get_ctx)) -> ConnectService:
 def get_mcp_service(ctx: Context = Depends(get_ctx)) -> McpService:
     """Resolve a McpService from the request context."""
     return McpService(ctx)
+
+
+def get_cli_facade_service(ctx: Context = Depends(get_ctx)) -> CliFacadeService:
+    """Resolve a CliFacadeService from the request context."""
+    return CliFacadeService(ctx)
 
 
 def get_vendor_registry_service(

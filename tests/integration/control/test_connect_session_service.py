@@ -33,6 +33,7 @@ from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredenti
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.services.event_service import EventService
 from jentic_one.admin.services.schemas.events import EventFilter
+from jentic_one.broker.core.git_api import GITHUB_GIT_API
 from jentic_one.broker.repos.credential_binding_resolver import CredentialBindingResolver
 from jentic_one.control.core.schema.connect_session_outcomes import ConnectSessionOutcome
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
@@ -87,6 +88,7 @@ from jentic_one.registry.services.catalog.service import CatalogEntryView, Catal
 from jentic_one.registry.services.import_service import ImportHandler
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import OWNER_CREDENTIALS_READ
+from jentic_one.shared.builtin_apis import GITHUB_GIT_CATALOG_API_ID
 from jentic_one.shared.config import (
     DirectOAuth2ProviderConfig,
     VendorAuthConfig,
@@ -626,6 +628,91 @@ async def test_late_bound_vendor_confirm_is_refused_while_the_binding_is_suspend
     async with ctx.control_db.session() as session:
         row = await ConnectSessionRepository.get_by_id(session, created.session_id)
     assert row is not None and row.state == "created" and row.agent_id is None
+
+
+class _RecordingImporter:
+    """A catalog auto-importer that records every import it is asked for."""
+
+    def __init__(self) -> None:
+        self.imports: list[str] = []
+
+    async def ensure_imported(self, *, api_id: str, initiator_actor_id: str) -> str | None:
+        self.imports.append(api_id)
+        return None
+
+    async def registered_identity(self, *, api_id: str) -> tuple[str, str] | None:
+        return None
+
+    async def current_version(self, *, api_id: str) -> str | None:
+        return None
+
+
+async def test_vendor_connect_for_the_builtin_git_api_scopes_the_credential_to_git_only(
+    integration_context: Context,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    # A vendor entry naming the built-in git API's catalog id connects a
+    # credential the broker's git pipeline derives a binding from, and that
+    # covers no other API of the vendor (the GitHub REST API included).
+    ctx = integration_context
+    ctx.config.vendors.entries["github-git"] = VendorAuthConfig(
+        vendor=GITHUB_GIT_CATALOG_API_ID,
+        display_name="GitHub (git)",
+        flows=[
+            VendorDeviceAuthorizationFlowConfig(
+                client_id="github-public-client",
+                authorization_endpoint="https://github.com/login/device/code",
+                token_endpoint="https://github.com/login/oauth/access_token",
+            )
+        ],
+        scopes=[VendorScopeConfig(name="repo", classification="write")],
+    )
+    importer = _RecordingImporter()
+    try:
+        created = await ConnectSessionService(ctx, catalog_auto_importer=importer).create_session(
+            vendor_key="github-git", agent_id=_AGENT_ID, identity=_USER_IDENTITY
+        )
+    finally:
+        del ctx.config.vendors.entries["github-git"]
+    async with ctx.control_db.session() as session:
+        row = await ConnectSessionRepository.get_by_id(session, created.session_id)
+        assert row is not None
+        await session.execute(
+            update(Credential).where(Credential.id == row.credential_id).values(state="connected")
+        )
+        await session.commit()
+        credential = await CredentialRepository.get_by_id(session, row.credential_id)
+    assert credential is not None
+    assert (credential.api_vendor, credential.api_name, credential.api_version) == (
+        GITHUB_GIT_API.vendor,
+        GITHUB_GIT_API.name,
+        None,
+    )
+    assert credential.catalog_api_id == GITHUB_GIT_CATALOG_API_ID
+    # No catalog entry exists for a built-in API, so none is imported.
+    assert importer.imports == []
+
+    async with ctx.admin_db.session() as session:
+        session.add(
+            AgentCredentialBinding(
+                id=generate_ksuid("acb"), agent_id=_AGENT_ID, credential_id=credential.id
+            )
+        )
+        await session.commit()
+    resolver = CredentialBindingResolver(ctx.admin_db, ctx.control_db)
+    git = await resolver.derive_credentials(
+        agent_id=_AGENT_ID,
+        vendor=GITHUB_GIT_API.vendor,
+        name=GITHUB_GIT_API.name,
+        version=GITHUB_GIT_API.version,
+    )
+    assert [c.credential_id for c in git.credentials] == [credential.id]
+    rest = await resolver.derive_credentials(
+        agent_id=_AGENT_ID, vendor="github-com", name="api-github-com", version="1.1.4"
+    )
+    assert not rest.credentials
 
 
 # ---------------------------------------------------------------------------

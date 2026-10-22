@@ -34,6 +34,12 @@ func InvocationErrorMapper(root *cobra.Command, err error) error {
 	if err == nil {
 		return nil
 	}
+	// A wrapped child's exit code (`jentic run`) is not an invocation error:
+	// pass it through so core.RunTree mirrors it, silently.
+	var childExit *ExitCodeError
+	if errors.As(err, &childExit) {
+		return err
+	}
 	var coded *ux.CodedError
 	if errors.As(err, &coded) {
 		// Already typed. Our SetFlagErrorFunc / register paths render at their

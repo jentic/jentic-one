@@ -49,6 +49,12 @@ func wireGracefulCancel(cmd *exec.Cmd) {
 	cmd.WaitDelay = cancelGracePeriod
 }
 
+// wireTerminal hands the launched agent the real terminal: it must get the
+// process's own stdio file descriptors, not a writer the render layer wraps.
+func wireTerminal(cmd *exec.Cmd) {
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+}
+
 type runOptions struct {
 	home         bool
 	allowDir     bool
@@ -60,6 +66,7 @@ type runOptions struct {
 	revoke       string
 	seedConfig   bool
 	noSeedConfig bool
+	container    containerOptions
 }
 
 // NewRunCmd builds the `run` command that launches a coding agent inside the
@@ -88,6 +95,11 @@ func NewRunCmd(app *cmdcore.App) *cobra.Command {
 			"form the first token after `--` is the agent id and there is no path argument\n" +
 			"(the working directory defaults to the current one); use the trailing form to\n" +
 			"pass a path. Without any `--`, run takes at most the agent id and a path.\n\n" +
+			"EXPERIMENTAL: --container runs the agent in a Docker container instead: the\n" +
+			"working directory is mounted at its own path, the active context is handed\n" +
+			"to the agent inside, and Jentic (at the context's loopback URLs) is all it can\n" +
+			"reach. With the only egress mode so far (none), the agent's LLM and vendor\n" +
+			"calls fail. Everything the session created is removed when it ends.\n\n" +
 			"The agent account, its home, and the directories it has been granted are\n" +
 			"recorded in the CLI's agent state (~/.config/jentic/agent-account.yaml).\n" +
 			"See the security analysis in\n" +
@@ -131,6 +143,7 @@ func NewRunCmd(app *cmdcore.App) *cobra.Command {
 		"copy the operator's agent config into the agent's home without prompting")
 	cmd.Flags().BoolVar(&opts.noSeedConfig, "no-seed-config", false,
 		"never copy the operator's agent config into the agent's home")
+	addContainerFlags(cmd, &opts.container)
 	return cmd
 }
 
@@ -174,6 +187,15 @@ func (a *Cmd) runE(cmd *cobra.Command, opts *runOptions, args []string) error {
 				"Runnable agents: %s", agentID, agentID, strings.Join(localagent.Known(), ", "))
 		}
 		return fmt.Errorf("unknown agent %q; known agents: %s", agentID, strings.Join(localagent.Known(), ", "))
+	}
+
+	if opts.container.enabled {
+		return a.runContainer(cmd, opts, agentID, posArgs, agentArgs)
+	}
+	for _, name := range []string{"container-image", "container-egress", shareProviderFlag} {
+		if cmd.Flags().Changed(name) {
+			return fmt.Errorf("--%s needs --container", name)
+		}
 	}
 
 	st, err := config.LoadAgentState(a.Paths)

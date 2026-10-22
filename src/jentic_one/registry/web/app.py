@@ -11,6 +11,7 @@ from jentic_one.registry.web.errors import service_error_handler
 from jentic_one.registry.web.routers import (
     apis,
     catalog,
+    cli_profiles,
     governed_hosts,
     inspect,
     notes,
@@ -31,6 +32,7 @@ def get_routers() -> list[tuple[APIRouter, str, list[str]]]:
         (make_health_router("registry", include_in_schema=False), "/registry", []),
         (apis.router, "", []),
         (catalog.router, "", []),
+        (cli_profiles.router, "", []),
         (governed_hosts.router, "", []),
         (inspect.router, "", []),
         (notes.router, "", []),

@@ -78,3 +78,12 @@ class ServedApiRef(BaseModel):
         description="Version of the served API; null means every version.",
         examples=[_EX_API_VERSION],
     )
+    api_role: str | None = Field(
+        default=None,
+        description=(
+            "Set when the credential is a CLI-profile credential (one connect covering several "
+            "APIs of a vendor): the API's role in the profile (`rest`, `graphql`, `git`, "
+            "`uploads`). The binding's rules for that role apply to it."
+        ),
+        examples=["git"],
+    )

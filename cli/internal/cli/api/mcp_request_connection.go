@@ -32,7 +32,8 @@ import (
 // requestConnectionParams: vendor is the registry key and api a registry API
 // identity (exactly one of the two); auth_type picks among the API's declared
 // schemes; scopes/reason/rules are the optional request shaping the approver
-// reviews; oauth_app_registration_id pins the shared OAuth app the user picked.
+// reviews; oauth_app_registration_id pins the shared OAuth app the user picked;
+// preset/preset_params name a CLI-profile rule preset the server expands.
 var requestConnectionParams = []paramSpec{
 	{name: "vendor", kind: paramString},
 	{name: "api", kind: paramJSON},
@@ -41,6 +42,8 @@ var requestConnectionParams = []paramSpec{
 	{name: "reason", kind: paramString},
 	{name: "oauth_app_registration_id", aliases: []string{"registration_id"}, kind: paramString},
 	{name: "requested_permission_rules", aliases: []string{"permission_rules"}, kind: paramJSON},
+	{name: "preset", kind: paramString},
+	{name: "preset_params", kind: paramJSON},
 }
 
 var requestConnectionSchema = map[string]any{
@@ -82,15 +85,37 @@ var requestConnectionSchema = map[string]any{
 			"items": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"effect":     map[string]any{"type": "string", "enum": []string{"allow", "deny"}},
+					"effect":     map[string]any{"type": "string", "enum": []string{"allow", "deny", "require-approval"}},
 					"methods":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 					"path":       map[string]any{"type": "string"},
-					"match_mode": map[string]any{"type": "string", "enum": []string{"regex", "prefix", "exact"}},
+					"match_mode": map[string]any{"type": "string", "enum": []string{"regex", "prefix", "exact", "graphql", "git"}},
 					"operations": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					"api_role": map[string]any{
+						"type": "string",
+						"enum": []string{"rest", "graphql", "git", "uploads"},
+						"description": "For a CLI-profile connect (e.g. vendor github): which of the profile's APIs the rule " +
+							"applies to; omitted, it defaults by kind — a git rule to git, a graphql rule to graphql, " +
+							"any other rule to rest.",
+					},
 				},
 				"required": []string{"effect"},
 			},
 			"description": "Permission rules you are asking for on the new binding (optional, max 100; \"permission_rules\" is an accepted alias), e.g. [{\"effect\": \"allow\", \"methods\": [\"GET\"], \"path\": \"/repos/.*\"}]. The approver reviews and edits them before anything is granted; an allow rule must constrain methods, path, or operations.",
+		},
+		"preset": map[string]any{
+			"type": "string",
+			"description": "A named rule preset of the vendor's CLI profile (optional, max 64 chars), expanded " +
+				"server-side into concrete permission rules the approver reviews; the result's " +
+				"requested_permission_rules lists them. The presets and their parameters come from " +
+				"GET /cli-profiles (`jentic cli profiles`); for GitHub: read_only, read_and_prs, push_branches. " +
+				`Example: {"vendor": "github", "preset": "push_branches", "preset_params": {"repo": "octo-org/app", "branches": "agent/*"}}.`,
+		},
+		"preset_params": map[string]any{
+			"type":                 "object",
+			"additionalProperties": map[string]any{"type": "string"},
+			"description": "The preset's parameters as name → value (with preset only; max 10, each value max 1000 chars), " +
+				`e.g. {"repo": "octo-org/app", "branches": "agent/*"} (GitHub presets take repo, branches, force). ` +
+				`A list of "name=value" strings also works; a repeated name joins its values with commas.`,
 		},
 	},
 }
@@ -116,6 +141,9 @@ type connectResponse struct {
 	ApprovalURL  string `json:"approval_url"`
 	PollToken    string `json:"poll_token"`
 	ResolvedFlow string `json:"resolved_flow"`
+	// RequestedPermissionRules are the rules the session asks for, with a
+	// --preset already expanded server-side (what the approver reviews).
+	RequestedPermissionRules []control.PermissionRuleSchema `json:"requested_permission_rules,omitempty"`
 }
 
 // connectScopesMax mirrors the route's requested_scopes bound
@@ -137,6 +165,126 @@ const connectRegistrationMax = 30
 // connectRulesMax mirrors the route's requested_permission_rules bound
 // (IntegrationsConnectRequest.requested_permission_rules — max_length=100).
 const connectRulesMax = 100
+
+// connectPresetMax, connectPresetParamsMax and connectPresetParamValueMax
+// mirror the route's preset bounds (IntegrationsConnectRequest.preset —
+// max_length=64; preset_params — at most 10 entries, each value at most
+// 1000 chars).
+const (
+	connectPresetMax           = 64
+	connectPresetParamsMax     = 10
+	connectPresetParamValueMax = 1000
+)
+
+// decodeConnectRuleAsk decodes the tool's requested_permission_rules argument
+// into the generated rule type: unknown keys, a missing/unknown effect and an
+// unknown api_role are invalid-params errors here rather than a route 422.
+// Path-pattern validity and the condition-less-allow guard stay server-side.
+func decodeConnectRuleAsk(raw json.RawMessage) ([]control.PermissionRuleSchema, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	var rules []control.PermissionRuleSchema
+	if err := dec.Decode(&rules); err != nil {
+		return nil, fmt.Errorf("requested_permission_rules must be a list of rule objects "+
+			"({effect, methods, path, match_mode, operations, api_role}): %w", err)
+	}
+	if len(rules) > connectRulesMax {
+		return nil, fmt.Errorf("requested_permission_rules must list at most %d rules, got %d", connectRulesMax, len(rules))
+	}
+	for i, r := range rules {
+		if !r.Effect.Valid() {
+			return nil, fmt.Errorf("requested_permission_rules[%d].effect must be \"allow\", \"deny\" or "+
+				"\"require-approval\", got %q", i, r.Effect)
+		}
+		if r.ApiRole != nil && !r.ApiRole.Valid() {
+			return nil, fmt.Errorf("requested_permission_rules[%d].api_role must be one of rest, graphql, git, "+
+				"uploads, got %q", i, *r.ApiRole)
+		}
+	}
+	return rules, nil
+}
+
+// decodePresetParams reads the preset_params argument: an object of string
+// values, or the CLI's list of "name=value" strings (a single string is one
+// pair). A name given more than once — or a list value in the object form —
+// joins its values with commas, as parsePresetParams does for
+// --preset-param.
+func decodePresetParams(raw json.RawMessage) (map[string]string, error) {
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return nil, fmt.Errorf("preset_params must be an object of string values: %w", err)
+	}
+	out := map[string]string{}
+	add := func(name, value string) error {
+		name = strings.TrimSpace(name)
+		if name == "" || strings.TrimSpace(value) == "" {
+			return fmt.Errorf("preset_params entries need a name and a non-empty value, got %q=%q", name, value)
+		}
+		if prev, seen := out[name]; seen {
+			value = prev + "," + value
+		}
+		out[name] = value
+		return nil
+	}
+	addPair := func(pair any) error {
+		s, ok := pair.(string)
+		if !ok {
+			return fmt.Errorf(`preset_params list entries must be "name=value" strings, got %T`, pair)
+		}
+		name, value, ok := strings.Cut(s, "=")
+		if !ok {
+			return fmt.Errorf(`preset_params entry %q must be "name=value"`, s)
+		}
+		return add(name, value)
+	}
+	switch t := v.(type) {
+	case map[string]any:
+		for name, val := range t {
+			var err error
+			switch vv := val.(type) {
+			case string:
+				err = add(name, vv)
+			case []any:
+				for _, e := range vv {
+					s, ok := e.(string)
+					if !ok {
+						return nil, fmt.Errorf("preset_params[%q] must be a string, got a list holding %T", name, e)
+					}
+					if err = add(name, s); err != nil {
+						break
+					}
+				}
+			default:
+				err = fmt.Errorf("preset_params[%q] must be a string, got %T", name, val)
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+	case []any:
+		for _, pair := range t {
+			if err := addPair(pair); err != nil {
+				return nil, err
+			}
+		}
+	case string:
+		if err := addPair(t); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("preset_params must be an object of string values, got %T", v)
+	}
+	if len(out) > connectPresetParamsMax {
+		return nil, fmt.Errorf("preset_params must hold at most %d entries, got %d", connectPresetParamsMax, len(out))
+	}
+	for name, value := range out {
+		if len(value) > connectPresetParamValueMax {
+			return nil, fmt.Errorf("preset_params[%q] must be at most %d characters, got %d",
+				name, connectPresetParamValueMax, len(value))
+		}
+	}
+	return out, nil
+}
 
 // decodeConnectRules decodes the requested_permission_rules argument into the
 // generated rule type, refusing unknown keys and a missing/unknown effect so
@@ -203,9 +351,23 @@ func (s *mcpServer) handleRequestConnection(ctx context.Context, req *mcp.CallTo
 	}
 	var rules []control.PermissionRuleSchema
 	if raw, ok := args["requested_permission_rules"].(json.RawMessage); ok {
-		if rules, err = decodeConnectRules(raw); err != nil {
+		if rules, err = decodeConnectRuleAsk(raw); err != nil {
 			return nil, invalidParams(err)
 		}
+	}
+	preset, _ := args["preset"].(string)
+	if len(preset) > connectPresetMax {
+		return nil, invalidParams(fmt.Errorf("preset must be at most %d characters, got %d", connectPresetMax, len(preset)))
+	}
+	var presetParams map[string]string
+	if raw, ok := args["preset_params"].(json.RawMessage); ok {
+		if presetParams, err = decodePresetParams(raw); err != nil {
+			return nil, invalidParams(err)
+		}
+	}
+	if len(presetParams) > 0 && preset == "" {
+		return nil, invalidParams(errors.New(`preset_params applies with preset only, e.g. {"vendor": "github", ` +
+			`"preset": "push_branches", "preset_params": {"repo": "octo-org/app", "branches": "agent/*"}}`))
 	}
 	client, err := s.app.controlClient(cctx)
 	if err != nil {
@@ -231,6 +393,12 @@ func (s *mcpServer) handleRequestConnection(ctx context.Context, req *mcp.CallTo
 	if len(rules) > 0 {
 		body.RequestedPermissionRules = &rules
 	}
+	if preset != "" {
+		body.Preset = &preset
+		if len(presetParams) > 0 {
+			body.PresetParams = &presetParams
+		}
+	}
 	// Never set body.AgentId: the caller IS the agent — the control plane
 	// injects the caller's identity, and a supplied agent_id is refused (403).
 	resp, callErr := client.IntegrationsConnectWithResponse(cctx, body)
@@ -255,6 +423,10 @@ func (s *mcpServer) handleRequestConnection(ctx context.Context, req *mcp.CallTo
 	if isHumanEntryFlow(created.ResolvedFlow) {
 		payload["instruction"] = requestConnectionHumanEntryInstruction
 		payload["next_tool"] = "execute"
+	}
+	if len(created.RequestedPermissionRules) > 0 {
+		// The concrete rules the approver reviews (a preset expanded).
+		payload["requested_permission_rules"] = created.RequestedPermissionRules
 	}
 	return s.result(cctx, payload), nil
 }
@@ -404,7 +576,9 @@ func (s *mcpServer) connectToolSpecs() []mcpToolSpec {
 					"the new credential binding, then retry the blocked call. Optionally pass auth_type " +
 					"(with api, when the spec declares several schemes), requested_scopes (vendor scope " +
 					"names; write scopes are flagged for the approver), requested_permission_rules (the " +
-					"binding rules you need; the approver reviews them) and a reason the approver will see. " +
+					"binding rules you need; the approver reviews them), preset with preset_params (a CLI-profile " +
+					"rule preset, e.g. GitHub push_branches, expanded server-side into the rules the result " +
+					"lists) and a reason the approver will see. " +
 					"If several shared OAuth apps serve the vendor, the error lists them: ask your human " +
 					"user which one to use (choosing it is their call, not yours) and retry with its " +
 					"oauth_app_registration_id. If the deployment does not take API connect requests, the " +

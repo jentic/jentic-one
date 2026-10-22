@@ -40,6 +40,9 @@ dependencies = [
     # import is not cached, so without it each call stats every sys.path entry.
     "sniffio>=1.3.1",
     "certifi>=2026.10.19",
+    # Full GraphQL grammar for the broker's GraphQL top-level-field rules
+    # (MIT licence).
+    "graphql-core>=3.3.0",
 ]
 
 [project.optional-dependencies]

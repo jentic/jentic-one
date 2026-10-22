@@ -1010,6 +1010,7 @@
             "kind": "api_key",
             "permission_rules": [
               {
+                "api_role": "rest",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -1091,6 +1092,7 @@
             "examples": [
               [
                 {
+                  "api_role": "rest",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -3328,6 +3330,7 @@
             "password": "example-secret",
             "permission_rules": [
               {
+                "api_role": "rest",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -3410,6 +3413,7 @@
             "examples": [
               [
                 {
+                  "api_role": "rest",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -3461,6 +3465,7 @@
             "kind": "bearer",
             "permission_rules": [
               {
+                "api_role": "rest",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -3530,6 +3535,7 @@
             "examples": [
               [
                 {
+                  "api_role": "rest",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -4273,6 +4279,1597 @@
         "title": "ClaimRequest",
         "type": "object"
       },
+      "CliFacadeContainerWiringResponse": {
+        "description": "What `jentic run --container` sets for the vendor's tools.",
+        "examples": [
+          {
+            "env_set": {
+              "GH_TOKEN": "{placeholder}",
+              "GIT_TERMINAL_PROMPT": "0"
+            },
+            "env_strip": [
+              "GITHUB_TOKEN"
+            ],
+            "tunnel_hosts": []
+          }
+        ],
+        "properties": {
+          "env_set": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Variables to set on the agent container. A value is a literal or `{placeholder}`, the egress proxy's fixed non-secret placeholder token.",
+            "examples": [
+              {
+                "GH_TOKEN": "{placeholder}",
+                "GIT_TERMINAL_PROMPT": "0"
+              }
+            ],
+            "title": "Env Set",
+            "type": "object"
+          },
+          "env_strip": {
+            "description": "Variables removed from the agent container's environment.",
+            "examples": [
+              [
+                "GITHUB_TOKEN"
+              ]
+            ],
+            "items": {
+              "type": "string"
+            },
+            "title": "Env Strip",
+            "type": "array"
+          },
+          "tunnel_hosts": {
+            "description": "Hosts the vendor's tools need reached directly (tunnelled by the egress proxy, never decrypted).",
+            "examples": [
+              []
+            ],
+            "items": {
+              "type": "string"
+            },
+            "title": "Tunnel Hosts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "env_set",
+          "env_strip",
+          "tunnel_hosts"
+        ],
+        "title": "CliFacadeContainerWiringResponse",
+        "type": "object"
+      },
+      "CliFacadeListResponse": {
+        "description": "The vendor CLI facades this deployment serves.",
+        "examples": [
+          {
+            "data": [
+              {
+                "address": "https://broker.jentic.example.com/_facade/cloudflare",
+                "binary": "cf",
+                "cli": "cf",
+                "container": {
+                  "env_set": {
+                    "GH_TOKEN": "{placeholder}",
+                    "GIT_TERMINAL_PROMPT": "0"
+                  },
+                  "env_strip": [
+                    "GITHUB_TOKEN"
+                  ],
+                  "tunnel_hosts": []
+                },
+                "display_name": "Cloudflare",
+                "governed_domains": [
+                  "api.cloudflare.com"
+                ],
+                "mode": "path",
+                "protocols": [
+                  "rest"
+                ],
+                "supported_range": ">=2.40.0,<3",
+                "vendor": "cloudflare",
+                "wrapper": {
+                  "env_set": {
+                    "CLOUDFLARE_API_BASE_URL": "{address}",
+                    "CLOUDFLARE_API_TOKEN": "{token}"
+                  },
+                  "env_strip": [
+                    "CLOUDFLARE_API_KEY",
+                    "CF_API_TOKEN"
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "properties": {
+          "data": {
+            "description": "Served facades, one per vendor; empty when none is enabled.",
+            "examples": [
+              [
+                {
+                  "address": "https://broker.jentic.example.com/_facade/cloudflare",
+                  "binary": "cf",
+                  "cli": "cf",
+                  "container": {
+                    "env_set": {
+                      "GH_TOKEN": "{placeholder}",
+                      "GIT_TERMINAL_PROMPT": "0"
+                    },
+                    "env_strip": [
+                      "GITHUB_TOKEN"
+                    ],
+                    "tunnel_hosts": []
+                  },
+                  "display_name": "Cloudflare",
+                  "governed_domains": [
+                    "api.cloudflare.com"
+                  ],
+                  "mode": "path",
+                  "protocols": [
+                    "rest"
+                  ],
+                  "supported_range": ">=2.40.0,<3",
+                  "vendor": "cloudflare",
+                  "wrapper": {
+                    "env_set": {
+                      "CLOUDFLARE_API_BASE_URL": "{address}",
+                      "CLOUDFLARE_API_TOKEN": "{token}"
+                    },
+                    "env_strip": [
+                      "CLOUDFLARE_API_KEY",
+                      "CF_API_TOKEN"
+                    ]
+                  }
+                }
+              ]
+            ],
+            "items": {
+              "$ref": "#/components/schemas/CliFacadeResponse"
+            },
+            "title": "Data",
+            "type": "array"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "CliFacadeListResponse",
+        "type": "object"
+      },
+      "CliFacadeResponse": {
+        "description": "One vendor CLI facade an agent's CLI can be pointed at.",
+        "examples": [
+          {
+            "address": "https://broker.jentic.example.com/_facade/cloudflare",
+            "binary": "cf",
+            "cli": "cf",
+            "container": {
+              "env_set": {
+                "GH_TOKEN": "{placeholder}",
+                "GIT_TERMINAL_PROMPT": "0"
+              },
+              "env_strip": [
+                "GITHUB_TOKEN"
+              ],
+              "tunnel_hosts": []
+            },
+            "display_name": "Cloudflare",
+            "governed_domains": [
+              "api.cloudflare.com"
+            ],
+            "mode": "path",
+            "protocols": [
+              "rest"
+            ],
+            "supported_range": ">=2.40.0,<3",
+            "vendor": "cloudflare",
+            "wrapper": {
+              "env_set": {
+                "CLOUDFLARE_API_BASE_URL": "{address}",
+                "CLOUDFLARE_API_TOKEN": "{token}"
+              },
+              "env_strip": [
+                "CLOUDFLARE_API_KEY",
+                "CF_API_TOKEN"
+              ]
+            }
+          }
+        ],
+        "properties": {
+          "address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Base URL to point the CLI at (e.g. `CLOUDFLARE_API_BASE_URL`). Null when the deployment cannot advertise one: a `remote` backend whose Broker URL is a loopback address and no `public_address` set for the vendor.",
+            "examples": [
+              "https://broker.jentic.example.com/_facade/cloudflare"
+            ],
+            "title": "Address"
+          },
+          "binary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The vendor CLI's executable, looked up on PATH.",
+            "examples": [
+              "cf"
+            ],
+            "title": "Binary"
+          },
+          "cli": {
+            "description": "The vendor CLI the facade speaks to, e.g. `cf` for `jentic cf`.",
+            "examples": [
+              "cf"
+            ],
+            "title": "Cli",
+            "type": "string"
+          },
+          "container": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CliFacadeContainerWiringResponse"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What `jentic run --container` sets for the vendor; null when nothing.",
+            "examples": [
+              {
+                "env_set": {
+                  "GH_TOKEN": "{placeholder}",
+                  "GIT_TERMINAL_PROMPT": "0"
+                },
+                "env_strip": [
+                  "GITHUB_TOKEN"
+                ],
+                "tunnel_hosts": []
+              }
+            ]
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How the vendor is named to people, e.g. in a wrapper's directives.",
+            "examples": [
+              "Cloudflare"
+            ],
+            "title": "Display Name"
+          },
+          "governed_domains": {
+            "description": "Domains whose hosts the egress proxy of `jentic run --container` relays to the Broker for this vendor.",
+            "examples": [
+              [
+                "api.cloudflare.com"
+              ]
+            ],
+            "items": {
+              "type": "string"
+            },
+            "title": "Governed Domains",
+            "type": "array"
+          },
+          "mode": {
+            "description": "How the facade is addressed: `host` on a hostname of its own, `path` under a path prefix on the Broker's own address.",
+            "enum": [
+              "host",
+              "path"
+            ],
+            "examples": [
+              "path"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "protocols": {
+            "description": "What the vendor's tools reach through Jentic: `rest` (the vendor's REST API), `graphql` (GitHub's GraphQL endpoint, governed by GraphQL rules) and `git` (git clone, fetch and push to github.com, governed by git rules; listed only while the governed git pipeline is on).",
+            "examples": [
+              [
+                "rest"
+              ]
+            ],
+            "items": {
+              "enum": [
+                "rest",
+                "graphql",
+                "git"
+              ],
+              "type": "string"
+            },
+            "title": "Protocols",
+            "type": "array"
+          },
+          "supported_range": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "CLI versions the vendor's CLI profile is written for, e.g. `>=2.40.0,<3`.",
+            "examples": [
+              ">=2.40.0,<3"
+            ],
+            "title": "Supported Range"
+          },
+          "vendor": {
+            "description": "Vendor the facade serves, as passed to `POST /cli-invocations`.",
+            "examples": [
+              "cloudflare"
+            ],
+            "title": "Vendor",
+            "type": "string"
+          },
+          "wrapper": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CliFacadeWrapperWiringResponse"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How `jentic <cli>` wires the vendor CLI (from its CLI profile); null when the CLI is not wrapped.",
+            "examples": [
+              {
+                "env_set": {
+                  "CLOUDFLARE_API_BASE_URL": "{address}",
+                  "CLOUDFLARE_API_TOKEN": "{token}"
+                },
+                "env_strip": [
+                  "CLOUDFLARE_API_KEY",
+                  "CF_API_TOKEN"
+                ]
+              }
+            ]
+          }
+        },
+        "required": [
+          "vendor",
+          "cli",
+          "mode",
+          "protocols"
+        ],
+        "title": "CliFacadeResponse",
+        "type": "object"
+      },
+      "CliFacadeWrapperWiringResponse": {
+        "description": "How `jentic <cli>` wires the vendor CLI on the agent's machine.",
+        "examples": [
+          {
+            "env_set": {
+              "CLOUDFLARE_API_BASE_URL": "{address}",
+              "CLOUDFLARE_API_TOKEN": "{token}"
+            },
+            "env_strip": [
+              "CLOUDFLARE_API_KEY",
+              "CF_API_TOKEN"
+            ]
+          }
+        ],
+        "properties": {
+          "env_set": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Variables to set for the CLI. A value is a literal or a placeholder the wrapper fills in: `{address}` (the facade address), `{address_host}` (its hostname) or `{token}` (the command's invocation token).",
+            "examples": [
+              {
+                "CLOUDFLARE_API_BASE_URL": "{address}",
+                "CLOUDFLARE_API_TOKEN": "{token}"
+              }
+            ],
+            "title": "Env Set",
+            "type": "object"
+          },
+          "env_strip": {
+            "description": "Credential variables the CLI could authenticate with instead of the invocation token; removed from its environment.",
+            "examples": [
+              [
+                "CLOUDFLARE_API_KEY",
+                "CF_API_TOKEN"
+              ]
+            ],
+            "items": {
+              "type": "string"
+            },
+            "title": "Env Strip",
+            "type": "array"
+          }
+        },
+        "required": [
+          "env_set",
+          "env_strip"
+        ],
+        "title": "CliFacadeWrapperWiringResponse",
+        "type": "object"
+      },
+      "CliInvocationCreateRequest": {
+        "additionalProperties": false,
+        "description": "Request body for minting a CLI invocation token.",
+        "examples": [
+          {
+            "command_title": "pr create",
+            "credential_name": "GitHub (acme org)",
+            "vendor": "github"
+          }
+        ],
+        "properties": {
+          "command_title": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*( [A-Za-z0-9][A-Za-z0-9._:-]*)*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The command's subcommand path as reported by the agent, e.g. `pr create`; never its arguments (words starting with `-` are rejected). Display-only.",
+            "examples": [
+              "pr create"
+            ],
+            "title": "Command Title"
+          },
+          "credential_name": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Name of the credential to use when the agent has several for this vendor (the wrapper's `JENTIC_CREDENTIAL`). The Broker applies it to every call the token makes, exactly as the `Jentic-Credential-Name` header; omit it to let the Broker select the credential as for any call. Not checked at mint: a name that matches none of the agent's credentials fails each call instead.",
+            "examples": [
+              "GitHub (acme org)"
+            ],
+            "title": "Credential Name"
+          },
+          "vendor": {
+            "description": "Vendor whose CLI facade the token is for: `github`, `cloudflare` or `aws`.",
+            "examples": [
+              "github"
+            ],
+            "maxLength": 32,
+            "minLength": 1,
+            "pattern": "^[a-z0-9-]+$",
+            "title": "Vendor",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vendor"
+        ],
+        "title": "CliInvocationCreateRequest",
+        "type": "object"
+      },
+      "CliInvocationCreatedResponse": {
+        "description": "A freshly minted CLI invocation, including its token (shown once).",
+        "examples": [
+          {
+            "command_title": "pr create",
+            "credential_name": "GitHub (acme org)",
+            "expires_at": "2026-01-15T09:40:00Z",
+            "hard_expires_at": "2026-01-15T10:30:00Z",
+            "id": "cli_6968b398d3e1a7c40f2b9e58",
+            "revoked_at": null,
+            "token": "cit_example-invocation-token",
+            "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+            "vendor": "github"
+          }
+        ],
+        "properties": {
+          "command_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Agent-reported subcommand path; null if not given.",
+            "examples": [
+              "pr create"
+            ],
+            "title": "Command Title"
+          },
+          "credential_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Name of the credential the token's calls use; null when the Broker selects it.",
+            "examples": [
+              "GitHub (acme org)"
+            ],
+            "title": "Credential Name"
+          },
+          "expires_at": {
+            "description": "When the token stops working unless renewed (RFC 3339).",
+            "examples": [
+              "2026-01-15T09:40:00Z"
+            ],
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "hard_expires_at": {
+            "description": "When the token stops working regardless of renewals (RFC 3339).",
+            "examples": [
+              "2026-01-15T10:30:00Z"
+            ],
+            "format": "date-time",
+            "title": "Hard Expires At",
+            "type": "string"
+          },
+          "id": {
+            "description": "Unique ID of the invocation.",
+            "examples": [
+              "cli_6968b398d3e1a7c40f2b9e58"
+            ],
+            "title": "Id",
+            "type": "string"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the token was revoked (RFC 3339); null while live.",
+            "examples": [
+              null
+            ],
+            "title": "Revoked At"
+          },
+          "token": {
+            "description": "The invocation token (`cit_…`). Shown once; accepted only by the Broker's CLI facade for `vendor`.",
+            "examples": [
+              "cit_example-invocation-token"
+            ],
+            "title": "Token",
+            "type": "string",
+            "x-sensitive": true
+          },
+          "trace_id": {
+            "description": "W3C trace ID chosen by the server; every call the token makes is recorded under it.",
+            "examples": [
+              "4bf92f3577b34da6a3ce929d0e0e4736"
+            ],
+            "title": "Trace Id",
+            "type": "string"
+          },
+          "vendor": {
+            "description": "Vendor the token is for.",
+            "examples": [
+              "github"
+            ],
+            "title": "Vendor",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "vendor",
+          "trace_id",
+          "expires_at",
+          "hard_expires_at",
+          "token"
+        ],
+        "title": "CliInvocationCreatedResponse",
+        "type": "object"
+      },
+      "CliInvocationResponse": {
+        "description": "A CLI invocation token's record (never the token itself).",
+        "examples": [
+          {
+            "command_title": "pr create",
+            "credential_name": "GitHub (acme org)",
+            "expires_at": "2026-01-15T09:40:00Z",
+            "hard_expires_at": "2026-01-15T10:30:00Z",
+            "id": "cli_6968b398d3e1a7c40f2b9e58",
+            "revoked_at": null,
+            "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+            "vendor": "github"
+          }
+        ],
+        "properties": {
+          "command_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Agent-reported subcommand path; null if not given.",
+            "examples": [
+              "pr create"
+            ],
+            "title": "Command Title"
+          },
+          "credential_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Name of the credential the token's calls use; null when the Broker selects it.",
+            "examples": [
+              "GitHub (acme org)"
+            ],
+            "title": "Credential Name"
+          },
+          "expires_at": {
+            "description": "When the token stops working unless renewed (RFC 3339).",
+            "examples": [
+              "2026-01-15T09:40:00Z"
+            ],
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "hard_expires_at": {
+            "description": "When the token stops working regardless of renewals (RFC 3339).",
+            "examples": [
+              "2026-01-15T10:30:00Z"
+            ],
+            "format": "date-time",
+            "title": "Hard Expires At",
+            "type": "string"
+          },
+          "id": {
+            "description": "Unique ID of the invocation.",
+            "examples": [
+              "cli_6968b398d3e1a7c40f2b9e58"
+            ],
+            "title": "Id",
+            "type": "string"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the token was revoked (RFC 3339); null while live.",
+            "examples": [
+              null
+            ],
+            "title": "Revoked At"
+          },
+          "trace_id": {
+            "description": "W3C trace ID chosen by the server; every call the token makes is recorded under it.",
+            "examples": [
+              "4bf92f3577b34da6a3ce929d0e0e4736"
+            ],
+            "title": "Trace Id",
+            "type": "string"
+          },
+          "vendor": {
+            "description": "Vendor the token is for.",
+            "examples": [
+              "github"
+            ],
+            "title": "Vendor",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "vendor",
+          "trace_id",
+          "expires_at",
+          "hard_expires_at"
+        ],
+        "title": "CliInvocationResponse",
+        "type": "object"
+      },
+      "CliProfileApiResponse": {
+        "description": "One API a CLI profile declares, and whether it is live in the registry.",
+        "examples": [
+          {
+            "api_id": "github.com/api.github.com",
+            "connect": "github",
+            "live": true,
+            "name": "api-github-com",
+            "role": "rest",
+            "source": "catalog:github.com/api.github.com",
+            "vendor": "github-com",
+            "version": "1.1.4"
+          }
+        ],
+        "properties": {
+          "api_id": {
+            "description": "The api_id a vendor entry names the API by.",
+            "examples": [
+              "github.com/api.github.com"
+            ],
+            "title": "Api Id",
+            "type": "string"
+          },
+          "connect": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The `jentic connect <vendor>` key that creates this API's credential; null when it is connected another way.",
+            "examples": [
+              "github"
+            ],
+            "title": "Connect"
+          },
+          "live": {
+            "description": "Whether the registry serves the API now.",
+            "examples": [
+              true
+            ],
+            "title": "Live",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "Registry API name.",
+            "examples": [
+              "api-github-com"
+            ],
+            "title": "Name",
+            "type": "string"
+          },
+          "role": {
+            "description": "What the API is to the CLI. It decides the rule kind its binding takes: path rules for `rest`/`uploads`, `graphql` rules for `graphql`, `git` rules for `git`.",
+            "enum": [
+              "rest",
+              "graphql",
+              "git",
+              "uploads"
+            ],
+            "examples": [
+              "rest"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "source": {
+            "description": "Where the API comes from: `catalog:<api_id>` (public catalog), `shipped:specs/<file>` (a spec shipped with Jentic) or `builtin:<api_id>` (served by the Broker itself).",
+            "examples": [
+              "catalog:github.com/api.github.com"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "vendor": {
+            "description": "Registry vendor of the API.",
+            "examples": [
+              "github-com"
+            ],
+            "title": "Vendor",
+            "type": "string"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "API version; null for a catalog API that is not imported yet.",
+            "examples": [
+              "1.1.4"
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "role",
+          "source",
+          "api_id",
+          "vendor",
+          "name",
+          "live"
+        ],
+        "title": "CliProfileApiResponse",
+        "type": "object"
+      },
+      "CliProfileHardDenyResponse": {
+        "description": "A hard-deny list that applies to one of the profile's APIs.",
+        "examples": [
+          {
+            "description": "Mutations that grant access or change repository protections.",
+            "kind": "graphql_mutation",
+            "role": "graphql"
+          }
+        ],
+        "properties": {
+          "description": {
+            "description": "What the list guards.",
+            "examples": [
+              "Mutations that grant access or change repository protections."
+            ],
+            "title": "Description",
+            "type": "string"
+          },
+          "kind": {
+            "description": "What the list holds.",
+            "enum": [
+              "graphql_mutation",
+              "graphql_held_mutation",
+              "git_ref"
+            ],
+            "examples": [
+              "graphql_mutation"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "role": {
+            "description": "The API the list applies to.",
+            "enum": [
+              "rest",
+              "graphql",
+              "git",
+              "uploads"
+            ],
+            "examples": [
+              "graphql"
+            ],
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "kind",
+          "description"
+        ],
+        "title": "CliProfileHardDenyResponse",
+        "type": "object"
+      },
+      "CliProfileListResponse": {
+        "description": "The CLI profiles this Jentic ships.",
+        "examples": [
+          {
+            "data": [
+              {
+                "apis": [
+                  {
+                    "api_id": "github.com/api.github.com",
+                    "connect": "github",
+                    "live": true,
+                    "name": "api-github-com",
+                    "role": "rest",
+                    "source": "catalog:github.com/api.github.com",
+                    "vendor": "github-com",
+                    "version": "1.1.4"
+                  }
+                ],
+                "cli": "gh",
+                "connect": "github",
+                "credential_mode": "profile_scoped",
+                "display_name": "GitHub",
+                "hard_deny": [
+                  {
+                    "description": "Mutations that grant access or change repository protections.",
+                    "kind": "graphql_mutation",
+                    "role": "graphql"
+                  }
+                ],
+                "presets": [
+                  {
+                    "description": "Read everything: REST GETs, every GraphQL query, git fetch.",
+                    "name": "read_only",
+                    "params": [
+                      {
+                        "default": "false",
+                        "description": "Repositories git may fetch, comma-separated '<owner>/<repo>' globs.",
+                        "kind": "repo_list",
+                        "name": "repo"
+                      }
+                    ],
+                    "roles": [
+                      "rest",
+                      "graphql"
+                    ]
+                  }
+                ],
+                "profile": "github",
+                "supported_range": ">=2.40.0,<3",
+                "vendor": "github",
+                "vendor_enabled": true
+              }
+            ]
+          }
+        ],
+        "properties": {
+          "data": {
+            "description": "Shipped profiles, by name.",
+            "examples": [
+              [
+                {
+                  "apis": [
+                    {
+                      "api_id": "github.com/api.github.com",
+                      "connect": "github",
+                      "live": true,
+                      "name": "api-github-com",
+                      "role": "rest",
+                      "source": "catalog:github.com/api.github.com",
+                      "vendor": "github-com",
+                      "version": "1.1.4"
+                    }
+                  ],
+                  "cli": "gh",
+                  "connect": "github",
+                  "credential_mode": "profile_scoped",
+                  "display_name": "GitHub",
+                  "hard_deny": [
+                    {
+                      "description": "Mutations that grant access or change repository protections.",
+                      "kind": "graphql_mutation",
+                      "role": "graphql"
+                    }
+                  ],
+                  "presets": [
+                    {
+                      "description": "Read everything: REST GETs, every GraphQL query, git fetch.",
+                      "name": "read_only",
+                      "params": [
+                        {
+                          "default": "false",
+                          "description": "Repositories git may fetch, comma-separated '<owner>/<repo>' globs.",
+                          "kind": "repo_list",
+                          "name": "repo"
+                        }
+                      ],
+                      "roles": [
+                        "rest",
+                        "graphql"
+                      ]
+                    }
+                  ],
+                  "profile": "github",
+                  "supported_range": ">=2.40.0,<3",
+                  "vendor": "github",
+                  "vendor_enabled": true
+                }
+              ]
+            ],
+            "items": {
+              "$ref": "#/components/schemas/CliProfileResponse"
+            },
+            "title": "Data",
+            "type": "array"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "CliProfileListResponse",
+        "type": "object"
+      },
+      "CliProfilePresetParamResponse": {
+        "description": "A parameter a preset is filled in with.",
+        "examples": [
+          {
+            "default": "false",
+            "description": "Repositories git may fetch, comma-separated '<owner>/<repo>' globs.",
+            "kind": "repo_list",
+            "name": "repo"
+          }
+        ],
+        "properties": {
+          "default": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Value used when it is not given.",
+            "examples": [
+              "false"
+            ],
+            "title": "Default"
+          },
+          "description": {
+            "description": "What the parameter means.",
+            "examples": [
+              "Repositories git may fetch, comma-separated '<owner>/<repo>' globs."
+            ],
+            "title": "Description",
+            "type": "string"
+          },
+          "kind": {
+            "description": "`repo_list`: comma-separated `<owner>/<repo>` globs; `ref_glob`: a branch glob below `refs/heads/`; `flag`: `true` or `false`.",
+            "enum": [
+              "repo_list",
+              "ref_glob",
+              "flag"
+            ],
+            "examples": [
+              "repo_list"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "description": "Parameter name, for `--preset-param <name>=…`.",
+            "examples": [
+              "repo"
+            ],
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "kind",
+          "description"
+        ],
+        "title": "CliProfilePresetParamResponse",
+        "type": "object"
+      },
+      "CliProfilePresetResponse": {
+        "description": "A named rule preset, expanded into concrete rules at connect time.",
+        "examples": [
+          {
+            "description": "Read everything: REST GETs, every GraphQL query, git fetch.",
+            "name": "read_only",
+            "params": [
+              {
+                "default": "false",
+                "description": "Repositories git may fetch, comma-separated '<owner>/<repo>' globs.",
+                "kind": "repo_list",
+                "name": "repo"
+              }
+            ],
+            "roles": [
+              "rest",
+              "graphql"
+            ]
+          }
+        ],
+        "properties": {
+          "description": {
+            "description": "What the preset grants.",
+            "examples": [
+              "Read everything: REST GETs, every GraphQL query, git fetch."
+            ],
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "description": "Preset name, for `jentic connect --preset`.",
+            "examples": [
+              "read_only"
+            ],
+            "title": "Name",
+            "type": "string"
+          },
+          "params": {
+            "description": "The preset's parameters.",
+            "examples": [
+              [
+                {
+                  "default": "false",
+                  "description": "Repositories git may fetch, comma-separated '<owner>/<repo>' globs.",
+                  "kind": "repo_list",
+                  "name": "repo"
+                }
+              ]
+            ],
+            "items": {
+              "$ref": "#/components/schemas/CliProfilePresetParamResponse"
+            },
+            "title": "Params",
+            "type": "array"
+          },
+          "roles": {
+            "description": "The API roles the preset has rules for.",
+            "examples": [
+              [
+                "rest",
+                "graphql"
+              ]
+            ],
+            "items": {
+              "enum": [
+                "rest",
+                "graphql",
+                "git",
+                "uploads"
+              ],
+              "type": "string"
+            },
+            "title": "Roles",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "roles",
+          "params"
+        ],
+        "title": "CliProfilePresetResponse",
+        "type": "object"
+      },
+      "CliProfileProvisionResponse": {
+        "description": "The outcome of provisioning a CLI profile.",
+        "examples": [
+          {
+            "apis": [
+              {
+                "api_id": "github.com/github-graphql",
+                "job_id": "job_2a…",
+                "name": "github-graphql",
+                "role": "graphql",
+                "source": "shipped:specs/github-graphql.openapi.yaml",
+                "status": "imported",
+                "vendor": "github-com",
+                "version": "1"
+              }
+            ],
+            "profile": "github",
+            "vendor": "github",
+            "vendor_enabled": true
+          }
+        ],
+        "properties": {
+          "apis": {
+            "description": "One entry per declared API.",
+            "examples": [
+              [
+                {
+                  "api_id": "github.com/github-graphql",
+                  "job_id": "job_2a…",
+                  "name": "github-graphql",
+                  "role": "graphql",
+                  "source": "shipped:specs/github-graphql.openapi.yaml",
+                  "status": "imported",
+                  "vendor": "github-com",
+                  "version": "1"
+                }
+              ]
+            ],
+            "items": {
+              "$ref": "#/components/schemas/CliProfileProvisionedApiResponse"
+            },
+            "title": "Apis",
+            "type": "array"
+          },
+          "profile": {
+            "description": "Profile name.",
+            "examples": [
+              "github"
+            ],
+            "title": "Profile",
+            "type": "string"
+          },
+          "vendor": {
+            "description": "CLI facade vendor.",
+            "examples": [
+              "github"
+            ],
+            "title": "Vendor",
+            "type": "string"
+          },
+          "vendor_enabled": {
+            "description": "Whether the vendor's facade is switched on. Provisioning runs either way; agents reach the APIs through the vendor's CLI only while it is on.",
+            "examples": [
+              true
+            ],
+            "title": "Vendor Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "profile",
+          "vendor",
+          "vendor_enabled",
+          "apis"
+        ],
+        "title": "CliProfileProvisionResponse",
+        "type": "object"
+      },
+      "CliProfileProvisionedApiResponse": {
+        "description": "What provisioning did for one API.",
+        "examples": [
+          {
+            "api_id": "github.com/github-graphql",
+            "job_id": "job_2a…",
+            "name": "github-graphql",
+            "role": "graphql",
+            "source": "shipped:specs/github-graphql.openapi.yaml",
+            "status": "imported",
+            "vendor": "github-com",
+            "version": "1"
+          }
+        ],
+        "properties": {
+          "api_id": {
+            "description": "The api_id.",
+            "examples": [
+              "github.com/github-graphql"
+            ],
+            "title": "Api Id",
+            "type": "string"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why, for `failed` and the other non-live states.",
+            "title": "Detail"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The enqueued import job, for `import_queued`.",
+            "examples": [
+              "job_2a…"
+            ],
+            "title": "Job Id"
+          },
+          "name": {
+            "description": "Registry API name.",
+            "examples": [
+              "github-graphql"
+            ],
+            "title": "Name",
+            "type": "string"
+          },
+          "role": {
+            "description": "The API's role.",
+            "enum": [
+              "rest",
+              "graphql",
+              "git",
+              "uploads"
+            ],
+            "examples": [
+              "graphql"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "source": {
+            "description": "Where the API comes from.",
+            "examples": [
+              "shipped:specs/github-graphql.openapi.yaml"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "description": "`live`: already served, nothing done; `imported`: the shipped spec was imported and is live; `import_queued`: a catalog import was enqueued (see `job_id`); `builtin`: served by the Broker, nothing to import; `held_for_review`: imported as a draft because it changes the API's hosts; `not_in_catalog`: the catalog has no such entry; `failed`: see `detail`.",
+            "enum": [
+              "live",
+              "imported",
+              "import_queued",
+              "builtin",
+              "held_for_review",
+              "not_in_catalog",
+              "failed"
+            ],
+            "examples": [
+              "imported"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "vendor": {
+            "description": "Registry vendor.",
+            "examples": [
+              "github-com"
+            ],
+            "title": "Vendor",
+            "type": "string"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "API version, when known.",
+            "examples": [
+              "1"
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "role",
+          "source",
+          "api_id",
+          "vendor",
+          "name",
+          "status"
+        ],
+        "title": "CliProfileProvisionedApiResponse",
+        "type": "object"
+      },
+      "CliProfileResponse": {
+        "description": "One shipped CLI profile.",
+        "examples": [
+          {
+            "apis": [
+              {
+                "api_id": "github.com/api.github.com",
+                "connect": "github",
+                "live": true,
+                "name": "api-github-com",
+                "role": "rest",
+                "source": "catalog:github.com/api.github.com",
+                "vendor": "github-com",
+                "version": "1.1.4"
+              }
+            ],
+            "cli": "gh",
+            "connect": "github",
+            "credential_mode": "profile_scoped",
+            "display_name": "GitHub",
+            "hard_deny": [
+              {
+                "description": "Mutations that grant access or change repository protections.",
+                "kind": "graphql_mutation",
+                "role": "graphql"
+              }
+            ],
+            "presets": [
+              {
+                "description": "Read everything: REST GETs, every GraphQL query, git fetch.",
+                "name": "read_only",
+                "params": [
+                  {
+                    "default": "false",
+                    "description": "Repositories git may fetch, comma-separated '<owner>/<repo>' globs.",
+                    "kind": "repo_list",
+                    "name": "repo"
+                  }
+                ],
+                "roles": [
+                  "rest",
+                  "graphql"
+                ]
+              }
+            ],
+            "profile": "github",
+            "supported_range": ">=2.40.0,<3",
+            "vendor": "github",
+            "vendor_enabled": true
+          }
+        ],
+        "properties": {
+          "apis": {
+            "description": "The APIs the profile declares.",
+            "examples": [
+              [
+                {
+                  "api_id": "github.com/api.github.com",
+                  "connect": "github",
+                  "live": true,
+                  "name": "api-github-com",
+                  "role": "rest",
+                  "source": "catalog:github.com/api.github.com",
+                  "vendor": "github-com",
+                  "version": "1.1.4"
+                }
+              ]
+            ],
+            "items": {
+              "$ref": "#/components/schemas/CliProfileApiResponse"
+            },
+            "title": "Apis",
+            "type": "array"
+          },
+          "cli": {
+            "description": "The vendor CLI binary.",
+            "examples": [
+              "gh"
+            ],
+            "title": "Cli",
+            "type": "string"
+          },
+          "connect": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "With `profile_scoped`: the `jentic connect <vendor>` key whose one connect covers every API of the profile. Null with `per_api`.",
+            "examples": [
+              "github"
+            ],
+            "title": "Connect"
+          },
+          "credential_mode": {
+            "description": "`per_api`: each API is connected with its own credential. `profile_scoped`: `jentic connect <connect>` creates one credential covering exactly the profile's APIs, each binding rule applying to the API of its role.",
+            "enum": [
+              "per_api",
+              "profile_scoped"
+            ],
+            "examples": [
+              "profile_scoped"
+            ],
+            "title": "Credential Mode",
+            "type": "string"
+          },
+          "display_name": {
+            "description": "How the profile is named.",
+            "examples": [
+              "GitHub"
+            ],
+            "title": "Display Name",
+            "type": "string"
+          },
+          "hard_deny": {
+            "description": "Lists no rule can override, kept in code.",
+            "examples": [
+              [
+                {
+                  "description": "Mutations that grant access or change repository protections.",
+                  "kind": "graphql_mutation",
+                  "role": "graphql"
+                }
+              ]
+            ],
+            "items": {
+              "$ref": "#/components/schemas/CliProfileHardDenyResponse"
+            },
+            "title": "Hard Deny",
+            "type": "array"
+          },
+          "presets": {
+            "description": "Rule presets.",
+            "examples": [
+              [
+                {
+                  "description": "Read everything: REST GETs, every GraphQL query, git fetch.",
+                  "name": "read_only",
+                  "params": [
+                    {
+                      "default": "false",
+                      "description": "Repositories git may fetch, comma-separated '<owner>/<repo>' globs.",
+                      "kind": "repo_list",
+                      "name": "repo"
+                    }
+                  ],
+                  "roles": [
+                    "rest",
+                    "graphql"
+                  ]
+                }
+              ]
+            ],
+            "items": {
+              "$ref": "#/components/schemas/CliProfilePresetResponse"
+            },
+            "title": "Presets",
+            "type": "array"
+          },
+          "profile": {
+            "description": "Profile name.",
+            "examples": [
+              "github"
+            ],
+            "title": "Profile",
+            "type": "string"
+          },
+          "supported_range": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "CLI versions the profile is written for.",
+            "examples": [
+              ">=2.40.0,<3"
+            ],
+            "title": "Supported Range"
+          },
+          "vendor": {
+            "description": "CLI facade vendor (`cli_facades.vendors` key).",
+            "examples": [
+              "github"
+            ],
+            "title": "Vendor",
+            "type": "string"
+          },
+          "vendor_enabled": {
+            "description": "Whether the vendor's facade is switched on in this deployment.",
+            "examples": [
+              true
+            ],
+            "title": "Vendor Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "profile",
+          "display_name",
+          "vendor",
+          "vendor_enabled",
+          "cli",
+          "credential_mode",
+          "apis",
+          "presets",
+          "hard_deny"
+        ],
+        "title": "CliProfileResponse",
+        "type": "object"
+      },
       "ConnectRequestBody": {
         "description": "Request body for initiating a credential connect flow.",
         "examples": [
@@ -4844,6 +6441,7 @@
             "serves": [
               {
                 "api_name": "stripe",
+                "api_role": "git",
                 "api_vendor": "stripe.com",
                 "api_version": "2024-04-10"
               }
@@ -4907,6 +6505,7 @@
               [
                 {
                   "api_name": "stripe",
+                  "api_role": "git",
                   "api_vendor": "stripe.com",
                   "api_version": "2024-04-10"
                 }
@@ -4965,6 +6564,7 @@
                 "serves": [
                   {
                     "api_name": "stripe",
+                    "api_role": "git",
                     "api_vendor": "stripe.com",
                     "api_version": "2024-04-10"
                   }
@@ -4990,6 +6590,7 @@
                   "serves": [
                     {
                       "api_name": "stripe",
+                      "api_role": "git",
                       "api_vendor": "stripe.com",
                       "api_version": "2024-04-10"
                     }
@@ -5025,6 +6626,7 @@
             "serves": [
               {
                 "api_name": "stripe",
+                "api_role": "git",
                 "api_vendor": "stripe.com",
                 "api_version": "2024-04-10"
               }
@@ -5104,6 +6706,7 @@
               [
                 {
                   "api_name": "stripe",
+                  "api_role": "git",
                   "api_vendor": "stripe.com",
                   "api_version": "2024-04-10"
                 }
@@ -7011,6 +8614,7 @@
             "kind": "existing_credential",
             "permission_rules": [
               {
+                "api_role": "rest",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -7089,6 +8693,7 @@
             "examples": [
               [
                 {
+                  "api_role": "rest",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -8258,9 +9863,15 @@
             "name": "GitHub (work)",
             "oauth_app_registration_id": "oar_6968b39821e5f89a6975f501",
             "preferred_flow": "authorization_code",
+            "preset": "read_only",
+            "preset_params": {
+              "branches": "agent/*",
+              "repo": "octo-org/app"
+            },
             "reason": "Needs read access to triage issues in the platform repo.",
             "requested_permission_rules": [
               {
+                "api_role": "rest",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -8376,6 +9987,37 @@
             ],
             "title": "Preferred Flow"
           },
+          "preset": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A rule preset of the CLI profile that declares the target (see `GET /cli-profiles`), expanded into concrete permission rules for the target API and appended to `requested_permission_rules`.",
+            "examples": [
+              "read_only"
+            ],
+            "title": "Preset"
+          },
+          "preset_params": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Values for the preset's parameters, e.g. `repo` (comma-separated `<owner>/<repo>` globs) and `branches` (a branch glob below `refs/heads/`).",
+            "examples": [
+              {
+                "branches": "agent/*",
+                "repo": "octo-org/app"
+              }
+            ],
+            "maxProperties": 10,
+            "title": "Preset Params",
+            "type": "object"
+          },
           "reason": {
             "anyOf": [
               {
@@ -8397,6 +10039,7 @@
             "examples": [
               [
                 {
+                  "api_role": "rest",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -9083,6 +10726,7 @@
                 "serves": [
                   {
                     "api_name": "stripe",
+                    "api_role": "git",
                     "api_vendor": "stripe.com",
                     "api_version": "2024-04-10"
                   }
@@ -9135,6 +10779,7 @@
                   "serves": [
                     {
                       "api_name": "stripe",
+                      "api_role": "git",
                       "api_vendor": "stripe.com",
                       "api_version": "2024-04-10"
                     }
@@ -12148,6 +13793,7 @@
             "kind": "oauth",
             "permission_rules": [
               {
+                "api_role": "rest",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -12238,6 +13884,7 @@
             "examples": [
               [
                 {
+                  "api_role": "rest",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -14061,6 +15708,7 @@
             "kind": "own_oauth_client",
             "permission_rules": [
               {
+                "api_role": "rest",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -14178,6 +15826,7 @@
             "examples": [
               [
                 {
+                  "api_role": "rest",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -14332,6 +15981,7 @@
               {
                 "_comment": "Read-only access to charges.",
                 "_system": false,
+                "api_role": "rest",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -14353,6 +16003,7 @@
                 {
                   "_comment": "Read-only access to charges.",
                   "_system": false,
+                  "api_role": "rest",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -14384,6 +16035,7 @@
           {
             "_comment": "Read-only access to charges.",
             "_system": false,
+            "api_role": "rest",
             "effect": "allow",
             "match_mode": "prefix",
             "methods": [
@@ -14420,6 +16072,27 @@
             "title": "System",
             "type": "boolean"
           },
+          "api_role": {
+            "anyOf": [
+              {
+                "enum": [
+                  "rest",
+                  "graphql",
+                  "git",
+                  "uploads"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The CLI-profile API the rule applies to on a CLI-profile credential's binding; null takes the role the rule's kind implies (`git`, `graphql`, else `rest`).",
+            "examples": [
+              "rest"
+            ],
+            "title": "Api Role"
+          },
           "effect": {
             "description": "Whether this rule allows, denies, or holds the matched request for human approval (`require-approval`).",
             "enum": [
@@ -14435,11 +16108,13 @@
           },
           "match_mode": {
             "default": "regex",
-            "description": "How `path` is interpreted: `regex` (full-match), `prefix` or `exact`.",
+            "description": "How `path` is interpreted: `regex` (full-match), `prefix`, `exact`, `graphql` (a GraphQL top-level-field selector) or `git` (a git repository/ref selector).",
             "enum": [
               "regex",
               "prefix",
-              "exact"
+              "exact",
+              "graphql",
+              "git"
             ],
             "examples": [
               "prefix"
@@ -14496,7 +16171,7 @@
                 "type": "null"
               }
             ],
-            "description": "Path pattern relative to the API's server URL, interpreted per `match_mode`; null matches all paths.",
+            "description": "Path pattern relative to the API's server URL, interpreted per `match_mode`; null matches all paths. A GraphQL selector when `match_mode` is `graphql`, a git selector when it is `git`.",
             "examples": [
               "/v1/charges"
             ],
@@ -14514,6 +16189,7 @@
         "description": "Permission rule for an agent↔credential binding.\n\nRules are evaluated first-match-wins. If no rule matches, the request is\ndenied (default-deny). A binding with zero rules therefore blocks all\noperations — users must explicitly add at least one allow rule.",
         "examples": [
           {
+            "api_role": "rest",
             "effect": "allow",
             "match_mode": "prefix",
             "methods": [
@@ -14526,6 +16202,27 @@
           }
         ],
         "properties": {
+          "api_role": {
+            "anyOf": [
+              {
+                "enum": [
+                  "rest",
+                  "graphql",
+                  "git",
+                  "uploads"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "On the binding of a CLI-profile credential (one connect covering several APIs of a vendor, e.g. `jentic connect github`): the profile API the rule applies to — `rest` and `uploads` take path rules, `graphql` GraphQL rules and `git` git rules. Omitted, the rule's kind decides: a `git` rule applies to `git`, a `graphql` rule to `graphql`, any other rule to `rest`. Ignored on any other credential.",
+            "examples": [
+              "rest"
+            ],
+            "title": "Api Role"
+          },
           "effect": {
             "description": "Whether this rule allows the matched request, denies it, or holds it for human approval before the broker executes it.",
             "enum": [
@@ -14541,11 +16238,13 @@
           },
           "match_mode": {
             "default": "regex",
-            "description": "How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility.",
+            "description": "How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility. `graphql` makes the rule match the top-level fields of a GraphQL request (the GitHub GraphQL endpoint) by operation type and field name, one field at a time; it matches no other request. `git` makes the rule match git clones, fetches and pushes to github.com through Jentic by repository and, for pushes, by ref; it matches no other request, and only `allow` and `deny` are accepted.",
             "enum": [
               "regex",
               "prefix",
-              "exact"
+              "exact",
+              "graphql",
+              "git"
             ],
             "examples": [
               "prefix"
@@ -14602,7 +16301,7 @@
                 "type": "null"
               }
             ],
-            "description": "Path pattern to match, relative to the API's server URL — the spec's path (`/widgets`), never the full upstream path with the server's base path (`/eu/widgets` for a server `https://host/{region}`). Interpreted per `match_mode`: `regex` uses full-match semantics (the pattern must describe the whole path); `prefix` and `exact` are literal. None matches all paths.",
+            "description": "Path pattern to match, relative to the API's server URL — the spec's path (`/widgets`), never the full upstream path with the server's base path (`/eu/widgets` for a server `https://host/{region}`). Interpreted per `match_mode`: `regex` uses full-match semantics (the pattern must describe the whole path); `prefix` and `exact` are literal. None matches all paths. With `match_mode` `graphql`, `path` is required and is a GraphQL selector instead: `query`, `mutation`, or `mutation:createPullRequest,addComment` (top-level field names, never aliases). With `match_mode` `git`, `path` is required and is a git selector: `<fetch|push|force>:<owner>/<repo>` with an optional `:refs/heads/<glob>` or `:refs/tags/<glob>` on push and force (e.g. `push:octo-org/app:refs/heads/agent/*`).",
             "examples": [
               "/v1/charges"
             ],
@@ -14823,6 +16522,7 @@
           {
             "add": [
               {
+                "api_role": "rest",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -14857,6 +16557,7 @@
             "examples": [
               [
                 {
+                  "api_role": "rest",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -15581,6 +17282,7 @@
             "kind": "reauthorize",
             "permission_rules": [
               {
+                "api_role": "rest",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -15659,6 +17361,7 @@
             "examples": [
               [
                 {
+                  "api_role": "rest",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -16161,6 +17864,7 @@
             "name": "Stripe read-only",
             "rules": [
               {
+                "api_role": "rest",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -16205,6 +17909,7 @@
             "examples": [
               [
                 {
+                  "api_role": "rest",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -16318,6 +18023,7 @@
               {
                 "_comment": "Read-only access to charges.",
                 "_system": false,
+                "api_role": "rest",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -16410,6 +18116,7 @@
                 {
                   "_comment": "Read-only access to charges.",
                   "_system": false,
+                  "api_role": "rest",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -17188,6 +18895,7 @@
         "examples": [
           {
             "api_name": "stripe",
+            "api_role": "git",
             "api_vendor": "stripe.com",
             "api_version": "2024-04-10"
           }
@@ -17207,6 +18915,21 @@
               "stripe"
             ],
             "title": "Api Name"
+          },
+          "api_role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Set when the credential is a CLI-profile credential (one connect covering several APIs of a vendor): the API's role in the profile (`rest`, `graphql`, `git`, `uploads`). The binding's rules for that role apply to it.",
+            "examples": [
+              "git"
+            ],
+            "title": "Api Role"
           },
           "api_vendor": {
             "description": "Vendor of the served API.",
@@ -23531,6 +25254,7 @@
                       "serves": [
                         {
                           "api_name": "stripe",
+                          "api_role": "git",
                           "api_vendor": "stripe.com",
                           "api_version": "2024-04-10"
                         }
@@ -23722,6 +25446,7 @@
                   "serves": [
                     {
                       "api_name": "stripe",
+                      "api_role": "git",
                       "api_vendor": "stripe.com",
                       "api_version": "2024-04-10"
                     }
@@ -24117,6 +25842,7 @@
                   "serves": [
                     {
                       "api_name": "stripe",
+                      "api_role": "git",
                       "api_vendor": "stripe.com",
                       "api_version": "2024-04-10"
                     }
@@ -34045,6 +35771,1151 @@
       },
       "summary": "Refresh Catalog"
     },
+    "/cli-facades": {
+      "description": "`GET`: List vendor CLI facades.",
+      "get": {
+        "description": "The vendor CLI facades this deployment serves, and the address of each.\n\n`jentic cf` (and `jentic cli list`) read this to learn where to point the\nvendor's own CLI, so no agent hard-codes a facade address. Lists only\nfacades that are switched on (`cli_facades.enabled` and the vendor's\n`enabled`) and implemented by the Broker. Whether the caller holds a\ncredential for the vendor is not checked here: a call without one fails\nat the facade with the usual Broker problem.\n\nEach facade also carries the agent-side wiring from the vendor's CLI\nprofile: the binary and supported versions, the environment `jentic\n<cli>` sets and strips, and what `jentic run --container` sets and\ngoverns, so no CLI hard-codes them.",
+        "operationId": "listCliFacades",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": [
+                    {
+                      "address": "https://broker.jentic.example.com/_facade/cloudflare",
+                      "binary": "cf",
+                      "cli": "cf",
+                      "container": {
+                        "env_set": {
+                          "GH_TOKEN": "{placeholder}",
+                          "GIT_TERMINAL_PROMPT": "0"
+                        },
+                        "env_strip": [
+                          "GITHUB_TOKEN"
+                        ],
+                        "tunnel_hosts": []
+                      },
+                      "display_name": "Cloudflare",
+                      "governed_domains": [
+                        "api.cloudflare.com"
+                      ],
+                      "mode": "path",
+                      "protocols": [
+                        "rest"
+                      ],
+                      "supported_range": ">=2.40.0,<3",
+                      "vendor": "cloudflare",
+                      "wrapper": {
+                        "env_set": {
+                          "CLOUDFLARE_API_BASE_URL": "{address}",
+                          "CLOUDFLARE_API_TOKEN": "{token}"
+                        },
+                        "env_strip": [
+                          "CLOUDFLARE_API_KEY",
+                          "CF_API_TOKEN"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/CliFacadeListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "OAuth2": []
+          }
+        ],
+        "summary": "List vendor CLI facades",
+        "tags": [
+          "CLI Facades"
+        ]
+      },
+      "summary": "List vendor CLI facades"
+    },
+    "/cli-invocations": {
+      "description": "`POST`: Mint a CLI invocation token.",
+      "post": {
+        "description": "Mint a short-lived invocation token for one vendor CLI command.\n\nCalled by `jentic gh`/`cf`/`aws` before it runs the vendor CLI. Only an\nagent holding `capabilities:execute` and authenticated with its own\naccess token (`at_…`, not an API key or JWT) may mint; anything else\nanswers 403 (`cli_invocation_mint_forbidden`). The token lives\n`cli_facades.invocation_ttl_seconds` (renew it with `:renew`), never past\n`hard_expires_at`, and never past the access token it was minted with:\nrevoking or expiring that access token ends the invocation token too.\nIt is accepted only by the Broker's CLI facade for `vendor`; `/execute`,\nthe control plane and MCP reject it. Answers 404 while\n`cli_facades.enabled` or the vendor's facade is off. Minting is rate\nlimited per agent (`cli_facades.mint_rate_limit_per_minute`).",
+        "operationId": "createCliInvocation",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "command_title": "pr create",
+                "credential_name": "GitHub (acme org)",
+                "vendor": "github"
+              },
+              "schema": {
+                "$ref": "#/components/schemas/CliInvocationCreateRequest"
+              }
+            }
+          },
+          "description": "Request body for minting a CLI invocation token.",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "command_title": "pr create",
+                  "credential_name": "GitHub (acme org)",
+                  "expires_at": "2026-01-15T09:40:00Z",
+                  "hard_expires_at": "2026-01-15T10:30:00Z",
+                  "id": "cli_6968b398d3e1a7c40f2b9e58",
+                  "revoked_at": null,
+                  "token": "cit_example-invocation-token",
+                  "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+                  "vendor": "github"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/CliInvocationCreatedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The requested resource does not exist or is not visible to you.",
+                  "instance": "/example/path",
+                  "status": 404,
+                  "title": "Not Found",
+                  "type": "not_found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "No CLI facade is available for `vendor` (`cli_facade_not_found`)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Too many requests; retry after the indicated delay.",
+                  "instance": "/example/path",
+                  "status": 429,
+                  "title": "Too Many Requests",
+                  "type": "rate_limit_exceeded"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "The agent's mint rate limit is exhausted; honour `Retry-After`."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "OAuth2": []
+          }
+        ],
+        "summary": "Mint a CLI invocation token",
+        "tags": [
+          "CLI Invocations"
+        ]
+      },
+      "summary": "Mint a CLI invocation token"
+    },
+    "/cli-invocations/{invocation_id}:renew": {
+      "description": "`POST`: Renew a CLI invocation token.",
+      "post": {
+        "description": "Extend one of the caller's live invocation tokens.\n\nMoves `expires_at` to `cli_facades.invocation_ttl_seconds` from now, capped at\n`hard_expires_at`. The CLI wrapper calls this on a heartbeat while the\ncommand runs. Only the agent that minted the invocation may renew it;\nany other caller gets 404. A revoked or expired invocation answers 409.",
+        "operationId": "renewCliInvocation",
+        "parameters": [
+          {
+            "description": "ID of the CLI invocation.",
+            "examples": {
+              "example": {
+                "summary": "CLI invocation ID",
+                "value": "cli_6968b398d3e1a7c40f2b9e58"
+              }
+            },
+            "in": "path",
+            "name": "invocation_id",
+            "required": true,
+            "schema": {
+              "description": "ID of the CLI invocation.",
+              "examples": [
+                "cli_6968b398d3e1a7c40f2b9e58"
+              ],
+              "title": "Invocation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "command_title": "pr create",
+                  "credential_name": "GitHub (acme org)",
+                  "expires_at": "2026-01-15T09:40:00Z",
+                  "hard_expires_at": "2026-01-15T10:30:00Z",
+                  "id": "cli_6968b398d3e1a7c40f2b9e58",
+                  "revoked_at": null,
+                  "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+                  "vendor": "github"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/CliInvocationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The requested resource does not exist or is not visible to you.",
+                  "instance": "/example/path",
+                  "status": 404,
+                  "title": "Not Found",
+                  "type": "not_found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "The invocation does not exist or is not the caller's."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request conflicts with the current state of the resource.",
+                  "instance": "/example/path",
+                  "status": 409,
+                  "title": "Conflict",
+                  "type": "conflict"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "The invocation is revoked or expired (`cli_invocation_not_renewable`)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "OAuth2": []
+          }
+        ],
+        "summary": "Renew a CLI invocation token",
+        "tags": [
+          "CLI Invocations"
+        ]
+      },
+      "summary": "Renew a CLI invocation token"
+    },
+    "/cli-invocations/{invocation_id}:revoke": {
+      "description": "`POST`: Revoke a CLI invocation token.",
+      "post": {
+        "description": "Revoke one of the caller's invocation tokens.\n\nThe CLI wrapper calls this when the command exits. The Broker stops\naccepting the token within its token-cache TTL\n(`broker.resolve_cache_ttl_seconds`). Only the agent that minted the\ninvocation may revoke it; any other caller gets 404. Revoking an\nalready-revoked invocation succeeds.",
+        "operationId": "revokeCliInvocation",
+        "parameters": [
+          {
+            "description": "ID of the CLI invocation.",
+            "examples": {
+              "example": {
+                "summary": "CLI invocation ID",
+                "value": "cli_6968b398d3e1a7c40f2b9e58"
+              }
+            },
+            "in": "path",
+            "name": "invocation_id",
+            "required": true,
+            "schema": {
+              "description": "ID of the CLI invocation.",
+              "examples": [
+                "cli_6968b398d3e1a7c40f2b9e58"
+              ],
+              "title": "Invocation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The requested resource does not exist or is not visible to you.",
+                  "instance": "/example/path",
+                  "status": 404,
+                  "title": "Not Found",
+                  "type": "not_found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "The invocation does not exist or is not the caller's."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "OAuth2": []
+          }
+        ],
+        "summary": "Revoke a CLI invocation token",
+        "tags": [
+          "CLI Invocations"
+        ]
+      },
+      "summary": "Revoke a CLI invocation token"
+    },
+    "/cli-profiles": {
+      "description": "`GET`: List CLI profiles.",
+      "get": {
+        "description": "The vendor CLI profiles this Jentic ships.\n\nA profile declares a vendor CLI's APIs (with the `jentic connect` key of\neach), its rule presets (for `jentic connect --preset`) and the hard-deny\nlists no rule can override. Each API says whether the registry serves it\nnow; `POST /cli-profiles/{profile}:provision` makes them all live.",
+        "operationId": "listCliProfiles",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": [
+                    {
+                      "apis": [
+                        {
+                          "api_id": "github.com/api.github.com",
+                          "connect": "github",
+                          "live": true,
+                          "name": "api-github-com",
+                          "role": "rest",
+                          "source": "catalog:github.com/api.github.com",
+                          "vendor": "github-com",
+                          "version": "1.1.4"
+                        }
+                      ],
+                      "cli": "gh",
+                      "connect": "github",
+                      "credential_mode": "profile_scoped",
+                      "display_name": "GitHub",
+                      "hard_deny": [
+                        {
+                          "description": "Mutations that grant access or change repository protections.",
+                          "kind": "graphql_mutation",
+                          "role": "graphql"
+                        }
+                      ],
+                      "presets": [
+                        {
+                          "description": "Read everything: REST GETs, every GraphQL query, git fetch.",
+                          "name": "read_only",
+                          "params": [
+                            {
+                              "default": "false",
+                              "description": "Repositories git may fetch, comma-separated '<owner>/<repo>' globs.",
+                              "kind": "repo_list",
+                              "name": "repo"
+                            }
+                          ],
+                          "roles": [
+                            "rest",
+                            "graphql"
+                          ]
+                        }
+                      ],
+                      "profile": "github",
+                      "supported_range": ">=2.40.0,<3",
+                      "vendor": "github",
+                      "vendor_enabled": true
+                    }
+                  ]
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/CliProfileListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "OAuth2": []
+          }
+        ],
+        "summary": "List CLI profiles",
+        "tags": [
+          "CLI Facades"
+        ]
+      },
+      "summary": "List CLI profiles"
+    },
+    "/cli-profiles/{profile}:provision": {
+      "description": "`POST`: Provision a CLI profile's APIs.",
+      "post": {
+        "description": "Make every API the profile declares exist and be live. Idempotent.\n\nA `catalog` API is imported from the public catalog (enqueued; nothing\nwhen it is already registered), a `shipped` API is imported from the spec\nshipped with Jentic and goes live at once, and a `builtin` API needs\nnothing. A connect for one of the profile's APIs runs the same\nprovisioning on demand, so this is for an operator who wants the APIs\nin place before any agent connects. Runs whether or not the vendor's\nfacade is enabled (`vendor_enabled`).",
+        "operationId": "provisionCliProfile",
+        "parameters": [
+          {
+            "description": "Profile name, e.g. `github`.",
+            "examples": {
+              "example": {
+                "summary": "Vendor registry key",
+                "value": "github"
+              }
+            },
+            "in": "path",
+            "name": "profile",
+            "required": true,
+            "schema": {
+              "description": "Profile name, e.g. `github`.",
+              "examples": [
+                "github"
+              ],
+              "title": "Profile",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "apis": [
+                    {
+                      "api_id": "github.com/github-graphql",
+                      "job_id": "job_2a…",
+                      "name": "github-graphql",
+                      "role": "graphql",
+                      "source": "shipped:specs/github-graphql.openapi.yaml",
+                      "status": "imported",
+                      "vendor": "github-com",
+                      "version": "1"
+                    }
+                  ],
+                  "profile": "github",
+                  "vendor": "github",
+                  "vendor_enabled": true
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/CliProfileProvisionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The requested resource does not exist or is not visible to you.",
+                  "instance": "/example/path",
+                  "status": 404,
+                  "title": "Not Found",
+                  "type": "not_found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "No shipped CLI profile has this name"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "OAuth2": []
+          }
+        ],
+        "summary": "Provision a CLI profile's APIs",
+        "tags": [
+          "CLI Facades"
+        ]
+      },
+      "summary": "Provision a CLI profile's APIs"
+    },
     "/connect-sessions": {
       "description": "`GET`: List connect sessions.",
       "get": {
@@ -36836,6 +39707,7 @@
                     {
                       "_comment": "Read-only access to charges.",
                       "_system": false,
+                      "api_role": "rest",
                       "effect": "allow",
                       "match_mode": "prefix",
                       "methods": [
@@ -37045,6 +39917,7 @@
               "example": {
                 "add": [
                   {
+                    "api_role": "rest",
                     "effect": "allow",
                     "match_mode": "prefix",
                     "methods": [
@@ -37078,6 +39951,7 @@
                     {
                       "_comment": "Read-only access to charges.",
                       "_system": false,
+                      "api_role": "rest",
                       "effect": "allow",
                       "match_mode": "prefix",
                       "methods": [
@@ -37306,6 +40180,7 @@
                     {
                       "_comment": "Read-only access to charges.",
                       "_system": false,
+                      "api_role": "rest",
                       "effect": "allow",
                       "match_mode": "prefix",
                       "methods": [
@@ -41857,9 +44732,15 @@
                 "name": "GitHub (work)",
                 "oauth_app_registration_id": "oar_6968b39821e5f89a6975f501",
                 "preferred_flow": "authorization_code",
+                "preset": "read_only",
+                "preset_params": {
+                  "branches": "agent/*",
+                  "repo": "octo-org/app"
+                },
                 "reason": "Needs read access to triage issues in the platform repo.",
                 "requested_permission_rules": [
                   {
+                    "api_role": "rest",
                     "effect": "allow",
                     "match_mode": "prefix",
                     "methods": [
@@ -47970,6 +50851,7 @@
                 "name": "Stripe read-only",
                 "rules": [
                   {
+                    "api_role": "rest",
                     "effect": "allow",
                     "match_mode": "prefix",
                     "methods": [
@@ -48006,6 +50888,7 @@
                     {
                       "_comment": "Read-only access to charges.",
                       "_system": false,
+                      "api_role": "rest",
                       "effect": "allow",
                       "match_mode": "prefix",
                       "methods": [
@@ -48394,6 +51277,7 @@
                     {
                       "_comment": "Read-only access to charges.",
                       "_system": false,
+                      "api_role": "rest",
                       "effect": "allow",
                       "match_mode": "prefix",
                       "methods": [
@@ -48608,6 +51492,7 @@
                     {
                       "_comment": "Read-only access to charges.",
                       "_system": false,
+                      "api_role": "rest",
                       "effect": "allow",
                       "match_mode": "prefix",
                       "methods": [
@@ -48820,6 +51705,7 @@
                     {
                       "_comment": "Read-only access to charges.",
                       "_system": false,
+                      "api_role": "rest",
                       "effect": "allow",
                       "match_mode": "prefix",
                       "methods": [
@@ -52870,6 +55756,14 @@
       "name": "OAuth"
     },
     {
+      "description": "Short-lived invocation tokens for vendor CLIs run through Jentic (`jentic gh`, `jentic cf`, `jentic aws`). An agent mints one per command with its own access token, renews it while the command runs and revokes it on exit; only the Broker's vendor CLI facades accept it.",
+      "name": "CLI Invocations"
+    },
+    {
+      "description": "The Broker's vendor CLI facades this deployment serves, and the address each vendor CLI is pointed at. `jentic cf` and `jentic cli list` read it, so no agent hard-codes a facade address.",
+      "name": "CLI Facades"
+    },
+    {
       "description": "Dynamic agent registration (RFC 7591-style) — register a new agent client, poll registration status, update, or delete a registration.",
       "name": "Agent Registration"
     },
@@ -52953,6 +55847,8 @@
         "Identity",
         "Agents",
         "OAuth",
+        "CLI Invocations",
+        "CLI Facades",
         "Agent Registration",
         "Discovery"
       ]

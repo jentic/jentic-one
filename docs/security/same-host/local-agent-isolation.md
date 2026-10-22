@@ -604,6 +604,176 @@ tokens. Two further details from live testing, both baked into `jentic run`:
   it, bash emits `getcwd: Permission denied` noise. `jentic run` sets the child's
   dir to `/` for every agent-user invocation.
 
+## Container mode (experimental) — `jentic run --container`
+
+`jentic run --container <agent> [path]` replaces the agent account with a
+Docker container per session (`cli/internal/localagent/container`). The work
+folder is bind-mounted at its host path; the grant policy's banned folders are
+refused.
+
+```
+host Jentic (127.0.0.1:8000/8100)
+   ▲  TCP
+relay container ── unix sockets in a per-session volume ──▶ loopback container
+(host network on native Linux,       │                      (internal network;
+ host.docker.internal elsewhere)     │                       listens on 127.0.0.1:<ports>)
+                                     │                           ▲ shares its network namespace
+                                     ▼                      agent container
+                        egress proxy container ◀── CONNECT ── (HTTPS_PROXY, :3128)
+                        (internal network + a per-session egress network)
+                           │ tunnel: LLM provider, undecrypted
+                           │ governed: TLS-terminated, relayed to the broker
+                           ▼   (/_facade/proxy/https://<host>/…, cit_ bearer)
+                        internet / the broker via the relay socket
+```
+
+- **The agent reaches Jentic and the egress proxy, nothing else.** It shares
+  the loopback container's network namespace: `lo` plus a per-session
+  `internal` network with no gateway, whose only other member is the egress
+  proxy (none with `--container-egress none`). The loopback forwards Jentic's ports
+  over unix sockets to the relay; the socket volume is never mounted in the
+  agent. Bytes pass unchanged, so `Host: 127.0.0.1:8000` and token audiences
+  match. The loopback listens before the agent starts; if a bridge container
+  stops, the CLI ends the session rather than leave the ports free to take.
+- **Egress is a seam.** An egress mode adds sidecars to the internal network
+  (and networks of their own), plus environment and read-only mounts for the
+  agent, and must report ready before the agent is created. `none` adds
+  nothing. `proxy` (the default) adds the egress proxy below.
+- **The agent container** runs as an unprivileged uid under Docker's init, with
+  `--cap-drop ALL`, `no-new-privileges`, a read-only root (tmpfs `/tmp`) and
+  no Docker socket. A spec that mounts one is refused before Docker is called.
+- **Its home** is a per-session volume, seeded before start with the exported
+  context (as on the agent-user path) and a generated Claude Code config. The
+  operator's settings are copied only on opt-in, allowlisted key by key: no
+  hooks, helpers, `env`, plugins, credentials or login state.
+- **Teardown** removes every object carrying the session label, on exit,
+  Ctrl-C and SIGTERM. Each client holds a lock file for its session; the
+  kernel releases it when the client dies, so the next run removes sessions
+  whose lock is free (SIGKILL, a crash). It only removes the sessions of the
+  same uid and host.
+
+Preflight fails closed (`CONFINEMENT_UNAVAILABLE`) when Docker is unreachable,
+an image is missing, the context is not on the host's loopback, or the session
+is file-less.
+
+### The egress proxy (`--container-egress proxy`)
+
+The proxy (`cli/internal/localagent/egressproxy`, the `jentic-egress-proxy`
+binary in `jentic-run-proxy:local`) is the only TLS interception the CLI ships,
+and only while every condition below holds; if one cannot be met the session
+does not start.
+
+- **Its own container.** Unprivileged uid, `--cap-drop ALL`,
+  `no-new-privileges`, read-only root. It joins the session's internal
+  network and a per-session egress network of its own; the agent joins only
+  the internal one. It reaches the broker through the relay's unix socket,
+  with the context's broker URL as `Host`. The agent cannot see its processes
+  or files: separate PID namespace, and the agent mounts neither its token
+  tmpfs nor the relay's socket volume.
+- **Per-CONNECT policy, in order.** A host on the agent's tunnel allowlist
+  (the agent descriptor's `ContainerTunnel`, plus a selected alternative
+  provider's hosts) is spliced through undecrypted, even when it falls inside
+  a governed domain (Bedrock under `amazonaws.com`). A host at or below a
+  governed domain is TLS-terminated. Anything else, an IP literal, a port
+  other than 443, and plain-HTTP proxying are refused with 403 and logged.
+  A tunnel never connects to a loopback, private or link-local address.
+- **Governed domains** are those of the vendors whose CLI facade the
+  deployment serves (`GET /cli-facades`) and the proxy can govern: GitHub
+  (`github.com`), Cloudflare (`api.cloudflare.com`), AWS (`amazonaws.com`).
+- **Per-session, in-memory, name-constrained CA.** ECDSA P-256, generated at
+  start, its key held only in the proxy's memory. `pathlen:0`, critical
+  `nameConstraints` permitting exactly the governed domains and excluding
+  `0.0.0.0/0` and `::/0` (a DNS-only constraint would still let it sign
+  IP-address certificates that Go and macOS accept). No governed vendor, no
+  CA. Leaves are minted per host on demand: SAN, SKI/AKI, `serverAuth`, 24 h
+  validity, accepted by Python 3.13's strict mode, OpenSSL, GnuTLS, Go and
+  Node. The proxy refuses to present a leaf for a host outside the
+  constraints, and the TLS server name must match the CONNECT host.
+- **Published read-only, never installed.** Only `ca.pem`, `bundle.pem`
+  (system roots + CA) and a `ready` file go to the session's CA volume, which
+  the agent mounts read-only and reaches through per-process variables
+  (`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`,
+  `GIT_SSL_CAINFO`, `AWS_CA_BUNDLE`, `CURL_CA_BUNDLE`). The `ready` file
+  carries the session's random readiness nonce and the digests of both
+  certificate files; the session waits for it, and refuses a CA published
+  for another nonce, before it creates the agent.
+- **No vendor credential in the agent.** Each governed request goes to
+  `<broker>/_facade/proxy/https://<host><path>?<query>` (raw path and query
+  kept) with `Authorization: Bearer <cit_ token>`. The broker matches the URL
+  to the token's vendor, applies the agent's rules, injects the credential
+  and records the call under the token's trace. The proxy drops hop-by-hop
+  headers, the client's `Authorization`, `Proxy-Authorization` and cookies,
+  forwarding headers, and any header carrying a `cit_` token. Bodies stream
+  both ways (chunked uploads, large downloads) over kept-alive connections.
+- **Tokens.** The host-side CLI mints one token per governed vendor at session
+  start (`command_title` `session`) with the agent's own access token, renews
+  it at a third of its lifetime, replaces it before its hard cap (handing the
+  proxy the new one before revoking the old) and revokes all of them at
+  teardown. They reach the proxy over `docker exec` stdin, onto a tmpfs only
+  the proxy mounts; never argv, environment or a volume. A failed mint
+  refuses the session. A command can use its own token through Basic proxy
+  credentials (`HTTPS_PROXY=http://<cit_ token>:x@…`), which take precedence;
+  with no usable token the proxy answers `407` with `Proxy-Authenticate` on
+  the same connection. The agent's git gets `GIT_HTTP_PROXY_AUTHMETHOD=basic`
+  so it sends a command's proxy credentials up front instead of waiting for a
+  407 the session token would never trigger.
+- **Vendor-shaped errors.** The broker's proxy route renders its errors in
+  the shape of the URL's vendor (GitHub's for `*.github.com`, Cloudflare's for
+  `*.cloudflare.com`, Problem Details otherwise); the proxy's own errors
+  inside a governed session (the broker unreachable) use the same shapes.
+- **git to github.com goes through the governed git pipeline.** On
+  `github.com` itself the proxy relays only git smart HTTP:
+  `GET /<owner>/<repo>[.git]/info/refs?service=git-upload-pack|git-receive-pack`
+  and `POST /<owner>/<repo>[.git]/git-upload-pack|git-receive-pack`, with the
+  path exactly as sent. They take the same route and token as any governed
+  call; the broker serves them through its git pipeline, which checks the
+  binding's git rules per repository and ref before it decrypts the
+  credential, and injects it as git's Basic auth toward GitHub
+  (see [Governed git](../../architecture/broker-execution.md#governed-git)).
+  git inside the container needs no credential helper and no `insteadOf`: it
+  talks to the real `https://github.com/…` URL through `HTTPS_PROXY` and the
+  session CA. It runs with `GIT_TERMINAL_PROMPT=0`, and it never meets a
+  credential challenge: the client's own `Authorization` is dropped, the proxy
+  injects the invocation token on every request, and a broker 401 to git (a
+  refused or expired token) is passed on as a 403 without
+  `WWW-Authenticate`, so git prints the broker's line and stops instead of
+  asking for a credential. Both bodies stream (a large push stays chunked;
+  gzip bodies pass through untouched); the broker applies the size and time
+  limits (`cli_facades.git`). Everything else on `github.com` (web pages, the
+  OAuth endpoints, dumb HTTP, `git-upload-archive`, Git LFS), and any
+  git-shaped path on another governed host, is refused with a 403 whose text
+  git and curl print, and is never relayed.
+
+### Sharing the operator's provider login (`--container-share-provider-credentials`)
+
+An opt-in for local testing, off by default, that deliberately breaks the
+rule that no operator credential enters the agent: the agent gets the
+operator's own LLM-provider session and can use it directly, outside Jentic.
+`jentic run` prints a warning on stderr and asks for confirmation (`--yes`
+skips it; without a terminal and without `--yes` it refuses with
+`INTERACTIVE_CONFIRM_BLOCKED`). What it shares is bounded:
+
+- **Mounts, read-only binds only:** `~/.aws` at `/home/agent/.aws` for
+  Bedrock; `~/.config/gcloud` at `/home/agent/.config/gcloud` and a
+  `GOOGLE_APPLICATION_CREDENTIALS` file at
+  `/run/jentic-provider/google-application-credentials.json` for Vertex;
+  nothing for the Anthropic API. Each source is resolved first and refused
+  if it leaves the operator's home, is the home itself, contains a sensitive
+  dir, or lands in a sensitive dir other than its own (a `~/.aws` symlinked
+  to `~/.ssh`). The plan refuses any provider mount that is writable or
+  targets another path.
+- **Environment, filtered:** only the provider selection, profile, region,
+  model and output-limit variables (from the operator's
+  `~/.claude/settings.json` env block and the process environment), and for
+  the Anthropic API `ANTHROPIC_API_KEY` from the process environment only.
+  They are written to the agent's `~/.claude/settings.json` env block in the
+  session volume, never to `docker` argv. Hooks, `awsAuthRefresh` and the
+  other helpers are never copied.
+- **Egress unchanged:** the provider's tunnel hosts are chosen from the
+  shared environment (Bedrock runtime and the IAM Identity Center OIDC and
+  portal hosts for Bedrock); every other AWS host, `sts.*` included, stays
+  governed through the broker.
+
 ## `jentic reset` — tear down the account and this machine's identity state
 
 Onboarding (`setup`/`wizard`) and `jentic run` accumulate real system state on

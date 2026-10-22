@@ -86,6 +86,7 @@ export function RuleListEditor({
 	requestedRules,
 	emptyStateContent,
 	addActions,
+	canAdd = true,
 	className,
 }: {
 	rules: readonly PermissionRule[];
@@ -110,6 +111,11 @@ export function RuleListEditor({
 	 * same row as "Add rule" — inside the empty panel while there are no rules.
 	 */
 	addActions?: ReactNode;
+	/**
+	 * Whether "Add rule" is offered. Off where the rules are not path rules
+	 * (GraphQL, git), which this form does not author.
+	 */
+	canAdd?: boolean;
 	className?: string;
 }) {
 	const [editingIndex, setEditingIndex] = useState<number | null>(null);
@@ -151,17 +157,19 @@ export function RuleListEditor({
 	// the empty panel, so the next step is where the eye already is.
 	const actionRow = (
 		<div className="flex flex-wrap items-center gap-2">
-			<Button
-				type="button"
-				variant="secondary"
-				size="sm"
-				onClick={(): void => setAdding(true)}
-				disabled={editingIndex !== null}
-				data-rule-add=""
-			>
-				<Plus className="h-4 w-4" aria-hidden="true" />
-				Add rule
-			</Button>
+			{canAdd && (
+				<Button
+					type="button"
+					variant="secondary"
+					size="sm"
+					onClick={(): void => setAdding(true)}
+					disabled={editingIndex !== null}
+					data-rule-add=""
+				>
+					<Plus className="h-4 w-4" aria-hidden="true" />
+					Add rule
+				</Button>
+			)}
 			{addActions}
 		</div>
 	);
@@ -228,7 +236,7 @@ export function RuleListEditor({
 					pathSuggestions={pathSuggestions}
 				/>
 			) : (
-				!defaultEmpty && actionRow
+				!defaultEmpty && (canAdd || addActions != null) && actionRow
 			)}
 		</div>
 	);
@@ -525,6 +533,8 @@ interface RuleDraft {
 	operations?: string[] | null;
 	/** Carried verbatim from the source rule — never edited here. */
 	comment?: string | null;
+	/** Carried verbatim from the source rule — never edited here. */
+	apiRole?: PermissionRule['api_role'];
 }
 
 /** Every effect the editor offers, in the order the effect picker shows them. */
@@ -566,6 +576,7 @@ function ruleDraftFromRule(rule: PermissionRule): RuleDraft {
 		matchMode: (rule.match_mode ?? (rule.path ? 'regex' : 'prefix')) as RuleDraft['matchMode'],
 		operations: rule.operations,
 		comment: rule.comment,
+		apiRole: rule.api_role,
 	};
 }
 
@@ -583,6 +594,7 @@ function ruleFromDraft(draft: RuleDraft): PermissionRule {
 	// shape and the "requested by agent" JSON-identity check stays exact.
 	if (draft.operations !== undefined) rule.operations = draft.operations;
 	if (draft.comment !== undefined) rule.comment = draft.comment;
+	if (draft.apiRole !== undefined) rule.api_role = draft.apiRole;
 	return rule;
 }
 

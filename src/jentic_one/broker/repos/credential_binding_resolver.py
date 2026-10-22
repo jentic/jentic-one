@@ -20,6 +20,7 @@ from jentic_one.shared.broker.protocols import (
     CredentialDerivation,
     IdentityMismatch,
 )
+from jentic_one.shared.cli_profiles import declaring_profile
 from jentic_one.shared.db import DatabaseSession
 from jentic_one.shared.models.api_identity import (
     CredentialScope,
@@ -65,10 +66,10 @@ _COVERING_CREDENTIALS = text(
 # credential, and rows are ordered so the "closest miss" choice is
 # deterministic across backends.
 _CREDENTIAL_IDENTITIES = text(
-    "SELECT DISTINCT c.api_vendor, c.api_name, c.api_version "
+    "SELECT DISTINCT c.api_vendor, c.api_name, c.api_version, c.cli_profile "
     "FROM credentials c "
     "WHERE c.id IN :credential_ids AND c.active "
-    "ORDER BY c.api_vendor, c.api_name, c.api_version"
+    "ORDER BY c.api_vendor, c.api_name, c.api_version, c.cli_profile"
 ).bindparams(bindparam("credential_ids", expanding=True))
 
 # control DB — whether any of the agent's suspended-binding credentials covers
@@ -128,7 +129,12 @@ class CredentialBindingResolver:
             covering_rows = (
                 await session.execute(
                     _COVERING_CREDENTIALS,
-                    {"vendor": vendor, "name": name, "version": version},
+                    {
+                        "vendor": vendor,
+                        "name": name,
+                        "version": version,
+                        "cli_profile": declaring_profile(vendor, name, version),
+                    },
                 )
             ).all()
         covering_ids = {row[0] for row in covering_rows}
@@ -179,6 +185,7 @@ class CredentialBindingResolver:
                         "vendor": vendor,
                         "name": name,
                         "version": version,
+                        "cli_profile": declaring_profile(vendor, name, version),
                     },
                 )
             ).first()
@@ -209,13 +216,24 @@ class CredentialBindingResolver:
             return None
 
         expected_vendor_slug = slugify_api_field(vendor)
+        declared_by = declaring_profile(vendor, name, version)
         best: IdentityMismatch | None = None
         best_rank: tuple[int, int] = (-1, -1)
         for row in rows:
             scope = canonical_credential_scope(
-                vendor=row.api_vendor, name=row.api_name, version=row.api_version
+                vendor=row.api_vendor,
+                name=row.api_name,
+                version=row.api_version,
+                cli_profile=row.cli_profile,
             )
-            would_match = credential_covers(scope, vendor=vendor, name=name, version=version)
+            if scope.cli_profile is not None:
+                # A profile credential covers its profile's declared APIs
+                # only; one that misses this API is no identity mismatch to
+                # fix (the API is outside the profile), so it is not named.
+                continue
+            would_match = credential_covers(
+                scope, vendor=vendor, name=name, version=version, declared_by=declared_by
+            )
             if scope.vendor != expected_vendor_slug and not would_match:
                 continue
             rank = (

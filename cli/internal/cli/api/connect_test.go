@@ -862,3 +862,61 @@ func TestConnect_AuthTypeRequiredListsOptions(t *testing.T) {
 		t.Errorf("details.options = %v, want both declared schemes", coded.Details["options"])
 	}
 }
+
+func TestConnect_PresetRidesTheWireAndTheConcreteRulesAreShown(t *testing.T) {
+	withXDG(t)
+	var seen []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"session_id":"cs_p","approval_url":"https://one.example/c/p","poll_token":"pt",
+			"resolved_flow":"device_authorization","requested_permission_rules":[
+			{"effect":"allow","match_mode":"git","path":"push:octo-org/app:refs/heads/agent/*"}]}`))
+	}))
+	defer srv.Close()
+
+	out, err := runConnectTree(t, srv.URL, "connect", "github-git", "--preset", "push_branches",
+		"--preset-param", "repo=octo-org/app", "--preset-param", "repo=octo-org/lib",
+		"--preset-param", "branches=agent/*")
+	if err != nil {
+		t.Fatalf("connect --preset: %v\n%s", err, out)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(seen, &wire); err != nil {
+		t.Fatalf("decode wire body: %v", err)
+	}
+	params, _ := wire["preset_params"].(map[string]any)
+	if wire["preset"] != "push_branches" || params["repo"] != "octo-org/app,octo-org/lib" || params["branches"] != "agent/*" {
+		t.Errorf("wire body = %v, want the preset and its params (repeated repo joined)", wire)
+	}
+	if !strings.Contains(out, "push:octo-org/app:refs/heads/agent/*") {
+		t.Errorf("the expanded rules are not shown\n---\n%s", out)
+	}
+}
+
+func TestConnect_PresetParamWithoutPresetIsArgumentError(t *testing.T) {
+	withXDG(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("no request should reach the server")
+	}))
+	defer srv.Close()
+	for _, args := range [][]string{
+		{"connect", "github", "--preset-param", "repo=o/r"},
+		{"connect", "github", "--preset", "read_only", "--preset-param", "repo"},
+	} {
+		if _, err := runConnectTree(t, srv.URL, args...); err == nil {
+			t.Errorf("%v: want an argument error", args)
+		}
+	}
+}
+
+func TestParsePresetParams(t *testing.T) {
+	got, err := parsePresetParams([]string{"repo=a/b", "repo=c/d", "force=true"})
+	if err != nil || got["repo"] != "a/b,c/d" || got["force"] != "true" {
+		t.Fatalf("parsePresetParams = %v, %v", got, err)
+	}
+	if _, err := parsePresetParams([]string{"=x"}); err == nil {
+		t.Error("an empty name must be refused")
+	}
+}

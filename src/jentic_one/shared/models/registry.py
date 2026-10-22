@@ -75,6 +75,9 @@ class RevisionOrigin(StrEnum):
     OVERLAY = "overlay"
     CATALOG = "catalog"
     UPLOADED = "uploaded"
+    #: A spec shipped in a CLI profile (``shared/cli_profiles``), imported and
+    #: made live by profile provisioning.
+    CLI_PROFILE = "cli_profile"
 
 
 #: Revision ``origin`` marker for a spec produced by materializing a confirmed overlay.

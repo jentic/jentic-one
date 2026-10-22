@@ -28,6 +28,7 @@ from typing import Any
 from sqlalchemy import bindparam, delete, func, inspect, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
 from jentic_one.shared.auth.permission_catalog import (
@@ -413,6 +414,8 @@ class ServiceAccountMigrationRepository:
         """
         query = (
             select(AgentPermissionRule)
+            # Service-account rules predate API roles; the column may not exist yet.
+            .options(defer(AgentPermissionRule.api_role))
             .where(AgentPermissionRule.agent_id == service_account_id)
             .order_by(AgentPermissionRule.credential_id, AgentPermissionRule.sequence)
         )

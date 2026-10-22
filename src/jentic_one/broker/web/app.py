@@ -16,6 +16,7 @@ from opentelemetry.metrics import CallbackOptions, Observation
 
 from jentic_one.broker.adapters.http_client import HttpClientProvider
 from jentic_one.broker.adapters.runners.circuit import CircuitBreakerRunner
+from jentic_one.broker.adapters.runners.git import GitUpstream
 from jentic_one.broker.adapters.runners.http import HttpRunner
 from jentic_one.broker.adapters.runners.registry import RunnerRegistry
 from jentic_one.broker.adapters.runners.sigv4 import SigV4SigningRunner
@@ -31,7 +32,7 @@ from jentic_one.broker.services.idempotency import SharedStateIdempotencyStore
 from jentic_one.broker.web.errors import install_broker_error_handlers
 from jentic_one.broker.web.middleware import AdmissionControlMiddleware, _AdmissionGate
 from jentic_one.broker.web.readiness import make_readiness_router
-from jentic_one.broker.web.routers import execute
+from jentic_one.broker.web.routers import execute, facades
 from jentic_one.shared.broker.execution import UpstreamRunner
 from jentic_one.shared.context import Context
 from jentic_one.shared.metrics import get_meter
@@ -45,7 +46,11 @@ from jentic_one.shared.web.health import make_health_router
 def _routers(*, readiness_saturation_threshold: float) -> list[tuple[APIRouter, str, list[str]]]:
     # Order matters: the health router (and the /metrics mount + /docs added by
     # create_surface_app) must be registered before the catch-all so a request to
-    # /health is never swallowed by /{upstream_url:path}.
+    # /health is never swallowed by /{upstream_url:path}. The CLI facades come
+    # before it too, each vendor's router ahead of the reserved-prefix 404 router.
+    # The GitHub facade's host-wide 404 router is a root catch-all, so the app
+    # factory includes it last, with the forward proxy; listing it first keeps it
+    # ahead of the proxy.
     return [
         (make_health_router("broker"), "", ["broker"]),
         (
@@ -53,6 +58,12 @@ def _routers(*, readiness_saturation_threshold: float) -> list[tuple[APIRouter, 
             "",
             ["broker"],
         ),
+        (facades.github_router, "", ["broker"]),
+        (facades.cloudflare_router, "", ["broker"]),
+        (facades.git_proxy_router, "", ["broker"]),
+        (facades.proxy_router, "", ["broker"]),
+        (facades.reserved_router, "", ["broker"]),
+        (facades.github_not_found_router, "", ["broker"]),
         (execute.router, "", ["broker"]),
     ]
 
@@ -82,6 +93,9 @@ def create_app(ctx: Context, container: AppContainer | None = None) -> FastAPI:
         # sync handler (via get_http_runner) and worker share.
         provider = HttpClientProvider(upstream_cfg, ctx.config.broker.egress)
         app.state.broker_http_client = provider.client
+        # The governed git pipeline streams over the same bounded client, to the
+        # fixed github.com upstream (redirects are never followed).
+        app.state.broker_git_upstream = GitUpstream(provider.client)
 
         # Distributed tracing continues *into* the upstream: instrument the shared
         # client so every outbound request carries W3C traceparent/tracestate

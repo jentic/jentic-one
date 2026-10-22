@@ -25,6 +25,7 @@ from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredenti
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.core.schema.authorization_codes import AuthorizationCode
+from jentic_one.admin.core.schema.cli_invocations import CliInvocation
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.admin.core.schema.held_executions import HeldExecution
@@ -34,6 +35,7 @@ from jentic_one.admin.core.schema.refresh_tokens import RefreshToken
 from jentic_one.admin.repos import (
     AgentCredentialBindingRepository,
     AgentRepository,
+    CliInvocationRepository,
     EventRepository,
     ExecutionRecordRepository,
     JobRepository,
@@ -154,6 +156,7 @@ async def purge_env(
             )
         )
         await session.execute(delete(ExecutionRecord).where(ExecutionRecord.actor_id.in_(ids)))
+        await session.execute(delete(CliInvocation).where(CliInvocation.actor_id.in_(ids)))
         await session.execute(delete(Job).where(Job.created_by.in_(ids)))
         await session.execute(
             delete(AuditEntry).where(
@@ -205,6 +208,20 @@ async def _seed_agent_footprint(ctx: Context, env: _Fixture, agent_id: str) -> _
             created_by=seeds.SEED_MARKER,
             actor_id=agent_id,
             actor_type="agent",
+        )
+        now = datetime.now(UTC)
+        await CliInvocationRepository.create(
+            session,
+            token_hash=f"cit-{agent_id}"[:64],
+            parent_token_hash=f"at-{agent_id}"[:64],
+            actor_id=agent_id,
+            actor_type="agent",
+            vendor="github",
+            credential_name=None,
+            trace_id="0" * 32,
+            command_title=None,
+            expires_at=now + timedelta(minutes=10),
+            hard_expires_at=now + timedelta(hours=1),
         )
         jobs = {}
         for status in (JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.COMPLETED):
@@ -306,6 +323,12 @@ async def _swept(ctx: Context, agent_id: str, seeded: _Seeded) -> dict[str, int]
         counts["refresh_tokens"] = await _count(
             session,
             select(func.count()).select_from(RefreshToken).where(RefreshToken.actor_id == agent_id),
+        )
+        counts["cli_invocations"] = await _count(
+            session,
+            select(func.count())
+            .select_from(CliInvocation)
+            .where(CliInvocation.actor_id == agent_id),
         )
         counts["bindings"] = await _count(
             session,

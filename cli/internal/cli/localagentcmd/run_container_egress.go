@@ -1,0 +1,341 @@
+package localagentcmd
+
+// run_container_egress.go wires the "proxy" egress of `jentic run --container`:
+// which vendors the session governs (the CLI facades the deployment serves),
+// which hosts the agent tunnels (its descriptor's allowlist plus the
+// operator's provider), and the session's invocation tokens, minted, renewed
+// and revoked here with the agent's own credentials.
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"slices"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/jentic/jentic-one/cli/client/auth"
+	"github.com/jentic/jentic-one/cli/client/generated/control"
+	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
+	"github.com/jentic/jentic-one/cli/internal/localagent"
+	"github.com/jentic/jentic-one/cli/internal/localagent/container"
+	"github.com/jentic/jentic-one/cli/internal/localagent/egressproxy"
+)
+
+// sessionCommandTitle is the command_title of a container session's tokens:
+// every governed call the session makes without per-command proxy
+// credentials is recorded under it.
+const sessionCommandTitle = "session"
+
+// governedFacades is what GET /cli-facades says about the vendors a session
+// governs: which ones (served and governable by the proxy, sorted), what each
+// one's tools reach through Jentic (rest, graphql, git), the agent
+// environment each one's wiring sets (from its CLI profile; none from a
+// server older than CLI profiles, which leaves the proxy's defaults), and the
+// extra hosts their tools need tunnelled.
+type governedFacades struct {
+	vendors   []string
+	protocols map[string][]string
+	env       map[string]container.VendorEnv
+	tunnel    []string
+}
+
+// governedVendors reads the governed facades from GET /cli-facades. A vendor
+// whose served governed domains do not include the domain the egress proxy
+// governs for it is refused: the proxy would relay hosts the deployment does
+// not expect, or miss ones it does (a CLI and a server of different
+// releases).
+func governedVendors(ctx context.Context, client *control.ClientWithResponses) (governedFacades, error) {
+	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	resp, err := client.ListCliFacadesWithResponse(callCtx)
+	if err != nil {
+		return governedFacades{}, fmt.Errorf("list the CLI facades: %w", err)
+	}
+	if resp.JSON200 == nil {
+		return governedFacades{}, fmt.Errorf("list the CLI facades: %s", problemSummary(resp.StatusCode(), resp.Body))
+	}
+	g := governedFacades{protocols: map[string][]string{}, env: map[string]container.VendorEnv{}}
+	for _, f := range resp.JSON200.Data {
+		if !slices.Contains(container.GovernableVendors(), f.Vendor) || slices.Contains(g.vendors, f.Vendor) {
+			continue
+		}
+		if f.GovernedDomains != nil && len(*f.GovernedDomains) > 0 {
+			if domain := egressproxy.VendorDomain(f.Vendor); !slices.Contains(*f.GovernedDomains, domain) {
+				return governedFacades{}, fmt.Errorf("this Jentic governs %v for %s, but this jentic CLI's egress proxy governs %s; use matching Jentic and jentic CLI releases",
+					*f.GovernedDomains, f.Vendor, domain)
+			}
+		}
+		g.vendors = append(g.vendors, f.Vendor)
+		for _, p := range f.Protocols {
+			g.protocols[f.Vendor] = append(g.protocols[f.Vendor], string(p))
+		}
+		if c := f.Container; c != nil {
+			g.env[f.Vendor] = container.VendorEnv{Set: c.EnvSet, Strip: c.EnvStrip}
+			for _, h := range c.TunnelHosts {
+				if !slices.Contains(g.tunnel, h) {
+					g.tunnel = append(g.tunnel, h)
+				}
+			}
+		}
+	}
+	sort.Strings(g.vendors)
+	return g, nil
+}
+
+// protocolLabels are how the egress summary names what a vendor's tools
+// reach through Jentic.
+var protocolLabels = map[string]string{"rest": "REST", "graphql": "GraphQL", "git": "git"}
+
+// governedSummary names each governed vendor with what its tools reach
+// through Jentic: "github (REST, GraphQL, git), cloudflare (REST)". A vendor
+// the deployment lists no protocols for is named alone.
+func governedSummary(vendors []string, protocols map[string][]string) string {
+	parts := make([]string, 0, len(vendors))
+	for _, v := range vendors {
+		labels := make([]string, 0, len(protocols[v]))
+		for _, p := range protocols[v] {
+			if label, ok := protocolLabels[p]; ok {
+				labels = append(labels, label)
+			}
+		}
+		if len(labels) == 0 {
+			parts = append(parts, v)
+			continue
+		}
+		parts = append(parts, v+" ("+strings.Join(labels, ", ")+")")
+	}
+	return strings.Join(parts, ", ")
+}
+
+// containerTunnelHosts is the agent's tunnel allowlist for a session: its
+// descriptor's hosts plus those of every provider the operator's environment
+// selects.
+func containerTunnelHosts(desc localagent.Descriptor, getenv func(string) string) []string {
+	hosts := append([]string(nil), desc.ContainerTunnel...)
+	for _, p := range desc.ContainerProviderTunnels {
+		if !envTruthy(getenv(p.Env)) {
+			continue
+		}
+		hosts = append(hosts, p.Hosts...)
+		if p.RegionEnv != "" && p.RegionHost != "" {
+			if region := strings.ToLower(strings.TrimSpace(getenv(p.RegionEnv))); region != "" && region != "global" {
+				hosts = append(hosts, strings.ReplaceAll(p.RegionHost, "{region}", region))
+			}
+		}
+	}
+	out := hosts[:0]
+	for _, h := range hosts {
+		if !slices.Contains(out, h) {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
+func envTruthy(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// controlIssuer mints, renews and revokes the session's invocation tokens on
+// the control plane with the agent's own access token.
+type controlIssuer struct {
+	client *control.ClientWithResponses
+	// refresh re-exchanges the agent's access token before a mint, so a token
+	// is never cut short by an access token about to expire.
+	refresh func() error
+}
+
+func newControlIssuer(ctx context.Context, st *clictx.ActiveState) (*controlIssuer, error) {
+	client, err := clictx.GetControlClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	issuer := &controlIssuer{client: client, refresh: func() error { return nil }}
+	if st != nil && st.ResolvedState != nil {
+		hc, err := clictx.AuthHTTPClient(ctx, st.CACertPath)
+		if err != nil {
+			return nil, err
+		}
+		creds := auth.Credentials{
+			BaseURL: st.BaseURL, IdentityName: st.IdentityName, EnvironmentName: st.EnvironmentName,
+			InjectedBearerToken: st.InjectedBearerToken, HTTPClient: hc,
+		}
+		if auth.CanReExchange(creds) {
+			issuer.refresh = func() error {
+				_, err := auth.RefreshBearerToken(creds)
+				return err
+			}
+		}
+	}
+	return issuer, nil
+}
+
+// Mint implements container.TokenIssuer.
+func (c *controlIssuer) Mint(ctx context.Context, vendor string) (container.InvocationToken, error) {
+	if err := c.refresh(); err != nil {
+		return container.InvocationToken{}, fmt.Errorf("refresh the agent's access token: %w", err)
+	}
+	title := sessionCommandTitle
+	resp, err := c.client.CreateCliInvocationWithResponse(ctx, control.CreateCliInvocationJSONRequestBody{
+		Vendor: vendor, CommandTitle: &title,
+	})
+	if err != nil {
+		return container.InvocationToken{}, err
+	}
+	if resp.JSON201 == nil {
+		reason := problemSummary(resp.StatusCode(), resp.Body)
+		switch resp.StatusCode() {
+		case http.StatusForbidden:
+			reason += " (only an agent holding capabilities:execute, signed in with its own access token rather than an API key, can mint invocation tokens)"
+		case http.StatusNotFound:
+			reason += " (the vendor's CLI facade is switched off)"
+		}
+		return container.InvocationToken{}, errors.New(reason)
+	}
+	t := resp.JSON201
+	return container.InvocationToken{ID: t.Id, Token: t.Token, ExpiresAt: t.ExpiresAt, HardExpiresAt: t.HardExpiresAt}, nil
+}
+
+// Renew implements container.TokenIssuer.
+func (c *controlIssuer) Renew(ctx context.Context, id string) (time.Time, error) {
+	resp, err := c.client.RenewCliInvocationWithResponse(ctx, id)
+	if err != nil {
+		return time.Time{}, err
+	}
+	switch {
+	case resp.JSON200 != nil:
+		return resp.JSON200.ExpiresAt, nil
+	case resp.StatusCode() == http.StatusConflict || resp.StatusCode() == http.StatusNotFound:
+		return time.Time{}, container.ErrTokenGone
+	default:
+		return time.Time{}, errors.New(problemSummary(resp.StatusCode(), resp.Body))
+	}
+}
+
+// Revoke implements container.TokenIssuer.
+func (c *controlIssuer) Revoke(ctx context.Context, id string) error {
+	resp, err := c.client.RevokeCliInvocationWithResponse(ctx, id)
+	if err != nil {
+		return err
+	}
+	if code := resp.StatusCode(); code < 200 || code > 299 {
+		if code == http.StatusNotFound || code == http.StatusConflict {
+			return nil // already gone
+		}
+		return errors.New(problemSummary(code, resp.Body))
+	}
+	return nil
+}
+
+// problemSummary is "HTTP <status>: <detail>" for a control-plane error
+// response, the detail read from its Problem Details body when there is one.
+func problemSummary(status int, body []byte) string {
+	var p struct {
+		Detail string `json:"detail"`
+		Title  string `json:"title"`
+	}
+	msg := "HTTP " + strconv.Itoa(status)
+	if json.Unmarshal(body, &p) == nil {
+		if p.Detail != "" {
+			return msg + ": " + p.Detail
+		}
+		if p.Title != "" {
+			return msg + ": " + p.Title
+		}
+	}
+	return msg
+}
+
+// proxyEgressSetup is the proxy egress for a session plus the token keeper
+// behind it; Close revokes the tokens.
+type proxyEgressSetup struct {
+	egress *container.ProxyEgress
+	keeper *container.TokenKeeper
+	// protocols is what each governed vendor's tools reach through Jentic.
+	protocols map[string][]string
+}
+
+// Close revokes the session's tokens.
+func (s *proxyEgressSetup) Close(ctx context.Context) error {
+	if s.keeper == nil {
+		return nil
+	}
+	return s.keeper.Close(ctx)
+}
+
+// setUpProxyEgress decides what the session governs and tunnels, and mints
+// its tokens. getenv answers the provider selection the tunnel allowlist
+// reads (containerTunnelHosts). It fails closed: any step that cannot
+// complete refuses the session, with every token minted so far revoked.
+func setUpProxyEgress(ctx context.Context, st *clictx.ActiveState, desc localagent.Descriptor, image string, getenv func(string) string) (*proxyEgressSetup, error) {
+	brokerURL := st.BrokerURL
+	if brokerURL == "" {
+		brokerURL = "http://127.0.0.1:" + strconv.Itoa(defaultBrokerPort)
+	}
+	if !strings.HasPrefix(brokerURL, "http://") {
+		return nil, containerUnavailableErr(
+			"the egress proxy reaches the broker over plain HTTP on the host's loopback; the context's broker URL is "+brokerURL,
+			"Use a context on a local Jentic served over http://127.0.0.1, or run with --container-egress none.")
+	}
+	brokerPort, err := loopbackPort(brokerURL)
+	if err != nil {
+		return nil, containerUnavailableErr(fmt.Sprintf("the context's broker URL %q: %v", brokerURL, err), "")
+	}
+	issuer, err := newControlIssuer(ctx, st)
+	if err != nil {
+		return nil, err
+	}
+	governed, err := governedVendors(ctx, issuer.client)
+	if err != nil {
+		return nil, containerUnavailableErr(
+			fmt.Sprintf("could not learn which vendor CLIs this Jentic governs: %v", err),
+			"Check that Jentic is reachable (jentic doctor), or run with --container-egress none.")
+	}
+	vendors := governed.vendors
+	setup := &proxyEgressSetup{protocols: governed.protocols}
+	tokens := func() map[string]string { return map[string]string{} }
+	if len(vendors) > 0 {
+		keeper, err := container.MintSessionTokens(ctx, issuer, vendors)
+		if err != nil {
+			return nil, containerUnavailableErr(fmt.Sprintf("could not mint the session's invocation tokens: %v", err),
+				"Run as an agent identity that holds capabilities:execute, or run with --container-egress none.")
+		}
+		setup.keeper = keeper
+		tokens = keeper.Tokens
+	}
+	nonce, err := container.NewNonce()
+	if err != nil {
+		_ = setup.Close(ctx)
+		return nil, err
+	}
+	setup.egress = &container.ProxyEgress{
+		Image:      image,
+		Vendors:    vendors,
+		Tunnel:     appendNew(containerTunnelHosts(desc, getenv), governed.tunnel...),
+		VendorEnv:  governed.env,
+		BrokerURL:  strings.TrimRight(brokerURL, "/"),
+		BrokerPort: brokerPort,
+		Nonce:      nonce,
+		Tokens:     tokens,
+	}
+	return setup, nil
+}
+
+// appendNew appends each of more not already in hosts.
+func appendNew(hosts []string, more ...string) []string {
+	for _, h := range more {
+		if !slices.Contains(hosts, h) {
+			hosts = append(hosts, h)
+		}
+	}
+	return hosts
+}

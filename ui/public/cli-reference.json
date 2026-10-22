@@ -1659,7 +1659,7 @@
           "path": "jentic connect",
           "use": "connect [\u003cvendor\u003e] [--api \u003cvendor/name/version\u003e]",
           "short": "Start connecting a credential for a vendor or a registry API (a human approves it)",
-          "long": "connect starts a connect session and prints the approval_url. Name a verified\nvendor from the deployment's vendor registry (e.g. `jentic connect github`), or\nany registry API with --api \u003cvendor/name/version\u003e (where the deployment takes\nAPI connect requests): its spec decides the credential — pass --auth-type when\nit declares several schemes — and --rules proposes the permission rules you need.\nRelay the URL to your human operator: they approve the connection (or enter the\nAPI key) in the browser — this command never completes an approval by itself.\nOnce they confirm, check your new binding with `jentic whoami` and retry the\ncall that was blocked. --wait polls the session until it connects or ends\n(rejected, expired, or cancelled), printing the approval_url and heartbeats\non stderr and a single JSON result on stdout. A session a human finishes by\nentering a credential can take hours: --wait returns at once for it unless\n--timeout is set — relay the URL, end your turn, and retry later.\nWhen several shared OAuth apps serve the vendor, the error lists them\n(details.candidates): ask your user which one to use and re-run with\n--registration \u003cregistration_id\u003e. Choosing the app is your user's call.",
+          "long": "connect starts a connect session and prints the approval_url. Name a verified\nvendor from the deployment's vendor registry (e.g. `jentic connect github`), or\nany registry API with --api \u003cvendor/name/version\u003e (where the deployment takes\nAPI connect requests): its spec decides the credential — pass --auth-type when\nit declares several schemes — and --rules proposes the permission rules you need.\nFor a vendor CLI's API (`jentic connect github`, `github-graphql`, `github-git`),\n--preset \u003cname\u003e asks for a named rule preset of its CLI profile instead (see\nGET /cli-profiles), filled in with --preset-param name=value (e.g. repo=octo-org/app,\nbranches='agent/*'); Jentic expands it into concrete rules for that API, which the\napprover reviews and the result lists under requested_permission_rules.\nRelay the URL to your human operator: they approve the connection (or enter the\nAPI key) in the browser — this command never completes an approval by itself.\nOnce they confirm, check your new binding with `jentic whoami` and retry the\ncall that was blocked. --wait polls the session until it connects or ends\n(rejected, expired, or cancelled), printing the approval_url and heartbeats\non stderr and a single JSON result on stdout. A session a human finishes by\nentering a credential can take hours: --wait returns at once for it unless\n--timeout is set — relay the URL, end your turn, and retry later.\nWhen several shared OAuth apps serve the vendor, the error lists them\n(details.candidates): ask your user which one to use and re-run with\n--registration \u003cregistration_id\u003e. Choosing the app is your user's call.",
           "group_title": "APIs",
           "flags": [
             {
@@ -1681,6 +1681,17 @@
               "name": "mode",
               "type": "string",
               "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
+            },
+            {
+              "name": "preset",
+              "type": "string",
+              "usage": "a rule preset of the target's CLI profile (read_only, read_and_prs, push_branches for GitHub), expanded server-side into concrete rules the approver reviews"
+            },
+            {
+              "name": "preset-param",
+              "type": "stringArray",
+              "default": "[]",
+              "usage": "a preset parameter as name=value (repeatable; repeating a name adds to its comma-separated list), e.g. repo=octo-org/app or branches='agent/*'"
             },
             {
               "name": "reason",
@@ -2313,6 +2324,131 @@
           ]
         },
         {
+          "name": "cf",
+          "path": "jentic cf",
+          "use": "cf [args…]",
+          "short": "Run your local `cf` through Jentic (Cloudflare, via the Broker)",
+          "long": "Runs the cf CLI installed on this machine in the current directory, with every\nargument passed through untouched, pointed at the Jentic Broker's Cloudflare facade.\nJentic injects the real Cloudflare credential per call under your rules and records\nevery call under one trace; the credential never reaches this machine.\n\ncf's stdout, stderr and exit code pass through unchanged. When the command\nfails, or cannot run, one `jentic: {\"directive\": …}` line on stderr says what\nJentic saw and what to do next.\n\nSet JENTIC_CREDENTIAL=\u003cname\u003e to pick a credential when you hold several for Cloudflare.",
+          "example": "  jentic cf zones list\n  JENTIC_CREDENTIAL=prod jentic cf zones list",
+          "group_title": "Find and run operations",
+          "flags": [
+            {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            }
+          ]
+        },
+        {
+          "name": "cli",
+          "path": "jentic cli",
+          "use": "cli",
+          "short": "Vendor CLIs (cf, …) you can run through Jentic",
+          "long": "Vendor CLIs installed on this machine can run through the Jentic Broker: the\nvendor credential stays in Jentic, and every call is checked against your rules\nand recorded. `jentic cli list` shows which ones this deployment serves;\n`jentic cf …` (or `jentic cli run cf -- …`) runs one.",
+          "group_title": "Find and run operations",
+          "flags": [
+            {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            }
+          ],
+          "subcommands": [
+            {
+              "name": "list",
+              "path": "jentic cli list",
+              "use": "list",
+              "short": "List the vendor CLIs this deployment serves, and their facade addresses",
+              "long": "list answers with the vendor CLI facades the Broker serves (GET /cli-facades):\nfor each vendor, the CLI, its addressing mode, the address the wrapper points\nthe CLI at, and what the vendor's tools reach through Jentic (protocols: rest,\ngraphql, and git for git clone/fetch/push to github.com from `jentic run\n--container`). A vendor missing here cannot be run through Jentic on this\ndeployment. Whether you hold a credential for it is checked per call.",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                }
+              ]
+            },
+            {
+              "name": "run",
+              "path": "jentic cli run",
+              "use": "run \u003ccli\u003e [--] [args…]",
+              "short": "Run a vendor CLI through Jentic (`jentic cli run cf -- zones list`)",
+              "long": "run is the generic form of `jentic \u003ccli\u003e`: `jentic cli run cf -- zones list` is\n`jentic cf zones list`. Everything after \u003ccli\u003e (and an optional `--`) is passed\nto the vendor CLI untouched. \u003ccli\u003e is any CLI `jentic cli list` shows: the\ndeployment serves how each one is wired (from its CLI profile).",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                }
+              ]
+            },
+            {
+              "name": "profiles",
+              "path": "jentic cli profiles",
+              "use": "profiles",
+              "short": "List the vendor CLI profiles: their APIs, connect keys and rule presets",
+              "long": "profiles answers with the CLI profiles this Jentic ships (GET /cli-profiles): for\neach vendor CLI, the APIs it reaches (REST, GraphQL, git) with the `jentic connect`\nkey of each and whether it is live, and the rule presets `jentic connect --preset`\ntakes, with their parameters (--preset-param name=value).",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                }
+              ]
+            }
+          ]
+        },
+        {
           "name": "skill",
           "path": "jentic skill",
           "use": "skill",
@@ -2581,7 +2717,7 @@
           "path": "jentic run",
           "use": "run \u003cagent\u003e [path] [-- \u003cagent-args\u003e...]",
           "short": "Launch a coding agent as its own isolated Unix user",
-          "long": "run launches a coding agent under a dedicated, unprivileged OS account\ndistinct from the operator's login user, so a compromised or prompt-injected\nagent cannot read the operator's keys, browser session, or the jentic-one\ncredential store. It provisions the agent's binary for that account if\nmissing, resolves filesystem access to the working directory (granting a\nscoped ACL only when the operator confirms), and starts the session as\nthe agent's own Unix user in a fresh login shell, so the operator's\nenvironment and secrets are not inherited by the agent.\n\nRunnable agents: claude, codex, cursor, hermes.\n(\"generic\" is a skill-only operator — it has no binary and cannot be run;\nuse `jentic skill` to write its onboarding docs instead.)\n\nArguments for the agent binary are forwarded verbatim, in either form:\n  jentic run claude -- --model opus -p \"hi\"   (agent, then -- \u003cagent-args\u003e)\n  jentic run -- claude --model opus -p \"hi\"   (-- then the whole agent command)\nboth run `claude --model opus -p \"hi\"` as the agent user. In the leading-`--`\nform the first token after `--` is the agent id and there is no path argument\n(the working directory defaults to the current one); use the trailing form to\npass a path. Without any `--`, run takes at most the agent id and a path.\n\nThe agent account, its home, and the directories it has been granted are\nrecorded in the CLI's agent state (~/.config/jentic/agent-account.yaml).\nSee the security analysis in\ndocs/security/same-host/local-agent-isolation.md for the full rationale.",
+          "long": "run launches a coding agent under a dedicated, unprivileged OS account\ndistinct from the operator's login user, so a compromised or prompt-injected\nagent cannot read the operator's keys, browser session, or the jentic-one\ncredential store. It provisions the agent's binary for that account if\nmissing, resolves filesystem access to the working directory (granting a\nscoped ACL only when the operator confirms), and starts the session as\nthe agent's own Unix user in a fresh login shell, so the operator's\nenvironment and secrets are not inherited by the agent.\n\nRunnable agents: claude, codex, cursor, hermes.\n(\"generic\" is a skill-only operator — it has no binary and cannot be run;\nuse `jentic skill` to write its onboarding docs instead.)\n\nArguments for the agent binary are forwarded verbatim, in either form:\n  jentic run claude -- --model opus -p \"hi\"   (agent, then -- \u003cagent-args\u003e)\n  jentic run -- claude --model opus -p \"hi\"   (-- then the whole agent command)\nboth run `claude --model opus -p \"hi\"` as the agent user. In the leading-`--`\nform the first token after `--` is the agent id and there is no path argument\n(the working directory defaults to the current one); use the trailing form to\npass a path. Without any `--`, run takes at most the agent id and a path.\n\nEXPERIMENTAL: --container runs the agent in a Docker container instead: the\nworking directory is mounted at its own path, the active context is handed\nto the agent inside, and Jentic (at the context's loopback URLs) is all it can\nreach. With the only egress mode so far (none), the agent's LLM and vendor\ncalls fail. Everything the session created is removed when it ends.\n\nThe agent account, its home, and the directories it has been granted are\nrecorded in the CLI's agent state (~/.config/jentic/agent-account.yaml).\nSee the security analysis in\ndocs/security/same-host/local-agent-isolation.md for the full rationale.",
           "group_title": "Local agent client",
           "flags": [
             {
@@ -2594,6 +2730,30 @@
               "type": "bool",
               "default": "false",
               "usage": "grant the agent access to the working directory without prompting"
+            },
+            {
+              "name": "container",
+              "type": "bool",
+              "default": "false",
+              "usage": "EXPERIMENTAL: run the agent in a Docker container instead of as the agent user (the work folder is mounted; only Jentic is reachable from inside)"
+            },
+            {
+              "name": "container-egress",
+              "type": "string",
+              "default": "proxy",
+              "usage": "EXPERIMENTAL: the --container egress mode; proxy, none (proxy: the agent's LLM provider is tunnelled, governed vendor APIs go through Jentic, everything else is refused; none: the agent reaches only Jentic)"
+            },
+            {
+              "name": "container-image",
+              "type": "string",
+              "default": "jentic-run-agent:local",
+              "usage": "EXPERIMENTAL: the agent image for --container"
+            },
+            {
+              "name": "container-share-provider-credentials",
+              "type": "bool",
+              "default": "false",
+              "usage": "EXPERIMENTAL, for local testing: share your own LLM-provider login with the --container agent (~/.aws or ~/.config/gcloud mounted read-only, the provider's env, or ANTHROPIC_API_KEY); the agent can then use that identity directly, bypassing Jentic. Asks for confirmation unless --yes"
             },
             {
               "name": "context",
@@ -2858,7 +3018,7 @@
           "path": "jentic admin",
           "use": "admin",
           "short": "Administer the jentic-one platform",
-          "long": "admin groups operator-facing platform administration. Subcommands\nrequire an identity with admin privileges (e.g. org:admin).\n\n`admin config providers` manages runtime credential provider\nconfiguration (e.g. Pipedream) without hand-editing backend YAML or\nrestarting the server.",
+          "long": "admin groups operator-facing platform administration. Subcommands\nrequire an identity with admin privileges (e.g. org:admin).\n\n`admin config providers` manages runtime credential provider\nconfiguration (e.g. Pipedream) without hand-editing backend YAML or\nrestarting the server. `admin cli-profiles provision` imports the APIs\nof a vendor CLI profile.",
           "group_title": "Administration",
           "flags": [
             {
@@ -3038,6 +3198,56 @@
                           "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
                         }
                       ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "cli-profiles",
+              "path": "jentic admin cli-profiles",
+              "use": "cli-profiles",
+              "short": "Provision the APIs of a vendor CLI profile (github, cloudflare)",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                }
+              ],
+              "subcommands": [
+                {
+                  "name": "provision",
+                  "path": "jentic admin cli-profiles provision",
+                  "use": "provision \u003cprofile\u003e",
+                  "short": "Make every API a CLI profile declares exist and be live (idempotent)",
+                  "long": "provision imports a CLI profile's APIs so the vendor's CLI finds them all live:\na catalog API is imported from the public catalog (an import job; nothing when it\nis already registered), a spec shipped with Jentic (the GitHub GraphQL API) is\nimported and made live at once, and a built-in API (GitHub git) needs nothing.\nSafe to re-run. Needs catalog:import. Each API's status says what happened\n(live, imported, import_queued, builtin, not_in_catalog, failed).",
+                  "example": "  jentic admin cli-profiles provision github",
+                  "flags": [
+                    {
+                      "name": "context",
+                      "type": "string",
+                      "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                    },
+                    {
+                      "name": "mode",
+                      "type": "string",
+                      "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
+                    },
+                    {
+                      "name": "theme",
+                      "type": "string",
+                      "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
                     }
                   ]
                 }

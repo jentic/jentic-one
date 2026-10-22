@@ -252,6 +252,7 @@ def test_connect_returns_session_id_and_poll_token() -> None:
         "approval_url": "https://example.com/app/agents?approve=sess_9",
         "poll_token": "tok9",
         "resolved_flow": "authorization_code",
+        "requested_permission_rules": [],
     }
 
 

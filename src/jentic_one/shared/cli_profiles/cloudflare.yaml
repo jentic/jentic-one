@@ -1,0 +1,55 @@
+# yaml-language-server: $schema=./cli-profile.schema.json
+#
+# The Cloudflare CLI profile: `cf` through Jentic. Reference:
+# docs/reference/cli-profiles.md.
+format_version: 1
+profile: cloudflare
+display_name: Cloudflare
+cli:
+  binary: cf
+vendor:
+  id: cloudflare
+  display_name: Cloudflare
+  registry_domains: [cloudflare.com]
+  error_shape: cloudflare
+credential:
+  mode: per_api
+apis:
+  - role: rest
+    source: catalog:cloudflare.com
+    identity: {vendor: cloudflare-com, name: cloudflare-com}
+    description: The Cloudflare API v4 (api.cloudflare.com/client/v4).
+routing:
+  facade:
+    mode: path
+    routes:
+      - {api: rest, prefix: /, upstream: "https://api.cloudflare.com/client/v4"}
+  egress:
+    governed_domains: [api.cloudflare.com]
+agent:
+  wrapper:
+    # cf authenticates with the first credential it finds, CLOUDFLARE_API_TOKEN
+    # first, and takes its API base from CLOUDFLARE_API_BASE_URL. The stripped
+    # names cover cf's Access service-token pair and the legacy key/email and
+    # CF_* names older Cloudflare tooling and SDKs read.
+    env_set:
+      CLOUDFLARE_API_BASE_URL: "{address}"
+      CLOUDFLARE_API_TOKEN: "{token}"
+    env_strip:
+      - CLOUDFLARE_API_KEY
+      - CLOUDFLARE_EMAIL
+      - CLOUDFLARE_API_EMAIL
+      - CLOUDFLARE_API_USER_SERVICE_KEY
+      - CLOUDFLARE_ACCESS_CLIENT_ID
+      - CLOUDFLARE_ACCESS_CLIENT_SECRET
+      - CF_API_TOKEN
+      - CF_API_KEY
+      - CF_API_EMAIL
+      - CF_EMAIL
+      - CF_ACCESS_CLIENT_ID
+      - CF_ACCESS_CLIENT_SECRET
+presets:
+  read_only:
+    description: Read everything through the Cloudflare API (GETs only).
+    rules:
+      - {api: rest, effect: allow, methods: [GET], match_mode: prefix, path: /}

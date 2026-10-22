@@ -11,6 +11,17 @@ concrete path relative to the API's server URL, normalized by
 for a server ``https://host/{region}``). Rules are authored against the spec's
 paths, so that is the only basis on which preview and enforcement agree
 (#1424).
+
+A GraphQL request is evaluated once per top-level field: callers pass the
+field as ``graphql_field``, and only then can a ``match_mode="graphql"`` rule
+match (see ``shared.permissions.graphql_rules``).
+
+A git smart-HTTP request is evaluated once per thing it does to the
+repository (a fetch, or one ref update of a push): callers pass it as
+``git_item``. Only a ``match_mode="git"`` rule or a condition-less ``deny`` can
+match a git item, so a path rule written for the REST API of the same
+credential (``allow GET,POST .*``) never lets a push through (see
+``shared.permissions.git_rules``).
 """
 
 from __future__ import annotations
@@ -22,7 +33,22 @@ from urllib.parse import urlparse
 
 import structlog
 
-from jentic_one.shared.permissions.matching import PathMatcher
+from jentic_one.shared.permissions.api_roles import effective_api_role
+from jentic_one.shared.permissions.git_rules import (
+    GIT_MATCH_MODE,
+    GitItem,
+    GitSelector,
+)
+from jentic_one.shared.permissions.git_rules import (
+    parse_selector as parse_git_selector,
+)
+from jentic_one.shared.permissions.graphql_rules import (
+    GRAPHQL_MATCH_MODE,
+    GraphQLField,
+    GraphQLSelector,
+    parse_selector,
+)
+from jentic_one.shared.permissions.matching import PathMatcher, compile_matcher
 from jentic_one.shared.url_path import normalize_path
 
 _logger = structlog.get_logger(__name__)
@@ -70,6 +96,80 @@ class PermissionRule:
     # The rule row's primary key, so a ``require-approval`` hold can record
     # which rule held the call.
     rule_id: str | None = None
+    # A ``match_mode="graphql"`` rule's selector: the rule then matches only a
+    # GraphQL request's top-level field it covers (``path`` is ``None``).
+    graphql: GraphQLSelector | None = None
+    # A ``match_mode="git"`` rule's selector: the rule then matches only a git
+    # item it covers (``path`` is ``None``).
+    git: GitSelector | None = None
+    # The CLI-profile API role the rule applies to on a profile-scoped
+    # credential's binding: the stored role, else the one its kind implies.
+    api_role: str = "rest"
+
+
+#: A path matcher that matches nothing: the fail-closed stand-in for a stored
+#: pattern or selector that does not compile.
+_NEVER = PathMatcher(mode="regex", literal=None, pattern=None, never=True)
+
+
+def compile_rule(
+    *,
+    effect: str,
+    methods: Sequence[str] | None,
+    path: str | None,
+    match_mode: str | None,
+    operations: Sequence[str] | None,
+    rule_id: str | None = None,
+    api_role: str | None = None,
+) -> PermissionRule:
+    """Compile one stored rule row (the broker enforcer and the control dry-run share it).
+
+    A ``graphql`` or ``git`` rule's ``path`` is its selector; one that does not
+    parse compiles to a rule that never matches (fail closed), like an invalid
+    stored path pattern.
+    """
+    mode = match_mode or "regex"
+    role = effective_api_role(api_role, mode)
+    if mode == GRAPHQL_MATCH_MODE:
+        selector = parse_selector(path)
+        return PermissionRule(
+            effect=effect,
+            methods=normalize_methods(methods),
+            path=_NEVER if selector is None else None,
+            operations=tuple(operations) if operations is not None else None,
+            rule_id=rule_id,
+            graphql=selector,
+            api_role=role,
+        )
+    if mode == GIT_MATCH_MODE:
+        git_selector = parse_git_selector(path)
+        return PermissionRule(
+            effect=effect,
+            methods=normalize_methods(methods),
+            path=_NEVER if git_selector is None else None,
+            operations=tuple(operations) if operations is not None else None,
+            rule_id=rule_id,
+            git=git_selector,
+            api_role=role,
+        )
+    return PermissionRule(
+        effect=effect,
+        methods=normalize_methods(methods),
+        path=compile_matcher(path, mode),
+        operations=tuple(operations) if operations is not None else None,
+        rule_id=rule_id,
+        api_role=role,
+    )
+
+
+def rules_for_api_role(rules: Sequence[PermissionRule], api_role: str) -> list[PermissionRule]:
+    """The rules of a profile-scoped credential's binding that apply to the ``api_role`` API.
+
+    The rest are not evaluated for a request to that API at all, so a path
+    rule written for the REST API never decides a GraphQL field or a git
+    push, and an API with no rule of its own is denied by default.
+    """
+    return [rule for rule in rules if rule.api_role == api_role]
 
 
 #: Effects a rule may only carry when it constrains methods, path, or operations.
@@ -85,11 +185,42 @@ def normalize_methods(raw: Sequence[str] | None) -> frozenset[str] | None:
 
 def is_condition_less(rule: PermissionRule) -> bool:
     """True if a rule constrains nothing — matches every request when evaluated."""
-    return rule.methods is None and rule.path is None and rule.operations is None
+    return (
+        rule.methods is None
+        and rule.path is None
+        and rule.operations is None
+        and rule.graphql is None
+        and rule.git is None
+    )
 
 
-def rule_matches(rule: PermissionRule, *, method: str, path: str, operation_id: str | None) -> bool:
-    """Return True if ALL defined criteria in the rule match the request."""
+def rule_matches(
+    rule: PermissionRule,
+    *,
+    method: str,
+    path: str,
+    operation_id: str | None,
+    graphql_field: GraphQLField | None = None,
+    git_item: GitItem | None = None,
+) -> bool:
+    """Return True if ALL defined criteria in the rule match the request.
+
+    A GraphQL rule matches only when ``graphql_field`` (one top-level field of
+    a GraphQL request) is given and its selector covers it. A git rule matches
+    only a ``git_item`` its selector covers for the rule's effect, and a
+    ``git_item`` is matched by nothing but a git rule or a condition-less rule.
+    """
+    if git_item is not None:
+        if rule.git is None:
+            return is_condition_less(rule)
+        if not rule.git.covers(git_item, effect=rule.effect):
+            return False
+    elif rule.git is not None:
+        return False
+    if rule.graphql is not None and (
+        graphql_field is None or not rule.graphql.matches(graphql_field)
+    ):
+        return False
     if rule.methods is not None and method.upper() not in rule.methods:
         return False
     if rule.path is not None and not rule.path.matches(path):
@@ -107,8 +238,14 @@ def first_matching_rule(
     operation_id: str | None,
     binding: str | None = None,
     warn: bool = True,
+    graphql_field: GraphQLField | None = None,
+    git_item: GitItem | None = None,
 ) -> int | None:
     """Index of the rule that decides the request, or ``None`` (default-deny).
+
+    ``graphql_field`` is the top-level field being evaluated for a GraphQL
+    request (one call per field); ``None`` for any other request. ``git_item``
+    is the same for a git smart-HTTP request (one call per item).
 
     ``binding`` labels the rule source (``agent:credential`` ids or
     ``rule_set:<id>`` — identifiers only, never secret material) so a
@@ -131,7 +268,14 @@ def first_matching_rule(
                     binding=binding,
                 )
             continue
-        if rule_matches(rule, method=method, path=path, operation_id=operation_id):
+        if rule_matches(
+            rule,
+            method=method,
+            path=path,
+            operation_id=operation_id,
+            graphql_field=graphql_field,
+            git_item=git_item,
+        ):
             return idx
     return None
 

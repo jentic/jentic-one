@@ -7,6 +7,7 @@ import pytest
 from jentic_one.shared.permissions.matching import (
     MATCH_MODES,
     MAX_PATTERN_LENGTH,
+    PATH_MATCH_MODES,
     PathValidationError,
     compile_matcher,
     validate_path,
@@ -19,17 +20,28 @@ from jentic_one.shared.permissions.matching import (
 
 def test_none_path_is_always_valid() -> None:
     # ``None`` is the "no path constraint" sentinel and must be accepted in
-    # every mode — that's the only way to author a rule that grants across
+    # every path mode — that's the only way to author a rule that grants across
     # the whole vendor without listing paths explicitly.
-    for mode in MATCH_MODES:
+    for mode in PATH_MATCH_MODES:
         assert validate_path(None, mode) is None
+
+
+def test_graphql_mode_requires_a_selector() -> None:
+    # A GraphQL rule's selector lives in ``path``; without one a reader that
+    # does not know the mode would see an unconstrained rule.
+    for path in (None, ""):
+        err = validate_path(path, "graphql")
+        assert isinstance(err, PathValidationError)
+        assert err.code == "invalid_graphql_selector"
+    assert validate_path("mutation:addComment", "graphql") is None
+    assert set(MATCH_MODES) == {*PATH_MATCH_MODES, "graphql", "git"}
 
 
 def test_empty_path_is_rejected_in_every_mode() -> None:
     # Empty string would satisfy the schema's condition-less-allow guard
     # (a set field is a "constraint") while matching every request in
     # prefix mode — an unrestricted grant disguised as a constraint.
-    for mode in MATCH_MODES:
+    for mode in PATH_MATCH_MODES:
         err = validate_path("", mode)
         assert isinstance(err, PathValidationError)
         assert err.code == "empty_path"

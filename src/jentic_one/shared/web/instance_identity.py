@@ -16,7 +16,7 @@ URL / host (``auth.canonical_base_url``, else ``server.public_base_url``, else
 the serving bind — with any userinfo stripped before echoing), whether the
 ``/mcp`` endpoint is served, and the broker (data plane) URL clients need for
 ``execute`` (``server.mcp.broker_url``, when honestly
-advertisable — see ``_advertised_broker_url``). The ``instance_id`` is a
+advertisable — see ``advertised_broker_url``). The ``instance_id`` is a
 one-way digest *derived from* the telemetry instance id — distinct installs get
 distinct values, but the durable telemetry identifier itself is never
 published.
@@ -32,7 +32,7 @@ from urllib.parse import urlsplit, urlunsplit
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
-from jentic_one.shared.config import resolved_auth_base_url
+from jentic_one.shared.config import AppConfig, resolved_auth_base_url
 from jentic_one.shared.context import Context
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.deps import get_ctx
@@ -157,6 +157,15 @@ def _is_loopback_host(hostname: str | None) -> bool:
         return False
 
 
+def advertised_broker_url(config: AppConfig) -> str | None:
+    """The broker URL this deployment may honestly tell clients to dial, or ``None``.
+
+    The same value ``GET /instance`` publishes as ``broker_url``; see
+    :func:`_advertised_broker_url`.
+    """
+    return _advertised_broker_url(config.server.mcp.broker_url, config.server.backend)
+
+
 def _advertised_broker_url(config_broker_url: str, backend: str) -> str | None:
     """The broker URL ``/instance`` may honestly advertise, or ``None``.
 
@@ -192,9 +201,7 @@ def resolve_instance_identity(ctx: Context) -> InstanceIdentityResponse:
         host=host,
         instance_id=_public_instance_id(ctx.instance_id),
         mcp_enabled=ctx.config.server.mcp.enabled,
-        broker_url=_advertised_broker_url(
-            ctx.config.server.mcp.broker_url, ctx.config.server.backend
-        ),
+        broker_url=advertised_broker_url(ctx.config),
     )
 
 

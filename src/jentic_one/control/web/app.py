@@ -32,6 +32,7 @@ from jentic_one.control.web.errors import (
     vendor_error_handler,
 )
 from jentic_one.control.web.routers import (
+    cli_facades,
     credentials,
     integrations,
     mcp,
@@ -61,6 +62,7 @@ def get_routers() -> list[tuple[APIRouter, str, list[str]]]:
         (vendors.router, "", []),
         (integrations.router, "", []),
         (oauth_app_registrations.router, "", []),
+        (cli_facades.router, "", []),
     ]
 
 

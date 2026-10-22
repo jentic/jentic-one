@@ -74,6 +74,12 @@ import {
 	secretKindOf,
 	secretNoun,
 } from '@/shared/credentials/lib/connectReview';
+import {
+	PROFILE_API_ROLE_LABEL,
+	groupProfileRules,
+	replaceGroupRules,
+	type ProfileRuleGroup,
+} from '@/shared/credentials/lib/profileRules';
 import { isHttpsVendorUrl, openVendorUrl } from '@/shared/credentials/lib/safe-navigation';
 import { useSharedAppSurface } from '@/shared/credentials/lib/sharedAppSurface';
 import type {
@@ -83,6 +89,7 @@ import type {
 	ConfirmSessionResponse,
 	DeviceAuthorizationConfirmResponse,
 	PermissionRule,
+	ProfileApi,
 	ReviewScope,
 	ReviewSession,
 	ScopeClassification,
@@ -189,6 +196,7 @@ const DEFAULT_ALLOW_GET_RULE: PermissionRule = {
 // form's ``useMemo`` doesn't invalidate on every render when the caller
 // omits it.
 const EMPTY_PATHS: readonly string[] = [];
+const EMPTY_PROFILE_APIS: readonly ProfileApi[] = [];
 
 export function VendorConnectFlow(props: VendorConnectFlowProps) {
 	if (props.mode === 'approve') {
@@ -1019,6 +1027,17 @@ function VendorApproveFlow({
 					variant: 'success',
 				});
 				void queryClient.invalidateQueries({ queryKey: ['credentials'] });
+				// The approval binds the credential to the session's agent, so
+				// the binding lists that show it are refetched.
+				const credentialId = polling.data.credential_id;
+				const agentId = session?.agent?.agent_id;
+				if (credentialId) {
+					void invalidateBindingSurfaces(
+						queryClient,
+						credentialId,
+						agentId ? [agentId] : [],
+					);
+				}
 			}
 		}
 	}, [phase, polling.data, polling.error, session, queryClient]);
@@ -1101,6 +1120,8 @@ function VendorApproveFlow({
 		goToPhase('terminal');
 		void queryClient.invalidateQueries({ queryKey: connectRequestsKey });
 		void queryClient.invalidateQueries({ queryKey: ['credentials'] });
+		const agentId = session?.agent?.agent_id;
+		void invalidateBindingSurfaces(queryClient, credentialId, agentId ? [agentId] : []);
 		toast({
 			title: `Connected to ${session?.vendor_display_name ?? 'the integration'}`,
 			variant: 'success',
@@ -1285,6 +1306,7 @@ function VendorApproveFlow({
 				submitting={confirmMutation.isPending}
 				error={errorFor('rules')}
 				apiReference={session.api_reference}
+				profileApis={session.cli_profile ? (session.profile_apis ?? []) : []}
 				// An API target always takes the approver's own rules: an
 				// empty list would be default deny, and no fallback rule is
 				// added on their behalf.
@@ -1545,6 +1567,10 @@ function ReauthorizeNotice({ display, url }: { display: VendorDisplay; url: stri
  * Non-empty: rules render in first-match-wins order with reorder +
  * delete controls. Agent-requested rules (approve mode) carry a
  * "requested by agent" pill.
+ *
+ * CLI profile (``profileApis`` non-empty): one section per profile API,
+ * each listing the rules that apply to it. A rule only ever applies to one
+ * API, so the sections' order does not change what the rules grant.
  */
 function RulesStep({
 	display,
@@ -1557,6 +1583,7 @@ function RulesStep({
 	error,
 	apiReference,
 	requireRule = false,
+	profileApis = EMPTY_PROFILE_APIS,
 }: {
 	display: VendorDisplay;
 	// Rules the initiating agent supplied on ``:connect``. Empty in the
@@ -1582,15 +1609,26 @@ function RulesStep({
 	// The operation-impact preview shows a skeleton until both are set
 	// AND the ops endpoint returns 200.
 	apiReference: { vendor: string; name: string | null; version: string | null } | null;
+	/** The APIs of a CLI-profile session; empty for any other session. */
+	profileApis?: readonly ProfileApi[];
 }) {
 	const isEmpty = currentRules.length === 0;
 	const fallback = isEmpty && !requireRule;
+	const grouped = useMemo(
+		() => (profileApis.length > 0 ? groupProfileRules(currentRules, profileApis) : null),
+		[currentRules, profileApis],
+	);
 
 	// Operation-impact preview: when the user has authored no rules,
 	// preview against the confirm-time fallback so they see what
 	// leaving the list empty actually grants. When they've authored
-	// rules, preview against those exactly.
-	const previewRules = fallback ? [DEFAULT_ALLOW_GET_RULE] : currentRules;
+	// rules, preview against those exactly — for a CLI profile, the REST
+	// API's rules, as ``apiReference`` is that API.
+	const previewRules = fallback
+		? [DEFAULT_ALLOW_GET_RULE]
+		: grouped
+			? (grouped.groups.find((g) => g.role === 'rest')?.rules ?? [])
+			: currentRules;
 
 	// Fetch ops once at the rules-page level and thread the result down.
 	// React-Query dedupes by query key so ``OperationImpactPreview``'s
@@ -1628,19 +1666,47 @@ function RulesStep({
 							? "Add at least one rule. With no rules the agent can't call anything on this API."
 							: 'First-match-wins. Requests that match no rule are denied.'}
 				</p>
-				<RuleListEditor
-					rules={currentRules}
-					onChange={onChange}
-					pathSuggestions={pathSuggestions}
-					opTemplates={pathSuggestions}
-					opsLoaded={pathSuggestions.length > 0}
-					requestedRules={requestedRules}
-					emptyStateContent={
-						requireRule ? undefined : (
-							<DefaultRulePreviewRow rule={DEFAULT_ALLOW_GET_RULE} />
-						)
-					}
-				/>
+				{grouped ? (
+					<div className="space-y-4">
+						{grouped.groups.map((group) => (
+							<ProfileRuleSection
+								key={group.role}
+								group={group}
+								requestedRules={requestedRules}
+								onChange={(next): void =>
+									onChange(
+										replaceGroupRules(
+											grouped.groups,
+											grouped.other,
+											group.role,
+											next,
+										),
+									)
+								}
+								pathSuggestions={pathSuggestions}
+								fallbackRule={
+									fallback && group.role === 'rest'
+										? DEFAULT_ALLOW_GET_RULE
+										: null
+								}
+							/>
+						))}
+					</div>
+				) : (
+					<RuleListEditor
+						rules={currentRules}
+						onChange={onChange}
+						pathSuggestions={pathSuggestions}
+						opTemplates={pathSuggestions}
+						opsLoaded={pathSuggestions.length > 0}
+						requestedRules={requestedRules}
+						emptyStateContent={
+							requireRule ? undefined : (
+								<DefaultRulePreviewRow rule={DEFAULT_ALLOW_GET_RULE} />
+							)
+						}
+					/>
+				)}
 			</div>
 
 			<OperationImpactPreview api={apiReference} rules={previewRules} />
@@ -1669,6 +1735,66 @@ function RulesStep({
 				</Button>
 			</div>
 		</div>
+	);
+}
+
+/**
+ * One profile API's rules on the rules page. Only REST and uploads rules are
+ * path rules, so only those sections offer "Add rule" and path suggestions.
+ */
+function ProfileRuleSection({
+	group,
+	requestedRules,
+	onChange,
+	pathSuggestions,
+	fallbackRule,
+}: {
+	group: ProfileRuleGroup;
+	requestedRules: PermissionRule[];
+	onChange: (rules: PermissionRule[]) => void;
+	pathSuggestions: readonly string[];
+	/** The rule Continue sends for an empty list, previewed in this section. */
+	fallbackRule: PermissionRule | null;
+}) {
+	const headingId = useId();
+	const pathRules = group.role === 'rest' || group.role === 'uploads';
+	const suggestions = group.role === 'rest' ? pathSuggestions : EMPTY_PATHS;
+	return (
+		<section aria-labelledby={headingId} className="space-y-2">
+			<div>
+				<h3 id={headingId} className="text-foreground text-sm font-medium">
+					{PROFILE_API_ROLE_LABEL[group.role]}
+					<span className="text-foreground-sub ml-2 font-mono text-xs font-normal">
+						{group.apis.map((api) => api.api_name).join(', ')}
+					</span>
+				</h3>
+				{group.apis.map((api) =>
+					api.description ? (
+						<p key={api.api_name} className="text-muted-foreground text-xs">
+							{api.description}
+						</p>
+					) : null,
+				)}
+			</div>
+			<RuleListEditor
+				rules={group.rules}
+				onChange={onChange}
+				pathSuggestions={suggestions}
+				opTemplates={suggestions}
+				opsLoaded={suggestions.length > 0}
+				requestedRules={requestedRules}
+				canAdd={pathRules}
+				emptyStateContent={
+					fallbackRule ? (
+						<DefaultRulePreviewRow rule={fallbackRule} />
+					) : (
+						<p className="text-muted-foreground text-xs">
+							No rules — denied by default.
+						</p>
+					)
+				}
+			/>
+		</section>
 	);
 }
 

@@ -32,6 +32,8 @@ deploy/
 │   ├── control.Dockerfile           # Control surface only
 │   ├── broker.Dockerfile            # Broker surface only
 │   ├── postgres-mirror.Dockerfile   # AWS Marketplace mirror of the official postgres image
+│   ├── run-agent.Dockerfile         # `jentic run --container` agent image (local build only)
+│   ├── run-bridge.Dockerfile        # `jentic run --container` loopback bridge (local build only)
 │   └── nginx/parts-gateway.conf     # Gateway config for the parts topology
 ├── helm/
 │   ├── README.md                    # Chart docs + local kind cluster / smoke workflow

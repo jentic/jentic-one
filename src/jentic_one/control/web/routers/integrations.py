@@ -13,7 +13,7 @@ from typing import Annotated
 
 import structlog
 from fastapi import APIRouter, Body, Depends, Path, Query, Request, Response
-from jentic.problem_details import Forbidden, TooManyRequests
+from jentic.problem_details import BadRequest, Forbidden, TooManyRequests
 
 from jentic_one.control.services.integrations.connect_session_service import (
     ApiTarget,
@@ -62,6 +62,7 @@ from jentic_one.control.web.schemas.integrations import (
     ReauthorizeConfirmSessionRequest,
     ReauthorizeConfirmSessionResponse,
     ReviewAgentResponse,
+    ReviewProfileApiResponse,
     ReviewProvenanceResponse,
     ReviewSchemeResponse,
     ReviewScopeResponse,
@@ -95,6 +96,9 @@ _POLL_TOKEN_DESCRIPTION = (
 )
 
 _logger = structlog.get_logger(__name__)
+
+#: Cap on the rules a session asks for, a preset expanded (the binding write takes 100).
+_MAX_REQUESTED_RULES = 100
 
 router = APIRouter(tags=["Integrations"])
 
@@ -189,20 +193,39 @@ async def integrations_connect(
     else:
         agent_id = body.agent_id or None
 
+    api_target = (
+        ApiTarget(vendor=body.api.vendor, name=body.api.name, version=body.api.version)
+        if body.api is not None
+        else None
+    )
+    requested_rules = [r.model_dump(exclude_none=True) for r in body.requested_permission_rules]
+    if body.preset is not None:
+        requested_rules += svc.preset_rules(
+            vendor_key=body.vendor,
+            api_target=api_target,
+            preset=body.preset,
+            params=body.preset_params,
+        )
+    if body.vendor is not None:
+        # A CLI-profile connect: each rule carries the profile API it applies to.
+        requested_rules = svc.profile_rules(svc.connect_profile(body.vendor), requested_rules)
+    if len(requested_rules) > _MAX_REQUESTED_RULES:
+        raise BadRequest(
+            detail=(
+                f"the request asks for {len(requested_rules)} permission rules with its preset "
+                f"expanded; at most {_MAX_REQUESTED_RULES} are accepted"
+            ),
+            type="too_many_requested_rules",
+            instance="/integrations:connect",
+        )
     created = await svc.create_session(
         vendor_key=body.vendor or "",
-        api_target=(
-            ApiTarget(vendor=body.api.vendor, name=body.api.name, version=body.api.version)
-            if body.api is not None
-            else None
-        ),
+        api_target=api_target,
         auth_type=body.auth_type,
         agent_id=agent_id,
         identity=identity,
         requested_scopes=body.requested_scopes,
-        requested_permission_rules=[
-            r.model_dump(exclude_none=True) for r in body.requested_permission_rules
-        ],
+        requested_permission_rules=requested_rules,
         preferred_flow=body.preferred_flow,
         reason=body.reason,
         credential_name=body.name,
@@ -214,6 +237,9 @@ async def integrations_connect(
         approval_url=created.approval_url,
         poll_token=created.poll_token,
         resolved_flow=created.resolved_flow,
+        requested_permission_rules=[
+            PermissionRuleSchema.model_validate(r) for r in requested_rules
+        ],
     )
 
 
@@ -408,6 +434,17 @@ def _review_response(data: ReviewData) -> ReviewSessionResponse:
                 can_reauthorize=c.can_reauthorize,
             )
             for c in data.existing_credentials
+        ],
+        cli_profile=data.cli_profile,
+        profile_apis=[
+            ReviewProfileApiResponse(
+                role=a.role,  # type: ignore[arg-type]
+                api_vendor=a.api_vendor,
+                api_name=a.api_name,
+                api_version=a.api_version,
+                description=a.description,
+            )
+            for a in data.profile_apis
         ],
     )
 

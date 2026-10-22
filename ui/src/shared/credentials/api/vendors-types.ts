@@ -71,6 +71,25 @@ export interface ReviewSession {
 	can_confirm: boolean;
 	/** Credentials the viewer already holds for the target. */
 	existing_credentials?: ExistingCredential[];
+	/**
+	 * The CLI profile the session connects (e.g. ``github``): one credential
+	 * covering several APIs of the vendor. Null for any other session.
+	 */
+	cli_profile?: string | null;
+	/** The APIs a CLI-profile credential covers; empty for any other session. */
+	profile_apis?: ProfileApi[];
+}
+
+/** The part a profile API plays in a CLI profile. */
+export type ProfileApiRole = 'rest' | 'graphql' | 'git' | 'uploads';
+
+/** One API a CLI-profile credential covers. */
+export interface ProfileApi {
+	role: ProfileApiRole;
+	api_vendor: string;
+	api_name: string;
+	api_version: string | null;
+	description: string;
 }
 
 /** Session states a review can show; the terminal ones never reach the review read. */
@@ -137,9 +156,14 @@ export interface PermissionRule {
 	effect: 'allow' | 'deny' | 'require-approval';
 	methods?: string[] | null;
 	path?: string | null;
-	match_mode?: 'regex' | 'prefix' | 'exact';
+	match_mode?: 'regex' | 'prefix' | 'exact' | 'graphql' | 'git';
 	operations?: string[] | null;
 	comment?: string | null;
+	/**
+	 * The profile API the rule applies to on a CLI-profile credential.
+	 * Omitted, the rule's kind decides (see ``ruleApiRole``).
+	 */
+	api_role?: ProfileApiRole | null;
 }
 
 /** The OAuth confirm — the default variant (a body without ``kind``). */

@@ -95,6 +95,9 @@ _ALLOWLIST: dict[str, str] = {
     "auth/registration.update_registration_endpoint": "always 403: client update unsupported",
     "auth/registration.delete_registration_endpoint": "always 403: client deletion unsupported",
     # --- control ---
+    "control/cli_facades.list_cli_facades": (
+        "deployment-wide CLI facade addresses read from config, no rows"
+    ),
     "control/credentials.list_providers": "static credential-provider metadata, no rows",
     "control/mcp.report_mcp_config_registration": (
         "fire-and-forget telemetry report attributed to identity.sub; reads nothing per-caller"
@@ -109,6 +112,10 @@ _ALLOWLIST: dict[str, str] = {
     "control/vendors.get_auth_capabilities": "public vendor auth metadata, no per-caller rows",
     # --- registry: the API catalogue is org-wide; only Note is caller-scoped ---
     "registry/apis.list_apis": _REGISTRY_CATALOGUE,
+    "registry/cli_profiles.list_cli_profiles": (
+        "the shipped CLI manifests and whether each API is live: deployment-wide, no "
+        "per-caller data"
+    ),
     "registry/apis.get_api": _REGISTRY_CATALOGUE,
     "registry/apis.list_api_security_schemes": _REGISTRY_CATALOGUE,
     "registry/apis.list_api_revisions": _REGISTRY_CATALOGUE,

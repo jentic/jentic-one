@@ -31,6 +31,7 @@ def _make_credential(
     provider: str = "static",
     server_variables: dict[str, str] | None = None,
     created_by: str | None = "usr_cred_owner",
+    cli_profile: str | None = None,
 ) -> MagicMock:
     cred = MagicMock()
     cred.id = cred_id
@@ -51,6 +52,7 @@ def _make_credential(
     cred.oauth_token = None
     cred.sigv4_credential = None
     cred.provider_account_ref = None
+    cred.cli_profile = cli_profile
     return cred
 
 
@@ -566,3 +568,50 @@ async def test_resolve_failure_loads_no_material(
         await CredentialResolver(ctx).resolve(api=api, caller="caller_1")
 
     load_material_spy.assert_not_awaited()
+
+
+# ── profile-scoped credentials ───────────────────────────────────────────────
+
+
+async def _resolve_github(cred: MagicMock, *, name: str, version: str) -> str:
+    tvc = MagicMock()
+    tvc.encrypted_token_value = "enc:gh"
+    cred.token_value_credential = tvc
+    ctx = _make_ctx_with_control_session(AsyncMock())
+    with patch(
+        "jentic_one.broker.services.credentials.resolver.CredentialRepository.list_by_vendor",
+        new_callable=AsyncMock,
+        return_value=[cred],
+    ):
+        result = await CredentialResolver(ctx).resolve(
+            api=APIReference(vendor="github-com", name=name, version=version), caller="c"
+        )
+    return result.credential_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("name", "version"),
+    [("api-github-com", "1.1.4"), ("github-graphql", "1"), ("github-git", "1")],
+)
+async def test_profile_credential_covers_each_declared_api(name: str, version: str) -> None:
+    cred = _make_credential(
+        api_vendor="github-com", api_name=None, api_version=None, cli_profile="github"
+    )
+    assert await _resolve_github(cred, name=name, version=version) == "cred_abc"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("name", "version"), [("gists", "1"), ("github-git", "2")])
+async def test_profile_credential_does_not_cover_an_undeclared_api(name: str, version: str) -> None:
+    cred = _make_credential(
+        api_vendor="github-com", api_name=None, api_version=None, cli_profile="github"
+    )
+    with pytest.raises(CredentialNotProvisionedError):
+        await _resolve_github(cred, name=name, version=version)
+
+
+@pytest.mark.asyncio
+async def test_vendor_wide_credential_still_covers_every_api_of_the_vendor() -> None:
+    cred = _make_credential(api_vendor="github-com", api_name=None, api_version=None)
+    assert await _resolve_github(cred, name="gists", version="1") == "cred_abc"

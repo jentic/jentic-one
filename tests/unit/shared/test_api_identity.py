@@ -125,6 +125,7 @@ def test_coverage_where_default_scopes_all_axes() -> None:
     frag = credential_coverage_where()
     assert frag == (
         "c.api_vendor = :vendor "
+        "AND (c.cli_profile IS NULL OR c.cli_profile = :cli_profile) "
         "AND (c.api_name IS NULL OR c.api_name = :name) "
         "AND (c.api_version IS NULL OR c.api_version = :version)"
     )
@@ -132,7 +133,9 @@ def test_coverage_where_default_scopes_all_axes() -> None:
 
 def test_coverage_where_unscoped_reference_omits_axes() -> None:
     frag = credential_coverage_where(name_scoped=False, version_scoped=False)
-    assert frag == "c.api_vendor = :vendor"
+    assert frag == (
+        "c.api_vendor = :vendor AND (c.cli_profile IS NULL OR c.cli_profile = :cli_profile)"
+    )
     assert ":name" not in frag
     assert ":version" not in frag
 
@@ -154,3 +157,32 @@ def test_coverage_where_no_dialect_specific_syntax() -> None:
     frag = credential_coverage_where()
     assert "::" not in frag
     assert "~" not in frag
+
+
+# ── profile-scoped credentials ───────────────────────────────────────────────
+
+
+def test_profile_scope_covers_only_when_its_profile_declares_the_api() -> None:
+    scope = canonical_credential_scope(
+        vendor="github-com", name=None, version=None, cli_profile="github"
+    )
+    op = {"vendor": "github-com", "name": "github-git", "version": "1"}
+    assert credential_covers(scope, **op, declared_by="github")
+    # Undeclared (no declaring profile) or another profile's API: not covered.
+    assert not credential_covers(scope, **op, declared_by=None)
+    assert not credential_covers(scope, **op, declared_by="other")
+    # A caller that does not pass the declaring profile fails closed.
+    assert not credential_covers(scope, **op)
+
+
+def test_non_profile_scope_ignores_the_declaring_profile() -> None:
+    scope = canonical_credential_scope(vendor="github-com", name=None, version=None)
+    op = {"vendor": "github-com", "name": "gists", "version": "1"}
+    assert credential_covers(scope, **op)
+    assert credential_covers(scope, **op, declared_by="github")
+    assert scope.cli_profile is None
+
+
+def test_empty_cli_profile_is_no_profile() -> None:
+    scope = canonical_credential_scope(vendor="v", name=None, version=None, cli_profile="")
+    assert scope.cli_profile is None

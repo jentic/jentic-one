@@ -28,6 +28,7 @@ from jentic_one.shared.config import (
     AuthConfig,
     BrokerResilienceConfig,
     CatalogConfig,
+    CliFacadesConfig,
     ConfigError,
     ConnectConfig,
     ControlEgressConfig,
@@ -444,6 +445,111 @@ def test_held_executions_yaml_and_env_override(tmp_path: Path):
 def test_held_executions_non_positive_rejected(field: str):
     with pytest.raises(ValidationError, match=field):
         HeldExecutionsConfig.model_validate({field: 0})
+
+
+_MINIMAL_DATABASES = {
+    "registry": {"name": "reg"},
+    "admin": {"name": "admin"},
+    "control": {"name": "ctrl"},
+}
+
+
+def test_cli_facades_defaults(tmp_path: Path):
+    """Off by default: every vendor disabled, github in host mode, 10 min TTL, 1 h cap."""
+    path = tmp_path / "minimal.yaml"
+    path.write_text(yaml.dump({"databases": _MINIMAL_DATABASES}))
+    cfg = load_config(path).cli_facades
+    assert cfg.enabled is False
+    assert cfg.vendors.github.mode == "host"
+    assert cfg.vendors.cloudflare.mode == "path"
+    assert cfg.vendors.aws.mode == "path"
+    assert not any(cfg.vendor_enabled(v) for v in ("github", "cloudflare", "aws"))
+    assert cfg.invocation_ttl_seconds == 600
+    assert cfg.invocation_hard_cap_seconds == 3600
+    assert cfg.mint_rate_limit_per_minute == 60
+
+
+def test_cli_facades_yaml_and_env_override(tmp_path: Path):
+    """The section is top-level: YAML sets it and ``JENTIC__CLI_FACADES__*`` wins."""
+    doc = {
+        "databases": _MINIMAL_DATABASES,
+        "cli_facades": {
+            "enabled": True,
+            "vendors": {"cloudflare": {"enabled": True}},
+            "invocation_ttl_seconds": 300,
+        },
+    }
+    path = tmp_path / "cf.yaml"
+    path.write_text(yaml.dump(doc))
+    cfg = load_config(path).cli_facades
+    assert cfg.vendor_enabled("cloudflare")
+    assert not cfg.vendor_enabled("github")
+    assert cfg.invocation_ttl_seconds == 300
+    env = {
+        "JENTIC__CLI_FACADES__VENDORS__GITHUB__ENABLED": "true",
+        "JENTIC__CLI_FACADES__VENDORS__GITHUB__HOST": "GitHub.Jentic.Example.com",
+        "JENTIC__CLI_FACADES__VENDORS__GITHUB__PUBLIC_ADDRESS": "gh.example.com",
+        "JENTIC__CLI_FACADES__MINT_RATE_LIMIT_PER_MINUTE": "5",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        cfg = load_config(path).cli_facades
+    assert cfg.vendor_enabled("github")
+    assert cfg.vendors.github.host == "github.jentic.example.com"
+    assert cfg.vendors.github.public_address == "gh.example.com"
+    assert cfg.mint_rate_limit_per_minute == 5
+
+
+def test_cli_facades_master_switch_gates_every_vendor():
+    cfg = CliFacadesConfig.model_validate({"vendors": {"aws": {"enabled": True}}})
+    assert not cfg.vendor_enabled("aws")
+    assert not CliFacadesConfig(enabled=True).vendor_enabled("gitlab")
+
+
+@pytest.mark.parametrize(
+    ("doc", "match"),
+    [
+        ({"vendors": {"github": {"mode": "path"}}}, "github.mode"),
+        ({"vendors": {"cloudflare": {"mode": "host"}}}, "cloudflare.mode"),
+        ({"vendors": {"aws": {"mode": "host", "host": "aws.example.com"}}}, "aws.mode"),
+        ({"vendors": {"aws": {"host": "aws.example.com"}}}, "only used in 'host' mode"),
+        ({"vendors": {"github": {"enabled": True}}}, "requires host"),
+        ({"vendors": {"github": {"host": "https://github.example.com"}}}, "bare hostname"),
+        ({"vendors": {"github": {"host": "github.example.com:8443"}}}, "bare hostname"),
+        ({"vendors": {"gitlab": {"mode": "host"}}}, "gitlab"),
+        ({"invocation_ttl_seconds": 0}, "invocation_ttl_seconds"),
+        ({"invocation_hard_cap_seconds": 0}, "invocation_hard_cap_seconds"),
+        ({"invocation_ttl_seconds": 900, "invocation_hard_cap_seconds": 600}, "hard_cap"),
+        ({"mint_rate_limit_per_minute": 0}, "mint_rate_limit_per_minute"),
+    ],
+)
+def test_cli_facades_invalid_rejected(doc: dict[str, Any], match: str):
+    with pytest.raises(ValidationError, match=match):
+        CliFacadesConfig.model_validate(doc)
+
+
+def test_cli_facades_git_defaults_and_overrides(tmp_path: Path):
+    """Governed git rides the GitHub facade's switch; its limits default to GitHub's push cap."""
+    cfg = CliFacadesConfig()
+    assert cfg.git.enabled is True
+    assert cfg.git.max_push_bytes == 2 * 1024 * 1024 * 1024
+    assert not cfg.git_enabled()
+    on = CliFacadesConfig.model_validate(
+        {"enabled": True, "vendors": {"github": {"enabled": True, "host": "gh.example.com"}}}
+    )
+    assert on.git_enabled()
+    on.git.enabled = False
+    assert not on.git_enabled()
+
+    path = tmp_path / "git.yaml"
+    path.write_text(
+        yaml.dump({"databases": _MINIMAL_DATABASES, "cli_facades": {"git": {"idle_timeout_s": 30}}})
+    )
+    with patch.dict(os.environ, {"JENTIC__CLI_FACADES__GIT__MAX_PUSH_BYTES": "1024"}, clear=False):
+        loaded = load_config(path).cli_facades.git
+    assert loaded.idle_timeout_s == 30
+    assert loaded.max_push_bytes == 1024
+    with pytest.raises(ValidationError, match="max_push_bytes"):
+        CliFacadesConfig.model_validate({"git": {"max_push_bytes": 0}})
 
 
 def test_catalog_jitter_ratio_default():

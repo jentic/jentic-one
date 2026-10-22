@@ -16,6 +16,7 @@ from pydantic import (
 )
 
 from jentic_one.control.web.schemas.permission_rules import PermissionRuleSchema
+from jentic_one.shared.permissions.api_roles import ApiRoleName
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.sensitive import SENSITIVE
 
@@ -252,12 +253,39 @@ class IntegrationsConnectRequest(BaseModel):
         ),
     )
 
+    # A CLI-profile preset (``GET /cli-profiles``), expanded server-side into
+    # concrete rules for the target API's role and appended to
+    # ``requested_permission_rules``, so the approver reviews concrete rules.
+    preset: str | None = Field(
+        default=None,
+        max_length=64,
+        examples=["read_only"],
+        description=(
+            "A rule preset of the CLI profile that declares the target (see `GET /cli-profiles`), "
+            "expanded into concrete permission rules for the target API and appended to "
+            "`requested_permission_rules`."
+        ),
+    )
+    preset_params: dict[str, str] = Field(
+        default_factory=dict,
+        max_length=10,
+        examples=[{"repo": "octo-org/app", "branches": "agent/*"}],
+        description=(
+            "Values for the preset's parameters, e.g. `repo` (comma-separated `<owner>/<repo>` "
+            "globs) and `branches` (a branch glob below `refs/heads/`)."
+        ),
+    )
+
     @model_validator(mode="after")
     def _one_target(self) -> IntegrationsConnectRequest:
         if (self.vendor is None) == (self.api is None):
             raise ValueError("pass exactly one of vendor or api")
         if self.auth_type is not None and self.api is None:
             raise ValueError("auth_type applies to an api target only")
+        if self.preset_params and self.preset is None:
+            raise ValueError("preset_params applies with a preset only")
+        if any(len(v) > 1000 for v in self.preset_params.values()):
+            raise ValueError("a preset_params value is at most 1000 characters")
         return self
 
 
@@ -266,6 +294,13 @@ class IntegrationsConnectResponse(BaseModel):
     approval_url: str
     poll_token: str
     resolved_flow: str
+    requested_permission_rules: list[PermissionRuleSchema] = Field(
+        default_factory=list,
+        description=(
+            "The permission rules the session asks for, with a `preset` already expanded: what "
+            "the approver reviews."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -426,6 +461,18 @@ class ExistingCredentialResponse(BaseModel):
     can_reauthorize: bool
 
 
+class ReviewProfileApiResponse(BaseModel):
+    """One API a CLI-profile credential covers: the rules of its ``role`` apply to it."""
+
+    role: ApiRoleName = Field(description="The API's role in the profile.", examples=["git"])
+    api_vendor: str = Field(examples=["github-com"])
+    api_name: str = Field(examples=["github-git"])
+    api_version: str | None = Field(
+        default=None, description="Null for a catalog API: any imported version.", examples=["1"]
+    )
+    description: str = Field(default="", description="What the API covers.")
+
+
 class ReviewSessionResponse(BaseModel):
     session_id: str
     state: str
@@ -453,6 +500,19 @@ class ReviewSessionResponse(BaseModel):
     digest: str
     can_confirm: bool
     existing_credentials: list[ExistingCredentialResponse] = Field(default_factory=list)
+    cli_profile: str | None = Field(
+        default=None,
+        description=(
+            "Set for a CLI-profile connect (`jentic connect github`): the profile whose APIs "
+            "the one credential covers. Each requested rule applies to the API of its "
+            "`api_role` only."
+        ),
+        examples=["github"],
+    )
+    profile_apis: list[ReviewProfileApiResponse] = Field(
+        default_factory=list,
+        description="The APIs the CLI-profile credential covers, to group the rules by.",
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -16,6 +16,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from jentic_one.shared.permissions.api_roles import ROLE_MATCH_MODES, ApiRoleName
+from jentic_one.shared.permissions.git_rules import GIT_MATCH_MODE
 from jentic_one.shared.permissions.matching import MatchMode, validate_path
 from jentic_one.shared.web import openapi_examples as ex
 
@@ -43,7 +45,13 @@ class BasePermissionRuleSchema(BaseModel):
             "server's base path (`/eu/widgets` for a server `https://host/{region}`). "
             "Interpreted per `match_mode`: `regex` uses "
             "full-match semantics (the pattern must describe the whole path); "
-            "`prefix` and `exact` are literal. None matches all paths."
+            "`prefix` and `exact` are literal. None matches all paths. With "
+            "`match_mode` `graphql`, `path` is required and is a GraphQL selector "
+            "instead: `query`, `mutation`, or `mutation:createPullRequest,addComment` "
+            "(top-level field names, never aliases). With `match_mode` `git`, `path` "
+            "is required and is a git selector: `<fetch|push|force>:<owner>/<repo>` "
+            "with an optional `:refs/heads/<glob>` or `:refs/tags/<glob>` on push "
+            "and force (e.g. `push:octo-org/app:refs/heads/agent/*`)."
         ),
     )
     match_mode: MatchMode = Field(
@@ -52,7 +60,12 @@ class BasePermissionRuleSchema(BaseModel):
         description=(
             "How `path` is interpreted: `regex` (full-match), `prefix` "
             "(string prefix), or `exact` (equality). Defaults to `regex` for "
-            "backwards compatibility."
+            "backwards compatibility. `graphql` makes the rule match the top-level "
+            "fields of a GraphQL request (the GitHub GraphQL endpoint) by operation "
+            "type and field name, one field at a time; it matches no other request. "
+            "`git` makes the rule match git clones, fetches and pushes to github.com "
+            "through Jentic by repository and, for pushes, by ref; it matches no other "
+            "request, and only `allow` and `deny` are accepted."
         ),
     )
     operations: list[str] | None = Field(
@@ -60,6 +73,28 @@ class BasePermissionRuleSchema(BaseModel):
         examples=[[ex.OPERATION_ID]],
         description="OpenAPI operation IDs to match. None matches all operations.",
     )
+    api_role: ApiRoleName | None = Field(
+        default=None,
+        examples=["rest"],
+        description=(
+            "On the binding of a CLI-profile credential (one connect covering several APIs "
+            "of a vendor, e.g. `jentic connect github`): the profile API the rule applies "
+            "to — `rest` and `uploads` take path rules, `graphql` GraphQL rules and `git` "
+            "git rules. Omitted, the rule's kind decides: a `git` rule applies to `git`, a "
+            "`graphql` rule to `graphql`, any other rule to `rest`. Ignored on any other "
+            "credential."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_api_role(self) -> BasePermissionRuleSchema:
+        if self.api_role is not None and self.match_mode not in ROLE_MATCH_MODES[self.api_role]:
+            allowed = ", ".join(sorted(ROLE_MATCH_MODES[self.api_role]))
+            raise ValueError(
+                f"A rule for the '{self.api_role}' API takes match_mode {allowed}, "
+                f"not '{self.match_mode}'"
+            )
+        return self
 
     @model_validator(mode="after")
     def _validate_path(self) -> BasePermissionRuleSchema:
@@ -70,6 +105,23 @@ class BasePermissionRuleSchema(BaseModel):
         err = validate_path(self.path, self.match_mode)
         if err is not None:
             raise ValueError(err.reason)
+        return self
+
+    @model_validator(mode="after")
+    def _reject_held_git_rule(self) -> BasePermissionRuleSchema:
+        # A held git push would block git with no output past an agent's tool
+        # timeout, so git rules allow or deny only (``shared.permissions.git_rules``).
+        if self.match_mode != GIT_MATCH_MODE:
+            return self
+        if getattr(self, "effect", None) == "require-approval":
+            raise ValueError("A 'git' rule's effect must be 'allow' or 'deny'")
+        # A git request has no HTTP method or registry operation a rule could
+        # match, so a git rule constraining either would never match.
+        if self.methods or self.operations:
+            raise ValueError(
+                "A 'git' rule takes no methods or operations: its selector in 'path' "
+                "names the git action, repository and ref"
+            )
         return self
 
     @model_validator(mode="after")
@@ -125,18 +177,31 @@ class PermissionRuleReadSchema(BaseModel):
         examples=["/v1/charges"],
         description=(
             "Path pattern relative to the API's server URL, interpreted per `match_mode`; "
-            "null matches all paths."
+            "null matches all paths. A GraphQL selector when `match_mode` is `graphql`, "
+            "a git selector when it is `git`."
         ),
     )
     match_mode: MatchMode = Field(
         default="regex",
         examples=["prefix"],
-        description="How `path` is interpreted: `regex` (full-match), `prefix` or `exact`.",
+        description=(
+            "How `path` is interpreted: `regex` (full-match), `prefix`, `exact`, "
+            "`graphql` (a GraphQL top-level-field selector) or `git` (a git "
+            "repository/ref selector)."
+        ),
     )
     operations: list[str] | None = Field(
         default=None,
         description="OpenAPI operation IDs the rule matches; null matches all.",
         examples=[[ex.OPERATION_ID]],
+    )
+    api_role: ApiRoleName | None = Field(
+        default=None,
+        examples=["rest"],
+        description=(
+            "The CLI-profile API the rule applies to on a CLI-profile credential's binding; "
+            "null takes the role the rule's kind implies (`git`, `graphql`, else `rest`)."
+        ),
     )
     is_system: bool = Field(
         alias="_system",

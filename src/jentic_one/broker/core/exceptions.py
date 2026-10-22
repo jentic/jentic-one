@@ -231,8 +231,64 @@ class ActionDeniedError(BrokerError):
     """The request was denied by a permission rule on the caller's binding (403)."""
 
 
+class CliInvocationVendorMismatchError(BrokerError):
+    """The proxy route resolved a URL to an API of another vendor than the token's (403).
+
+    An invocation token is minted for one vendor; at the vendor-neutral proxy
+    route the URL decides the API, so a URL of any other vendor is refused
+    before any rule or credential is looked at.
+    """
+
+    default_type = "cli_invocation_vendor_mismatch"
+
+
+class GraphQLRequestRejectedError(BrokerError):
+    """A request to a GraphQL endpoint whose operation cannot be inspected (400).
+
+    Rules on a GraphQL endpoint match the document's top-level fields, so a
+    request they cannot be evaluated on (a batch, a persisted query, more than
+    one operation, an unparsable document, …) is refused before any rule runs.
+    """
+
+    default_type = "graphql_request_rejected"
+
+
+class GitRequestRejectedError(BrokerError):
+    """A git smart-HTTP request the governed git pipeline cannot read or serve (400).
+
+    A push whose ref commands are malformed, a signed push, an unsupported
+    object format, or a git URL the pipeline does not serve. The message is
+    one line git prints to the user.
+    """
+
+    default_type = "git_request_rejected"
+
+
+class GitCredentialUnsupportedError(BrokerError):
+    """The credential bound for git to github.com is not a token (424).
+
+    git authenticates to github.com with a token (a personal access token,
+    an OAuth or GitHub App token); a credential that injects anything else
+    (Basic, an API key in another header, SigV4) cannot carry it.
+    """
+
+    default_type = "git_credential_unsupported"
+
+
 class ApprovalPendingLimitError(BrokerError):
     """The agent already holds the configured maximum of pending approvals (403)."""
+
+
+class ExecutionHeldError(BrokerError):
+    """A CLI facade call was held for human approval (409).
+
+    The plain proxy answers a hold with the 202 held envelope. A vendor CLI
+    would misread that as the operation's own response, so a facade answers
+    the hold as an error instead: the hold is already filed, ``extra`` carries
+    the held execution's id and links, and the CLI fails without retrying.
+    """
+
+    default_type = "execution_held"
 
 
 class ApprovalHoldUnavailableError(BrokerError):
@@ -742,6 +798,96 @@ def direct_action_denied_directive() -> AgentDirective:
             "forbid this specific call — ask your operator to adjust the "
             "binding's permission rules. This is not something you can grant "
             "yourself."
+        ),
+    )
+
+
+def cli_invocation_vendor_mismatch_directive(*, token_vendor: str) -> AgentDirective:
+    """Directive for the ``cli_invocation_vendor_mismatch`` 403: wrong token for this API."""
+    return AgentDirective(
+        strategy="fatal",
+        parameters={"token_vendor": token_vendor},
+        human_readable_instruction=(
+            f"This command's Jentic invocation token is for {token_vendor} and can only "
+            "reach that vendor's APIs. Run the call through the matching vendor command "
+            "instead of reusing this token."
+        ),
+    )
+
+
+def graphql_request_rejected_directive() -> AgentDirective:
+    """Directive for the ``graphql_request_rejected`` 400: the request shape must change."""
+    return AgentDirective(
+        strategy="fatal",
+        parameters={},
+        human_readable_instruction=(
+            "Send one GraphQL query or mutation per request, as a POST with a JSON object "
+            "body holding the full document in 'query' (and optionally 'variables' and "
+            "'operationName'). Batches, persisted queries, subscriptions and documents "
+            "with several operations are refused."
+        ),
+    )
+
+
+def graphql_field_hard_denied_directive(*, field: str) -> AgentDirective:
+    """Directive for a GraphQL top-level field that no rule can allow (403)."""
+    return AgentDirective(
+        strategy="fatal",
+        parameters={"field": field},
+        human_readable_instruction=(
+            f"The '{field}' mutation is never allowed through Jentic, whatever the "
+            "binding's rules say. Do not retry it or look for another way to make the "
+            "same change; tell the user it needs to be done by a person outside Jentic."
+        ),
+    )
+
+
+def graphql_field_denied_directive(*, operation_type: str, field: str) -> AgentDirective:
+    """Directive for a GraphQL top-level field the binding's rules deny (403)."""
+    return AgentDirective(
+        strategy="prompt_human",
+        parameters={"operation_type": operation_type, "field": field},
+        human_readable_instruction=(
+            f"The GraphQL {operation_type} field '{field}' is denied by your credential "
+            "binding's permission rules. Ask your operator to allow it if the task needs "
+            "it; this is not something you can grant yourself."
+        ),
+    )
+
+
+def git_action_denied_directive(*, action: str, repository: str) -> AgentDirective:
+    """Directive for a git fetch or push the binding's git rules deny (403)."""
+    return AgentDirective(
+        strategy="prompt_human",
+        parameters={"action": action, "repository": repository},
+        human_readable_instruction=(
+            f"The binding's git rules do not allow {action} on {repository}. Ask your "
+            "operator to add a git rule for it if the task needs it; this is not something "
+            "you can grant yourself."
+        ),
+    )
+
+
+def git_request_rejected_directive() -> AgentDirective:
+    """Directive for the ``git_request_rejected`` 400: the git request must change."""
+    return AgentDirective(
+        strategy="fatal",
+        parameters={},
+        human_readable_instruction=(
+            "Use a plain git clone, fetch or push over HTTPS: signed pushes and "
+            "SHA-256 repositories are not supported through Jentic."
+        ),
+    )
+
+
+def git_credential_unsupported_directive() -> AgentDirective:
+    """Directive for the ``git_credential_unsupported`` 424: the bound credential is not a token."""
+    return AgentDirective(
+        strategy="prompt_human",
+        parameters={},
+        human_readable_instruction=(
+            "git to github.com needs a GitHub token credential (a personal access token, "
+            "an OAuth or GitHub App token). Ask your operator to bind one for github.com."
         ),
     )
 

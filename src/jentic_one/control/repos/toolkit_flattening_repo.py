@@ -36,7 +36,7 @@ from dataclasses import dataclass
 
 from sqlalchemy import inspect, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import load_only, raiseload
+from sqlalchemy.orm import defer, load_only, raiseload
 
 from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
 from jentic_one.control.core.schema.credentials import Credential
@@ -255,9 +255,14 @@ class FlatteningControlRepository:
     async def list_inline_rules(
         session: AsyncSession, *, agent_id: str, credential_id: str
     ) -> list[AgentPermissionRule]:
-        """A direct binding's inline rules, in evaluation order (verification read)."""
+        """A direct binding's inline rules, in evaluation order (verification read).
+
+        ``api_role`` is deferred: the job also runs against a schema that
+        predates the column, and flattened rules never carry one.
+        """
         result = await session.execute(
             select(AgentPermissionRule)
+            .options(defer(AgentPermissionRule.api_role))
             .where(
                 AgentPermissionRule.agent_id == agent_id,
                 AgentPermissionRule.credential_id == credential_id,

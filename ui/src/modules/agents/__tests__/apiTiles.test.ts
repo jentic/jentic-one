@@ -149,6 +149,37 @@ describe('composeApiTiles', () => {
 		expect(tiles.map((t) => t.title)).toEqual(['Slack Admin']);
 	});
 
+	it('draws one tile per API a CLI-profile credential serves', () => {
+		// One `jentic connect github` credential covers the REST, GraphQL and git
+		// APIs; its binding lists each, and only REST is imported here.
+		const apis = [
+			makeApi({
+				vendor: 'github-com',
+				name: 'api-github-com',
+				display_name: 'GitHub REST',
+				version: '2022-11-28',
+			}),
+			makeApi({ vendor: 'github-com', name: 'other-api', display_name: 'Other' }),
+		];
+		const binding = makeBinding({
+			serves: [
+				{ vendor: 'github-com', name: 'api-github-com', version: null },
+				{ vendor: 'github-com', name: 'github-graphql', version: '1' },
+				{ vendor: 'github-com', name: 'github-git', version: '1' },
+			],
+		});
+		const tiles = composeApiTiles([binding], [makeCredential()], apis);
+		expect(tiles).toHaveLength(3);
+		expect(new Set(tiles.map((t) => t.key)).size).toBe(3);
+		expect(tiles.map((t) => t.apiName).sort()).toEqual([
+			'api-github-com',
+			'github-git',
+			'github-graphql',
+		]);
+		expect(tiles.every((t) => t.bindingId === binding.id)).toBe(true);
+		expect(agentApiCount([binding], apis)).toBe(3);
+	});
+
 	it('titles a tile with the shared humaniser and puts the domain beside it', () => {
 		// The title is the SAME friendly name the credential picker and the
 		// workspace cards show for this API — never the raw registry slug — and

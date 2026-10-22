@@ -46,6 +46,7 @@ def _make_credential(
     cred.customer_api_key = None
     cred.basic_credential = None
     cred.oauth_token = None
+    cred.cli_profile = None
     return cred
 
 

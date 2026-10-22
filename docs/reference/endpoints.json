@@ -1650,6 +1650,133 @@
       ],
       "auth_note": null,
       "authenticated": true,
+      "group": "Agent-facing (typically an agent)",
+      "implied_permissions": {
+        "capabilities:read": []
+      },
+      "method": "GET",
+      "operation_id": "listCliFacades",
+      "path": "/cli-facades",
+      "public": false,
+      "required_permissions": [
+        "capabilities:read"
+      ],
+      "summary": "List vendor CLI facades",
+      "surface": "cli-facades",
+      "typical_caller": "agent"
+    },
+    {
+      "actor_types": [
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Agent-facing (typically an agent)",
+      "implied_permissions": {
+        "capabilities:execute": [
+          "apis:read",
+          "capabilities:read",
+          "executions:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "createCliInvocation",
+      "path": "/cli-invocations",
+      "public": false,
+      "required_permissions": [
+        "capabilities:execute"
+      ],
+      "summary": "Mint a CLI invocation token",
+      "surface": "cli-invocations",
+      "typical_caller": "agent"
+    },
+    {
+      "actor_types": [
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Agent-facing (typically an agent)",
+      "implied_permissions": {},
+      "method": "POST",
+      "operation_id": "renewCliInvocation",
+      "path": "/cli-invocations/{invocation_id}:renew",
+      "public": false,
+      "required_permissions": [],
+      "summary": "Renew a CLI invocation token",
+      "surface": "cli-invocations",
+      "typical_caller": "agent"
+    },
+    {
+      "actor_types": [
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Agent-facing (typically an agent)",
+      "implied_permissions": {},
+      "method": "POST",
+      "operation_id": "revokeCliInvocation",
+      "path": "/cli-invocations/{invocation_id}:revoke",
+      "public": false,
+      "required_permissions": [],
+      "summary": "Revoke a CLI invocation token",
+      "surface": "cli-invocations",
+      "typical_caller": "agent"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Agent-facing (typically an agent)",
+      "implied_permissions": {
+        "capabilities:read": []
+      },
+      "method": "GET",
+      "operation_id": "listCliProfiles",
+      "path": "/cli-profiles",
+      "public": false,
+      "required_permissions": [
+        "capabilities:read"
+      ],
+      "summary": "List CLI profiles",
+      "surface": "cli-profiles",
+      "typical_caller": "agent"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Agent-facing (typically an agent)",
+      "implied_permissions": {
+        "catalog:import": [
+          "apis:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "provisionCliProfile",
+      "path": "/cli-profiles/{profile}:provision",
+      "public": false,
+      "required_permissions": [
+        "catalog:import"
+      ],
+      "summary": "Provision a CLI profile's APIs",
+      "surface": "cli-profiles",
+      "typical_caller": "agent"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
       "group": "Any authenticated actor",
       "implied_permissions": {
         "credentials:read": [],
@@ -4751,5 +4878,5 @@
     "total": 27
   },
   "schema": "jentic.endpoint-permission-tree/v1",
-  "total": 170
+  "total": 176
 }

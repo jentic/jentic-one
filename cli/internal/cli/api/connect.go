@@ -71,6 +71,8 @@ func newConnectCmd(a *app) *cobra.Command {
 	var apiRef string
 	var authType string
 	var rulesJSON string
+	var preset string
+	var presetParams []string
 	var wait bool
 	var timeout time.Duration
 	cmd := &cobra.Command{
@@ -81,6 +83,11 @@ func newConnectCmd(a *app) *cobra.Command {
 			"any registry API with --api <vendor/name/version> (where the deployment takes\n" +
 			"API connect requests): its spec decides the credential — pass --auth-type when\n" +
 			"it declares several schemes — and --rules proposes the permission rules you need.\n" +
+			"For a vendor CLI's API (`jentic connect github`, `github-graphql`, `github-git`),\n" +
+			"--preset <name> asks for a named rule preset of its CLI profile instead (see\n" +
+			"GET /cli-profiles), filled in with --preset-param name=value (e.g. repo=octo-org/app,\n" +
+			"branches='agent/*'); Jentic expands it into concrete rules for that API, which the\n" +
+			"approver reviews and the result lists under requested_permission_rules.\n" +
 			"Relay the URL to your human operator: they approve the connection (or enter the\n" +
 			"API key) in the browser — this command never completes an approval by itself.\n" +
 			"Once they confirm, check your new binding with `jentic whoami` and retry the\n" +
@@ -146,6 +153,17 @@ func newConnectCmd(a *app) *cobra.Command {
 				}
 				rules = decoded
 			}
+			params, perr := parsePresetParams(presetParams)
+			if perr == nil && len(params) > 0 && preset == "" {
+				perr = errors.New("--preset-param applies with --preset only")
+			}
+			if perr != nil {
+				return reportCoded(aud, &ux.CodedError{
+					Code:       ux.CodeMissingArgument,
+					Msg:        perr.Error(),
+					Actionable: "Pass --preset <name> with --preset-param name=value (repeat the flag per value), e.g. --preset push_branches --preset-param repo=octo-org/app --preset-param branches='agent/*'.",
+				})
+			}
 			target := connectTargetLabel(vendor, api)
 			rerun := "jentic connect " + vendor
 			if api != nil {
@@ -199,6 +217,12 @@ func newConnectCmd(a *app) *cobra.Command {
 			if len(rules) > 0 {
 				body.RequestedPermissionRules = &rules
 			}
+			if preset != "" {
+				body.Preset = &preset
+				if len(params) > 0 {
+					body.PresetParams = &params
+				}
+			}
 			if len(scopes) > 0 {
 				body.RequestedScopes = &scopes
 			}
@@ -238,6 +262,10 @@ func newConnectCmd(a *app) *cobra.Command {
 			}
 			if humanEntry {
 				envelope["next_step"] = humanEntryNextStep("`jentic whoami`")
+			}
+			if len(created.RequestedPermissionRules) > 0 {
+				// The concrete rules the approver reviews (a --preset expanded).
+				envelope["requested_permission_rules"] = created.RequestedPermissionRules
 			}
 			if !wait {
 				aud.Render(envelope)
@@ -298,6 +326,10 @@ func newConnectCmd(a *app) *cobra.Command {
 		"with --api: the declared scheme name or kind to use (api_key, bearer, basic, oauth2) when the spec declares several")
 	cmd.Flags().StringVar(&rulesJSON, "rules", "",
 		"permission rules you ask for on the binding, as a JSON list (the approver reviews them; a denial's suggested_rules fit as-is)")
+	cmd.Flags().StringVar(&preset, "preset", "",
+		"a rule preset of the target's CLI profile (read_only, read_and_prs, push_branches for GitHub), expanded server-side into concrete rules the approver reviews")
+	cmd.Flags().StringArrayVar(&presetParams, "preset-param", nil,
+		"a preset parameter as name=value (repeatable; repeating a name adds to its comma-separated list), e.g. repo=octo-org/app or branches='agent/*'")
 	cmd.Flags().BoolVar(&wait, "wait", false,
 		"poll the session until it connects or ends (rejected, expired, or cancelled)")
 	cmd.Flags().DurationVar(&timeout, "timeout", connectWaitDefault,
@@ -570,4 +602,23 @@ func isAmbiguousVendor(he *HTTPError) bool {
 func isInvalidRegistration(he *HTTPError) bool {
 	t, _ := he.Fields()["type"].(string)
 	return he.StatusCode == http.StatusBadRequest && strings.HasSuffix(t, "invalid_oauth_app_registration")
+}
+
+// parsePresetParams reads --preset-param name=value pairs. A name given more
+// than once collects its values into one comma-separated list (repo=a
+// --preset-param repo=b is repo=a,b).
+func parsePresetParams(pairs []string) (map[string]string, error) {
+	out := map[string]string{}
+	for _, pair := range pairs {
+		name, value, ok := strings.Cut(pair, "=")
+		name = strings.TrimSpace(name)
+		if !ok || name == "" || strings.TrimSpace(value) == "" {
+			return nil, fmt.Errorf("--preset-param %q must be name=value", pair)
+		}
+		if prev, seen := out[name]; seen {
+			value = prev + "," + value
+		}
+		out[name] = value
+	}
+	return out, nil
 }

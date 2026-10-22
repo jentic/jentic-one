@@ -19,6 +19,7 @@ var SensitiveFields = map[string][]string{
 	"BearerTokenUpdateRequest":                   []string{"token"},
 	"ChangePasswordRequest":                      []string{"current_password", "new_password"},
 	"ClaimRequest":                               []string{"token"},
+	"CliInvocationCreatedResponse":               []string{"token"},
 	"CreateAdminRequest":                         []string{"password"},
 	"CredentialCreateResponse":                   []string{"secret"},
 	"InviteIssuedResponse":                       []string{"token"},

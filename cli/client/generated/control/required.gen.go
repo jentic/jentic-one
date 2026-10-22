@@ -88,7 +88,46 @@ func (CatalogRefreshResponse) RequiredFields() []string { return []string{"count
 func (ChangePasswordRequest) RequiredFields() []string {
 	return []string{"current_password", "new_password"}
 }
-func (ClaimRequest) RequiredFields() []string               { return []string{"token"} }
+func (ClaimRequest) RequiredFields() []string { return []string{"token"} }
+func (CliFacadeContainerWiringResponse) RequiredFields() []string {
+	return []string{"env_set", "env_strip", "tunnel_hosts"}
+}
+func (CliFacadeListResponse) RequiredFields() []string { return []string{"data"} }
+func (CliFacadeResponse) RequiredFields() []string {
+	return []string{"cli", "mode", "protocols", "vendor"}
+}
+func (CliFacadeWrapperWiringResponse) RequiredFields() []string {
+	return []string{"env_set", "env_strip"}
+}
+func (CliInvocationCreateRequest) RequiredFields() []string { return []string{"vendor"} }
+func (CliInvocationCreatedResponse) RequiredFields() []string {
+	return []string{"expires_at", "hard_expires_at", "id", "token", "trace_id", "vendor"}
+}
+func (CliInvocationResponse) RequiredFields() []string {
+	return []string{"expires_at", "hard_expires_at", "id", "trace_id", "vendor"}
+}
+func (CliProfileApiResponse) RequiredFields() []string {
+	return []string{"api_id", "live", "name", "role", "source", "vendor"}
+}
+func (CliProfileHardDenyResponse) RequiredFields() []string {
+	return []string{"description", "kind", "role"}
+}
+func (CliProfileListResponse) RequiredFields() []string { return []string{"data"} }
+func (CliProfilePresetParamResponse) RequiredFields() []string {
+	return []string{"description", "kind", "name"}
+}
+func (CliProfilePresetResponse) RequiredFields() []string {
+	return []string{"description", "name", "params", "roles"}
+}
+func (CliProfileProvisionResponse) RequiredFields() []string {
+	return []string{"apis", "profile", "vendor", "vendor_enabled"}
+}
+func (CliProfileProvisionedApiResponse) RequiredFields() []string {
+	return []string{"api_id", "name", "role", "source", "status", "vendor"}
+}
+func (CliProfileResponse) RequiredFields() []string {
+	return []string{"apis", "cli", "credential_mode", "display_name", "hard_deny", "presets", "profile", "vendor", "vendor_enabled"}
+}
 func (ConnectSessionListResponse) RequiredFields() []string { return []string{"data", "has_more"} }
 func (ConnectSessionSummaryResponse) RequiredFields() []string {
 	return []string{"created_at", "credential_id", "requested_by_actor_id", "session_id", "state", "vendor_display_name", "vendor_key"}

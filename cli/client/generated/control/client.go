@@ -324,6 +324,234 @@ func (e BearerTokenUpdateRequestType) Valid() bool {
 	}
 }
 
+// Defines values for CliFacadeResponseMode.
+const (
+	Host CliFacadeResponseMode = "host"
+	Path CliFacadeResponseMode = "path"
+)
+
+// Valid indicates whether the value is a known member of the CliFacadeResponseMode enum.
+func (e CliFacadeResponseMode) Valid() bool {
+	switch e {
+	case Host:
+		return true
+	case Path:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CliFacadeResponseProtocols.
+const (
+	CliFacadeResponseProtocolsGit     CliFacadeResponseProtocols = "git"
+	CliFacadeResponseProtocolsGraphql CliFacadeResponseProtocols = "graphql"
+	CliFacadeResponseProtocolsRest    CliFacadeResponseProtocols = "rest"
+)
+
+// Valid indicates whether the value is a known member of the CliFacadeResponseProtocols enum.
+func (e CliFacadeResponseProtocols) Valid() bool {
+	switch e {
+	case CliFacadeResponseProtocolsGit:
+		return true
+	case CliFacadeResponseProtocolsGraphql:
+		return true
+	case CliFacadeResponseProtocolsRest:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CliProfileApiResponseRole.
+const (
+	CliProfileApiResponseRoleGit     CliProfileApiResponseRole = "git"
+	CliProfileApiResponseRoleGraphql CliProfileApiResponseRole = "graphql"
+	CliProfileApiResponseRoleRest    CliProfileApiResponseRole = "rest"
+	CliProfileApiResponseRoleUploads CliProfileApiResponseRole = "uploads"
+)
+
+// Valid indicates whether the value is a known member of the CliProfileApiResponseRole enum.
+func (e CliProfileApiResponseRole) Valid() bool {
+	switch e {
+	case CliProfileApiResponseRoleGit:
+		return true
+	case CliProfileApiResponseRoleGraphql:
+		return true
+	case CliProfileApiResponseRoleRest:
+		return true
+	case CliProfileApiResponseRoleUploads:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CliProfileHardDenyResponseKind.
+const (
+	GitRef              CliProfileHardDenyResponseKind = "git_ref"
+	GraphqlHeldMutation CliProfileHardDenyResponseKind = "graphql_held_mutation"
+	GraphqlMutation     CliProfileHardDenyResponseKind = "graphql_mutation"
+)
+
+// Valid indicates whether the value is a known member of the CliProfileHardDenyResponseKind enum.
+func (e CliProfileHardDenyResponseKind) Valid() bool {
+	switch e {
+	case GitRef:
+		return true
+	case GraphqlHeldMutation:
+		return true
+	case GraphqlMutation:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CliProfileHardDenyResponseRole.
+const (
+	CliProfileHardDenyResponseRoleGit     CliProfileHardDenyResponseRole = "git"
+	CliProfileHardDenyResponseRoleGraphql CliProfileHardDenyResponseRole = "graphql"
+	CliProfileHardDenyResponseRoleRest    CliProfileHardDenyResponseRole = "rest"
+	CliProfileHardDenyResponseRoleUploads CliProfileHardDenyResponseRole = "uploads"
+)
+
+// Valid indicates whether the value is a known member of the CliProfileHardDenyResponseRole enum.
+func (e CliProfileHardDenyResponseRole) Valid() bool {
+	switch e {
+	case CliProfileHardDenyResponseRoleGit:
+		return true
+	case CliProfileHardDenyResponseRoleGraphql:
+		return true
+	case CliProfileHardDenyResponseRoleRest:
+		return true
+	case CliProfileHardDenyResponseRoleUploads:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CliProfilePresetParamResponseKind.
+const (
+	Flag     CliProfilePresetParamResponseKind = "flag"
+	RefGlob  CliProfilePresetParamResponseKind = "ref_glob"
+	RepoList CliProfilePresetParamResponseKind = "repo_list"
+)
+
+// Valid indicates whether the value is a known member of the CliProfilePresetParamResponseKind enum.
+func (e CliProfilePresetParamResponseKind) Valid() bool {
+	switch e {
+	case Flag:
+		return true
+	case RefGlob:
+		return true
+	case RepoList:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CliProfilePresetResponseRoles.
+const (
+	CliProfilePresetResponseRolesGit     CliProfilePresetResponseRoles = "git"
+	CliProfilePresetResponseRolesGraphql CliProfilePresetResponseRoles = "graphql"
+	CliProfilePresetResponseRolesRest    CliProfilePresetResponseRoles = "rest"
+	CliProfilePresetResponseRolesUploads CliProfilePresetResponseRoles = "uploads"
+)
+
+// Valid indicates whether the value is a known member of the CliProfilePresetResponseRoles enum.
+func (e CliProfilePresetResponseRoles) Valid() bool {
+	switch e {
+	case CliProfilePresetResponseRolesGit:
+		return true
+	case CliProfilePresetResponseRolesGraphql:
+		return true
+	case CliProfilePresetResponseRolesRest:
+		return true
+	case CliProfilePresetResponseRolesUploads:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CliProfileProvisionedApiResponseRole.
+const (
+	CliProfileProvisionedApiResponseRoleGit     CliProfileProvisionedApiResponseRole = "git"
+	CliProfileProvisionedApiResponseRoleGraphql CliProfileProvisionedApiResponseRole = "graphql"
+	CliProfileProvisionedApiResponseRoleRest    CliProfileProvisionedApiResponseRole = "rest"
+	CliProfileProvisionedApiResponseRoleUploads CliProfileProvisionedApiResponseRole = "uploads"
+)
+
+// Valid indicates whether the value is a known member of the CliProfileProvisionedApiResponseRole enum.
+func (e CliProfileProvisionedApiResponseRole) Valid() bool {
+	switch e {
+	case CliProfileProvisionedApiResponseRoleGit:
+		return true
+	case CliProfileProvisionedApiResponseRoleGraphql:
+		return true
+	case CliProfileProvisionedApiResponseRoleRest:
+		return true
+	case CliProfileProvisionedApiResponseRoleUploads:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CliProfileProvisionedApiResponseStatus.
+const (
+	CliProfileProvisionedApiResponseStatusBuiltin       CliProfileProvisionedApiResponseStatus = "builtin"
+	CliProfileProvisionedApiResponseStatusFailed        CliProfileProvisionedApiResponseStatus = "failed"
+	CliProfileProvisionedApiResponseStatusHeldForReview CliProfileProvisionedApiResponseStatus = "held_for_review"
+	CliProfileProvisionedApiResponseStatusImportQueued  CliProfileProvisionedApiResponseStatus = "import_queued"
+	CliProfileProvisionedApiResponseStatusImported      CliProfileProvisionedApiResponseStatus = "imported"
+	CliProfileProvisionedApiResponseStatusLive          CliProfileProvisionedApiResponseStatus = "live"
+	CliProfileProvisionedApiResponseStatusNotInCatalog  CliProfileProvisionedApiResponseStatus = "not_in_catalog"
+)
+
+// Valid indicates whether the value is a known member of the CliProfileProvisionedApiResponseStatus enum.
+func (e CliProfileProvisionedApiResponseStatus) Valid() bool {
+	switch e {
+	case CliProfileProvisionedApiResponseStatusBuiltin:
+		return true
+	case CliProfileProvisionedApiResponseStatusFailed:
+		return true
+	case CliProfileProvisionedApiResponseStatusHeldForReview:
+		return true
+	case CliProfileProvisionedApiResponseStatusImportQueued:
+		return true
+	case CliProfileProvisionedApiResponseStatusImported:
+		return true
+	case CliProfileProvisionedApiResponseStatusLive:
+		return true
+	case CliProfileProvisionedApiResponseStatusNotInCatalog:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CliProfileResponseCredentialMode.
+const (
+	PerApi        CliProfileResponseCredentialMode = "per_api"
+	ProfileScoped CliProfileResponseCredentialMode = "profile_scoped"
+)
+
+// Valid indicates whether the value is a known member of the CliProfileResponseCredentialMode enum.
+func (e CliProfileResponseCredentialMode) Valid() bool {
+	switch e {
+	case PerApi:
+		return true
+	case ProfileScoped:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ConnectSessionSummaryResponseState.
 const (
 	ConnectSessionSummaryResponseStateAwaitingApp ConnectSessionSummaryResponseState = "awaiting_app"
@@ -945,6 +1173,30 @@ func (e OwnOAuthClientConfirmSessionRequestKind) Valid() bool {
 	}
 }
 
+// Defines values for PermissionRuleReadSchemaApiRole.
+const (
+	PermissionRuleReadSchemaApiRoleGit     PermissionRuleReadSchemaApiRole = "git"
+	PermissionRuleReadSchemaApiRoleGraphql PermissionRuleReadSchemaApiRole = "graphql"
+	PermissionRuleReadSchemaApiRoleRest    PermissionRuleReadSchemaApiRole = "rest"
+	PermissionRuleReadSchemaApiRoleUploads PermissionRuleReadSchemaApiRole = "uploads"
+)
+
+// Valid indicates whether the value is a known member of the PermissionRuleReadSchemaApiRole enum.
+func (e PermissionRuleReadSchemaApiRole) Valid() bool {
+	switch e {
+	case PermissionRuleReadSchemaApiRoleGit:
+		return true
+	case PermissionRuleReadSchemaApiRoleGraphql:
+		return true
+	case PermissionRuleReadSchemaApiRoleRest:
+		return true
+	case PermissionRuleReadSchemaApiRoleUploads:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PermissionRuleReadSchemaEffect.
 const (
 	PermissionRuleReadSchemaEffectAllow           PermissionRuleReadSchemaEffect = "allow"
@@ -968,9 +1220,11 @@ func (e PermissionRuleReadSchemaEffect) Valid() bool {
 
 // Defines values for PermissionRuleReadSchemaMatchMode.
 const (
-	PermissionRuleReadSchemaMatchModeExact  PermissionRuleReadSchemaMatchMode = "exact"
-	PermissionRuleReadSchemaMatchModePrefix PermissionRuleReadSchemaMatchMode = "prefix"
-	PermissionRuleReadSchemaMatchModeRegex  PermissionRuleReadSchemaMatchMode = "regex"
+	PermissionRuleReadSchemaMatchModeExact   PermissionRuleReadSchemaMatchMode = "exact"
+	PermissionRuleReadSchemaMatchModeGit     PermissionRuleReadSchemaMatchMode = "git"
+	PermissionRuleReadSchemaMatchModeGraphql PermissionRuleReadSchemaMatchMode = "graphql"
+	PermissionRuleReadSchemaMatchModePrefix  PermissionRuleReadSchemaMatchMode = "prefix"
+	PermissionRuleReadSchemaMatchModeRegex   PermissionRuleReadSchemaMatchMode = "regex"
 )
 
 // Valid indicates whether the value is a known member of the PermissionRuleReadSchemaMatchMode enum.
@@ -978,9 +1232,37 @@ func (e PermissionRuleReadSchemaMatchMode) Valid() bool {
 	switch e {
 	case PermissionRuleReadSchemaMatchModeExact:
 		return true
+	case PermissionRuleReadSchemaMatchModeGit:
+		return true
+	case PermissionRuleReadSchemaMatchModeGraphql:
+		return true
 	case PermissionRuleReadSchemaMatchModePrefix:
 		return true
 	case PermissionRuleReadSchemaMatchModeRegex:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PermissionRuleSchemaApiRole.
+const (
+	PermissionRuleSchemaApiRoleGit     PermissionRuleSchemaApiRole = "git"
+	PermissionRuleSchemaApiRoleGraphql PermissionRuleSchemaApiRole = "graphql"
+	PermissionRuleSchemaApiRoleRest    PermissionRuleSchemaApiRole = "rest"
+	PermissionRuleSchemaApiRoleUploads PermissionRuleSchemaApiRole = "uploads"
+)
+
+// Valid indicates whether the value is a known member of the PermissionRuleSchemaApiRole enum.
+func (e PermissionRuleSchemaApiRole) Valid() bool {
+	switch e {
+	case PermissionRuleSchemaApiRoleGit:
+		return true
+	case PermissionRuleSchemaApiRoleGraphql:
+		return true
+	case PermissionRuleSchemaApiRoleRest:
+		return true
+	case PermissionRuleSchemaApiRoleUploads:
 		return true
 	default:
 		return false
@@ -1010,15 +1292,21 @@ func (e PermissionRuleSchemaEffect) Valid() bool {
 
 // Defines values for PermissionRuleSchemaMatchMode.
 const (
-	PermissionRuleSchemaMatchModeExact  PermissionRuleSchemaMatchMode = "exact"
-	PermissionRuleSchemaMatchModePrefix PermissionRuleSchemaMatchMode = "prefix"
-	PermissionRuleSchemaMatchModeRegex  PermissionRuleSchemaMatchMode = "regex"
+	PermissionRuleSchemaMatchModeExact   PermissionRuleSchemaMatchMode = "exact"
+	PermissionRuleSchemaMatchModeGit     PermissionRuleSchemaMatchMode = "git"
+	PermissionRuleSchemaMatchModeGraphql PermissionRuleSchemaMatchMode = "graphql"
+	PermissionRuleSchemaMatchModePrefix  PermissionRuleSchemaMatchMode = "prefix"
+	PermissionRuleSchemaMatchModeRegex   PermissionRuleSchemaMatchMode = "regex"
 )
 
 // Valid indicates whether the value is a known member of the PermissionRuleSchemaMatchMode enum.
 func (e PermissionRuleSchemaMatchMode) Valid() bool {
 	switch e {
 	case PermissionRuleSchemaMatchModeExact:
+		return true
+	case PermissionRuleSchemaMatchModeGit:
+		return true
+	case PermissionRuleSchemaMatchModeGraphql:
 		return true
 	case PermissionRuleSchemaMatchModePrefix:
 		return true
@@ -1533,7 +1821,7 @@ type ApiInfoResponse struct {
 
 // ApiKeyConfirmSessionRequest Confirm a “manual_api_key“ session with the API key to store.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","key":"example-secret","kind":"api_key","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","key":"example-secret","kind":"api_key","permission_rules":[{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
 type ApiKeyConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
 	//
@@ -1562,7 +1850,7 @@ type ApiKeyConfirmSessionRequest struct {
 
 	// PermissionRules Permission rules to bind for the agent (at most 100).
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
 }
 
@@ -2313,7 +2601,7 @@ type BasicAuthUpdateRequestType string
 
 // BasicConfirmSessionRequest Confirm a “manual_basic“ session with the username and password to store.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"basic","password":"example-secret","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"username":"svc-reporting"}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"basic","password":"example-secret","permission_rules":[{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"username":"svc-reporting"}
 type BasicConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
 	//
@@ -2342,7 +2630,7 @@ type BasicConfirmSessionRequest struct {
 
 	// PermissionRules Permission rules to bind for the agent (at most 100).
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
 
 	// Username Username to store.
@@ -2358,7 +2646,7 @@ type BasicConfirmSessionRequestKind string
 
 // BearerConfirmSessionRequest Confirm a “manual_bearer“ session with the bearer token to store.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"bearer","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"token":"example-secret"}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"bearer","permission_rules":[{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"token":"example-secret"}
 type BearerConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
 	//
@@ -2382,7 +2670,7 @@ type BearerConfirmSessionRequest struct {
 
 	// PermissionRules Permission rules to bind for the agent (at most 100).
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
 
 	// Token Bearer token to store; write-only.
@@ -2658,6 +2946,530 @@ type ClaimRequest struct {
 	Token string `json:"token"`
 }
 
+// CliFacadeContainerWiringResponse What `jentic run --container` sets for the vendor's tools.
+//
+// Examples: {"env_set":{"GH_TOKEN":"{placeholder}","GIT_TERMINAL_PROMPT":"0"},"env_strip":["GITHUB_TOKEN"],"tunnel_hosts":[]}
+type CliFacadeContainerWiringResponse struct {
+	// EnvSet Variables to set on the agent container. A value is a literal or `{placeholder}`, the egress proxy's fixed non-secret placeholder token.
+	//
+	// Examples: {"GH_TOKEN":"{placeholder}","GIT_TERMINAL_PROMPT":"0"}
+	EnvSet map[string]string `json:"env_set"`
+
+	// EnvStrip Variables removed from the agent container's environment.
+	//
+	// Examples: ["GITHUB_TOKEN"]
+	EnvStrip []string `json:"env_strip"`
+
+	// TunnelHosts Hosts the vendor's tools need reached directly (tunnelled by the egress proxy, never decrypted).
+	//
+	// Examples: []
+	TunnelHosts []string `json:"tunnel_hosts"`
+}
+
+// CliFacadeListResponse The vendor CLI facades this deployment serves.
+//
+// Examples: {"data":[{"address":"https://broker.jentic.example.com/_facade/cloudflare","binary":"cf","cli":"cf","container":{"env_set":{"GH_TOKEN":"{placeholder}","GIT_TERMINAL_PROMPT":"0"},"env_strip":["GITHUB_TOKEN"],"tunnel_hosts":[]},"display_name":"Cloudflare","governed_domains":["api.cloudflare.com"],"mode":"path","protocols":["rest"],"supported_range":"\u003e=2.40.0,\u003c3","vendor":"cloudflare","wrapper":{"env_set":{"CLOUDFLARE_API_BASE_URL":"{address}","CLOUDFLARE_API_TOKEN":"{token}"},"env_strip":["CLOUDFLARE_API_KEY","CF_API_TOKEN"]}}]}
+type CliFacadeListResponse struct {
+	// Data Served facades, one per vendor; empty when none is enabled.
+	//
+	// Examples: [{"address":"https://broker.jentic.example.com/_facade/cloudflare","binary":"cf","cli":"cf","container":{"env_set":{"GH_TOKEN":"{placeholder}","GIT_TERMINAL_PROMPT":"0"},"env_strip":["GITHUB_TOKEN"],"tunnel_hosts":[]},"display_name":"Cloudflare","governed_domains":["api.cloudflare.com"],"mode":"path","protocols":["rest"],"supported_range":"\u003e=2.40.0,\u003c3","vendor":"cloudflare","wrapper":{"env_set":{"CLOUDFLARE_API_BASE_URL":"{address}","CLOUDFLARE_API_TOKEN":"{token}"},"env_strip":["CLOUDFLARE_API_KEY","CF_API_TOKEN"]}}]
+	Data []CliFacadeResponse `json:"data"`
+}
+
+// CliFacadeResponse One vendor CLI facade an agent's CLI can be pointed at.
+//
+// Examples: {"address":"https://broker.jentic.example.com/_facade/cloudflare","binary":"cf","cli":"cf","container":{"env_set":{"GH_TOKEN":"{placeholder}","GIT_TERMINAL_PROMPT":"0"},"env_strip":["GITHUB_TOKEN"],"tunnel_hosts":[]},"display_name":"Cloudflare","governed_domains":["api.cloudflare.com"],"mode":"path","protocols":["rest"],"supported_range":"\u003e=2.40.0,\u003c3","vendor":"cloudflare","wrapper":{"env_set":{"CLOUDFLARE_API_BASE_URL":"{address}","CLOUDFLARE_API_TOKEN":"{token}"},"env_strip":["CLOUDFLARE_API_KEY","CF_API_TOKEN"]}}
+type CliFacadeResponse struct {
+	// Address Base URL to point the CLI at (e.g. `CLOUDFLARE_API_BASE_URL`). Null when the deployment cannot advertise one: a `remote` backend whose Broker URL is a loopback address and no `public_address` set for the vendor.
+	//
+	// Examples: https://broker.jentic.example.com/_facade/cloudflare
+	Address *string `json:"address,omitempty"`
+
+	// Binary The vendor CLI's executable, looked up on PATH.
+	//
+	// Examples: cf
+	Binary *string `json:"binary,omitempty"`
+
+	// Cli The vendor CLI the facade speaks to, e.g. `cf` for `jentic cf`.
+	//
+	// Examples: cf
+	Cli string `json:"cli"`
+
+	// Container What `jentic run --container` sets for the vendor; null when nothing.
+	//
+	// Examples: {"env_set":{"GH_TOKEN":"{placeholder}","GIT_TERMINAL_PROMPT":"0"},"env_strip":["GITHUB_TOKEN"],"tunnel_hosts":[]}
+	Container *CliFacadeContainerWiringResponse `json:"container,omitempty"`
+
+	// DisplayName How the vendor is named to people, e.g. in a wrapper's directives.
+	//
+	// Examples: Cloudflare
+	DisplayName *string `json:"display_name,omitempty"`
+
+	// GovernedDomains Domains whose hosts the egress proxy of `jentic run --container` relays to the Broker for this vendor.
+	//
+	// Examples: ["api.cloudflare.com"]
+	GovernedDomains *[]string `json:"governed_domains,omitempty"`
+
+	// Mode How the facade is addressed: `host` on a hostname of its own, `path` under a path prefix on the Broker's own address.
+	//
+	// Examples: path
+	Mode CliFacadeResponseMode `json:"mode"`
+
+	// Protocols What the vendor's tools reach through Jentic: `rest` (the vendor's REST API), `graphql` (GitHub's GraphQL endpoint, governed by GraphQL rules) and `git` (git clone, fetch and push to github.com, governed by git rules; listed only while the governed git pipeline is on).
+	//
+	// Examples: ["rest"]
+	Protocols []CliFacadeResponseProtocols `json:"protocols"`
+
+	// SupportedRange CLI versions the vendor's CLI profile is written for, e.g. `>=2.40.0,<3`.
+	//
+	// Examples: >=2.40.0,<3
+	SupportedRange *string `json:"supported_range,omitempty"`
+
+	// Vendor Vendor the facade serves, as passed to `POST /cli-invocations`.
+	//
+	// Examples: cloudflare
+	Vendor string `json:"vendor"`
+
+	// Wrapper How `jentic <cli>` wires the vendor CLI (from its CLI profile); null when the CLI is not wrapped.
+	//
+	// Examples: {"env_set":{"CLOUDFLARE_API_BASE_URL":"{address}","CLOUDFLARE_API_TOKEN":"{token}"},"env_strip":["CLOUDFLARE_API_KEY","CF_API_TOKEN"]}
+	Wrapper *CliFacadeWrapperWiringResponse `json:"wrapper,omitempty"`
+}
+
+// CliFacadeResponseMode How the facade is addressed: `host` on a hostname of its own, `path` under a path prefix on the Broker's own address.
+//
+// Examples: path
+type CliFacadeResponseMode string
+
+// CliFacadeResponseProtocols defines model for CliFacadeResponse.Protocols.
+type CliFacadeResponseProtocols string
+
+// CliFacadeWrapperWiringResponse How `jentic <cli>` wires the vendor CLI on the agent's machine.
+//
+// Examples: {"env_set":{"CLOUDFLARE_API_BASE_URL":"{address}","CLOUDFLARE_API_TOKEN":"{token}"},"env_strip":["CLOUDFLARE_API_KEY","CF_API_TOKEN"]}
+type CliFacadeWrapperWiringResponse struct {
+	// EnvSet Variables to set for the CLI. A value is a literal or a placeholder the wrapper fills in: `{address}` (the facade address), `{address_host}` (its hostname) or `{token}` (the command's invocation token).
+	//
+	// Examples: {"CLOUDFLARE_API_BASE_URL":"{address}","CLOUDFLARE_API_TOKEN":"{token}"}
+	EnvSet map[string]string `json:"env_set"`
+
+	// EnvStrip Credential variables the CLI could authenticate with instead of the invocation token; removed from its environment.
+	//
+	// Examples: ["CLOUDFLARE_API_KEY","CF_API_TOKEN"]
+	EnvStrip []string `json:"env_strip"`
+}
+
+// CliInvocationCreateRequest Request body for minting a CLI invocation token.
+//
+// Examples: {"command_title":"pr create","credential_name":"GitHub (acme org)","vendor":"github"}
+type CliInvocationCreateRequest struct {
+	// CommandTitle The command's subcommand path as reported by the agent, e.g. `pr create`; never its arguments (words starting with `-` are rejected). Display-only.
+	//
+	// Examples: pr create
+	CommandTitle *string `json:"command_title,omitempty"`
+
+	// CredentialName Name of the credential to use when the agent has several for this vendor (the wrapper's `JENTIC_CREDENTIAL`). The Broker applies it to every call the token makes, exactly as the `Jentic-Credential-Name` header; omit it to let the Broker select the credential as for any call. Not checked at mint: a name that matches none of the agent's credentials fails each call instead.
+	//
+	// Examples: GitHub (acme org)
+	CredentialName *string `json:"credential_name,omitempty"`
+
+	// Vendor Vendor whose CLI facade the token is for: `github`, `cloudflare` or `aws`.
+	//
+	// Examples: github
+	Vendor string `json:"vendor"`
+}
+
+// CliInvocationCreatedResponse A freshly minted CLI invocation, including its token (shown once).
+//
+// Examples: {"command_title":"pr create","credential_name":"GitHub (acme org)","expires_at":"2026-01-15T09:40:00Z","hard_expires_at":"2026-01-15T10:30:00Z","id":"cli_6968b398d3e1a7c40f2b9e58","revoked_at":null,"token":"cit_example-invocation-token","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","vendor":"github"}
+type CliInvocationCreatedResponse struct {
+	// CommandTitle Agent-reported subcommand path; null if not given.
+	//
+	// Examples: pr create
+	CommandTitle *string `json:"command_title,omitempty"`
+
+	// CredentialName Name of the credential the token's calls use; null when the Broker selects it.
+	//
+	// Examples: GitHub (acme org)
+	CredentialName *string `json:"credential_name,omitempty"`
+
+	// ExpiresAt When the token stops working unless renewed (RFC 3339).
+	//
+	// Examples: 2026-01-15T09:40:00Z
+	ExpiresAt time.Time `json:"expires_at"`
+
+	// HardExpiresAt When the token stops working regardless of renewals (RFC 3339).
+	//
+	// Examples: 2026-01-15T10:30:00Z
+	HardExpiresAt time.Time `json:"hard_expires_at"`
+
+	// Id Unique ID of the invocation.
+	//
+	// Examples: cli_6968b398d3e1a7c40f2b9e58
+	Id string `json:"id"`
+
+	// RevokedAt When the token was revoked (RFC 3339); null while live.
+	//
+	// Examples: null
+	RevokedAt *time.Time `json:"revoked_at,omitempty"`
+
+	// Token The invocation token (`cit_…`). Shown once; accepted only by the Broker's CLI facade for `vendor`.
+	//
+	// Examples: cit_example-invocation-token
+	Token string `json:"token"`
+
+	// TraceId W3C trace ID chosen by the server; every call the token makes is recorded under it.
+	//
+	// Examples: 4bf92f3577b34da6a3ce929d0e0e4736
+	TraceId string `json:"trace_id"`
+
+	// Vendor Vendor the token is for.
+	//
+	// Examples: github
+	Vendor string `json:"vendor"`
+}
+
+// CliInvocationResponse A CLI invocation token's record (never the token itself).
+//
+// Examples: {"command_title":"pr create","credential_name":"GitHub (acme org)","expires_at":"2026-01-15T09:40:00Z","hard_expires_at":"2026-01-15T10:30:00Z","id":"cli_6968b398d3e1a7c40f2b9e58","revoked_at":null,"trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","vendor":"github"}
+type CliInvocationResponse struct {
+	// CommandTitle Agent-reported subcommand path; null if not given.
+	//
+	// Examples: pr create
+	CommandTitle *string `json:"command_title,omitempty"`
+
+	// CredentialName Name of the credential the token's calls use; null when the Broker selects it.
+	//
+	// Examples: GitHub (acme org)
+	CredentialName *string `json:"credential_name,omitempty"`
+
+	// ExpiresAt When the token stops working unless renewed (RFC 3339).
+	//
+	// Examples: 2026-01-15T09:40:00Z
+	ExpiresAt time.Time `json:"expires_at"`
+
+	// HardExpiresAt When the token stops working regardless of renewals (RFC 3339).
+	//
+	// Examples: 2026-01-15T10:30:00Z
+	HardExpiresAt time.Time `json:"hard_expires_at"`
+
+	// Id Unique ID of the invocation.
+	//
+	// Examples: cli_6968b398d3e1a7c40f2b9e58
+	Id string `json:"id"`
+
+	// RevokedAt When the token was revoked (RFC 3339); null while live.
+	//
+	// Examples: null
+	RevokedAt *time.Time `json:"revoked_at,omitempty"`
+
+	// TraceId W3C trace ID chosen by the server; every call the token makes is recorded under it.
+	//
+	// Examples: 4bf92f3577b34da6a3ce929d0e0e4736
+	TraceId string `json:"trace_id"`
+
+	// Vendor Vendor the token is for.
+	//
+	// Examples: github
+	Vendor string `json:"vendor"`
+}
+
+// CliProfileApiResponse One API a CLI profile declares, and whether it is live in the registry.
+//
+// Examples: {"api_id":"github.com/api.github.com","connect":"github","live":true,"name":"api-github-com","role":"rest","source":"catalog:github.com/api.github.com","vendor":"github-com","version":"1.1.4"}
+type CliProfileApiResponse struct {
+	// ApiId The api_id a vendor entry names the API by.
+	//
+	// Examples: github.com/api.github.com
+	ApiId string `json:"api_id"`
+
+	// Connect The `jentic connect <vendor>` key that creates this API's credential; null when it is connected another way.
+	//
+	// Examples: github
+	Connect *string `json:"connect,omitempty"`
+
+	// Live Whether the registry serves the API now.
+	//
+	// Examples: true
+	Live bool `json:"live"`
+
+	// Name Registry API name.
+	//
+	// Examples: api-github-com
+	Name string `json:"name"`
+
+	// Role What the API is to the CLI. It decides the rule kind its binding takes: path rules for `rest`/`uploads`, `graphql` rules for `graphql`, `git` rules for `git`.
+	//
+	// Examples: rest
+	Role CliProfileApiResponseRole `json:"role"`
+
+	// Source Where the API comes from: `catalog:<api_id>` (public catalog), `shipped:specs/<file>` (a spec shipped with Jentic) or `builtin:<api_id>` (served by the Broker itself).
+	//
+	// Examples: catalog:github.com/api.github.com
+	Source string `json:"source"`
+
+	// Vendor Registry vendor of the API.
+	//
+	// Examples: github-com
+	Vendor string `json:"vendor"`
+
+	// Version API version; null for a catalog API that is not imported yet.
+	//
+	// Examples: 1.1.4
+	Version *string `json:"version,omitempty"`
+}
+
+// CliProfileApiResponseRole What the API is to the CLI. It decides the rule kind its binding takes: path rules for `rest`/`uploads`, `graphql` rules for `graphql`, `git` rules for `git`.
+//
+// Examples: rest
+type CliProfileApiResponseRole string
+
+// CliProfileHardDenyResponse A hard-deny list that applies to one of the profile's APIs.
+//
+// Examples: {"description":"Mutations that grant access or change repository protections.","kind":"graphql_mutation","role":"graphql"}
+type CliProfileHardDenyResponse struct {
+	// Description What the list guards.
+	//
+	// Examples: Mutations that grant access or change repository protections.
+	Description string `json:"description"`
+
+	// Kind What the list holds.
+	//
+	// Examples: graphql_mutation
+	Kind CliProfileHardDenyResponseKind `json:"kind"`
+
+	// Role The API the list applies to.
+	//
+	// Examples: graphql
+	Role CliProfileHardDenyResponseRole `json:"role"`
+}
+
+// CliProfileHardDenyResponseKind What the list holds.
+//
+// Examples: graphql_mutation
+type CliProfileHardDenyResponseKind string
+
+// CliProfileHardDenyResponseRole The API the list applies to.
+//
+// Examples: graphql
+type CliProfileHardDenyResponseRole string
+
+// CliProfileListResponse The CLI profiles this Jentic ships.
+//
+// Examples: {"data":[{"apis":[{"api_id":"github.com/api.github.com","connect":"github","live":true,"name":"api-github-com","role":"rest","source":"catalog:github.com/api.github.com","vendor":"github-com","version":"1.1.4"}],"cli":"gh","connect":"github","credential_mode":"profile_scoped","display_name":"GitHub","hard_deny":[{"description":"Mutations that grant access or change repository protections.","kind":"graphql_mutation","role":"graphql"}],"presets":[{"description":"Read everything: REST GETs, every GraphQL query, git fetch.","name":"read_only","params":[{"default":"false","description":"Repositories git may fetch, comma-separated '\u003cowner\u003e/\u003crepo\u003e' globs.","kind":"repo_list","name":"repo"}],"roles":["rest","graphql"]}],"profile":"github","supported_range":"\u003e=2.40.0,\u003c3","vendor":"github","vendor_enabled":true}]}
+type CliProfileListResponse struct {
+	// Data Shipped profiles, by name.
+	//
+	// Examples: [{"apis":[{"api_id":"github.com/api.github.com","connect":"github","live":true,"name":"api-github-com","role":"rest","source":"catalog:github.com/api.github.com","vendor":"github-com","version":"1.1.4"}],"cli":"gh","connect":"github","credential_mode":"profile_scoped","display_name":"GitHub","hard_deny":[{"description":"Mutations that grant access or change repository protections.","kind":"graphql_mutation","role":"graphql"}],"presets":[{"description":"Read everything: REST GETs, every GraphQL query, git fetch.","name":"read_only","params":[{"default":"false","description":"Repositories git may fetch, comma-separated '\u003cowner\u003e/\u003crepo\u003e' globs.","kind":"repo_list","name":"repo"}],"roles":["rest","graphql"]}],"profile":"github","supported_range":"\u003e=2.40.0,\u003c3","vendor":"github","vendor_enabled":true}]
+	Data []CliProfileResponse `json:"data"`
+}
+
+// CliProfilePresetParamResponse A parameter a preset is filled in with.
+//
+// Examples: {"default":"false","description":"Repositories git may fetch, comma-separated '\u003cowner\u003e/\u003crepo\u003e' globs.","kind":"repo_list","name":"repo"}
+type CliProfilePresetParamResponse struct {
+	// Default Value used when it is not given.
+	//
+	// Examples: false
+	Default *string `json:"default,omitempty"`
+
+	// Description What the parameter means.
+	//
+	// Examples: Repositories git may fetch, comma-separated '<owner>/<repo>' globs.
+	Description string `json:"description"`
+
+	// Kind `repo_list`: comma-separated `<owner>/<repo>` globs; `ref_glob`: a branch glob below `refs/heads/`; `flag`: `true` or `false`.
+	//
+	// Examples: repo_list
+	Kind CliProfilePresetParamResponseKind `json:"kind"`
+
+	// Name Parameter name, for `--preset-param <name>=…`.
+	//
+	// Examples: repo
+	Name string `json:"name"`
+}
+
+// CliProfilePresetParamResponseKind `repo_list`: comma-separated `<owner>/<repo>` globs; `ref_glob`: a branch glob below `refs/heads/`; `flag`: `true` or `false`.
+//
+// Examples: repo_list
+type CliProfilePresetParamResponseKind string
+
+// CliProfilePresetResponse A named rule preset, expanded into concrete rules at connect time.
+//
+// Examples: {"description":"Read everything: REST GETs, every GraphQL query, git fetch.","name":"read_only","params":[{"default":"false","description":"Repositories git may fetch, comma-separated '\u003cowner\u003e/\u003crepo\u003e' globs.","kind":"repo_list","name":"repo"}],"roles":["rest","graphql"]}
+type CliProfilePresetResponse struct {
+	// Description What the preset grants.
+	//
+	// Examples: Read everything: REST GETs, every GraphQL query, git fetch.
+	Description string `json:"description"`
+
+	// Name Preset name, for `jentic connect --preset`.
+	//
+	// Examples: read_only
+	Name string `json:"name"`
+
+	// Params The preset's parameters.
+	//
+	// Examples: [{"default":"false","description":"Repositories git may fetch, comma-separated '\u003cowner\u003e/\u003crepo\u003e' globs.","kind":"repo_list","name":"repo"}]
+	Params []CliProfilePresetParamResponse `json:"params"`
+
+	// Roles The API roles the preset has rules for.
+	//
+	// Examples: ["rest","graphql"]
+	Roles []CliProfilePresetResponseRoles `json:"roles"`
+}
+
+// CliProfilePresetResponseRoles defines model for CliProfilePresetResponse.Roles.
+type CliProfilePresetResponseRoles string
+
+// CliProfileProvisionResponse The outcome of provisioning a CLI profile.
+//
+// Examples: {"apis":[{"api_id":"github.com/github-graphql","job_id":"job_2a…","name":"github-graphql","role":"graphql","source":"shipped:specs/github-graphql.openapi.yaml","status":"imported","vendor":"github-com","version":"1"}],"profile":"github","vendor":"github","vendor_enabled":true}
+type CliProfileProvisionResponse struct {
+	// Apis One entry per declared API.
+	//
+	// Examples: [{"api_id":"github.com/github-graphql","job_id":"job_2a…","name":"github-graphql","role":"graphql","source":"shipped:specs/github-graphql.openapi.yaml","status":"imported","vendor":"github-com","version":"1"}]
+	Apis []CliProfileProvisionedApiResponse `json:"apis"`
+
+	// Profile Profile name.
+	//
+	// Examples: github
+	Profile string `json:"profile"`
+
+	// Vendor CLI facade vendor.
+	//
+	// Examples: github
+	Vendor string `json:"vendor"`
+
+	// VendorEnabled Whether the vendor's facade is switched on. Provisioning runs either way; agents reach the APIs through the vendor's CLI only while it is on.
+	//
+	// Examples: true
+	VendorEnabled bool `json:"vendor_enabled"`
+}
+
+// CliProfileProvisionedApiResponse What provisioning did for one API.
+//
+// Examples: {"api_id":"github.com/github-graphql","job_id":"job_2a…","name":"github-graphql","role":"graphql","source":"shipped:specs/github-graphql.openapi.yaml","status":"imported","vendor":"github-com","version":"1"}
+type CliProfileProvisionedApiResponse struct {
+	// ApiId The api_id.
+	//
+	// Examples: github.com/github-graphql
+	ApiId string `json:"api_id"`
+
+	// Detail Why, for `failed` and the other non-live states.
+	Detail *string `json:"detail,omitempty"`
+
+	// JobId The enqueued import job, for `import_queued`.
+	//
+	// Examples: job_2a…
+	JobId *string `json:"job_id,omitempty"`
+
+	// Name Registry API name.
+	//
+	// Examples: github-graphql
+	Name string `json:"name"`
+
+	// Role The API's role.
+	//
+	// Examples: graphql
+	Role CliProfileProvisionedApiResponseRole `json:"role"`
+
+	// Source Where the API comes from.
+	//
+	// Examples: shipped:specs/github-graphql.openapi.yaml
+	Source string `json:"source"`
+
+	// Status `live`: already served, nothing done; `imported`: the shipped spec was imported and is live; `import_queued`: a catalog import was enqueued (see `job_id`); `builtin`: served by the Broker, nothing to import; `held_for_review`: imported as a draft because it changes the API's hosts; `not_in_catalog`: the catalog has no such entry; `failed`: see `detail`.
+	//
+	// Examples: imported
+	Status CliProfileProvisionedApiResponseStatus `json:"status"`
+
+	// Vendor Registry vendor.
+	//
+	// Examples: github-com
+	Vendor string `json:"vendor"`
+
+	// Version API version, when known.
+	//
+	// Examples: 1
+	Version *string `json:"version,omitempty"`
+}
+
+// CliProfileProvisionedApiResponseRole The API's role.
+//
+// Examples: graphql
+type CliProfileProvisionedApiResponseRole string
+
+// CliProfileProvisionedApiResponseStatus `live`: already served, nothing done; `imported`: the shipped spec was imported and is live; `import_queued`: a catalog import was enqueued (see `job_id`); `builtin`: served by the Broker, nothing to import; `held_for_review`: imported as a draft because it changes the API's hosts; `not_in_catalog`: the catalog has no such entry; `failed`: see `detail`.
+//
+// Examples: imported
+type CliProfileProvisionedApiResponseStatus string
+
+// CliProfileResponse One shipped CLI profile.
+//
+// Examples: {"apis":[{"api_id":"github.com/api.github.com","connect":"github","live":true,"name":"api-github-com","role":"rest","source":"catalog:github.com/api.github.com","vendor":"github-com","version":"1.1.4"}],"cli":"gh","connect":"github","credential_mode":"profile_scoped","display_name":"GitHub","hard_deny":[{"description":"Mutations that grant access or change repository protections.","kind":"graphql_mutation","role":"graphql"}],"presets":[{"description":"Read everything: REST GETs, every GraphQL query, git fetch.","name":"read_only","params":[{"default":"false","description":"Repositories git may fetch, comma-separated '\u003cowner\u003e/\u003crepo\u003e' globs.","kind":"repo_list","name":"repo"}],"roles":["rest","graphql"]}],"profile":"github","supported_range":"\u003e=2.40.0,\u003c3","vendor":"github","vendor_enabled":true}
+type CliProfileResponse struct {
+	// Apis The APIs the profile declares.
+	//
+	// Examples: [{"api_id":"github.com/api.github.com","connect":"github","live":true,"name":"api-github-com","role":"rest","source":"catalog:github.com/api.github.com","vendor":"github-com","version":"1.1.4"}]
+	Apis []CliProfileApiResponse `json:"apis"`
+
+	// Cli The vendor CLI binary.
+	//
+	// Examples: gh
+	Cli string `json:"cli"`
+
+	// Connect With `profile_scoped`: the `jentic connect <vendor>` key whose one connect covers every API of the profile. Null with `per_api`.
+	//
+	// Examples: github
+	Connect *string `json:"connect,omitempty"`
+
+	// CredentialMode `per_api`: each API is connected with its own credential. `profile_scoped`: `jentic connect <connect>` creates one credential covering exactly the profile's APIs, each binding rule applying to the API of its role.
+	//
+	// Examples: profile_scoped
+	CredentialMode CliProfileResponseCredentialMode `json:"credential_mode"`
+
+	// DisplayName How the profile is named.
+	//
+	// Examples: GitHub
+	DisplayName string `json:"display_name"`
+
+	// HardDeny Lists no rule can override, kept in code.
+	//
+	// Examples: [{"description":"Mutations that grant access or change repository protections.","kind":"graphql_mutation","role":"graphql"}]
+	HardDeny []CliProfileHardDenyResponse `json:"hard_deny"`
+
+	// Presets Rule presets.
+	//
+	// Examples: [{"description":"Read everything: REST GETs, every GraphQL query, git fetch.","name":"read_only","params":[{"default":"false","description":"Repositories git may fetch, comma-separated '\u003cowner\u003e/\u003crepo\u003e' globs.","kind":"repo_list","name":"repo"}],"roles":["rest","graphql"]}]
+	Presets []CliProfilePresetResponse `json:"presets"`
+
+	// Profile Profile name.
+	//
+	// Examples: github
+	Profile string `json:"profile"`
+
+	// SupportedRange CLI versions the profile is written for.
+	//
+	// Examples: >=2.40.0,<3
+	SupportedRange *string `json:"supported_range,omitempty"`
+
+	// Vendor CLI facade vendor (`cli_facades.vendors` key).
+	//
+	// Examples: github
+	Vendor string `json:"vendor"`
+
+	// VendorEnabled Whether the vendor's facade is switched on in this deployment.
+	//
+	// Examples: true
+	VendorEnabled bool `json:"vendor_enabled"`
+}
+
+// CliProfileResponseCredentialMode `per_api`: each API is connected with its own credential. `profile_scoped`: `jentic connect <connect>` creates one credential covering exactly the profile's APIs, each binding rule applying to the API of its role.
+//
+// Examples: profile_scoped
+type CliProfileResponseCredentialMode string
+
 // ConnectRequestBody Request body for initiating a credential connect flow.
 //
 // Examples: {"extra":{"prompt":"consent"},"scopes":["read_write"]}
@@ -2877,7 +3689,7 @@ type CredentialBindRequest struct {
 
 // CredentialBindingEntry Direct agent↔credential binding summary for the /me response (theme 5 phase 1).
 //
-// Examples: {"bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}
+// Examples: {"bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_role":"git","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}
 type CredentialBindingEntry struct {
 	// BoundAt When the credential was bound (RFC 3339).
 	//
@@ -2901,7 +3713,7 @@ type CredentialBindingEntry struct {
 
 	// Serves The APIs the bound credential serves; empty if unresolvable.
 	//
-	// Examples: [{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}]
+	// Examples: [{"api_name":"stripe","api_role":"git","api_vendor":"stripe.com","api_version":"2024-04-10"}]
 	Serves *[]ServedApiRef `json:"serves,omitempty"`
 
 	// Suspended Whether the binding is suspended; the agent cannot execute through it until resumed.
@@ -2917,17 +3729,17 @@ type CredentialBindingEntry struct {
 
 // CredentialBindingListResponse List of direct credential bindings.
 //
-// Examples: {"data":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","id":"acb_6968b3989a4f1c2e7d3b5a60","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}]}
+// Examples: {"data":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","id":"acb_6968b3989a4f1c2e7d3b5a60","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_role":"git","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}]}
 type CredentialBindingListResponse struct {
 	// Data The agent's direct credential bindings.
 	//
-	// Examples: [{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","id":"acb_6968b3989a4f1c2e7d3b5a60","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}]
+	// Examples: [{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","id":"acb_6968b3989a4f1c2e7d3b5a60","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_role":"git","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}]
 	Data []CredentialBindingResponse `json:"data"`
 }
 
 // CredentialBindingResponse Direct agent↔credential binding representation in API responses.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","id":"acb_6968b3989a4f1c2e7d3b5a60","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","id":"acb_6968b3989a4f1c2e7d3b5a60","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_role":"git","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}
 type CredentialBindingResponse struct {
 	// AgentId ID of the agent the credential is bound to.
 	//
@@ -2961,7 +3773,7 @@ type CredentialBindingResponse struct {
 
 	// Serves The APIs the bound credential serves; empty if unresolvable.
 	//
-	// Examples: [{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}]
+	// Examples: [{"api_name":"stripe","api_role":"git","api_vendor":"stripe.com","api_version":"2024-04-10"}]
 	Serves *[]ServedApiRef `json:"serves,omitempty"`
 
 	// Suspended Whether the binding is suspended, cutting off the agent's access to it.
@@ -3579,7 +4391,7 @@ type ExecutionStatsResponse struct {
 
 // ExistingCredentialConfirmSessionRequest Bind a credential the approver already holds (OAuth only if its grant covers the ask).
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"existing_credential","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"existing_credential","permission_rules":[{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
 type ExistingCredentialConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
 	//
@@ -3608,7 +4420,7 @@ type ExistingCredentialConfirmSessionRequest struct {
 
 	// PermissionRules Permission rules to bind for the agent (at most 100).
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
 }
 
@@ -4043,7 +4855,7 @@ type InstanceIdentityResponseBackend string
 
 // IntegrationsConnectRequest Start connecting a credential for a vendor or a registry API.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","api":{"name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"auth_type":"oauth2","name":"GitHub (work)","oauth_app_registration_id":"oar_6968b39821e5f89a6975f501","preferred_flow":"authorization_code","reason":"Needs read access to triage issues in the platform repo.","requested_permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"requested_scopes":["repo","read:user"],"vendor":"github"}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","api":{"name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"auth_type":"oauth2","name":"GitHub (work)","oauth_app_registration_id":"oar_6968b39821e5f89a6975f501","preferred_flow":"authorization_code","preset":"read_only","preset_params":{"branches":"agent/*","repo":"octo-org/app"},"reason":"Needs read access to triage issues in the platform repo.","requested_permission_rules":[{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"requested_scopes":["repo","read:user"],"vendor":"github"}
 type IntegrationsConnectRequest struct {
 	// AgentId ID of the agent to bind the credential to on confirm; it must be an active agent the caller owns and may approve for (`agents:write`), or any agent for `org:admin`. Agent callers must omit it, and when omitted by a user the credential connects unbound.
 	//
@@ -4075,6 +4887,16 @@ type IntegrationsConnectRequest struct {
 	// Examples: authorization_code
 	PreferredFlow *string `json:"preferred_flow,omitempty"`
 
+	// Preset A rule preset of the CLI profile that declares the target (see `GET /cli-profiles`), expanded into concrete permission rules for the target API and appended to `requested_permission_rules`.
+	//
+	// Examples: read_only
+	Preset *string `json:"preset,omitempty"`
+
+	// PresetParams Values for the preset's parameters, e.g. `repo` (comma-separated `<owner>/<repo>` globs) and `branches` (a branch glob below `refs/heads/`).
+	//
+	// Examples: {"branches":"agent/*","repo":"octo-org/app"}
+	PresetParams *map[string]string `json:"preset_params,omitempty"`
+
 	// Reason Free-text reason for the request, shown to the approver.
 	//
 	// Examples: Needs read access to triage issues in the platform repo.
@@ -4082,7 +4904,7 @@ type IntegrationsConnectRequest struct {
 
 	// RequestedPermissionRules Permission rules proposed for the agent, shown pre-filled on the review page; nothing is bound until confirm.
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	RequestedPermissionRules *[]PermissionRuleSchema `json:"requested_permission_rules,omitempty"`
 
 	// RequestedScopes Upstream scopes to request (at most 100).
@@ -4327,7 +5149,7 @@ type McpConfigRuntime string
 
 // MeAgent Identity response for an agent actor.
 //
-// Examples: {"approved_by":"usr_6968b3987ee4c3ec0b4ee3b9","credential_bindings":[{"bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}],"id":"agnt_6968b3984d1c238dbe7e2e29","name":"invoice-reconciler","parent_agent_id":"agnt_6968b3984d1c238dbe7e2e29","permissions":["apis:read","capabilities:execute"],"status":"active","token_permissions":["apis:read","capabilities:execute"],"type":"agent"}
+// Examples: {"approved_by":"usr_6968b3987ee4c3ec0b4ee3b9","credential_bindings":[{"bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_role":"git","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}],"id":"agnt_6968b3984d1c238dbe7e2e29","name":"invoice-reconciler","parent_agent_id":"agnt_6968b3984d1c238dbe7e2e29","permissions":["apis:read","capabilities:execute"],"status":"active","token_permissions":["apis:read","capabilities:execute"],"type":"agent"}
 type MeAgent struct {
 	// ApprovedBy ID of the user who approved the agent; null if not approved.
 	//
@@ -4336,7 +5158,7 @@ type MeAgent struct {
 
 	// CredentialBindings Credentials bound directly to the agent.
 	//
-	// Examples: [{"bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}]
+	// Examples: [{"bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_role":"git","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}]
 	CredentialBindings *[]CredentialBindingEntry `json:"credential_bindings,omitempty"`
 
 	// Id Unique ID of the agent.
@@ -5405,7 +6227,7 @@ type OAuthClientUpdateRequest struct {
 //
 // The default variant — a body without “kind“ is this one.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","confirmed_scopes":["repo","read:user"],"digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"oauth","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","confirmed_scopes":["repo","read:user"],"digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"oauth","permission_rules":[{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
 type OAuthConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
 	//
@@ -5434,7 +6256,7 @@ type OAuthConfirmSessionRequest struct {
 
 	// PermissionRules Permission rules to bind for the agent (at most 100).
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules *[]PermissionRuleSchema `json:"permission_rules,omitempty"`
 }
 
@@ -6026,7 +6848,7 @@ type OverlayUpdateRequest struct {
 // the spec may be agent-submitted and the token endpoint receives the
 // client secret.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","authorize_url":"https://github.com/login/oauth/authorize","client_id":"Iv1.a1b2c3d4","client_secret":"example-secret","confirmed_scopes":["repo","read:user"],"digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"own_oauth_client","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"token_url":"https://github.com/login/oauth/access_token"}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","authorize_url":"https://github.com/login/oauth/authorize","client_id":"Iv1.a1b2c3d4","client_secret":"example-secret","confirmed_scopes":["repo","read:user"],"digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"own_oauth_client","permission_rules":[{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"token_url":"https://github.com/login/oauth/access_token"}
 type OwnOAuthClientConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
 	//
@@ -6070,7 +6892,7 @@ type OwnOAuthClientConfirmSessionRequest struct {
 
 	// PermissionRules Permission rules to bind for the agent (at most 100).
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
 
 	// TokenUrl Token endpoint URL of the OAuth app.
@@ -6121,17 +6943,17 @@ type PermissionResponse struct {
 
 // PermissionRuleListResponse List of permission rules.
 //
-// Examples: {"data":[{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+// Examples: {"data":[{"_comment":"Read-only access to charges.","_system":false,"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
 type PermissionRuleListResponse struct {
 	// Data The binding's permission rules, in evaluation order.
 	//
-	// Examples: [{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"_comment":"Read-only access to charges.","_system":false,"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	Data []PermissionRuleReadSchema `json:"data"`
 }
 
 // PermissionRuleReadSchema Permission rule response (includes system fields).
 //
-// Examples: {"_comment":"Read-only access to charges.","_system":false,"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}
+// Examples: {"_comment":"Read-only access to charges.","_system":false,"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}
 type PermissionRuleReadSchema struct {
 	// UnderscoreComment Optional note attached to the rule.
 	//
@@ -6143,12 +6965,17 @@ type PermissionRuleReadSchema struct {
 	// Examples: false
 	UnderscoreSystem *bool `json:"_system,omitempty"`
 
+	// ApiRole The CLI-profile API the rule applies to on a CLI-profile credential's binding; null takes the role the rule's kind implies (`git`, `graphql`, else `rest`).
+	//
+	// Examples: rest
+	ApiRole *PermissionRuleReadSchemaApiRole `json:"api_role,omitempty"`
+
 	// Effect Whether this rule allows, denies, or holds the matched request for human approval (`require-approval`).
 	//
 	// Examples: allow
 	Effect PermissionRuleReadSchemaEffect `json:"effect"`
 
-	// MatchMode How `path` is interpreted: `regex` (full-match), `prefix` or `exact`.
+	// MatchMode How `path` is interpreted: `regex` (full-match), `prefix`, `exact`, `graphql` (a GraphQL top-level-field selector) or `git` (a git repository/ref selector).
 	//
 	// Examples: prefix
 	MatchMode *PermissionRuleReadSchemaMatchMode `json:"match_mode,omitempty"`
@@ -6163,18 +6990,21 @@ type PermissionRuleReadSchema struct {
 	// Examples: ["listCharges"]
 	Operations *[]string `json:"operations,omitempty"`
 
-	// Path Path pattern relative to the API's server URL, interpreted per `match_mode`; null matches all paths.
+	// Path Path pattern relative to the API's server URL, interpreted per `match_mode`; null matches all paths. A GraphQL selector when `match_mode` is `graphql`, a git selector when it is `git`.
 	//
 	// Examples: /v1/charges
 	Path *string `json:"path,omitempty"`
 }
+
+// PermissionRuleReadSchemaApiRole defines model for PermissionRuleReadSchema.ApiRole.
+type PermissionRuleReadSchemaApiRole string
 
 // PermissionRuleReadSchemaEffect Whether this rule allows, denies, or holds the matched request for human approval (`require-approval`).
 //
 // Examples: allow
 type PermissionRuleReadSchemaEffect string
 
-// PermissionRuleReadSchemaMatchMode How `path` is interpreted: `regex` (full-match), `prefix` or `exact`.
+// PermissionRuleReadSchemaMatchMode How `path` is interpreted: `regex` (full-match), `prefix`, `exact`, `graphql` (a GraphQL top-level-field selector) or `git` (a git repository/ref selector).
 //
 // Examples: prefix
 type PermissionRuleReadSchemaMatchMode string
@@ -6185,14 +7015,19 @@ type PermissionRuleReadSchemaMatchMode string
 // denied (default-deny). A binding with zero rules therefore blocks all
 // operations — users must explicitly add at least one allow rule.
 //
-// Examples: {"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}
+// Examples: {"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}
 type PermissionRuleSchema struct {
+	// ApiRole On the binding of a CLI-profile credential (one connect covering several APIs of a vendor, e.g. `jentic connect github`): the profile API the rule applies to — `rest` and `uploads` take path rules, `graphql` GraphQL rules and `git` git rules. Omitted, the rule's kind decides: a `git` rule applies to `git`, a `graphql` rule to `graphql`, any other rule to `rest`. Ignored on any other credential.
+	//
+	// Examples: rest
+	ApiRole *PermissionRuleSchemaApiRole `json:"api_role,omitempty"`
+
 	// Effect Whether this rule allows the matched request, denies it, or holds it for human approval before the broker executes it.
 	//
 	// Examples: allow
 	Effect PermissionRuleSchemaEffect `json:"effect"`
 
-	// MatchMode How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility.
+	// MatchMode How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility. `graphql` makes the rule match the top-level fields of a GraphQL request (the GitHub GraphQL endpoint) by operation type and field name, one field at a time; it matches no other request. `git` makes the rule match git clones, fetches and pushes to github.com through Jentic by repository and, for pushes, by ref; it matches no other request, and only `allow` and `deny` are accepted.
 	//
 	// Examples: prefix
 	MatchMode *PermissionRuleSchemaMatchMode `json:"match_mode,omitempty"`
@@ -6207,18 +7042,21 @@ type PermissionRuleSchema struct {
 	// Examples: ["listCharges"]
 	Operations *[]string `json:"operations,omitempty"`
 
-	// Path Path pattern to match, relative to the API's server URL — the spec's path (`/widgets`), never the full upstream path with the server's base path (`/eu/widgets` for a server `https://host/{region}`). Interpreted per `match_mode`: `regex` uses full-match semantics (the pattern must describe the whole path); `prefix` and `exact` are literal. None matches all paths.
+	// Path Path pattern to match, relative to the API's server URL — the spec's path (`/widgets`), never the full upstream path with the server's base path (`/eu/widgets` for a server `https://host/{region}`). Interpreted per `match_mode`: `regex` uses full-match semantics (the pattern must describe the whole path); `prefix` and `exact` are literal. None matches all paths. With `match_mode` `graphql`, `path` is required and is a GraphQL selector instead: `query`, `mutation`, or `mutation:createPullRequest,addComment` (top-level field names, never aliases). With `match_mode` `git`, `path` is required and is a git selector: `<fetch|push|force>:<owner>/<repo>` with an optional `:refs/heads/<glob>` or `:refs/tags/<glob>` on push and force (e.g. `push:octo-org/app:refs/heads/agent/*`).
 	//
 	// Examples: /v1/charges
 	Path *string `json:"path,omitempty"`
 }
+
+// PermissionRuleSchemaApiRole defines model for PermissionRuleSchema.ApiRole.
+type PermissionRuleSchemaApiRole string
 
 // PermissionRuleSchemaEffect Whether this rule allows the matched request, denies it, or holds it for human approval before the broker executes it.
 //
 // Examples: allow
 type PermissionRuleSchemaEffect string
 
-// PermissionRuleSchemaMatchMode How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility.
+// PermissionRuleSchemaMatchMode How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility. `graphql` makes the rule match the top-level fields of a GraphQL request (the GitHub GraphQL endpoint) by operation type and field name, one field at a time; it matches no other request. `git` makes the rule match git clones, fetches and pushes to github.com through Jentic by repository and, for pushes, by ref; it matches no other request, and only `allow` and `deny` are accepted.
 //
 // Examples: prefix
 type PermissionRuleSchemaMatchMode string
@@ -6295,11 +7133,11 @@ type Permissions struct {
 
 // PermissionsPatchRequest Patch permission rules — add and/or remove.
 //
-// Examples: {"add":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"remove":[0,2]}
+// Examples: {"add":[{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"remove":[0,2]}
 type PermissionsPatchRequest struct {
 	// Add Rules to append after the existing user rules.
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	Add *[]PermissionRuleSchema `json:"add,omitempty"`
 
 	// Remove Zero-based indexes of user rules (excluding system rules) to delete; applied before `add`.
@@ -6540,7 +7378,7 @@ type ProviderDiscoveryResponse struct {
 //
 // Refused when another agent is bound to the credential.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"reauthorize","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"reauthorize","permission_rules":[{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
 type ReauthorizeConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
 	//
@@ -6569,7 +7407,7 @@ type ReauthorizeConfirmSessionRequest struct {
 
 	// PermissionRules Permission rules to bind for the agent (at most 100).
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
 }
 
@@ -6758,7 +7596,7 @@ type RuleSetAttachRequest struct {
 
 // RuleSetCreateRequest Create a shared permission rule set (theme 5 phase 1, Q-04).
 //
-// Examples: {"description":"Allows GET requests to the Stripe API; denies everything else.","name":"Stripe read-only","rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+// Examples: {"description":"Allows GET requests to the Stripe API; denies everything else.","name":"Stripe read-only","rules":[{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
 type RuleSetCreateRequest struct {
 	// Description Optional free-text description of the set.
 	//
@@ -6772,7 +7610,7 @@ type RuleSetCreateRequest struct {
 
 	// Rules Initial ordered rule list (first-match-wins, default-deny).
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	Rules *[]PermissionRuleSchema `json:"rules,omitempty"`
 }
 
@@ -6798,7 +7636,7 @@ type RuleSetListResponse struct {
 
 // RuleSetResponse Rule set detail — the ordered rules plus its referencing-binding count.
 //
-// Examples: {"binding_count":3,"created_at":"2026-01-15T09:30:00Z","created_by":"usr_6968b3987ee4c3ec0b4ee3b9","curated":true,"description":"Allows GET requests to the Stripe API; denies everything else.","name":"Stripe read-only","rule_set_id":"prs_6968b3987c22b63e87e79f05","rules":[{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+// Examples: {"binding_count":3,"created_at":"2026-01-15T09:30:00Z","created_by":"usr_6968b3987ee4c3ec0b4ee3b9","curated":true,"description":"Allows GET requests to the Stripe API; denies everything else.","name":"Stripe read-only","rule_set_id":"prs_6968b3987c22b63e87e79f05","rules":[{"_comment":"Read-only access to charges.","_system":false,"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
 type RuleSetResponse struct {
 	// BindingCount How many agent-credential bindings currently point at this set.
 	//
@@ -6837,7 +7675,7 @@ type RuleSetResponse struct {
 
 	// Rules Ordered rule list (first-match-wins, default-deny).
 	//
-	// Examples: [{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"_comment":"Read-only access to charges.","_system":false,"api_role":"rest","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	Rules []PermissionRuleReadSchema `json:"rules"`
 }
 
@@ -7069,12 +7907,17 @@ type SecuritySchemeResponse struct {
 // all-required “APIReference“. Shared so the auth service schema and the
 // “/me“ web schema use ONE model instead of two identical copies.
 //
-// Examples: {"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}
+// Examples: {"api_name":"stripe","api_role":"git","api_vendor":"stripe.com","api_version":"2024-04-10"}
 type ServedApiRef struct {
 	// ApiName Name of the served API; null means every API of the vendor.
 	//
 	// Examples: stripe
 	ApiName *string `json:"api_name,omitempty"`
+
+	// ApiRole Set when the credential is a CLI-profile credential (one connect covering several APIs of a vendor): the API's role in the profile (`rest`, `graphql`, `git`, `uploads`). The binding's rules for that role apply to it.
+	//
+	// Examples: git
+	ApiRole *string `json:"api_role,omitempty"`
 
 	// ApiVendor Vendor of the served API.
 	//
@@ -8377,6 +9220,9 @@ type LoginJSONRequestBody = LoginRequest
 
 // SnoozeCatalogEntryJSONRequestBody defines body for SnoozeCatalogEntry for application/json ContentType.
 type SnoozeCatalogEntryJSONRequestBody = SnoozeCatalogEntryJSONBody
+
+// CreateCliInvocationJSONRequestBody defines body for CreateCliInvocation for application/json ContentType.
+type CreateCliInvocationJSONRequestBody = CliInvocationCreateRequest
 
 // ConfirmConnectSessionJSONRequestBody defines body for ConfirmConnectSession for application/json ContentType.
 type ConfirmConnectSessionJSONRequestBody ConfirmConnectSessionJSONBody
@@ -10757,6 +11603,119 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /catalog:refresh (the `RefreshCatalog` operationId).
 	RefreshCatalog(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListCliFacades List vendor CLI facades
+	//
+	// The vendor CLI facades this deployment serves, and the address of each.
+	//
+	// `jentic cf` (and `jentic cli list`) read this to learn where to point the
+	// vendor's own CLI, so no agent hard-codes a facade address. Lists only
+	// facades that are switched on (`cli_facades.enabled` and the vendor's
+	// `enabled`) and implemented by the Broker. Whether the caller holds a
+	// credential for the vendor is not checked here: a call without one fails
+	// at the facade with the usual Broker problem.
+	//
+	// Each facade also carries the agent-side wiring from the vendor's CLI
+	// profile: the binary and supported versions, the environment `jentic
+	// <cli>` sets and strips, and what `jentic run --container` sets and
+	// governs, so no CLI hard-codes them.
+	//
+	// Corresponds with GET /cli-facades (the `ListCliFacades` operationId).
+	ListCliFacades(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateCliInvocationWithBody Mint a CLI invocation token
+	//
+	// Mint a short-lived invocation token for one vendor CLI command.
+	//
+	// Called by `jentic gh`/`cf`/`aws` before it runs the vendor CLI. Only an
+	// agent holding `capabilities:execute` and authenticated with its own
+	// access token (`at_…`, not an API key or JWT) may mint; anything else
+	// answers 403 (`cli_invocation_mint_forbidden`). The token lives
+	// `cli_facades.invocation_ttl_seconds` (renew it with `:renew`), never past
+	// `hard_expires_at`, and never past the access token it was minted with:
+	// revoking or expiring that access token ends the invocation token too.
+	// It is accepted only by the Broker's CLI facade for `vendor`; `/execute`,
+	// the control plane and MCP reject it. Answers 404 while
+	// `cli_facades.enabled` or the vendor's facade is off. Minting is rate
+	// limited per agent (`cli_facades.mint_rate_limit_per_minute`).
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /cli-invocations (the `CreateCliInvocation` operationId).
+	CreateCliInvocationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateCliInvocation Mint a CLI invocation token
+	//
+	// Mint a short-lived invocation token for one vendor CLI command.
+	//
+	// Called by `jentic gh`/`cf`/`aws` before it runs the vendor CLI. Only an
+	// agent holding `capabilities:execute` and authenticated with its own
+	// access token (`at_…`, not an API key or JWT) may mint; anything else
+	// answers 403 (`cli_invocation_mint_forbidden`). The token lives
+	// `cli_facades.invocation_ttl_seconds` (renew it with `:renew`), never past
+	// `hard_expires_at`, and never past the access token it was minted with:
+	// revoking or expiring that access token ends the invocation token too.
+	// It is accepted only by the Broker's CLI facade for `vendor`; `/execute`,
+	// the control plane and MCP reject it. Answers 404 while
+	// `cli_facades.enabled` or the vendor's facade is off. Minting is rate
+	// limited per agent (`cli_facades.mint_rate_limit_per_minute`).
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /cli-invocations (the `CreateCliInvocation` operationId).
+	CreateCliInvocation(ctx context.Context, body CreateCliInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RenewCliInvocation Renew a CLI invocation token
+	//
+	// Extend one of the caller's live invocation tokens.
+	//
+	// Moves `expires_at` to `cli_facades.invocation_ttl_seconds` from now, capped at
+	// `hard_expires_at`. The CLI wrapper calls this on a heartbeat while the
+	// command runs. Only the agent that minted the invocation may renew it;
+	// any other caller gets 404. A revoked or expired invocation answers 409.
+	//
+	// Corresponds with POST /cli-invocations/{invocation_id}:renew (the `RenewCliInvocation` operationId).
+	RenewCliInvocation(ctx context.Context, invocationId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeCliInvocation Revoke a CLI invocation token
+	//
+	// Revoke one of the caller's invocation tokens.
+	//
+	// The CLI wrapper calls this when the command exits. The Broker stops
+	// accepting the token within its token-cache TTL
+	// (`broker.resolve_cache_ttl_seconds`). Only the agent that minted the
+	// invocation may revoke it; any other caller gets 404. Revoking an
+	// already-revoked invocation succeeds.
+	//
+	// Corresponds with POST /cli-invocations/{invocation_id}:revoke (the `RevokeCliInvocation` operationId).
+	RevokeCliInvocation(ctx context.Context, invocationId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListCliProfiles List CLI profiles
+	//
+	// The vendor CLI profiles this Jentic ships.
+	//
+	// A profile declares a vendor CLI's APIs (with the `jentic connect` key of
+	// each), its rule presets (for `jentic connect --preset`) and the hard-deny
+	// lists no rule can override. Each API says whether the registry serves it
+	// now; `POST /cli-profiles/{profile}:provision` makes them all live.
+	//
+	// Corresponds with GET /cli-profiles (the `ListCliProfiles` operationId).
+	ListCliProfiles(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ProvisionCliProfile Provision a CLI profile's APIs
+	//
+	// Make every API the profile declares exist and be live. Idempotent.
+	//
+	// A `catalog` API is imported from the public catalog (enqueued; nothing
+	// when it is already registered), a `shipped` API is imported from the spec
+	// shipped with Jentic and goes live at once, and a `builtin` API needs
+	// nothing. A connect for one of the profile's APIs runs the same
+	// provisioning on demand, so this is for an operator who wants the APIs
+	// in place before any agent connects. Runs whether or not the vendor's
+	// facade is enabled (`vendor_enabled`).
+	//
+	// Corresponds with POST /cli-profiles/{profile}:provision (the `ProvisionCliProfile` operationId).
+	ProvisionCliProfile(ctx context.Context, profile string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListConnectSessions List connect sessions
 	//
@@ -14505,6 +15464,189 @@ func (c *Client) UnsnoozeCatalogEntry(ctx context.Context, apiId string, reqEdit
 // Corresponds with POST /catalog:refresh (the `RefreshCatalog` operationId).
 func (c *Client) RefreshCatalog(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRefreshCatalogRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListCliFacades List vendor CLI facades
+//
+// The vendor CLI facades this deployment serves, and the address of each.
+//
+// `jentic cf` (and `jentic cli list`) read this to learn where to point the
+// vendor's own CLI, so no agent hard-codes a facade address. Lists only
+// facades that are switched on (`cli_facades.enabled` and the vendor's
+// `enabled`) and implemented by the Broker. Whether the caller holds a
+// credential for the vendor is not checked here: a call without one fails
+// at the facade with the usual Broker problem.
+//
+// Each facade also carries the agent-side wiring from the vendor's CLI
+// profile: the binary and supported versions, the environment `jentic
+// <cli>` sets and strips, and what `jentic run --container` sets and
+// governs, so no CLI hard-codes them.
+//
+// Corresponds with GET /cli-facades (the `ListCliFacades` operationId).
+func (c *Client) ListCliFacades(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListCliFacadesRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateCliInvocationWithBody Mint a CLI invocation token
+//
+// Mint a short-lived invocation token for one vendor CLI command.
+//
+// Called by `jentic gh`/`cf`/`aws` before it runs the vendor CLI. Only an
+// agent holding `capabilities:execute` and authenticated with its own
+// access token (`at_…`, not an API key or JWT) may mint; anything else
+// answers 403 (`cli_invocation_mint_forbidden`). The token lives
+// `cli_facades.invocation_ttl_seconds` (renew it with `:renew`), never past
+// `hard_expires_at`, and never past the access token it was minted with:
+// revoking or expiring that access token ends the invocation token too.
+// It is accepted only by the Broker's CLI facade for `vendor`; `/execute`,
+// the control plane and MCP reject it. Answers 404 while
+// `cli_facades.enabled` or the vendor's facade is off. Minting is rate
+// limited per agent (`cli_facades.mint_rate_limit_per_minute`).
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /cli-invocations (the `CreateCliInvocation` operationId).
+func (c *Client) CreateCliInvocationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateCliInvocationRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateCliInvocation Mint a CLI invocation token
+//
+// Mint a short-lived invocation token for one vendor CLI command.
+//
+// Called by `jentic gh`/`cf`/`aws` before it runs the vendor CLI. Only an
+// agent holding `capabilities:execute` and authenticated with its own
+// access token (`at_…`, not an API key or JWT) may mint; anything else
+// answers 403 (`cli_invocation_mint_forbidden`). The token lives
+// `cli_facades.invocation_ttl_seconds` (renew it with `:renew`), never past
+// `hard_expires_at`, and never past the access token it was minted with:
+// revoking or expiring that access token ends the invocation token too.
+// It is accepted only by the Broker's CLI facade for `vendor`; `/execute`,
+// the control plane and MCP reject it. Answers 404 while
+// `cli_facades.enabled` or the vendor's facade is off. Minting is rate
+// limited per agent (`cli_facades.mint_rate_limit_per_minute`).
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /cli-invocations (the `CreateCliInvocation` operationId).
+func (c *Client) CreateCliInvocation(ctx context.Context, body CreateCliInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateCliInvocationRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RenewCliInvocation Renew a CLI invocation token
+//
+// Extend one of the caller's live invocation tokens.
+//
+// Moves `expires_at` to `cli_facades.invocation_ttl_seconds` from now, capped at
+// `hard_expires_at`. The CLI wrapper calls this on a heartbeat while the
+// command runs. Only the agent that minted the invocation may renew it;
+// any other caller gets 404. A revoked or expired invocation answers 409.
+//
+// Corresponds with POST /cli-invocations/{invocation_id}:renew (the `RenewCliInvocation` operationId).
+func (c *Client) RenewCliInvocation(ctx context.Context, invocationId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRenewCliInvocationRequest(c.Server, invocationId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeCliInvocation Revoke a CLI invocation token
+//
+// Revoke one of the caller's invocation tokens.
+//
+// The CLI wrapper calls this when the command exits. The Broker stops
+// accepting the token within its token-cache TTL
+// (`broker.resolve_cache_ttl_seconds`). Only the agent that minted the
+// invocation may revoke it; any other caller gets 404. Revoking an
+// already-revoked invocation succeeds.
+//
+// Corresponds with POST /cli-invocations/{invocation_id}:revoke (the `RevokeCliInvocation` operationId).
+func (c *Client) RevokeCliInvocation(ctx context.Context, invocationId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeCliInvocationRequest(c.Server, invocationId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListCliProfiles List CLI profiles
+//
+// The vendor CLI profiles this Jentic ships.
+//
+// A profile declares a vendor CLI's APIs (with the `jentic connect` key of
+// each), its rule presets (for `jentic connect --preset`) and the hard-deny
+// lists no rule can override. Each API says whether the registry serves it
+// now; `POST /cli-profiles/{profile}:provision` makes them all live.
+//
+// Corresponds with GET /cli-profiles (the `ListCliProfiles` operationId).
+func (c *Client) ListCliProfiles(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListCliProfilesRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ProvisionCliProfile Provision a CLI profile's APIs
+//
+// Make every API the profile declares exist and be live. Idempotent.
+//
+// A `catalog` API is imported from the public catalog (enqueued; nothing
+// when it is already registered), a `shipped` API is imported from the spec
+// shipped with Jentic and goes live at once, and a `builtin` API needs
+// nothing. A connect for one of the profile's APIs runs the same
+// provisioning on demand, so this is for an operator who wants the APIs
+// in place before any agent connects. Runs whether or not the vendor's
+// facade is enabled (`vendor_enabled`).
+//
+// Corresponds with POST /cli-profiles/{profile}:provision (the `ProvisionCliProfile` operationId).
+func (c *Client) ProvisionCliProfile(ctx context.Context, profile string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewProvisionCliProfileRequest(c.Server, profile)
 	if err != nil {
 		return nil, err
 	}
@@ -21367,6 +22509,202 @@ func NewRefreshCatalogRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewListCliFacadesRequest constructs an http.Request for the ListCliFacades method
+func NewListCliFacadesRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/cli-facades")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateCliInvocationRequest calls the generic CreateCliInvocation builder with application/json body
+func NewCreateCliInvocationRequest(server string, body CreateCliInvocationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateCliInvocationRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateCliInvocationRequestWithBody constructs an http.Request for the CreateCliInvocation method, with any body, and a specified content type
+func NewCreateCliInvocationRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/cli-invocations")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRenewCliInvocationRequest constructs an http.Request for the RenewCliInvocation method
+func NewRenewCliInvocationRequest(server string, invocationId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "invocation_id", invocationId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/cli-invocations/%s:renew", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRevokeCliInvocationRequest constructs an http.Request for the RevokeCliInvocation method
+func NewRevokeCliInvocationRequest(server string, invocationId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "invocation_id", invocationId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/cli-invocations/%s:revoke", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListCliProfilesRequest constructs an http.Request for the ListCliProfiles method
+func NewListCliProfilesRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/cli-profiles")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewProvisionCliProfileRequest constructs an http.Request for the ProvisionCliProfile method
+func NewProvisionCliProfileRequest(server string, profile string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "profile", profile, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/cli-profiles/%s:provision", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListConnectSessionsRequest constructs an http.Request for the ListConnectSessions method
 func NewListConnectSessionsRequest(server string, params *ListConnectSessionsParams) (*http.Request, error) {
 	var err error
@@ -27359,6 +28697,129 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /catalog:refresh (the `RefreshCatalog` operationId).
 	RefreshCatalogWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RefreshCatalogHTTPResp, error)
+
+	// ListCliFacadesWithResponse List vendor CLI facades
+	//
+	// The vendor CLI facades this deployment serves, and the address of each.
+	//
+	// `jentic cf` (and `jentic cli list`) read this to learn where to point the
+	// vendor's own CLI, so no agent hard-codes a facade address. Lists only
+	// facades that are switched on (`cli_facades.enabled` and the vendor's
+	// `enabled`) and implemented by the Broker. Whether the caller holds a
+	// credential for the vendor is not checked here: a call without one fails
+	// at the facade with the usual Broker problem.
+	//
+	// Each facade also carries the agent-side wiring from the vendor's CLI
+	// profile: the binary and supported versions, the environment `jentic
+	// <cli>` sets and strips, and what `jentic run --container` sets and
+	// governs, so no CLI hard-codes them.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /cli-facades (the `ListCliFacades` operationId).
+	ListCliFacadesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListCliFacadesHTTPResp, error)
+
+	// CreateCliInvocationWithBodyWithResponse Mint a CLI invocation token
+	//
+	// Mint a short-lived invocation token for one vendor CLI command.
+	//
+	// Called by `jentic gh`/`cf`/`aws` before it runs the vendor CLI. Only an
+	// agent holding `capabilities:execute` and authenticated with its own
+	// access token (`at_…`, not an API key or JWT) may mint; anything else
+	// answers 403 (`cli_invocation_mint_forbidden`). The token lives
+	// `cli_facades.invocation_ttl_seconds` (renew it with `:renew`), never past
+	// `hard_expires_at`, and never past the access token it was minted with:
+	// revoking or expiring that access token ends the invocation token too.
+	// It is accepted only by the Broker's CLI facade for `vendor`; `/execute`,
+	// the control plane and MCP reject it. Answers 404 while
+	// `cli_facades.enabled` or the vendor's facade is off. Minting is rate
+	// limited per agent (`cli_facades.mint_rate_limit_per_minute`).
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /cli-invocations (the `CreateCliInvocation` operationId).
+	CreateCliInvocationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCliInvocationHTTPResp, error)
+
+	// CreateCliInvocationWithResponse Mint a CLI invocation token
+	//
+	// Mint a short-lived invocation token for one vendor CLI command.
+	//
+	// Called by `jentic gh`/`cf`/`aws` before it runs the vendor CLI. Only an
+	// agent holding `capabilities:execute` and authenticated with its own
+	// access token (`at_…`, not an API key or JWT) may mint; anything else
+	// answers 403 (`cli_invocation_mint_forbidden`). The token lives
+	// `cli_facades.invocation_ttl_seconds` (renew it with `:renew`), never past
+	// `hard_expires_at`, and never past the access token it was minted with:
+	// revoking or expiring that access token ends the invocation token too.
+	// It is accepted only by the Broker's CLI facade for `vendor`; `/execute`,
+	// the control plane and MCP reject it. Answers 404 while
+	// `cli_facades.enabled` or the vendor's facade is off. Minting is rate
+	// limited per agent (`cli_facades.mint_rate_limit_per_minute`).
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /cli-invocations (the `CreateCliInvocation` operationId).
+	CreateCliInvocationWithResponse(ctx context.Context, body CreateCliInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCliInvocationHTTPResp, error)
+
+	// RenewCliInvocationWithResponse Renew a CLI invocation token
+	//
+	// Extend one of the caller's live invocation tokens.
+	//
+	// Moves `expires_at` to `cli_facades.invocation_ttl_seconds` from now, capped at
+	// `hard_expires_at`. The CLI wrapper calls this on a heartbeat while the
+	// command runs. Only the agent that minted the invocation may renew it;
+	// any other caller gets 404. A revoked or expired invocation answers 409.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /cli-invocations/{invocation_id}:renew (the `RenewCliInvocation` operationId).
+	RenewCliInvocationWithResponse(ctx context.Context, invocationId string, reqEditors ...RequestEditorFn) (*RenewCliInvocationHTTPResp, error)
+
+	// RevokeCliInvocationWithResponse Revoke a CLI invocation token
+	//
+	// Revoke one of the caller's invocation tokens.
+	//
+	// The CLI wrapper calls this when the command exits. The Broker stops
+	// accepting the token within its token-cache TTL
+	// (`broker.resolve_cache_ttl_seconds`). Only the agent that minted the
+	// invocation may revoke it; any other caller gets 404. Revoking an
+	// already-revoked invocation succeeds.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /cli-invocations/{invocation_id}:revoke (the `RevokeCliInvocation` operationId).
+	RevokeCliInvocationWithResponse(ctx context.Context, invocationId string, reqEditors ...RequestEditorFn) (*RevokeCliInvocationHTTPResp, error)
+
+	// ListCliProfilesWithResponse List CLI profiles
+	//
+	// The vendor CLI profiles this Jentic ships.
+	//
+	// A profile declares a vendor CLI's APIs (with the `jentic connect` key of
+	// each), its rule presets (for `jentic connect --preset`) and the hard-deny
+	// lists no rule can override. Each API says whether the registry serves it
+	// now; `POST /cli-profiles/{profile}:provision` makes them all live.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /cli-profiles (the `ListCliProfiles` operationId).
+	ListCliProfilesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListCliProfilesHTTPResp, error)
+
+	// ProvisionCliProfileWithResponse Provision a CLI profile's APIs
+	//
+	// Make every API the profile declares exist and be live. Idempotent.
+	//
+	// A `catalog` API is imported from the public catalog (enqueued; nothing
+	// when it is already registered), a `shipped` API is imported from the spec
+	// shipped with Jentic and goes live at once, and a `builtin` API needs
+	// nothing. A connect for one of the profile's APIs runs the same
+	// provisioning on demand, so this is for an operator who wants the APIs
+	// in place before any agent connects. Runs whether or not the vendor's
+	// facade is enabled (`vendor_enabled`).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /cli-profiles/{profile}:provision (the `ProvisionCliProfile` operationId).
+	ProvisionCliProfileWithResponse(ctx context.Context, profile string, reqEditors ...RequestEditorFn) (*ProvisionCliProfileHTTPResp, error)
 
 	// ListConnectSessionsWithResponse List connect sessions
 	//
@@ -35643,6 +37104,581 @@ func (r RefreshCatalogHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RefreshCatalogHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListCliFacadesHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CliFacadeListResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListCliFacadesHTTPResp) GetJSON200() *CliFacadeListResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListCliFacadesHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListCliFacadesHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListCliFacadesHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ListCliFacadesHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ListCliFacadesHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListCliFacadesHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListCliFacadesHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListCliFacadesHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListCliFacadesHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListCliFacadesHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListCliFacadesHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateCliInvocationHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *CliInvocationCreatedResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON429 the response for an HTTP 429 `application/problem+json` response
+	ApplicationproblemJSON429 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateCliInvocationHTTPResp) GetJSON201() *CliInvocationCreatedResponse {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r CreateCliInvocationHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r CreateCliInvocationHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r CreateCliInvocationHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r CreateCliInvocationHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r CreateCliInvocationHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
+func (r CreateCliInvocationHTTPResp) GetApplicationproblemJSON429() *ProblemDetail {
+	return r.ApplicationproblemJSON429
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r CreateCliInvocationHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r CreateCliInvocationHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateCliInvocationHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateCliInvocationHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateCliInvocationHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateCliInvocationHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateCliInvocationHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RenewCliInvocationHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CliInvocationResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RenewCliInvocationHTTPResp) GetJSON200() *CliInvocationResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r RenewCliInvocationHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r RenewCliInvocationHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r RenewCliInvocationHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r RenewCliInvocationHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r RenewCliInvocationHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r RenewCliInvocationHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r RenewCliInvocationHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r RenewCliInvocationHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RenewCliInvocationHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RenewCliInvocationHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RenewCliInvocationHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RenewCliInvocationHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RenewCliInvocationHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RevokeCliInvocationHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r RevokeCliInvocationHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r RevokeCliInvocationHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r RevokeCliInvocationHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r RevokeCliInvocationHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r RevokeCliInvocationHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r RevokeCliInvocationHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r RevokeCliInvocationHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokeCliInvocationHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokeCliInvocationHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeCliInvocationHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeCliInvocationHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokeCliInvocationHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListCliProfilesHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CliProfileListResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListCliProfilesHTTPResp) GetJSON200() *CliProfileListResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListCliProfilesHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListCliProfilesHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListCliProfilesHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ListCliProfilesHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ListCliProfilesHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListCliProfilesHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListCliProfilesHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListCliProfilesHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListCliProfilesHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListCliProfilesHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListCliProfilesHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ProvisionCliProfileHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CliProfileProvisionResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ProvisionCliProfileHTTPResp) GetJSON200() *CliProfileProvisionResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ProvisionCliProfileHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ProvisionCliProfileHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ProvisionCliProfileHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ProvisionCliProfileHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ProvisionCliProfileHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ProvisionCliProfileHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ProvisionCliProfileHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ProvisionCliProfileHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ProvisionCliProfileHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ProvisionCliProfileHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ProvisionCliProfileHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ProvisionCliProfileHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -45757,6 +47793,171 @@ func (c *ClientWithResponses) RefreshCatalogWithResponse(ctx context.Context, re
 	return ParseRefreshCatalogHTTPResp(rsp)
 }
 
+// ListCliFacadesWithResponse List vendor CLI facades
+//
+// The vendor CLI facades this deployment serves, and the address of each.
+//
+// `jentic cf` (and `jentic cli list`) read this to learn where to point the
+// vendor's own CLI, so no agent hard-codes a facade address. Lists only
+// facades that are switched on (`cli_facades.enabled` and the vendor's
+// `enabled`) and implemented by the Broker. Whether the caller holds a
+// credential for the vendor is not checked here: a call without one fails
+// at the facade with the usual Broker problem.
+//
+// Each facade also carries the agent-side wiring from the vendor's CLI
+// profile: the binary and supported versions, the environment `jentic
+// <cli>` sets and strips, and what `jentic run --container` sets and
+// governs, so no CLI hard-codes them.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /cli-facades (the `ListCliFacades` operationId).
+func (c *ClientWithResponses) ListCliFacadesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListCliFacadesHTTPResp, error) {
+	rsp, err := c.ListCliFacades(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListCliFacadesHTTPResp(rsp)
+}
+
+// CreateCliInvocationWithBodyWithResponse Mint a CLI invocation token
+//
+// Mint a short-lived invocation token for one vendor CLI command.
+//
+// Called by `jentic gh`/`cf`/`aws` before it runs the vendor CLI. Only an
+// agent holding `capabilities:execute` and authenticated with its own
+// access token (`at_…`, not an API key or JWT) may mint; anything else
+// answers 403 (`cli_invocation_mint_forbidden`). The token lives
+// `cli_facades.invocation_ttl_seconds` (renew it with `:renew`), never past
+// `hard_expires_at`, and never past the access token it was minted with:
+// revoking or expiring that access token ends the invocation token too.
+// It is accepted only by the Broker's CLI facade for `vendor`; `/execute`,
+// the control plane and MCP reject it. Answers 404 while
+// `cli_facades.enabled` or the vendor's facade is off. Minting is rate
+// limited per agent (`cli_facades.mint_rate_limit_per_minute`).
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /cli-invocations (the `CreateCliInvocation` operationId).
+func (c *ClientWithResponses) CreateCliInvocationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCliInvocationHTTPResp, error) {
+	rsp, err := c.CreateCliInvocationWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateCliInvocationHTTPResp(rsp)
+}
+
+// CreateCliInvocationWithResponse Mint a CLI invocation token
+//
+// Mint a short-lived invocation token for one vendor CLI command.
+//
+// Called by `jentic gh`/`cf`/`aws` before it runs the vendor CLI. Only an
+// agent holding `capabilities:execute` and authenticated with its own
+// access token (`at_…`, not an API key or JWT) may mint; anything else
+// answers 403 (`cli_invocation_mint_forbidden`). The token lives
+// `cli_facades.invocation_ttl_seconds` (renew it with `:renew`), never past
+// `hard_expires_at`, and never past the access token it was minted with:
+// revoking or expiring that access token ends the invocation token too.
+// It is accepted only by the Broker's CLI facade for `vendor`; `/execute`,
+// the control plane and MCP reject it. Answers 404 while
+// `cli_facades.enabled` or the vendor's facade is off. Minting is rate
+// limited per agent (`cli_facades.mint_rate_limit_per_minute`).
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /cli-invocations (the `CreateCliInvocation` operationId).
+func (c *ClientWithResponses) CreateCliInvocationWithResponse(ctx context.Context, body CreateCliInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCliInvocationHTTPResp, error) {
+	rsp, err := c.CreateCliInvocation(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateCliInvocationHTTPResp(rsp)
+}
+
+// RenewCliInvocationWithResponse Renew a CLI invocation token
+//
+// Extend one of the caller's live invocation tokens.
+//
+// Moves `expires_at` to `cli_facades.invocation_ttl_seconds` from now, capped at
+// `hard_expires_at`. The CLI wrapper calls this on a heartbeat while the
+// command runs. Only the agent that minted the invocation may renew it;
+// any other caller gets 404. A revoked or expired invocation answers 409.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /cli-invocations/{invocation_id}:renew (the `RenewCliInvocation` operationId).
+func (c *ClientWithResponses) RenewCliInvocationWithResponse(ctx context.Context, invocationId string, reqEditors ...RequestEditorFn) (*RenewCliInvocationHTTPResp, error) {
+	rsp, err := c.RenewCliInvocation(ctx, invocationId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRenewCliInvocationHTTPResp(rsp)
+}
+
+// RevokeCliInvocationWithResponse Revoke a CLI invocation token
+//
+// Revoke one of the caller's invocation tokens.
+//
+// The CLI wrapper calls this when the command exits. The Broker stops
+// accepting the token within its token-cache TTL
+// (`broker.resolve_cache_ttl_seconds`). Only the agent that minted the
+// invocation may revoke it; any other caller gets 404. Revoking an
+// already-revoked invocation succeeds.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /cli-invocations/{invocation_id}:revoke (the `RevokeCliInvocation` operationId).
+func (c *ClientWithResponses) RevokeCliInvocationWithResponse(ctx context.Context, invocationId string, reqEditors ...RequestEditorFn) (*RevokeCliInvocationHTTPResp, error) {
+	rsp, err := c.RevokeCliInvocation(ctx, invocationId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeCliInvocationHTTPResp(rsp)
+}
+
+// ListCliProfilesWithResponse List CLI profiles
+//
+// The vendor CLI profiles this Jentic ships.
+//
+// A profile declares a vendor CLI's APIs (with the `jentic connect` key of
+// each), its rule presets (for `jentic connect --preset`) and the hard-deny
+// lists no rule can override. Each API says whether the registry serves it
+// now; `POST /cli-profiles/{profile}:provision` makes them all live.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /cli-profiles (the `ListCliProfiles` operationId).
+func (c *ClientWithResponses) ListCliProfilesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListCliProfilesHTTPResp, error) {
+	rsp, err := c.ListCliProfiles(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListCliProfilesHTTPResp(rsp)
+}
+
+// ProvisionCliProfileWithResponse Provision a CLI profile's APIs
+//
+// Make every API the profile declares exist and be live. Idempotent.
+//
+// A `catalog` API is imported from the public catalog (enqueued; nothing
+// when it is already registered), a `shipped` API is imported from the spec
+// shipped with Jentic and goes live at once, and a `builtin` API needs
+// nothing. A connect for one of the profile's APIs runs the same
+// provisioning on demand, so this is for an operator who wants the APIs
+// in place before any agent connects. Runs whether or not the vendor's
+// facade is enabled (`vendor_enabled`).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /cli-profiles/{profile}:provision (the `ProvisionCliProfile` operationId).
+func (c *ClientWithResponses) ProvisionCliProfileWithResponse(ctx context.Context, profile string, reqEditors ...RequestEditorFn) (*ProvisionCliProfileHTTPResp, error) {
+	rsp, err := c.ProvisionCliProfile(ctx, profile, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseProvisionCliProfileHTTPResp(rsp)
+}
+
 // ListConnectSessionsWithResponse List connect sessions
 //
 // List connect sessions with cursor-based pagination.
@@ -53738,6 +55939,494 @@ func ParseRefreshCatalogHTTPResp(rsp *http.Response) (*RefreshCatalogHTTPResp, e
 			return nil, err
 		}
 		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListCliFacadesHTTPResp parses an HTTP response from a ListCliFacadesWithResponse call
+func ParseListCliFacadesHTTPResp(rsp *http.Response) (*ListCliFacadesHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListCliFacadesHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CliFacadeListResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateCliInvocationHTTPResp parses an HTTP response from a CreateCliInvocationWithResponse call
+func ParseCreateCliInvocationHTTPResp(rsp *http.Response) (*CreateCliInvocationHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateCliInvocationHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest CliInvocationCreatedResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRenewCliInvocationHTTPResp parses an HTTP response from a RenewCliInvocationWithResponse call
+func ParseRenewCliInvocationHTTPResp(rsp *http.Response) (*RenewCliInvocationHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RenewCliInvocationHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CliInvocationResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokeCliInvocationHTTPResp parses an HTTP response from a RevokeCliInvocationWithResponse call
+func ParseRevokeCliInvocationHTTPResp(rsp *http.Response) (*RevokeCliInvocationHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeCliInvocationHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListCliProfilesHTTPResp parses an HTTP response from a ListCliProfilesWithResponse call
+func ParseListCliProfilesHTTPResp(rsp *http.Response) (*ListCliProfilesHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListCliProfilesHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CliProfileListResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseProvisionCliProfileHTTPResp parses an HTTP response from a ProvisionCliProfileWithResponse call
+func ParseProvisionCliProfileHTTPResp(rsp *http.Response) (*ProvisionCliProfileHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ProvisionCliProfileHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CliProfileProvisionResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail

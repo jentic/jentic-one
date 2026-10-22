@@ -54,6 +54,7 @@ EVENT_ID = "evt_6968b398b04f002b6dbff4d1"
 AUDIT_ID = "aud_6968b3984275d71e90f7f09f"
 JOB_ID = "job_6968b3985e8c9902207afaeb"
 HELD_EXECUTION_ID = "held_6968b398a1c4e2d07b5f93c6"
+CLI_INVOCATION_ID = "cli_6968b398d3e1a7c40f2b9e58"  # vendor CLI invocation token record
 NOTE_ID = "note_6968b398edb465624291e405"
 TOOLKIT_ID = "tk_6968b3981ec22d56dbbc91e8"
 REVISION_ID = "3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"  # registry revisions are UUIDs
@@ -134,6 +135,7 @@ _VALUE_SUMMARIES: dict[str, str] = {
     EVENT_ID: "Event ID",
     AUDIT_ID: "Audit entry ID",
     JOB_ID: "Job ID",
+    CLI_INVOCATION_ID: "CLI invocation ID",
     NOTE_ID: "Note ID",
     TOOLKIT_ID: "Toolkit ID",
     REVISION_ID: "Revision ID (UUID)",

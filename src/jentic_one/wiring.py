@@ -40,10 +40,12 @@ from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.registry.services.api_security_lookup_service import ApiSecurityLookupService
 from jentic_one.registry.services.catalog.service import CatalogService
+from jentic_one.registry.services.cli_profile_service import CliProfileService
 from jentic_one.registry.services.errors import CatalogEntryNotFoundError
 from jentic_one.registry.services.inspect.registry_service import RegistryService
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import ResolveResult, RevisionPinResult
+from jentic_one.shared.cli_profiles import profile_api_for_catalog_api_id
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models.actors import actor_type_from_id
@@ -117,12 +119,22 @@ class InProcessCatalogAutoImporter:
     keeps the manual import route. The service method itself
     does not enforce ``catalog:import`` scope; the router does, and we do not
     go through the router.
+
+    An api_id one of the shipped CLI profiles declares provisions that
+    profile instead (:class:`CliProfileService`): the API itself whatever its
+    source (a catalog import, or the spec shipped with Jentic), plus the
+    profile's other APIs while the vendor's facade is enabled. This is the
+    one on-demand trigger for profile provisioning; nothing provisions at boot.
     """
 
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
 
     async def ensure_imported(self, *, api_id: str, initiator_actor_id: str) -> str | None:
+        if profile_api_for_catalog_api_id(api_id) is not None:
+            return await self._provision_profile(
+                api_id=api_id, initiator_actor_id=initiator_actor_id
+            )
         try:
             svc = CatalogService(self._ctx)
             entry = await svc.get(api_id)
@@ -159,6 +171,34 @@ class InProcessCatalogAutoImporter:
         except Exception:
             _logger.warning("catalog_auto_import.failed", api_id=api_id, exc_info=True)
             return None
+
+    async def _provision_profile(self, *, api_id: str, initiator_actor_id: str) -> str | None:
+        """Provision the CLI profile declaring ``api_id``; the first enqueued job id, if any."""
+        try:
+            identity = Identity(
+                sub=initiator_actor_id, actor_type=actor_type_from_id(initiator_actor_id)
+            )
+        except ValueError:
+            _logger.info(
+                "cli_profile_provision.skipped_retired_initiator",
+                api_id=api_id,
+                initiator=initiator_actor_id,
+            )
+            return None
+        try:
+            result = await CliProfileService(self._ctx).ensure_for_catalog_api_id(api_id, identity)
+        except Exception:
+            _logger.warning("cli_profile_provision.failed", api_id=api_id, exc_info=True)
+            return None
+        if result is None:
+            return None
+        _logger.info(
+            "cli_profile_provision.on_connect",
+            api_id=api_id,
+            profile=result.profile,
+            statuses={a.role: a.status for a in result.apis},
+        )
+        return next((a.job_id for a in result.apis if a.job_id is not None), None)
 
     async def registered_identity(self, *, api_id: str) -> tuple[str, str] | None:
         """Return the ``(vendor, name)`` of the local API imported from ``api_id``, or None."""

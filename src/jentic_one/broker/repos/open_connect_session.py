@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from sqlalchemy import text
 
+from jentic_one.shared.cli_profiles import declaring_profile
 from jentic_one.shared.db import DatabaseSession
 from jentic_one.shared.models.api_identity import credential_coverage_where
 
@@ -47,7 +48,13 @@ class OpenConnectSessionReader:
             row = (
                 await session.execute(
                     _OPEN_SESSION_FOR_API,
-                    {"agent_id": agent_id, "vendor": vendor, "name": name, "version": version},
+                    {
+                        "agent_id": agent_id,
+                        "vendor": vendor,
+                        "name": name,
+                        "version": version,
+                        "cli_profile": declaring_profile(vendor, name, version),
+                    },
                 )
             ).first()
         return str(row[0]) if row is not None else None

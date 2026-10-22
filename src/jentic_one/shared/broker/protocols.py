@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
+from jentic_one.shared.auth.cli_invocation import CliInvocationIdentity
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models.credentials import CredentialType
 from jentic_one.shared.permissions.evaluation import PathDivergence
+from jentic_one.shared.permissions.git_rules import GitItem
+from jentic_one.shared.permissions.graphql_document import GraphQLCall
 from jentic_one.shared.schemas import APIReference, OperationInfo
 
 
@@ -109,6 +113,12 @@ class TokenResolverProtocol(Protocol):
     async def resolve_access_token(self, token: str) -> Identity | None: ...
 
 
+class CliInvocationResolverProtocol(Protocol):
+    """Resolves a ``cit_`` CLI invocation token to its agent identity and claims."""
+
+    async def resolve_cli_invocation_token(self, token: str) -> CliInvocationIdentity | None: ...
+
+
 class RuleVerdict(StrEnum):
     """Tri-state outcome of a permission-rule evaluation.
 
@@ -125,6 +135,15 @@ class RuleVerdict(StrEnum):
     ALLOW = "allow"
     DENY = "deny"
     REQUIRE_APPROVAL = "require-approval"
+
+
+@dataclass(frozen=True, slots=True)
+class GraphQLFieldEvaluation:
+    """The rule verdict for one top-level field of a GraphQL request."""
+
+    field: str
+    verdict: RuleVerdict
+    matched_rule_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,11 +172,36 @@ class RuleEvaluation:
     # against the full upstream path (server base included) changes the
     # verdict versus the spec-relative path (#1424 upgrade diagnostics).
     divergence: PathDivergence | None = None
+    # A GraphQL request's per-field results, in document order (empty for any
+    # other request). ``verdict`` and ``matched_rule_id`` are those of the most
+    # restrictive field.
+    graphql_fields: tuple[GraphQLFieldEvaluation, ...] = ()
 
     @property
     def allowed(self) -> bool:
         """True when the verdict is ALLOW; False for DENY or REQUIRE_APPROVAL."""
         return self.verdict == RuleVerdict.ALLOW
+
+
+@dataclass(frozen=True, slots=True)
+class GitItemEvaluation:
+    """The rule verdict for one thing a git request does (a fetch, one ref update).
+
+    Git rules are allow-or-deny: ``allowed`` is False for a deny, for no
+    matching rule and for a matching ``require-approval`` rule alike.
+    """
+
+    item: GitItem
+    allowed: bool
+    matched_rule_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class GitEvaluation:
+    """The rule verdicts for the items of one git request, in the order given."""
+
+    items: tuple[GitItemEvaluation, ...]
+    rules_loaded: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -268,6 +312,12 @@ class AgentRuleEvaluatorProtocol(Protocol):
     ``rule_set_id`` the shared ``permission_rule_set_rules`` list is evaluated
     *instead of* the inline rows. First-match-wins over the ordered list; an
     exhausted list defaults to deny (secure-by-default).
+
+    With ``graphql`` (an inspected GraphQL request) the list is evaluated once
+    per top-level field and the most restrictive field verdict decides.
+
+    ``api_role`` (set for a profile-scoped credential) evaluates only the
+    rules for the API of that role; an API with none is denied by default.
     """
 
     async def evaluate(
@@ -280,7 +330,25 @@ class AgentRuleEvaluatorProtocol(Protocol):
         path: str,
         operation_id: str | None,
         upstream_path: str | None = None,
+        graphql: GraphQLCall | None = None,
+        api_role: str | None = None,
     ) -> RuleEvaluation: ...
+
+    async def evaluate_git(
+        self,
+        *,
+        agent_id: str,
+        credential_id: str,
+        rule_set_id: str | None,
+        items: Sequence[GitItem],
+        api_role: str | None = None,
+    ) -> GitEvaluation:
+        """Evaluate the binding's rules once per git item (``shared.permissions.git_rules``).
+
+        Only a ``match_mode="git"`` rule or a condition-less ``deny`` decides a
+        git item; an exhausted list denies it.
+        """
+        ...
 
 
 @dataclass(frozen=True, slots=True)

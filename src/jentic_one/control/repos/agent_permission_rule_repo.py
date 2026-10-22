@@ -88,6 +88,9 @@ class AgentPermissionRuleRepository:
                 sequence=idx,
                 created_by=created_by,
             )
+            if rule_data.get("api_role"):
+                # Set only when given, so the INSERT names the column only then.
+                rule.api_role = str(rule_data["api_role"])
             session.add(rule)
             new_rules.append(rule)
         await session.flush()
@@ -131,6 +134,8 @@ class AgentPermissionRuleRepository:
                     sequence=max_seq + 1 + idx,
                     created_by=created_by,
                 )
+                if rule_data.get("api_role"):
+                    rule.api_role = str(rule_data["api_role"])
                 session.add(rule)
 
         await session.flush()
