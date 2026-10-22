@@ -178,45 +178,46 @@ credentials:
 #         identity_field: login
 #         display_template: "@{login}"
 
-# Shared-state backend for cross-process coordination. The default (memory)
-# keeps rate limiters, consent handles, and circuit state per-process — fine
-# for a single-worker install, but a multi-worker or multi-instance deployment
-# needs Redis so the token-endpoint limiter and consent-nonce anti-replay
-# survive across workers. The redis client is an optional extra
-# (pip install jentic-one[redis]; for an image, build with
-# --build-arg EXTRAS=redis) and is NOT in the published container
-# image — enabling this backend there fails at startup.
-broker:
-  resilience:
-    backend:
-      backend: memory
-      # backend: redis
-      # redis_url: rediss://user:pass@redis.example.com:6379/0
-      # redis_key_prefix: jentic:prod:
-      # Bounds for the memory backend, per key namespace (the key prefix before
-      # the first ":"). A namespace (or one caller's share of it) full of live
-      # entries refuses new writes (the request gets a 503) instead of evicting
-      # a live entry.
-      # Idempotency-Key ceiling per process:
-      #   min(max_entries, max_bytes / record_bytes) / broker.idempotency.ttl_s
-      # with record_bytes ~ 1000 B + response headers (capped at 512 B): about
-      # 30 req/s at the defaults (1 h TTL on memory), 3 req/s per caller.
-      # max_total_bytes caps all namespaces of one backend together; raise
-      # the container memory limit with any budget (the broker chart's 512Mi
-      # fits the defaults).
-      # memory:
-      #   max_entries_per_namespace: 100000
-      #   max_bytes_per_namespace: 16777216   # 16 MiB
-      #   max_total_bytes: 201326592          # 192 MiB
-      #   namespaces:
-      #     # The built-in defaults:
-      #     idem: {max_entries: 250000, max_bytes: 134217728, max_owner_share: 0.1}
-      #     idem-body: {max_entries: 1000000, max_bytes: 33554432, max_owner_share: 0.1}
-      #     # Login page CSRF nonces: the per-namespace defaults above, and each
-      #     # client (IPv4 address or IPv6 /64) may hold 2% of them, about 370
-      #     # nonces in their 5-minute TTL, so one flooding client gets 503 while
-      #     # everyone else can still sign in.
-      #     login-csrf: {max_entries: 100000, max_bytes: 16777216, max_owner_share: 0.02}
+# Shared-state backend: one per process, shared by every surface the process
+# serves (rate limiters, consent handles, circuit state, Idempotency-Key
+# records). The default (memory) keeps that state in the process, which is what
+# the supported one-process-per-surface deployment needs: run one process (one
+# worker, one replica) per surface. Multi-process shared state comes from a
+# backend an extension registers with register_state_backend, selected here by
+# name, with its settings under state.options. The built-in redis backend is
+# deprecated and will be removed; it needs the optional redis extra
+# (pip install jentic-one[redis]), which is NOT in the published container
+# image. The deprecated broker.resilience.backend path (and its
+# JENTIC__BROKER__RESILIENCE__BACKEND__* env vars) is still read into this
+# section for one release, with a deprecation warning.
+state:
+  backend: memory
+  # backend: my-registered-backend
+  # options: {}            # settings for a registered backend
+  # Bounds for the memory backend, per key namespace (the key prefix before
+  # the first ":"). A namespace (or one caller's share of it) full of live
+  # entries refuses new writes (the request gets a 503) instead of evicting
+  # a live entry.
+  # Idempotency-Key ceiling per process:
+  #   min(max_entries, max_bytes / record_bytes) / broker.idempotency.ttl_s
+  # with record_bytes ~ 1000 B + response headers (capped at 512 B): about
+  # 30 req/s at the defaults (1 h TTL on memory), 3 req/s per caller.
+  # max_total_bytes caps all namespaces of the process's backend together;
+  # raise the container memory limit with any budget (the broker chart's
+  # 512Mi fits the defaults).
+  # memory:
+  #   max_entries_per_namespace: 100000
+  #   max_bytes_per_namespace: 16777216   # 16 MiB
+  #   max_total_bytes: 201326592          # 192 MiB
+  #   namespaces:
+  #     # The built-in defaults:
+  #     idem: {max_entries: 250000, max_bytes: 134217728, max_owner_share: 0.1}
+  #     idem-body: {max_entries: 1000000, max_bytes: 33554432, max_owner_share: 0.1}
+  #     # Login page CSRF nonces: the per-namespace defaults above, and each
+  #     # client (IPv4 address or IPv6 /64) may hold 2% of them, about 370
+  #     # nonces in their 5-minute TTL, so one flooding client gets 503 while
+  #     # everyone else can still sign in.
+  #     login-csrf: {max_entries: 100000, max_bytes: 16777216, max_owner_share: 0.02}
 
 admin:
   auth:
