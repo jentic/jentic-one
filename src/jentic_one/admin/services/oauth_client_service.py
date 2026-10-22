@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
 import functools
 import re
-from functools import partial
 from urllib.parse import urlparse
 
 import structlog
@@ -15,7 +13,13 @@ from jentic_one.admin.repos.access_token_repo import AccessTokenRepository
 from jentic_one.admin.repos.oauth_client_grant_repo import OAuthClientGrantRepository
 from jentic_one.admin.repos.oauth_client_repo import OAuthClientRepository
 from jentic_one.admin.repos.refresh_token_repo import RefreshTokenRepository
-from jentic_one.admin.services._support.passwords import hash_password, verify_password
+from jentic_one.admin.services._support.passwords import (
+    configure_argon2_from_config,
+    dummy_password_hash,
+    hash_password,
+    run_argon2,
+    verify_password,
+)
 from jentic_one.admin.services._support.tokens import generate_client_id, generate_client_secret
 from jentic_one.admin.services.errors import (
     ConflictError,
@@ -124,15 +128,12 @@ _RFC3986_URI_CHARS_RE = re.compile(r"[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]*\Z")
 def _dummy_argon2_hash() -> str:
     """A cached argon2id hash used as the timing-equalizer verify target.
 
-    The first call computes a real argon2id hash (~64 MiB / tens of ms)
-    synchronously on the event-loop thread; every later call returns the
-    cached string. This is a deliberate trade-off: the cost is paid once per
-    process, only when a rejection path first needs the equalizer, and
-    keeping the computation lazy avoids taxing startup (and every test
-    session) with an argon2 run. Callers verify *against* this hash via
-    ``_verify_password_async``, which does run in the executor.
+    Shares the process-wide dummy hash in :mod:`passwords` so the equalizer
+    cost is paid at most once per process; callers verify *against* this hash
+    via :func:`_verify_password_async`, which runs in the executor under the
+    process-wide argon2 concurrency bound.
     """
-    return hash_password("dummy-timing-equalizer")
+    return dummy_password_hash()
 
 
 def _validate_redirect_uris(uris: list[str], *, allow_private_use_schemes: bool = False) -> None:
@@ -259,15 +260,13 @@ def _to_view(client: OAuthClient) -> OAuthClientView:
 
 
 async def _hash_password_async(plain: str) -> str:
-    """Run argon2id hashing off the event loop."""
-    return await asyncio.get_running_loop().run_in_executor(None, hash_password, plain)
+    """Run argon2id hashing off the event loop under the process-wide concurrency bound."""
+    return await run_argon2(hash_password, plain)
 
 
 async def _verify_password_async(plain: str, hashed: str) -> bool:
-    """Run argon2id verification off the event loop."""
-    return await asyncio.get_running_loop().run_in_executor(
-        None, partial(verify_password, plain, hashed)
-    )
+    """Run argon2id verification off the event loop under the process-wide concurrency bound."""
+    return await run_argon2(verify_password, plain, hashed)
 
 
 class OAuthClientService:
@@ -275,6 +274,7 @@ class OAuthClientService:
 
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
+        configure_argon2_from_config(getattr(ctx, "config", None))
 
     async def create(
         self,

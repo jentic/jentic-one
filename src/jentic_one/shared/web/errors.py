@@ -178,6 +178,14 @@ def make_service_error_handler(
                         type=type_slug,
                         path=request.url.path,
                     )
+                elif status_code == 503 and hasattr(exc, "retry_after_s"):
+                    logger.warning(
+                        "service_at_capacity",
+                        status=status_code,
+                        type=type_slug,
+                        path=request.url.path,
+                        retry_after_s=exc.retry_after_s,
+                    )
                 elif status_code >= 500:
                     logger.error(
                         "unhandled_service_error",

@@ -10,6 +10,19 @@ import "regexp"
 
 // Admin authentication settings.
 type AdminAuthConfig struct {
+	// Maximum seconds a password or OAuth client-secret hash or verification waits
+	// for one of the ``argon2_max_concurrency`` slots before failing with HTTP 503
+	// and a ``Retry-After`` header.
+	Argon2AcquireTimeoutS float64 `json:"argon2_acquire_timeout_s" yaml:"argon2_acquire_timeout_s" mapstructure:"argon2_acquire_timeout_s"`
+
+	// Per-process cap on concurrent argon2id password and OAuth client-secret hashes
+	// and verifications across all surfaces. Each argon2id call allocates 64 MiB
+	// (``memory_cost=65536``), so the default of 4 bounds peak argon2 memory at 256
+	// MiB per process. Calls beyond the cap wait up to ``argon2_acquire_timeout_s``
+	// for a slot and then fail with HTTP 503 + ``Retry-After`` instead of allocating
+	// another 64 MiB buffer.
+	Argon2MaxConcurrency int `json:"argon2_max_concurrency" yaml:"argon2_max_concurrency" mapstructure:"argon2_max_concurrency"`
+
 	// How long a locked admin account stays locked before logins are accepted again.
 	FailedLoginLockoutSeconds int `json:"failed_login_lockout_seconds" yaml:"failed_login_lockout_seconds" mapstructure:"failed_login_lockout_seconds"`
 
@@ -41,6 +54,24 @@ func (j *AdminAuthConfig) UnmarshalJSON(value []byte) error {
 	var plain Plain
 	if err := json.Unmarshal(value, &plain); err != nil {
 		return err
+	}
+	if v, ok := raw["argon2_acquire_timeout_s"]; !ok || v == nil {
+		plain.Argon2AcquireTimeoutS = 5.0
+	}
+	if 60 < plain.Argon2AcquireTimeoutS {
+		return fmt.Errorf("field %s: must be <= %v", "argon2_acquire_timeout_s", 60)
+	}
+	if 0 >= plain.Argon2AcquireTimeoutS {
+		return fmt.Errorf("field %s: must be > %v", "argon2_acquire_timeout_s", 0)
+	}
+	if v, ok := raw["argon2_max_concurrency"]; !ok || v == nil {
+		plain.Argon2MaxConcurrency = 4
+	}
+	if 64 < plain.Argon2MaxConcurrency {
+		return fmt.Errorf("field %s: must be <= %v", "argon2_max_concurrency", 64)
+	}
+	if 1 > plain.Argon2MaxConcurrency {
+		return fmt.Errorf("field %s: must be >= %v", "argon2_max_concurrency", 1)
 	}
 	if v, ok := raw["failed_login_lockout_seconds"]; !ok || v == nil {
 		plain.FailedLoginLockoutSeconds = 900

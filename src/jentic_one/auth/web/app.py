@@ -7,6 +7,7 @@ from typing import Any
 import structlog
 from fastapi import APIRouter, FastAPI
 
+from jentic_one.admin.services.errors import PasswordHasherBusyError
 from jentic_one.auth.services.errors import AuthServiceError
 from jentic_one.auth.web.errors import (
     cursor_error_handler,
@@ -67,6 +68,7 @@ def get_exception_handlers() -> list[tuple[type[Exception], Any]]:
     """Return auth-specific exception handlers for registration on the combined app."""
     return [
         (AuthServiceError, service_error_handler),
+        (PasswordHasherBusyError, service_error_handler),
         (DatabaseUnavailableError, database_error_handler),
         # A user-supplied `?cursor=` that fails to decode must 400, not 500 —
         # the per-agent grant listing decodes it (see auth/web/errors.py).

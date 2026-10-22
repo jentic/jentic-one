@@ -308,3 +308,17 @@ class OAuthClientNotFoundError(NotFoundError):
     def __init__(self, id: str) -> None:
         super().__init__(f"OAuth client '{id}' not found")
         self.id = id
+
+
+class PasswordHasherBusyError(AdminServiceError):
+    """Raised when concurrent argon2 password operations are saturated and queue wait times out."""
+
+    def __init__(self, retry_after_s: int = 1) -> None:
+        super().__init__(
+            "The authentication service is temporarily at capacity; "
+            "retry after the indicated delay."
+        )
+        self.retry_after_s = max(1, int(retry_after_s))
+
+
+Argon2BusyError = PasswordHasherBusyError

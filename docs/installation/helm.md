@@ -509,10 +509,19 @@ sized for evaluation, not load: registry/control request 100m/128Mi with a
 500m/256Mi limit, the broker requests 100m/256Mi with a 500m/512Mi limit (its
 default `memory` shared-state budgets, above), and app/admin request 256Mi
 with a 1Gi limit. The app's floor is real, not a hint: it boots at roughly 150Mi RSS, and every concurrent password or
-OAuth client-secret verification adds 64Mi (argon2id with
-`memory_cost=65536`) — so a handful of simultaneous logins on a 256Mi limit
-is an OOM-kill, not a slowdown. Do not set the app's memory limit below
-512Mi.
+OAuth client-secret hash or verification adds 64Mi (argon2id with
+`memory_cost=65536`). Concurrent argon2 operations are capped per process at
+`admin.auth.argon2_max_concurrency` (`JENTIC__ADMIN__AUTH__ARGON2_MAX_CONCURRENCY`,
+default `4`, so `4 × 64Mi = 256Mi` peak argon2 memory); callers beyond the
+cap wait up to `admin.auth.argon2_acquire_timeout_s` (default `5.0`s) for a
+slot and then get a `503` with `Retry-After` instead of allocating another
+64Mi buffer. Together with the ~150Mi process baseline and the `memory`
+shared-state backend (`state.memory.max_total_bytes`, 192Mi budgeted / ~220Mi
+real), the default concurrency of 4 fits inside the 1Gi limit with headroom.
+Do not set the app's memory limit below 512Mi, and if you raise
+`admin.auth.argon2_max_concurrency`, raise the container memory limit by at
+least `64Mi` per additional slot (`baseline + state.memory.max_total_bytes +
+64Mi × argon2_max_concurrency`).
 
 **OSS supports one process per surface.** The app (the combined process,
 whose auth and control surfaces keep shared state), control and broker keep their rate-limit
