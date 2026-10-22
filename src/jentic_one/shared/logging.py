@@ -193,9 +193,53 @@ def configure_logging(config: AppConfig) -> None:
     # httpx's INFO request line carries the full outbound URL — mask its query
     # values (query-located API keys) before any handler formats it.
     _install_httpx_url_filter()
-    # uvicorn's access line carries the inbound query string (poll tokens,
-    # OAuth callback codes) — mask its values too.
+    install_server_log_filters()
+
+
+def install_server_log_filters() -> None:
+    """Install the uvicorn logger filters (idempotent).
+
+    uvicorn's access line carries the inbound query string (poll tokens, OAuth
+    callback codes), so its values are masked; and a response the app aborted
+    on purpose (see :func:`mark_response_aborted`) gets no redundant
+    unstructured incomplete-response line.
+    """
     _install_access_log_query_filter()
+    _install_aborted_response_filter()
+
+
+_response_aborted: ContextVar[bool] = ContextVar("response_aborted", default=False)
+
+# uvicorn's notice for an app that returned after starting, but not finishing, a
+# response; it then closes the connection.
+_INCOMPLETE_RESPONSE_MSG = "ASGI callable returned without completing response."
+
+
+def mark_response_aborted() -> None:
+    """Record that this request's response was cut short on purpose, already logged.
+
+    A streaming response whose upstream fails partway through the body can only
+    end by closing the connection (the status line is already sent). The app
+    signals that by returning without the final body frame, and the server logs
+    its generic "returned without completing response" line for it. The app has
+    already emitted a structured, request-correlated event for the abort, so
+    that line is suppressed for this request only (the flag lives in the
+    request task's context, which the server's own log call shares).
+    """
+    _response_aborted.set(True)
+
+
+class _AbortedResponseFilter(logging.Filter):
+    """Drop uvicorn's incomplete-response line for a response the app aborted on purpose."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not (_response_aborted.get() and record.msg == _INCOMPLETE_RESPONSE_MSG)
+
+
+def _install_aborted_response_filter() -> None:
+    error_logger = logging.getLogger("uvicorn.error")
+    if not any(isinstance(f, _AbortedResponseFilter) for f in error_logger.filters):
+        error_logger.addFilter(_AbortedResponseFilter())
 
 
 def _is_valid_request_id(value: str) -> bool:

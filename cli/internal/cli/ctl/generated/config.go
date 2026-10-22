@@ -268,6 +268,13 @@ type BrokerConfig struct {
 	// up to 10 more connections on top of it.
 	StreamingPersistMaxConcurrency int `json:"streaming_persist_max_concurrency" yaml:"streaming_persist_max_concurrency" mapstructure:"streaming_persist_max_concurrency"`
 
+	// Budget (seconds) for writing one streaming execution's record and lifecycle
+	// event. The write runs after the response, off the request, so it never delays
+	// the client; past the budget it is abandoned, logged and counted on
+	// ``app.background_tasks`` (``kind=streaming_execution_persist``,
+	// ``outcome=timed_out``).
+	StreamingPersistTimeoutS float64 `json:"streaming_persist_timeout_s" yaml:"streaming_persist_timeout_s" mapstructure:"streaming_persist_timeout_s"`
+
 	// ToolkitCacheTtlS corresponds to the JSON schema field "toolkit_cache_ttl_s".
 	ToolkitCacheTtlS float64 `json:"toolkit_cache_ttl_s" yaml:"toolkit_cache_ttl_s" mapstructure:"toolkit_cache_ttl_s"`
 
@@ -313,6 +320,12 @@ func (j *BrokerConfig) UnmarshalJSON(value []byte) error {
 	}
 	if 0 >= plain.StreamingPersistMaxConcurrency {
 		return fmt.Errorf("field %s: must be > %v", "streaming_persist_max_concurrency", 0)
+	}
+	if v, ok := raw["streaming_persist_timeout_s"]; !ok || v == nil {
+		plain.StreamingPersistTimeoutS = 10.0
+	}
+	if 0 >= plain.StreamingPersistTimeoutS {
+		return fmt.Errorf("field %s: must be > %v", "streaming_persist_timeout_s", 0)
 	}
 	if v, ok := raw["toolkit_cache_ttl_s"]; !ok || v == nil {
 		plain.ToolkitCacheTtlS = 3.0
@@ -2610,6 +2623,12 @@ func (j *ServerConfig) UnmarshalJSON(value []byte) error {
 
 // Service-level settings (immutable after boot).
 type ServicesConfig struct {
+	// On shutdown, how long (seconds) the app waits for work requests handed off
+	// after their response (e.g. streaming execution records) before cancelling what
+	// is still running. Runs before the databases close; each cancelled task is
+	// logged and counted on ``app.background_tasks`` (``outcome=cancelled``).
+	BackgroundTaskDrainTimeoutS float64 `json:"background_task_drain_timeout_s" yaml:"background_task_drain_timeout_s" mapstructure:"background_task_drain_timeout_s"`
+
 	// RequestTimeoutS corresponds to the JSON schema field "request_timeout_s".
 	RequestTimeoutS float64 `json:"request_timeout_s" yaml:"request_timeout_s" mapstructure:"request_timeout_s"`
 
@@ -2630,6 +2649,12 @@ func (j *ServicesConfig) UnmarshalJSON(value []byte) error {
 	var plain Plain
 	if err := json.Unmarshal(value, &plain); err != nil {
 		return err
+	}
+	if v, ok := raw["background_task_drain_timeout_s"]; !ok || v == nil {
+		plain.BackgroundTaskDrainTimeoutS = 10.0
+	}
+	if 0 > plain.BackgroundTaskDrainTimeoutS {
+		return fmt.Errorf("field %s: must be >= %v", "background_task_drain_timeout_s", 0)
 	}
 	if v, ok := raw["request_timeout_s"]; !ok || v == nil {
 		plain.RequestTimeoutS = 30.0
