@@ -164,6 +164,13 @@ def _normalize_optional_base_url(value: str | None) -> str | None:
     return normalize_base_url(value)
 
 
+# Default ``databases.*.pool_pre_ping_idle_s``: minimum time a connection must
+# sit idle in the pool before checkout runs the ``pool_pre_ping`` wire check.
+# Active and burst checkouts reuse connections within milliseconds, so gating
+# the wire ping on a short idle window eliminates redundant ``BEGIN``/``;``/
+# ``ROLLBACK`` round trips while still probing connections that have been idle.
+POOL_PRE_PING_IDLE_S = 1.0
+
 # Default ``databases.*.pool_recycle_s``: a pooled connection older than this is
 # replaced at checkout. Bounds connection age so a connection silently dropped by
 # a middlebox (Docker Desktop's VM network, a NAT gateway, a cloud load balancer)
@@ -218,15 +225,30 @@ class DatabaseConfig(BaseModel):
     pool_pre_ping: bool = Field(
         default=True,
         description=(
-            "PostgreSQL: test each pooled connection on checkout and transparently "
-            "replace a dead one. On asyncpg the ping costs three round trips "
-            "(``BEGIN``, ``;``, ``ROLLBACK``) per checkout. With ``false``, "
-            "``pool_recycle_s`` and TCP keepalive do not cover a Postgres restart or "
-            "failover, a pooler/proxy restart, or a terminated backend: after such an "
-            "event the first request on each pool per process can fail with an HTTP "
-            "503 (work run through the retrying transaction helper is re-run on a "
-            "fresh connection instead). Only disable it where those events are rare "
-            "and that error is acceptable. Ignored for SQLite."
+            "PostgreSQL: test pooled connections on checkout and transparently "
+            "replace a dead one. By default the wire ping (three round trips on "
+            "asyncpg: ``BEGIN``, ``;``, ``ROLLBACK``) runs only when the connection "
+            "has sat idle in the pool for at least ``pool_pre_ping_idle_s`` seconds; "
+            "active checkouts within that window skip the wire ping unless the driver "
+            "connection is already closed. With ``false``, ``pool_recycle_s`` and TCP "
+            "keepalive do not cover a Postgres restart or failover, a pooler/proxy "
+            "restart, or a terminated backend: after such an event the first request "
+            "on each pool per process can fail with an HTTP 503 (work run through the "
+            "retrying transaction helper is re-run on a fresh connection instead). "
+            "Only disable it where those events are rare and that error is "
+            "acceptable. Ignored for SQLite."
+        ),
+    )
+    pool_pre_ping_idle_s: float = Field(
+        default=POOL_PRE_PING_IDLE_S,
+        ge=0,
+        allow_inf_nan=False,
+        description=(
+            "PostgreSQL: seconds a connection must sit idle in the pool before "
+            "checkout runs the ``pool_pre_ping`` wire check. Active checkouts "
+            "returning within this window skip the wire ping unless the driver "
+            "connection is already closed. ``0`` pings on every checkout. Only "
+            "applies when ``pool_pre_ping`` is ``true``. Ignored for SQLite."
         ),
     )
     pool_recycle_s: int = Field(
