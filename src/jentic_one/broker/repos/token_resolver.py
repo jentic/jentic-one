@@ -61,14 +61,13 @@ class InProcessTokenResolver:
             "  WHEN 'agent' THEN"
             # An owned agent follows its owner's account status: while the
             # owner is disabled or deleted the agent reads 'owner_inactive'.
-            # A soft-deleted user has users.active false, so the o.active
-            # probe covers delete too. Ownerless agents depend on their own
-            # status alone. One PK probe on agents, one on users.
+            # Ownerless agents depend on their own status alone. One PK probe
+            # on agents, one on users.
             "   (SELECT CASE"
             "     WHEN a.status <> 'active' THEN a.status"
             "     WHEN a.owner_id IS NULL THEN 'active'"
             "     WHEN EXISTS (SELECT 1 FROM users o"
-            "      WHERE o.id = a.owner_id AND o.active) THEN 'active'"
+            "      WHERE o.id = a.owner_id AND o.active AND o.deleted_at IS NULL) THEN 'active'"
             "     ELSE 'owner_inactive' END"
             "    FROM agents a WHERE a.id = t.actor_id)"
             # Service-account sessions are retired (theme 8; the tables were

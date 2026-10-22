@@ -15,6 +15,9 @@ from jentic_one.registry.repos.agent_ownership_boundary_repo import (
     AgentOwnershipBoundaryRepository,
 )
 from jentic_one.registry.repos.api_repo import ApiRepository
+from jentic_one.registry.repos.control_credential_boundary_repo import (
+    ControlCredentialBoundaryRepository,
+)
 from jentic_one.registry.repos.note_repo import UNSET as UNSET
 from jentic_one.registry.repos.note_repo import NoteRepository, _Unset
 from jentic_one.registry.repos.operation_repo import OperationRepository as OpRepo
@@ -26,7 +29,7 @@ from jentic_one.registry.services.errors import (
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.auth.permission_catalog import ORG_ADMIN
+from jentic_one.shared.auth.permission_catalog import ORG_ADMIN, OWNER_CREDENTIALS_READ
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
@@ -98,6 +101,58 @@ class NoteService:
                 session, owner_id=identity.sub
             )
 
+    async def _credential_is_visible(self, credential_id: str, identity: Identity) -> bool:
+        """Return True if ``credential_id`` exists and is visible to ``identity``.
+
+        Mirrors ``CredentialService.get`` visibility across the control/admin
+        boundary without importing control or admin ORM models:
+        - ``org:admin``: the credential row must exist.
+        - Non-admin: the credential row must exist and match the caller's
+          ``created_by``, owner-delegated ``parent_actor_id``, active agent
+          binding, or an open connect session for an owned agent.
+        """
+        async with self._ctx.control_db.session() as session:
+            cred = await ControlCredentialBoundaryRepository.get_credential_visibility_row(
+                session, credential_id=credential_id
+            )
+            if cred is None:
+                return False
+            if ORG_ADMIN in identity.permissions:
+                return True
+            if not identity.sub:
+                return False
+            if cred.created_by == identity.sub:
+                return True
+            if (
+                identity.actor_type == ActorType.AGENT
+                and OWNER_CREDENTIALS_READ in identity.permissions
+                and identity.parent_actor_id is not None
+                and cred.created_by == identity.parent_actor_id
+            ):
+                return True
+
+        if identity.actor_type == ActorType.AGENT and self._ctx.is_db_allowed("admin"):
+            async with self._ctx.admin_db.session() as admin_session:
+                if await AgentOwnershipBoundaryRepository.has_active_credential_binding(
+                    admin_session, agent_id=identity.sub, credential_id=credential_id
+                ):
+                    return True
+
+        if cred.state == "pending" and identity.actor_type == ActorType.USER:
+            owned_agent_ids = await self._owned_agent_ids(identity)
+            if owned_agent_ids:
+                async with self._ctx.control_db.session() as control_session:
+                    if await (
+                        ControlCredentialBoundaryRepository.has_open_connect_session_for_agents(
+                            control_session,
+                            credential_id=credential_id,
+                            agent_ids=owned_agent_ids,
+                        )
+                    ):
+                        return True
+
+        return False
+
     async def create(
         self,
         *,
@@ -144,6 +199,13 @@ class NoteService:
                 found = await OpRepo.get_by_ids(session, {resource_operation_id})
             if not found:
                 raise InvalidNoteResourceError(f"Operation '{resource_operation_id}' not found")
+
+        if (
+            resource_credential_id is not None
+            and self._ctx.is_db_allowed("control")
+            and not await self._credential_is_visible(resource_credential_id, identity)
+        ):
+            raise NoteNotFoundError(resource_credential_id)
 
         async with self._ctx.registry_db.transaction() as session:
             note = await NoteRepository.create(

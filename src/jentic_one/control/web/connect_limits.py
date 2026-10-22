@@ -9,10 +9,11 @@ platform IP throttled by GitHub / Google / etc., which would fail-fast every
 legitimate user on the same install. One per-actor bucket caps both, well below
 any vendor's own throttle: ``CONNECT_RPM`` sustained requests per minute,
 ``CONNECT_BURST`` bucket capacity for a short spike. The MCP
-``request_connection`` tool calls the connect-session service in-process, so it
-carries its own bucket with the same policy.
+``request_connection`` tool calls the connect-session service in-process and
+shares the same per-actor bucket so an actor cannot double its rate limit by
+splitting requests across HTTP and MCP.
 
-Both limiters run on the process's shared-state backend (``state:``,
+The limiter runs on the process's shared-state backend (``state:``,
 ``Context.state_backend``): per process on ``memory``, cluster-wide on a
 shared backend.
 """
@@ -34,9 +35,10 @@ CONNECT_BURST = 10
 ROUTE_LIMITER_ATTR = "integrations_connect_limiter"
 MCP_LIMITER_ATTR = "mcp_connect_limiter"
 _BACKEND_ATTR = "control_state_backend"
+_CONNECT_NAMESPACE = "integrations_connect"
 _NAMESPACES = {
-    ROUTE_LIMITER_ATTR: "integrations_connect",
-    MCP_LIMITER_ATTR: "mcp_integrations_connect",
+    ROUTE_LIMITER_ATTR: _CONNECT_NAMESPACE,
+    MCP_LIMITER_ATTR: _CONNECT_NAMESPACE,
 }
 
 
@@ -45,29 +47,37 @@ def _limiter(store: RateLimitStore, namespace: str) -> RateLimiter:
 
 
 def install_connect_limiters(app: FastAPI, ctx: Context) -> None:
-    """Install both connect limiters on the process's shared-state backend.
+    """Install the shared connect limiter on the process's shared-state backend.
 
     The backend is the process's one instance; the app lifespan closes it
     (``ctx.close_state_backend()``).
     """
     backend = ctx.state_backend
     setattr(app.state, _BACKEND_ATTR, backend)
-    for attr, namespace in _NAMESPACES.items():
-        setattr(app.state, attr, _limiter(backend, namespace))
+    limiter = _limiter(backend, _CONNECT_NAMESPACE)
+    for attr in _NAMESPACES:
+        setattr(app.state, attr, limiter)
 
 
 def connect_limiter(app: FastAPI, attr: str) -> RateLimiter:
     """Return the installed limiter ``attr`` from ``app.state``.
 
     An app assembled without :func:`install_connect_limiters` (a bare test app)
-    gets an in-process limiter, cached on the app so its buckets persist.
+    gets an in-process limiter, cached on the app across both attributes so
+    HTTP and MCP share the same per-actor bucket.
     """
     limiter: RateLimiter | None = getattr(app.state, attr, None)
     if limiter is not None:
         return limiter
+    for other_attr in _NAMESPACES:
+        existing: RateLimiter | None = getattr(app.state, other_attr, None)
+        if existing is not None:
+            setattr(app.state, attr, existing)
+            return existing
     _logger.warning("control_connect_limiter_missing_using_in_memory_fallback", limiter=attr)
     limiter = _limiter(MemoryStateBackend(), _NAMESPACES[attr])
-    setattr(app.state, attr, limiter)
+    for target_attr in _NAMESPACES:
+        setattr(app.state, target_attr, limiter)
     return limiter
 
 

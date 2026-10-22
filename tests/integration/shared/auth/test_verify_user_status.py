@@ -400,6 +400,31 @@ async def test_deleted_row_refuses_every_credential_even_when_active(
         actor_id=actors.user_id, actor_type=ActorType.USER.value
     )
 
+    # An agent owned by the deleted-but-active user must also be treated as
+    # having an inactive owner across AgentRepository, TokenService,
+    # InProcessTokenResolver, and ActorStatusResolver.
+    async with ctx.admin_db.session() as session:
+        owned_agent = await AgentRepository.create(
+            session,
+            name="deleted-owner-agent",
+            owner_id=actors.user_id,
+            registered_by=actors.user_id,
+            created_by=_SEED_MARKER,
+            status=ActorStatus.ACTIVE,
+        )
+        await session.commit()
+        with_owner = await AgentRepository.get_with_owner_active(session, owned_agent.id)
+    assert with_owner is not None and with_owner[1] is False
+
+    agent_access, _agent_refresh = await tokens.issue_pair(owned_agent.id, ActorType.AGENT, [])
+    resolved_agent = await tokens.resolve_access_token(agent_access)
+    assert resolved_agent is not None and not resolved_agent.active
+    brokered_agent = await InProcessTokenResolver(ctx.admin_db).resolve_access_token(agent_access)
+    assert brokered_agent is not None and not brokered_agent.active
+    assert not await ActorStatusResolver(ctx.admin_db).is_active(
+        actor_id=owned_agent.id, actor_type=ActorType.AGENT.value
+    )
+
     async with _client(ctx, _FULL) as client:
         _assert_refused(await _get(client, "/users/me", jwt))
         _assert_refused(await _get(client, "/me", access))

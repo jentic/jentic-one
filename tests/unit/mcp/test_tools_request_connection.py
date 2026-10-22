@@ -19,6 +19,7 @@ from typing import Any, ClassVar
 from unittest.mock import MagicMock
 
 import pytest
+from fastapi import FastAPI
 from mcp.shared.exceptions import MCPError
 
 import jentic_one.mcp.tools as tools_mod
@@ -47,6 +48,11 @@ from jentic_one.control.services.vendors.service import (
     UnknownVendorError,
     UnsupportedFlowError,
     VendorNotConfiguredError,
+)
+from jentic_one.control.web.connect_limits import (
+    MCP_LIMITER_ATTR,
+    ROUTE_LIMITER_ATTR,
+    connect_limiter,
 )
 from jentic_one.mcp.tools import CallEnv, dispatch_tool_call
 from jentic_one.shared.auth.identity import Identity
@@ -521,6 +527,37 @@ async def test_rate_limit_is_retryable_transport_error(
     assert payload["retryable"] is True
     assert payload["retry_after_s"] >= 0
     assert len(_FakeConnectSessionService.calls) == 1
+
+
+async def test_http_and_mcp_connect_share_per_actor_rate_limit_budget() -> None:
+    """HTTP ``POST /integrations:connect`` and MCP ``request_connection`` draw
+    from the same per-actor token bucket on ``app.state``."""
+    app = FastAPI()
+    shared = RateLimiter(
+        MemoryStateBackend(),
+        default_rpm=1,
+        burst=2,
+        namespace="integrations_connect",
+    )
+    setattr(app.state, ROUTE_LIMITER_ATTR, shared)
+
+    route_lim = connect_limiter(app, ROUTE_LIMITER_ATTR)
+    mcp_lim = connect_limiter(app, MCP_LIMITER_ATTR)
+    assert route_lim is mcp_lim
+
+    # Spend 1 of the 2 burst tokens on the HTTP route limiter for agnt_1.
+    route_decision = await route_lim.acquire("agnt_1")
+    assert route_decision.allowed is True
+
+    # Spend the 2nd token via MCP request_connection for the same actor.
+    env = _env(["credentials:connect"], sub="agnt_1", connect_limiter=mcp_lim)
+    first_mcp = await dispatch_tool_call(env, "request_connection", {"vendor": "github"})
+    assert not first_mcp.is_error, first_mcp.content
+
+    # The 3rd attempt (across HTTP + MCP) is rate-limited.
+    second_mcp = await dispatch_tool_call(env, "request_connection", {"vendor": "github"})
+    assert second_mcp.is_error
+    assert _payload(second_mcp)["error_code"] == "TRANSPORT_ERROR"
 
 
 # ── registry-API targets (Go: the api / auth_type arms) ──────────────────────

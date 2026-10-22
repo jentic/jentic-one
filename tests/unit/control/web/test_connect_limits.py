@@ -39,9 +39,20 @@ async def test_both_connect_limiters_use_the_process_backend() -> None:
 
     install_connect_limiters(app, ctx)
 
-    await connect_limiter(app, ROUTE_LIMITER_ATTR).acquire("actor-1")
-    await connect_limiter(app, MCP_LIMITER_ATTR).acquire("actor-1")
+    route_lim = connect_limiter(app, ROUTE_LIMITER_ATTR)
+    mcp_lim = connect_limiter(app, MCP_LIMITER_ATTR)
+    assert route_lim is mcp_lim
+    await route_lim.acquire("actor-1")
+    await mcp_lim.acquire("actor-1")
     assert backend.bucket_keys == [
         "rl:integrations_connect:actor-1",
-        "rl:mcp_integrations_connect:actor-1",
+        "rl:integrations_connect:actor-1",
     ]
+
+
+async def test_fallback_connect_limiter_shares_budget_across_http_and_mcp() -> None:
+    app = FastAPI()
+    route_lim = connect_limiter(app, ROUTE_LIMITER_ATTR)
+    mcp_lim = connect_limiter(app, MCP_LIMITER_ATTR)
+    assert route_lim is mcp_lim
+    assert route_lim._key_prefix == "rl:integrations_connect:"

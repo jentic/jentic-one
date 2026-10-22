@@ -273,3 +273,39 @@ async def test_resolve_access_token_protocol(resolver: ApiKeyResolver, admin_db:
 
     identity = await resolver.resolve_access_token("jak_proto_test")
     assert identity is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_agent_key_deleted_owner_fails_closed(
+    resolver: ApiKeyResolver, admin_db: MagicMock
+) -> None:
+    """An owned agent whose owner has ``deleted_at IS NOT NULL`` evaluates
+    ``owner_active`` to ``False`` (or ``None`` on outer join) and fails closed."""
+    agent_row = AgentRow(
+        agent_id="agnt_123", status="active", owner_id="usr_deleted", owner_active=False
+    )
+    captured_sql: list[str] = []
+    session_mock = AsyncMock()
+
+    async def _execute(stmt: object, params: dict[str, object]) -> object:
+        captured_sql.append(str(stmt))
+        result = MagicMock()
+        result.one_or_none.return_value = agent_row
+        return result
+
+    session_mock.execute = _execute
+    ctx_mgr = AsyncMock()
+    ctx_mgr.__aenter__.return_value = session_mock
+    ctx_mgr.__aexit__.return_value = None
+    admin_db.session.return_value = ctx_mgr
+
+    with structlog.testing.capture_logs() as logs:
+        identity = await resolver.resolve("jak_deleted_owner_agent")
+
+    assert identity is None
+    assert len(captured_sql) == 1
+    assert "deleted_at IS NULL" in captured_sql[0]
+    owner_inactive = [log for log in logs if log["event"] == "agent_owner_inactive"]
+    assert len(owner_inactive) == 1
+    assert owner_inactive[0]["agent_id"] == "agnt_123"
+    assert owner_inactive[0]["owner_id"] == "usr_deleted"
