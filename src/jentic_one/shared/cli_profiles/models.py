@@ -22,6 +22,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from jentic_one.shared.permissions.api_roles import ROLE_MATCH_MODES as _ROLE_MATCH_MODES
+
 #: The manifest format version this loader reads.
 FORMAT_VERSION = 1
 
@@ -81,10 +83,7 @@ class SourceKind(StrEnum):
 
 #: The rule ``match_mode`` values each role accepts.
 ROLE_MATCH_MODES: dict[ApiRole, frozenset[str]] = {
-    ApiRole.REST: frozenset({"regex", "prefix", "exact"}),
-    ApiRole.UPLOADS: frozenset({"regex", "prefix", "exact"}),
-    ApiRole.GRAPHQL: frozenset({"graphql"}),
-    ApiRole.GIT: frozenset({"git"}),
+    ApiRole(role): modes for role, modes in _ROLE_MATCH_MODES.items()
 }
 
 
@@ -252,8 +251,9 @@ class CredentialPolicy(_Strict):
         default="per_api",
         description=(
             "`per_api`: each API has its own credential, created by its own `connect` entry. "
-            "`profile_scoped` (reserved, not accepted yet): one credential covering exactly "
-            "the profile's APIs, created by the profile's `connect`."
+            "`profile_scoped`: the profile's `connect` creates one credential (one secret, "
+            "one binding per agent) that covers exactly the APIs listed in `apis`, each "
+            "binding rule applying only to the API of its role."
         ),
     )
 
@@ -598,15 +598,55 @@ class CliProfile(_Strict):
             for rule in preset.rules:
                 if rule.api not in declared:
                     raise ValueError(f"preset {name!r} has a rule for undeclared role {rule.api!r}")
-        if self.credential.mode == "profile_scoped":
-            raise ValueError(
-                "credential.mode 'profile_scoped' is reserved: this release keeps one "
-                "credential per API (per_api)"
-            )
         connects = [api.connect for api in self.apis if api.connect is not None]
         if len(set(connects)) != len(connects):
             raise ValueError("two APIs name the same connect entry; each API has its own")
+        identities = [(api.identity.vendor, api.identity.name) for api in self.apis]
+        if len(set(identities)) != len(identities):
+            raise ValueError("two APIs declare the same identity")
+        if self.profile_scoped:
+            self._check_profile_scoped()
         return self
+
+    def _check_profile_scoped(self) -> None:
+        if self.connect is None:
+            raise ValueError("credential.mode 'profile_scoped' needs the profile's connect block")
+        if self.connect.vendor_entry in {api.connect for api in self.apis}:
+            raise ValueError(
+                f"connect entry {self.connect.vendor_entry!r} is the profile's own connect; "
+                "no API may name it as its per-API connect"
+            )
+        vendors = {api.identity.vendor for api in self.apis}
+        if len(vendors) != 1:
+            # The credential's stored scope is the one vendor axis; the declared
+            # APIs narrow it, so they must all sit below that one vendor.
+            raise ValueError(
+                "a profile_scoped profile's APIs must share one identity vendor, got "
+                f"{sorted(vendors)}"
+            )
+
+    @property
+    def profile_scoped(self) -> bool:
+        """Whether the profile's connect creates one credential for all of its APIs."""
+        return self.credential.mode == "profile_scoped"
+
+    @property
+    def identity_vendor(self) -> str:
+        """The identity vendor of the profile's first API (every API's, when profile_scoped)."""
+        return self.apis[0].identity.vendor
+
+    def declared_api(self, vendor: str, name: str, version: str) -> ProfileApi | None:
+        """The API declared as ``vendor``/``name`` (slug form) at ``version``, or ``None``.
+
+        A ``catalog`` API declares no version (any imported version is it); a
+        ``shipped`` or ``builtin`` API declares exactly one.
+        """
+        api = self.api_for_identity(vendor, name)
+        if api is None:
+            return None
+        if api.identity.version is not None and api.identity.version != version.strip():
+            return None
+        return api
 
     def api(self, role: ApiRole) -> ProfileApi | None:
         """The profile's API with ``role``, or ``None``."""

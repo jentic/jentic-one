@@ -150,7 +150,7 @@
       "properties": {
         "mode": {
           "default": "per_api",
-          "description": "`per_api`: each API has its own credential, created by its own `connect` entry. `profile_scoped` (reserved, not accepted yet): one credential covering exactly the profile's APIs, created by the profile's `connect`.",
+          "description": "`per_api`: each API has its own credential, created by its own `connect` entry. `profile_scoped`: the profile's `connect` creates one credential (one secret, one binding per agent) that covers exactly the APIs listed in `apis`, each binding rule applying only to the API of its role.",
           "enum": [
             "per_api",
             "profile_scoped"

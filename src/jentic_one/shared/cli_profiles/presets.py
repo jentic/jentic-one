@@ -9,9 +9,13 @@ credentials API accepts (``effect``, ``methods``, ``path``, ``match_mode``,
 goes through, so an expanded preset can never store a rule the API would
 refuse.
 
-Each API of a profile has its own binding today, so expansion is per role:
-``expand_preset(profile, name, params, role=ApiRole.GIT)`` returns the git
-rules only, and asks only for the parameters those rules use.
+With per-API credentials each API has its own binding, so expansion is per
+role: ``expand_preset(profile, name, params, role=ApiRole.GIT)`` returns the
+git rules only, and asks only for the parameters those rules use. A
+profile-scoped credential has one binding for all of the profile's APIs:
+:func:`expand_preset_for_profile` returns every role's rules, each carrying
+the ``api_role`` it applies to, and :func:`assign_rule_roles` gives rules the
+caller wrote themselves their role (named, or by kind).
 
 Pure module: no FastAPI, httpx or DB imports.
 """
@@ -22,6 +26,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from jentic_one.shared.cli_profiles.models import (
+    ROLE_MATCH_MODES,
     TEMPLATE_RE,
     ApiRole,
     CliProfile,
@@ -30,6 +35,7 @@ from jentic_one.shared.cli_profiles.models import (
     PresetRule,
 )
 from jentic_one.shared.cli_profiles.rule_sets import rule_set
+from jentic_one.shared.permissions.api_roles import default_api_role
 from jentic_one.shared.permissions.git_rules import GIT_MATCH_MODE
 from jentic_one.shared.permissions.matching import validate_path
 
@@ -210,4 +216,51 @@ def expand_preset_by_role(
     return {r: expand_preset(profile, preset_name, params, role=r) for r in roles}
 
 
-__all__ = ["MAX_REPOS", "PresetError", "expand_preset", "expand_preset_by_role"]
+def expand_preset_for_profile(
+    profile: CliProfile, preset_name: str, params: Mapping[str, str] | None = None
+) -> list[dict[str, Any]]:
+    """Every role's rules for ``preset_name``, each with the ``api_role`` it applies to."""
+    return [
+        {**rule, "api_role": role.value}
+        for role, rules in expand_preset_by_role(profile, preset_name, params).items()
+        for rule in rules
+    ]
+
+
+def assign_rule_roles(
+    profile: CliProfile, rules: list[dict[str, Any]], *, origin: str = "rule"
+) -> list[dict[str, Any]]:
+    """``rules`` for ``profile``'s one binding, each with the ``api_role`` it applies to.
+
+    A rule that names no role gets the one its kind implies (a git rule
+    ``git``, a GraphQL rule ``graphql``, any other ``rest``). Raises
+    :class:`PresetError` for a role the profile does not declare, or one whose
+    API takes another kind of rule (a path rule for ``graphql``).
+    """
+    declared = {api.role.value for api in profile.apis}
+    out: list[dict[str, Any]] = []
+    for index, rule in enumerate(rules):
+        mode = str(rule.get("match_mode") or "regex")
+        role = str(rule.get("api_role") or default_api_role(mode))
+        if role not in declared:
+            raise PresetError(
+                f"{origin} {index}: profile {profile.profile!r} has no {role!r} API "
+                f"(its APIs: {', '.join(sorted(declared))}); set api_role to one of them"
+            )
+        allowed = ROLE_MATCH_MODES[ApiRole(role)]
+        if mode not in allowed:
+            raise PresetError(
+                f"{origin} {index}: the {role} API takes match_mode {sorted(allowed)}, not {mode!r}"
+            )
+        out.append({**rule, "api_role": role})
+    return out
+
+
+__all__ = [
+    "MAX_REPOS",
+    "PresetError",
+    "assign_rule_roles",
+    "expand_preset",
+    "expand_preset_by_role",
+    "expand_preset_for_profile",
+]

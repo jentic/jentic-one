@@ -34,12 +34,17 @@ from jentic_one.shared.cli_profiles import (
     CliProfileError,
     PresetError,
     SourceKind,
+    assign_rule_roles,
+    declaring_profile,
     expand_preset,
+    expand_preset_for_profile,
     load_profiles,
     parse_profile,
     profile_api_for_catalog_api_id,
     profile_api_for_connect,
     profile_api_for_identity,
+    profile_api_role,
+    profile_for_connect,
     shipped_spec_text,
 )
 from jentic_one.shared.cli_profiles.rule_sets import RULE_SETS
@@ -268,7 +273,9 @@ def test_the_unmodified_document_parses() -> None:
     ("mutate", "message"),
     [
         (lambda d: d.update(unknown_key=1), "Extra inputs are not permitted"),
-        (lambda d: d["credential"].update(mode="profile_scoped"), "reserved"),
+        (lambda d: d.pop("connect"), "needs the profile's connect block"),
+        (lambda d: d["apis"][0].update(connect="github"), "is the profile's own connect"),
+        (lambda d: d["apis"][1]["identity"].update(vendor="gh"), "share one identity vendor"),
         (lambda d: d["apis"].append(dict(d["apis"][0], connect="x")), "once in a profile"),
         (
             lambda d: d["apis"][0]["identity"].update(name="rest"),
@@ -306,3 +313,83 @@ def test_invalid_documents_are_refused(
     mutate(doc)
     with pytest.raises(CliProfileError, match=message):
         _parse(doc)
+
+
+# ── profile-scoped credentials ───────────────────────────────────────────────
+
+
+def test_github_is_profile_scoped_through_its_own_connect() -> None:
+    profile = _github()
+    assert profile.profile_scoped
+    assert profile_for_connect("github") is profile
+    # The per-API connects stay for a credential of one API only.
+    assert profile_for_connect("github-git") is None
+    assert profile_for_connect("stripe") is None
+
+
+def test_per_api_mode_still_parses() -> None:
+    doc = _github_doc()
+    doc["credential"]["mode"] = "per_api"
+    _parse(doc)
+
+
+@pytest.mark.parametrize(
+    ("vendor", "name", "version", "expected"),
+    [
+        ("github-com", "api-github-com", "1.1.4", "github"),
+        ("github.com", "api.github.com", "2022-11-28", "github"),
+        ("github-com", "github-graphql", "1", "github"),
+        ("github-com", "github-git", "1", "github"),
+        # A shipped or built-in API declares one version only.
+        ("github-com", "github-git", "2", None),
+        # An undeclared API of the same vendor belongs to no profile.
+        ("github-com", "gists", "1", None),
+        ("cloudflare-com", "cloudflare-com", "4", "cloudflare"),
+    ],
+)
+def test_declaring_profile(vendor: str, name: str, version: str, expected: str | None) -> None:
+    assert declaring_profile(vendor, name, version) == expected
+
+
+def test_profile_api_role() -> None:
+    assert profile_api_role("github", "github-com", "github-graphql", "1") == ApiRole.GRAPHQL
+    assert profile_api_role("github", "github-com", "api-github-com", "1.1.4") == ApiRole.REST
+    assert profile_api_role("github", "github-com", "gists", "1") is None
+    assert profile_api_role("nope", "github-com", "github-git", "1") is None
+
+
+def test_preset_for_profile_tags_every_rule_with_its_role() -> None:
+    rules = expand_preset_for_profile(
+        _github(), "read_and_push", {"repo": "octo-org/app", "branches": "agent/*"}
+    )
+    assert {r["api_role"] for r in rules} == {"rest", "graphql", "git"}
+    for rule in rules:
+        expected = {"git": "git", "graphql": "graphql"}.get(rule["match_mode"], "rest")
+        assert rule["api_role"] == expected
+    assert {
+        "effect": "allow",
+        "match_mode": "git",
+        "path": "push:octo-org/app:refs/heads/agent/*",
+        "api_role": "git",
+    } in rules
+
+
+def test_assign_rule_roles_defaults_by_kind_and_refuses_a_mismatch() -> None:
+    profile = _github()
+    rules = assign_rule_roles(
+        profile,
+        [
+            {"effect": "allow", "methods": ["GET"], "path": "/", "match_mode": "prefix"},
+            {"effect": "allow", "path": "query", "match_mode": "graphql"},
+            {"effect": "allow", "path": "fetch:o/r", "match_mode": "git"},
+            {"effect": "deny", "path": "mutation", "match_mode": "graphql", "api_role": "graphql"},
+        ],
+    )
+    assert [r["api_role"] for r in rules] == ["rest", "graphql", "git", "graphql"]
+    with pytest.raises(PresetError, match="takes match_mode"):
+        assign_rule_roles(profile, [{"effect": "allow", "path": "/", "api_role": "graphql"}])
+    with pytest.raises(PresetError, match="has no 'uploads' API"):
+        assign_rule_roles(
+            profile,
+            [{"effect": "allow", "path": "/", "match_mode": "prefix", "api_role": "uploads"}],
+        )

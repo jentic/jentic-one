@@ -119,8 +119,20 @@ class CliProfileResponse(BaseModel):
         examples=[">=2.40.0,<3"],
     )
     credential_mode: Literal["per_api", "profile_scoped"] = Field(
-        description="`per_api`: each API is connected with its own credential.",
-        examples=["per_api"],
+        description=(
+            "`per_api`: each API is connected with its own credential. `profile_scoped`: "
+            "`jentic connect <connect>` creates one credential covering exactly the "
+            "profile's APIs, each binding rule applying to the API of its role."
+        ),
+        examples=["profile_scoped"],
+    )
+    connect: str | None = Field(
+        default=None,
+        description=(
+            "With `profile_scoped`: the `jentic connect <vendor>` key whose one connect covers "
+            "every API of the profile. Null with `per_api`."
+        ),
+        examples=["github"],
     )
     apis: list[CliProfileApiResponse] = Field(description="The APIs the profile declares.")
     presets: list[CliProfilePresetResponse] = Field(description="Rule presets.")

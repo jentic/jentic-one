@@ -6,12 +6,15 @@ See :mod:`jentic_one.shared.cli_profiles.models` for the format and
 
 from jentic_one.shared.cli_profiles.loader import (
     CliProfileError,
+    declaring_profile,
     derived_identity,
     load_profiles,
     parse_profile,
     profile_api_for_catalog_api_id,
     profile_api_for_connect,
     profile_api_for_identity,
+    profile_api_role,
+    profile_for_connect,
     profile_for_vendor,
     shipped_spec_text,
 )
@@ -24,8 +27,10 @@ from jentic_one.shared.cli_profiles.models import (
 )
 from jentic_one.shared.cli_profiles.presets import (
     PresetError,
+    assign_rule_roles,
     expand_preset,
     expand_preset_by_role,
+    expand_preset_for_profile,
 )
 
 __all__ = [
@@ -36,14 +41,19 @@ __all__ = [
     "PresetError",
     "ProfileApi",
     "SourceKind",
+    "assign_rule_roles",
+    "declaring_profile",
     "derived_identity",
     "expand_preset",
     "expand_preset_by_role",
+    "expand_preset_for_profile",
     "load_profiles",
     "parse_profile",
     "profile_api_for_catalog_api_id",
     "profile_api_for_connect",
     "profile_api_for_identity",
+    "profile_api_role",
+    "profile_for_connect",
     "profile_for_vendor",
     "shipped_spec_text",
 ]

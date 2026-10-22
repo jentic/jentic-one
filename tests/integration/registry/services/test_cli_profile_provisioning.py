@@ -211,15 +211,17 @@ async def test_concurrent_provisioning_imports_the_shipped_spec_once(clean: Cont
     assert count == 1
 
 
-async def test_on_demand_provisioning_follows_the_vendor_switch(clean: Context) -> None:
+async def test_on_demand_provisioning_covers_a_profile_scoped_profile_whole(
+    clean: Context,
+) -> None:
     ctx = clean
     svc = CliProfileService(ctx)
     ctx.config.cli_facades = CliFacadesConfig()
-    # Facade off: a connect for the GraphQL API provisions that API only.
+    # Facade off: GitHub is profile_scoped, so one connect covers (and
+    # provisions) every API of the profile all the same.
     result = await svc.ensure_for_catalog_api_id("github.com/github-graphql", _IDENTITY)
     assert result is not None and not result.vendor_enabled
-    assert _statuses(result) == {"graphql": "imported"}
-    assert await _import_jobs(ctx) == []
+    assert _statuses(result) == {"rest": "import_queued", "graphql": "imported", "git": "builtin"}
 
     ctx.config.cli_facades = CliFacadesConfig.model_validate(
         {"enabled": True, "vendors": {"github": {"enabled": True, "host": "github.jentic.test"}}}

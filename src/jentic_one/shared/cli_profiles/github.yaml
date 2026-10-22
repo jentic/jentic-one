@@ -14,17 +14,19 @@ vendor:
   registry_domains: [github.com]
   error_shape: github
 credential:
-  # One credential per API, each from its own connect entry below.
-  mode: per_api
+  # `jentic connect github` creates one credential (one device-flow grant, one
+  # refresh token) covering exactly the APIs below, each binding rule applying
+  # to the API of its role. github-graphql and github-git stay available for a
+  # credential of one API only.
+  mode: profile_scoped
 connect:
-  # The single connect a profile-scoped credential will use; unused with per_api.
+  # The profile's own connect: the `github` vendor entry's device flow.
   vendor_entry: github
   flow: device_authorization
 apis:
   - role: rest
     source: catalog:github.com/api.github.com
     identity: {vendor: github-com, name: api-github-com}
-    connect: github
     description: The GitHub REST API (api.github.com and uploads.github.com).
   - role: graphql
     source: shipped:specs/github-graphql.openapi.yaml
@@ -122,6 +124,37 @@ presets:
         description: Also allow force-pushes and deletions of those branches.
         default: "false"
     rules:
+      - api: git
+        for_each: repo
+        effect: allow
+        match_mode: git
+        path: "push:${repo}:refs/heads/${branches}"
+      - api: git
+        for_each: repo
+        when: force
+        effect: allow
+        match_mode: git
+        path: "force:${repo}:refs/heads/${branches}"
+  read_and_push:
+    description: >-
+      read_only, plus pushing branches matching a pattern in the listed
+      repositories (push_branches); with force=true, force-push and delete those
+      branches too.
+    params:
+      repo:
+        kind: repo_list
+        description: Repositories git may fetch and push to, comma-separated '<owner>/<repo>' globs.
+      branches:
+        kind: ref_glob
+        description: Branches that may be pushed, a glob below refs/heads/ (e.g. 'agent/*').
+      force:
+        kind: flag
+        description: Also allow force-pushes and deletions of those branches.
+        default: "false"
+    rules:
+      - {api: rest, effect: allow, methods: [GET], match_mode: prefix, path: /}
+      - {api: graphql, include: "github_graphql:read_only"}
+      - {api: git, for_each: repo, effect: allow, match_mode: git, path: "fetch:${repo}"}
       - api: git
         for_each: repo
         effect: allow

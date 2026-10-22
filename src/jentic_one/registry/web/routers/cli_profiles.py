@@ -44,6 +44,11 @@ def _profile_response(
         cli=profile.cli.binary,
         supported_range=profile.cli.supported_range,
         credential_mode=profile.credential.mode,
+        connect=(
+            profile.connect.vendor_entry
+            if profile.profile_scoped and profile.connect is not None
+            else None
+        ),
         apis=[
             CliProfileApiResponse(
                 role=a.api.role.value,

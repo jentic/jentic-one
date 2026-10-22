@@ -181,14 +181,16 @@ class CliProfileService:
         The connected API itself is always provisioned. When the profile's
         vendor facade is enabled, every other API of the profile is too, so
         the vendor's CLI finds all of them live; while it is off, only the
-        connected API is (the connect is not a CLI-profile connect then).
+        connected API is (the connect is not a CLI-profile connect then). A
+        ``profile_scoped`` profile's connect creates one credential for all of
+        its APIs, so all of them are provisioned whatever the facade's state.
         """
         found = profile_api_for_catalog_api_id(api_id)
         if found is None:
             return None
         profile, target = found
         enabled = self._vendor_enabled(profile)
-        apis = profile.apis if enabled else (target,)
+        apis = profile.apis if enabled or profile.profile_scoped else (target,)
         results = tuple([await self._provision_api(api, identity) for api in apis])
         return ProvisionResult(
             profile=profile.profile,

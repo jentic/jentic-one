@@ -42,7 +42,13 @@ from jentic_one.shared.builtin_apis import (
     GITHUB_GIT_API_VERSION,
     GITHUB_GIT_CATALOG_API_ID,
 )
-from jentic_one.shared.cli_profiles.models import ApiIdentity, CliProfile, ProfileApi, SourceKind
+from jentic_one.shared.cli_profiles.models import (
+    ApiIdentity,
+    ApiRole,
+    CliProfile,
+    ProfileApi,
+    SourceKind,
+)
 from jentic_one.shared.cli_profiles.presets import PresetError, expand_preset
 from jentic_one.shared.cli_profiles.rule_sets import RULE_SETS
 from jentic_one.shared.config import CLI_FACADE_VENDORS, CliFacadeVendorsConfig
@@ -178,6 +184,8 @@ def load_profiles() -> Mapping[str, CliProfile]:
     """Every shipped profile, by profile name (validated; cached)."""
     profiles: dict[str, CliProfile] = {}
     vendors: set[str] = set()
+    identities: dict[tuple[str, str], str] = {}
+    connects: dict[str, str] = {}
     for filename in _profile_files():
         profile = parse_profile(_read(filename), source=filename)
         if filename != f"{profile.profile}.yaml":
@@ -187,6 +195,23 @@ def load_profiles() -> Mapping[str, CliProfile]:
         if profile.vendor.id in vendors:
             raise CliProfileError(f"{filename}: a second profile for vendor {profile.vendor.id!r}")
         vendors.add(profile.vendor.id)
+        for api in profile.apis:
+            # A profile credential's coverage is "the profile declaring this
+            # identity", so an identity belongs to one profile only.
+            key = (api.identity.vendor, api.identity.name)
+            if key in identities:
+                raise CliProfileError(
+                    f"{filename}: {key[0]}/{key[1]} is also declared by profile {identities[key]!r}"
+                )
+            identities[key] = profile.profile
+        if profile.connect is not None and profile.profile_scoped:
+            other = connects.get(profile.connect.vendor_entry)
+            if other is not None:
+                raise CliProfileError(
+                    f"{filename}: connect entry {profile.connect.vendor_entry!r} is also "
+                    f"profile {other!r}'s connect"
+                )
+            connects[profile.connect.vendor_entry] = profile.profile
         profiles[profile.profile] = profile
     return MappingProxyType(profiles)
 
@@ -194,6 +219,43 @@ def load_profiles() -> Mapping[str, CliProfile]:
 def profile_for_vendor(vendor: str) -> CliProfile | None:
     """The profile of CLI-facade vendor ``vendor`` (``github``), or ``None``."""
     return next((p for p in load_profiles().values() if p.vendor.id == vendor), None)
+
+
+def profile_for_connect(vendor_entry: str) -> CliProfile | None:
+    """The ``profile_scoped`` profile whose own connect is ``vendor_entry``, or ``None``."""
+    return next(
+        (
+            p
+            for p in load_profiles().values()
+            if p.profile_scoped and p.connect is not None and p.connect.vendor_entry == vendor_entry
+        ),
+        None,
+    )
+
+
+def declaring_profile(vendor: str, name: str, version: str) -> str | None:
+    """The name of the profile declaring the concrete API identity, or ``None``.
+
+    The one input a profile credential's coverage needs besides its own
+    ``cli_profile``: such a credential covers an API exactly when this returns
+    its profile. Read from the shipped manifests at call time, so a manifest
+    that adds or drops an API widens or narrows every profile credential with
+    the release that ships it.
+    """
+    vendor_slug, name_slug = slugify_api_field(vendor), slugify_api_field(name)
+    for profile in load_profiles().values():
+        if profile.declared_api(vendor_slug, name_slug, version) is not None:
+            return profile.profile
+    return None
+
+
+def profile_api_role(cli_profile: str, vendor: str, name: str, version: str) -> ApiRole | None:
+    """The role of the API ``cli_profile`` declares as this identity, or ``None``."""
+    profile = load_profiles().get(cli_profile)
+    if profile is None:
+        return None
+    api = profile.declared_api(slugify_api_field(vendor), slugify_api_field(name), version)
+    return api.role if api is not None else None
 
 
 def profile_api_for_catalog_api_id(api_id: str) -> tuple[CliProfile, ProfileApi] | None:
@@ -226,12 +288,15 @@ def profile_api_for_identity(vendor: str, name: str) -> tuple[CliProfile, Profil
 
 __all__ = [
     "CliProfileError",
+    "declaring_profile",
     "derived_identity",
     "load_profiles",
     "parse_profile",
     "profile_api_for_catalog_api_id",
     "profile_api_for_connect",
     "profile_api_for_identity",
+    "profile_api_role",
+    "profile_for_connect",
     "profile_for_vendor",
     "shipped_spec_text",
 ]

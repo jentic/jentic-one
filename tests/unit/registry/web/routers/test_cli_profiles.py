@@ -90,9 +90,11 @@ def test_list_describes_every_profile(operator: TestClient) -> None:
     assert set(data) == {"github", "cloudflare"}
     github = data["github"]
     assert github["vendor_enabled"] is True and github["cli"] == "gh"
-    assert github["credential_mode"] == "per_api"
+    assert github["credential_mode"] == "profile_scoped"
+    assert github["connect"] == "github"
+    assert data["cloudflare"]["connect"] is None
     assert [(a["role"], a["connect"], a["live"]) for a in github["apis"]] == [
-        ("rest", "github", False),
+        ("rest", None, False),
         ("graphql", "github-graphql", False),
         ("git", "github-git", True),
     ]
