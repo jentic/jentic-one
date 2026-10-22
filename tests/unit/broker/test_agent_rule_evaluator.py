@@ -328,13 +328,13 @@ _GIT_ROWS: list[tuple[object, ...]] = [
         "apr_push",
         "allow",
         None,
-        "push:jentic/jentic-one-internal:refs/heads/jentic-e2e/*",
+        "push:octo-org/app:refs/heads/jentic-e2e/*",
         None,
         "git",
     ),
-    ("apr_fetch", "allow", None, "fetch:jentic/jentic-one-internal", None, "git"),
-    ("apr_methods", "allow", '["POST"]', "force:jentic/*", None, "git"),
-    ("apr_held", "require-approval", None, "force:jentic/jentic-one-internal", None, "git"),
+    ("apr_fetch", "allow", None, "fetch:octo-org/app", None, "git"),
+    ("apr_methods", "allow", '["POST"]', "force:octo-org/*", None, "git"),
+    ("apr_held", "require-approval", None, "force:octo-org/app", None, "git"),
 ]
 
 
@@ -343,14 +343,14 @@ async def test_git_items_follow_the_git_rules_only() -> None:
     """Fetch the repo, push only to jentic-e2e/*, nothing else — whatever the REST rule says."""
     mock_db, _ = _mock_db(_GIT_ROWS)
     evaluator = AgentRuleEvaluator(mock_db, cache_ttl_seconds=300.0)
-    repo = ("jentic", "jentic-one-internal")
+    repo = ("octo-org", "app")
     items = [
         GitItem(GitAction.FETCH, *repo),
         GitItem(GitAction.PUSH, *repo),
         GitItem(GitAction.PUSH, *repo, "refs/heads/jentic-e2e/feat"),
         GitItem(GitAction.PUSH, *repo, "refs/heads/main"),
         GitItem(GitAction.FORCE, *repo, "refs/heads/jentic-e2e/feat"),
-        GitItem(GitAction.FETCH, "jentic", "other"),
+        GitItem(GitAction.FETCH, "octo-org", "other"),
     ]
 
     result = await evaluator.evaluate_git(

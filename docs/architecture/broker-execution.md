@@ -402,9 +402,9 @@ Only a git rule or a condition-less `deny` decides a git request; git rules are
 `allow` or `deny` only and take no methods or operations. An `allow` covers its
 level and below (a push rule also allows the fetch and advertisement a push
 needs, `push.negotiate` included); a `deny` covers its level and above. A
-binding that may fetch `jentic/jentic-one-internal` and push only to
-`refs/heads/jentic-e2e/*` holds two rules, `allow fetch:jentic/jentic-one-internal`
-and `allow push:jentic/jentic-one-internal:refs/heads/jentic-e2e/*`; everything
+binding that may fetch `octo-org/app` and push only to
+`refs/heads/jentic-e2e/*` holds two rules, `allow fetch:octo-org/app`
+and `allow push:octo-org/app:refs/heads/jentic-e2e/*`; everything
 else is default-denied. A reader that does not know the mode never matches the
 selector (fail closed). The info/refs and upload-pack requests are checked as
 a fetch (or, for `git-receive-pack` info/refs, a push with no ref) and refused

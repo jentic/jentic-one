@@ -234,19 +234,19 @@ def test_fetch_one_repo_push_only_to_one_namespace() -> None:
         compile_rule(
             effect="allow",
             methods=None,
-            path="push:jentic/jentic-one-internal:refs/heads/jentic-e2e/*",
+            path="push:octo-org/app:refs/heads/jentic-e2e/*",
             match_mode="git",
             operations=None,
         ),
         compile_rule(
             effect="allow",
             methods=None,
-            path="fetch:jentic/jentic-one-internal",
+            path="fetch:octo-org/app",
             match_mode="git",
             operations=None,
         ),
     ]
-    repo = ("jentic", "jentic-one-internal")
+    repo = ("octo-org", "app")
 
     def allowed(item: GitItem) -> bool:
         idx = first_matching_rule(rules, method="", path="", operation_id=None, git_item=item)
@@ -258,4 +258,4 @@ def test_fetch_one_repo_push_only_to_one_namespace() -> None:
     assert not allowed(GitItem(GitAction.PUSH, *repo, "refs/heads/main"))
     assert not allowed(GitItem(GitAction.PUSH, *repo, "refs/tags/v1"))
     assert not allowed(GitItem(GitAction.FORCE, *repo, "refs/heads/jentic-e2e/a"))
-    assert not allowed(GitItem(GitAction.FETCH, "jentic", "other"))
+    assert not allowed(GitItem(GitAction.FETCH, "octo-org", "other"))

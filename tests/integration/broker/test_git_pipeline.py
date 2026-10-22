@@ -9,7 +9,7 @@ git's Basic auth with the stored token, plus a stub of GitHub's compare API
 answered from the same repositories with ``git merge-base``.
 
 The binding carries the rules the pipeline is meant to express: fetch
-``jentic/jentic-one-internal``; push only to ``refs/heads/jentic-e2e/*`` (and
+``octo-org/app``; push only to ``refs/heads/jentic-e2e/*`` (and
 create tags); force only on ``refs/heads/jentic-e2e/scratch/*``; plus a REST
 path rule allowing everything, which must never let git through.
 """
@@ -73,8 +73,8 @@ pytestmark = [
 
 _SEED_MARKER = "usr_git_pipeline_seed"
 _OWNER_ID = "usr_git_pipeline_owner"
-_OWNER = "jentic"
-_REPO = "jentic-one-internal"
+_OWNER = "octo-org"
+_REPO = "app"
 _SECRET = "ghp-git-pipeline-secret"  # pragma: allowlist secret
 _GIT_ENV_BASE = {
     "GIT_CONFIG_NOSYSTEM": "1",
@@ -364,11 +364,11 @@ async def _truncate(ctx: Context) -> None:
 _RULES: list[dict[str, Any]] = [
     # A REST rule of the same credential: it must never decide a git request.
     {"effect": "allow", "methods": ["GET", "POST"], "path": ".*", "match_mode": "regex"},
-    {"effect": "deny", "path": "force:jentic/jentic-one-internal:refs/heads/main"},
-    {"effect": "allow", "path": "force:jentic/jentic-one-internal:refs/heads/jentic-e2e/scratch/*"},
-    {"effect": "allow", "path": "push:jentic/jentic-one-internal:refs/heads/jentic-e2e/*"},
-    {"effect": "allow", "path": "push:jentic/jentic-one-internal:refs/tags/*"},
-    {"effect": "allow", "path": "fetch:jentic/jentic-one-internal"},
+    {"effect": "deny", "path": "force:octo-org/app:refs/heads/main"},
+    {"effect": "allow", "path": "force:octo-org/app:refs/heads/jentic-e2e/scratch/*"},
+    {"effect": "allow", "path": "push:octo-org/app:refs/heads/jentic-e2e/*"},
+    {"effect": "allow", "path": "push:octo-org/app:refs/tags/*"},
+    {"effect": "allow", "path": "fetch:octo-org/app"},
 ]
 
 
@@ -606,10 +606,10 @@ async def test_fetch_of_a_repository_the_rules_do_not_name_is_refused(env: _Env)
     code, err = await env.git("ls-remote", other)
 
     assert code != 0
-    assert "remote: Jentic: The binding's git rules do not allow fetching jentic/other" in err
+    assert "remote: Jentic: The binding's git rules do not allow fetching octo-org/other" in err
     assert env.standin.seen == []
     denials = await _denials(env.ctx)
-    assert any(d.get("repository") == "jentic/other" and d["mode"] == "git" for d in denials)
+    assert any(d.get("repository") == "octo-org/other" and d["mode"] == "git" for d in denials)
 
 
 async def test_a_token_for_another_vendor_is_refused(env: _Env) -> None:
@@ -655,7 +655,7 @@ async def test_push_to_a_denied_ref_prints_the_jentic_reason(env: _Env) -> None:
     assert not any(s.method == "POST" and s.path.endswith("receive-pack") for s in env.standin.seen)
     denials = await _denials(env.ctx)
     (denial,) = [d for d in denials if d.get("ref") == "refs/heads/main"]
-    assert denial["repository"] == "jentic/jentic-one-internal"
+    assert denial["repository"] == "octo-org/app"
     assert denial["mode"] == "git"
     assert "not allowed" in denial["detail"]
     await _settle()

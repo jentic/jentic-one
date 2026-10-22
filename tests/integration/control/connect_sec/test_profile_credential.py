@@ -71,7 +71,7 @@ _GIT = APIReference(vendor="github-com", name="github-git", version="1")
 #: Another API of the same registry vendor, which the GitHub profile does not declare.
 _GISTS = APIReference(vendor="github-com", name="gists", version="1")
 
-_REPO = "jentic/jentic-one-internal"
+_REPO = "octo-org/app"
 _PRESET = {"repo": _REPO, "branches": "jentic-e2e/*"}
 
 
