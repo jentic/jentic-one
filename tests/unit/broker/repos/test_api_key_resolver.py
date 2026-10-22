@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import namedtuple
+from collections.abc import Sequence
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -11,13 +12,14 @@ import structlog.testing
 from jentic_one.shared.auth.api_key_resolver import ApiKeyResolver
 from jentic_one.shared.models import ActorType
 
-Row = namedtuple("Row", ["permission"])
-# Mirrors the resolver's agent-arm SELECT. ``name`` rides off the already-joined
-# ``agents`` row so the Identity can carry a display name (#1543), and
-# ``owner_active`` off the joined owner row; both default here so only the
-# tests that care about them have to mention them.
+# Mirrors the resolver's agent-arm SELECT (#1543, #1944). ``name`` rides off the
+# joined ``agents`` row, ``owner_active`` off the outer-joined owner row, and
+# ``permission`` off the outer-joined ``actor_permission_grants`` row; all three
+# default here so only the tests that care about them have to mention them.
 AgentRow = namedtuple(
-    "AgentRow", ["agent_id", "status", "owner_id", "name", "owner_active"], defaults=(None, True)
+    "AgentRow",
+    ["agent_id", "status", "owner_id", "name", "owner_active", "permission"],
+    defaults=(None, True, None),
 )
 
 
@@ -31,34 +33,54 @@ def resolver(admin_db: MagicMock) -> ApiKeyResolver:
     return ApiKeyResolver(admin_db)
 
 
-@pytest.mark.asyncio
-async def test_resolve_agent_key_active(resolver: ApiKeyResolver, admin_db: MagicMock) -> None:
-    agent_row = AgentRow(
-        agent_id="agnt_123", status="active", owner_id="usr_owner", name="billing-bot"
-    )
-    permission_rows = [Row(permission="broker:execute"), Row(permission="toolkit:read")]
-
+def _rows_db(
+    admin_db: MagicMock, rows: Sequence[AgentRow], captured_sql: list[str] | None = None
+) -> list[int]:
+    """Every ``read_session`` query answers ``rows``; returns a one-element call counter."""
+    calls = [0]
     session_mock = AsyncMock()
-    call_count = 0
 
     async def _execute(stmt: object, params: dict[str, object]) -> object:
-        nonlocal call_count
-        call_count += 1
+        calls[0] += 1
+        if captured_sql is not None:
+            captured_sql.append(str(stmt))
         result = MagicMock()
-        if call_count == 1:
-            result.one_or_none.return_value = agent_row
-        else:
-            result.all.return_value = permission_rows
+        result.all.return_value = list(rows)
         return result
 
     session_mock.execute = _execute
     ctx_mgr = AsyncMock()
     ctx_mgr.__aenter__.return_value = session_mock
     ctx_mgr.__aexit__.return_value = None
-    admin_db.session.return_value = ctx_mgr
+    admin_db.read_session.return_value = ctx_mgr
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_resolve_agent_key_active(resolver: ApiKeyResolver, admin_db: MagicMock) -> None:
+    rows = [
+        AgentRow(
+            agent_id="agnt_123",
+            status="active",
+            owner_id="usr_owner",
+            name="billing-bot",
+            permission="broker:execute",
+        ),
+        AgentRow(
+            agent_id="agnt_123",
+            status="active",
+            owner_id="usr_owner",
+            name="billing-bot",
+            permission="toolkit:read",
+        ),
+    ]
+    calls = _rows_db(admin_db, rows)
 
     identity = await resolver.resolve("jak_test_secret_value")
 
+    assert calls[0] == 1
+    admin_db.read_session.assert_called_once()
+    admin_db.session.assert_not_called()
     assert identity is not None
     assert identity.sub == "agnt_123"
     assert identity.actor_type == ActorType.AGENT
@@ -66,27 +88,38 @@ async def test_resolve_agent_key_active(resolver: ApiKeyResolver, admin_db: Magi
     assert identity.active is True
     # Carried off the joined row, so audit summaries can name the agent (#1543).
     assert identity.actor_name == "billing-bot"
-    assert "broker:execute" in identity.permissions
-    assert "toolkit:read" in identity.permissions
+    assert identity.permissions == ["broker:execute", "toolkit:read"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_agent_key_active_without_grants(
+    resolver: ApiKeyResolver, admin_db: MagicMock
+) -> None:
+    """An active agent with zero grants produces one LEFT JOIN row with ``permission=None``."""
+    calls = _rows_db(
+        admin_db,
+        [
+            AgentRow(
+                agent_id="agnt_zero",
+                status="active",
+                owner_id="usr_owner",
+                name="zero-grant-bot",
+                permission=None,
+            )
+        ],
+    )
+
+    identity = await resolver.resolve("jak_zero_grant_secret")
+
+    assert calls[0] == 1
+    assert identity is not None
+    assert identity.sub == "agnt_zero"
+    assert identity.permissions == []
 
 
 def _single_row_db(admin_db: MagicMock, row: AgentRow | None) -> list[int]:
-    """Every query answers ``row``; returns a one-element call counter."""
-    calls = [0]
-    session_mock = AsyncMock()
-
-    async def _execute(stmt: object, params: dict[str, object]) -> object:
-        calls[0] += 1
-        result = MagicMock()
-        result.one_or_none.return_value = row
-        return result
-
-    session_mock.execute = _execute
-    ctx_mgr = AsyncMock()
-    ctx_mgr.__aenter__.return_value = session_mock
-    ctx_mgr.__aexit__.return_value = None
-    admin_db.session.return_value = ctx_mgr
-    return calls
+    """Every query answers ``[row]`` (or ``[]`` when ``row`` is None)."""
+    return _rows_db(admin_db, [] if row is None else [row])
 
 
 @pytest.mark.asyncio
@@ -111,7 +144,7 @@ async def test_sak_key_is_refused_even_when_a_successor_holds_its_digest(
         identity = await resolver.resolve("sak_migrated_key")
 
     assert identity is None
-    assert calls[0] == 1  # the successor lookup only — no permission load
+    assert calls[0] == 1
     refused = [log for log in logs if log["event"] == "retired_service_account_key_refused"]
     assert len(refused) == 1 and refused[0]["log_level"] == "info"
     assert refused[0]["successor_agent_id"] == successor
@@ -126,27 +159,13 @@ async def test_retired_key_digest_miss_fails_closed(
 ) -> None:
     """Theme-8 Phase 4: no service-account fallback remains — a retired key
     no agent carries resolves to None after one agent lookup, with a WARNING."""
-    session_mock = AsyncMock()
-    call_count = 0
-
-    async def _execute(stmt: object, params: dict[str, object]) -> object:
-        nonlocal call_count
-        call_count += 1
-        result = MagicMock()
-        result.one_or_none.return_value = None
-        return result
-
-    session_mock.execute = _execute
-    ctx_mgr = AsyncMock()
-    ctx_mgr.__aenter__.return_value = session_mock
-    ctx_mgr.__aexit__.return_value = None
-    admin_db.session.return_value = ctx_mgr
+    calls = _rows_db(admin_db, [])
 
     with structlog.testing.capture_logs() as logs:
         identity = await resolver.resolve(raw_key)
 
     assert identity is None
-    assert call_count == 1
+    assert calls[0] == 1
     unresolved = [log for log in logs if log["event"] == "retired_key_unresolved"]
     assert len(unresolved) == 1 and unresolved[0]["log_level"] == "info"
 
@@ -180,29 +199,12 @@ async def test_migrated_jntc_key_logs_deprecation_on_agent_arm(
     ``jntc_live_`` resolve served by the AGENT arm still WARNs, naming the
     successor."""
     agent_row = AgentRow(agent_id="agnt_successor", status="active", owner_id="usr_owner")
-
-    session_mock = AsyncMock()
-    call_count = 0
-
-    async def _execute(stmt: object, params: dict[str, object]) -> object:
-        nonlocal call_count
-        call_count += 1
-        result = MagicMock()
-        if call_count == 1:
-            result.one_or_none.return_value = agent_row
-        else:
-            result.all.return_value = []
-        return result
-
-    session_mock.execute = _execute
-    ctx_mgr = AsyncMock()
-    ctx_mgr.__aenter__.return_value = session_mock
-    ctx_mgr.__aexit__.return_value = None
-    admin_db.session.return_value = ctx_mgr
+    calls = _single_row_db(admin_db, agent_row)
 
     with structlog.testing.capture_logs() as logs:
         identity = await resolver.resolve("jntc_live_migrated")
 
+    assert calls[0] == 1
     assert identity is not None and identity.sub == "agnt_successor"
     deprecations = [log for log in logs if log["event"] == "deprecated_toolkit_key_used"]
     assert len(deprecations) == 1 and deprecations[0]["log_level"] == "warning"
@@ -212,19 +214,7 @@ async def test_migrated_jntc_key_logs_deprecation_on_agent_arm(
 @pytest.mark.asyncio
 async def test_resolve_agent_key_inactive(resolver: ApiKeyResolver, admin_db: MagicMock) -> None:
     agent_row = AgentRow(agent_id="agnt_123", status="disabled", owner_id="usr_owner")
-
-    session_mock = AsyncMock()
-
-    async def _execute(stmt: object, params: dict[str, object]) -> object:
-        result = MagicMock()
-        result.one_or_none.return_value = agent_row
-        return result
-
-    session_mock.execute = _execute
-    ctx_mgr = AsyncMock()
-    ctx_mgr.__aenter__.return_value = session_mock
-    ctx_mgr.__aexit__.return_value = None
-    admin_db.session.return_value = ctx_mgr
+    _single_row_db(admin_db, agent_row)
 
     identity = await resolver.resolve("jak_disabled_agent")
     assert identity is None
@@ -232,18 +222,7 @@ async def test_resolve_agent_key_inactive(resolver: ApiKeyResolver, admin_db: Ma
 
 @pytest.mark.asyncio
 async def test_resolve_key_not_found(resolver: ApiKeyResolver, admin_db: MagicMock) -> None:
-    session_mock = AsyncMock()
-
-    async def _execute(stmt: object, params: dict[str, object]) -> object:
-        result = MagicMock()
-        result.one_or_none.return_value = None
-        return result
-
-    session_mock.execute = _execute
-    ctx_mgr = AsyncMock()
-    ctx_mgr.__aenter__.return_value = session_mock
-    ctx_mgr.__aexit__.return_value = None
-    admin_db.session.return_value = ctx_mgr
+    _rows_db(admin_db, [])
 
     identity = await resolver.resolve("jak_nonexistent_key")
     assert identity is None
@@ -258,18 +237,7 @@ async def test_resolve_unknown_prefix(resolver: ApiKeyResolver) -> None:
 @pytest.mark.asyncio
 async def test_resolve_access_token_protocol(resolver: ApiKeyResolver, admin_db: MagicMock) -> None:
     """Verify resolve_access_token delegates to resolve (TokenResolverProtocol)."""
-    session_mock = AsyncMock()
-
-    async def _execute(stmt: object, params: dict[str, object]) -> object:
-        result = MagicMock()
-        result.one_or_none.return_value = None
-        return result
-
-    session_mock.execute = _execute
-    ctx_mgr = AsyncMock()
-    ctx_mgr.__aenter__.return_value = session_mock
-    ctx_mgr.__aexit__.return_value = None
-    admin_db.session.return_value = ctx_mgr
+    _rows_db(admin_db, [])
 
     identity = await resolver.resolve_access_token("jak_proto_test")
     assert identity is None
@@ -285,19 +253,7 @@ async def test_resolve_agent_key_deleted_owner_fails_closed(
         agent_id="agnt_123", status="active", owner_id="usr_deleted", owner_active=False
     )
     captured_sql: list[str] = []
-    session_mock = AsyncMock()
-
-    async def _execute(stmt: object, params: dict[str, object]) -> object:
-        captured_sql.append(str(stmt))
-        result = MagicMock()
-        result.one_or_none.return_value = agent_row
-        return result
-
-    session_mock.execute = _execute
-    ctx_mgr = AsyncMock()
-    ctx_mgr.__aenter__.return_value = session_mock
-    ctx_mgr.__aexit__.return_value = None
-    admin_db.session.return_value = ctx_mgr
+    _rows_db(admin_db, [agent_row], captured_sql=captured_sql)
 
     with structlog.testing.capture_logs() as logs:
         identity = await resolver.resolve("jak_deleted_owner_agent")
@@ -308,7 +264,11 @@ async def test_resolve_agent_key_deleted_owner_fails_closed(
         "CASE WHEN u.deleted_at IS NULL THEN u.active ELSE FALSE END AS owner_active"
         in captured_sql[0]
     )
-    assert "LEFT JOIN users u ON u.id = a.owner_id WHERE" in captured_sql[0]
+    assert "LEFT JOIN users u ON u.id = a.owner_id" in captured_sql[0]
+    assert (
+        "LEFT JOIN actor_permission_grants g ON g.actor_id = a.id AND g.actor_type = 'agent' WHERE"
+        in captured_sql[0]
+    )
     owner_inactive = [log for log in logs if log["event"] == "agent_owner_inactive"]
     assert len(owner_inactive) == 1
     assert owner_inactive[0]["agent_id"] == "agnt_123"
