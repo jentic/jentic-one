@@ -56,6 +56,7 @@ from jentic_one.shared.permissions.evaluation import (
     compile_rule,
     first_matching_rule,
     rule_verdict,
+    rules_for_api_role,
 )
 from jentic_one.shared.permissions.git_rules import GitItem
 from jentic_one.shared.permissions.graphql_document import GraphQLCall
@@ -99,16 +100,18 @@ def _coerce_json_list(value: object) -> list[str] | None:
 # ``id`` is selected so the hold path can record which rule triggered the hold
 # as ``matched_rule_id`` on the ``held_executions`` row.
 _BINDING_RULES_QUERY = text(
-    "SELECT id, effect, methods, path, operations, match_mode "
+    "SELECT id, effect, methods, path, operations, match_mode, api_role "
     "FROM agent_permission_rules "
     "WHERE agent_id = :agent_id AND credential_id = :credential_id "
     "ORDER BY sequence ASC"
 )
 
 # Shared rule-set rules — evaluated *instead of* the inline rows when the
-# binding carries a rule_set_id (the attach API enforces this precedence).
+# binding carries a rule_set_id (the attach API enforces this precedence). A
+# rule-set rule stores no API role: on a profile-scoped credential's binding
+# it applies to the role its kind implies (``shared.permissions.api_roles``).
 _RULE_SET_RULES_QUERY = text(
-    "SELECT id, effect, methods, path, operations, match_mode "
+    "SELECT id, effect, methods, path, operations, match_mode, NULL AS api_role "
     "FROM permission_rule_set_rules "
     "WHERE rule_set_id = :rule_set_id "
     "ORDER BY sequence ASC"
@@ -130,7 +133,8 @@ def _compile_row(row: Sequence[Any], *, binding: str) -> PermissionRule:
     matches — fail-closed, never a silent wildcard (#751) — and the warning
     identifies the misconfigured binding/rule set so an operator can fix it.
     """
-    # Row columns: id(0), effect(1), methods(2), path(3), operations(4), match_mode(5)
+    # Row columns: id(0), effect(1), methods(2), path(3), operations(4),
+    # match_mode(5), api_role(6)
     mode = str(row[5] or "regex")
     rule = compile_rule(
         effect=row[1],
@@ -139,6 +143,7 @@ def _compile_row(row: Sequence[Any], *, binding: str) -> PermissionRule:
         match_mode=mode,
         operations=_coerce_json_list(row[4]),
         rule_id=str(row[0]) if row[0] is not None else None,
+        api_role=str(row[6]) if len(row) > 6 and row[6] else None,
     )
     if rule.path is not None and rule.path.never:
         _logger.warning(
@@ -242,6 +247,7 @@ class AgentRuleEvaluator:
         operation_id: str | None,
         upstream_path: str | None = None,
         graphql: GraphQLCall | None = None,
+        api_role: str | None = None,
     ) -> RuleEvaluation:
         """Evaluate the binding's (or its rule set's) rules for the request.
 
@@ -256,9 +262,15 @@ class AgentRuleEvaluator:
         With ``graphql`` the rules are evaluated once per top-level field
         (``graphql_fields`` on the result) and the most restrictive field
         verdict is the request's.
+
+        ``api_role`` is set for a profile-scoped credential: only the rules
+        for the API of that role are evaluated (``rules_for_api_role``).
         """
-        rules = await self._get_rules(
-            agent_id=agent_id, credential_id=credential_id, rule_set_id=rule_set_id
+        rules = await self._rules_for(
+            agent_id=agent_id,
+            credential_id=credential_id,
+            rule_set_id=rule_set_id,
+            api_role=api_role,
         )
         if not rules:
             return RuleEvaluation(verdict=RuleVerdict.DENY, rules_loaded=0)
@@ -306,6 +318,7 @@ class AgentRuleEvaluator:
         credential_id: str,
         rule_set_id: str | None,
         items: Sequence[GitItem],
+        api_role: str | None = None,
     ) -> GitEvaluation:
         """Evaluate the binding's (or its rule set's) rules once per git item.
 
@@ -313,10 +326,14 @@ class AgentRuleEvaluator:
         no matching rule and a ``require-approval`` rule (refused for git rules
         at save time) all deny it. The method, path and operation a rule may
         also constrain are empty for a git item, so a git rule saved with any
-        of them never matches (fail closed).
+        of them never matches (fail closed). ``api_role`` narrows the rules
+        as in :meth:`evaluate`.
         """
-        rules = await self._get_rules(
-            agent_id=agent_id, credential_id=credential_id, rule_set_id=rule_set_id
+        rules = await self._rules_for(
+            agent_id=agent_id,
+            credential_id=credential_id,
+            rule_set_id=rule_set_id,
+            api_role=api_role,
         )
         binding = _binding_label(
             agent_id=agent_id, credential_id=credential_id, rule_set_id=rule_set_id
@@ -340,6 +357,15 @@ class AgentRuleEvaluator:
                 )
             )
         return GitEvaluation(items=tuple(evaluated), rules_loaded=len(rules))
+
+    async def _rules_for(
+        self, *, agent_id: str, credential_id: str, rule_set_id: str | None, api_role: str | None
+    ) -> list[PermissionRule]:
+        """The binding's rules, narrowed to one API role for a profile-scoped credential."""
+        rules = await self._get_rules(
+            agent_id=agent_id, credential_id=credential_id, rule_set_id=rule_set_id
+        )
+        return rules if api_role is None else rules_for_api_role(rules, api_role)
 
     async def _get_rules(
         self, *, agent_id: str, credential_id: str, rule_set_id: str | None

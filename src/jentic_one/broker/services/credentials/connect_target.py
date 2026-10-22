@@ -17,10 +17,28 @@ from jentic_one.shared.broker.protocols import (
     ConnectableRegistration,
     ConnectableRegistrationSourceProtocol,
 )
+from jentic_one.shared.cli_profiles import declaring_profile, load_profiles
 from jentic_one.shared.context import Context
 from jentic_one.shared.schemas import APIReference
 
 logger = structlog.get_logger(__name__)
+
+
+def _profile_connect_key(ctx: Context, api: APIReference) -> str | None:
+    """The profile connect covering ``api`` when a ``profile_scoped`` CLI profile declares it.
+
+    One connect then covers every API of the profile (``jentic connect github``
+    for the GitHub git API too), so it is suggested ahead of a per-API entry.
+    Only a key the deployment configures is suggested.
+    """
+    if not (api.vendor and api.name and api.version):
+        return None
+    name = declaring_profile(api.vendor, api.name, api.version)
+    profile = load_profiles().get(name) if name is not None else None
+    if profile is None or not profile.profile_scoped or profile.connect is None:
+        return None
+    key = profile.connect.vendor_entry
+    return key if key in ctx.config.vendors.entries else None
 
 
 async def resolve_connect_target(
@@ -36,9 +54,11 @@ async def resolve_connect_target(
     control-DB reader). A failed read degrades to the operator-only guidance:
     the denial itself must still reach the agent.
     """
-    key = connect_vendor_key(
-        ctx.config.vendors, vendor=api.vendor, name=api.name, version=api.version
-    )
+    key = _profile_connect_key(ctx, api)
+    if key is None:
+        key = connect_vendor_key(
+            ctx.config.vendors, vendor=api.vendor, name=api.name, version=api.version
+        )
     if key is not None:
         return ConnectTarget(vendor_key=key)
     source = (

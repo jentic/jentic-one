@@ -21,6 +21,7 @@ from __future__ import annotations
 from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from jentic_one.shared.cli_profiles import declaring_profile
 from jentic_one.shared.models.api_identity import credential_coverage_where
 
 # control DB — every credential covering the API identity (NULL axis = wildcard,
@@ -54,7 +55,13 @@ class CredentialBindingPresenceRepository:
         """Ids of every credential covering the API identity (**control** DB session)."""
         rows = (
             await session.execute(
-                _COVERING_CREDENTIALS, {"vendor": vendor, "name": name, "version": version}
+                _COVERING_CREDENTIALS,
+                {
+                    "vendor": vendor,
+                    "name": name,
+                    "version": version,
+                    "cli_profile": declaring_profile(vendor, name, version),
+                },
             )
         ).all()
         return [row[0] for row in rows]

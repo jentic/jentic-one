@@ -315,6 +315,9 @@ class AgentRuleEvaluatorProtocol(Protocol):
 
     With ``graphql`` (an inspected GraphQL request) the list is evaluated once
     per top-level field and the most restrictive field verdict decides.
+
+    ``api_role`` (set for a profile-scoped credential) evaluates only the
+    rules for the API of that role; an API with none is denied by default.
     """
 
     async def evaluate(
@@ -328,6 +331,7 @@ class AgentRuleEvaluatorProtocol(Protocol):
         operation_id: str | None,
         upstream_path: str | None = None,
         graphql: GraphQLCall | None = None,
+        api_role: str | None = None,
     ) -> RuleEvaluation: ...
 
     async def evaluate_git(
@@ -337,6 +341,7 @@ class AgentRuleEvaluatorProtocol(Protocol):
         credential_id: str,
         rule_set_id: str | None,
         items: Sequence[GitItem],
+        api_role: str | None = None,
     ) -> GitEvaluation:
         """Evaluate the binding's rules once per git item (``shared.permissions.git_rules``).
 

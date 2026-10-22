@@ -33,6 +33,7 @@ from urllib.parse import urlparse
 
 import structlog
 
+from jentic_one.shared.permissions.api_roles import effective_api_role
 from jentic_one.shared.permissions.git_rules import (
     GIT_MATCH_MODE,
     GitItem,
@@ -101,6 +102,9 @@ class PermissionRule:
     # A ``match_mode="git"`` rule's selector: the rule then matches only a git
     # item it covers (``path`` is ``None``).
     git: GitSelector | None = None
+    # The CLI-profile API role the rule applies to on a profile-scoped
+    # credential's binding: the stored role, else the one its kind implies.
+    api_role: str = "rest"
 
 
 #: A path matcher that matches nothing: the fail-closed stand-in for a stored
@@ -116,6 +120,7 @@ def compile_rule(
     match_mode: str | None,
     operations: Sequence[str] | None,
     rule_id: str | None = None,
+    api_role: str | None = None,
 ) -> PermissionRule:
     """Compile one stored rule row (the broker enforcer and the control dry-run share it).
 
@@ -124,6 +129,7 @@ def compile_rule(
     stored path pattern.
     """
     mode = match_mode or "regex"
+    role = effective_api_role(api_role, mode)
     if mode == GRAPHQL_MATCH_MODE:
         selector = parse_selector(path)
         return PermissionRule(
@@ -133,6 +139,7 @@ def compile_rule(
             operations=tuple(operations) if operations is not None else None,
             rule_id=rule_id,
             graphql=selector,
+            api_role=role,
         )
     if mode == GIT_MATCH_MODE:
         git_selector = parse_git_selector(path)
@@ -143,6 +150,7 @@ def compile_rule(
             operations=tuple(operations) if operations is not None else None,
             rule_id=rule_id,
             git=git_selector,
+            api_role=role,
         )
     return PermissionRule(
         effect=effect,
@@ -150,7 +158,18 @@ def compile_rule(
         path=compile_matcher(path, mode),
         operations=tuple(operations) if operations is not None else None,
         rule_id=rule_id,
+        api_role=role,
     )
+
+
+def rules_for_api_role(rules: Sequence[PermissionRule], api_role: str) -> list[PermissionRule]:
+    """The rules of a profile-scoped credential's binding that apply to the ``api_role`` API.
+
+    The rest are not evaluated for a request to that API at all, so a path
+    rule written for the REST API never decides a GraphQL field or a git
+    push, and an API with no rule of its own is denied by default.
+    """
+    return [rule for rule in rules if rule.api_role == api_role]
 
 
 #: Effects a rule may only carry when it constrains methods, path, or operations.

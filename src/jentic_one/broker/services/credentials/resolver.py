@@ -17,6 +17,7 @@ from jentic_one.broker.services.credentials.errors import (
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.repos import CredentialRepository
 from jentic_one.control.services.credentials.mapping import to_wire
+from jentic_one.shared.cli_profiles import declaring_profile
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.api_identity import (
     CredentialScope,
@@ -46,6 +47,9 @@ class ResolvedCredential(BaseModel):
     # and health events name it as their subject so the owner sees another
     # actor's use of the credential under owner-scoped event reads.
     created_by: str | None = None
+    # The CLI profile of a profile-scoped credential (``github``): its binding
+    # rules then apply per API role. ``None`` for every other credential.
+    cli_profile: str | None = None
     wire_type: CredentialType
     stored_type: StoredCredentialType
     provider: str
@@ -153,14 +157,22 @@ class CredentialResolver:
             # either unscoped (NULL → wildcard) or equal. Precompute (cred, scope)
             # once so the scope isn't recomputed per predicate below.
             covering: list[tuple[Credential, CredentialScope]] = []
+            declared_by = declaring_profile(api.vendor, api.name, api.version)
             for c in candidates:
                 if not c.active:
                     continue
                 scope = canonical_credential_scope(
-                    vendor=c.api_vendor, name=c.api_name, version=c.api_version
+                    vendor=c.api_vendor,
+                    name=c.api_name,
+                    version=c.api_version,
+                    cli_profile=c.cli_profile,
                 )
                 if not credential_covers(
-                    scope, vendor=api.vendor, name=api.name, version=api.version
+                    scope,
+                    vendor=api.vendor,
+                    name=api.name,
+                    version=api.version,
+                    declared_by=declared_by,
                 ):
                     continue
                 if not server_variables_compatible(
@@ -262,6 +274,7 @@ class CredentialResolver:
                 credential_id=credential.id,
                 name=credential.name,
                 created_by=credential.created_by,
+                cli_profile=credential.cli_profile,
                 wire_type=wire_type,
                 stored_type=stored_type,
                 provider=credential.provider,
@@ -275,6 +288,7 @@ class CredentialResolver:
                 credential_id=credential.id,
                 name=credential.name,
                 created_by=credential.created_by,
+                cli_profile=credential.cli_profile,
                 wire_type=wire_type,
                 stored_type=stored_type,
                 provider=credential.provider,
@@ -290,6 +304,7 @@ class CredentialResolver:
                 credential_id=credential.id,
                 name=credential.name,
                 created_by=credential.created_by,
+                cli_profile=credential.cli_profile,
                 wire_type=wire_type,
                 stored_type=stored_type,
                 provider=credential.provider,
@@ -304,6 +319,7 @@ class CredentialResolver:
                 credential_id=credential.id,
                 name=credential.name,
                 created_by=credential.created_by,
+                cli_profile=credential.cli_profile,
                 wire_type=wire_type,
                 stored_type=stored_type,
                 provider=credential.provider,
@@ -322,6 +338,7 @@ class CredentialResolver:
                 credential_id=credential.id,
                 name=credential.name,
                 created_by=credential.created_by,
+                cli_profile=credential.cli_profile,
                 wire_type=wire_type,
                 stored_type=stored_type,
                 provider=credential.provider,
@@ -334,6 +351,7 @@ class CredentialResolver:
                 credential_id=credential.id,
                 name=credential.name,
                 created_by=credential.created_by,
+                cli_profile=credential.cli_profile,
                 wire_type=wire_type,
                 stored_type=stored_type,
                 provider=credential.provider,

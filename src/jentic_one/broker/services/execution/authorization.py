@@ -57,6 +57,7 @@ from jentic_one.shared.broker.protocols import (
     RuleEvaluation,
     RuleVerdict,
 )
+from jentic_one.shared.cli_profiles import profile_api_role
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort, valid_trace_id_or_none
 from jentic_one.shared.metrics import get_meter
@@ -283,6 +284,25 @@ async def derive_credential_bindings(
             )
         raise denial
     return derivation
+
+
+#: The role of an API a profile credential does not declare: no rule has it.
+_NO_API_ROLE = "<undeclared>"
+
+
+def binding_api_role(credential: ResolvedCredential, api: APIReference) -> str | None:
+    """The API role whose rules decide a call through a profile-scoped credential.
+
+    ``None`` for any other credential: every rule on its binding is evaluated,
+    as before. For a profile credential it is the role the profile's manifest
+    gives the API (``rest``, ``graphql``, ``git``, ``uploads``); an API the
+    profile does not declare (coverage already refuses one) gets a role no
+    rule carries, so nothing allows it.
+    """
+    if credential.cli_profile is None:
+        return None
+    role = profile_api_role(credential.cli_profile, api.vendor, api.name or "", api.version or "")
+    return role.value if role is not None else _NO_API_ROLE
 
 
 @dataclass(frozen=True, slots=True)
@@ -674,6 +694,10 @@ async def authorize_execution(
     upstream_path = (
         normalize_path(raw_upstream_path or "/") if raw_upstream_path is not None else None
     )
+    # A profile-scoped credential's binding carries rules for several APIs;
+    # only those for this API's role decide (on the GraphQL endpoint that is
+    # GraphQL rules alone: a path rule written for the REST API never does).
+    api_role = binding_api_role(selected_credential, api)
     if graphql is not None:
         evaluation = _hold_ref_mutations(
             await agent_rule_evaluator.evaluate(
@@ -684,6 +708,7 @@ async def authorize_execution(
                 path=path,
                 operation_id=operation_id,
                 graphql=graphql,
+                api_role=api_role,
             )
         )
     else:
@@ -695,6 +720,7 @@ async def authorize_execution(
             path=path,
             operation_id=operation_id,
             upstream_path=upstream_path if upstream_path != path else None,
+            api_role=api_role,
         )
     if evaluation.divergence is not None:
         _report_base_path_divergence(

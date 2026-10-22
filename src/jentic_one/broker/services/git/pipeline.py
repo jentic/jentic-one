@@ -94,6 +94,7 @@ from jentic_one.broker.core.headers import JenticHeader
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
 from jentic_one.broker.services.credentials.resolver import ResolvedCredential
 from jentic_one.broker.services.execution.authorization import (
+    binding_api_role,
     derive_credential_bindings,
     record_pbac_denial,
 )
@@ -374,6 +375,8 @@ class GitPipeline:
             credential_id=binding.credential.credential_id,
             rule_set_id=binding.rule_set_id,
             items=items,
+            # A profile-scoped credential's git API takes its git rules only.
+            api_role=binding_api_role(binding.credential, GITHUB_GIT_API),
         )
 
     async def _require(self, call: GitCall, binding: _Binding, action: GitAction) -> None:

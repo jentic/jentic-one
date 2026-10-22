@@ -12,6 +12,14 @@ the registry hard-fails otherwise. A **credential is scoped** at ``vendor`` /
 canonical scope, and the SQL fragment builder below are the one definition of
 "does this credential cover this operation?", shared by all three matchers
 (broker runtime, control bind-time, broker credential resolution).
+
+A **profile-scoped credential** (``cli_profile`` set, one connect for a CLI
+profile such as ``github``) is stored vendor-wide and narrowed to exactly the
+APIs its profile's shipped manifest declares: it covers an operation only when
+the caller passes that profile as ``declared_by`` (Python) or ``:cli_profile``
+(SQL) — :func:`jentic_one.shared.cli_profiles.declaring_profile` of the
+operation identity. A matcher that does not know the declaring profile passes
+``None``, so a profile credential is never covered by accident (fail closed).
 """
 
 from __future__ import annotations
@@ -45,10 +53,13 @@ class CredentialScope:
     vendor: str
     name: str | None
     version: str | None
+    #: The CLI profile a profile-scoped credential belongs to; ``None`` for
+    #: every other credential.
+    cli_profile: str | None = None
 
 
 def canonical_credential_scope(
-    *, vendor: str, name: str | None, version: str | None
+    *, vendor: str, name: str | None, version: str | None, cli_profile: str | None = None
 ) -> CredentialScope:
     """Canonicalize a *credential* scope for storage or comparison.
 
@@ -67,17 +78,31 @@ def canonical_credential_scope(
         vendor=slugify_api_field(vendor),
         name=slug_name or None,
         version=trimmed_version or None,
+        cli_profile=cli_profile or None,
     )
 
 
-def credential_covers(scope: CredentialScope, *, vendor: str, name: str, version: str) -> bool:
+def credential_covers(
+    scope: CredentialScope,
+    *,
+    vendor: str,
+    name: str,
+    version: str,
+    declared_by: str | None = None,
+) -> bool:
     """Return whether ``scope`` covers the (always concrete) operation identity.
 
     A ``None`` axis on the scope is an unscoped wildcard (covers any value);
     otherwise the axis must equal the operation axis in canonical form. The
     operation identity is normalized here so a legacy non-canonical stored scope
     and a concrete operation compare on the same footing.
+
+    ``declared_by`` is the CLI profile declaring the operation identity
+    (``shared.cli_profiles.declaring_profile``); a profile-scoped scope covers
+    the operation only when it is that scope's profile.
     """
+    if scope.cli_profile is not None and scope.cli_profile != declared_by:
+        return False
     return (
         scope.vendor == slugify_api_field(vendor)
         and (scope.name is None or scope.name == slugify_api_field(name))
@@ -97,7 +122,9 @@ def credential_specificity(scope: CredentialScope) -> int:
 def credential_coverage_where(
     *, alias: str = "c", name_scoped: bool = True, version_scoped: bool = True
 ) -> str:
-    """Build the shared SQL coverage fragment (binds ``:vendor``/``:name``/``:version``).
+    """Build the shared SQL coverage fragment.
+
+    Binds ``:vendor``, ``:name``, ``:version`` and ``:cli_profile``.
 
     The one WHERE fragment used by the two raw-SQL matchers (runtime
     credential-binding derivation and bind-time credential selection). ``NULL``
@@ -111,7 +138,13 @@ def credential_coverage_where(
     emitted (no casts / regex), so the fragment is dialect-portable across
     Postgres and SQLite.
     """
-    clauses = [f"{alias}.api_vendor = :vendor"]
+    clauses = [
+        f"{alias}.api_vendor = :vendor",
+        # A profile-scoped credential covers only the APIs its profile
+        # declares: callers bind ``:cli_profile`` to the profile declaring the
+        # API (``None`` when none does, which matches no profile credential).
+        f"({alias}.cli_profile IS NULL OR {alias}.cli_profile = :cli_profile)",
+    ]
     if name_scoped:
         clauses.append(f"({alias}.api_name IS NULL OR {alias}.api_name = :name)")
     if version_scoped:
