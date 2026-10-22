@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -38,7 +39,10 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
 
-// vendorProfile is how one vendor CLI is pointed at its facade.
+// vendorProfile is how one vendor CLI is pointed at its facade. The deployment
+// serves it (GET /cli-facades `binary`, `display_name`, `wrapper`), from the
+// vendor's CLI profile; builtinVendorProfiles is the fallback for a server
+// that does not.
 type vendorProfile struct {
 	// Vendor is the facade vendor (GET /cli-facades `vendor`, the mint's `vendor`).
 	Vendor string
@@ -48,28 +52,38 @@ type vendorProfile struct {
 	Binary string
 	// Display names the vendor in directives.
 	Display string
-	// BaseURLEnv receives the facade address.
-	BaseURLEnv string
-	// TokenEnv receives the invocation token.
-	TokenEnv string
+	// EnvSet are the variables set for the child: a literal, or one of the
+	// placeholders {address} (the facade address), {address_host} (its
+	// hostname) and {token} (the invocation token).
+	EnvSet map[string]string
 	// StripEnv are credential variables the vendor CLI (or a library it
-	// embeds) could authenticate with instead of TokenEnv; removed from the
-	// child's environment so only the invocation token is ever presented.
+	// embeds) could authenticate with instead of the invocation token;
+	// removed from the child's environment so only that token is presented.
 	StripEnv []string
 }
 
-// cloudflareProfile wires `cf`. cf authenticates with the first credential it
-// finds, CLOUDFLARE_API_TOKEN first (process env wins over a `.env` file), and
-// takes its API base from CLOUDFLARE_API_BASE_URL. The stripped names cover
-// cf's Access service-token pair and the legacy key/email and CF_* names the
-// older Cloudflare tooling and SDKs read.
-var cloudflareProfile = vendorProfile{ //nolint:gosec // G101: names of credential variables to strip, not credentials
-	Vendor:     "cloudflare",
-	CLI:        "cf",
-	Binary:     "cf",
-	Display:    "Cloudflare",
-	BaseURLEnv: "CLOUDFLARE_API_BASE_URL",
-	TokenEnv:   "CLOUDFLARE_API_TOKEN",
+// Placeholders an EnvSet value may be.
+const (
+	envPlaceholderAddress     = "{address}"
+	envPlaceholderAddressHost = "{address_host}"
+	envPlaceholderToken       = "{token}"
+)
+
+// cloudflareProfile wires `cf` when the server serves no wiring. cf
+// authenticates with the first credential it finds, CLOUDFLARE_API_TOKEN
+// first (process env wins over a `.env` file), and takes its API base from
+// CLOUDFLARE_API_BASE_URL. The stripped names cover cf's Access service-token
+// pair and the legacy key/email and CF_* names the older Cloudflare tooling
+// and SDKs read.
+var cloudflareProfile = vendorProfile{
+	Vendor:  "cloudflare",
+	CLI:     "cf",
+	Binary:  "cf",
+	Display: "Cloudflare",
+	EnvSet: map[string]string{
+		"CLOUDFLARE_API_BASE_URL": envPlaceholderAddress,
+		"CLOUDFLARE_API_TOKEN":    envPlaceholderToken,
+	},
 	StripEnv: []string{
 		"CLOUDFLARE_API_KEY",
 		"CLOUDFLARE_EMAIL",
@@ -86,8 +100,9 @@ var cloudflareProfile = vendorProfile{ //nolint:gosec // G101: names of credenti
 	},
 }
 
-// vendorProfiles are the vendor CLIs `jentic cli run` accepts, by CLI name.
-var vendorProfiles = map[string]vendorProfile{cloudflareProfile.CLI: cloudflareProfile}
+// builtinVendorProfiles are the wrapper wiring used when the deployment's
+// GET /cli-facades carries none (a server older than CLI profiles), by CLI name.
+var builtinVendorProfiles = map[string]vendorProfile{cloudflareProfile.CLI: cloudflareProfile}
 
 // jenticSecretEnv are the CLI's own credential variables. The vendor CLI never
 // sees them: the agent's access token must not leave this process.
@@ -150,6 +165,16 @@ func (a *app) runVendorCLI(cmd *cobra.Command, prof vendorProfile, args []string
 		return cmdcore.NewExitCodeError(vendorCLIExitRefused)
 	}
 
+	client, err := clictx.GetControlClient(ctx)
+	if err != nil {
+		return refuse(notSignedInDirective(err))
+	}
+
+	prof, address, d := resolveVendorFacade(ctx, client, prof)
+	if d != nil {
+		return refuse(*d)
+	}
+
 	binary, err := findVendorBinary(prof.Binary)
 	if err != nil {
 		return refuse(ux.VendorCLIDirective{Directive: ux.Directive{
@@ -157,16 +182,6 @@ func (a *app) runVendorCLI(cmd *cobra.Command, prof vendorProfile, args []string
 			Parameters:  map[string]any{"cli": prof.Binary},
 			Instruction: fmt.Sprintf("`%s` is not installed or not on PATH. Ask the user to install the %s CLI, then re-run the command.", prof.Binary, prof.Display),
 		}})
-	}
-
-	client, err := clictx.GetControlClient(ctx)
-	if err != nil {
-		return refuse(notSignedInDirective(err))
-	}
-
-	address, d := facadeAddress(ctx, client, prof)
-	if d != nil {
-		return refuse(*d)
 	}
 
 	// Mint with a fresh access token: the invocation token never outlives the
@@ -191,7 +206,15 @@ func (a *app) runVendorCLI(cmd *cobra.Command, prof vendorProfile, args []string
 
 	child := exec.Command(binary, args...) //nolint:gosec // binary is the vendor CLI resolved on PATH; args are the agent's own pass-through argv.
 	child.Stdin, child.Stdout, child.Stderr = cmd.InOrStdin(), cmd.OutOrStdout(), stderr
-	child.Env = vendorChildEnv(os.Environ(), prof, address, inv.Token)
+	child.Env, err = vendorChildEnv(os.Environ(), prof, address, inv.Token)
+	if err != nil {
+		revokeOnce()
+		return refuse(ux.VendorCLIDirective{TraceID: inv.TraceId, Directive: ux.Directive{
+			Strategy:    "prompt_human",
+			Parameters:  map[string]any{"cli": prof.Binary, "suggested_command": "jentic update"},
+			Instruction: fmt.Sprintf("This Jentic wires `%s` in a way this jentic CLI does not understand (%v). Update the jentic CLI, then re-run the command.", prof.Binary, err),
+		}})
+	}
 	if err := child.Start(); err != nil {
 		revokeOnce()
 		return refuse(ux.VendorCLIDirective{TraceID: inv.TraceId, Directive: ux.Directive{
@@ -262,21 +285,56 @@ func cleanDir(dir string) string {
 	return filepath.Clean(dir)
 }
 
-// facadeAddress reads the vendor's facade address from GET /cli-facades, or
-// the directive to print when the vendor CLI cannot be run.
-func facadeAddress(ctx context.Context, client *control.ClientWithResponses, prof vendorProfile) (string, *ux.VendorCLIDirective) {
+// servedVendorProfile is the wrapper wiring the deployment serves for facade
+// f, from the vendor's CLI profile; false when it serves none (a server older
+// than CLI profiles, or a vendor whose CLI is not wrapped).
+func servedVendorProfile(f control.CliFacadeResponse) (vendorProfile, bool) {
+	if f.Wrapper == nil || len(f.Wrapper.EnvSet) == 0 {
+		return vendorProfile{}, false
+	}
+	prof := vendorProfile{
+		Vendor:   f.Vendor,
+		CLI:      f.Cli,
+		Binary:   f.Cli,
+		Display:  f.Vendor,
+		EnvSet:   f.Wrapper.EnvSet,
+		StripEnv: f.Wrapper.EnvStrip,
+	}
+	if f.Binary != nil && *f.Binary != "" {
+		prof.Binary = *f.Binary
+	}
+	if f.DisplayName != nil && *f.DisplayName != "" {
+		prof.Display = *f.DisplayName
+	}
+	return prof, true
+}
+
+// resolveVendorFacade reads GET /cli-facades for the facade of `jentic
+// <prof.CLI>`: its address, and the wiring the deployment serves for it
+// (falling back to prof, the built-in wiring, when it serves none). It
+// returns the directive to print when the vendor CLI cannot be run.
+func resolveVendorFacade(ctx context.Context, client *control.ClientWithResponses, prof vendorProfile) (vendorProfile, string, *ux.VendorCLIDirective) {
 	callCtx, cancel := context.WithTimeout(ctx, vendorCLICallTimeout)
 	defer cancel()
 	resp, err := client.ListCliFacadesWithResponse(callCtx)
 	if err := apiErrorFor(resp, err); err != nil {
-		return "", controlCallDirective("list the CLI facades", err)
+		return prof, "", controlCallDirective("list the CLI facades", err)
 	}
 	for _, f := range resp.JSON200.Data {
-		if f.Vendor != prof.Vendor {
+		if f.Cli != prof.CLI && f.Vendor != prof.Vendor {
 			continue
 		}
+		if served, ok := servedVendorProfile(f); ok {
+			prof = served
+		} else if len(prof.EnvSet) == 0 {
+			return prof, "", &ux.VendorCLIDirective{Directive: ux.Directive{
+				Strategy:    "prompt_human",
+				Parameters:  map[string]any{"cli": prof.CLI, "suggested_command": "jentic update"},
+				Instruction: fmt.Sprintf("This Jentic serves the %s facade but not how to wire `%s`; update Jentic or the jentic CLI.", f.Vendor, prof.CLI),
+			}}
+		}
 		if f.Address == nil || *f.Address == "" {
-			return "", &ux.VendorCLIDirective{Directive: ux.Directive{
+			return prof, "", &ux.VendorCLIDirective{Directive: ux.Directive{
 				Strategy:   "prompt_human",
 				Parameters: map[string]any{"vendor": prof.Vendor},
 				Instruction: fmt.Sprintf("The %s facade is enabled but this deployment advertises no address for it. "+
@@ -284,9 +342,9 @@ func facadeAddress(ctx context.Context, client *control.ClientWithResponses, pro
 					prof.Display, prof.Vendor),
 			}}
 		}
-		return *f.Address, nil
+		return prof, *f.Address, nil
 	}
-	return "", &ux.VendorCLIDirective{Directive: ux.Directive{
+	return prof, "", &ux.VendorCLIDirective{Directive: ux.Directive{
 		Strategy:   "prompt_human",
 		Parameters: map[string]any{"vendor": prof.Vendor, "suggested_command": "jentic cli list"},
 		Instruction: fmt.Sprintf("`jentic %s` is not available on this Jentic deployment: its %s CLI facade is not enabled. "+
@@ -405,18 +463,48 @@ func oneLine(err error) string {
 }
 
 // vendorChildEnv is the vendor CLI's environment: a copy of this process's
-// with the facade address and invocation token set, every other credential
-// the vendor CLI could use removed, and Jentic's own credentials (anything
-// holding an `at_`/`jak_` token) removed.
-func vendorChildEnv(parent []string, prof vendorProfile, address, token string) []string {
-	drop := map[string]bool{prof.BaseURLEnv: true, prof.TokenEnv: true}
+// with the profile's variables set (the facade address and invocation token
+// filled in), every other credential the vendor CLI could use removed, and
+// Jentic's own credentials (anything holding an `at_`/`jak_` token) removed.
+// A wiring with a placeholder this CLI does not know, or that never hands
+// the child the invocation token, is refused.
+func vendorChildEnv(parent []string, prof vendorProfile, address, token string) ([]string, error) {
+	host := address
+	if u, err := url.Parse(address); err == nil && u.Hostname() != "" {
+		host = u.Hostname()
+	}
+	set := make([]string, 0, len(prof.EnvSet))
+	hasToken := false
+	for _, k := range sortedKeys(prof.EnvSet) {
+		v := prof.EnvSet[k]
+		switch v {
+		case envPlaceholderAddress:
+			v = address
+		case envPlaceholderAddressHost:
+			v = host
+		case envPlaceholderToken:
+			v, hasToken = token, true
+		default:
+			if strings.ContainsAny(v, "{}") {
+				return nil, fmt.Errorf("unknown placeholder %s=%s", k, v)
+			}
+		}
+		set = append(set, k+"="+v)
+	}
+	if !hasToken {
+		return nil, errors.New("the wiring hands the CLI no invocation token")
+	}
+	drop := map[string]bool{}
+	for k := range prof.EnvSet {
+		drop[envKey(k)] = true
+	}
 	for _, k := range prof.StripEnv {
 		drop[k] = true
 	}
 	for _, k := range jenticSecretEnv {
 		drop[k] = true
 	}
-	env := make([]string, 0, len(parent)+2)
+	env := make([]string, 0, len(parent)+len(set))
 	for _, kv := range parent {
 		key, value, _ := strings.Cut(kv, "=")
 		if drop[envKey(key)] || strings.HasPrefix(value, "at_") || strings.HasPrefix(value, "jak_") {
@@ -424,7 +512,7 @@ func vendorChildEnv(parent []string, prof vendorProfile, address, token string) 
 		}
 		env = append(env, kv)
 	}
-	return append(env, prof.BaseURLEnv+"="+address, prof.TokenEnv+"="+token)
+	return append(env, set...), nil
 }
 
 // envKey normalises a variable name for matching (Windows names are

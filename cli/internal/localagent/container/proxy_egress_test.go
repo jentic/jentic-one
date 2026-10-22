@@ -347,3 +347,32 @@ func TestTokenKeeperReplacesATokenTheServerWillNotRenew(t *testing.T) {
 		t.Error("a token the server will not renew must be replaced")
 	}
 }
+
+func TestProxyEgressUsesTheServedVendorEnv(t *testing.T) {
+	o := testOptions()
+	e := testProxyEgress()
+	e.VendorEnv = map[string]VendorEnv{
+		"github": {Set: map[string]string{"GH_TOKEN": placeholderEnvValue, "GH_PROMPT_DISABLED": "1"}, Strip: []string{"GITHUB_TOKEN"}},
+	}
+	o.Egress = e
+	o.Env = append(o.Env, "GITHUB_TOKEN=ghp_users_own", "KEEP=1")
+	p := mustPlan(t, o)
+	for _, want := range []string{"GH_TOKEN=" + ghPlaceholderToken, "GH_PROMPT_DISABLED=1", "KEEP=1"} {
+		if !slices.Contains(p.Agent.Env, want) {
+			t.Errorf("agent env lacks %s: %v", want, p.Agent.Env)
+		}
+	}
+	for _, kv := range p.Agent.Env {
+		if strings.HasPrefix(kv, "GITHUB_TOKEN=") || strings.HasPrefix(kv, "GIT_TERMINAL_PROMPT=") {
+			t.Errorf("%s: the served wiring replaces the defaults and strips GITHUB_TOKEN", kv)
+		}
+	}
+}
+
+func TestProxyEgressRefusesAnUnknownEnvPlaceholder(t *testing.T) {
+	e := testProxyEgress()
+	e.VendorEnv = map[string]VendorEnv{"github": {Set: map[string]string{"GH_TOKEN": "{token}"}}}
+	if err := e.Validate(proxyPlan(t)); err == nil {
+		t.Error("an unknown placeholder must be refused")
+	}
+}

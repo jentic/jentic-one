@@ -2403,7 +2403,31 @@
               "path": "jentic cli run",
               "use": "run \u003ccli\u003e [--] [args…]",
               "short": "Run a vendor CLI through Jentic (`jentic cli run cf -- zones list`)",
-              "long": "run is the generic form of `jentic \u003ccli\u003e`: `jentic cli run cf -- zones list` is\n`jentic cf zones list`. Everything after \u003ccli\u003e (and an optional `--`) is passed\nto the vendor CLI untouched. Supported: cf.",
+              "long": "run is the generic form of `jentic \u003ccli\u003e`: `jentic cli run cf -- zones list` is\n`jentic cf zones list`. Everything after \u003ccli\u003e (and an optional `--`) is passed\nto the vendor CLI untouched. \u003ccli\u003e is any CLI `jentic cli list` shows: the\ndeployment serves how each one is wired (from its CLI profile).",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                }
+              ]
+            },
+            {
+              "name": "profiles",
+              "path": "jentic cli profiles",
+              "use": "profiles",
+              "short": "List the vendor CLI profiles: their APIs, connect keys and rule presets",
+              "long": "profiles answers with the CLI profiles this Jentic ships (GET /cli-profiles): for\neach vendor CLI, the APIs it reaches (REST, GraphQL, git) with the `jentic connect`\nkey of each and whether it is live, and the rule presets `jentic connect --preset`\ntakes, with their parameters (--preset-param name=value).",
               "flags": [
                 {
                   "name": "context",
@@ -2994,7 +3018,7 @@
           "path": "jentic admin",
           "use": "admin",
           "short": "Administer the jentic-one platform",
-          "long": "admin groups operator-facing platform administration. Subcommands\nrequire an identity with admin privileges (e.g. org:admin).\n\n`admin config providers` manages runtime credential provider\nconfiguration (e.g. Pipedream) without hand-editing backend YAML or\nrestarting the server.",
+          "long": "admin groups operator-facing platform administration. Subcommands\nrequire an identity with admin privileges (e.g. org:admin).\n\n`admin config providers` manages runtime credential provider\nconfiguration (e.g. Pipedream) without hand-editing backend YAML or\nrestarting the server. `admin cli-profiles provision` imports the APIs\nof a vendor CLI profile.",
           "group_title": "Administration",
           "flags": [
             {
@@ -3174,6 +3198,56 @@
                           "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
                         }
                       ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "cli-profiles",
+              "path": "jentic admin cli-profiles",
+              "use": "cli-profiles",
+              "short": "Provision the APIs of a vendor CLI profile (github, cloudflare)",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                }
+              ],
+              "subcommands": [
+                {
+                  "name": "provision",
+                  "path": "jentic admin cli-profiles provision",
+                  "use": "provision \u003cprofile\u003e",
+                  "short": "Make every API a CLI profile declares exist and be live (idempotent)",
+                  "long": "provision imports a CLI profile's APIs so the vendor's CLI finds them all live:\na catalog API is imported from the public catalog (an import job; nothing when it\nis already registered), a spec shipped with Jentic (the GitHub GraphQL API) is\nimported and made live at once, and a built-in API (GitHub git) needs nothing.\nSafe to re-run. Needs catalog:import. Each API's status says what happened\n(live, imported, import_queued, builtin, not_in_catalog, failed).",
+                  "example": "  jentic admin cli-profiles provision github",
+                  "flags": [
+                    {
+                      "name": "context",
+                      "type": "string",
+                      "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                    },
+                    {
+                      "name": "mode",
+                      "type": "string",
+                      "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
+                    },
+                    {
+                      "name": "theme",
+                      "type": "string",
+                      "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
                     }
                   ]
                 }

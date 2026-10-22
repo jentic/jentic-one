@@ -5,9 +5,10 @@ import (
 )
 
 // newAdminCmd builds the `admin` command tree: operator-facing platform
-// administration. Today it carries a single group, `config providers`, for
-// runtime credential provider configuration (set/get/list); the tree is shaped
-// so future admin config surfaces can hang off `admin config` additively.
+// administration: `config providers` for runtime credential provider
+// configuration (set/get/list), and `cli-profiles provision` for importing a
+// vendor CLI profile's APIs. Future admin config surfaces hang off `admin
+// config` additively.
 func newAdminCmd(app *app) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "admin",
@@ -16,10 +17,11 @@ func newAdminCmd(app *app) *cobra.Command {
 			"require an identity with admin privileges (e.g. org:admin).\n\n" +
 			"`admin config providers` manages runtime credential provider\n" +
 			"configuration (e.g. Pipedream) without hand-editing backend YAML or\n" +
-			"restarting the server.",
+			"restarting the server. `admin cli-profiles provision` imports the APIs\n" +
+			"of a vendor CLI profile.",
 		Args: cobra.NoArgs,
 	}
-	cmd.AddCommand(newAdminConfigCmd(app))
+	cmd.AddCommand(newAdminConfigCmd(app), newAdminCLIProfilesCmd(app))
 	return cmd
 }
 

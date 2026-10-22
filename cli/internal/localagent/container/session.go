@@ -156,7 +156,7 @@ func NewPlan(o Options) (*Plan, error) {
 		Cmd:          append([]string{"loopback"}, ports...),
 	}
 
-	env := append([]string{"HOME=" + AgentHome}, o.Env...)
+	env := append([]string{"HOME=" + AgentHome}, withoutEnv(o.Env, egressEnvStrip(o.Egress, p))...)
 	env = append(env, o.Egress.AgentEnv(p)...)
 	mounts := []Mount{
 		{Type: "volume", Source: p.HomeVolume, Target: filepath.Dir(AgentHome)},
@@ -412,4 +412,31 @@ func Teardown(ctx context.Context, d Docker, sessionID string) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// egressEnvStrip are the variables an egress removes from the agent's
+// environment, when it removes any.
+func egressEnvStrip(e Egress, p *Plan) []string {
+	if s, ok := e.(interface{ AgentEnvStrip(*Plan) []string }); ok {
+		return s.AgentEnvStrip(p)
+	}
+	return nil
+}
+
+// withoutEnv is env without the KEY=VALUE entries whose key is in drop.
+func withoutEnv(env, drop []string) []string {
+	if len(drop) == 0 {
+		return env
+	}
+	gone := make(map[string]bool, len(drop))
+	for _, k := range drop {
+		gone[k] = true
+	}
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		if k, _, _ := strings.Cut(kv, "="); !gone[k] {
+			out = append(out, kv)
+		}
+	}
+	return out
 }

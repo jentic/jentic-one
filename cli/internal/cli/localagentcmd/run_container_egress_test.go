@@ -24,6 +24,9 @@ type fakeControl struct {
 	revoked []string
 	renewed []string
 	renewSt int
+	// facades overrides the GET /cli-facades body (a server without CLI
+	// profile wiring when empty).
+	facades string
 }
 
 func (f *fakeControl) handler(t *testing.T) http.Handler {
@@ -33,6 +36,8 @@ func (f *fakeControl) handler(t *testing.T) http.Handler {
 		defer f.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/cli-facades" && f.facades != "":
+			_, _ = w.Write([]byte(f.facades))
 		case r.Method == http.MethodGet && r.URL.Path == "/cli-facades":
 			_, _ = w.Write([]byte(`{"data":[{"vendor":"github","cli":"gh","mode":"host","protocols":["rest","graphql","git"]},` +
 				`{"vendor":"cloudflare","cli":"cf","mode":"path","protocols":["rest"]},` +
@@ -85,10 +90,11 @@ func testIssuer(t *testing.T) (*controlIssuer, *fakeControl) {
 
 func TestGovernedVendorsAreTheServedFacadesTheProxyCanGovern(t *testing.T) {
 	issuer, _ := testIssuer(t)
-	got, protocols, err := governedVendors(context.Background(), issuer.client)
+	g, err := governedVendors(context.Background(), issuer.client)
 	if err != nil {
 		t.Fatal(err)
 	}
+	got, protocols := g.vendors, g.protocols
 	if !slices.Equal(got, []string{"cloudflare", "github"}) {
 		t.Errorf("governed vendors = %v", got)
 	}
@@ -149,5 +155,34 @@ func TestContainerTunnelHosts(t *testing.T) {
 	if got := containerTunnelHosts(desc, getenv); !slices.Contains(got, "us-east5-aiplatform.googleapis.com") ||
 		!slices.Contains(got, "oauth2.googleapis.com") {
 		t.Errorf("vertex tunnel hosts = %v", got)
+	}
+}
+
+func TestGovernedVendorsCarryTheServedContainerWiring(t *testing.T) {
+	issuer, fc := testIssuer(t)
+	fc.facades = `{"data":[{"vendor":"github","cli":"gh","mode":"host","protocols":["rest","git"],
+		"governed_domains":["github.com"],
+		"container":{"env_set":{"GH_TOKEN":"{placeholder}","GIT_TERMINAL_PROMPT":"0"},
+		"env_strip":["GITHUB_TOKEN"],"tunnel_hosts":["objects.githubusercontent.com"]}}]}`
+	g, err := governedVendors(context.Background(), issuer.client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(g.vendors, []string{"github"}) || !slices.Equal(g.tunnel, []string{"objects.githubusercontent.com"}) {
+		t.Errorf("governed = %+v", g)
+	}
+	env := g.env["github"]
+	if env.Set["GH_TOKEN"] != "{placeholder}" || !slices.Equal(env.Strip, []string{"GITHUB_TOKEN"}) {
+		t.Errorf("github wiring = %+v", env)
+	}
+}
+
+func TestGovernedVendorsRefuseADomainTheProxyDoesNotGovern(t *testing.T) {
+	issuer, fc := testIssuer(t)
+	fc.facades = `{"data":[{"vendor":"github","cli":"gh","mode":"host","protocols":["rest"],
+		"governed_domains":["ghe.example.com"]}]}`
+	if _, err := governedVendors(context.Background(), issuer.client); err == nil ||
+		!strings.Contains(err.Error(), "matching Jentic and jentic CLI releases") {
+		t.Errorf("err = %v, want a release-mismatch refusal", err)
 	}
 }

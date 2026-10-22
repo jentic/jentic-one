@@ -2,8 +2,6 @@ package api
 
 import (
 	"fmt"
-	"sort"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -22,7 +20,7 @@ func newCLICmd(a *app) *cobra.Command {
 			"and recorded. `jentic cli list` shows which ones this deployment serves;\n" +
 			"`jentic cf …` (or `jentic cli run cf -- …`) runs one.",
 	}
-	cmd.AddCommand(newCLIListCmd(a), newCLIRunCmd(a))
+	cmd.AddCommand(newCLIListCmd(a), newCLIRunCmd(a), newCLIProfilesCmd(a))
 	return cmd
 }
 
@@ -54,30 +52,30 @@ func newCLIListCmd(_ *app) *cobra.Command {
 }
 
 func newCLIRunCmd(a *app) *cobra.Command {
-	names := make([]string, 0, len(vendorProfiles))
-	for name := range vendorProfiles {
-		names = append(names, name)
-	}
-	sort.Strings(names)
 	return &cobra.Command{
 		Use:   "run <cli> [--] [args…]",
 		Short: "Run a vendor CLI through Jentic (`jentic cli run cf -- zones list`)",
 		Long: "run is the generic form of `jentic <cli>`: `jentic cli run cf -- zones list` is\n" +
 			"`jentic cf zones list`. Everything after <cli> (and an optional `--`) is passed\n" +
-			"to the vendor CLI untouched. Supported: " + strings.Join(names, ", ") + ".",
+			"to the vendor CLI untouched. <cli> is any CLI `jentic cli list` shows: the\n" +
+			"deployment serves how each one is wired (from its CLI profile).",
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
 				return cmd.Help()
 			}
-			prof, ok := vendorProfiles[args[0]]
-			if !ok {
+			name := args[0]
+			if !isCLIName(name) {
 				return reportCoded(ux.FromContext(cmd.Context()), &ux.CodedError{
 					Code:       ux.CodeMissingArgument,
-					Msg:        fmt.Sprintf("unknown vendor CLI %q", args[0]),
-					Actionable: "jentic cli run <" + strings.Join(names, "|") + "> -- <args>",
+					Msg:        fmt.Sprintf("invalid vendor CLI name %q", name),
+					Actionable: "jentic cli run <cli> -- <args> (see `jentic cli list`)",
 				})
+			}
+			prof, ok := builtinVendorProfiles[name]
+			if !ok {
+				prof = vendorProfile{Vendor: name, CLI: name, Binary: name, Display: name}
 			}
 			rest := args[1:]
 			if len(rest) > 0 && rest[0] == "--" {
@@ -86,4 +84,18 @@ func newCLIRunCmd(a *app) *cobra.Command {
 			return a.runVendorCLI(cmd, prof, rest)
 		},
 	}
+}
+
+// isCLIName reports whether name could be a vendor CLI's executable name.
+func isCLIName(name string) bool {
+	if name == "" || len(name) > 32 {
+		return false
+	}
+	for i, r := range name {
+		if (r >= 'a' && r <= 'z') || (i > 0 && ((r >= '0' && r <= '9') || r == '-' || r == '_')) {
+			continue
+		}
+		return false
+	}
+	return true
 }

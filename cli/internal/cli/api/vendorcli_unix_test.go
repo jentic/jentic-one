@@ -511,3 +511,102 @@ func TestForwardSignals_RelaysTerminationToTheChild(t *testing.T) {
 		t.Fatal("SIGHUP was not forwarded to the child")
 	}
 }
+
+// installFakeBinary puts a fake vendor CLI called name first on PATH (the
+// fakeCF script) and returns where it reports.
+func installFakeBinary(t *testing.T, name string) string {
+	t.Helper()
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, name), []byte(fakeCF), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	out := filepath.Join(t.TempDir(), name+".out")
+	t.Setenv("FAKE_CF_OUT", out)
+	return out
+}
+
+func TestCf_UsesTheWiringTheDeploymentServes(t *testing.T) {
+	withXDG(t)
+	report := installFakeCF(t)
+	fc, srv := newFakeControl(t, "http://broker.test/_facade/cloudflare")
+	fc.facades = `{"data":[{"vendor":"cloudflare","cli":"cf","mode":"path","protocols":["rest"],
+		"address":"http://broker.test/_facade/cloudflare","binary":"cf","display_name":"Cloudflare",
+		"wrapper":{"env_set":{"CF_BASE":"{address}","CF_TOKEN_NEW":"{token}","CF_MODE":"jentic"},
+		"env_strip":["CLOUDFLARE_API_TOKEN"]}}]}`
+	t.Setenv("CLOUDFLARE_API_TOKEN", "users-own-token")
+	t.Setenv("CF_API_KEY", "kept-not-in-served-strip")
+
+	run := runCf(t, srv, report, "cf", "zones", "list")
+
+	if run.code != 0 {
+		t.Fatalf("exit = %d, stderr:\n%s", run.code, run.stderr)
+	}
+	if run.env["CF_BASE"] != "http://broker.test/_facade/cloudflare" || run.env["CF_TOKEN_NEW"] != testCitToken || run.env["CF_MODE"] != "jentic" {
+		t.Errorf("served env_set not applied: %v", run.env)
+	}
+	if _, ok := run.env["CLOUDFLARE_API_TOKEN"]; ok {
+		t.Error("a served env_strip variable reached cf")
+	}
+	if _, ok := run.env["CLOUDFLARE_API_BASE_URL"]; ok {
+		t.Error("the built-in wiring was used although the deployment serves one")
+	}
+	if run.env["CF_API_KEY"] != "kept-not-in-served-strip" {
+		t.Error("the served strip list replaces the built-in one")
+	}
+}
+
+func TestCliRun_RunsAServedCLIWithItsHostAddress(t *testing.T) {
+	withXDG(t)
+	report := installFakeBinary(t, "gh")
+	fc, srv := newFakeControl(t, "")
+	fc.facades = `{"data":[{"vendor":"github","cli":"gh","mode":"host","protocols":["rest","graphql","git"],
+		"address":"https://github.jentic.test","binary":"gh","display_name":"GitHub",
+		"wrapper":{"env_set":{"GH_HOST":"{address_host}","GH_ENTERPRISE_TOKEN":"{token}"},
+		"env_strip":["GH_TOKEN","GITHUB_TOKEN"]}}]}`
+	t.Setenv("GH_TOKEN", "ghp_users_own")
+
+	run := runCf(t, srv, report, "cli", "run", "gh", "--", "pr", "list")
+
+	if run.code != 0 {
+		t.Fatalf("exit = %d, stderr:\n%s", run.code, run.stderr)
+	}
+	if run.env["GH_HOST"] != "github.jentic.test" || run.env["GH_ENTERPRISE_TOKEN"] != testCitToken {
+		t.Errorf("gh env = %v", run.env)
+	}
+	if _, ok := run.env["GH_TOKEN"]; ok {
+		t.Error("GH_TOKEN reached gh")
+	}
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
+	if fc.mintBody["vendor"] != "github" {
+		t.Errorf("mint body = %v, want the served vendor", fc.mintBody)
+	}
+}
+
+func TestCliRun_ServedCLIWithoutWiringIsRefused(t *testing.T) {
+	withXDG(t)
+	report := installFakeBinary(t, "gh")
+	fc, srv := newFakeControl(t, "")
+	fc.facades = `{"data":[{"vendor":"github","cli":"gh","mode":"host","address":"https://github.jentic.test"}]}`
+
+	run := runCf(t, srv, report, "cli", "run", "gh", "--", "pr", "list")
+
+	if run.ran || run.code != ux.ExitError {
+		t.Fatalf("gh must not run without wiring: exit = %d", run.code)
+	}
+	if d := directiveLine(t, run.stderr); !strings.Contains(d.Directive.Instruction, "not how to wire") {
+		t.Errorf("directive = %+v", d.Directive)
+	}
+}
+
+func TestVendorChildEnv_RefusesUnknownPlaceholdersAndTokenlessWiring(t *testing.T) {
+	prof := vendorProfile{EnvSet: map[string]string{"X": "{secret}", "T": "{token}"}}
+	if _, err := vendorChildEnv(nil, prof, "https://a.test", "cit_x"); err == nil {
+		t.Error("an unknown placeholder must be refused")
+	}
+	prof = vendorProfile{EnvSet: map[string]string{"BASE": "{address}"}}
+	if _, err := vendorChildEnv(nil, prof, "https://a.test", "cit_x"); err == nil {
+		t.Error("a wiring that hands over no token must be refused")
+	}
+}

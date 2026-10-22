@@ -132,6 +132,34 @@ var caBundleEnv = []string{
 	"SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS", "GIT_SSL_CAINFO", "AWS_CA_BUNDLE", "CURL_CA_BUNDLE",
 }
 
+// placeholderEnvValue is the value in a served VendorEnv.Set that stands for
+// ghPlaceholderToken.
+const placeholderEnvValue = "{placeholder}"
+
+// VendorEnv is what the agent container gets for one governed vendor, as the
+// deployment serves it (GET /cli-facades `container`, from the vendor's CLI
+// profile).
+type VendorEnv struct {
+	// Set are variables to set: a literal, or placeholderEnvValue.
+	Set map[string]string
+	// Strip are variables removed from the agent's environment.
+	Strip []string
+}
+
+// defaultVendorEnv is the agent environment for a governed vendor whose
+// deployment serves none (a server older than CLI profiles).
+func defaultVendorEnv(vendor string) VendorEnv {
+	if vendor != "github" {
+		return VendorEnv{}
+	}
+	set := map[string]string{"GH_TOKEN": placeholderEnvValue}
+	for _, kv := range gitEnv {
+		k, v, _ := strings.Cut(kv, "=")
+		set[k] = v
+	}
+	return VendorEnv{Set: set}
+}
+
 // gitEnv lets git talk to https://github.com/... through the proxy with no
 // credential helper or URL rewrite: the proxy relays its smart HTTP to the
 // broker with the session's (or the command's) invocation token, so git never
@@ -153,6 +181,9 @@ type ProxyEgress struct {
 	Vendors []string
 	// Tunnel are the agent's tunnel host patterns.
 	Tunnel []string
+	// VendorEnv is the agent environment each governed vendor's tools get,
+	// by vendor; a vendor missing here gets defaultVendorEnv.
+	VendorEnv map[string]VendorEnv
 	// BrokerURL is the broker's base URL as the context names it.
 	BrokerURL string
 	// BrokerPort is the broker URL's port; it must be one of the session's
@@ -197,6 +228,18 @@ func (e *ProxyEgress) Validate(p *Plan) error {
 	for _, v := range append(append([]string{}, e.Vendors...), e.Tunnel...) {
 		if v == "" || strings.ContainsAny(v, ", \t\n") {
 			return fmt.Errorf("invalid egress proxy vendor or tunnel host %q", v)
+		}
+	}
+	for vendor, ve := range e.VendorEnv {
+		for k, v := range ve.Set {
+			if !validEnvName(k) || strings.ContainsAny(v, "\x00\n") || (strings.ContainsAny(v, "{}") && v != placeholderEnvValue) {
+				return fmt.Errorf("invalid agent environment %s=%q for vendor %s", k, v, vendor)
+			}
+		}
+		for _, k := range ve.Strip {
+			if !validEnvName(k) {
+				return fmt.Errorf("invalid agent environment name %q for vendor %s", k, vendor)
+			}
 		}
 	}
 	return nil
@@ -262,13 +305,41 @@ func (e *ProxyEgress) AgentEnv(p *Plan) []string {
 	for _, k := range caBundleEnv {
 		env = append(env, k+"="+ProxyCABundle)
 	}
-	for _, v := range e.Vendors {
-		if v == "github" {
-			env = append(env, "GH_TOKEN="+ghPlaceholderToken)
-			env = append(env, gitEnv...)
+	vendors := append([]string(nil), e.Vendors...)
+	sort.Strings(vendors)
+	for _, v := range vendors {
+		ve, ok := e.VendorEnv[v]
+		if !ok {
+			ve = defaultVendorEnv(v)
+		}
+		keys := make([]string, 0, len(ve.Set))
+		for k := range ve.Set {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			value := ve.Set[k]
+			if value == placeholderEnvValue {
+				value = ghPlaceholderToken
+			}
+			env = append(env, k+"="+value)
 		}
 	}
 	return env
+}
+
+// AgentEnvStrip are the variables the governed vendors' wiring removes from
+// the agent's environment (Session drops them from the options' Env).
+func (e *ProxyEgress) AgentEnvStrip(*Plan) []string {
+	var out []string
+	for _, v := range e.Vendors {
+		ve, ok := e.VendorEnv[v]
+		if !ok {
+			ve = defaultVendorEnv(v)
+		}
+		out = append(out, ve.Strip...)
+	}
+	return out
 }
 
 // AgentMounts implements Egress: the CA volume, read-only.
@@ -328,4 +399,18 @@ func (e *ProxyEgress) PushTokens(ctx context.Context, d Docker, p *Plan, tokens 
 		return fmt.Errorf("hand the session tokens to the egress proxy: %w", err)
 	}
 	return nil
+}
+
+// validEnvName reports whether k is an upper-case environment variable name.
+func validEnvName(k string) bool {
+	if k == "" {
+		return false
+	}
+	for i, r := range k {
+		if r == '_' || (r >= 'A' && r <= 'Z') || (i > 0 && r >= '0' && r <= '9') {
+			continue
+		}
+		return false
+	}
+	return true
 }

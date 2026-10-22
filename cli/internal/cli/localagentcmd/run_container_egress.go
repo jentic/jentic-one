@@ -23,6 +23,7 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/localagent"
 	"github.com/jentic/jentic-one/cli/internal/localagent/container"
+	"github.com/jentic/jentic-one/cli/internal/localagent/egressproxy"
 )
 
 // sessionCommandTitle is the command_title of a container session's tokens:
@@ -30,31 +31,60 @@ import (
 // credentials is recorded under it.
 const sessionCommandTitle = "session"
 
-// governedVendors are the vendors whose CLI facade the deployment serves and
-// the proxy can govern, sorted, and what each one's tools reach through
-// Jentic (GET /cli-facades `protocols`: rest, graphql, git).
-func governedVendors(ctx context.Context, client *control.ClientWithResponses) ([]string, map[string][]string, error) {
+// governedFacades is what GET /cli-facades says about the vendors a session
+// governs: which ones (served and governable by the proxy, sorted), what each
+// one's tools reach through Jentic (rest, graphql, git), the agent
+// environment each one's wiring sets (from its CLI profile; none from a
+// server older than CLI profiles, which leaves the proxy's defaults), and the
+// extra hosts their tools need tunnelled.
+type governedFacades struct {
+	vendors   []string
+	protocols map[string][]string
+	env       map[string]container.VendorEnv
+	tunnel    []string
+}
+
+// governedVendors reads the governed facades from GET /cli-facades. A vendor
+// whose served governed domains do not include the domain the egress proxy
+// governs for it is refused: the proxy would relay hosts the deployment does
+// not expect, or miss ones it does (a CLI and a server of different
+// releases).
+func governedVendors(ctx context.Context, client *control.ClientWithResponses) (governedFacades, error) {
 	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	resp, err := client.ListCliFacadesWithResponse(callCtx)
 	if err != nil {
-		return nil, nil, fmt.Errorf("list the CLI facades: %w", err)
+		return governedFacades{}, fmt.Errorf("list the CLI facades: %w", err)
 	}
 	if resp.JSON200 == nil {
-		return nil, nil, fmt.Errorf("list the CLI facades: %s", problemSummary(resp.StatusCode(), resp.Body))
+		return governedFacades{}, fmt.Errorf("list the CLI facades: %s", problemSummary(resp.StatusCode(), resp.Body))
 	}
-	var vendors []string
-	protocols := map[string][]string{}
+	g := governedFacades{protocols: map[string][]string{}, env: map[string]container.VendorEnv{}}
 	for _, f := range resp.JSON200.Data {
-		if slices.Contains(container.GovernableVendors(), f.Vendor) && !slices.Contains(vendors, f.Vendor) {
-			vendors = append(vendors, f.Vendor)
-			for _, p := range f.Protocols {
-				protocols[f.Vendor] = append(protocols[f.Vendor], string(p))
+		if !slices.Contains(container.GovernableVendors(), f.Vendor) || slices.Contains(g.vendors, f.Vendor) {
+			continue
+		}
+		if f.GovernedDomains != nil && len(*f.GovernedDomains) > 0 {
+			if domain := egressproxy.VendorDomain(f.Vendor); !slices.Contains(*f.GovernedDomains, domain) {
+				return governedFacades{}, fmt.Errorf("this Jentic governs %v for %s, but this jentic CLI's egress proxy governs %s; use matching Jentic and jentic CLI releases",
+					*f.GovernedDomains, f.Vendor, domain)
+			}
+		}
+		g.vendors = append(g.vendors, f.Vendor)
+		for _, p := range f.Protocols {
+			g.protocols[f.Vendor] = append(g.protocols[f.Vendor], string(p))
+		}
+		if c := f.Container; c != nil {
+			g.env[f.Vendor] = container.VendorEnv{Set: c.EnvSet, Strip: c.EnvStrip}
+			for _, h := range c.TunnelHosts {
+				if !slices.Contains(g.tunnel, h) {
+					g.tunnel = append(g.tunnel, h)
+				}
 			}
 		}
 	}
-	sort.Strings(vendors)
-	return vendors, protocols, nil
+	sort.Strings(g.vendors)
+	return g, nil
 }
 
 // protocolLabels are how the egress summary names what a vendor's tools
@@ -264,13 +294,14 @@ func setUpProxyEgress(ctx context.Context, st *clictx.ActiveState, desc localage
 	if err != nil {
 		return nil, err
 	}
-	vendors, protocols, err := governedVendors(ctx, issuer.client)
+	governed, err := governedVendors(ctx, issuer.client)
 	if err != nil {
 		return nil, containerUnavailableErr(
 			fmt.Sprintf("could not learn which vendor CLIs this Jentic governs: %v", err),
 			"Check that Jentic is reachable (jentic doctor), or run with --container-egress none.")
 	}
-	setup := &proxyEgressSetup{protocols: protocols}
+	vendors := governed.vendors
+	setup := &proxyEgressSetup{protocols: governed.protocols}
 	tokens := func() map[string]string { return map[string]string{} }
 	if len(vendors) > 0 {
 		keeper, err := container.MintSessionTokens(ctx, issuer, vendors)
@@ -289,11 +320,22 @@ func setUpProxyEgress(ctx context.Context, st *clictx.ActiveState, desc localage
 	setup.egress = &container.ProxyEgress{
 		Image:      image,
 		Vendors:    vendors,
-		Tunnel:     containerTunnelHosts(desc, getenv),
+		Tunnel:     appendNew(containerTunnelHosts(desc, getenv), governed.tunnel...),
+		VendorEnv:  governed.env,
 		BrokerURL:  strings.TrimRight(brokerURL, "/"),
 		BrokerPort: brokerPort,
 		Nonce:      nonce,
 		Tokens:     tokens,
 	}
 	return setup, nil
+}
+
+// appendNew appends each of more not already in hosts.
+func appendNew(hosts []string, more ...string) []string {
+	for _, h := range more {
+		if !slices.Contains(hosts, h) {
+			hosts = append(hosts, h)
+		}
+	}
+	return hosts
 }
