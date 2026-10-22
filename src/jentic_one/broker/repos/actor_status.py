@@ -96,7 +96,7 @@ class ActorStatusResolver:
     async def is_active(self, *, actor_id: str, actor_type: str) -> bool:
         """``True`` only when the actor row exists and is active."""
         if actor_type == ActorType.AGENT.value:
-            async with self._admin_db.session() as session:
+            async with self._admin_db.read_session() as session:
                 row = (await session.execute(_AGENT_STATUS, {"actor_id": actor_id})).one_or_none()
             if row is None:
                 return False
@@ -111,7 +111,7 @@ class ActorStatusResolver:
     async def authority(self, *, actor_id: str, actor_type: str, permission: str) -> ActorAuthority:
         """The actor's liveness and whether it holds ``permission``, from one query."""
         if actor_type == ActorType.AGENT.value:
-            async with self._admin_db.session() as session:
+            async with self._admin_db.read_session() as session:
                 row = (
                     await session.execute(
                         _AGENT_AUTHORITY, {"actor_id": actor_id, "permission": permission}
@@ -123,7 +123,7 @@ class ActorStatusResolver:
                 log_agent_owner_inactive(actor_id, row.owner_id)
             return ActorAuthority(active=row.status == "active", holds_permission=bool(row.granted))
         if actor_type == ActorType.USER.value:
-            async with self._admin_db.session() as session:
+            async with self._admin_db.read_session() as session:
                 rows = (await session.execute(_USER_AUTHORITY, {"actor_id": actor_id})).all()
             if not rows:
                 return _NONE

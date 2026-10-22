@@ -27,6 +27,7 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.schemas import APIReference
+from tests.harness.db_round_trips import trace_round_trips
 
 pytestmark = pytest.mark.integration
 
@@ -73,8 +74,11 @@ async def test_reader_lists_only_active_registrations(
         control_db, api_vendor="google", catalog_api_id="googleapis.com/drive", is_active=False
     )
 
-    rows = await ConnectableRegistrationReader(control_db).list_active()
+    with trace_round_trips(control_db) as trace:
+        rows = await ConnectableRegistrationReader(control_db).list_active()
 
+    assert len(trace.statements) == 1, trace.statements
+    trace.assert_no_begin_or_rollback()
     assert rows == (
         ConnectableRegistration(
             id=active, api_vendor="google", catalog_api_id="googleapis.com/gmail"

@@ -107,7 +107,10 @@ class InProcessTokenResolver:
             oauth_client_approved=Boolean,
             oauth_grant_active=Boolean,
         )
-        async with self._admin_db.session() as session:
+        # Read-only: the token lookup and optional grant lookup need no shared
+        # snapshot at READ COMMITTED, so autocommit drops the BEGIN/ROLLBACK
+        # round trips (#1942).
+        async with self._admin_db.read_session() as session:
             result = await session.execute(stmt, {"token_hash": token_hash})
             row = result.one_or_none()
 
