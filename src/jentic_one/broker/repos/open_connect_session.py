@@ -43,7 +43,7 @@ class OpenConnectSessionReader:
         self, *, agent_id: str, vendor: str, name: str, version: str
     ) -> str | None:
         """Return the open session's id, or ``None`` when the agent has none for the API."""
-        async with self._control_db.session() as session:
+        async with self._control_db.read_session() as session:
             row = (
                 await session.execute(
                     _OPEN_SESSION_FOR_API,

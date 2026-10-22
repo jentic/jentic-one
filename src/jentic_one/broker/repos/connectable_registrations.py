@@ -34,7 +34,7 @@ class ConnectableRegistrationReader:
 
     async def list_active(self) -> tuple[ConnectableRegistration, ...]:
         """Return every active registration's id, connect key and catalog API."""
-        async with self._control_db.session() as session:
+        async with self._control_db.read_session() as session:
             rows = (await session.execute(_ACTIVE_REGISTRATIONS)).all()
         return tuple(
             ConnectableRegistration(

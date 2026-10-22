@@ -58,7 +58,7 @@ async def read_user_status(admin_db: DatabaseSession, user_id: str) -> UserStatu
     Neither path admits the caller.
     """
     try:
-        async with admin_db.session() as session:
+        async with admin_db.read_session() as session:
             row = (await session.execute(_USER_STATUS, {"user_id": user_id})).one_or_none()
     except (OperationalError, DisconnectionError) as exc:
         raise DatabaseUnavailableError(redact_sql(str(exc))) from exc

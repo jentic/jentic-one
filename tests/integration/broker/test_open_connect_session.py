@@ -39,6 +39,7 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.schemas import APIReference
+from tests.harness.db_round_trips import trace_round_trips
 
 pytestmark = pytest.mark.integration
 
@@ -124,7 +125,11 @@ async def test_reader_finds_a_created_session(
     control_db: DatabaseSession, clean_sessions: None
 ) -> None:
     await _seed_session(control_db, session_id="cs_open_created")
-    assert await _find(control_db) == "cs_open_created"
+    with trace_round_trips(control_db) as trace:
+        found = await _find(control_db)
+    assert found == "cs_open_created"
+    assert len(trace.statements) == 1, trace.statements
+    trace.assert_no_begin_or_rollback()
 
 
 @pytest.mark.parametrize("state", ["polling", "awaiting_app"])
