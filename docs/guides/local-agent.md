@@ -432,7 +432,9 @@ vendors:
         - {name: repo, classification: write, default: true}
 ```
 
-The agent then asks for it, with the rules it needs; the human approves both
+The agent then asks for it, with the rules it needs (or a preset, see
+[CLI profiles](#cli-profiles): `--preset push_branches --preset-param
+repo=octo-org/app --preset-param branches='agent/*'`); the human approves both
 in the browser:
 
 ```bash
@@ -510,6 +512,84 @@ calls. The mounts are read-only and limited to the paths above; a `~/.aws`
 or gcloud dir that is a symlink out of your home, to your home itself or
 into another sensitive dir (`~/.ssh`, …) is refused. Use it on your own
 machine, for testing.
+
+## CLI profiles
+
+Each vendor CLI Jentic governs has a **CLI profile**, a manifest shipped with
+Jentic ([reference](../architecture/cli-profiles.md)). It declares the
+vendor's APIs and where each comes from, how the Broker and the container
+egress proxy route the CLI's calls, the environment `jentic <cli>` and `jentic
+run --container` give the CLI, and rule presets. `jentic cli profiles` lists
+them (`GET /cli-profiles`); `jentic cli list` shows what each served facade
+wires.
+
+The GitHub profile has three APIs, each with its own credential and its own
+rules today:
+
+| API | Source | Connect | Rules |
+| --- | ------ | ------- | ----- |
+| REST (`api.github.com`, `uploads.github.com`) | the public API catalog | `jentic connect github` | path rules |
+| GraphQL (`POST api.github.com/graphql`) | a spec shipped with Jentic | `jentic connect github-graphql` | GraphQL rules |
+| git (clone, fetch, push to `github.com`) | built into the Broker | `jentic connect github-git` | git rules |
+
+### Enabling GitHub end to end
+
+1. Operator: switch the facade on and give the vendor entries your GitHub
+   OAuth app (device flow enabled). `config/local.yaml` ships the `github`,
+   `github-graphql` and `github-git` entries; set each `client_id`:
+
+   ```yaml
+   cli_facades:
+     enabled: true
+     vendors:
+       github: {enabled: true, host: github.jentic.example.com}
+   vendors:
+     entries:
+       github:         {vendor: github.com/api.github.com, ...}
+       github-graphql: {vendor: github.com/github-graphql, ...}
+       github-git:     {vendor: github.com/github-git, ...}
+   ```
+
+2. Operator (optional): put the APIs in place before any agent connects. The
+   REST import runs as a job; the GraphQL spec is live at once; git needs
+   nothing:
+
+   ```bash
+   jentic admin cli-profiles provision github
+   ```
+
+   Without this, the first connect for any of the three provisions the whole
+   profile on demand.
+
+3. Agent: ask for each API with a preset; the human approves each in the
+   browser and sees the concrete rules:
+
+   ```bash
+   jentic connect github --preset read_and_prs --wait
+   jentic connect github-graphql --preset read_and_prs --wait
+   jentic connect github-git --preset push_branches \
+     --preset-param repo=octo-org/app --preset-param branches='agent/*' --wait
+   ```
+
+4. Agent: run the tools: `jentic cli run gh -- pr list` on the agent's machine
+   (host-mode facade), or `gh`, `git` and `curl` as usual inside `jentic run
+   --container`.
+
+Presets expand server-side into rules of the API's own kind, so each connect
+asks only for the parameters its API uses (`repo` for git, nothing for REST
+and GraphQL):
+
+| Preset | REST | GraphQL | git |
+| ------ | ---- | ------- | --- |
+| `read_only` | `GET` everything | every query, no mutation | `fetch:<repo>` |
+| `read_and_prs` | `GET` everything, open PRs, comment | queries, PR mutations; other mutations held | `fetch:<repo>` |
+| `push_branches` | | | `push:<repo>:refs/heads/<branches>`; `force:` too with `--preset-param force=true` |
+
+`--preset-param repo=` takes comma-separated `<owner>/<repo>` globs; repeating
+the flag adds to the list. A preset's rules come after any `--rules` the agent
+lists itself. The hard-deny lists (GraphQL mutations that grant access or
+change protections, refs outside `refs/heads/` and `refs/tags/`) apply under
+every preset.
 
 ## Where state lives
 
