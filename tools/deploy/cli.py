@@ -197,6 +197,7 @@ def smoke(mode: str, obs: bool) -> None:
         # the test runner (kind host port). These match the deploy fixture
         # defaults, but are exported explicitly so non-default clusters work too.
         "UPSTREAM_INCLUSTER_URL": "http://jentic-smoke-upstream:8084",
+        "UPSTREAM_INCLUSTER_TLS_URL": "https://jentic-smoke-upstream:8443",
         "UPSTREAM_DIRECT_URL": "http://localhost:8084",
     }
     run("uv", "run", "pytest", "tests/smoke/", "-m", "smoke", "--no-cov", env=env)
