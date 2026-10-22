@@ -20,7 +20,6 @@ import hashlib
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from functools import partialmethod
 from pathlib import Path
 
 import pytest
@@ -47,7 +46,6 @@ from jentic_one.admin.repos import (
 from jentic_one.admin.services import AuthService, UserService
 from jentic_one.admin.services._support.passwords import hash_password
 from jentic_one.admin.services.errors import ConflictError, InvalidCredentialsError
-from jentic_one.admin.services.event_stream_service import EventStreamService
 from jentic_one.admin.services.schemas.auth import LoginPayload
 from jentic_one.auth.services.errors import InvalidGrantError
 from jentic_one.auth.services.token_service import TokenService
@@ -61,6 +59,7 @@ from jentic_one.shared.auth.verify import verify_token
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorStatus, ActorType, InviteState
+from tests.harness.event_stream import StreamProbe
 
 pytestmark = pytest.mark.integration
 
@@ -525,24 +524,20 @@ async def test_admin_db_unavailable_is_503_on_mcp_mount(
 
 
 async def test_open_event_stream_ends_when_user_disabled(
-    integration_context: Context, actors: _Actors, monkeypatch: pytest.MonkeyPatch
+    integration_context: Context, actors: _Actors, fast_stream: StreamProbe
 ) -> None:
     """An open ``/events/stream`` re-verifies its credential, so disabling the user
     ends the stream instead of letting it run on indefinitely."""
     ctx = integration_context
-    monkeypatch.setattr(ctx.config.admin.events, "stream_recheck_seconds", 0.01)
-    monkeypatch.setattr(
-        EventStreamService,
-        "stream",
-        partialmethod(EventStreamService.stream, poll_interval_seconds=0.05),
-    )
     token = await _login(ctx)
 
     async with _client(ctx, _FULL) as client:
         # The ASGI transport returns once the response body ends, so the request
         # only completes if the stream closes itself.
         request = asyncio.create_task(_get(client, "/events/stream", token))
-        await asyncio.sleep(0.3)
+        # Disable only once the first heartbeat has passed a recheck and gone
+        # out; disabling sooner races that recheck and ends the stream empty.
+        await fast_stream.wait_for_items(2)
         assert not request.done(), "the stream must stay open while the user is active"
         with structlog.testing.capture_logs() as logs:
             await UserService(ctx).disable(actors.user_id, identity=_operator(actors))
