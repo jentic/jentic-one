@@ -2380,6 +2380,7 @@ def test_db_connection_tunables_default_and_env_override(
     """Pre-ping, pool recycle and TCP keepalive are per-database ``databases.*`` settings."""
     default = load_config(config_file).databases.registry
     assert default.pool_pre_ping is True
+    assert default.pool_pre_ping_idle_s == config_module.POOL_PRE_PING_IDLE_S == 1.0
     assert default.pool_recycle_s == config_module.POOL_RECYCLE_S == 1800
     assert default.tcp_keepalive is True
     assert default.tcp_keepalive_idle_s == config_module.TCP_KEEPALIVE_IDLE_S == 60
@@ -2387,8 +2388,10 @@ def test_db_connection_tunables_default_and_env_override(
     assert default.tcp_keepalive_count == config_module.TCP_KEEPALIVE_COUNT == 5
     env = {
         "JENTIC__DATABASES__REGISTRY__POOL_PRE_PING": "false",
+        "JENTIC__DATABASES__REGISTRY__POOL_PRE_PING_IDLE_S": "0",
         "JENTIC__DATABASES__REGISTRY__POOL_RECYCLE_S": "0",
         "JENTIC__DATABASES__REGISTRY__TCP_KEEPALIVE": "false",
+        "JENTIC__DATABASES__CONTROL__POOL_PRE_PING_IDLE_S": "2.5",
         "JENTIC__DATABASES__CONTROL__TCP_KEEPALIVE_IDLE_S": "30",
         "JENTIC__DATABASES__CONTROL__TCP_KEEPALIVE_INTERVAL_S": "3",
         "JENTIC__DATABASES__CONTROL__TCP_KEEPALIVE_COUNT": "9",
@@ -2396,26 +2399,36 @@ def test_db_connection_tunables_default_and_env_override(
     with patch.dict(os.environ, env, clear=False):
         config = load_config(config_file)
     assert config.databases.registry.pool_pre_ping is False
+    assert config.databases.registry.pool_pre_ping_idle_s == 0.0
     assert config.databases.registry.pool_recycle_s == 0
     assert config.databases.registry.tcp_keepalive is False
     control = config.databases.control
     assert control.pool_pre_ping is True
+    assert control.pool_pre_ping_idle_s == 2.5
     assert (control.tcp_keepalive_idle_s, control.tcp_keepalive_interval_s) == (30, 3)
     assert control.tcp_keepalive_count == 9
+    assert config.databases.admin.pool_pre_ping_idle_s == 1.0
     assert config.databases.admin.tcp_keepalive_idle_s == 60
 
     doc = copy.deepcopy(sample_config_dict)
     doc["databases"]["admin"]["pool_pre_ping"] = False
+    doc["databases"]["admin"]["pool_pre_ping_idle_s"] = 4.0
     from_yaml = tmp_path / "no-pre-ping.yaml"
     from_yaml.write_text(yaml.dump(doc))
     databases = load_config(from_yaml).databases
     assert databases.admin.pool_pre_ping is False
+    assert databases.admin.pool_pre_ping_idle_s == 4.0
     assert databases.registry.pool_pre_ping is True
+    assert databases.registry.pool_pre_ping_idle_s == 1.0
 
 
 @pytest.mark.parametrize(
     ("key", "value"),
     [
+        ("POOL_PRE_PING_IDLE_S", "-0.1"),
+        ("POOL_PRE_PING_IDLE_S", "inf"),
+        ("POOL_PRE_PING_IDLE_S", "-inf"),
+        ("POOL_PRE_PING_IDLE_S", "nan"),
         ("POOL_RECYCLE_S", "-1"),
         ("TCP_KEEPALIVE_IDLE_S", "0"),
         ("TCP_KEEPALIVE_IDLE_S", "32768"),

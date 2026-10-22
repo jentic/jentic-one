@@ -889,15 +889,25 @@ type DatabaseConfig struct {
 	// Maximum connections in the PostgreSQL connection pool (ignored for SQLite).
 	PoolMax int `json:"pool_max" yaml:"pool_max" mapstructure:"pool_max"`
 
-	// PostgreSQL: test each pooled connection on checkout and transparently replace a
-	// dead one. On asyncpg the ping costs three round trips (``BEGIN``, ``;``,
-	// ``ROLLBACK``) per checkout. With ``false``, ``pool_recycle_s`` and TCP
-	// keepalive do not cover a Postgres restart or failover, a pooler/proxy restart,
-	// or a terminated backend: after such an event the first request on each pool per
-	// process can fail with an HTTP 503 (work run through the retrying transaction
-	// helper is re-run on a fresh connection instead). Only disable it where those
-	// events are rare and that error is acceptable. Ignored for SQLite.
+	// PostgreSQL: test pooled connections on checkout and transparently replace a
+	// dead one. By default the wire ping (three round trips on asyncpg: ``BEGIN``,
+	// ``;``, ``ROLLBACK``) runs only when the connection has sat idle in the pool for
+	// at least ``pool_pre_ping_idle_s`` seconds; active checkouts within that window
+	// skip the wire ping unless the driver connection is already closed. With
+	// ``false``, ``pool_recycle_s`` and TCP keepalive do not cover a Postgres restart
+	// or failover, a pooler/proxy restart, or a terminated backend: after such an
+	// event the first request on each pool per process can fail with an HTTP 503
+	// (work run through the retrying transaction helper is re-run on a fresh
+	// connection instead). Only disable it where those events are rare and that error
+	// is acceptable. Ignored for SQLite.
 	PoolPrePing bool `json:"pool_pre_ping" yaml:"pool_pre_ping" mapstructure:"pool_pre_ping"`
+
+	// PostgreSQL: seconds a connection must sit idle in the pool before checkout runs
+	// the ``pool_pre_ping`` wire check. Active checkouts returning within this window
+	// skip the wire ping unless the driver connection is already closed. ``0`` pings
+	// on every checkout. Only applies when ``pool_pre_ping`` is ``true``. Ignored for
+	// SQLite.
+	PoolPrePingIdleS float64 `json:"pool_pre_ping_idle_s" yaml:"pool_pre_ping_idle_s" mapstructure:"pool_pre_ping_idle_s"`
 
 	// PostgreSQL: replace a pooled connection once it is this many seconds old, on
 	// its next checkout, so a connection silently dropped by a middlebox or left
@@ -1006,6 +1016,12 @@ func (j *DatabaseConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["pool_pre_ping"]; !ok || v == nil {
 		plain.PoolPrePing = true
+	}
+	if v, ok := raw["pool_pre_ping_idle_s"]; !ok || v == nil {
+		plain.PoolPrePingIdleS = 1.0
+	}
+	if 0 > plain.PoolPrePingIdleS {
+		return fmt.Errorf("field %s: must be >= %v", "pool_pre_ping_idle_s", 0)
 	}
 	if v, ok := raw["pool_recycle_s"]; !ok || v == nil {
 		plain.PoolRecycleS = 1800

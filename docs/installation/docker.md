@@ -140,17 +140,20 @@ the app and broker containers open all three pools — the example above holds
 your instance's `max_connections` (managed-PG entry tiers are often ~100) or
 front Postgres with a pooler like pgbouncer.
 
-**Connection health checks:** by default every pool checkout pings the
-connection (`pool_pre_ping: true`) and transparently replaces one that died
-while idle, pooled connections are recycled once they are 30 minutes old
-(`pool_recycle_s: 1800`), and TCP keepalive is enabled on every connection.
-On asyncpg the ping costs three round trips (`BEGIN`, `;`, `ROLLBACK`) per
-checkout. Latency-sensitive deployments can set `pool_pre_ping: false` per
-database to save them; keep `pool_recycle_s` below the shortest idle timeout
-on the path (Postgres `idle_session_timeout`, pgbouncer/proxy, cloud NAT or
-load balancer) so connections are retired before anything in between drops
-them, lowering it from the default if any of those cut off sooner.
-`pool_recycle_s: 0` disables recycling. Both are ignored for SQLite.
+**Connection health checks:** by default a pool checkout pings the
+connection (`pool_pre_ping: true`) once it has sat idle in the pool for at
+least `pool_pre_ping_idle_s: 1.0` seconds (active checkouts within that
+window skip the wire ping unless the driver connection is already closed)
+and transparently replaces one that died while idle, pooled connections are
+recycled once they are 30 minutes old (`pool_recycle_s: 1800`), and TCP
+keepalive is enabled on every connection. On asyncpg the ping costs three
+round trips (`BEGIN`, `;`, `ROLLBACK`) when it runs; setting
+`pool_pre_ping_idle_s: 0` pings on every checkout, and `pool_pre_ping: false`
+disables pre-ping altogether. Keep `pool_recycle_s` below the shortest idle
+timeout on the path (Postgres `idle_session_timeout`, pgbouncer/proxy, cloud
+NAT or load balancer) so connections are retired before anything in between
+drops them, lowering it from the default if any of those cut off sooner.
+`pool_recycle_s: 0` disables recycling. All three are ignored for SQLite.
 
 Recycling and keepalive do **not** cover a Postgres restart or failover
 (including managed-Postgres maintenance), a pgbouncer/proxy restart, or a
