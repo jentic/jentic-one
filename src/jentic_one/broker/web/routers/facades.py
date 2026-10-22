@@ -74,8 +74,8 @@ from jentic_one.broker.core.facades import (
     GITHUB_GRAPHQL_PATH,
     GITHUB_META_BODY,
     GITHUB_META_PATH,
+    GITHUB_PREFIX_FACADES,
     GITHUB_REST_FACADE,
-    GITHUB_UPLOADS_FACADE,
     PROXY_FACADE_PREFIX,
     cloudflare_error_body,
     facade_error_message,
@@ -322,15 +322,6 @@ async def github_facade_meta(
     return JSONResponse(dict(GITHUB_META_BODY))
 
 
-@github_router.api_route(GITHUB_GRAPHQL_PATH, methods=_FACADE_METHODS, include_in_schema=False)
-@github_router.api_route(
-    f"{GITHUB_REST_FACADE.prefix}/{{path:path}}", methods=_FACADE_METHODS, include_in_schema=False
-)
-@github_router.api_route(
-    f"{GITHUB_UPLOADS_FACADE.prefix}/{{path:path}}",
-    methods=_FACADE_METHODS,
-    include_in_schema=False,
-)
 async def github_facade(
     request: Request,
     credential_deriver: CredentialDeriver,
@@ -379,6 +370,22 @@ async def github_facade(
 #: factory includes it with the forward proxy's, ahead of it: on the facade
 #: host it answers GitHub's 404 instead of the request being read as a
 #: proxied URL; on any other host it never matches.
+
+
+# The GitHub layout's routes, from the GitHub CLI profile: GraphQL at its exact
+# path, then each prefix route (REST, uploads).
+github_router.add_api_route(
+    GITHUB_GRAPHQL_PATH, github_facade, methods=_FACADE_METHODS, include_in_schema=False
+)
+for _facade in GITHUB_PREFIX_FACADES:
+    github_router.add_api_route(
+        f"{_facade.prefix}/{{path:path}}",
+        github_facade,
+        methods=_FACADE_METHODS,
+        include_in_schema=False,
+    )
+
+
 github_not_found_router = APIRouter(route_class=GitHubFacadeRoute)
 
 

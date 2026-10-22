@@ -38,6 +38,7 @@ from urllib.parse import unquote, urlsplit
 from jentic_one.broker.core.git_protocol import is_github_git_path
 from jentic_one.broker.core.proxy_headers import reconstruct_upstream_url
 from jentic_one.shared.cli_facades import FACADE_PATH_PREFIX, facade_path_prefix
+from jentic_one.shared.cli_profiles import ApiRole, CliProfile, load_profiles, profile_for_vendor
 from jentic_one.shared.models.api_identity import slugify_api_field
 
 
@@ -55,12 +56,36 @@ class PathFacade:
     upstream_base: str
 
 
-#: Cloudflare (``cf``): ``CLOUDFLARE_API_BASE_URL=<broker>/_facade/cloudflare``.
-CLOUDFLARE_FACADE = PathFacade(
-    vendor="cloudflare",
-    prefix=facade_path_prefix("cloudflare"),
-    upstream_base="https://api.cloudflare.com/client/v4",
-)
+def _profile(vendor: str) -> CliProfile:
+    profile = profile_for_vendor(vendor)
+    if profile is None:
+        raise RuntimeError(f"no shipped CLI profile for the {vendor!r} facade")
+    return profile
+
+
+def _prefix_facades(vendor: str) -> tuple[PathFacade, ...]:
+    """The vendor profile's prefix routes, in manifest order, as :class:`PathFacade` values.
+
+    A ``path``-mode route's prefix is below the facade's own
+    ``/_facade/<vendor>`` (``/`` is that root); a ``host``-mode route's is the
+    request path itself.
+    """
+    profile = _profile(vendor)
+    base = facade_path_prefix(vendor) if profile.routing.facade.mode == "path" else ""
+    return tuple(
+        PathFacade(
+            vendor=vendor,
+            prefix=f"{base}{'' if route.prefix == '/' else route.prefix}",
+            upstream_base=route.upstream,
+        )
+        for route in profile.routing.facade.routes
+        if route.prefix is not None
+    )
+
+
+#: Cloudflare (``cf``): ``CLOUDFLARE_API_BASE_URL=<broker>/_facade/cloudflare``,
+#: from the Cloudflare CLI profile's facade route.
+(CLOUDFLARE_FACADE,) = _prefix_facades("cloudflare")
 
 
 def facade_upstream_url(scope: Mapping[str, Any], facade: PathFacade) -> str | None:
@@ -106,15 +131,18 @@ def _has_dot_segment(path: str) -> bool:
 #: The vendor-neutral proxy route: ``/_facade/proxy/<full upstream URL>``.
 PROXY_FACADE_PREFIX = facade_path_prefix("proxy")
 
+#: Proxy-route vendors with no CLI profile yet: AWS tokens reach the
+#: ``amazonaws.com`` APIs (the egress proxy governs AWS SDK calls).
+_PROFILELESS_PROXY_VENDORS: Mapping[str, frozenset[str]] = {"aws": frozenset({"amazonaws.com"})}
+
 #: The vendor domains each invocation-token vendor covers at the proxy route,
 #: compared with an API's vendor in the registry's slug form (``github.com``
-#: is stored as ``github-com``). A token vendor missing here reaches no API
-#: through it.
+#: is stored as ``github-com``): each CLI profile's ``vendor.registry_domains``.
+#: A token vendor missing here reaches no API through it.
 PROXY_API_VENDORS: Mapping[str, frozenset[str]] = MappingProxyType(
     {
-        "github": frozenset({"github.com"}),
-        "cloudflare": frozenset({"cloudflare.com"}),
-        "aws": frozenset({"amazonaws.com"}),
+        **{p.vendor.id: frozenset(p.vendor.registry_domains) for p in load_profiles().values()},
+        **_PROFILELESS_PROXY_VENDORS,
     }
 )
 
@@ -147,9 +175,15 @@ def proxy_upstream_url(scope: Mapping[str, Any]) -> str | None:
 
 
 #: The hosts whose proxy-route errors take a vendor's error shape: the domain
-#: and every host below it. A host under none keeps RFC 9457 Problem Details.
+#: and every host below it, for each CLI profile with an ``error_shape``. A
+#: host under none keeps RFC 9457 Problem Details.
 PROXY_ERROR_SHAPE_DOMAINS: Mapping[str, str] = MappingProxyType(
-    {"github.com": "github", "cloudflare.com": "cloudflare"}
+    {
+        domain: p.vendor.error_shape
+        for p in load_profiles().values()
+        if p.vendor.error_shape is not None
+        for domain in p.vendor.registry_domains
+    }
 )
 
 
@@ -202,19 +236,24 @@ def api_vendor_matches(token_vendor: str, api_vendor: str) -> bool:
 
 # ── GitHub (host mode) ───────────────────────────────────────────────────────
 
-#: The GitHub REST API: ``https://<facade host>/api/v3/<rest>``.
-GITHUB_REST_FACADE = PathFacade(
-    vendor="github", prefix="/api/v3", upstream_base="https://api.github.com"
-)
+#: The GitHub facade's prefix routes, from the GitHub CLI profile: the REST
+#: API (``https://<facade host>/api/v3/<rest>``) first, then release asset
+#: uploads (``https://<facade host>/api/uploads/<rest>``).
+GITHUB_PREFIX_FACADES: tuple[PathFacade, ...] = _prefix_facades("github")
+GITHUB_REST_FACADE, GITHUB_UPLOADS_FACADE = GITHUB_PREFIX_FACADES
 
-#: Release asset uploads: ``https://<facade host>/api/uploads/<rest>``.
-GITHUB_UPLOADS_FACADE = PathFacade(
-    vendor="github", prefix="/api/uploads", upstream_base="https://uploads.github.com"
-)
+
+def _graphql_route() -> tuple[str, str]:
+    profile = _profile("github")
+    route = next(
+        r for r in profile.routing.facade.routes if r.api == ApiRole.GRAPHQL and r.path is not None
+    )
+    assert route.path is not None
+    return route.path, route.upstream
+
 
 #: The GitHub GraphQL endpoint, served at exactly :data:`GITHUB_GRAPHQL_PATH`.
-GITHUB_GRAPHQL_PATH = "/api/graphql"
-GITHUB_GRAPHQL_UPSTREAM = "https://api.github.com/graphql"
+GITHUB_GRAPHQL_PATH, GITHUB_GRAPHQL_UPSTREAM = _graphql_route()
 
 #: ``GET /api/v3/meta``, which ``gh`` reads to detect the Enterprise Server
 #: version. The facade answers it itself (see :data:`GITHUB_META_BODY`).
@@ -243,7 +282,7 @@ def github_upstream_url(scope: Mapping[str, Any]) -> str | None:
     raw_path = _raw_path(scope)
     if raw_path == GITHUB_GRAPHQL_PATH:
         return _with_query(GITHUB_GRAPHQL_UPSTREAM, scope)
-    for facade in (GITHUB_REST_FACADE, GITHUB_UPLOADS_FACADE):
+    for facade in GITHUB_PREFIX_FACADES:
         if raw_path.startswith(f"{facade.prefix}/"):
             return facade_upstream_url(scope, facade)
     return None
@@ -273,9 +312,9 @@ def is_facade_host(host_header: str | None, facade_host: str | None) -> bool:
     return request_host(host_header) == facade_host.lower()
 
 
-_GITHUB_ORIGINS: tuple[tuple[str, str], ...] = (
-    ("api.github.com", GITHUB_REST_FACADE.prefix),
-    ("uploads.github.com", GITHUB_UPLOADS_FACADE.prefix),
+_GITHUB_ORIGINS: tuple[tuple[str, str], ...] = tuple(
+    (urlsplit(facade.upstream_base).hostname or "", facade.prefix)
+    for facade in GITHUB_PREFIX_FACADES
 )
 
 
@@ -523,6 +562,7 @@ __all__ = [
     "GITHUB_GRAPHQL_UPSTREAM",
     "GITHUB_META_BODY",
     "GITHUB_META_PATH",
+    "GITHUB_PREFIX_FACADES",
     "GITHUB_RESPONSE_HEADERS",
     "GITHUB_REST_FACADE",
     "GITHUB_UPLOADS_FACADE",
