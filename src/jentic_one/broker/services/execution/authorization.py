@@ -482,6 +482,11 @@ async def authorize_execution(
     )
     allowed_credential_ids = [bc.credential_id for bc in derivation.credentials]
     rule_set_ids = {bc.credential_id: bc.rule_set_id for bc in derivation.credentials}
+    candidate_headers = (
+        [bc.header for bc in derivation.credentials if bc.header is not None]
+        if all(bc.header is not None for bc in derivation.credentials)
+        else None
+    )
     selected_credential = await CredentialService(ctx).select(
         api_vendor=api.vendor,
         api_name=api.name,
@@ -490,6 +495,7 @@ async def authorize_execution(
         credential_name=credential_name,
         credential_id=credential_id,
         allowed_credential_ids=allowed_credential_ids,
+        candidate_headers=candidate_headers,
         request_server_variables=request_server_variables,
         server_variables_unresolved=server_variables_unresolved,
         method=method,

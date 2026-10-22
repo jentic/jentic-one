@@ -22,6 +22,7 @@ from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.shared.broker.protocols import CredentialDeriverProtocol
 from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.db.session import DatabaseSession
+from tests.harness.db_round_trips import trace_round_trips
 
 pytestmark = pytest.mark.integration
 
@@ -291,3 +292,54 @@ async def test_wildcard_credential_covers(
     )
 
     assert [bc.credential_id for bc in result.credentials] == [cred_id]
+
+
+async def test_derive_credentials_populates_header_and_runs_in_autocommit(
+    admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
+) -> None:
+    """Pins #1943: ``derive_credentials`` runs in ``read_session()`` (no BEGIN/ROLLBACK)
+    and populates ``BoundCredential.header`` with the covering credential's metadata."""
+    credential = Credential(
+        type="API_KEY",
+        name="acme-eu",
+        api_vendor="acme.com",
+        api_name="pets-api",
+        api_version="v1",
+        provider="static",
+        provider_account_ref="acct-eu",
+        server_variables={"region": "eu"},
+        created_by="usr_owner",
+        active=True,
+    )
+    async with control_db.session() as session:
+        session.add(credential)
+        await session.commit()
+        cred_id = credential.id
+    agent_id = await _seed_agent(admin_db)
+    await _bind(admin_db, agent_id=agent_id, credential_id=cred_id, rule_set_id="prs_01")
+
+    resolver = CredentialBindingResolver(admin_db, control_db)
+    with trace_round_trips(admin_db) as admin_trace, trace_round_trips(control_db) as control_trace:
+        result = await resolver.derive_credentials(
+            agent_id=agent_id, vendor="acme.com", name="pets-api", version="v1"
+        )
+
+    assert len(admin_trace.statements) == 1
+    assert len(control_trace.statements) == 1
+    admin_trace.assert_no_begin_or_rollback()
+    control_trace.assert_no_begin_or_rollback()
+
+    assert len(result.credentials) == 1
+    header = result.credentials[0].header
+    assert header is not None
+    assert header.id == cred_id
+    assert header.type == "API_KEY"
+    assert header.name == "acme-eu"
+    assert header.api_vendor == "acme.com"
+    assert header.api_name == "pets-api"
+    assert header.api_version == "v1"
+    assert header.provider == "static"
+    assert header.provider_account_ref == "acct-eu"
+    assert header.server_variables == {"region": "eu"}
+    assert header.created_by == "usr_owner"
+    assert header.created_at is not None

@@ -13,10 +13,17 @@ Python rather than via a cross-schema JOIN.
 
 from __future__ import annotations
 
+import json
+from collections.abc import Mapping
+from datetime import UTC, datetime
+from typing import Any
+
 from sqlalchemy import bindparam, text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.shared.broker.protocols import (
     BoundCredential,
+    BoundCredentialHeader,
     CredentialDerivation,
     IdentityMismatch,
 )
@@ -45,6 +52,10 @@ _AGENT_CREDENTIALS = text(
 # resolver
 # (broker/services/credentials/resolver) cannot drift apart.
 #
+# Selects the non-secret header columns alongside ``c.id`` so downstream
+# selection (``CredentialService.select`` / ``CredentialResolver.resolve``)
+# can disambiguate candidates without querying ``credentials`` a second time.
+#
 # ``c.active`` is filtered here (unlike the deleted pre-6b toolkit-path
 # matcher, which deferred
 # the active check to injection): a disabled credential must not surface as a
@@ -55,7 +66,10 @@ _AGENT_CREDENTIALS = text(
 # flow completes), and the schema contract (core/schema/credentials.py)
 # promises broker resolution skips non-``connected`` rows.
 _COVERING_CREDENTIALS = text(
-    f"SELECT c.id FROM credentials c "
+    "SELECT c.id, c.type, c.name, c.api_vendor, c.api_name, c.api_version, "
+    "c.provider, c.provider_account_ref, c.server_variables, "
+    "c.created_at, c.created_by "
+    f"FROM credentials c "
     f"WHERE {credential_coverage_where()} AND c.active AND c.state = 'connected'"
 )
 
@@ -95,6 +109,53 @@ def _axes_matched(scope: CredentialScope, *, vendor: str, name: str, version: st
     )
 
 
+def _coerce_server_variables(value: object) -> dict[str, str] | None:
+    """Coerce a raw-SQL ``server_variables`` column value into a string dict."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return None
+    if isinstance(value, Mapping):
+        return {str(k): str(v) for k, v in value.items()}
+    return None
+
+
+def _coerce_datetime(value: object) -> datetime | None:
+    """Coerce a raw-SQL timestamp column value into a timezone-aware UTC datetime."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    if isinstance(value, str):
+        try:
+            dt = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+    return None
+
+
+def _to_header(row: Any) -> BoundCredentialHeader:
+    """Build a :class:`BoundCredentialHeader` from a ``_COVERING_CREDENTIALS`` row."""
+    return BoundCredentialHeader(
+        id=row.id,
+        type=row.type,
+        name=row.name,
+        api_vendor=row.api_vendor,
+        api_name=row.api_name,
+        api_version=row.api_version,
+        provider=row.provider,
+        provider_account_ref=row.provider_account_ref,
+        active=True,
+        server_variables=_coerce_server_variables(row.server_variables),
+        created_at=_coerce_datetime(row.created_at),
+        created_by=row.created_by,
+    )
+
+
 class CredentialBindingResolver:
     """Derives an agent's directly-bound credentials for an API identity.
 
@@ -119,44 +180,49 @@ class CredentialBindingResolver:
         identity. The suspension check costs a query only on the empty-set
         path, and only when the agent holds a suspended binding.
         """
-        async with self._admin_db.session() as session:
+        async with self._admin_db.read_session() as session:
             binding_rows = (await session.execute(_AGENT_CREDENTIALS, {"agent_id": agent_id})).all()
         rule_sets: dict[str, str | None] = {row[0]: row[1] for row in binding_rows if not row[2]}
         suspended_ids = {row[0] for row in binding_rows if row[2]}
 
-        async with self._control_db.session() as session:
+        async with self._control_db.read_session() as session:
             covering_rows = (
                 await session.execute(
                     _COVERING_CREDENTIALS,
                     {"vendor": vendor, "name": name, "version": version},
                 )
             ).all()
-        covering_ids = {row[0] for row in covering_rows}
+            covering_by_id = {row.id: row for row in covering_rows}
+            covering_ids = set(covering_by_id)
 
-        # Sorted for a deterministic, cache-stable candidate order.
-        candidates = tuple(
-            BoundCredential(credential_id=cid, rule_set_id=rule_sets[cid])
-            for cid in sorted(rule_sets.keys() & covering_ids)
-        )
-
-        # Nearest-miss diagnostic only when nothing covers the API at all: if a
-        # credential covers it (``covering_ids``), the recovery is "bind to it"
-        # (an operator grant), not "fix your credential", so a mismatch
-        # would send the wrong signal. Requires the agent to be bound to
-        # something (else it is a plain no-binding case).
-        mismatch: IdentityMismatch | None = None
-        if not candidates and rule_sets and not covering_ids:
-            mismatch = await self._nearest_miss(
-                set(rule_sets.keys()), vendor=vendor, name=name, version=version
+            # Sorted for a deterministic, cache-stable candidate order.
+            candidates = tuple(
+                BoundCredential(
+                    credential_id=cid,
+                    rule_set_id=rule_sets[cid],
+                    header=_to_header(covering_by_id[cid]),
+                )
+                for cid in sorted(rule_sets.keys() & covering_ids)
             )
 
-        # Denial path only: a suspended binding covering the API is the
-        # operator's cut-off, so the denial must not read as "connect one".
-        binding_suspended = False
-        if not candidates and suspended_ids:
-            binding_suspended = await self._suspended_covers(
-                suspended_ids, vendor=vendor, name=name, version=version
-            )
+            # Nearest-miss diagnostic only when nothing covers the API at all: if a
+            # credential covers it (``covering_ids``), the recovery is "bind to it"
+            # (an operator grant), not "fix your credential", so a mismatch
+            # would send the wrong signal. Requires the agent to be bound to
+            # something (else it is a plain no-binding case).
+            mismatch: IdentityMismatch | None = None
+            if not candidates and rule_sets and not covering_ids:
+                mismatch = await self._nearest_miss(
+                    session, set(rule_sets.keys()), vendor=vendor, name=name, version=version
+                )
+
+            # Denial path only: a suspended binding covering the API is the
+            # operator's cut-off, so the denial must not read as "connect one".
+            binding_suspended = False
+            if not candidates and suspended_ids:
+                binding_suspended = await self._suspended_covers(
+                    session, suspended_ids, vendor=vendor, name=name, version=version
+                )
 
         return CredentialDerivation(
             credentials=candidates,
@@ -167,25 +233,36 @@ class CredentialBindingResolver:
         )
 
     async def _suspended_covers(
-        self, suspended_ids: set[str], *, vendor: str, name: str, version: str
+        self,
+        session: AsyncSession,
+        suspended_ids: set[str],
+        *,
+        vendor: str,
+        name: str,
+        version: str,
     ) -> bool:
         """Whether any suspended-binding credential's stored identity covers the API."""
-        async with self._control_db.session() as session:
-            row = (
-                await session.execute(
-                    _SUSPENDED_COVERING,
-                    {
-                        "credential_ids": sorted(suspended_ids),
-                        "vendor": vendor,
-                        "name": name,
-                        "version": version,
-                    },
-                )
-            ).first()
+        row = (
+            await session.execute(
+                _SUSPENDED_COVERING,
+                {
+                    "credential_ids": sorted(suspended_ids),
+                    "vendor": vendor,
+                    "name": name,
+                    "version": version,
+                },
+            )
+        ).first()
         return row is not None
 
     async def _nearest_miss(
-        self, bound_credential_ids: set[str], *, vendor: str, name: str, version: str
+        self,
+        session: AsyncSession,
+        bound_credential_ids: set[str],
+        *,
+        vendor: str,
+        name: str,
+        version: str,
     ) -> IdentityMismatch | None:
         """Find the closest bound-credential identity that fails to cover the API.
 
@@ -198,13 +275,12 @@ class CredentialBindingResolver:
         among gated candidates ``would_match_if_normalized`` wins, then the most
         axes matching the operation.
         """
-        async with self._control_db.session() as session:
-            rows = (
-                await session.execute(
-                    _CREDENTIAL_IDENTITIES,
-                    {"credential_ids": sorted(bound_credential_ids)},
-                )
-            ).all()
+        rows = (
+            await session.execute(
+                _CREDENTIAL_IDENTITIES,
+                {"credential_ids": sorted(bound_credential_ids)},
+            )
+        ).all()
         if not rows:
             return None
 

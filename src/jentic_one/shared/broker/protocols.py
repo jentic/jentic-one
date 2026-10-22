@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
@@ -180,16 +182,41 @@ class IdentityMismatch:
 
 
 @dataclass(frozen=True, slots=True)
+class BoundCredentialHeader:
+    """Non-secret header columns of an active, connected covering credential.
+
+    Populated by ``CredentialBindingResolver`` alongside :class:`BoundCredential`
+    so credential selection can disambiguate candidates without a second
+    ``SELECT … FROM credentials`` round trip on ``control_db``.
+    """
+
+    id: str
+    type: str
+    name: str
+    api_vendor: str
+    api_name: str | None = None
+    api_version: str | None = None
+    provider: str = "static"
+    provider_account_ref: str | None = None
+    active: bool = True
+    server_variables: Mapping[str, str] | None = None
+    created_at: datetime | None = None
+    created_by: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class BoundCredential:
     """One direct agent→credential binding candidate for an API identity.
 
     Carries the binding's ``rule_set_id`` alongside the credential id so the
     rule evaluator can honour an attached shared rule set without a second
-    admin-DB round-trip after credential selection.
+    admin-DB round-trip after credential selection, and optional ``header``
+    metadata so selection needs no second ``credentials`` query.
     """
 
     credential_id: str
     rule_set_id: str | None
+    header: BoundCredentialHeader | None = None
 
 
 @dataclass(frozen=True, slots=True)

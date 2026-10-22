@@ -12,7 +12,7 @@ call-sites get identical problem+json semantics.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Mapping, Sequence
 from typing import Any
 
 import structlog
@@ -48,7 +48,10 @@ from jentic_one.broker.services.credentials.refresh import TokenRefresher
 from jentic_one.broker.services.credentials.resolver import CredentialResolver, ResolvedCredential
 from jentic_one.shared.access_guidance import ConnectTarget
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.broker.protocols import ConnectableRegistrationSourceProtocol
+from jentic_one.shared.broker.protocols import (
+    BoundCredentialHeader,
+    ConnectableRegistrationSourceProtocol,
+)
 from jentic_one.shared.context import Context
 from jentic_one.shared.crypto import DecryptionError
 from jentic_one.shared.events import (
@@ -132,10 +135,14 @@ class CredentialService:
             return _EMPTY
 
         api = APIReference(vendor=api_vendor, name=api_name or "", version=api_version or "")
-        resolved = (
-            preresolved
-            if preresolved is not None
-            else await self._resolve_mapped(
+        if preresolved is not None:
+            resolved = (
+                preresolved
+                if preresolved.material_loaded
+                else await CredentialResolver(self._ctx).load_material(preresolved, api=api)
+            )
+        else:
+            resolved = await self._resolve_mapped(
                 api,
                 identity,
                 credential_name=credential_name,
@@ -144,7 +151,6 @@ class CredentialService:
                 request_server_variables=request_server_variables,
                 server_variables_unresolved=server_variables_unresolved,
             )
-        )
         try:
             try:
                 access_token: str | None = None
@@ -292,20 +298,27 @@ class CredentialService:
         credential_name: str | None = None,
         credential_id: str | None = None,
         allowed_credential_ids: Collection[str] | None = None,
+        candidate_headers: Sequence[BoundCredentialHeader] | None = None,
         request_server_variables: Mapping[str, str] | None = None,
         server_variables_unresolved: bool = False,
         method: str = "",
         path: str = "",
     ) -> ResolvedCredential | None:
-        """Resolve-only credential selection — no refresh, decrypt, or audit.
+        """Header-only credential selection — no material read, refresh, decrypt, or audit.
 
         The direct-binding path (theme-5 Phase 2) must know *which* credential
         was selected **before** permission rules can be evaluated (rules are
         keyed on the ``(agent, credential)`` binding) — and enforcement must
         happen before any secret is touched or a ``CREDENTIAL_ACCESSED`` audit
         event fires. This runs the same resolution + error mapping as
-        :meth:`inject` and returns the resolved metadata; pass it back to
-        :meth:`inject` as ``preresolved`` to avoid resolving twice.
+        :meth:`inject` in header-only mode (``include_material=False``) and
+        returns the resolved metadata; pass it back to :meth:`inject` as
+        ``preresolved`` so injection loads only the winning credential's
+        secret material after rules allow the call.
+
+        ``candidate_headers`` carries the covering credential headers already
+        read by ``CredentialBindingResolver.derive_credentials``, avoiding a
+        second ``SELECT … FROM credentials`` query on ``control_db``.
 
         ``method`` / ``path`` are the request's, for the 424 directive's
         ``suggested_rules``.
@@ -321,6 +334,8 @@ class CredentialService:
             credential_name=credential_name,
             credential_id=credential_id,
             allowed_credential_ids=allowed_credential_ids,
+            candidate_headers=candidate_headers,
+            include_material=False,
             request_server_variables=request_server_variables,
             server_variables_unresolved=server_variables_unresolved,
             method=method,
@@ -335,6 +350,8 @@ class CredentialService:
         credential_name: str | None,
         credential_id: str | None,
         allowed_credential_ids: Collection[str] | None,
+        candidate_headers: Sequence[BoundCredentialHeader] | None = None,
+        include_material: bool = True,
         request_server_variables: Mapping[str, str] | None = None,
         server_variables_unresolved: bool = False,
         method: str = "",
@@ -346,6 +363,11 @@ class CredentialService:
         identical problem+json for the resolve-phase failures
         (424/400/409).
         """
+        extra_kwargs: dict[str, Any] = {}
+        if candidate_headers is not None:
+            extra_kwargs["candidate_headers"] = candidate_headers
+        if not include_material:
+            extra_kwargs["include_material"] = False
         try:
             return await CredentialResolver(self._ctx).resolve(
                 api=api,
@@ -355,6 +377,7 @@ class CredentialService:
                 allowed_credential_ids=allowed_credential_ids,
                 request_server_variables=request_server_variables,
                 server_variables_unresolved=server_variables_unresolved,
+                **extra_kwargs,
             )
         except CredentialNotProvisionedError as exc:
             await self._emit_credential_failure(
