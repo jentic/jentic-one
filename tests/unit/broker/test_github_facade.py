@@ -184,7 +184,7 @@ def test_github_api_urls_point_at_the_facade(url: str, expected: str) -> None:
         "https://objects.githubusercontent.com/x",
         "https://api.github.com.evil.example/user",
         "http://api.github.com/user",
-        "https://user:pw@api.github.com/user",
+        "https://user:pw@api.github.com/user",  # pragma: allowlist secret
         "https://api.github.com:8443/user",
         "https://api.github.com:notaport/user",
         "/relative/path",

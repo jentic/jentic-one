@@ -32,7 +32,7 @@ func TestProviderEnvBedrockKeepsOnlyProviderVariables(t *testing.T) {
 		"AWS_REGION=us-east-1", // the settings value wins
 		"AWS_DEFAULT_REGION=eu-west-1",
 		"ANTHROPIC_DEFAULT_SONNET_MODEL=eu.anthropic.claude-sonnet",
-		"ANTHROPIC_API_KEY=sk-process", // not for Bedrock
+		"ANTHROPIC_API_KEY=sk-process", // pragma: allowlist secret (not for Bedrock)
 		"AWS_ACCESS_KEY_ID=AKIA",
 		"HOME=/Users/alice",
 		"PATH=/usr/bin",
@@ -65,7 +65,7 @@ func TestProviderEnvAnthropicKeyComesFromTheProcessOnly(t *testing.T) {
 		t.Errorf("a key from settings.json is never passed: %v", env)
 	}
 	provider, env, _ := ProviderEnv(map[string]string{"ANTHROPIC_API_KEY": "sk-from-file"},
-		[]string{"ANTHROPIC_API_KEY=sk-process", "AWS_PROFILE=x"})
+		[]string{"ANTHROPIC_API_KEY=sk-process", "AWS_PROFILE=x"}) // pragma: allowlist secret
 	if provider != ProviderAnthropic || !maps.Equal(env, map[string]string{"ANTHROPIC_API_KEY": "sk-process"}) {
 		t.Errorf("provider %q env %v", provider, env)
 	}
@@ -78,7 +78,7 @@ func TestProviderEnvVertex(t *testing.T) {
 		"ANTHROPIC_VERTEX_PROJECT_ID":    "proj",
 		"GOOGLE_APPLICATION_CREDENTIALS": "/Users/alice/keys/sa.json",
 		"AWS_PROFILE":                    "x",
-	}, []string{"ANTHROPIC_API_KEY=sk-process"})
+	}, []string{"ANTHROPIC_API_KEY=sk-process"}) // pragma: allowlist secret
 	want := map[string]string{"CLAUDE_CODE_USE_VERTEX": "true", "CLOUD_ML_REGION": "us-east5", "ANTHROPIC_VERTEX_PROJECT_ID": "proj"}
 	if provider != ProviderVertex || gac != "/Users/alice/keys/sa.json" || !maps.Equal(env, want) {
 		t.Errorf("provider %q gac %q env %v", provider, gac, env)

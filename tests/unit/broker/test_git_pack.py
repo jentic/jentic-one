@@ -22,7 +22,7 @@ from jentic_one.broker.core.git_pack import (
 )
 
 _COMMIT, _TREE, _BLOB, _OFS_DELTA, _REF_DELTA = 1, 2, 3, 6, 7
-_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"  # the empty tree
+_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"  # pragma: allowlist secret (the empty tree)
 _OUTSIDE = "e" * 40
 _LIMIT = 1 << 20
 

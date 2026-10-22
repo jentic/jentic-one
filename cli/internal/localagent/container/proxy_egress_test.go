@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const testNonce = "0123456789abcdef0123456789abcdef"
+const testNonce = "0123456789abcdef0123456789abcdef" // pragma: allowlist secret
 
 func testProxyEgress() *ProxyEgress {
 	return &ProxyEgress{
@@ -22,7 +22,7 @@ func testProxyEgress() *ProxyEgress {
 		BrokerPort: 8100,
 		Nonce:      testNonce,
 		Tokens: func() map[string]string {
-			return map[string]string{"github": "cit_session-github-0123456789abcdefghijklmnop"}
+			return map[string]string{"github": "cit_session-github-0123456789abcdefghijklmnop"} // pragma: allowlist secret
 		},
 	}
 }

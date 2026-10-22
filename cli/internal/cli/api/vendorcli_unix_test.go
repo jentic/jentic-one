@@ -40,8 +40,8 @@ exit "${FAKE_CF_EXIT:-0}"
 
 const (
 	testInvocationID = "cli_test1"
-	testTraceID      = "4bf92f3577b34da6a3ce929d0e0e4736"
-	testCitToken     = "cit_testinvocationtokenvalue0123456789abcdefghij"
+	testTraceID      = "4bf92f3577b34da6a3ce929d0e0e4736"                 // pragma: allowlist secret
+	testCitToken     = "cit_testinvocationtokenvalue0123456789abcdefghij" // pragma: allowlist secret
 )
 
 // fakeControl serves the routes `jentic cf` calls and records what it saw.
@@ -551,7 +551,7 @@ func TestCf_UsesTheWiringTheDeploymentServes(t *testing.T) {
 	if _, ok := run.env["CLOUDFLARE_API_BASE_URL"]; ok {
 		t.Error("the built-in wiring was used although the deployment serves one")
 	}
-	if run.env["CF_API_KEY"] != "kept-not-in-served-strip" {
+	if run.env["CF_API_KEY"] != "kept-not-in-served-strip" { // pragma: allowlist secret
 		t.Error("the served strip list replaces the built-in one")
 	}
 }

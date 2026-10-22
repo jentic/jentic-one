@@ -23,8 +23,8 @@ import (
 )
 
 const (
-	sessionGitHubToken = "cit_session-github-0123456789abcdefghijklmnopqrstuv"
-	commandToken       = "cit_command-github-0123456789abcdefghijklmnopqrstuv"
+	sessionGitHubToken = "cit_session-github-0123456789abcdefghijklmnopqrstuv" // pragma: allowlist secret
+	commandToken       = "cit_command-github-0123456789abcdefghijklmnopqrstuv" // pragma: allowlist secret
 )
 
 type fakeTokens map[string]string
@@ -177,7 +177,7 @@ func TestHeaderHygiene(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodPost, "https://api.github.com/repos/o/r/issues", strings.NewReader(`{"title":"x"}`))
 	req.Header.Set("Authorization", "Bearer agent-own-token")
 	req.Header.Set("Cookie", "session=abc")
-	req.Header.Set("X-Leak", "token=cit_leaked-0123456789abcdefghijklmnop")
+	req.Header.Set("X-Leak", "token=cit_leaked-0123456789abcdefghijklmnop") // pragma: allowlist secret
 	req.Header.Set("X-Forwarded-For", "10.0.0.1")
 	req.Header.Set("Connection", "X-Hop")
 	req.Header.Set("X-Hop", "1")

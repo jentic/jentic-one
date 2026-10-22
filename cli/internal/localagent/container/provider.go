@@ -35,7 +35,7 @@ var providerTargets = []string{AWSConfigTarget, GCloudConfigTarget, GoogleCreden
 const (
 	envUseBedrock         = "CLAUDE_CODE_USE_BEDROCK"
 	envUseVertex          = "CLAUDE_CODE_USE_VERTEX"
-	envAnthropicAPIKey    = "ANTHROPIC_API_KEY"              //nolint:gosec // G101: a variable name, not a credential
+	envAnthropicAPIKey    = "ANTHROPIC_API_KEY"              //nolint:gosec // pragma: allowlist secret // G101: a variable name, not a credential
 	envGoogleCredentials  = "GOOGLE_APPLICATION_CREDENTIALS" //nolint:gosec // G101: a variable name, not a credential
 	anthropicModelPrefix  = "ANTHROPIC_"
 	anthropicModelMarker  = "MODEL"
