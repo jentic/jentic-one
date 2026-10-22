@@ -82,6 +82,7 @@ from jentic_one.control.services.integrations.api_targets import (
     oauth_scopes_of,
     require_pinnable_hosts,
     review_digest,
+    scheme_kind,
     scheme_still_declared,
     select_scheme,
 )
@@ -271,6 +272,54 @@ class ScopeOptions:
 
     supported: bool
     catalog: list[VendorScopeConfig] | None
+
+
+@dataclass(slots=True, frozen=True)
+class ConnectScopeOption:
+    """One scope a connection to an API could ask for.
+
+    ``requestable`` is whether a request may name it here: the connect
+    source's catalog decides when there is one; without one, the spec's.
+    """
+
+    name: str
+    description: str
+    classification: str | None
+    default: bool
+    requestable: bool
+
+
+@dataclass(slots=True, frozen=True)
+class ConnectSchemeOption:
+    """How a connection would collect one declared security scheme.
+
+    ``kind`` is the connect-session kind (``oauth2``, ``api_key``,
+    ``bearer``, ``basic``), or ``None`` for a scheme connections can't serve.
+    ``flow`` is what a session would run: an OAuth flow, a ``manual_*``
+    entry, or ``awaiting_app`` while no OAuth app covers the API. An OAuth
+    scheme's ``vendor_key`` and ``registration_id`` name the app.
+    """
+
+    name: str
+    type: str
+    kind: str | None
+    flow: str | None
+    vendor_key: str | None
+    registration_id: str | None
+    scopes: list[ConnectScopeOption]
+
+
+@dataclass(slots=True, frozen=True)
+class ConnectOptions:
+    """How a connection to one registry API would be made, scheme by scheme."""
+
+    vendor: str
+    name: str
+    version: str
+    display_name: str | None
+    #: Whether ``:connect`` takes this API as a target (``manual_flows_enabled``).
+    api_target_supported: bool
+    schemes: list[ConnectSchemeOption]
 
 
 @dataclass(slots=True, frozen=True)
@@ -2398,6 +2447,98 @@ class ConnectSessionService:
             unknown = self._vendors.validate_scopes(consent.entry, added_scopes(baseline, result))
             if unknown:
                 raise ScopeValidationError(unknown)
+
+    async def connect_options(
+        self, target: ApiTarget, *, registration_id: str | None = None
+    ) -> ConnectOptions:
+        """How ``:connect`` would connect ``target``: each declared scheme and its scopes.
+
+        Resolved the way ``:connect`` resolves an API target (the pinned
+        ``registration_id``, else the config entry covering the API, else its
+        one active shared app), so a scope listed ``requestable`` is one a
+        request may name. An API the registry doesn't hold is
+        :class:`UnknownApiError`.
+        """
+        view = await self._lookup_api(target.vendor, target.name, target.version)
+        if view is None:
+            raise UnknownApiError(target.vendor, target.name, target.version)
+        oauth: tuple[str, ResolvedVendorSource] | None = None
+        ambiguous = False
+        if any(scheme_kind(s) == SCHEME_OAUTH2 for s in view.schemes):
+            try:
+                oauth = await self._vendors.resolve_api_source(
+                    _api_covers(view.vendor, view.name, view.version),
+                    registration_id=registration_id,
+                )
+            except AmbiguousVendorError:
+                ambiguous = True
+        schemes: list[ConnectSchemeOption] = []
+        for scheme in sorted(view.schemes, key=lambda s: s.name):
+            kind = scheme_kind(scheme)
+            declared = dict(scheme.oauth_scope_descriptions)
+            if kind == SCHEME_OAUTH2 and oauth is not None:
+                key, source = oauth
+                offered = {c.name: c for c in source.entry.scopes}
+                scopes = [
+                    ConnectScopeOption(
+                        name=c.name,
+                        description=c.description or declared.get(c.name, ""),
+                        classification=c.classification,
+                        default=c.default,
+                        requestable=True,
+                    )
+                    for c in source.entry.scopes
+                ] + [
+                    ConnectScopeOption(
+                        name=name,
+                        description=declared.get(name, ""),
+                        classification=classify_spec_scope(name),
+                        default=False,
+                        requestable=False,
+                    )
+                    for name in scheme.oauth_scopes
+                    if name not in offered
+                ]
+                flow: str | None = source.flow.kind
+                vendor_key: str | None = key
+                reg_id = source.registration.id if source.registration is not None else None
+            else:
+                scopes = [
+                    ConnectScopeOption(
+                        name=name,
+                        description=declared.get(name, ""),
+                        classification=classify_spec_scope(name),
+                        default=False,
+                        requestable=True,
+                    )
+                    for name in scheme.oauth_scopes
+                ]
+                manual = manual_handler_for_scheme(kind) if kind is not None else None
+                flow = (
+                    manual.kind
+                    if manual is not None
+                    else (None if kind is None or ambiguous else AWAITING_APP)
+                )
+                vendor_key, reg_id = None, None
+            schemes.append(
+                ConnectSchemeOption(
+                    name=scheme.name,
+                    type=scheme.type,
+                    kind=kind,
+                    flow=flow,
+                    vendor_key=vendor_key,
+                    registration_id=reg_id,
+                    scopes=scopes,
+                )
+            )
+        return ConnectOptions(
+            vendor=view.vendor,
+            name=view.name,
+            version=view.version,
+            display_name=view.display_name,
+            api_target_supported=self._manual_flows_enabled,
+            schemes=schemes,
+        )
 
     async def scope_options(self, credential_id: str) -> ScopeOptions:
         """How an edit of a binding to ``credential_id`` can change its scopes."""

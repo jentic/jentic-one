@@ -24746,6 +24746,148 @@ paths:
       tags:
       - System
     summary: Backend identity
+  /integrations/{vendor}/{name}/{version}/connect-options:
+    description: '`GET`: How a connection to an API would be made.'
+    get:
+      description: |-
+        List the API's declared security schemes and how `:connect` would collect each.
+
+        Resolved as `:connect` resolves an API target, so a scope marked
+        `requestable` is one `requested_scopes` may name: for OAuth, the
+        connecting app's scope catalog (the spec's other scopes are listed but
+        not requestable); with no app, the spec's scopes. An API the registry
+        doesn't hold is 404 `unknown_api`: import it first.
+      operationId: integrationsConnectOptions
+      parameters:
+      - description: The API's vendor.
+        examples:
+          example:
+            summary: Example path value for `vendor`
+            value: googleapis.com
+        in: path
+        name: vendor
+        required: true
+        schema:
+          description: The API's vendor.
+          examples:
+          - googleapis.com
+          title: Vendor
+          type: string
+      - description: The API's name.
+        examples:
+          example:
+            summary: Example path value for `name`
+            value: gmail
+        in: path
+        name: name
+        required: true
+        schema:
+          description: The API's name.
+          examples:
+          - gmail
+          title: Name
+          type: string
+      - description: The API's version.
+        examples:
+          example:
+            summary: Example path value for `version`
+            value: v1
+        in: path
+        name: version
+        required: true
+        schema:
+          description: The API's version.
+          examples:
+          - v1
+          title: Version
+          type: string
+      - description: Pin a shared OAuth app, as `oauth_app_registration_id` on `:connect`.
+        examples:
+          example:
+            summary: OAuth app registration ID
+            value: oar_6968b39821e5f89a6975f501
+        in: query
+        name: registration_id
+        required: false
+        schema:
+          anyOf:
+          - examples:
+            - oar_6968b39821e5f89a6975f501
+            type: string
+          - type: 'null'
+          description: Pin a shared OAuth app, as `oauth_app_registration_id` on `:connect`.
+          examples:
+          - oar_6968b39821e5f89a6975f501
+          title: Registration Id
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id194
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id195
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id196
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id205
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: The registry holds no such API
+        '422':
+          content:
+            application/problem+json:
+              example: *id197
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id191
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id198
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+        default:
+          content:
+            application/problem+json:
+              example: *id191
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unexpected error, as RFC 9457 Problem Details.
+      security:
+      - BearerAuth: []
+      - OAuth2: []
+      summary: How a connection to an API would be made
+      tags:
+      - Integrations
+    summary: How a connection to an API would be made
   /integrations:connect:
     description: '`POST`: Start an integration connect session.'
     post:

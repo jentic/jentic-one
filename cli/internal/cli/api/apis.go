@@ -38,6 +38,7 @@ func newApisCmd(app *app) *cobra.Command {
 	cmd.AddCommand(newApisRevisionsCmd(app))
 	cmd.AddCommand(newApisOperationsCmd(app))
 	cmd.AddCommand(newApisInspectCmd(app))
+	cmd.AddCommand(newApisAuthCmd(app))
 	cmd.AddCommand(newApisPromoteCmd(app))
 	cmd.AddCommand(newApisArchiveCmd(app))
 	cmd.AddCommand(newApisRmCmd(app))

@@ -2498,6 +2498,33 @@
           "credentials:read"
         ]
       },
+      "method": "GET",
+      "operation_id": "integrationsConnectOptions",
+      "path": "/integrations/{vendor}/{name}/{version}/connect-options",
+      "public": false,
+      "required_permissions": [
+        "credentials:connect",
+        "credentials:write"
+      ],
+      "summary": "How a connection to an API would be made",
+      "surface": "integrations",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_permissions": {
+        "credentials:connect": [],
+        "credentials:write": [
+          "credentials:connect",
+          "credentials:read"
+        ]
+      },
       "method": "POST",
       "operation_id": "integrationsConnect",
       "path": "/integrations:connect",
@@ -4830,5 +4857,5 @@
     "total": 27
   },
   "schema": "jentic.endpoint-permission-tree/v1",
-  "total": 173
+  "total": 174
 }

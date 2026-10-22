@@ -105,6 +105,16 @@ func CuratedBindings() []CuratedBinding {
 			},
 		},
 		{
+			// apis auth: how a connection to an API would be made. The API
+			// identity is the positional argument (the route's path).
+			Command: "apis auth",
+			Params:  control.IntegrationsConnectOptionsParams{},
+			Bind: map[string]string{
+				"registration_id": "registration-id",
+			},
+			NotExposed: map[string]string{},
+		},
+		{
 			// access edit: ask for a change to the caller's own binding. The
 			// credential is the positional argument; the rule change rides
 			// --add (with --before), --remove and --set, which together build

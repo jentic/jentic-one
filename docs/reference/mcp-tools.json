@@ -228,6 +228,29 @@
       }
     },
     {
+      "name": "inspect_api",
+      "title": "Show how to connect an API",
+      "description": "Show how a connection to one registry API would be made, before asking for it: each security scheme it declares, how a connection would collect it (an OAuth flow, a credential a human enters, or waiting for an OAuth app), and for OAuth the scopes a request may name (requestable: true; the spec's others are listed but can't be asked for here). Example: {\"api\": \"googleapis.com/gmail/v1\"}. The flow is search_catalog, import_api if needed, inspect_api, then request_connection with requested_scopes from the requestable ones. An API the registry doesn't hold is not found: import it first.",
+      "input_schema": {
+        "properties": {
+          "api": {
+            "description": "The registry API (required): {\"vendor\", \"name\", \"version\"} or a \"vendor/name/version\" string, as search_apis or import_api report it."
+          },
+          "oauth_app_registration_id": {
+            "description": "Pin a shared OAuth app, as request_connection would.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "api"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "read_only_hint": true
+      }
+    },
+    {
       "name": "request_connection",
       "title": "Start connecting a vendor credential",
       "description": "Start a connect session when whoami shows no credential binding serving the API you need — the self-service leg of credential provisioning. Name a verified vendor ({\"vendor\": \"github\", \"reason\": \"read open PRs to summarise them\"}) or, for any other registry API, the API itself ({\"api\": {\"vendor\": …, \"name\": …, \"version\": …}}, from inspect_operation or a denial's parameters.connect.api). Returns {session_id, approval_url, resolved_flow}: relay the approval_url to your human operator — they approve the connection (or enter the API key) in their browser; you cannot open the URL or approve it yourself. This tool only STARTS the flow and never polls it. When a human must enter the credential (resolved_flow manual_* or awaiting_app) it can take hours: end your turn and retry execute later. Otherwise, once they confirm, call whoami to see the new credential binding, then retry the blocked call. Optionally pass auth_type (with api, when the spec declares several schemes), requested_scopes (vendor scope names; write scopes are flagged for the approver), requested_permission_rules (the binding rules you need; the approver reviews them) and a reason the approver will see. If several shared OAuth apps serve the vendor, the error lists them: ask your human user which one to use (choosing it is their call, not yours) and retry with its oauth_app_registration_id. If the deployment does not take API connect requests, the error says so: report the gap to your operator once. After a rejection, do not ask again — tell your user. Binding an EXISTING credential and scope grants stay operator actions.",

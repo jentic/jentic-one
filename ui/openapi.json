@@ -43414,6 +43414,253 @@
       },
       "summary": "Backend identity"
     },
+    "/integrations/{vendor}/{name}/{version}/connect-options": {
+      "description": "`GET`: How a connection to an API would be made.",
+      "get": {
+        "description": "List the API's declared security schemes and how `:connect` would collect each.\n\nResolved as `:connect` resolves an API target, so a scope marked\n`requestable` is one `requested_scopes` may name: for OAuth, the\nconnecting app's scope catalog (the spec's other scopes are listed but\nnot requestable); with no app, the spec's scopes. An API the registry\ndoesn't hold is 404 `unknown_api`: import it first.",
+        "operationId": "integrationsConnectOptions",
+        "parameters": [
+          {
+            "description": "The API's vendor.",
+            "examples": {
+              "example": {
+                "summary": "Example path value for `vendor`",
+                "value": "googleapis.com"
+              }
+            },
+            "in": "path",
+            "name": "vendor",
+            "required": true,
+            "schema": {
+              "description": "The API's vendor.",
+              "examples": [
+                "googleapis.com"
+              ],
+              "title": "Vendor",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The API's name.",
+            "examples": {
+              "example": {
+                "summary": "Example path value for `name`",
+                "value": "gmail"
+              }
+            },
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "The API's name.",
+              "examples": [
+                "gmail"
+              ],
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The API's version.",
+            "examples": {
+              "example": {
+                "summary": "Example path value for `version`",
+                "value": "v1"
+              }
+            },
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "description": "The API's version.",
+              "examples": [
+                "v1"
+              ],
+              "title": "Version",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Pin a shared OAuth app, as `oauth_app_registration_id` on `:connect`.",
+            "examples": {
+              "example": {
+                "summary": "OAuth app registration ID",
+                "value": "oar_6968b39821e5f89a6975f501"
+              }
+            },
+            "in": "query",
+            "name": "registration_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "examples": [
+                    "oar_6968b39821e5f89a6975f501"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Pin a shared OAuth app, as `oauth_app_registration_id` on `:connect`.",
+              "examples": [
+                "oar_6968b39821e5f89a6975f501"
+              ],
+              "title": "Registration Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The requested resource does not exist or is not visible to you.",
+                  "instance": "/example/path",
+                  "status": 404,
+                  "title": "Not Found",
+                  "type": "not_found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "The registry holds no such API"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "OAuth2": []
+          }
+        ],
+        "summary": "How a connection to an API would be made",
+        "tags": [
+          "Integrations"
+        ]
+      },
+      "summary": "How a connection to an API would be made"
+    },
     "/integrations:connect": {
       "description": "`POST`: Start an integration connect session.",
       "post": {

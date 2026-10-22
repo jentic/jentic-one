@@ -414,6 +414,63 @@ export class IntegrationsService {
         });
     }
     /**
+     * How a connection to an API would be made
+     * List the API's declared security schemes and how `:connect` would collect each.
+     *
+     * Resolved as `:connect` resolves an API target, so a scope marked
+     * `requestable` is one `requested_scopes` may name: for OAuth, the
+     * connecting app's scope catalog (the spec's other scopes are listed but
+     * not requestable); with no app, the spec's scopes. An API the registry
+     * doesn't hold is 404 `unknown_api`: import it first.
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static integrationsConnectOptions({
+        vendor,
+        name,
+        version,
+        registrationId,
+    }: {
+        /**
+         * The API's vendor.
+         */
+        vendor: string,
+        /**
+         * The API's name.
+         */
+        name: string,
+        /**
+         * The API's version.
+         */
+        version: string,
+        /**
+         * Pin a shared OAuth app, as `oauth_app_registration_id` on `:connect`.
+         */
+        registrationId?: (string | null),
+    }): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/integrations/{vendor}/{name}/{version}/connect-options',
+            path: {
+                'vendor': vendor,
+                'name': name,
+                'version': version,
+            },
+            query: {
+                'registration_id': registrationId,
+            },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `The registry holds no such API`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
      * Start an integration connect session
      * Both entrypoints (agent + UI) use this endpoint.
      *

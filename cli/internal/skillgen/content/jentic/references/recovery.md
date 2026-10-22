@@ -95,7 +95,8 @@ step 5. **Approval is always your operator's** — but for the
 credential-*provisioning* denials below you can start the fix yourself
 whenever the directive names a connect target: run its `suggested_command`
 (`jentic connect <vendor>` or `jentic connect --api <vendor/name/version>`,
-CLI) or call `request_connection` with `parameters.connect` (MCP), relay
+CLI) or call `request_connection` with `parameters.connect` (MCP), naming
+only scopes `inspect_api` (`jentic apis auth`) marks requestable, relay
 the returned `approval_url` to your operator, confirm with `whoami` once
 they approve, then retry. When a human must enter the credential (a
 `manual_*` or `awaiting_app` flow), end your turn after relaying the URL

@@ -1491,3 +1491,40 @@ async def test_http_reject_status_and_cooldown(env: Context) -> None:
         again = await agent_client.post("/integrations:connect", json=_API_BODY)
         assert (again.status_code, again.json()["type"]) == (429, "recently_rejected")
         assert int(again.headers["Retry-After"]) > 0
+
+
+async def test_connect_options_list_what_connect_would_ask_for(env: Context) -> None:
+    await _import(env, {**_OAUTH_SCHEME, **_KEY_SCHEME})
+    # With no app covering the API, an OAuth connect waits for one; the spec's
+    # scopes are what a request may name.
+    options = await _svc(env).connect_options(_TARGET)
+    assert options.api_target_supported is True
+    by_name = {s.name: s for s in options.schemes}
+    assert (by_name["key"].kind, by_name["key"].flow, by_name["key"].scopes) == (
+        "api_key",
+        "manual_api_key",
+        [],
+    )
+    oauth = by_name["oauth"]
+    assert (oauth.kind, oauth.flow, oauth.vendor_key) == ("oauth2", "awaiting_app", None)
+    assert [(s.name, s.requestable, s.description) for s in oauth.scopes] == [
+        ("read", True, "Read"),
+        ("write", True, "Write"),
+    ]
+
+    # A covering app decides: its catalog is requestable, the spec's other scopes aren't.
+    env.config.vendors.entries["widgets"] = _covering_entry()
+    oauth = {s.name: s for s in (await _svc(env).connect_options(_TARGET)).schemes}["oauth"]
+    assert (oauth.flow, oauth.vendor_key) == ("authorization_code", "widgets")
+    assert [(s.name, s.requestable, s.default) for s in oauth.scopes] == [
+        ("read", True, True),
+        ("write", False, False),
+    ]
+    # And :connect takes the same app.
+    connected = await _connect(env, requested_scopes=["read"], auth_type="oauth")
+    assert connected.resolved_flow == "authorization_code"
+
+
+async def test_connect_options_for_an_api_the_registry_lacks(env: Context) -> None:
+    with pytest.raises(UnknownApiError):
+        await _svc(env).connect_options(ApiTarget(vendor="nope", name="nope", version="v0"))

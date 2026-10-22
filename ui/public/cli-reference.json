@@ -1329,6 +1329,35 @@
               ]
             },
             {
+              "name": "auth",
+              "path": "jentic apis auth",
+              "use": "auth \u003cvendor/name/version\u003e",
+              "short": "Show how a connection to an API would be made, and the scopes you can ask for",
+              "long": "auth answers with each security scheme the API declares, how a connection\nwould collect it (an OAuth flow, a credential a human enters, or waiting for\nan OAuth app), and for OAuth the scopes a request may name (requestable).\nUse it before `jentic connect --api` or `jentic access edit --add-scopes`.",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
+                },
+                {
+                  "name": "registration-id",
+                  "type": "string",
+                  "usage": "pin a shared OAuth app, as `jentic connect --registration-id` would"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                }
+              ]
+            },
+            {
               "name": "promote",
               "path": "jentic apis promote",
               "use": "promote \u003cvendor/name/version\u003e \u003crevision_id\u003e",

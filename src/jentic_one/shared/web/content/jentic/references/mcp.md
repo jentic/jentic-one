@@ -70,6 +70,11 @@ request_connection {"vendor": "github", "reason": "read open PRs to summarise th
 request_connection {"api": {"vendor": "stripe-com", "name": "stripe-com-api", "version": "2024-06-20"}, "reason": "list this month's charges"}
 ```
 
+Before asking for an OAuth connection, read which scopes you can name with
+`inspect_api {"api": "vendor/name/version"}` (`jentic apis auth` on the CLI):
+each declared scheme, how a connection would collect it, and the scopes marked
+`requestable`. Ask only for those, in `requested_scopes`.
+
 It returns `{session_id, approval_url, resolved_flow}` — relay the
 `approval_url` to your human operator, who approves in their browser (and
 enters the key, for an `api` connect); you cannot open or approve it, and

@@ -29,7 +29,7 @@ import json
 import time
 import uuid as uuid_mod
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
@@ -95,6 +95,7 @@ from jentic_one.control.services.vendors.service import (
 )
 from jentic_one.control.web.errors import check_access_directive
 from jentic_one.control.web.routers.credentials import binding_access_response
+from jentic_one.control.web.schemas.integrations import ConnectOptionsResponse
 from jentic_one.control.web.schemas.permission_rules import PermissionRuleSchema
 from jentic_one.mcp import approvals
 from jentic_one.mcp import execute as ex
@@ -1985,6 +1986,52 @@ async def handle_show_access(env: CallEnv, arguments: dict[str, Any]) -> mcp_typ
     return tool_result(env.ctx, payload)
 
 
+# ── inspect_api ───────────────────────────────────────────────────────────────
+
+_INSPECT_API_PARAMS = [
+    ParamSpec("api", "json"),
+    ParamSpec("oauth_app_registration_id", "string", ("registration_id",)),
+]
+
+_CONNECT_OPTIONS_NEXT_STEP = (
+    "To connect it, call request_connection (`jentic connect --api <vendor/name/version>`) "
+    "with requested_scopes from the scopes marked requestable, and auth_type when it declares "
+    "several schemes. If whoami already shows a binding serving this API, change its scopes "
+    "with request_access_change instead."
+)
+
+
+async def handle_inspect_api(env: CallEnv, arguments: dict[str, Any]) -> mcp_types.CallToolResult:
+    """GET …/connect-options for one API, in-process (Go: ``handleInspectAPI``).
+
+    How ``:connect`` would connect the API, scheme by scheme, and which scopes a
+    request may name. An API the registry doesn't hold is RESOLVE_FAILED
+    pointing at import_api.
+    """
+    args = normalize_tool_args(arguments, _INSPECT_API_PARAMS)
+    if "api" not in args:
+        raise invalid_params('inspect_api requires "api", e.g. {"api": "vendor/name/version"}')
+    target = _connect_api_target(args["api"])
+    label = f"{target.vendor}/{target.name}/{target.version}"
+    require_permissions(env.identity, ["credentials:connect", "credentials:write"])
+    try:
+        options = await ConnectSessionService(
+            env.ctx, security_schemes_lookup=env.security_schemes_lookup
+        ).connect_options(target, registration_id=args.get("oauth_app_registration_id") or None)
+    except UnknownApiError:
+        raise ToolError(
+            CODE_RESOLVE_FAILED,
+            f"the registry holds no API {label}",
+            actionable="find it with search_catalog (`jentic catalog search`) and import it "
+            "(import_api / `jentic catalog import`), then ask again",
+            next_tool="import_api",
+        ) from None
+    payload = ConnectOptionsResponse.model_validate(asdict(options)).model_dump(mode="json")
+    payload["next_step"] = _CONNECT_OPTIONS_NEXT_STEP
+    payload["schema_version"] = SCHEMA_VERSION
+    return tool_result(env.ctx, payload)
+
+
 # ── request_access_change / amend_request ─────────────────────────────────────
 
 _REQUEST_ACCESS_CHANGE_PARAMS = [
@@ -2247,6 +2294,7 @@ HANDLERS: dict[str, Handler] = {
     "get_execution_result": handle_get_execution_result,
     "request_connection": handle_request_connection,
     "show_access": handle_show_access,
+    "inspect_api": handle_inspect_api,
     "request_access_change": handle_request_access_change,
     "amend_request": handle_amend_request,
 }

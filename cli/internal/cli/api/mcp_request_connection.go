@@ -422,6 +422,7 @@ const requestConnectionRegistrationRetry = "call request_connection again with "
 // destructiveHint (execute alone carries that, §3.2).
 func (s *mcpServer) connectToolSpecs() []mcpToolSpec {
 	return []mcpToolSpec{
+		s.inspectAPIToolSpec(),
 		{
 			tool: &mcp.Tool{
 				Name:  "request_connection",

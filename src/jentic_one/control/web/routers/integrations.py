@@ -9,6 +9,7 @@ ad-hoc error ``JSONResponse`` bodies.
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Annotated, Any
 
 import structlog
@@ -54,6 +55,7 @@ from jentic_one.control.web.schemas.integrations import (
     ConfirmSessionRequest,
     ConfirmSessionResponse,
     ConnectedConfirmSessionResponse,
+    ConnectOptionsResponse,
     ConnectSessionListResponse,
     ConnectSessionState,
     ConnectSessionSummaryResponse,
@@ -232,6 +234,47 @@ async def integrations_connect(
 
 
 # ---------------------------------------------------------------------------
+@router.get(
+    "/integrations/{vendor}/{name}/{version}/connect-options",
+    summary="How a connection to an API would be made",
+    response_model=None,
+    responses=with_responses(not_found("The registry holds no such API")),
+)
+async def integrations_connect_options(
+    vendor: Annotated[
+        str,
+        Path(description="The API's vendor.", openapi_examples=ex.example("googleapis.com")),
+    ],
+    name: Annotated[str, Path(description="The API's name.", openapi_examples=ex.example("gmail"))],
+    version: Annotated[
+        str, Path(description="The API's version.", openapi_examples=ex.example("v1"))
+    ],
+    registration_id: Annotated[
+        str | None,
+        Query(
+            description="Pin a shared OAuth app, as `oauth_app_registration_id` on `:connect`.",
+            openapi_examples=ex.example(ex.OAUTH_APP_REGISTRATION_ID),
+        ),
+    ] = None,
+    identity: Identity = get_current_identity(
+        required_permissions=["credentials:connect", "credentials:write"]
+    ),
+    svc: ConnectSessionService = Depends(get_connect_session_service),
+) -> ConnectOptionsResponse:
+    """List the API's declared security schemes and how `:connect` would collect each.
+
+    Resolved as `:connect` resolves an API target, so a scope marked
+    `requestable` is one `requested_scopes` may name: for OAuth, the
+    connecting app's scope catalog (the spec's other scopes are listed but
+    not requestable); with no app, the spec's scopes. An API the registry
+    doesn't hold is 404 `unknown_api`: import it first.
+    """
+    options = await svc.connect_options(
+        ApiTarget(vendor=vendor, name=name, version=version), registration_id=registration_id
+    )
+    return ConnectOptionsResponse.model_validate(asdict(options))
+
+
 def _scope_change(scopes: EditScopesRequest | None) -> dict[str, Any]:
     """An edit's scope change as :class:`EditRequest` fields."""
     if scopes is None:

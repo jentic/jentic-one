@@ -430,6 +430,65 @@ class EditConnectionRequest(BaseModel):
     )
 
 
+class ConnectScopeOptionResponse(BaseModel):
+    """One scope a connection to the API could ask for."""
+
+    name: str = Field(examples=["https://www.googleapis.com/auth/gmail.send"])
+    description: str = Field(default="", examples=["Send email on your behalf"])
+    classification: Literal["read", "write", "admin"] | None = Field(
+        default=None, description="What the scope lets a holder do.", examples=["write"]
+    )
+    default: bool = Field(
+        default=False, description="Asked for when a request names no scopes.", examples=[False]
+    )
+    requestable: bool = Field(
+        description=(
+            "Whether a request may name it here: in the connect source's catalog, or "
+            "declared by the spec when no catalog applies."
+        ),
+        examples=[True],
+    )
+
+
+class ConnectSchemeOptionResponse(BaseModel):
+    """How a connection would collect one of the API's declared security schemes."""
+
+    name: str = Field(description="The scheme's name in the spec.", examples=["oauth2"])
+    type: str = Field(description="The spec's scheme type.", examples=["oauth2"])
+    kind: Literal["oauth2", "api_key", "bearer", "basic"] | None = Field(
+        description="What a connect session collects for it; null when it can't serve it.",
+        examples=["oauth2"],
+    )
+    flow: str | None = Field(
+        description=(
+            "What a session would run: an OAuth flow (`authorization_code`, "
+            "`device_authorization`), a `manual_*` entry, or `awaiting_app` while no OAuth "
+            "app covers the API."
+        ),
+        examples=["authorization_code"],
+    )
+    vendor_key: str | None = Field(
+        default=None, description="The OAuth app's vendor key, when one covers the API."
+    )
+    registration_id: str | None = Field(
+        default=None, description="The shared OAuth app it would use, when that's the source."
+    )
+    scopes: list[ConnectScopeOptionResponse] = Field(default_factory=list)
+
+
+class ConnectOptionsResponse(BaseModel):
+    """How a connection to one registry API would be made, scheme by scheme."""
+
+    vendor: str = Field(examples=["googleapis.com"])
+    name: str = Field(examples=["gmail"])
+    version: str = Field(examples=["v1"])
+    display_name: str | None = None
+    api_target_supported: bool = Field(
+        description="Whether `:connect` takes this API as a target on this instance."
+    )
+    schemes: list[ConnectSchemeOptionResponse]
+
+
 class AmendSessionRequest(BaseModel):
     """Change an open session's ask; fields sent replace those parts, the rest stay."""
 
