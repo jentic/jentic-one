@@ -1019,6 +1019,17 @@ function VendorApproveFlow({
 					variant: 'success',
 				});
 				void queryClient.invalidateQueries({ queryKey: ['credentials'] });
+				// The approval binds the credential to the session's agent, so
+				// the binding lists that show it are refetched.
+				const credentialId = polling.data.credential_id;
+				const agentId = session?.agent?.agent_id;
+				if (credentialId) {
+					void invalidateBindingSurfaces(
+						queryClient,
+						credentialId,
+						agentId ? [agentId] : [],
+					);
+				}
 			}
 		}
 	}, [phase, polling.data, polling.error, session, queryClient]);
@@ -1101,6 +1112,8 @@ function VendorApproveFlow({
 		goToPhase('terminal');
 		void queryClient.invalidateQueries({ queryKey: connectRequestsKey });
 		void queryClient.invalidateQueries({ queryKey: ['credentials'] });
+		const agentId = session?.agent?.agent_id;
+		void invalidateBindingSurfaces(queryClient, credentialId, agentId ? [agentId] : []);
 		toast({
 			title: `Connected to ${session?.vendor_display_name ?? 'the integration'}`,
 			variant: 'success',

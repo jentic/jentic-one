@@ -1518,6 +1518,32 @@ describe('VendorConnectFlow — token-less approve (owner / org admin)', () => {
 		expectNoPollToken();
 	});
 
+	it("refetches the agent's binding surfaces once the approved sign-in connects", async () => {
+		const invalidate = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
+		const seeded = seedMockAgentConnectSession({ agent_id: 'agnt_1', vendor_key: 'github' });
+		await driveToAwaiting(seeded.session_id);
+
+		seeded.status = {
+			...seeded.status,
+			status: 'connected',
+			connected_as: 'octocat',
+			credential_id: seeded.credential_id,
+		};
+		expect(await screen.findByText('octocat')).toBeInTheDocument();
+		expect(invalidate).toHaveBeenCalledWith({
+			queryKey: ['agents', 'credential-bindings', 'agnt_1'],
+		});
+		expect(invalidate).toHaveBeenCalledWith({
+			queryKey: ['agents', 'binding-permissions', 'agnt_1', seeded.credential_id],
+		});
+		const bindingCalls = invalidate.mock.calls.filter(
+			([filters]) =>
+				JSON.stringify(filters?.queryKey) ===
+				JSON.stringify(['agents', 'credential-bindings', 'agnt_1']),
+		);
+		expect(bindingCalls).toHaveLength(1);
+	});
+
 	it('cancels token-less when unmounted mid-sign-in', async () => {
 		const seeded = seedMockAgentConnectSession({ agent_id: 'agnt_1', vendor_key: 'github' });
 		const view = await driveToAwaiting(seeded.session_id);
