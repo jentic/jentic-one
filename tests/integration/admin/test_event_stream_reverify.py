@@ -19,8 +19,6 @@ import hashlib
 import secrets
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
-from typing import Any
 
 import pytest
 from fastapi import FastAPI
@@ -28,11 +26,10 @@ from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy import text
 
 from jentic_one.__main__ import _build_app
-from jentic_one.admin.services.event_stream_service import EventStreamService
-from jentic_one.admin.services.schemas.events import EventView, Heartbeat
 from jentic_one.auth.services.token_service import TokenService
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
+from tests.harness.event_stream import StreamProbe
 
 pytestmark = pytest.mark.integration
 
@@ -106,46 +103,10 @@ async def _client(ctx: Context) -> AsyncIterator[AsyncClient]:
         yield c
 
 
-@dataclass
-class _StreamProbe:
-    """Counts the items the stream service hands the router."""
-
-    items: int = 0
-
-    async def wait_for_items(self, count: int, *, timeout: float = 10.0) -> None:
-        async def _poll() -> None:
-            while self.items < count:
-                await asyncio.sleep(0.01)
-
-        await asyncio.wait_for(_poll(), timeout=timeout)
-
-
-@pytest.fixture()
-def fast_stream(integration_context: Context, monkeypatch: pytest.MonkeyPatch) -> _StreamProbe:
-    """Re-verify on every page, poll every 50 ms, and count what the stream yields."""
-    monkeypatch.setattr(integration_context.config.admin.events, "stream_recheck_seconds", 0.01)
-    probe = _StreamProbe()
-    original = EventStreamService.stream
-
-    async def _stream(
-        self: EventStreamService, **kwargs: Any
-    ) -> AsyncGenerator[EventView | Heartbeat, None]:
-        items = original(self, **{**kwargs, "poll_interval_seconds": 0.05})
-        try:
-            async for item in items:
-                probe.items += 1
-                yield item
-        finally:
-            await items.aclose()
-
-    monkeypatch.setattr(EventStreamService, "stream", _stream)
-    return probe
-
-
 async def _stream_until_closed(
     ctx: Context,
     headers: dict[str, str],
-    probe: _StreamProbe,
+    probe: StreamProbe,
     change: Callable[[], Awaitable[None]],
 ) -> Response:
     async with _client(ctx) as client:
@@ -175,7 +136,7 @@ def _closed_reason(resp: Response) -> str:
 
 
 async def test_revoking_events_read_closes_the_open_stream(
-    integration_context: Context, agent_key: str, fast_stream: _StreamProbe
+    integration_context: Context, agent_key: str, fast_stream: StreamProbe
 ) -> None:
     ctx = integration_context
 
@@ -187,7 +148,7 @@ async def test_revoking_events_read_closes_the_open_stream(
 
 
 async def test_disabling_the_agent_closes_the_open_stream(
-    integration_context: Context, agent_key: str, fast_stream: _StreamProbe
+    integration_context: Context, agent_key: str, fast_stream: StreamProbe
 ) -> None:
     ctx = integration_context
 
@@ -199,7 +160,7 @@ async def test_disabling_the_agent_closes_the_open_stream(
 
 
 async def test_revoking_the_access_token_closes_the_open_stream(
-    integration_context: Context, agent_key: str, fast_stream: _StreamProbe
+    integration_context: Context, agent_key: str, fast_stream: StreamProbe
 ) -> None:
     ctx = integration_context
     access, _refresh = await TokenService(ctx).issue_pair(_AGENT, ActorType.AGENT, [])
