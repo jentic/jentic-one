@@ -159,7 +159,7 @@ class CachingCredentialDeriver:
     def invalidate_credential(self, credential_id: str) -> None:
         """Evict what a credential mutation can change (#1837).
 
-        A diagnosis's ``api_served`` and ``identity_mismatch`` can depend on any
+        A diagnosis's ``api_served`` and ``scope_miss`` can depend on any
         covering credential, bound to the agent or not, so every diagnosis is
         dropped. Bindings are dropped too: a credential delete cascades to its
         bindings, and that may be signalled by credential id alone.

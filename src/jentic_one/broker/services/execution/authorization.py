@@ -106,7 +106,7 @@ def _unserved_denial(
       :func:`no_credential_binding_directive` from whether any credential
       serves the API at all.
     """
-    if d.agent_bound_any and not d.api_served and d.identity_mismatch is not None:
+    if d.agent_bound_any and not d.api_served and d.scope_miss is not None:
         _authz_denied.add(
             1,
             {
@@ -119,7 +119,7 @@ def _unserved_denial(
             "A bound credential's identity does not cover this API",
             type="credential_identity_mismatch",
             instance=instance,
-            directive=direct_credential_identity_mismatch_directive(mismatch=d.identity_mismatch),
+            directive=direct_credential_identity_mismatch_directive(miss=d.scope_miss),
         )
     _authz_denied.add(
         1,

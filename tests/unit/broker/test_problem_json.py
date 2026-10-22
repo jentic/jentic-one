@@ -44,7 +44,7 @@ from jentic_one.broker.web.errors import (
 )
 from jentic_one.control.web.schemas.permission_rules import PermissionRuleSchema
 from jentic_one.shared.access_guidance import ConnectTarget
-from jentic_one.shared.broker.protocols import IdentityMismatch
+from jentic_one.shared.broker.protocols import CredentialScopeMiss
 from jentic_one.shared.db.errors import (
     DatabaseCommitOutcomeUnknownError,
     DatabaseUnavailableError,
@@ -69,7 +69,7 @@ def test_directive_factories_emit_known_strategies() -> None:
     directives = [
         switch_toolkit_directive(503),
         credential_identity_mismatch_directive(
-            mismatch=IdentityMismatch(
+            miss=CredentialScopeMiss(
                 expected_vendor="acme",
                 expected_name="widgets",
                 expected_version="1.0.0",
@@ -84,7 +84,7 @@ def test_directive_factories_emit_known_strategies() -> None:
         ),
         ambiguous_credential_binding_directive(["cred_a", "cred_b"]),
         direct_credential_identity_mismatch_directive(
-            mismatch=IdentityMismatch(
+            miss=CredentialScopeMiss(
                 expected_vendor="acme",
                 expected_name="widgets",
                 expected_version="1.0.0",
@@ -314,7 +314,7 @@ def test_credential_identity_mismatch_directive_has_no_fabricated_command() -> N
     command, so a ``suggested_command`` here would be fiction the CLI prints
     verbatim (review B2)."""
     d = credential_identity_mismatch_directive(
-        mismatch=IdentityMismatch(
+        miss=CredentialScopeMiss(
             expected_vendor="acme",
             expected_name="widgets",
             expected_version="1.0.0",
@@ -339,7 +339,7 @@ def test_credential_identity_mismatch_directive_renders_unset_axes() -> None:
     Without the ``*`` placeholder, ``(acme, None, "1.0.0")`` would render as the
     ambiguous ``acme/1.0.0`` — indistinguishable from vendor/name."""
     d = credential_identity_mismatch_directive(
-        mismatch=IdentityMismatch(
+        miss=CredentialScopeMiss(
             expected_vendor="acme",
             expected_name="widgets",
             expected_version="1.0.0",
@@ -355,7 +355,7 @@ def test_credential_identity_mismatch_directive_renders_unset_axes() -> None:
 def test_credential_identity_mismatch_directive_would_normalize_message() -> None:
     """When only normalization differs, the instruction says so (#746 legacy row)."""
     d = credential_identity_mismatch_directive(
-        mismatch=IdentityMismatch(
+        miss=CredentialScopeMiss(
             expected_vendor="acme",
             expected_name="widgets",
             expected_version="1.0.0",

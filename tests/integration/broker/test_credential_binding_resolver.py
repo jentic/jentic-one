@@ -162,7 +162,7 @@ async def test_unbound_agent_returns_empty_with_api_served(
     assert result.diagnosis is not None
     assert result.diagnosis.agent_bound_any is False
     assert result.diagnosis.api_served is True
-    assert result.diagnosis.identity_mismatch is None
+    assert result.diagnosis.scope_miss is None
 
 
 async def test_nothing_serves_api(
@@ -267,7 +267,7 @@ async def test_inactive_credential_excluded(
 async def test_nearest_miss_same_vendor(
     admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
 ) -> None:
-    """Bound + nothing serves + same-vendor near-miss → identity_mismatch populated."""
+    """Bound + nothing serves + same-vendor near-miss → scope_miss populated."""
     cred_id = await _seed_credential(
         control_db, name="acme", vendor="acme.com", api_name="old-api", version="v1"
     )
@@ -280,9 +280,9 @@ async def test_nearest_miss_same_vendor(
     assert result.diagnosis is not None
     assert result.diagnosis.agent_bound_any is True
     assert result.diagnosis.api_served is False
-    assert result.diagnosis.identity_mismatch is not None
-    assert result.diagnosis.identity_mismatch.found_name == "old-api"
-    assert result.diagnosis.identity_mismatch.expected_name == "pets-api"
+    assert result.diagnosis.scope_miss is not None
+    assert result.diagnosis.scope_miss.found_name == "old-api"
+    assert result.diagnosis.scope_miss.expected_name == "pets-api"
 
 
 async def test_unrelated_vendor_is_not_a_mismatch(
@@ -299,7 +299,7 @@ async def test_unrelated_vendor_is_not_a_mismatch(
 
     assert result.candidates == ()
     assert result.diagnosis is not None
-    assert result.diagnosis.identity_mismatch is None
+    assert result.diagnosis.scope_miss is None
 
 
 async def test_wildcard_credential_covers(

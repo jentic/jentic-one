@@ -161,13 +161,14 @@ class RuleEvaluation:
 
 
 @dataclass(frozen=True, slots=True)
-class IdentityMismatch:
-    """A nearest-miss credential identity for an unresolved-but-bound API.
+class CredentialScopeMiss:
+    """The bound credential whose API scope comes closest to covering a request.
 
-    Populated when the agent is bound but no credential's stored identity
-    covers the (concrete) operation identity — the #747/#748 case. All
-    fields are plain strings so the directive layer can serialize them directly
-    without touching a pydantic model.
+    The nearest miss when the agent is bound but no credential's stored scope
+    (vendor / name / version) covers the concrete operation — the #747/#748
+    case: ``expected_*`` is the operation, ``found_*`` the credential's scope.
+    All fields are plain strings so the directive layer can serialize them
+    directly without touching a pydantic model.
     """
 
     expected_vendor: str
@@ -233,8 +234,8 @@ class UnservedDiagnosis:
       agent or not) covers the API. Deliberately a *bool*, not ids: covering
       credentials can belong to other owners, so carrying their ids here would
       invite a cross-tenant leak into a directive.
-    - ``identity_mismatch`` — nearest-miss diagnostic when the agent is bound
-      but nothing covers the operation identity.
+    - ``scope_miss`` — the bound credential whose scope comes closest, when
+      the agent is bound but nothing covers the operation.
     - ``binding_suspended`` — the agent holds a *suspended* binding to a
       credential covering the API; the recovery is the operator's (resume the
       binding), never a new connect.
@@ -242,7 +243,7 @@ class UnservedDiagnosis:
 
     agent_bound_any: bool
     api_served: bool
-    identity_mismatch: IdentityMismatch | None
+    scope_miss: CredentialScopeMiss | None
     binding_suspended: bool = False
 
 

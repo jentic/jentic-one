@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from jentic_one.shared.broker.protocols import (
     AgentBindings,
     BoundCredential,
-    IdentityMismatch,
+    CredentialScopeMiss,
     UnservedDiagnosis,
 )
 from jentic_one.shared.db import DatabaseSession
@@ -133,9 +133,9 @@ class CredentialBindingResolver:
             # grant), not "fix your credential", so a mismatch would send the
             # wrong signal. Requires the agent to be bound to something (else it
             # is a plain no-binding case).
-            mismatch: IdentityMismatch | None = None
+            miss: CredentialScopeMiss | None = None
             if bindings.active and not api_served:
-                mismatch = await self._nearest_miss(
+                miss = await self._nearest_miss(
                     session, set(bindings.active_ids), vendor=vendor, name=name, version=version
                 )
 
@@ -150,7 +150,7 @@ class CredentialBindingResolver:
         return UnservedDiagnosis(
             agent_bound_any=bool(bindings.active),
             api_served=api_served,
-            identity_mismatch=mismatch,
+            scope_miss=miss,
             binding_suspended=binding_suspended,
         )
 
@@ -185,7 +185,7 @@ class CredentialBindingResolver:
         vendor: str,
         name: str,
         version: str,
-    ) -> IdentityMismatch | None:
+    ) -> CredentialScopeMiss | None:
         """Find the closest bound-credential identity that fails to cover the API.
 
         Same vendor-affinity gate and ranking as the deleted toolkit-path twin
@@ -207,7 +207,7 @@ class CredentialBindingResolver:
             return None
 
         expected_vendor_slug = slugify_api_field(vendor)
-        best: IdentityMismatch | None = None
+        best: CredentialScopeMiss | None = None
         best_rank: tuple[int, int] = (-1, -1)
         for row in rows:
             scope = canonical_credential_scope(
@@ -222,7 +222,7 @@ class CredentialBindingResolver:
             )
             if rank > best_rank:
                 best_rank = rank
-                best = IdentityMismatch(
+                best = CredentialScopeMiss(
                     expected_vendor=vendor,
                     expected_name=name,
                     expected_version=version,

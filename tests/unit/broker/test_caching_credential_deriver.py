@@ -31,7 +31,7 @@ class _CountingDeriver:
         self, *, bindings: AgentBindings, vendor: str, name: str, version: str
     ) -> UnservedDiagnosis:
         self.diagnosis_calls += 1
-        return UnservedDiagnosis(agent_bound_any=True, api_served=False, identity_mismatch=None)
+        return UnservedDiagnosis(agent_bound_any=True, api_served=False, scope_miss=None)
 
 
 def _bindings(agent_id: str) -> AgentBindings:
