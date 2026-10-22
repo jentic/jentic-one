@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
@@ -182,66 +180,66 @@ class IdentityMismatch:
 
 
 @dataclass(frozen=True, slots=True)
-class BoundCredentialHeader:
-    """Non-secret header columns of an active, connected covering credential.
-
-    Populated by ``CredentialBindingResolver`` alongside :class:`BoundCredential`
-    so credential selection can disambiguate candidates without a second
-    ``SELECT … FROM credentials`` round trip on ``control_db``.
-    """
-
-    id: str
-    type: str
-    name: str
-    api_vendor: str
-    api_name: str | None = None
-    api_version: str | None = None
-    provider: str = "static"
-    provider_account_ref: str | None = None
-    active: bool = True
-    server_variables: Mapping[str, str] | None = None
-    created_at: datetime | None = None
-    created_by: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
 class BoundCredential:
-    """One direct agent→credential binding candidate for an API identity.
+    """One active direct agent→credential binding.
 
     Carries the binding's ``rule_set_id`` alongside the credential id so the
     rule evaluator can honour an attached shared rule set without a second
-    admin-DB round-trip after credential selection, and optional ``header``
-    metadata so selection needs no second ``credentials`` query.
+    admin-DB round-trip after credential selection.
     """
 
     credential_id: str
     rule_set_id: str | None
-    header: BoundCredentialHeader | None = None
 
 
 @dataclass(frozen=True, slots=True)
-class CredentialDerivation:
-    """Result of direct-binding credential derivation (theme-5).
+class AgentBindings:
+    """An agent's direct credential bindings (theme-5), read from the admin DB.
 
-    ``credentials`` is the intersection of the agent's **active**
-    (non-suspended) direct bindings with the credentials whose stored identity
-    covers the API. The remaining fields explain an empty set so the denial
-    picks the right directive:
-
-    - ``agent_bound_any`` — the agent has at least one active direct binding.
-    - ``api_served`` — at least one active credential (bound to this agent or
-      not) covers the API. Deliberately a *bool*, not ids: covering credentials
-      can belong to other owners, so carrying their ids here would invite a
-      cross-tenant leak into a directive.
-    - ``identity_mismatch`` — nearest-miss diagnostic when the agent is bound
-      but none of its bound credentials cover the operation identity.
-    - ``binding_suspended`` — the agent holds a *suspended* binding to a
-      credential covering the API. Computed only for an empty
-      ``credentials``; the recovery is the operator's (resume the binding),
-      never a new connect.
+    ``active`` holds the non-suspended bindings, sorted by credential id;
+    ``suspended_ids`` the credentials whose binding is suspended (they never
+    authorize an execution — they only explain a denial). Credential state
+    (active, connected, which API it covers) is not part of this: the broker
+    reads it live at selection time, so a cached ``AgentBindings`` can never
+    make a disabled or re-scoped credential injectable.
     """
 
-    credentials: tuple[BoundCredential, ...]
+    agent_id: str
+    active: tuple[BoundCredential, ...]
+    suspended_ids: frozenset[str] = frozenset()
+
+    @property
+    def active_ids(self) -> tuple[str, ...]:
+        """The actively bound credential ids, in ``active`` order."""
+        return tuple(b.credential_id for b in self.active)
+
+    def rule_set_id(self, credential_id: str) -> str | None:
+        """The shared rule set attached to the active binding to ``credential_id``."""
+        for binding in self.active:
+            if binding.credential_id == credential_id:
+                return binding.rule_set_id
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class UnservedDiagnosis:
+    """Why none of an agent's bound credentials serves an API (denial path only).
+
+    Picks the denial directive when no actively bound, active, connected
+    credential covers the API:
+
+    - ``agent_bound_any`` — the agent has at least one active direct binding.
+    - ``api_served`` — at least one active, connected credential (bound to this
+      agent or not) covers the API. Deliberately a *bool*, not ids: covering
+      credentials can belong to other owners, so carrying their ids here would
+      invite a cross-tenant leak into a directive.
+    - ``identity_mismatch`` — nearest-miss diagnostic when the agent is bound
+      but nothing covers the operation identity.
+    - ``binding_suspended`` — the agent holds a *suspended* binding to a
+      credential covering the API; the recovery is the operator's (resume the
+      binding), never a new connect.
+    """
+
     agent_bound_any: bool
     api_served: bool
     identity_mismatch: IdentityMismatch | None
@@ -250,15 +248,19 @@ class CredentialDerivation:
 
 @runtime_checkable
 class CredentialDeriverProtocol(Protocol):
-    """Derives which of an agent's directly-bound credentials cover an API identity.
+    """Reads an agent's direct bindings, and explains an unserved API.
 
-    Empty ``credentials`` → 403, one → use it, many → name/id header
-    disambiguation then most-specific-wins (a genuine unaddressed tie → 409).
+    The broker intersects ``derive_bindings`` with a live read of the covering
+    credentials: none → :meth:`diagnose_unserved` picks the 403, one → use it,
+    many → name/id header disambiguation then most-specific-wins (a genuine
+    unaddressed tie → 409).
     """
 
-    async def derive_credentials(
-        self, *, agent_id: str, vendor: str, name: str, version: str
-    ) -> CredentialDerivation: ...
+    async def derive_bindings(self, *, agent_id: str) -> AgentBindings: ...
+
+    async def diagnose_unserved(
+        self, *, bindings: AgentBindings, vendor: str, name: str, version: str
+    ) -> UnservedDiagnosis: ...
 
 
 @dataclass(frozen=True, slots=True)

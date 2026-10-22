@@ -315,7 +315,7 @@ async def test_broker_ignores_a_suspended_binding_once_an_active_one_covers_the_
     active = await existing_credential(env, name="Active")
     await bind(env, AGENT_ID, active)
 
-    derivation = await derive_credential_bindings(
+    derived = await derive_credential_bindings(
         deriver=CredentialBindingResolver(env.admin_db, env.control_db),
         identity=AGENT,
         api=_API,
@@ -323,5 +323,4 @@ async def test_broker_ignores_a_suspended_binding_once_an_active_one_covers_the_
         ctx=env,
     )
 
-    assert [c.credential_id for c in derivation.credentials] == [active]
-    assert derivation.binding_suspended is False
+    assert derived.candidates.ids == (active,)

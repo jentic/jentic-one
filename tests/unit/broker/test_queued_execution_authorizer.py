@@ -16,7 +16,7 @@ from jentic_one.broker.core.exceptions import ActionDeniedError, AgentDirective
 from jentic_one.broker.core.problem import broker_error_problem, problem_body
 from jentic_one.broker.repos.actor_status import ActorStatusResolver
 from jentic_one.broker.services.execution.queued_authorization import QueuedExecutionAuthorizer
-from jentic_one.shared.broker.protocols import CredentialDerivation
+from jentic_one.shared.broker.protocols import AgentBindings, UnservedDiagnosis
 from jentic_one.shared.config import VendorRegistryConfig
 from jentic_one.shared.jobs.protocols import ActorAuthority, QueuedExecutionRequest
 
@@ -38,9 +38,7 @@ class _DenyingCredentialDeriver:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def derive_credentials(
-        self, *, agent_id: str, vendor: str, name: str, version: str
-    ) -> CredentialDerivation:
+    async def derive_bindings(self, *, agent_id: str) -> AgentBindings:
         self.calls += 1
         raise ActionDeniedError(
             "Denied by rule",
@@ -50,6 +48,11 @@ class _DenyingCredentialDeriver:
                 strategy="retry", human_readable_instruction="Ask for access."
             ),
         )
+
+    async def diagnose_unserved(
+        self, *, bindings: AgentBindings, vendor: str, name: str, version: str
+    ) -> UnservedDiagnosis:
+        raise AssertionError("not reached: derive_bindings denies first")
 
 
 def _authorizer(

@@ -69,7 +69,7 @@ from jentic_one.broker.core.schemas import (
     HeldExecutionAcceptedResponse,
 )
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
-from jentic_one.broker.services.credentials.resolver import ResolvedCredential
+from jentic_one.broker.services.credentials.resolver import SelectedCredential
 from jentic_one.broker.services.discovery import (
     discover,
     discover_via_pins,
@@ -543,17 +543,17 @@ async def _resolve_credentials(
     identity: Identity,
     credential_name: str | None = None,
     *,
-    preresolved: ResolvedCredential | None = None,
+    selected: SelectedCredential | None = None,
     allowed_credential_ids: list[str] | None = None,
     credential_id: str | None = None,
 ) -> InjectedAuth:
     """Resolve + inject credentials via the shared ``CredentialService``.
 
-    ``preresolved`` carries the direct path's already-selected credential so
+    ``selected`` carries the direct path's already-selected credential so
     injection never re-resolves (and cannot pick a different credential than
-    the one the rules were evaluated against). ``allowed_credential_ids`` is
-    the injection boundary: only these ids may resolve, and an empty list
-    resolves nothing. ``credential_id`` (``Jentic-Credential-Id``)
+    the one the rules were evaluated against); only its secret is read.
+    ``allowed_credential_ids`` is the injection boundary: only these ids may
+    resolve, and an empty list resolves nothing. ``credential_id`` (``Jentic-Credential-Id``)
     disambiguates *within* that boundary — it can never select a credential
     outside it.
     """
@@ -566,7 +566,7 @@ async def _resolve_credentials(
         credential_id=credential_id,
         allowed_credential_ids=allowed_credential_ids,
         trace_id=ctx_req.trace_id,
-        preresolved=preresolved,
+        selected=selected,
         request_server_variables=ctx_req.server_variables,
         server_variables_unresolved=ctx_req.server_variables_unresolved,
     )
@@ -816,7 +816,7 @@ async def _handle(
             identity,
             runner,
             upstream_cfg,
-            preresolved=selected_credential,
+            selected=selected_credential,
             allowed_credential_ids=allowed_credential_ids,
         )
 
@@ -883,7 +883,7 @@ async def _execute_buffered(
     runner: UpstreamRunner,
     body: bytes | None,
     *,
-    selected_credential: ResolvedCredential | None = None,
+    selected_credential: SelectedCredential | None = None,
     allowed_credential_ids: list[str] | None = None,
 ) -> ExecutionOutcome:
     """Inject credentials, run the buffered upstream call, and persist its record.
@@ -900,7 +900,7 @@ async def _execute_buffered(
         ctx,
         identity,
         credential_name,
-        preresolved=selected_credential,
+        selected=selected_credential,
         allowed_credential_ids=allowed_credential_ids,
         credential_id=request.headers.get("jentic-credential-id"),
     )
@@ -940,7 +940,7 @@ async def _handle_streaming(
     runner: StreamingUpstreamRunner,
     upstream_cfg: UpstreamClientConfig,
     *,
-    preresolved: ResolvedCredential | None = None,
+    selected: SelectedCredential | None = None,
     allowed_credential_ids: list[str] | None = None,
 ) -> Response:
     """Sync, non-idempotent streaming passthrough.
@@ -965,7 +965,7 @@ async def _handle_streaming(
         ctx,
         identity,
         credential_name,
-        preresolved=preresolved,
+        selected=selected,
         allowed_credential_ids=allowed_credential_ids,
         credential_id=request.headers.get("jentic-credential-id"),
     )

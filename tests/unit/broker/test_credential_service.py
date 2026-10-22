@@ -34,7 +34,7 @@ from jentic_one.broker.services.credentials.errors import (
     CredentialNotProvisionedError as ResolveNotProvisioned,
 )
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
-from jentic_one.broker.services.credentials.resolver import ResolvedCredential
+from jentic_one.broker.services.credentials.resolver import CredentialCandidates, ResolvedCredential
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import ConnectableRegistration
 from jentic_one.shared.config import (
@@ -47,6 +47,7 @@ from jentic_one.shared.crypto import DecryptionError
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.credentials import CredentialType, StoredCredentialType
 from jentic_one.shared.models.events import EventSeverity
+from jentic_one.shared.schemas import APIReference
 
 _IDENTITY = Identity(
     sub="agent_42",
@@ -166,7 +167,7 @@ def _patch_resolver(monkeypatch: pytest.MonkeyPatch, exc: Exception) -> None:
     resolve = AsyncMock(side_effect=exc)
     monkeypatch.setattr(
         "jentic_one.broker.services.credentials.orchestrator.CredentialResolver",
-        lambda ctx: MagicMock(resolve=resolve),
+        lambda ctx: MagicMock(resolve=resolve, select=MagicMock(side_effect=exc)),
     )
 
 
@@ -418,9 +419,10 @@ async def test_not_provisioned_registry_vendor_carries_structured_connect(
 
     with pytest.raises(CredentialNotProvisionedError) as exc:
         await _service(_ctx(vendors=_github_registry()), registrations).select(
-            api_vendor="github.com",
-            api_name="github.com/api.github.com",
-            api_version="",
+            candidates=CredentialCandidates(
+                api=APIReference(vendor="github.com", name="github.com/api.github.com", version=""),
+                credentials=(),
+            ),
             identity=_IDENTITY,
             method="get",
             path="/repos/acme/widgets/issues",

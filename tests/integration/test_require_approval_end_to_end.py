@@ -37,9 +37,10 @@ from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import AgentRepository, UserRepository
 from jentic_one.admin.web.app import create_app
 from jentic_one.broker.core.schemas import ExecuteRequestContext
-from jentic_one.broker.services.credentials.resolver import ResolvedCredential
+from jentic_one.broker.services.credentials.resolver import SelectedCredential
 from jentic_one.broker.services.execution.authorization import ExecutionAuthorization
 from jentic_one.broker.web.routers.execute import _handle_hold
+from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.mcp.tools import CallEnv, dispatch_mcp_tool_call
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import RuleVerdict
@@ -51,7 +52,6 @@ from jentic_one.shared.jobs.worker import WorkerLoop
 from jentic_one.shared.models import (
     ActorStatus,
     ActorType,
-    CredentialType,
     InviteState,
     JobKind,
     JobStatus,
@@ -173,12 +173,15 @@ async def _broker_holds(ctx: Context, agent: Identity) -> dict[str, Any]:
     )
     authorization = ExecutionAuthorization(
         allowed_credential_ids=["cred_e2e"],
-        selected_credential=ResolvedCredential(
+        selected_credential=SelectedCredential(
             credential_id="cred_e2e",
             name="payments-key",
-            wire_type=CredentialType.API_KEY,
-            stored_type=StoredCredentialType.API_KEY,
-            provider="api.example.com",
+            header=Credential(
+                id="cred_e2e",
+                name="payments-key",
+                type=StoredCredentialType.API_KEY.value,
+                api_vendor="api.example.com",
+            ),
         ),
         verdict=RuleVerdict.REQUIRE_APPROVAL,
         matched_rule_id="apr_e2e",

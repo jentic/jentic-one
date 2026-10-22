@@ -34,6 +34,9 @@ from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.services.event_service import EventService
 from jentic_one.admin.services.schemas.events import EventFilter
 from jentic_one.broker.repos.credential_binding_resolver import CredentialBindingResolver
+from jentic_one.broker.services.credentials.orchestrator import (
+    CredentialService as BrokerCredentialService,
+)
 from jentic_one.control.core.schema.connect_session_outcomes import ConnectSessionOutcome
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
 from jentic_one.control.core.schema.credentials import Credential
@@ -102,6 +105,7 @@ from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.events import EventSeverity, EventType
+from jentic_one.shared.schemas import APIReference
 from jentic_one.shared.web.deps import resolve_identity
 from jentic_one.wiring import InProcessCatalogAutoImporter
 
@@ -484,11 +488,14 @@ async def _connect_and_bind(ctx: Context) -> Credential:
 
 
 async def _assert_binding_resolves(ctx: Context, api: Api, credential: Credential) -> None:
-    derivation = await CredentialBindingResolver(ctx.admin_db, ctx.control_db).derive_credentials(
-        agent_id=_AGENT_ID, vendor=api.vendor, name=api.name, version=api.version
+    bindings = await CredentialBindingResolver(ctx.admin_db, ctx.control_db).derive_bindings(
+        agent_id=_AGENT_ID
     )
-    assert [c.credential_id for c in derivation.credentials] == [credential.id]
-    assert derivation.identity_mismatch is None
+    candidates = await BrokerCredentialService(ctx).covering(
+        api=APIReference(vendor=api.vendor, name=api.name, version=api.version),
+        credential_ids=bindings.active_ids,
+    )
+    assert candidates.ids == (credential.id,)
 
 
 async def test_vendor_connect_after_catalog_import_resolves_for_the_imported_api(

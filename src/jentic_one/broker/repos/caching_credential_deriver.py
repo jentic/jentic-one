@@ -1,32 +1,43 @@
-"""Short-TTL, single-flighted cache around direct-binding credential derivation.
+"""Short-TTL, single-flighted cache around direct-binding derivation.
 
 The direct-binding twin of the pre-6b ``caching_toolkit_deriver`` (deleted with
-the toolkit path): the cross-DB
-``derive_credentials`` lookup (admin agent→credential bindings ∩ control
-covering credentials) runs on every direct-path request — two DB hits per
-request. Bindings change infrequently, so this wraps the authoritative resolver
-in a short-TTL LRU keyed on ``(agent_id, vendor, name, version) →
-CredentialDerivation``, invalidated on TTL only, and single-flighted so
-concurrent misses for one key collapse to a single Admin+Control lookup.
+the toolkit path). Two read-mostly lookups are cached, each in its own TTL LRU:
 
-This is a pure latency optimization layered *over* the authoritative DB lookup —
-authorization correctness never depends on the cache, only its staleness is
-bounded by the TTL. In a cluster the LRU is **per instance**, so a binding
+- ``derive_bindings`` (admin agent→credential bindings), keyed on ``agent_id``
+  and read on every direct-path request.
+- ``diagnose_unserved`` (control-DB denial guidance), keyed on
+  ``(agent_id, vendor, name, version)`` and read only when a request is denied
+  for lack of a covering credential — an agent retrying a denied call is served
+  from cache.
+
+Credential state (active, connected, which API it covers, its header fields)
+is **not** cached here: the broker reads it live per request
+(``CredentialRepository.list_covering``), so a disabled or re-scoped credential
+stops being selectable on the next request whatever this cache holds.
+
+This is a pure latency optimization layered *over* the authoritative DB
+lookups, single-flighted so concurrent misses for one key collapse to a single
+lookup. In a cluster the LRUs are **per instance**, so a binding
 granted/revoked/suspended via the binding API only becomes consistent after the
-TTL lapses on each node (acceptable for the read-mostly default; keep the TTL
-short).
+TTL lapses on each node that misses the invalidation (acceptable for the
+read-mostly default; keep the TTL short).
 """
 
 from __future__ import annotations
 
 import time
 from collections import OrderedDict
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 import structlog
 
 from jentic_one.broker.core.singleflight import SingleFlight
-from jentic_one.shared.broker.protocols import CredentialDerivation, CredentialDeriverProtocol
+from jentic_one.shared.broker.protocols import (
+    AgentBindings,
+    CredentialDeriverProtocol,
+    UnservedDiagnosis,
+)
 from jentic_one.shared.metrics import get_meter
 
 logger = structlog.get_logger(__name__)
@@ -39,34 +50,65 @@ _cache_misses = _meter.create_counter(
 )
 
 DEFAULT_CREDENTIAL_CACHE_TTL_SECONDS = 30.0
-# Bound the LRU so a high-cardinality spray of distinct (agent, api) tuples
-# can't grow the cache without limit. Derivation keys are low-cardinality in
+# Bound each LRU so a high-cardinality spray of distinct agents / (agent, api)
+# tuples can't grow the cache without limit. Keys are low-cardinality in
 # practice (bounded by active agents times APIs), so this is generous headroom.
 DEFAULT_MAX_CACHE_ENTRIES = 10_000
 
 
 @dataclass(slots=True)
-class _CacheEntry:
-    """A cached derivation result with its insertion time (monotonic)."""
+class _CacheEntry[T]:
+    """A cached value with its insertion time (monotonic)."""
 
-    value: CredentialDerivation
+    value: T
     cached_at: float
+
+
+class _TTLCache[T]:
+    """A TTL LRU with single-flighted misses, labelled for its metrics."""
+
+    def __init__(self, *, kind: str, ttl_seconds: float, max_entries: int) -> None:
+        self._kind = kind
+        self._ttl_seconds = ttl_seconds
+        self._max_entries = max_entries
+        self._entries: OrderedDict[str, _CacheEntry[T]] = OrderedDict()
+        self._single_flight: SingleFlight[T] = SingleFlight()
+
+    async def get(self, key: str, load: Callable[[], Awaitable[T]]) -> T:
+        cached = self._entries.get(key)
+        if cached is not None and (time.monotonic() - cached.cached_at) < self._ttl_seconds:
+            self._entries.move_to_end(key)
+            _cache_hits.add(1, {"kind": self._kind})
+            return cached.value
+
+        async def _load() -> T:
+            value = await load()
+            self._entries[key] = _CacheEntry(value=value, cached_at=time.monotonic())
+            self._entries.move_to_end(key)
+            while len(self._entries) > self._max_entries:
+                self._entries.popitem(last=False)
+            _cache_misses.add(1, {"kind": self._kind})
+            return value
+
+        return await self._single_flight.do(key, _load)
+
+    def pop(self, key: str) -> None:
+        self._entries.pop(key, None)
+
+    def pop_prefix(self, prefix: str) -> None:
+        for k in [k for k in self._entries if k.startswith(prefix)]:
+            self._entries.pop(k, None)
+
+    def clear(self) -> None:
+        self._entries.clear()
 
 
 class CachingCredentialDeriver:
     """TTL-LRU + single-flight wrapper around a :class:`CredentialDeriverProtocol`.
 
     Implements ``CredentialDeriverProtocol`` itself so it drops in wherever the
-    raw resolver is used. A hit within ``cache_ttl_seconds`` returns the cached
-    result without touching the DB; concurrent misses for one key are coalesced
-    into a single underlying ``derive_credentials`` call.
-
-    The cached :class:`CredentialDerivation` is a frozen dataclass of frozen
-    values, so it is returned directly (no defensive copy). Its ``api_served``
-    and ``identity_mismatch`` are cached under the same TTL as the candidate
-    list; those drive recovery guidance, never authorization, so bounded
-    staleness is acceptable — the same argument that justifies caching the
-    candidate list.
+    raw resolver is used. Cached values are frozen dataclasses of frozen
+    values, so they are returned directly (no defensive copy).
     """
 
     def __init__(
@@ -79,62 +121,53 @@ class CachingCredentialDeriver:
         if max_entries < 1:
             raise ValueError("max_entries must be >= 1")
         self._inner = inner
-        self._cache_ttl_seconds = cache_ttl_seconds
-        self._max_entries = max_entries
-        self._cache: OrderedDict[str, _CacheEntry] = OrderedDict()
-        self._single_flight: SingleFlight[CredentialDerivation] = SingleFlight()
+        self._bindings: _TTLCache[AgentBindings] = _TTLCache(
+            kind="bindings", ttl_seconds=cache_ttl_seconds, max_entries=max_entries
+        )
+        self._diagnoses: _TTLCache[UnservedDiagnosis] = _TTLCache(
+            kind="diagnosis", ttl_seconds=cache_ttl_seconds, max_entries=max_entries
+        )
 
-    async def derive_credentials(
-        self, *, agent_id: str, vendor: str, name: str, version: str
-    ) -> CredentialDerivation:
-        """Return the agent's derivation for the API, served from cache when fresh."""
-        key = self._make_key(agent_id=agent_id, vendor=vendor, name=name, version=version)
-        now = time.monotonic()
+    async def derive_bindings(self, *, agent_id: str) -> AgentBindings:
+        """Return the agent's bindings, served from cache when fresh."""
 
-        cached = self._cache.get(key)
-        if cached is not None and (now - cached.cached_at) < self._cache_ttl_seconds:
-            self._cache.move_to_end(key)
-            _cache_hits.add(1)
-            return cached.value
+        async def _load() -> AgentBindings:
+            logger.debug("credential_binding_cache_miss", agent_id=agent_id)
+            return await self._inner.derive_bindings(agent_id=agent_id)
 
-        async def _load() -> CredentialDerivation:
-            result = await self._inner.derive_credentials(
-                agent_id=agent_id, vendor=vendor, name=name, version=version
+        return await self._bindings.get(agent_id, _load)
+
+    async def diagnose_unserved(
+        self, *, bindings: AgentBindings, vendor: str, name: str, version: str
+    ) -> UnservedDiagnosis:
+        """Return the denial diagnosis for the agent and API, served from cache when fresh."""
+
+        async def _load() -> UnservedDiagnosis:
+            return await self._inner.diagnose_unserved(
+                bindings=bindings, vendor=vendor, name=name, version=version
             )
-            self._store(key, _CacheEntry(value=result, cached_at=time.monotonic()))
-            _cache_misses.add(1)
-            logger.debug("credential_binding_cache_miss", agent_id=agent_id, vendor=vendor)
-            return result
 
-        return await self._single_flight.do(key, _load)
-
-    def _store(self, key: str, entry: _CacheEntry) -> None:
-        self._cache[key] = entry
-        self._cache.move_to_end(key)
-        while len(self._cache) > self._max_entries:
-            self._cache.popitem(last=False)
-
-    @staticmethod
-    def _make_key(*, agent_id: str, vendor: str, name: str, version: str) -> str:
         # NUL-joined so component boundaries are unambiguous (no value contains it).
-        return "\x00".join((agent_id, vendor, name, version))
+        key = "\x00".join((bindings.agent_id, vendor, name, version))
+        return await self._diagnoses.get(key, _load)
 
     def invalidate_agent(self, agent_id: str) -> None:
-        """Evict all cached derivations for ``agent_id`` (#1837)."""
-        prefix = f"{agent_id}\x00"
-        stale = [k for k in self._cache if k.startswith(prefix)]
-        for k in stale:
-            self._cache.pop(k, None)
+        """Evict the agent's cached bindings and diagnoses (#1837)."""
+        self._bindings.pop(agent_id)
+        self._diagnoses.pop_prefix(f"{agent_id}\x00")
 
     def invalidate_credential(self, credential_id: str) -> None:
-        """Evict cached derivations when a credential is deleted or changed (#1837).
+        """Evict what a credential mutation can change (#1837).
 
-        A derivation entry's ``api_served`` and ``identity_mismatch`` fields can
-        depend on any covering credential even when ``credential_id`` is not in
-        ``entry.value.credentials``, so a credential mutation clears the cache.
+        A diagnosis's ``api_served`` and ``identity_mismatch`` can depend on any
+        covering credential, bound to the agent or not, so every diagnosis is
+        dropped. Bindings are dropped too: a credential delete cascades to its
+        bindings, and that may be signalled by credential id alone.
         """
-        self._cache.clear()
+        self._bindings.clear()
+        self._diagnoses.clear()
 
     def clear(self) -> None:
         """Drop all cached entries (useful for tests/operational invalidation)."""
-        self._cache.clear()
+        self._bindings.clear()
+        self._diagnoses.clear()

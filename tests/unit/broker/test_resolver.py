@@ -12,8 +12,12 @@ from jentic_one.broker.services.credentials.errors import (
     AmbiguousCredentialError,
     CredentialNotProvisionedError,
 )
-from jentic_one.broker.services.credentials.resolver import CredentialResolver, ResolvedCredential
-from jentic_one.shared.broker.protocols import BoundCredentialHeader
+from jentic_one.broker.services.credentials.resolver import (
+    CredentialCandidates,
+    CredentialResolver,
+    ResolvedCredential,
+)
+from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.shared.models.credentials import CredentialType, StoredCredentialType
 from jentic_one.shared.schemas import APIReference
 
@@ -569,55 +573,33 @@ async def test_resolve_failure_loads_no_material(
     load_material_spy.assert_not_awaited()
 
 
-@pytest.mark.asyncio
-async def test_resolve_with_candidate_headers_and_without_material_skips_db(
-    load_material_spy: AsyncMock,
-) -> None:
-    """Pins #1943: header-only selection over derived ``candidate_headers`` runs
-    in memory without querying ``list_by_vendor`` or ``load_material``."""
+def test_select_runs_in_memory_and_reads_no_material(load_material_spy: AsyncMock) -> None:
+    """Pins #1943: selection over live covering candidates opens no session and
+    reads no secret material; most-specific-wins picks the pinned credential."""
     ctx = MagicMock()
     ctx.control_db.read_session.side_effect = AssertionError("read_session must not be opened")
     api = APIReference(vendor="stripe", name="payments", version="v1")
-    headers = [
-        BoundCredentialHeader(
-            id="cred_wild",
-            type=StoredCredentialType.STATIC_BEARER_TOKEN.value,
-            name="wildcard",
-            api_vendor="stripe",
-            api_name=None,
-            api_version=None,
-        ),
-        BoundCredentialHeader(
-            id="cred_pin",
-            type=StoredCredentialType.API_KEY.value,
-            name="pinned",
-            api_vendor="stripe",
-            api_name="payments",
-            api_version="v1",
-            created_by="usr_owner",
-            server_variables={"region": "eu"},
-        ),
-    ]
+    wildcard = Credential(
+        id="cred_wild",
+        type=StoredCredentialType.STATIC_BEARER_TOKEN.value,
+        name="wildcard",
+        api_vendor="stripe",
+        active=True,
+    )
+    pinned = Credential(
+        id="cred_pin",
+        type=StoredCredentialType.API_KEY.value,
+        name="pinned",
+        api_vendor="stripe",
+        api_name="payments",
+        api_version="v1",
+        active=True,
+    )
 
-    with patch(
-        "jentic_one.broker.services.credentials.resolver.CredentialRepository.list_by_vendor",
-        new_callable=AsyncMock,
-    ) as list_spy:
-        result = await CredentialResolver(ctx).resolve(
-            api=api,
-            caller="caller_1",
-            allowed_credential_ids={"cred_wild", "cred_pin"},
-            candidate_headers=headers,
-            include_material=False,
-        )
+    selected = CredentialResolver(ctx).select(
+        CredentialCandidates(api=api, credentials=(pinned, wildcard))
+    )
 
-    list_spy.assert_not_awaited()
     load_material_spy.assert_not_awaited()
-    assert result.credential_id == "cred_pin"
-    assert result.name == "pinned"
-    assert result.created_by == "usr_owner"
-    assert result.wire_type == CredentialType.API_KEY
-    assert result.stored_type == StoredCredentialType.API_KEY
-    assert result.server_variables == {"region": "eu"}
-    assert result.material_loaded is False
-    assert result.encrypted_secret is None
+    assert (selected.credential_id, selected.name) == ("cred_pin", "pinned")
+    assert selected.header is pinned

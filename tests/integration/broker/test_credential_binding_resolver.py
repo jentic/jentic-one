@@ -1,16 +1,18 @@
 """Integration tests for the cross-DB ``CredentialBindingResolver`` (theme-5 Phase 2).
 
 Seeds the admin DB (direct agent→credential bindings) and the control DB
-(credentials), then asserts ``derive_credentials`` returns the intersection for
-an API identity: ``()`` (no overlap / suspended / inactive), one candidate
-(with its ``rule_set_id``), and many candidates — plus the empty-set context
-(``agent_bound_any`` / ``api_served`` / nearest-miss) the broker maps to the
-right denial directive.
+(credentials), then runs the broker's derivation — ``derive_bindings``, the live
+``CredentialRepository.list_covering`` read, and ``diagnose_unserved`` when that
+is empty — and asserts the candidates for an API identity: ``()`` (no overlap /
+suspended / inactive), one candidate (with its ``rule_set_id``), and many
+candidates — plus the diagnosis (``agent_bound_any`` / ``api_served`` /
+nearest-miss) the broker maps to the right denial directive.
 """
 
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 
 import pytest
 from sqlalchemy import delete
@@ -19,10 +21,14 @@ from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredenti
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.broker.repos.credential_binding_resolver import CredentialBindingResolver
 from jentic_one.control.core.schema.credentials import Credential
-from jentic_one.shared.broker.protocols import CredentialDeriverProtocol
+from jentic_one.control.repos import CredentialRepository
+from jentic_one.shared.broker.protocols import (
+    AgentBindings,
+    CredentialDeriverProtocol,
+    UnservedDiagnosis,
+)
 from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.db.session import DatabaseSession
-from tests.harness.db_round_trips import trace_round_trips
 
 pytestmark = pytest.mark.integration
 
@@ -99,6 +105,44 @@ async def _bind(
         await session.commit()
 
 
+@dataclass(frozen=True)
+class _Derived:
+    candidates: tuple[str, ...]
+    bindings: AgentBindings
+    diagnosis: UnservedDiagnosis | None
+
+
+async def _derive(
+    admin_db: DatabaseSession,
+    control_db: DatabaseSession,
+    *,
+    agent_id: str,
+    vendor: str = "acme.com",
+    name: str = "pets-api",
+    version: str = "v1",
+) -> _Derived:
+    """The broker's derivation: bindings ∩ live covering read, diagnosed when empty."""
+    resolver = CredentialBindingResolver(admin_db, control_db)
+    bindings = await resolver.derive_bindings(agent_id=agent_id)
+    async with control_db.read_session() as session:
+        rows = await CredentialRepository.list_covering(
+            session,
+            credential_ids=bindings.active_ids,
+            vendor=vendor,
+            name=name,
+            version=version,
+        )
+    candidates = tuple(c.id for c in rows)
+    diagnosis = (
+        None
+        if candidates
+        else await resolver.diagnose_unserved(
+            bindings=bindings, vendor=vendor, name=name, version=version
+        )
+    )
+    return _Derived(candidates=candidates, bindings=bindings, diagnosis=diagnosis)
+
+
 def test_satisfies_protocol() -> None:
     assert issubclass(CredentialBindingResolver, CredentialDeriverProtocol)
 
@@ -112,15 +156,13 @@ async def test_unbound_agent_returns_empty_with_api_served(
     )
     agent_id = await _seed_agent(admin_db)
 
-    resolver = CredentialBindingResolver(admin_db, control_db)
-    result = await resolver.derive_credentials(
-        agent_id=agent_id, vendor="acme.com", name="pets-api", version="v1"
-    )
+    result = await _derive(admin_db, control_db, agent_id=agent_id)
 
-    assert result.credentials == ()
-    assert result.agent_bound_any is False
-    assert result.api_served is True
-    assert result.identity_mismatch is None
+    assert result.candidates == ()
+    assert result.diagnosis is not None
+    assert result.diagnosis.agent_bound_any is False
+    assert result.diagnosis.api_served is True
+    assert result.diagnosis.identity_mismatch is None
 
 
 async def test_nothing_serves_api(
@@ -129,14 +171,12 @@ async def test_nothing_serves_api(
     """No credential covers the API at all → api_served False (unserved emit at caller)."""
     agent_id = await _seed_agent(admin_db)
 
-    resolver = CredentialBindingResolver(admin_db, control_db)
-    result = await resolver.derive_credentials(
-        agent_id=agent_id, vendor="acme.com", name="pets-api", version="v1"
-    )
+    result = await _derive(admin_db, control_db, agent_id=agent_id)
 
-    assert result.credentials == ()
-    assert result.agent_bound_any is False
-    assert result.api_served is False
+    assert result.candidates == ()
+    assert result.diagnosis is not None
+    assert result.diagnosis.agent_bound_any is False
+    assert result.diagnosis.api_served is False
 
 
 async def test_single_binding_match_carries_rule_set_id(
@@ -153,16 +193,11 @@ async def test_single_binding_match_carries_rule_set_id(
     await _bind(admin_db, agent_id=agent_id, credential_id=cred_id, rule_set_id="prs_shared01")
     await _bind(admin_db, agent_id=agent_id, credential_id=other_id)
 
-    resolver = CredentialBindingResolver(admin_db, control_db)
-    result = await resolver.derive_credentials(
-        agent_id=agent_id, vendor="acme.com", name="pets-api", version="v1"
-    )
+    result = await _derive(admin_db, control_db, agent_id=agent_id)
 
-    assert len(result.credentials) == 1
-    assert result.credentials[0].credential_id == cred_id
-    assert result.credentials[0].rule_set_id == "prs_shared01"
-    assert result.agent_bound_any is True
-    assert result.api_served is True
+    assert result.candidates == (cred_id,)
+    assert result.bindings.rule_set_id(cred_id) == "prs_shared01"
+    assert result.diagnosis is None
 
 
 async def test_multiple_bindings_match_sorted(
@@ -179,12 +214,9 @@ async def test_multiple_bindings_match_sorted(
     await _bind(admin_db, agent_id=agent_id, credential_id=cred_a)
     await _bind(admin_db, agent_id=agent_id, credential_id=cred_b)
 
-    resolver = CredentialBindingResolver(admin_db, control_db)
-    result = await resolver.derive_credentials(
-        agent_id=agent_id, vendor="acme.com", name="pets-api", version="v1"
-    )
+    result = await _derive(admin_db, control_db, agent_id=agent_id)
 
-    assert [bc.credential_id for bc in result.credentials] == sorted([cred_a, cred_b])
+    assert result.candidates == tuple(sorted([cred_a, cred_b]))
 
 
 async def test_suspended_binding_excluded(
@@ -197,16 +229,16 @@ async def test_suspended_binding_excluded(
     agent_id = await _seed_agent(admin_db)
     await _bind(admin_db, agent_id=agent_id, credential_id=cred_id, suspended=True)
 
-    resolver = CredentialBindingResolver(admin_db, control_db)
-    result = await resolver.derive_credentials(
-        agent_id=agent_id, vendor="acme.com", name="pets-api", version="v1"
-    )
+    result = await _derive(admin_db, control_db, agent_id=agent_id)
 
-    assert result.credentials == ()
+    assert result.candidates == ()
+    assert result.bindings.suspended_ids == frozenset({cred_id})
     # A suspended binding does not count as "bound" for directive purposes —
     # the active-binding query excludes it entirely.
-    assert result.agent_bound_any is False
-    assert result.api_served is True
+    assert result.diagnosis is not None
+    assert result.diagnosis.agent_bound_any is False
+    assert result.diagnosis.api_served is True
+    assert result.diagnosis.binding_suspended is True
 
 
 async def test_inactive_credential_excluded(
@@ -224,14 +256,12 @@ async def test_inactive_credential_excluded(
     agent_id = await _seed_agent(admin_db)
     await _bind(admin_db, agent_id=agent_id, credential_id=cred_id)
 
-    resolver = CredentialBindingResolver(admin_db, control_db)
-    result = await resolver.derive_credentials(
-        agent_id=agent_id, vendor="acme.com", name="pets-api", version="v1"
-    )
+    result = await _derive(admin_db, control_db, agent_id=agent_id)
 
-    assert result.credentials == ()
-    assert result.agent_bound_any is True
-    assert result.api_served is False
+    assert result.candidates == ()
+    assert result.diagnosis is not None
+    assert result.diagnosis.agent_bound_any is True
+    assert result.diagnosis.api_served is False
 
 
 async def test_nearest_miss_same_vendor(
@@ -244,17 +274,15 @@ async def test_nearest_miss_same_vendor(
     agent_id = await _seed_agent(admin_db)
     await _bind(admin_db, agent_id=agent_id, credential_id=cred_id)
 
-    resolver = CredentialBindingResolver(admin_db, control_db)
-    result = await resolver.derive_credentials(
-        agent_id=agent_id, vendor="acme.com", name="pets-api", version="v1"
-    )
+    result = await _derive(admin_db, control_db, agent_id=agent_id)
 
-    assert result.credentials == ()
-    assert result.agent_bound_any is True
-    assert result.api_served is False
-    assert result.identity_mismatch is not None
-    assert result.identity_mismatch.found_name == "old-api"
-    assert result.identity_mismatch.expected_name == "pets-api"
+    assert result.candidates == ()
+    assert result.diagnosis is not None
+    assert result.diagnosis.agent_bound_any is True
+    assert result.diagnosis.api_served is False
+    assert result.diagnosis.identity_mismatch is not None
+    assert result.diagnosis.identity_mismatch.found_name == "old-api"
+    assert result.diagnosis.identity_mismatch.expected_name == "pets-api"
 
 
 async def test_unrelated_vendor_is_not_a_mismatch(
@@ -267,13 +295,11 @@ async def test_unrelated_vendor_is_not_a_mismatch(
     agent_id = await _seed_agent(admin_db)
     await _bind(admin_db, agent_id=agent_id, credential_id=cred_id)
 
-    resolver = CredentialBindingResolver(admin_db, control_db)
-    result = await resolver.derive_credentials(
-        agent_id=agent_id, vendor="acme.com", name="pets-api", version="v1"
-    )
+    result = await _derive(admin_db, control_db, agent_id=agent_id)
 
-    assert result.credentials == ()
-    assert result.identity_mismatch is None
+    assert result.candidates == ()
+    assert result.diagnosis is not None
+    assert result.diagnosis.identity_mismatch is None
 
 
 async def test_wildcard_credential_covers(
@@ -286,60 +312,6 @@ async def test_wildcard_credential_covers(
     agent_id = await _seed_agent(admin_db)
     await _bind(admin_db, agent_id=agent_id, credential_id=cred_id)
 
-    resolver = CredentialBindingResolver(admin_db, control_db)
-    result = await resolver.derive_credentials(
-        agent_id=agent_id, vendor="acme.com", name="pets-api", version="v1"
-    )
+    result = await _derive(admin_db, control_db, agent_id=agent_id)
 
-    assert [bc.credential_id for bc in result.credentials] == [cred_id]
-
-
-async def test_derive_credentials_populates_header_and_runs_in_autocommit(
-    admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
-) -> None:
-    """Pins #1943: ``derive_credentials`` runs in ``read_session()`` (no BEGIN/ROLLBACK)
-    and populates ``BoundCredential.header`` with the covering credential's metadata."""
-    credential = Credential(
-        type="API_KEY",
-        name="acme-eu",
-        api_vendor="acme.com",
-        api_name="pets-api",
-        api_version="v1",
-        provider="static",
-        provider_account_ref="acct-eu",
-        server_variables={"region": "eu"},
-        created_by="usr_owner",
-        active=True,
-    )
-    async with control_db.session() as session:
-        session.add(credential)
-        await session.commit()
-        cred_id = credential.id
-    agent_id = await _seed_agent(admin_db)
-    await _bind(admin_db, agent_id=agent_id, credential_id=cred_id, rule_set_id="prs_01")
-
-    resolver = CredentialBindingResolver(admin_db, control_db)
-    with trace_round_trips(admin_db) as admin_trace, trace_round_trips(control_db) as control_trace:
-        result = await resolver.derive_credentials(
-            agent_id=agent_id, vendor="acme.com", name="pets-api", version="v1"
-        )
-
-    assert len(admin_trace.statements) == 1
-    assert len(control_trace.statements) == 1
-    admin_trace.assert_no_begin_or_rollback()
-    control_trace.assert_no_begin_or_rollback()
-
-    assert len(result.credentials) == 1
-    header = result.credentials[0].header
-    assert header is not None
-    assert header.id == cred_id
-    assert header.type == "API_KEY"
-    assert header.name == "acme-eu"
-    assert header.api_vendor == "acme.com"
-    assert header.api_name == "pets-api"
-    assert header.api_version == "v1"
-    assert header.provider == "static"
-    assert header.provider_account_ref == "acct-eu"
-    assert header.server_variables == {"region": "eu"}
-    assert header.created_by == "usr_owner"
-    assert header.created_at is not None
+    assert result.candidates == (cred_id,)

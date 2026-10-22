@@ -1,31 +1,27 @@
-"""Cross-DB direct-binding credential derivation (theme-5 Phase 2).
+"""Direct-binding derivation and unserved-API diagnosis (theme-5 Phase 2).
 
-Given an agent and a resolved API identity, returns the credentials the agent
-is **directly and actively bound to** whose stored identity covers that API.
-The lookup is
-inherently cross-schema (admin ``agent_credential_bindings`` + control
-``credentials``) — the broker may import neither ``admin`` nor ``control`` ORM,
-so it runs as raw SQL behind ``CredentialDeriverProtocol``.
+``derive_bindings`` reads an agent's direct bindings from the admin DB. The
+broker intersects them with the covering credentials it reads live from the
+control DB (``CredentialRepository.list_covering``, via ``CredentialService``),
+so credential state is never served from this module's cache.
 
-The two databases are separate sessions, so the intersection is computed in
-Python rather than via a cross-schema JOIN.
+``diagnose_unserved`` runs only when that intersection is empty: it reads the
+control DB to explain the denial (does anything serve the API, is a bound
+credential a near miss, is a covering binding suspended). The broker may import
+neither ``admin`` nor ``control`` ORM, so both run as raw SQL behind
+``CredentialDeriverProtocol``.
 """
 
 from __future__ import annotations
-
-import json
-from collections.abc import Mapping
-from datetime import UTC, datetime
-from typing import Any
 
 from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.shared.broker.protocols import (
+    AgentBindings,
     BoundCredential,
-    BoundCredentialHeader,
-    CredentialDerivation,
     IdentityMismatch,
+    UnservedDiagnosis,
 )
 from jentic_one.shared.db import DatabaseSession
 from jentic_one.shared.models.api_identity import (
@@ -45,32 +41,17 @@ _AGENT_CREDENTIALS = text(
     "WHERE agent_id = :agent_id"
 )
 
-# control DB — active credentials whose stored identity covers the API. The
-# coverage rule (NULL credential axis = "unscoped → covers any"; otherwise
-# equality against the always-concrete operation axis) is the shared seam in
-# shared/models/api_identity.py, so this matcher and the injection-time
-# resolver
-# (broker/services/credentials/resolver) cannot drift apart.
-#
-# Selects the non-secret header columns alongside ``c.id`` so downstream
-# selection (``CredentialService.select`` / ``CredentialResolver.resolve``)
-# can disambiguate candidates without querying ``credentials`` a second time.
-#
-# ``c.active`` is filtered here (unlike the deleted pre-6b toolkit-path
-# matcher, which deferred
-# the active check to injection): a disabled credential must not surface as a
-# selection candidate — it could only turn a clean 403 into a confusing 424
-# later, or force a spurious ambiguity 409 against a live sibling.
-# ``c.state = 'connected'`` for the same reason: the connect flow mints its
-# credential row upfront in state ``pending`` (token-less until the vendor
-# flow completes), and the schema contract (core/schema/credentials.py)
-# promises broker resolution skips non-``connected`` rows.
-_COVERING_CREDENTIALS = text(
-    "SELECT c.id, c.type, c.name, c.api_vendor, c.api_name, c.api_version, "
-    "c.provider, c.provider_account_ref, c.server_variables, "
-    "c.created_at, c.created_by "
-    f"FROM credentials c "
-    f"WHERE {credential_coverage_where()} AND c.active AND c.state = 'connected'"
+# control DB — whether any active, connected credential (any owner) covers the
+# API. Denial path only; drives the "grant a binding" vs. "provision a
+# credential first" directive. The coverage rule (NULL credential axis =
+# "unscoped → covers any"; otherwise equality against the always-concrete
+# operation axis) is the shared seam in shared/models/api_identity.py, so this
+# and the live candidate read (``CredentialRepository.list_covering``) cannot
+# drift apart. ``c.active`` / ``c.state = 'connected'`` match that read: a
+# disabled or still-``pending`` credential serves nothing.
+_API_SERVED = text(
+    f"SELECT 1 FROM credentials c "
+    f"WHERE {credential_coverage_where()} AND c.active AND c.state = 'connected' LIMIT 1"
 )
 
 # control DB — the stored identities of a set of credentials. Used only on the
@@ -109,57 +90,9 @@ def _axes_matched(scope: CredentialScope, *, vendor: str, name: str, version: st
     )
 
 
-def _coerce_server_variables(value: object) -> dict[str, str] | None:
-    """Coerce a raw-SQL ``server_variables`` column value into a string dict."""
-    if value is None:
-        return None
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except json.JSONDecodeError:
-            return None
-    if isinstance(value, Mapping):
-        return {str(k): str(v) for k, v in value.items()}
-    return None
-
-
-def _coerce_datetime(value: object) -> datetime | None:
-    """Coerce a raw-SQL timestamp column value into a timezone-aware UTC datetime."""
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
-    if isinstance(value, str):
-        try:
-            dt = datetime.fromisoformat(value)
-        except ValueError:
-            return None
-        return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
-    return None
-
-
-def _to_header(row: Any) -> BoundCredentialHeader:
-    """Build a :class:`BoundCredentialHeader` from a ``_COVERING_CREDENTIALS`` row."""
-    return BoundCredentialHeader(
-        id=row.id,
-        type=row.type,
-        name=row.name,
-        api_vendor=row.api_vendor,
-        api_name=row.api_name,
-        api_version=row.api_version,
-        provider=row.provider,
-        provider_account_ref=row.provider_account_ref,
-        active=True,
-        server_variables=_coerce_server_variables(row.server_variables),
-        created_at=_coerce_datetime(row.created_at),
-        created_by=row.created_by,
-    )
-
-
 class CredentialBindingResolver:
-    """Derives an agent's directly-bound credentials for an API identity.
+    """Reads an agent's direct bindings and diagnoses an unserved API.
 
-    Cross-DB: active bindings (admin) ∩ active covering credentials (control).
     Implements ``CredentialDeriverProtocol``.
     """
 
@@ -167,75 +100,64 @@ class CredentialBindingResolver:
         self._admin_db = admin_db
         self._control_db = control_db
 
-    async def derive_credentials(
-        self, *, agent_id: str, vendor: str, name: str, version: str
-    ) -> CredentialDerivation:
-        """Derive the agent's bound credentials for the API, with empty-set context.
-
-        Returns the intersection (active direct bindings ∩ active credentials
-        covering the API) plus enough context to pick the right denial
-        directive: whether the agent is bound to anything, whether any
-        credential serves the API at all, whether a suspended binding covers
-        it, and — when bound but unresolved — a nearest-miss credential
-        identity. The suspension check costs a query only on the empty-set
-        path, and only when the agent holds a suspended binding.
-        """
+    async def derive_bindings(self, *, agent_id: str) -> AgentBindings:
+        """The agent's active bindings (sorted by credential id) and suspended ids."""
         async with self._admin_db.read_session() as session:
-            binding_rows = (await session.execute(_AGENT_CREDENTIALS, {"agent_id": agent_id})).all()
-        rule_sets: dict[str, str | None] = {row[0]: row[1] for row in binding_rows if not row[2]}
-        suspended_ids = {row[0] for row in binding_rows if row[2]}
+            rows = (await session.execute(_AGENT_CREDENTIALS, {"agent_id": agent_id})).all()
+        return AgentBindings(
+            agent_id=agent_id,
+            active=tuple(
+                BoundCredential(credential_id=row[0], rule_set_id=row[1])
+                for row in sorted(rows, key=lambda r: r[0])
+                if not row[2]
+            ),
+            suspended_ids=frozenset(row[0] for row in rows if row[2]),
+        )
 
+    async def diagnose_unserved(
+        self, *, bindings: AgentBindings, vendor: str, name: str, version: str
+    ) -> UnservedDiagnosis:
+        """Explain why none of ``bindings`` serves the API, in one control read session.
+
+        Called only when no actively bound credential covers the API. Costs
+        one query for ``api_served``, plus one for the nearest miss when the
+        agent is bound but nothing serves the API, plus one for the suspension
+        check when the agent holds a suspended binding.
+        """
+        params = {"vendor": vendor, "name": name, "version": version}
         async with self._control_db.read_session() as session:
-            covering_rows = (
-                await session.execute(
-                    _COVERING_CREDENTIALS,
-                    {"vendor": vendor, "name": name, "version": version},
-                )
-            ).all()
-            covering_by_id = {row.id: row for row in covering_rows}
-            covering_ids = set(covering_by_id)
-
-            # Sorted for a deterministic, cache-stable candidate order.
-            candidates = tuple(
-                BoundCredential(
-                    credential_id=cid,
-                    rule_set_id=rule_sets[cid],
-                    header=_to_header(covering_by_id[cid]),
-                )
-                for cid in sorted(rule_sets.keys() & covering_ids)
-            )
+            api_served = (await session.execute(_API_SERVED, params)).first() is not None
 
             # Nearest-miss diagnostic only when nothing covers the API at all: if a
-            # credential covers it (``covering_ids``), the recovery is "bind to it"
-            # (an operator grant), not "fix your credential", so a mismatch
-            # would send the wrong signal. Requires the agent to be bound to
-            # something (else it is a plain no-binding case).
+            # credential covers it, the recovery is "bind to it" (an operator
+            # grant), not "fix your credential", so a mismatch would send the
+            # wrong signal. Requires the agent to be bound to something (else it
+            # is a plain no-binding case).
             mismatch: IdentityMismatch | None = None
-            if not candidates and rule_sets and not covering_ids:
+            if bindings.active and not api_served:
                 mismatch = await self._nearest_miss(
-                    session, set(rule_sets.keys()), vendor=vendor, name=name, version=version
+                    session, set(bindings.active_ids), vendor=vendor, name=name, version=version
                 )
 
-            # Denial path only: a suspended binding covering the API is the
-            # operator's cut-off, so the denial must not read as "connect one".
+            # A suspended binding covering the API is the operator's cut-off, so
+            # the denial must not read as "connect one".
             binding_suspended = False
-            if not candidates and suspended_ids:
+            if bindings.suspended_ids:
                 binding_suspended = await self._suspended_covers(
-                    session, suspended_ids, vendor=vendor, name=name, version=version
+                    session, bindings.suspended_ids, vendor=vendor, name=name, version=version
                 )
 
-        return CredentialDerivation(
-            credentials=candidates,
-            agent_bound_any=bool(rule_sets),
-            api_served=bool(covering_ids),
+        return UnservedDiagnosis(
+            agent_bound_any=bool(bindings.active),
+            api_served=api_served,
             identity_mismatch=mismatch,
             binding_suspended=binding_suspended,
         )
 
+    @staticmethod
     async def _suspended_covers(
-        self,
         session: AsyncSession,
-        suspended_ids: set[str],
+        suspended_ids: frozenset[str],
         *,
         vendor: str,
         name: str,
@@ -255,8 +177,8 @@ class CredentialBindingResolver:
         ).first()
         return row is not None
 
+    @staticmethod
     async def _nearest_miss(
-        self,
         session: AsyncSession,
         bound_credential_ids: set[str],
         *,

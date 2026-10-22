@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Collection, Mapping
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from pydantic import BaseModel
@@ -17,7 +18,6 @@ from jentic_one.broker.services.credentials.errors import (
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.repos import CredentialRepository
 from jentic_one.control.services.credentials.mapping import to_wire
-from jentic_one.shared.broker.protocols import BoundCredentialHeader
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.api_identity import (
     CredentialScope,
@@ -76,11 +76,37 @@ class ResolvedCredential(BaseModel):
     aws_region: str | None = None
     aws_service: str | None = None
 
-    # False when resolved in header-only mode (``CredentialService.select``) so
-    # ``CredentialService.inject`` loads the winning credential's child row
-    # only after permission rules allow the call. Defaults to True so callers
-    # that construct ``ResolvedCredential`` directly are treated as populated.
-    material_loaded: bool = True
+
+@dataclass(frozen=True, slots=True)
+class CredentialCandidates:
+    """The live covering credentials for one API among a caller's bound ids.
+
+    Header-only ORM rows from :meth:`CredentialResolver.covering`; a row's
+    secret-material child is read only by :meth:`CredentialResolver.load`, for
+    the selected credential. Ordered by id.
+    """
+
+    api: APIReference
+    credentials: tuple[Credential, ...]
+
+    @property
+    def ids(self) -> tuple[str, ...]:
+        """The candidate credential ids, in order."""
+        return tuple(c.id for c in self.credentials)
+
+
+@dataclass(frozen=True, slots=True)
+class SelectedCredential:
+    """The credential selected for a request, before its secret is read.
+
+    Returned by :meth:`CredentialResolver.select`; permission rules are
+    evaluated against ``credential_id``, and :meth:`CredentialResolver.load`
+    reads the material only once they allow the call.
+    """
+
+    credential_id: str
+    name: str
+    header: Credential = field(repr=False, compare=False)
 
 
 class CredentialResolver:
@@ -99,8 +125,6 @@ class CredentialResolver:
         allowed_credential_ids: Collection[str] | None = None,
         request_server_variables: Mapping[str, str] | None = None,
         server_variables_unresolved: bool = False,
-        candidate_headers: Sequence[BoundCredentialHeader] | None = None,
-        include_material: bool = True,
     ) -> ResolvedCredential:
         """Resolve a single active credential for the API tuple.
 
@@ -126,15 +150,6 @@ class CredentialResolver:
             server_variables_unresolved: Discovery could not determine the
                 request URL's server-variable values; a credential scoped by
                 ``server_variables`` is then never a match (fail closed).
-            candidate_headers: Optional pre-fetched credential headers from
-                ``CredentialBindingResolver.derive_credentials``. When provided,
-                selection runs over these headers without a second
-                ``SELECT … FROM credentials`` query on ``control_db``.
-            include_material: When ``False`` (used by ``CredentialService.select``
-                before permission-rule evaluation), skips ``load_material`` and
-                returns a header-only ``ResolvedCredential`` with
-                ``material_loaded=False``; ``CredentialService.inject`` loads
-                the secret material after rules allow the call.
 
         Raises CredentialNotProvisionedError if no match.
         Raises AmbiguousCredentialError if >1 match and no credential_name given.
@@ -149,33 +164,6 @@ class CredentialResolver:
         covering-but-less-specific credential), and only then apply
         most-specific-wins to break ties.
         """
-        if candidate_headers is not None:
-            candidates = [self._header_to_credential(h) for h in candidate_headers]
-            candidates.sort(key=lambda c: c.id)
-            credential = self._select_winner(
-                candidates,
-                api=api,
-                credential_name=credential_name,
-                credential_id=credential_id,
-                allowed_credential_ids=allowed_credential_ids,
-                request_server_variables=request_server_variables,
-                server_variables_unresolved=server_variables_unresolved,
-            )
-            stored_type = StoredCredentialType(credential.type)
-            wire_type = to_wire(stored_type)
-            if not include_material or wire_type == CredentialType.NO_AUTH:
-                return self._build_resolved(
-                    credential,
-                    wire_type,
-                    stored_type,
-                    material_loaded=(wire_type == CredentialType.NO_AUTH),
-                )
-            async with self._ctx.control_db.read_session() as session:
-                await CredentialRepository.load_material(session, [credential])
-                return self._build_resolved(
-                    credential, wire_type, stored_type, material_loaded=True
-                )
-
         # Read-only: the header query and the winner's material query need no
         # shared snapshot. At READ COMMITTED (the server default; the
         # application sets no isolation level) each already takes its own, so
@@ -183,6 +171,7 @@ class CredentialResolver:
         # is read.
         async with self._ctx.control_db.read_session() as session:
             candidates = await CredentialRepository.list_by_vendor(session, api.vendor)
+
             credential = self._select_winner(
                 candidates,
                 api=api,
@@ -192,66 +181,73 @@ class CredentialResolver:
                 request_server_variables=request_server_variables,
                 server_variables_unresolved=server_variables_unresolved,
             )
-            stored_type = StoredCredentialType(credential.type)
-            wire_type = to_wire(stored_type)
-            if not include_material or wire_type == CredentialType.NO_AUTH:
-                return self._build_resolved(
-                    credential,
-                    wire_type,
-                    stored_type,
-                    material_loaded=(wire_type == CredentialType.NO_AUTH),
-                )
 
             # ``list_by_vendor`` returns headers only; read secret material for
             # the single winner alone, so unbound/inactive/non-covering
             # candidates' rows are never selected (and 404/409 read none).
             await CredentialRepository.load_material(session, [credential])
-            return self._build_resolved(credential, wire_type, stored_type, material_loaded=True)
+            return self._build_resolved(credential)
 
-    async def load_material(
-        self, resolved: ResolvedCredential, *, api: APIReference
-    ) -> ResolvedCredential:
-        """Populate secret material for a header-only :class:`ResolvedCredential`."""
-        if resolved.material_loaded or resolved.wire_type == CredentialType.NO_AUTH:
-            return resolved
-        credential = Credential(
-            id=resolved.credential_id,
-            type=resolved.stored_type.value,
-            name=resolved.name,
-            api_vendor=api.vendor,
-            api_name=api.name or None,
-            api_version=api.version or None,
-            provider=resolved.provider,
-            provider_account_ref=resolved.provider_account_ref,
-            active=True,
-            server_variables=resolved.server_variables,
-            created_by=resolved.created_by,
+    async def covering(
+        self, *, api: APIReference, credential_ids: Collection[str]
+    ) -> CredentialCandidates:
+        """Read the live covering candidates among ``credential_ids`` — headers only.
+
+        One ``credentials`` query, bounded to ``credential_ids`` (the caller's
+        bound credentials), returning only active, connected rows whose stored
+        identity covers ``api``. No secret material is read; pass the result to
+        :meth:`select`.
+        """
+        if not credential_ids:
+            return CredentialCandidates(api=api, credentials=())
+        async with self._ctx.control_db.read_session() as session:
+            rows = await CredentialRepository.list_covering(
+                session,
+                credential_ids=credential_ids,
+                vendor=api.vendor,
+                name=api.name,
+                version=api.version,
+            )
+        return CredentialCandidates(api=api, credentials=tuple(rows))
+
+    def select(
+        self,
+        candidates: CredentialCandidates,
+        *,
+        credential_name: str | None = None,
+        credential_id: str | None = None,
+        request_server_variables: Mapping[str, str] | None = None,
+        server_variables_unresolved: bool = False,
+    ) -> SelectedCredential:
+        """Select one credential among ``candidates`` in memory — no DB access.
+
+        Same rules and errors as :meth:`resolve` (the candidates are the
+        injection boundary); the winner's secret material is read later by
+        :meth:`load`, only once permission rules allow the call.
+        """
+        credential = self._select_winner(
+            list(candidates.credentials),
+            api=candidates.api,
+            credential_name=credential_name,
+            credential_id=credential_id,
+            allowed_credential_ids=None,
+            request_server_variables=request_server_variables,
+            server_variables_unresolved=server_variables_unresolved,
         )
+        return SelectedCredential(
+            credential_id=credential.id, name=credential.name, header=credential
+        )
+
+    async def load(self, selected: SelectedCredential) -> ResolvedCredential:
+        """Read the selected credential's secret material and build the injection input.
+
+        At most one query, for the credential's own type-matching child row
+        (none for ``NO_AUTH``).
+        """
+        credential = selected.header
         async with self._ctx.control_db.read_session() as session:
             await CredentialRepository.load_material(session, [credential])
-        return self._build_resolved(
-            credential, resolved.wire_type, resolved.stored_type, material_loaded=True
-        )
-
-    @staticmethod
-    def _header_to_credential(header: BoundCredentialHeader) -> Credential:
-        """Build an in-memory ``Credential`` header object from a derived header."""
-        return Credential(
-            id=header.id,
-            type=header.type,
-            name=header.name,
-            api_vendor=header.api_vendor,
-            api_name=header.api_name,
-            api_version=header.api_version,
-            provider=header.provider,
-            provider_account_ref=header.provider_account_ref,
-            active=header.active,
-            server_variables=(
-                dict(header.server_variables) if header.server_variables is not None else None
-            ),
-            created_at=header.created_at,
-            created_by=header.created_by,
-        )
+        return self._build_resolved(credential)
 
     def _select_winner(
         self,
@@ -264,7 +260,7 @@ class CredentialResolver:
         request_server_variables: Mapping[str, str] | None,
         server_variables_unresolved: bool,
     ) -> Credential:
-        """Apply boundary, coverage, id/name disambiguation, and specificity."""
+        """Apply the boundary, coverage, id/name disambiguation and specificity."""
         # Injection boundary (Q-02): an unbound credential must never be
         # considered, even if it covers the API. Applied before coverage
         # matching so nothing downstream (name filter, specificity, the
@@ -365,17 +361,12 @@ class CredentialResolver:
             created_at=credential.created_at,
         )
 
-    def _build_resolved(
-        self,
-        credential: Credential,
-        wire_type: CredentialType,
-        stored_type: StoredCredentialType,
-        *,
-        material_loaded: bool = True,
-    ) -> ResolvedCredential:
+    def _build_resolved(self, credential: Credential) -> ResolvedCredential:
+        stored_type = StoredCredentialType(credential.type)
+        wire_type = to_wire(stored_type)
 
         if wire_type == CredentialType.BEARER_TOKEN:
-            tvc = credential.token_value_credential if material_loaded else None
+            tvc = credential.token_value_credential
             return ResolvedCredential(
                 credential_id=credential.id,
                 name=credential.name,
@@ -385,11 +376,10 @@ class CredentialResolver:
                 provider=credential.provider,
                 server_variables=credential.server_variables,
                 encrypted_secret=tvc.encrypted_token_value if tvc else None,
-                material_loaded=material_loaded,
             )
 
         if wire_type == CredentialType.API_KEY:
-            cak = credential.customer_api_key if material_loaded else None
+            cak = credential.customer_api_key
             return ResolvedCredential(
                 credential_id=credential.id,
                 name=credential.name,
@@ -401,11 +391,10 @@ class CredentialResolver:
                 encrypted_secret=cak.encrypted_key if cak else None,
                 location=CredentialLocation(cak.location) if cak else CredentialLocation.HEADER,
                 field_name=cak.field_name if cak else "Authorization",
-                material_loaded=material_loaded,
             )
 
         if wire_type == CredentialType.BASIC:
-            bc = credential.basic_credential if material_loaded else None
+            bc = credential.basic_credential
             return ResolvedCredential(
                 credential_id=credential.id,
                 name=credential.name,
@@ -416,11 +405,10 @@ class CredentialResolver:
                 server_variables=credential.server_variables,
                 username=bc.username if bc else None,
                 encrypted_password=bc.encrypted_password if bc else None,
-                material_loaded=material_loaded,
             )
 
         if wire_type == CredentialType.OAUTH2:
-            token = credential.oauth_token if material_loaded else None
+            token = credential.oauth_token
             return ResolvedCredential(
                 credential_id=credential.id,
                 name=credential.name,
@@ -433,7 +421,6 @@ class CredentialResolver:
                 encrypted_refresh_token=token.encrypted_refresh_token if token else None,
                 token_expires_at=token.expires_at if token else None,
                 provider_account_ref=credential.provider_account_ref,
-                material_loaded=material_loaded,
             )
 
         if wire_type == CredentialType.NO_AUTH:
@@ -448,11 +435,10 @@ class CredentialResolver:
                 stored_type=stored_type,
                 provider=credential.provider,
                 server_variables=credential.server_variables,
-                material_loaded=True,
             )
 
         if wire_type == CredentialType.SIGV4:
-            sig = credential.sigv4_credential if material_loaded else None
+            sig = credential.sigv4_credential
             return ResolvedCredential(
                 credential_id=credential.id,
                 name=credential.name,
@@ -466,7 +452,6 @@ class CredentialResolver:
                 encrypted_session_token=sig.encrypted_session_token if sig else None,
                 aws_region=sig.region if sig else None,
                 aws_service=sig.service if sig else None,
-                material_loaded=material_loaded,
             )
 
         raise CredentialNotProvisionedError(
