@@ -100,7 +100,8 @@ function compileMatcher(path: string | null | undefined, mode: MatchMode): PathM
 	// A GraphQL rule's ``path`` is a top-level-field selector and a git rule's a
 	// repository/ref selector: they match GraphQL fields or git requests, never
 	// a request path (``graphql_rules.py``, ``git_rules.py``).
-	if (mode === 'graphql' || mode === 'git') return { mode, literal: null, pattern: null, never: true };
+	if (mode === 'graphql' || mode === 'git')
+		return { mode, literal: null, pattern: null, never: true };
 	if (path == null) return null;
 	if (path === '') {
 		// Empty path is rejected by the Python side (``_check``) too. Mirror
