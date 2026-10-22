@@ -25,6 +25,7 @@ from mcp.shared.exceptions import MCPError
 import jentic_one.mcp.tools as tools_mod
 from jentic_one.control.services.integrations.connect_session_service import (
     ApiTarget,
+    ConnectSessionService,
     CreatedSession,
 )
 from jentic_one.control.services.integrations.errors import (
@@ -119,6 +120,11 @@ class _FakeConnectSessionService:
     def __init__(self, ctx: Any, **seams: Any) -> None:
         self._ctx = ctx
         _FakeConnectSessionService.seams.append(seams)
+
+    # The real preset and rule-role logic: pure, manifest-driven.
+    preset_rules = ConnectSessionService.preset_rules
+    profile_rules = staticmethod(ConnectSessionService.profile_rules)
+    connect_profile = staticmethod(ConnectSessionService.connect_profile)
 
     async def create_session(self, **kwargs: Any) -> CreatedSession:
         if _FakeConnectSessionService.error is not None:
@@ -707,3 +713,81 @@ async def test_suspended_binding_on_a_vendor_target_tells_the_agent_to_ask_its_o
     assert "next_tool" not in payload
     assert "ask your operator to resume" in payload["actionable_step"]
     assert "request_connection" not in payload["actionable_step"]
+
+
+# ── CLI-profile presets ──────────────────────────────────────────────────────
+
+
+async def test_profile_preset_expands_into_rules_for_every_api_role() -> None:
+    result = await dispatch_tool_call(
+        _env(["credentials:connect"]),
+        "request_connection",
+        {
+            "vendor": "github",
+            "preset": "read_and_push",
+            "preset_params": {"repo": "octo-org/app", "branches": "agent/*"},
+            "requested_permission_rules": [
+                {
+                    "effect": "deny",
+                    "methods": ["GET"],
+                    "path": "/user/emails",
+                    "match_mode": "exact",
+                }
+            ],
+        },
+    )
+    assert not result.is_error, result.content
+    (call,) = _FakeConnectSessionService.calls
+    rules = call["requested_permission_rules"]
+    # The agent's own rule first (tagged rest by kind), then the preset's.
+    assert rules[0]["api_role"] == "rest"
+    assert {r["api_role"] for r in rules} == {"rest", "graphql", "git"}
+    assert {
+        "effect": "allow",
+        "match_mode": "git",
+        "path": "push:octo-org/app:refs/heads/agent/*",
+        "api_role": "git",
+    } in rules
+    assert _payload(result)["requested_permission_rules"] == rules
+
+
+async def test_preset_params_take_the_name_value_list_form() -> None:
+    result = await dispatch_tool_call(
+        _env(["credentials:connect"]),
+        "request_connection",
+        {
+            "vendor": "github",
+            "preset": "read_only",
+            "preset_params": ["repo=octo-org/app", "repo=octo-org/lib"],
+        },
+    )
+    assert not result.is_error, result.content
+    (call,) = _FakeConnectSessionService.calls
+    fetches = [r["path"] for r in call["requested_permission_rules"] if r["api_role"] == "git"]
+    assert fetches == ["fetch:octo-org/app", "fetch:octo-org/lib"]
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        ({"vendor": "github", "preset_params": {"repo": "o/r"}}, "applies with preset only"),
+        ({"vendor": "github", "preset": "nope"}, "has no preset"),
+        ({"vendor": "github", "preset": "read_only"}, "needs parameter 'repo'"),
+        (
+            {
+                "vendor": "github",
+                "requested_permission_rules": [
+                    {"effect": "allow", "path": "/", "match_mode": "prefix", "api_role": "uploads"}
+                ],
+            },
+            "has no 'uploads' API",
+        ),
+    ],
+)
+async def test_unusable_presets_and_roles_are_invalid_params(
+    arguments: dict[str, Any], message: str
+) -> None:
+    with pytest.raises(MCPError) as err:
+        await tools_mod.handle_request_connection(_env(["credentials:connect"]), arguments)
+    assert message in str(err.value)
+    assert _FakeConnectSessionService.calls == []

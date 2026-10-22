@@ -65,8 +65,11 @@ from jentic_one.control.services.integrations.errors import (
     ManualFlowsDisabledError,
     NoDeclaredSchemeError,
     NoOpForFlowError,
+    PresetInvalidError,
+    PresetNotApplicableError,
     RecentlyRejectedError,
     ReservedAuthFieldError,
+    RuleApiRoleError,
     SecuritySchemesLookupUnavailableError,
     TooManyOpenSessionsError,
     UnknownApiError,
@@ -1444,7 +1447,14 @@ _REQUEST_CONNECTION_PARAMS = [
     ParamSpec("reason", "string"),
     ParamSpec("oauth_app_registration_id", "string", ("registration_id",)),
     ParamSpec("requested_permission_rules", "json", ("permission_rules",)),
+    ParamSpec("preset", "string"),
+    ParamSpec("preset_params", "json"),
 ]
+
+#: Bounds on a CLI-profile preset ask (the route's ``preset`` / ``preset_params``).
+_REQUEST_CONNECTION_PRESET_MAX = 64
+_REQUEST_CONNECTION_PRESET_PARAMS_MAX = 10
+_REQUEST_CONNECTION_PRESET_VALUE_MAX = 1000
 
 #: The operator-relay guidance stamped on every successful result (Go:
 #: ``requestConnectionInstruction`` in ``mcp_request_connection.go``).
@@ -1578,6 +1588,43 @@ def _requested_permission_rules(raw: Any) -> list[dict[str, object]] | None:
             raise invalid_params(f"requested_permission_rules[{idx}]: {reasons}") from None
         rules.append(rule.model_dump(exclude_none=True))
     return rules or None
+
+
+def _preset_params(raw: Any) -> dict[str, str]:
+    """``preset_params``: an object of strings, or ``name=value`` pairs (Go: same forms).
+
+    A name given more than once collects its values into one comma-separated
+    list, like ``jentic connect --preset-param``.
+    """
+    if raw is None:
+        return {}
+    pairs: list[tuple[str, str]] = []
+    if isinstance(raw, dict):
+        for name, value in raw.items():
+            if not isinstance(value, str):
+                raise invalid_params(f"preset_params[{name!r}] must be a string")
+            pairs.append((str(name), value))
+    else:
+        items = [raw] if isinstance(raw, str) else raw
+        if not isinstance(items, list):
+            raise invalid_params('preset_params must be an object, e.g. {"repo": "octo-org/app"}')
+        for item in items:
+            name, sep, value = str(item).partition("=")
+            if not isinstance(item, str) or not sep or not name.strip() or not value.strip():
+                raise invalid_params(f"preset_params entry {item!r} must be name=value")
+            pairs.append((name.strip(), value))
+    params: dict[str, str] = {}
+    for name, value in pairs:
+        params[name] = f"{params[name]},{value}" if name in params else value
+    if len(params) > _REQUEST_CONNECTION_PRESET_PARAMS_MAX:
+        raise invalid_params(
+            f"preset_params takes at most {_REQUEST_CONNECTION_PRESET_PARAMS_MAX} parameters"
+        )
+    if any(len(v) > _REQUEST_CONNECTION_PRESET_VALUE_MAX for v in params.values()):
+        raise invalid_params(
+            f"a preset_params value is at most {_REQUEST_CONNECTION_PRESET_VALUE_MAX} characters"
+        )
+    return params
 
 
 def _is_human_entry_flow(flow: str) -> bool:
@@ -1773,6 +1820,17 @@ async def handle_request_connection(
             f"{_REQUEST_CONNECTION_REGISTRATION_MAX} characters, got {len(registration_id)}"
         )
     requested_rules = _requested_permission_rules(args.get("requested_permission_rules"))
+    preset = args.get("preset") or None
+    preset_params = _preset_params(args.get("preset_params"))
+    if preset_params and preset is None:
+        raise invalid_params(
+            'preset_params applies with preset only, e.g. {"vendor": "github", "preset": '
+            '"push_branches", "preset_params": {"repo": "octo-org/app", "branches": "agent/*"}}'
+        )
+    if preset is not None and len(preset) > _REQUEST_CONNECTION_PRESET_MAX:
+        raise invalid_params(
+            f"preset must be at most {_REQUEST_CONNECTION_PRESET_MAX} characters, got {len(preset)}"
+        )
     try:
         # The route's any-of gate (credentials:connect | credentials:write);
         # agents hold credentials:connect by default.
@@ -1811,12 +1869,38 @@ async def handle_request_connection(
     # itself; a user caller over this mount connects an
     # unbound credential (the tool surface carries no agent_id).
     agent_id = env.identity.sub if env.identity.actor_type == ActorType.AGENT else None
+    svc = ConnectSessionService(
+        env.ctx,
+        catalog_auto_importer=env.catalog_auto_importer,
+        security_schemes_lookup=env.security_schemes_lookup,
+    )
     try:
-        created = await ConnectSessionService(
-            env.ctx,
-            catalog_auto_importer=env.catalog_auto_importer,
-            security_schemes_lookup=env.security_schemes_lookup,
-        ).create_session(
+        # A CLI-profile preset expands server-side, as on the route, into the
+        # concrete rules the approver reviews (each with its profile API role
+        # for a profile connect such as "github").
+        if preset is not None:
+            requested_rules = [
+                *(requested_rules or []),
+                *svc.preset_rules(
+                    vendor_key=vendor or None,
+                    api_target=api_target,
+                    preset=preset,
+                    params=preset_params,
+                ),
+            ]
+        if api_target is None:
+            requested_rules = (
+                svc.profile_rules(svc.connect_profile(vendor), requested_rules or []) or None
+            )
+    except (PresetNotApplicableError, PresetInvalidError, RuleApiRoleError) as exc:
+        raise invalid_params(f"{exc} (see GET /cli-profiles for the presets)") from None
+    if requested_rules is not None and len(requested_rules) > _REQUEST_CONNECTION_RULES_MAX:
+        raise invalid_params(
+            f"the request asks for {len(requested_rules)} permission rules with its preset "
+            f"expanded; at most {_REQUEST_CONNECTION_RULES_MAX} are accepted"
+        )
+    try:
+        created = await svc.create_session(
             vendor_key=vendor,
             api_target=api_target,
             auth_type=auth_type,
@@ -1911,6 +1995,9 @@ async def handle_request_connection(
         "resolved_flow": created.resolved_flow,
         "instruction": _REQUEST_CONNECTION_INSTRUCTION,
     }
+    if requested_rules:
+        # The concrete rules the approver reviews (a preset expanded).
+        payload["requested_permission_rules"] = requested_rules
     if _is_human_entry_flow(created.resolved_flow):
         payload["instruction"] = _REQUEST_CONNECTION_HUMAN_ENTRY_INSTRUCTION
         payload["next_tool"] = "execute"
