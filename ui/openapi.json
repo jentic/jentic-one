@@ -1528,6 +1528,7 @@
           "key": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -1558,6 +1559,7 @@
           "name": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -3211,6 +3213,7 @@
           "name": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -3226,6 +3229,7 @@
           "password": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -3292,6 +3296,7 @@
           "username": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -3732,6 +3737,7 @@
           "name": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -3788,6 +3794,7 @@
           "token": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -9448,6 +9455,115 @@
         "title": "NoAuthCreateRequest",
         "type": "object"
       },
+      "NoAuthUpdateRequest": {
+        "description": "Update request for no_auth credentials (label, enablement, server variables).",
+        "examples": [
+          {
+            "active": true,
+            "name": "Open-Meteo",
+            "runtime_config": {
+              "headers": {
+                "Stripe-Version": "2024-04-10"
+              },
+              "query_params": {
+                "locale": "en-GB"
+              }
+            },
+            "server_variables": {
+              "region": "eu"
+            },
+            "type": "no_auth"
+          }
+        ],
+        "properties": {
+          "active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Enable or disable the credential for injection; omit to leave unchanged.",
+            "examples": [
+              true
+            ],
+            "title": "Active"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "New label for the credential; omit to leave unchanged.",
+            "examples": [
+              "Open-Meteo"
+            ],
+            "title": "Name"
+          },
+          "runtime_config": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RuntimeConfig"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Per-upstream-call overrides; reserved and not currently applied.",
+            "examples": [
+              {
+                "headers": {
+                  "Stripe-Version": "2024-04-10"
+                },
+                "query_params": {
+                  "locale": "en-GB"
+                }
+              }
+            ]
+          },
+          "server_variables": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Replacement OpenAPI server-variable values; omit to leave unchanged.",
+            "examples": [
+              {
+                "region": "eu"
+              }
+            ],
+            "title": "Server Variables"
+          },
+          "type": {
+            "const": "no_auth",
+            "description": "Credential type; always `no_auth`.",
+            "examples": [
+              "no_auth"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "NoAuthUpdateRequest",
+        "type": "object"
+      },
       "NoteApiReference": {
         "additionalProperties": false,
         "description": "Loose ``(vendor, name, version)`` identity tuple for a registered API.",
@@ -10064,13 +10180,14 @@
           "client_secret": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "description": "Replacement client secret; omit to leave unchanged. token_url and scopes are applied only together with it.",
+            "description": "Replacement client secret; omit to leave unchanged. Required when `token_url` moves to a different origin. Rejected with 400 on `device_code` credentials (public client) and on credentials that use a shared app registration.",
             "examples": [
               "example-secret"
             ],
@@ -10080,6 +10197,7 @@
           "name": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -10125,7 +10243,7 @@
                 "type": "null"
               }
             ],
-            "description": "Replacement OAuth scopes; applied only when client_secret is sent.",
+            "description": "Replacement OAuth scopes; omit to leave unchanged, send `[]` to clear them. Each item is a single non-empty scope token without whitespace. Rejected with 400 on credentials that use a shared app registration, and on `device_code` credentials while a device flow is pending.",
             "examples": [
               [
                 "read_write"
@@ -10156,13 +10274,14 @@
           "token_url": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "description": "Replacement token endpoint URL; applied only when client_secret is sent.",
+            "description": "Replacement token endpoint URL; omit to leave unchanged. A change of origin (scheme, host or port) requires `client_secret` in the same request and disconnects the credential until it is reconnected; on `device_code` credentials it is rejected with 400. Rejected with 400 on credentials that use a shared app registration, and on `device_code` credentials while a device flow is pending.",
             "examples": [
               "https://connect.stripe.com/oauth/token"
             ],
@@ -17355,6 +17474,7 @@
           "access_key_id": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -17385,6 +17505,7 @@
           "aws_region": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -17400,6 +17521,7 @@
           "aws_service": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -17424,6 +17546,7 @@
           "name": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -17460,6 +17583,7 @@
           "secret_access_key": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -17496,6 +17620,7 @@
           "session_token": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -22830,7 +22955,7 @@
         ]
       },
       "patch": {
-        "description": "Partially update an agent's `name`, `description` or `owner_id`.\n\nOnly the fields present in the body change; an empty body returns the\nagent unchanged. Allowed for the agent's owner or an `org:admin` (anyone\nelse gets 404). Changing `owner_id` transfers ownership, is\n`org:admin`-only, and revokes every active OAuth client grant bound to\nthe agent, so the new owner must re-consent any connected client. The\nagent's API key, permissions and credential bindings are unaffected. An\narchived agent cannot be updated (409). Returns the updated agent.",
+        "description": "Partially update an agent's `name`, `description` or `owner_id`.\n\nOnly the fields present in the body change; an empty body returns the\nagent unchanged. Allowed for the agent's owner or an `org:admin` (anyone\nelse gets 404). Changing `owner_id` transfers ownership, is\n`org:admin`-only, revokes every active OAuth client grant bound to the\nagent (so the new owner must re-consent any connected client), and\nsuspends active credential bindings to credentials outside the new\nowner's ownership. The agent's API key and permissions are unaffected. An\narchived agent cannot be updated (409). Returns the updated agent.",
         "operationId": "updateAgent",
         "parameters": [
           {
@@ -34785,7 +34910,7 @@
     "/connect-sessions/{session_id}:confirm": {
       "description": "`POST`: Confirm a connect session.",
       "post": {
-        "description": "Called by the review page after the human confirms selections.\n\nThe body's ``kind`` picks the variant (no ``kind`` is the OAuth\nvariant): OAuth scopes, a secret for a ``manual_*`` session\n(``api_key`` / ``bearer`` / ``basic``), the approver's own OAuth client\nfor an ``awaiting_app`` session, or a credential the approver already\nholds (``existing_credential``, ``reauthorize``). Secrets are write-only:\nthey never appear in a response, audit entry or log.\n\nShares the ``:connect`` per-actor rate bucket — this is the endpoint\nthat actually fires the vendor's device-authorization call, and a\nfailed ``begin`` leaves the session retryable, so it must not be\nfree to hammer during a vendor incident. Gated like the review read\n(``poll_token`` or owner / ``org:admin``; 403 otherwise).",
+        "description": "Called by the review page after the human confirms selections.\n\nThe body's ``kind`` picks the variant (no ``kind`` is the OAuth\nvariant): OAuth scopes, a secret for a ``manual_*`` session\n(``api_key`` / ``bearer`` / ``basic``), the approver's own OAuth client\nfor an ``awaiting_app`` session, or a credential the approver already\nholds (``existing_credential``, ``reauthorize``). Secrets are write-only:\nthey never appear in a response, audit entry or log.\n\nShares the ``:connect`` per-actor rate bucket — this is the endpoint\nthat actually fires the vendor's device-authorization call, and a\nfailed ``begin`` leaves the session retryable, so it must not be\nfree to hammer during a vendor incident. Gated like the review read\n(``poll_token`` or owner / ``org:admin``; 403 otherwise).\n\nA response carrying an ``authorize_url`` also sets a short-lived\n``HttpOnly`` cookie scoped to the OAuth callback path: the vendor\nsign-in completes only in the approver's browser that called this\nendpoint, whoever opened the session.",
         "operationId": "confirmConnectSession",
         "parameters": [
           {
@@ -36205,6 +36330,7 @@
                     "api_key": "#/components/schemas/ApiKeyUpdateRequest",
                     "basic": "#/components/schemas/BasicAuthUpdateRequest",
                     "bearer_token": "#/components/schemas/BearerTokenUpdateRequest",
+                    "no_auth": "#/components/schemas/NoAuthUpdateRequest",
                     "oauth2": "#/components/schemas/OAuth2UpdateRequest",
                     "sigv4": "#/components/schemas/Sigv4UpdateRequest"
                   },
@@ -36222,6 +36348,9 @@
                   },
                   {
                     "$ref": "#/components/schemas/OAuth2UpdateRequest"
+                  },
+                  {
+                    "$ref": "#/components/schemas/NoAuthUpdateRequest"
                   },
                   {
                     "$ref": "#/components/schemas/Sigv4UpdateRequest"
@@ -37957,7 +38086,7 @@
     "/credentials/{credential_id}/connect": {
       "description": "`POST`: Begin OAuth connect flow.",
       "post": {
-        "description": "Initiate the OAuth connect flow for a credential.\n\nDiscriminates on the provider's returned challenge: OAuth2\nauthorization-code providers return an ``authorize_url`` for popup\nredirect; device-flow providers return ``user_code`` /\n``verification_uri`` for the RFC 8628 human step.",
+        "description": "Initiate the OAuth connect flow for a credential.\n\nDiscriminates on the provider's returned challenge: OAuth2\nauthorization-code providers return an ``authorize_url`` for popup\nredirect; device-flow providers return ``user_code`` /\n``verification_uri`` for the RFC 8628 human step.\n\nAn ``authorize_url`` response also sets a short-lived ``HttpOnly``\ncookie scoped to the OAuth callback path: the callback completes only\nin the browser that called this endpoint, so call it from the browser\nthat opens the ``authorize_url``.",
         "operationId": "connectCredential",
         "parameters": [
           {

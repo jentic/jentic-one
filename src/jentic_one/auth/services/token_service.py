@@ -490,6 +490,7 @@ class TokenService:
         """Revoke a token. No-op if not found or not owned by actor (RFC 7009)."""
         token_hash = _hash_token(token)
         actor_id = identity.sub
+        revoked_actor_id: str | None = None
 
         async with self._ctx.admin_db.transaction() as session:
             if token.startswith(ACCESS_TOKEN_PREFIX):
@@ -516,6 +517,7 @@ class TokenService:
                     return
                 await RefreshTokenRepository.revoke_family(session, rt.token_family_id)
                 await AccessTokenRepository.revoke_family(session, rt.token_family_id)
+                revoked_actor_id = rt.actor_id
                 await record_audit(
                     session,
                     action=AuditAction.REVOKE,
@@ -525,6 +527,10 @@ class TokenService:
                     actor_id=actor_id or rt.actor_id,
                     origin=identity.origin.value,
                 )
+            else:
+                return
+
+        self._ctx.invalidate_broker_caches(agent_id=revoked_actor_id, token=token)
 
     async def introspect(self, token: str) -> dict[str, bool | str | int | None]:
         """Introspect a token per RFC 7662.

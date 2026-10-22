@@ -230,7 +230,6 @@ async def run_execution(
                     trace_id=ctx_req.trace_id,
                     actor_id=actor_id,
                     actor_type=actor_type,
-                    toolkit_id=ctx_req.toolkit_id,
                     credential_id=ctx_req.credential_id,
                     operation=ctx_req.operation,
                     security_config=security_config,
@@ -309,7 +308,6 @@ async def run_execution(
                 trace_id=ctx_req.trace_id,
                 actor_id=actor_id,
                 actor_type=actor_type,
-                toolkit_id=ctx_req.toolkit_id,
                 credential_id=ctx_req.credential_id,
                 operation=ctx_req.operation,
                 security_config=security_config,
@@ -337,9 +335,9 @@ async def persist_streaming_execution(
 ) -> None:
     """Persist an execution record for a streaming-path execution.
 
-    Called from the background task after the streaming response body completes
-    (or terminates with an error). Shares metrics instrumentation with the
-    buffered path for observability parity.
+    Called once after the streaming response body ends, on every outcome
+    (completed, failed mid-body, client disconnect). Shares metrics
+    instrumentation with the buffered path for observability parity.
     """
     operation_id = ctx_req.operation_id
     _executions_total.add(1, {"operation": operation_id or "", "status": status})
@@ -392,7 +390,6 @@ async def persist_streaming_execution(
         trace_id=ctx_req.trace_id,
         actor_id=actor_id,
         actor_type=actor_type,
-        toolkit_id=ctx_req.toolkit_id,
         credential_id=ctx_req.credential_id,
         operation=ctx_req.operation,
         security_config=security_config,
@@ -447,7 +444,6 @@ async def _emit_execution_lifecycle(
     trace_id: str | None,
     actor_id: str,
     actor_type: str,
-    toolkit_id: str | None = None,
     credential_id: str | None = None,
     operation: OperationInfo | None = None,
     security_config: SecurityConfig | None = None,
@@ -513,7 +509,6 @@ async def _emit_execution_lifecycle(
             session,
             actor_id=actor_id,
             actor_type=actor_type,
-            toolkit_id=toolkit_id,
             credential_id=credential_id,
             operation=operation,
             trace_id=event_trace_id,

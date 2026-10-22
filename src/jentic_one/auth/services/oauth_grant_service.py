@@ -244,7 +244,7 @@ class OAuthGrantService:
             else build_access_filters(identity, OAuthClientGrant)
         )
 
-        async def _write(session: AsyncSession) -> bool:
+        async def _write(session: AsyncSession) -> tuple[bool, str | None]:
             grant = await OAuthClientGrantRepository.get_by_id(
                 session, grant_id, filters=access_filters
             )
@@ -253,7 +253,7 @@ class OAuthGrantService:
             if not viewer_can_revoke(grant.user_id, identity):
                 raise OAuthGrantAccessDeniedError(grant_id)
 
-            return await revoke_grant_and_sweep_tokens(
+            did_revoke = await revoke_grant_and_sweep_tokens(
                 session,
                 grant,
                 actor_type=identity.actor_type,
@@ -261,8 +261,11 @@ class OAuthGrantService:
                 origin=identity.origin.value,
                 audit_reason="oauth grant revoked",
             )
+            return did_revoke, grant.agent_id
 
-        revoked = await self._ctx.admin_db.run_in_transaction(_write)
+        revoked, grant_agent_id = await self._ctx.admin_db.run_in_transaction(_write)
+        if grant_agent_id is not None:
+            self._ctx.invalidate_broker_caches(agent_id=grant_agent_id)
         if revoked:
             logger.info("oauth_grant_revoked", grant_id=grant_id, actor_id=identity.sub)
 

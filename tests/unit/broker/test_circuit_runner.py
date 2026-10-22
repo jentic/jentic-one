@@ -18,7 +18,7 @@ from jentic_one.broker.core.exceptions import (
     UpstreamTimeoutError,
 )
 from jentic_one.shared.resilience import CircuitBreaker
-from jentic_one.shared.resilience.circuit import _OPEN_PREFIX
+from jentic_one.shared.resilience.circuit import _FAIL_PREFIX, _OPEN_PREFIX, _TOTAL_PREFIX
 from jentic_one.shared.state.backend import MemoryStateBackend
 
 
@@ -143,3 +143,50 @@ async def test_host_less_urls_isolated_from_real_hosts() -> None:
 
     # The sentinel key is stored under a fixed, non-empty name.
     assert await backend.get(f"{_OPEN_PREFIX}{_NO_HOST_KEY}") is not None
+
+
+@pytest.mark.asyncio
+async def test_local_only_error_excluded_from_per_host_breaker_accounting() -> None:
+    """Pins #1795: a broker-local failure (e.g. pool exhaustion) must not trip
+    the waiting host's circuit breaker."""
+    backend = MemoryStateBackend()
+    pool_err = UpstreamTimeoutError(
+        detail="The broker's upstream connection pool had no free connection in time.",
+        type="upstream_connect_failed",
+        pre_send=True,
+        local_only=True,
+    )
+    inner = _FakeRunner(raises=pool_err)
+    runner = CircuitBreakerRunner(inner, _breaker(backend), enforcement_mode="blocking")
+
+    for _ in range(5):
+        with pytest.raises(UpstreamTimeoutError):
+            await runner.run(_request())
+
+    # Neither total nor failure counters are touched for local_only errors, so
+    # pool exhaustion neither charges the host nor dilutes its failure ratio.
+    assert await backend.get(f"{_TOTAL_PREFIX}api.example.com") is None
+    assert await backend.get(f"{_FAIL_PREFIX}api.example.com") is None
+
+    # The waiting host's circuit stays closed once a pool slot is free again.
+    inner.raises = None
+    inner.status = 200
+    result = await runner.run(_request())
+    assert result.status_code == 200
+
+    # Two subsequent upstream failures still trip the circuit at min_calls=2
+    # (confirming local_only errors did not inflate the total-calls denominator).
+    backend_fresh = MemoryStateBackend()
+    inner_fresh = _FakeRunner(raises=pool_err)
+    runner_fresh = CircuitBreakerRunner(
+        inner_fresh, _breaker(backend_fresh), enforcement_mode="blocking"
+    )
+    for _ in range(5):
+        with pytest.raises(UpstreamTimeoutError):
+            await runner_fresh.run(_request())
+    inner_fresh.raises = None
+    inner_fresh.status = 500
+    await runner_fresh.run(_request())
+    await runner_fresh.run(_request())
+    with pytest.raises(CircuitOpenError):
+        await runner_fresh.run(_request())

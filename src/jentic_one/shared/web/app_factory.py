@@ -43,6 +43,7 @@ from jentic_one.shared.telemetry.sink import TelemetrySink, set_active_sink
 from jentic_one.shared.tracing import instrument_inbound_app
 from jentic_one.shared.web.agent_discovery import get_agent_discovery_router
 from jentic_one.shared.web.auth import API_KEY_HEADER
+from jentic_one.shared.web.background_tasks import install_background_tasks
 from jentic_one.shared.web.cache_control import AuthenticatedResponseCacheMiddleware
 from jentic_one.shared.web.container import AppContainer, RouterSpec
 from jentic_one.shared.web.deps import TokenVerifier
@@ -245,7 +246,10 @@ def instrument_databases(ctx: Context) -> None:
         if ctx.has_db(name)
     ]
     if engines:
-        SQLAlchemyInstrumentor().instrument(engines=engines)
+        # skip_dep_check keeps DB tracing active when SQLAlchemy 2.1 is installed
+        # alongside opentelemetry-instrumentation-sqlalchemy releases whose
+        # metadata upper-bounds sqlalchemy at <2.1.0.
+        SQLAlchemyInstrumentor().instrument(engines=engines, skip_dep_check=True)
 
 
 def _start_worker(
@@ -681,6 +685,9 @@ def create_surface_app(
                 await _stop_catalog_update_scanner(catalog_scanner_task)
                 await _stop_expiry_scanner(scanner_task)
                 await _stop_worker(worker_task)
+                # Work requests handed off after their response (it may write to
+                # the databases) drains before ctx.shutdown() closes them.
+                await background_tasks.drain(ctx.config.services.background_task_drain_timeout_s)
                 await _stop_telemetry(telemetry_handle)
                 await _run_shutdown_handlers(app)
                 await ctx.shutdown()
@@ -692,6 +699,7 @@ def create_surface_app(
     meta["title"] = title
     app = FastAPI(lifespan=lifespan, **meta)
     app.state.ctx = ctx
+    background_tasks = install_background_tasks(app)
     if container.broker is not None:
         # Wire the injected broker into BOTH data-plane paths: the sync router
         # reads app.state.broker, while the async worker builds its broker via
@@ -965,12 +973,14 @@ def create_combined_app(
                 await _stop_catalog_update_scanner(catalog_scanner_task)
                 await _stop_expiry_scanner(scanner_task)
                 await _stop_worker(worker_task)
+                await background_tasks.drain(ctx.config.services.background_task_drain_timeout_s)
                 await _stop_telemetry(telemetry_handle)
                 await _run_shutdown_handlers(app)
                 await ctx.shutdown()
 
     root = FastAPI(lifespan=lifespan, **fastapi_metadata_kwargs(ctx.config.server.public_base_url))
     root.state.ctx = ctx
+    background_tasks = install_background_tasks(root)
     # Injected Broker (None by default → broker surface builds its default
     # per request). Wire BOTH data-plane paths: the sync router reads
     # root.state.broker; the async worker builds its broker via

@@ -74,6 +74,7 @@ class BrokerError(Exception):
         headers: dict[str, str] | None = None,
         instance: str | None = None,
         pre_send: bool = False,
+        local_only: bool = False,
     ) -> None:
         super().__init__(detail)
         self.detail = detail
@@ -92,6 +93,12 @@ class BrokerError(Exception):
         # after send) is only safe to retry for idempotent HTTP methods (#1799).
         # Defaults to False (assume bytes were sent).
         self.pre_send = pre_send
+        # Whether the failure is local to the broker's own shared resources
+        # (e.g. outbound connection-pool exhaustion) rather than the target
+        # upstream host. A broker-local failure is excluded from per-host
+        # circuit-breaker accounting so one host saturating the shared pool
+        # cannot trip another host's breaker (#1795). Defaults to False.
+        self.local_only = local_only
 
 
 class OperationNotFoundError(BrokerError):
@@ -250,12 +257,13 @@ class CredentialIdentityMismatchError(BrokerError):
 
 
 class UpstreamTimeoutError(BrokerError):
-    """The upstream did not respond within the deadline (504).
+    """The upstream did not respond within the deadline, or the pool timed out (504).
 
     ``broker`` origin: the broker gave up and generated this response; no
     upstream answer exists. Typed ``upstream_timeout`` (read phase, the request
-    may have reached the upstream) or ``upstream_connect_failed`` (connect
-    phase, ``pre_send``: no request bytes were sent).
+    may have reached the upstream) or ``upstream_connect_failed`` (connect or
+    pool-acquire phase, ``pre_send``: no request bytes were sent; pool
+    exhaustion also sets ``local_only=True``).
     """
 
     default_type = "upstream_timeout"
@@ -269,8 +277,8 @@ class UpstreamTransportError(BrokerError):
     exists. ``broker`` origin: the broker generated this response. Typed
     ``upstream_transport_error`` (the request may have reached the upstream) or
     ``upstream_connect_failed`` (connect phase, ``pre_send``: no request bytes
-    were sent). A connect or read *timeout* is :class:`UpstreamTimeoutError`
-    (504) instead.
+    were sent). A pool, connect, or read *timeout* is
+    :class:`UpstreamTimeoutError` (504) instead.
     """
 
     default_type = "upstream_transport_error"
@@ -302,6 +310,26 @@ class UpstreamResponseTooLargeError(BrokerError):
     """
 
     default_type = "upstream_response_too_large"
+
+
+class UpstreamBodyInterruptedError(BrokerError):
+    """The upstream failed at the transport level partway through a streamed body.
+
+    Raised from the streaming body iterator, after the response status line has
+    been sent, so it never becomes an error response: the streaming edge logs
+    it as ``upstream_network_failure``, aborts the response, and records
+    ``transport_error`` on the execution. ``transport_error`` is the ``httpx``
+    exception class name (never its message, which can quote request
+    material). Typed ``upstream_timeout`` for a read stall, else
+    ``upstream_transport_error``. The streaming edge classifies by this class,
+    never by the problem ``type`` or ``extra`` members.
+    """
+
+    default_type = "upstream_transport_error"
+
+    def __init__(self, detail: str, *, transport_error: str, type: str | None = None) -> None:
+        super().__init__(detail, type=type)
+        self.transport_error = transport_error
 
 
 class RunnerSchemeUnsupportedError(BrokerError):

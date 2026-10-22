@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import APIRouter, FastAPI
@@ -24,8 +26,11 @@ from jentic_one.shared.web.app_factory import (
     create_surface_app,
     get_control_plane_reference_router,
 )
+from jentic_one.shared.web.background_tasks import get_background_tasks
 from jentic_one.shared.web.container import AppContainer
 from jentic_one.shared.web.endpoint_permissions import _iter_api_routes
+
+_AF = "jentic_one.shared.web.app_factory"
 
 
 @pytest.fixture()
@@ -364,3 +369,32 @@ def test_html_get_401_without_spa_keeps_problem_details(ctx: Context) -> None:
     client = TestClient(app, raise_server_exceptions=False, follow_redirects=False)
     resp = client.get("/users", headers=_html_headers())
     assert resp.status_code == 401
+
+
+async def test_surface_lifespan_drains_background_tasks_before_closing_the_databases(
+    ctx: Context,
+) -> None:
+    """Work handed off after a response may write to the DBs: it drains first."""
+    app = create_surface_app(ctx, title="t", routers=[], enabled_apps={"admin"})
+    registry = get_background_tasks(app)
+    assert registry is not None
+    finished: list[str] = []
+    seen_at_shutdown: list[tuple[bool, list[str]]] = []
+
+    async def _persist() -> None:
+        await asyncio.sleep(0.02)
+        finished.append("persist")
+
+    async def _shutdown() -> None:
+        seen_at_shutdown.append((registry.closed, list(finished)))
+
+    with (
+        patch.object(ctx, "startup", AsyncMock()),
+        patch.object(ctx, "shutdown", side_effect=_shutdown),
+        patch(f"{_AF}.instrument_databases"),
+        patch(f"{_AF}._start_worker", return_value=None),
+    ):
+        async with app.router.lifespan_context(app):
+            registry.spawn(_persist(), kind="test", timeout_s=5)
+
+    assert seen_at_shutdown == [(True, ["persist"])]

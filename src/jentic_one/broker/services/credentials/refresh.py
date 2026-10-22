@@ -119,14 +119,44 @@ class TokenRefresher:
         check and the refresh token sent to the vendor: replaying a
         rotated-out refresh token gets ``invalid_grant``, and providers that
         detect refresh-token reuse revoke the whole grant.
+
+        A missing or revoked row under the lock means the grant is gone (a
+        disconnect, or a ``token_url`` move to another origin, which takes this
+        same lock to drop the row), so the credential must be reconnected. The
+        snapshot's refresh token is never used in that case: it belongs to the
+        old grant and may be bound to a different token endpoint. Only a
+        provider that connects as an account reference
+        (``ProviderRegistry.mints_from_account_ref``) mints with no row, from
+        ``provider_account_ref``; on any other provider that column is just a
+        display name and does not stand in for a grant.
         """
         async with self._ctx.control_db.transaction() as session:
             if advisory_lock:
                 await OAuthTokenRepository.acquire_refresh_lock(session, resolved.credential_id)
             row = await OAuthTokenRepository.get_by_credential(session, resolved.credential_id)
-            if row is not None and row.encrypted_access_token:
+            if row is None or row.revoked_at is not None:
+                mints_from_ref = (
+                    row is None
+                    and bool(resolved.provider_account_ref)
+                    and self._ctx.providers.mints_from_account_ref(resolved.provider)
+                )
+                if not mints_from_ref:
+                    logger.warning(
+                        "refresh_grant_missing",
+                        credential_id=resolved.credential_id,
+                        revoked=row is not None,
+                    )
+                    raise RefreshInvalidGrantError(resolved.credential_id)
+                resolved = resolved.model_copy(
+                    update={
+                        "encrypted_access_token": None,
+                        "encrypted_refresh_token": None,
+                        "token_expires_at": None,
+                    }
+                )
+            else:
                 now = datetime.now(UTC)
-                if _is_fresh(row.expires_at, skew, now):
+                if row.encrypted_access_token and _is_fresh(row.expires_at, skew, now):
                     return self._ctx.encryption.decrypt(row.encrypted_access_token)
                 # Every encryption draws a fresh nonce, so a ciphertext that
                 # differs from the snapshot's means the row was rewritten after
@@ -135,8 +165,10 @@ class TokenRefresher:
                 # until it actually expires rather than refreshing again inside
                 # the skew window, which would burn another rotation (and loop
                 # for tokens whose lifetime is shorter than the skew).
-                if row.encrypted_access_token != resolved.encrypted_access_token and (
-                    row.expires_at is None or row.expires_at > now
+                if (
+                    row.encrypted_access_token
+                    and row.encrypted_access_token != resolved.encrypted_access_token
+                    and (row.expires_at is None or row.expires_at > now)
                 ):
                     return self._ctx.encryption.decrypt(row.encrypted_access_token)
                 resolved = resolved.model_copy(

@@ -564,3 +564,73 @@ async def test_approve_without_requested_permissions_grants_and_audits_defaults(
     assert await _audit_permissions(integration_context, agent_id, AuditAction.APPROVE) == list(
         DEFAULT_AGENT_PERMISSIONS
     )
+
+
+# ---------------------------------------------------------------------------
+# API key writes — owner or org:admin checked before active-status check
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("verb", ["generate-api-key", "revoke-api-key"])
+@pytest.mark.parametrize(
+    "status",
+    [
+        ActorStatus.ACTIVE,
+        ActorStatus.DISABLED,
+        ActorStatus.ARCHIVED,
+        ActorStatus.PENDING,
+    ],
+)
+async def test_non_owner_cannot_write_api_key_regardless_of_status(
+    integration_context: Context, users: None, status: ActorStatus, verb: str
+) -> None:
+    """A non-owner gets 404 actor_not_found, never 409 invalid_transition, on foreign agents."""
+    agent_id = await seeds.seed_agent(integration_context, owner_id=OWNER, scopes=[], status=status)
+    async with _client(integration_context, _writer(OTHER)) as client:
+        resp = await client.post(f"/agents/{agent_id}:{verb}")
+    assert resp.status_code == 404, resp.text
+    assert resp.json()["type"] == "actor_not_found"
+    assert (await _agent(integration_context, agent_id)).status == status
+
+
+@pytest.mark.parametrize("verb", ["generate-api-key", "revoke-api-key"])
+async def test_non_admin_cannot_write_api_key_on_unowned_pending_agent(
+    integration_context: Context,
+    self_register: Callable[[str], Awaitable[str]],
+    verb: str,
+) -> None:
+    """An unclaimed pending agent answers 404 actor_not_found to a non-admin caller."""
+    agent_id = await self_register("")
+    async with _client(integration_context, _writer(OTHER)) as client:
+        resp = await client.post(f"/agents/{agent_id}:{verb}")
+    assert resp.status_code == 404, resp.text
+    assert resp.json()["type"] == "actor_not_found"
+    agent = await _agent(integration_context, agent_id)
+    assert agent.status == ActorStatus.PENDING
+    assert agent.owner_id is None
+
+
+@pytest.mark.parametrize("verb", ["generate-api-key", "revoke-api-key"])
+@pytest.mark.parametrize(
+    "status",
+    [
+        ActorStatus.DISABLED,
+        ActorStatus.ARCHIVED,
+        ActorStatus.PENDING,
+    ],
+)
+@pytest.mark.parametrize("as_admin", [False, True], ids=["owner", "admin"])
+async def test_owner_or_admin_key_write_on_non_active_agent_is_409(
+    integration_context: Context,
+    users: None,
+    status: ActorStatus,
+    verb: str,
+    as_admin: bool,
+) -> None:
+    """The owner or org:admin still gets 409 invalid_transition on a non-active agent."""
+    agent_id = await seeds.seed_agent(integration_context, owner_id=OWNER, scopes=[], status=status)
+    caller = _admin() if as_admin else _writer(OWNER)
+    async with _client(integration_context, caller) as client:
+        resp = await client.post(f"/agents/{agent_id}:{verb}")
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["type"] == "invalid_transition"
