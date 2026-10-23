@@ -44,7 +44,7 @@ import structlog
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION
 from jentic_one.shared.config import SecurityConfig
-from jentic_one.shared.crypto.encryption import EncryptionService
+from jentic_one.shared.crypto.encryption import DecryptionError, EncryptionService
 from jentic_one.shared.db.connectivity import involves_database_error, redact_sql
 from jentic_one.shared.db.protocols import TransactionalDatabase
 from jentic_one.shared.events import (
@@ -194,17 +194,28 @@ class ExecutionHandler:
     def _inbound_cookie(self, payload: dict[str, Any], *, job_id: str) -> str | None:
         """The caller's ``Cookie`` the broker captured at enqueue, decrypted.
 
-        A payload without one yields ``None``. One this worker has no keyset to
-        decrypt is dropped and logged: the run goes ahead without the
-        caller's cookies rather than failing a call the broker accepted.
+        A payload without one yields ``None``. One this worker cannot decrypt
+        (no keyset, a key id no longer in the keyset, or a corrupt blob) is
+        dropped and logged: the run goes ahead without the caller's cookies
+        rather than failing a call the broker accepted.
         """
         blob = payload.get(INBOUND_COOKIE_PAYLOAD_KEY)
         if not isinstance(blob, str) or not blob:
             return None
         if self._encryption is None:
-            logger.warning("queued_execution_cookie_undecryptable", job_id=job_id)
+            logger.warning(
+                "queued_execution_cookie_undecryptable",
+                job_id=job_id,
+                reason="no_encryption_keyset",
+            )
             return None
-        return self._encryption.decrypt(blob)
+        try:
+            return self._encryption.decrypt(blob)
+        except DecryptionError:
+            logger.warning(
+                "queued_execution_cookie_undecryptable", job_id=job_id, reason="decryption_failed"
+            )
+            return None
 
     async def execute(
         self,

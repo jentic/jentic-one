@@ -1205,7 +1205,9 @@ async def _handle_hold(
     claim. Filing, the approval row and ``execution.approval_requested`` share
     one admin-DB transaction; an identical pending request joins its existing
     hold (even at the cap), and an agent at its pending cap is otherwise denied
-    before anything is written.
+    before anything is written. The fingerprint a join matches on leaves out the
+    ``Cookie``, so a joined hold runs with the first request's captured cookie
+    and the joining request's cookie is not kept.
     """
     if not ctx.has_encryption_keyset:
         raise ApprovalHoldUnavailableError(
