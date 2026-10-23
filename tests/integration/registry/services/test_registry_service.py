@@ -24,9 +24,9 @@ from jentic_one.registry.core.url_index import (
 )
 from jentic_one.registry.repos.operation_repo import OperationInput, OperationRepository
 from jentic_one.registry.repos.url_index_repo import UrlIndexRepository
-from jentic_one.registry.services.errors import AmbiguousMatchError
 from jentic_one.registry.services.inspect.registry_service import RegistryService
 from jentic_one.shared.db.session import DatabaseSession
+from jentic_one.shared.discovery.errors import AmbiguousMatchError
 from jentic_one.wiring import InProcessRegistryResolver
 from tests.harness.db_round_trips import trace_round_trips
 

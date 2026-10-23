@@ -26,7 +26,7 @@ from jentic_one.broker.core.directives import (
     suggested_permission_rules,
 )
 from jentic_one.broker.core.exceptions import (
-    AmbiguousMatchError,
+    AmbiguousCredentialMatchError,
     CredentialNeedsReconnectError,
     CredentialRefreshTransientError,
     CredentialUndecryptableError,
@@ -392,7 +392,7 @@ class CredentialService:
             # with the Jentic-Credential-Id header — so it gets the Phase-2 wire
             # type + directive. The legacy unfiltered path keeps its vocabulary.
             if allowed_credential_ids is not None:
-                raise AmbiguousMatchError(
+                raise AmbiguousCredentialMatchError(
                     detail=str(exc),
                     type="ambiguous_credential_binding",
                     extra={"candidates": [c.model_dump(mode="json") for c in exc.candidates]},
@@ -400,7 +400,7 @@ class CredentialService:
                         [c.id for c in exc.candidates]
                     ),
                 ) from exc
-            raise AmbiguousMatchError(
+            raise AmbiguousCredentialMatchError(
                 detail=str(exc),
                 type="ambiguous_credential",
                 extra={"candidates": [c.model_dump(mode="json") for c in exc.candidates]},

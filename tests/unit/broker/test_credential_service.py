@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from jentic_one.broker.core.exceptions import (
-    AmbiguousMatchError,
+    AmbiguousCredentialMatchError,
     CredentialNeedsReconnectError,
     CredentialNotProvisionedError,
     CredentialRefreshTransientError,
@@ -529,7 +529,7 @@ async def test_not_provisioned_ignores_public_base_url(
 async def test_ambiguous_maps_to_409(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_resolver(monkeypatch, AmbiguousCredentialError("stripe", "", "", 2))
 
-    with pytest.raises(AmbiguousMatchError) as exc:
+    with pytest.raises(AmbiguousCredentialMatchError) as exc:
         await _service(_ctx()).inject(
             api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY
         )

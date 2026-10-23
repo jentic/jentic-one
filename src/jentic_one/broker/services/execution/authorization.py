@@ -464,8 +464,8 @@ async def authorize_execution(
     ``path``), recorded on the denial event.
 
     Raises a :class:`BrokerError` (``ActionDeniedError`` /
-    ``CredentialIdentityMismatchError`` → 403, ``AmbiguousMatchError`` → 409,
-    and the credential-resolution taxonomy from ``CredentialService.select``)
+    ``CredentialIdentityMismatchError`` → 403, ``AmbiguousCredentialMatchError``
+    → 409, and the credential-resolution taxonomy from ``CredentialService.select``)
     when the execution is not allowed.
     """
     # Derive candidates (0 → 403 with the right directive), then select the

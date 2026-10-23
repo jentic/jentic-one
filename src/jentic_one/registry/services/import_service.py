@@ -31,6 +31,7 @@ from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_b
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseIntegrityError
 from jentic_one.shared.db.protocols import TransactionalDatabase
+from jentic_one.shared.discovery.errors import DiscoveryError
 from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.jobs.handlers import JobResultPayload
 from jentic_one.shared.models import (
@@ -74,7 +75,7 @@ def _readable_source_error(exc: Exception) -> str:
     """
     if isinstance(exc, DatabaseIntegrityError) and is_duplicate_revision_conflict(exc):
         return DuplicateRevisionError().message
-    if isinstance(exc, BaseIngestError | RegistryServiceError | ValidationError):
+    if isinstance(exc, BaseIngestError | RegistryServiceError | DiscoveryError | ValidationError):
         return str(exc)
     return _UNEXPECTED_SOURCE_ERROR
 

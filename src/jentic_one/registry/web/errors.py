@@ -6,7 +6,6 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from jentic_one.registry.services.errors import (
-    AmbiguousMatchError,
     ApiDeleteBlockedError,
     ApiNotFoundError,
     ArchivedRevisionPinError,
@@ -18,12 +17,10 @@ from jentic_one.registry.services.errors import (
     InvalidApiFilterError,
     InvalidNoteResourceError,
     InvalidOverlayDocumentError,
-    MethodNotAllowedError,
     NoCurrentRevisionError,
     NoteNotFoundError,
     NotePreconditionFailedError,
     NothingToSnoozeError,
-    OperationNotFoundError,
     OverlayApplyConflictError,
     OverlayNotFoundError,
     OverlayRematerializeForbiddenError,
@@ -35,9 +32,14 @@ from jentic_one.registry.services.errors import (
     SearchUnavailableError,
     SnoozeForbiddenError,
     SpecFileMissingError,
-    TooManyCandidatesError,
 )
 from jentic_one.shared.db.errors import DatabaseConsistencyError, DatabaseUnavailableError
+from jentic_one.shared.discovery.errors import (
+    AmbiguousMatchError,
+    MethodNotAllowedError,
+    OperationNotFoundError,
+    TooManyCandidatesError,
+)
 from jentic_one.shared.web.errors import DB_UNAVAILABLE_SAFE_DETAILS, make_service_error_handler
 
 _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {

@@ -24,8 +24,8 @@ from __future__ import annotations
 
 import structlog
 
-from jentic_one.broker.core.exceptions import BrokerError, OperationNotFoundError
-from jentic_one.broker.core.problem import broker_error_problem
+from jentic_one.broker.core.exceptions import BrokerError
+from jentic_one.broker.core.problem import broker_error_problem, discovery_error_problem
 from jentic_one.broker.repos.actor_status import ActorStatusResolver
 from jentic_one.broker.services.execution.authorization import authorize_execution
 from jentic_one.shared.auth.identity import Identity
@@ -36,6 +36,7 @@ from jentic_one.shared.broker.protocols import (
     RuleVerdict,
 )
 from jentic_one.shared.context import Context
+from jentic_one.shared.discovery.errors import OperationNotFoundError
 from jentic_one.shared.jobs.hold import approval_required_problem, get_approved_by_job_id
 from jentic_one.shared.jobs.protocols import QueuedExecutionRequest, QueuedExecutionVerdict
 from jentic_one.shared.jobs.queued_denials import (
@@ -104,12 +105,11 @@ class QueuedExecutionAuthorizer:
             # sync route never gets this far for an unregistered operation.
             return QueuedExecutionVerdict(
                 allowed=False,
-                problem=broker_error_problem(
+                problem=discovery_error_problem(
                     OperationNotFoundError(
-                        "Operation not found — unregistered upstream URL.",
-                        type="operation_not_found",
-                        instance=instance,
-                    )
+                        detail="Operation not found — unregistered upstream URL."
+                    ),
+                    instance=instance,
                 ),
             )
 

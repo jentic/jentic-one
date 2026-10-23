@@ -41,7 +41,6 @@ from jentic_one.broker.core.exceptions import (
     ApprovalPendingLimitError,
     IdempotencyConflictError,
     IdempotencyInProgressError,
-    OperationNotFoundError,
     PayloadTooLargeError,
     UpgradeNotSupportedError,
     UpstreamUrlNotAllowedError,
@@ -111,6 +110,7 @@ from jentic_one.shared.broker.protocols import (
 )
 from jentic_one.shared.config import AppConfig, UpstreamClientConfig
 from jentic_one.shared.context import Context
+from jentic_one.shared.discovery.errors import OperationNotFoundError
 from jentic_one.shared.events import (
     emit_event_best_effort,
     mint_trace_id,
@@ -716,10 +716,7 @@ async def _handle(
         )
         if handled is not None:
             return handled
-        raise OperationNotFoundError(
-            detail="Operation not found — unregistered upstream URL.",
-            type="operation_not_found",
-        )
+        raise OperationNotFoundError(detail="Operation not found — unregistered upstream URL.")
 
     # If a pin applies to the discovered API, translate it to a revision_id
     # in-process (no control-plane HTTP) and re-resolve against the pinned spec.
@@ -732,10 +729,7 @@ async def _handle(
                 resolver, method=method, url=upstream_url, revision_id=revision_id
             )
             if pinned is None:
-                raise OperationNotFoundError(
-                    detail="Operation not found in the pinned revision.",
-                    type="operation_not_found",
-                )
+                raise OperationNotFoundError(detail="Operation not found in the pinned revision.")
             resolved = pinned
             pinned_revisions = {
                 f"{resolved.api.vendor}:{resolved.api.name}:{resolved.api.version}": str(

@@ -12,6 +12,11 @@ always the broker's own response, so it keeps the ``broker`` default) and,
 where a deterministic recovery exists, a structured ``AgentDirective``
 (``broker/core/directives.py``) so the autonomous-agent caller can recover
 without reading docs (02-core-proxy "Agent-centric error recovery").
+
+Operation-discovery failures (operation not found, method not allowed, ambiguous
+match, too many candidates) are not ``BrokerError`` subclasses: the registry
+raises the same types, so they live in ``shared/discovery/errors.py`` and the
+broker renders them through ``broker/core/problem.py``.
 """
 
 from __future__ import annotations
@@ -72,27 +77,6 @@ class BrokerError(Exception):
         # circuit-breaker accounting so one host saturating the shared pool
         # cannot trip another host's breaker (#1795). Defaults to False.
         self.local_only = local_only
-
-
-class OperationNotFoundError(BrokerError):
-    """The reconstructed URL+method matched no registered operation (404)."""
-
-
-class AmbiguousMatchError(BrokerError):
-    """The URL matched more than one operation and cannot be disambiguated (409)."""
-
-
-class MethodNotAllowedError(BrokerError):
-    """The URL matched an operation, but not for the requested method (405)."""
-
-
-class TooManyCandidatesError(BrokerError):
-    """Discovery produced too many candidates to resolve safely (503).
-
-    Raised before dispatch, so the upstream never saw the call.
-    """
-
-    default_type = "too_many_candidates"
 
 
 class UpstreamUrlNotAllowedError(BrokerError):
@@ -198,6 +182,15 @@ class CredentialRefreshTransientError(BrokerError):
 
 class InvalidCredentialNameError(BrokerError):
     """The Jentic-Credential-Name header value doesn't match any active credential (400)."""
+
+
+class AmbiguousCredentialMatchError(BrokerError):
+    """More than one of the caller's credentials covers the call and none is chosen (409).
+
+    The raise site sets the wire ``type`` (``ambiguous_credential_binding`` on
+    the direct-binding path, ``ambiguous_credential`` otherwise) and carries the
+    candidates so the caller can pick one with ``Jentic-Credential-Id``.
+    """
 
 
 class ActionDeniedError(BrokerError):
@@ -321,10 +314,11 @@ class RunnerSchemeUnsupportedError(BrokerError):
     """No runner is registered for the upstream URL's scheme (501).
 
     The broker has no transport that can speak this scheme (e.g. an ``ftp://``
-    upstream when only the HTTP runner is registered). Distinct from a
-    :class:`OperationNotFoundError` (404 — the scheme is known but the URL maps
-    to no operation): here the broker simply *cannot* carry the protocol, so the
-    capability gap is the agent's to resolve (use a different upstream).
+    upstream when only the HTTP runner is registered). Distinct from an
+    ``OperationNotFoundError`` (``shared/discovery/errors.py``; 404 — the scheme
+    is known but the URL maps to no operation): here the broker simply *cannot*
+    carry the protocol, so the capability gap is the agent's to resolve (use a
+    different upstream).
     """
 
 

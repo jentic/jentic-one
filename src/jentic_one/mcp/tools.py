@@ -99,7 +99,6 @@ from jentic_one.registry.services.errors import (
     CatalogEntryNotFoundError,
     CatalogUnavailableError,
     InvalidApiFilterError,
-    OperationNotFoundError,
     OverlaySupersedeForbiddenError,
     SearchUnavailableError,
 )
@@ -120,6 +119,7 @@ from jentic_one.shared.catalog.protocols import (
     SecuritySchemesLookupProtocol,
 )
 from jentic_one.shared.context import Context
+from jentic_one.shared.discovery.errors import OperationNotFoundError
 from jentic_one.shared.jobs.hold import (
     HELD_AGENT_DIRECTIVE,
     STILL_HELD_AGENT_DIRECTIVE,

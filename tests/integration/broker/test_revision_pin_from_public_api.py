@@ -18,7 +18,9 @@ ASGI with the real registry resolver and binding deriver. They assert:
   to a draft that drops it — and the pin resolves to exactly the listed revision;
 - a ``revision_id`` pin the caller may not use (another API's revision, a random
   id, an archived revision, another user's draft) is refused with the problem
-  type its ``rev_`` equivalent gets, and the detail echoes the id as sent.
+  type its ``rev_`` equivalent gets, and the detail echoes the id as sent;
+- a pinned call whose URL the revision serves only for other methods is a broker
+  405 ``method_not_allowed`` naming the allowed methods (#1962).
 """
 
 from __future__ import annotations
@@ -179,7 +181,7 @@ async def _broker(ctx: Context) -> AsyncIterator[httpx.AsyncClient]:
     async with httpx.AsyncClient() as upstream:
         runner = HttpRunner(upstream)
 
-        @app.api_route("/{upstream_url:path}", methods=["GET"])
+        @app.api_route("/{upstream_url:path}", methods=["GET", "POST"])
         async def proxy(upstream_url: str, request: Request) -> Response:
             return await _handle(
                 request, request.method, ctx, identity, deriver, evaluator, runner, None
@@ -351,3 +353,24 @@ async def test_unusable_revision_id_pin_is_refused_and_echoes_the_sent_id(
     assert body["type"] == problem_type
     assert f"{VENDOR}:{NAME}:{VERSION}={revision_id}" in body["detail"]
     assert "rev_" not in body["detail"]
+
+
+async def test_pinned_url_served_for_another_method_is_405(env: Context) -> None:
+    # Pins #1962: the registry lookup raises the shared discovery error for a
+    # pinned revision that serves the URL only for GET; the broker renders it as
+    # its own 405 problem (with ``Allow``), never an unhandled 500.
+    await _import(env, ["/v1/widgets"])
+    (revision_id,) = await _listed_revision_ids(env, state="draft")
+
+    async with _broker(env) as broker:
+        resp = await broker.post(WIDGETS_PATH, headers=_pin(revision_id))
+
+    assert resp.status_code == 405, resp.text
+    assert resp.headers["content-type"] == "application/problem+json"
+    assert resp.headers["Allow"] == "GET"
+    assert resp.headers["Jentic-Error-Origin"] == "broker"
+    body = resp.json()
+    assert body["type"] == "method_not_allowed"
+    assert body["status"] == 405
+    assert body["error_origin"] == "broker"
+    assert body["allowed_methods"] == ["GET"]

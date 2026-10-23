@@ -25,7 +25,7 @@ from jentic_one.registry.repos.url_index_repo import (
     UrlIndexCandidate,
     UrlIndexRepository,
 )
-from jentic_one.registry.services.errors import (
+from jentic_one.shared.discovery.errors import (
     AmbiguousMatchError,
     MethodNotAllowedError,
     TooManyCandidatesError,

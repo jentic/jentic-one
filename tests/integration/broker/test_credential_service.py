@@ -16,7 +16,7 @@ import pytest
 from sqlalchemy import delete
 
 from jentic_one.broker.core.exceptions import (
-    AmbiguousMatchError,
+    AmbiguousCredentialMatchError,
     CredentialNotProvisionedError,
 )
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
@@ -171,7 +171,7 @@ async def test_ambiguous_credential_maps_to_409(
         secret="b",
     )
 
-    with pytest.raises(AmbiguousMatchError) as exc:
+    with pytest.raises(AmbiguousCredentialMatchError) as exc:
         await CredentialService(integration_context).inject(
             api_vendor=_VENDOR, api_name=_API_NAME, api_version=_API_VERSION, identity=_IDENTITY
         )
