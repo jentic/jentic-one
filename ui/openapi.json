@@ -22782,7 +22782,7 @@
       },
       "description": "`GET`: Get an agent. `PATCH`: Update an agent. `DELETE`: Archive Agent.",
       "get": {
-        "description": "Get one agent's profile and lifecycle state.\n\nReturns the agent's name, description, owner, `status`, approval or\ndenial details, and whether it currently has an API key (`has_api_key`).\nReadable by the agent itself, its owner, and `org:admin`; an agent outside\nthe caller's visibility answers 404.",
+        "description": "Get one agent's profile and lifecycle state.\n\nReturns the agent's name, description, owner, `status`, approval or\ndenial details, and whether it currently has an API key (`has_api_key`).\nReadable by the agent itself, its owner, `org:admin`, and a caller holding\n`agents:read` (implied by `agents:write`); an agent outside the caller's\nvisibility answers 404.",
         "operationId": "getAgent",
         "parameters": [
           {
@@ -23491,7 +23491,7 @@
     "/agents/{agent_id}/credentials": {
       "description": "`GET`: List an agent's credential bindings. `POST`: Bind a credential to an agent.",
       "get": {
-        "description": "List the credentials bound directly to an agent.\n\nEach binding names the credential, the API it serves, when it was bound,\nwhether it is `suspended` (and why), and any attached permission\n`rule_set_id`. Credential secrets are never returned. Readable by the\nagent itself, its owner, and `org:admin` (404 otherwise). The list is not\npaginated.",
+        "description": "List the credentials bound directly to an agent.\n\nEach binding names the credential, the API it serves, when it was bound,\nwhether it is `suspended` (and why), and any attached permission\n`rule_set_id`. Credential secrets are never returned. Readable like\n`GET /agents/{agent_id}`: by the agent itself, its owner, `org:admin`, and a\ncaller holding `agents:read` (implied by `agents:write`); 404 otherwise.\nThe list is not paginated.",
         "operationId": "listAgentCredentials",
         "parameters": [
           {
