@@ -153,6 +153,20 @@ def test_rate_limit_429_relays_retry_after() -> None:
     assert "(7s)" in got.actionable
 
 
+def test_fractional_retry_after_relays_whole_seconds_rounded_up() -> None:
+    # MCP and the broker share one Retry-After parser (#1957).
+    got = ex.classify_broker_transport_error(
+        503,
+        _headers("broker", retry_after="1.5"),
+        _body({"type": "circuit_open", "title": "Circuit open"}),
+        retry_safe=False,
+    )
+    assert got is not None
+    assert got.details is not None
+    assert got.details["retry_after_s"] == 2
+    assert "(2s)" in got.actionable
+
+
 def test_scheme_unsupported_points_at_search_apis() -> None:
     got = ex.classify_broker_transport_error(
         501,
@@ -212,7 +226,7 @@ def test_retry_after_seconds() -> None:
     assert ex.retry_after_seconds(httpx.Headers({})) is None
     assert ex.retry_after_seconds(httpx.Headers({"Retry-After": "12"})) == 12
     assert ex.retry_after_seconds(httpx.Headers({"Retry-After": " 3 "})) == 3
-    assert ex.retry_after_seconds(httpx.Headers({"Retry-After": "1.5"})) == 1.5
+    assert ex.retry_after_seconds(httpx.Headers({"Retry-After": "1.5"})) == 2
     assert ex.retry_after_seconds(httpx.Headers({"Retry-After": "-1"})) is None
     assert ex.retry_after_seconds(httpx.Headers({"Retry-After": "soon"})) is None
     remaining = ex.retry_after_seconds(httpx.Headers({"Retry-After": future}))
