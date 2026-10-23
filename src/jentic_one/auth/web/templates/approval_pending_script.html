@@ -1,0 +1,166 @@
+<script>
+(function () {
+    "use strict";
+    var cfg = JSON.parse(document.getElementById("approval-config").textContent);
+    var statusEl = document.getElementById("approval-status");
+    var adminPanel = document.getElementById("admin-panel");
+    var anonPanel = document.getElementById("anon-panel");
+    var settled = false;
+
+    function navigate(url) {
+        settled = true;
+        window.location.replace(url);
+    }
+
+    function isHttpUrl(url) {
+        return typeof url === "string" &&
+            (url.indexOf("https://") === 0 || url.indexOf("http://") === 0);
+    }
+
+    function onStatus(status) {
+        if (settled) { return; }
+        if (status === "approved") {
+            statusEl.textContent = "Approved — continuing…";
+            // Re-run the ORIGINAL authorize request; the client gate now
+            // passes, so the server 302s to the identity provider.
+            navigate(cfg.resume_url);
+        } else if (status === "denied") {
+            if (isHttpUrl(cfg.deny_redirect)) {
+                // Standard OAuth closure for the client: error=access_denied
+                // on its own registered redirect_uri.
+                navigate(cfg.deny_redirect);
+            } else {
+                settled = true;
+                statusEl.textContent =
+                    "An administrator denied this application. " +
+                    "You can close this page.";
+            }
+        }
+    }
+
+    // I2 clamp: a 400 (expired/invalid blob) re-runs /authorize to mint a
+    // fresh blob. A clock-skewed verifier could 400 fresh blobs too, so
+    // re-mints are capped per tab; any healthy poll answer resets the count.
+    var REMINT_KEY = "jentic-one.approval-remints";
+    var MAX_REMINTS = 3;
+    function remintOrStop() {
+        var count = 0;
+        try {
+            count = parseInt(window.sessionStorage.getItem(REMINT_KEY), 10) || 0;
+        } catch (e) { /* storage blocked */ }
+        if (count >= MAX_REMINTS) {
+            settled = true;
+            statusEl.textContent =
+                "This page could not verify its state. " +
+                "Retry the connection from your application.";
+            return;
+        }
+        try {
+            window.sessionStorage.setItem(REMINT_KEY, String(count + 1));
+        } catch (e) { /* storage blocked */ }
+        navigate(cfg.resume_url);
+    }
+    function clearRemints() {
+        try { window.sessionStorage.removeItem(REMINT_KEY); } catch (e) { /* blocked */ }
+    }
+
+    // Poll cadence: cfg.poll_ms steady-state. A 429 backs off to the
+    // server's Retry-After hint (or doubles the cadence when absent),
+    // clamped to [cfg.poll_ms, 60 s]; any non-429 answer resets it.
+    var pollDelay = cfg.poll_ms;
+    function schedule() {
+        if (!settled) { window.setTimeout(poll, pollDelay); }
+    }
+    function poll() {
+        if (settled) { return; }
+        fetch(cfg.status_url, { headers: { Accept: "application/json" } })
+            .then(function (resp) {
+                if (resp.status === 400) {
+                    remintOrStop();
+                    return null;
+                }
+                if (resp.status === 429) {
+                    var retryAfter = parseInt(resp.headers.get("Retry-After"), 10);
+                    var hinted = isNaN(retryAfter) ? 0 : retryAfter * 1000;
+                    pollDelay = Math.min(
+                        Math.max(hinted, pollDelay * 2, cfg.poll_ms), 60000);
+                    return null;
+                }
+                pollDelay = cfg.poll_ms;
+                if (resp.ok) {
+                    clearRemints();
+                    return resp.json();
+                }
+                return null;
+            })
+            .then(function (body) {
+                if (body && body.status) { onStatus(body.status); }
+                schedule();
+            })
+            .catch(function () { schedule(); });
+    }
+    poll();
+
+    // Admin detection: the operator SPA keeps its session as a bearer token
+    // in same-origin localStorage. If one is present and /me confirms the
+    // oauth-clients:write permission (or org:admin), reveal the inline
+    // decision panel. Anything else keeps the anonymous panel.
+    var token = null;
+    try { token = window.localStorage.getItem(cfg.token_key); } catch (e) { /* blocked */ }
+    if (token) {
+        fetch(cfg.me_url, { headers: { Authorization: "Bearer " + token } })
+            .then(function (resp) { return resp.ok ? resp.json() : null; })
+            .then(function (me) {
+                var permissions = (me && me.permissions) || [];
+                if (me && (me.admin === true ||
+                        permissions.indexOf("oauth-clients:write") !== -1)) {
+                    adminPanel.hidden = false;
+                    anonPanel.hidden = true;
+                }
+            })
+            .catch(function () { /* stay anonymous */ });
+    }
+
+    function decide(action, button) {
+        button.disabled = true;
+        fetch(cfg.decision_url, {
+            method: "POST",
+            headers: {
+                Authorization: "Bearer " + token,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ state: cfg.state, action: action }),
+        })
+            .then(function (resp) {
+                if (!resp.ok) { throw new Error("decision failed"); }
+                return resp.json();
+            })
+            .then(function (body) { onStatus(body.status); })
+            .catch(function () {
+                button.disabled = false;
+                statusEl.textContent =
+                    "Decision failed — try again or use the approval queue.";
+            });
+    }
+    document.getElementById("btn-approve").addEventListener("click", function () {
+        decide("approve", this);
+    });
+    document.getElementById("btn-deny").addEventListener("click", function () {
+        decide("deny", this);
+    });
+
+    document.getElementById("copy-link").addEventListener("click", function () {
+        var input = document.getElementById("queue-link");
+        input.select();
+        var self = this;
+        try {
+            navigator.clipboard.writeText(input.value).then(function () {
+                self.textContent = "Copied";
+            });
+        } catch (e) {
+            document.execCommand("copy");
+            self.textContent = "Copied";
+        }
+    });
+})();
+</script>

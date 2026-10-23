@@ -559,6 +559,19 @@ def verify_payload(
     return payload
 
 
+def error_redirect(
+    redirect_uri: str, error: str, state: str | None, description: str | None = None
+) -> RedirectResponse:
+    """The RFC 6749 §4.1.2.1 error redirect back to the client's ``redirect_uri``."""
+    params: dict[str, str] = {"error": error}
+    if state:
+        params["state"] = state
+    if description:
+        params["error_description"] = description
+    separator = "&" if "?" in redirect_uri else "?"
+    return RedirectResponse(url=f"{redirect_uri}{separator}{urlencode(params)}", status_code=302)
+
+
 # --- consent handle -------------------------------------------------------------
 
 

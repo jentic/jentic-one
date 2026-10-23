@@ -15,7 +15,10 @@ from jentic_one.auth.web.errors import (
 )
 from jentic_one.auth.web.routers import (
     agents,
+    approval,
     authorize,
+    consent,
+    consent_agent,
     discovery,
     identity,
     local_login,
@@ -50,7 +53,12 @@ def get_routers() -> list[tuple[APIRouter, str, list[str]]]:
         # the root protected-resource alias, and the /mcp 401 challenge. All
         # gated by server.mcp.oauth.enabled (404 when off).
         (discovery.mcp_router, "", []),
+        # The interactive AuthCode+PKCE flow, split by leg. Order is the
+        # OpenAPI path order of the schema-visible routes.
+        (approval.router, "", []),
         (authorize.router, "", []),
+        (consent.router, "", []),
+        (consent_agent.router, "", []),
         # Local-account login form on the /authorize flow. Gated by
         # auth.local_login.enabled (404 when off).
         (local_login.router, "", []),
