@@ -57,8 +57,10 @@ MIRROR_URL = (
     "petstore3.swagger.io/main/1.0.27/openapi.json"
 )
 _WRITER = Identity(sub="usr_writer", actor_type=ActorType.USER, permissions=["apis:write"])
+#: ``credentials:write`` and the creator of ``bound_petstore``'s credential, so
+#: it may approve a server-host change on the bound API.
 _OPERATOR = Identity(
-    sub="usr_operator",
+    sub="usr_x",
     actor_type=ActorType.USER,
     permissions=["apis:write", "credentials:write"],
 )
@@ -413,7 +415,8 @@ async def test_promoting_a_reimport_of_a_credential_bound_host_less_api_needs_cr
 ) -> None:
     """Pins the runbook's gate: the re-import resolves against the URL its
     redirects ended on, and gives the API hosts it never had, so with
-    credentials bound a promote needs ``credentials:write``."""
+    credentials bound a promote needs ``credentials:write`` (and, short of
+    ``org:admin``, ownership of the bound credential)."""
     legacy = await _ingest_legacy(
         ingest_context,
         monkeypatch,

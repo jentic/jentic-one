@@ -18,7 +18,8 @@ from typing import Any
 
 from jentic_one.registry.core.url_index import expand_path_template
 from jentic_one.registry.ingest.host_change_guard import (
-    may_approve_host_change,
+    holds_host_change_scope,
+    is_host_change_admin,
     pending_host_change,
 )
 from jentic_one.registry.repos.api_repo import ApiRepository
@@ -99,8 +100,12 @@ class RegistryService:
         - owned ``draft`` whose server hosts differ from the API's live ones, on
           an API with bound credentials, for a caller without
           ``credentials:write`` → ``HOST_CHANGE_HELD`` (→ 403): pinning it would
-          send those credentials to hosts no operator approved, which
-          promoting it would refuse (``registry/ingest/host_change_guard.py``),
+          send those credentials to hosts nobody approved, which promoting it
+          would refuse (``registry/ingest/host_change_guard.py``),
+        - either kind of draft above for a caller holding ``credentials:write``
+          that is not an organisation admin → ``RESOLVED`` with
+          ``credential_owner_required``: the broker routes through it only with
+          a credential the caller owns,
         - ``published`` revision, or an owned ``draft`` → ``RESOLVED``.
 
         Ownership of a ``draft`` is decided by ``submitted_by == identity.sub`` —
@@ -126,15 +131,21 @@ class RegistryService:
             return RevisionPinResult(RevisionPinOutcome.ARCHIVED)
 
         if revision.state == ApiRevisionState.DRAFT:
+            admin = is_host_change_admin(identity.permissions)
             # A draft with an origin is an import held for server-host review
-            # (``registry/ingest/host_change_guard.py``): only an operator who could
-            # promote it may route through it, not the agent that submitted it.
+            # (``registry/ingest/host_change_guard.py``): only a caller who could
+            # approve it may route through it, not the agent that submitted it.
             if revision.origin is not None:
-                if not may_approve_host_change(identity.permissions):
+                if not holds_host_change_scope(identity.permissions):
                     return RevisionPinResult(RevisionPinOutcome.FORBIDDEN)
-            elif revision.submitted_by != identity.sub:
+                return RevisionPinResult(
+                    RevisionPinOutcome.RESOLVED,
+                    revision_id=revision_id,
+                    credential_owner_required=not admin,
+                )
+            if revision.submitted_by != identity.sub:
                 return RevisionPinResult(RevisionPinOutcome.FORBIDDEN)
-            elif not may_approve_host_change(identity.permissions):
+            if not admin:
                 held = await pending_host_change(
                     self._ctx,
                     self._session,
@@ -145,8 +156,14 @@ class RegistryService:
                     version=version,
                 )
                 if held is not None:
+                    if not holds_host_change_scope(identity.permissions):
+                        return RevisionPinResult(
+                            RevisionPinOutcome.HOST_CHANGE_HELD, revision_id=revision_id
+                        )
                     return RevisionPinResult(
-                        RevisionPinOutcome.HOST_CHANGE_HELD, revision_id=revision_id
+                        RevisionPinOutcome.RESOLVED,
+                        revision_id=revision_id,
+                        credential_owner_required=True,
                     )
 
         return RevisionPinResult(RevisionPinOutcome.RESOLVED, revision_id=revision_id)

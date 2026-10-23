@@ -294,12 +294,14 @@ async def test_listed_revision_id_pins_over_the_live_revision(env: Context) -> N
     # serve answers from the draft when pinned and from the live one unpinned.
     resolver = InProcessRegistryResolver(env.registry_db, ctx=env)
     pins = parse_revisions(_pin(draft_id)["Jentic-Revision"])
-    pinned_id = await resolve_pin_for_api(
+    pin = await resolve_pin_for_api(
         resolver,
         api=APIReference(vendor=VENDOR, name=NAME, version=VERSION),
         pins=pins,
         identity=_agent(),
     )
+    assert pin is not None
+    pinned_id = pin.revision_id
     assert pinned_id == uuid.UUID(draft_id)
 
     widgets_url = f"https://{HOST}/v1/widgets"

@@ -298,18 +298,28 @@ async def _import_payload(perms: list[str]) -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("perms", [["catalog:import", "credentials:write"], ["org:admin"]])
-async def test_import_entry_stamps_host_change_approval_for_operator(perms: list[str]) -> None:
-    """``credentials:write`` (directly or via org:admin) approves a server-host change."""
-    payload = await _import_payload(perms)
+async def test_import_entry_stamps_host_change_approval_for_org_admin() -> None:
+    """An organisation admin approves a server-host change up front."""
+    payload = await _import_payload(["org:admin"])
     assert payload["sources"][0]["host_change_approved"] == "true"
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("perms", [["catalog:import"], ["catalog:import", "apis:write"]])
-async def test_import_entry_no_host_change_approval_without_operator_scope(
+@pytest.mark.parametrize(
+    "perms",
+    [
+        ["catalog:import"],
+        ["catalog:import", "apis:write"],
+        ["catalog:import", "apis:write", "credentials:write"],
+    ],
+)
+async def test_import_entry_no_host_change_approval_without_org_admin(
     perms: list[str],
 ) -> None:
-    """Default agent scopes and ``apis:write`` alone do not approve a host change."""
+    """Without ``org:admin`` a host change is held as a draft, whatever else is held.
+
+    ``credentials:write`` alone does not approve it: whether the caller owns the
+    API's credentials is checked when the held draft is promoted.
+    """
     payload = await _import_payload(perms)
     assert "host_change_approved" not in payload["sources"][0]
