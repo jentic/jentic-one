@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 
 import structlog
 
@@ -175,8 +175,14 @@ class ConnectService:
             provider = self._ctx.providers.get(state.provider)
             result = await provider.complete_connect(self._ctx, state=state, callback=callback)
 
+            # The bindings lock is taken inside the control transaction, after
+            # the refresh lock: control then admin is the order the other
+            # paths that hold both transactions use (the credential expiry
+            # scan, the rule path rewrite), so on SQLite the two write locks
+            # are never taken in opposite orders. ``bindings_held`` releases
+            # it only after the control transaction commits or rolls back.
             async with (
-                self._sole_binding_held(state.credential_id, state.sole_agent_id),
+                AsyncExitStack() as bindings_held,
                 self._ctx.control_db.transaction() as session,
             ):
                 # Same lock as the broker refresh and a token_url edit, then
@@ -185,6 +191,10 @@ class ConnectService:
                 # away from the origin this grant was minted at, and storing
                 # it would hand its refresh token to the new origin.
                 await OAuthTokenRepository.acquire_refresh_lock(session, state.credential_id)
+                if state.sole_agent_id is not None:
+                    await bindings_held.enter_async_context(
+                        self._sole_binding_held(state.credential_id, state.sole_agent_id)
+                    )
                 credential = await CredentialRepository.get_by_id(session, state.credential_id)
                 if credential is None:
                     raise CredentialNotFoundError(state.credential_id)
@@ -293,21 +303,17 @@ class ConnectService:
 
     @asynccontextmanager
     async def _sole_binding_held(
-        self, credential_id: str, sole_agent_id: str | None
+        self, credential_id: str, sole_agent_id: str
     ) -> AsyncIterator[None]:
         """Keep a re-authorize's credential sole-bound while its grant is stored.
 
         Takes the credential's bindings lock in an admin transaction, checks
         that ``sole_agent_id`` is still the only bound agent, and holds the
-        lock until the body (the token write) has committed or rolled back.
-        A binding committed while the code was exchanged is seen here and the
-        wider grant is discarded; a binding attempted while the lock is held
-        waits until the grant is stored. A plain connect
-        (``sole_agent_id is None``) takes no lock.
+        lock until the context exits, which the caller arranges to follow the
+        token write's commit or rollback. A binding committed while the code
+        was exchanged is seen here and the wider grant is discarded; a binding
+        attempted while the lock is held waits until the grant is stored.
         """
-        if sole_agent_id is None:
-            yield
-            return
         async with self._ctx.admin_db.transaction() as admin_session:
             await PrerequisiteRepository.lock_bindings_for_credential(
                 admin_session, credential_id=credential_id
