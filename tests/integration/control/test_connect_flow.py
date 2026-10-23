@@ -9,14 +9,18 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
-from sqlalchemy import delete, select
+import structlog.testing
+from sqlalchemy import delete, select, text
 
+from jentic_one.admin.repos.agent_credential_binding_repo import AgentCredentialBindingRepository
 from jentic_one.control.core.schema.connect_nonces import ConnectNonce
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.customer_api_keys import CustomerAPIKey
 from jentic_one.control.core.schema.oauth_client_credentials import OAuthClientCredential
 from jentic_one.control.core.schema.oauth_tokens import OAuthToken
 from jentic_one.control.repos import CredentialRepository, OAuthTokenRepository
+from jentic_one.control.repos.effects_repo import EffectsRepository
+from jentic_one.control.repos.prerequisite_repo import PrerequisiteRepository
 from jentic_one.control.services.credentials.connect_service import ConnectFlowError, ConnectService
 from jentic_one.control.services.credentials.errors import CredentialNotFoundError
 from jentic_one.control.services.credentials.providers.direct_oauth2 import DirectOAuth2Provider
@@ -888,3 +892,167 @@ async def test_state_without_browser_binding_is_refused_and_not_consumed(
         assert await OAuthTokenRepository.get_by_credential(session, credential_id) is None
         consumed = (await session.execute(select(ConnectNonce))).scalars().all()
     assert consumed == []
+
+
+# --- Re-authorize: the credential must stay sole-bound until the grant is stored ---
+
+_REAUTH_FIRST_AGENT = "agnt_reauth_first"
+_REAUTH_SECOND_AGENT = "agnt_reauth_second"
+
+
+@pytest.fixture()
+async def reauth_agents(integration_context: Context) -> AsyncGenerator[None, None]:
+    """Two approved agents registered by ``_OWNER``; their bindings are removed after."""
+    ctx = integration_context
+    await _delete_reauth_agents(ctx)
+    async with ctx.admin_db.transaction() as session:
+        for agent_id in (_REAUTH_FIRST_AGENT, _REAUTH_SECOND_AGENT):
+            await session.execute(
+                text(
+                    "INSERT INTO agents (id, name, registered_by, status, created_by) "
+                    "VALUES (:id, :id, :owner, 'approved', :owner)"
+                ),
+                {"id": agent_id, "owner": _OWNER.sub},
+            )
+    yield
+    await _delete_reauth_agents(ctx)
+
+
+async def _delete_reauth_agents(ctx: Context) -> None:
+    ids = {"a": _REAUTH_FIRST_AGENT, "b": _REAUTH_SECOND_AGENT}
+    async with ctx.admin_db.transaction() as session:
+        await session.execute(
+            text("DELETE FROM agent_credential_bindings WHERE agent_id IN (:a, :b)"), ids
+        )
+        await session.execute(text("DELETE FROM agents WHERE id IN (:a, :b)"), ids)
+
+
+async def _bind(ctx: Context, agent_id: str, credential_id: str) -> None:
+    async with ctx.admin_db.transaction() as session:
+        await AgentCredentialBindingRepository.bind(
+            session, agent_id=agent_id, credential_id=credential_id, created_by=_OWNER.sub
+        )
+
+
+async def _stored_access_token(ctx: Context, credential_id: str) -> str:
+    async with ctx.control_db.session() as session:
+        token = await OAuthTokenRepository.get_by_credential(session, credential_id)
+    assert token is not None
+    return ctx.encryption.decrypt(token.encrypted_access_token)
+
+
+@pytest.mark.parametrize("second_agent_binds", [False, True])
+async def test_reauthorize_rechecks_sole_binding_before_storing_grant(
+    integration_context: Context,
+    clean_connect_tables: None,
+    reauth_agents: None,
+    second_agent_binds: bool,
+) -> None:
+    """A re-authorize for the credential's only bound agent stores the new
+    grant only if no other agent is bound once the code exchange returns. A
+    binding that commits while the vendor is answering is seen by the check
+    in the token-write transaction: the connect is refused with the
+    other-agent-bound error and the stored grant is left as it was. With no
+    second binding the same flow stores the new grant."""
+    ctx = integration_context
+    provider = _RecordingOAuth2()
+    _patch_provider_registry(ctx, "my_oauth", provider)
+    credential_id = await _connected(ctx)
+    await _bind(ctx, _REAUTH_FIRST_AGENT, credential_id)
+
+    svc = ConnectService(ctx)
+    challenge = await svc.begin(
+        credential_id,
+        ConnectRequest(scopes=["read", "write"]),
+        identity=_OWNER,
+        browser_binding=_BINDING.claim,
+        sole_agent_id=_REAUTH_FIRST_AGENT,
+    )
+    assert isinstance(challenge, AuthCodeChallenge)
+    release = asyncio.Event()
+    provider.hold_after_exchange = release
+
+    with structlog.testing.capture_logs() as logs:
+        async with asyncio.TaskGroup() as tg:
+            complete = tg.create_task(
+                _raises(
+                    svc.complete(
+                        challenge.state,
+                        ConnectCallback(code="code-reauthorize"),
+                        browser_binding=_BINDING.value,
+                    )
+                )
+            )
+            await asyncio.wait_for(provider.exchanged.wait(), timeout=5)
+            if second_agent_binds:
+                await _bind(ctx, _REAUTH_SECOND_AGENT, credential_id)
+            release.set()
+
+    # The pre-exchange check passed: the code reached the vendor exactly once.
+    assert provider.posted_to == ["https://idp.example.com/token"]
+    refusals = [
+        entry
+        for entry in logs
+        if entry["event"] == "oauth_reauthorize_refused_other_agent_bound"
+        and entry["credential_id"] == credential_id
+        and entry["agent_id"] == _REAUTH_FIRST_AGENT
+    ]
+    if second_agent_binds:
+        error = complete.result()
+        assert isinstance(error, ConnectFlowError)
+        assert str(error) == "re-authorize refused: another agent is bound to the credential"
+        assert len(refusals) == 1
+        assert await _stored_access_token(ctx, credential_id) == "at-old"
+    else:
+        assert complete.result() is None
+        assert refusals == []
+        assert await _stored_access_token(ctx, credential_id) == "at-reconnected"
+
+
+@pytest.mark.parametrize("binder", ["admin_repository", "connect_effects"])
+async def test_binding_waits_while_sole_binding_check_holds_lock(
+    integration_context: Context,
+    clean_connect_tables: None,
+    reauth_agents: None,
+    binder: str,
+) -> None:
+    """Both binding writers wait on the credential's bindings lock, so a
+    binding cannot commit between the re-authorize's sole-binding check and
+    its token write. On SQLite the admin write transaction alone serialises
+    them."""
+    ctx = integration_context
+    credential_id = await _connected(ctx)
+
+    async def bind_second_agent() -> None:
+        async with ctx.admin_db.transaction() as session:
+            if binder == "admin_repository":
+                await AgentCredentialBindingRepository.bind(
+                    session,
+                    agent_id=_REAUTH_SECOND_AGENT,
+                    credential_id=credential_id,
+                    created_by=_OWNER.sub,
+                )
+            else:
+                await EffectsRepository.bind_agent_to_credential(
+                    session,
+                    agent_id=_REAUTH_SECOND_AGENT,
+                    credential_id=credential_id,
+                    rule_set_id=None,
+                    created_by=_OWNER.sub,
+                )
+
+    async with asyncio.TaskGroup() as tg:
+        async with ctx.admin_db.transaction() as held:
+            await PrerequisiteRepository.lock_bindings_for_credential(
+                held, credential_id=credential_id
+            )
+            bind = tg.create_task(bind_second_agent())
+            await asyncio.sleep(0.3)
+            assert not bind.done()
+        await asyncio.wait_for(bind, timeout=5)
+
+    async with ctx.admin_db.session() as session:
+        rows = await PrerequisiteRepository.list_agents_for_credential(
+            session, credential_id=credential_id
+        )
+    assert [row.agent_id for row in rows] == [_REAUTH_SECOND_AGENT]
