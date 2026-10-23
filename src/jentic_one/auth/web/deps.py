@@ -8,7 +8,6 @@ from jentic_one.admin.services.user_service import UserService
 from jentic_one.auth.services.agent_auth_service import AgentAuthService
 from jentic_one.auth.services.agent_service import AgentService
 from jentic_one.auth.services.authorize_service import AuthorizeService
-from jentic_one.auth.services.oauth_grant_service import OAuthGrantService
 from jentic_one.shared.context import Context
 from jentic_one.shared.web import get_ctx
 
@@ -27,7 +26,3 @@ def get_agent_auth_service(ctx: Context = Depends(get_ctx)) -> AgentAuthService:
 
 def get_authorize_service(ctx: Context = Depends(get_ctx)) -> AuthorizeService:
     return AuthorizeService(ctx)
-
-
-def get_oauth_grant_service(ctx: Context = Depends(get_ctx)) -> OAuthGrantService:
-    return OAuthGrantService(ctx)

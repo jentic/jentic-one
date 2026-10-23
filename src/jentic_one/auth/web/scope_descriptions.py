@@ -1,4 +1,10 @@
-"""Human-readable descriptions of OAuth scopes for the consent pages."""
+"""Human-readable descriptions of OAuth scopes for the consent pages.
+
+Presentation copy, not business logic: it holds no ``Context``, reads no
+repository, and its only consumer is :mod:`jentic_one.auth.web.pages`. It
+lives beside :mod:`jentic_one.auth.web.theme` for that reason — the wording a
+consent page shows is not a domain contract.
+"""
 
 from __future__ import annotations
 

@@ -49,7 +49,7 @@ def _handle_digest(consent_token: str) -> str:
     return hashlib.sha256(consent_token.encode()).hexdigest()
 
 
-# ---------- approval-in-flow (P2) ----------
+# ---------- the approval-pending page ----------
 
 
 def mint_approval_state(
@@ -159,7 +159,7 @@ def consent_user_key(params: dict[str, object]) -> str | None:
     return None
 
 
-# ---------- inline agent creation (P4) ----------
+# ---------- inline agent creation ----------
 
 
 def mint_agent_create_state(ctx: Context, *, consent_token: str, user_key: str) -> str:

@@ -22,9 +22,8 @@ from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
-from jentic_one.auth.services.authorize_service import AuthorizeService
+from jentic_one.auth.services.authorize_service import AuthorizeService, candidate_agent_scopes
 from jentic_one.auth.services.errors import InvalidGrantError, UserNotAdmittedError
-from jentic_one.auth.services.oauth_grant_service import OAuthGrantService
 from jentic_one.auth.web import pages
 from jentic_one.auth.web.consent_state import (
     claims_from_params,
@@ -33,10 +32,7 @@ from jentic_one.auth.web.consent_state import (
     load_consent_handle,
     mint_agent_create_state,
 )
-from jentic_one.auth.web.deps import (
-    get_authorize_service,
-    get_oauth_grant_service,
-)
+from jentic_one.auth.web.deps import get_authorize_service
 from jentic_one.auth.web.flow import (
     check_rate_limit,
     client_gate_passes,
@@ -44,11 +40,11 @@ from jentic_one.auth.web.flow import (
     get_cached_oauth_client,
     is_platform_client,
 )
-from jentic_one.auth.web.routers.consent_agent import render_agent_awaiting_page
-from jentic_one.shared.auth.permission_catalog import (
-    OIDC_PASSTHROUGH_SCOPES,
-    compute_implies_transitive,
+from jentic_one.auth.web.flow_pages import (
+    approval_note_for_user,
+    mint_and_render_agent_awaiting_page,
 )
+from jentic_one.shared.auth.permission_catalog import compute_implies_transitive
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.oauth_clients import OAuthConsentModel
 from jentic_one.shared.web import openapi_examples as ex
@@ -115,7 +111,7 @@ async def _render_agent_consent_page(
     """The agent-picker consent variant for ``consent_model='agent'`` clients.
 
     Lists only the consenting user's own ``status='active'`` agents; the
-    zero-active-agents arm fans out (P4 hybrid):
+    zero-active-agents arm fans out four ways:
 
     - handle names no provisionable subject (malformed) → the terminal empty
       state, first-run copy;
@@ -133,6 +129,13 @@ async def _render_agent_consent_page(
     The user identity is resolved read-only: rendering consent must not
     create a user row (the Deny contract); provisioning happens only on the
     create submit, an affirmative user action.
+
+    The arm decision stays in the web layer on purpose: each arm IS a
+    different page, so there is nothing to hand back to a renderer but the
+    page itself. The reads it fans out on are all
+    :class:`AuthorizeService` methods, and the rendered output of all four
+    arms is pinned byte-for-byte by
+    ``tests/unit/auth/web/test_authorize_pages_golden.py``.
     """
     app_name = str(params.get("client_name") or "Unknown Application")
     scope = str(params.get("scope") or "")
@@ -159,7 +162,7 @@ async def _render_agent_consent_page(
                 # revisited): park on the awaiting page for the newest
                 # pending agent instead of a dead end — the poll blob is
                 # bound to this handle + this agent, both server-resolved.
-                return render_agent_awaiting_page(
+                return mint_and_render_agent_awaiting_page(
                     params,
                     request,
                     ctx,
@@ -178,22 +181,13 @@ async def _render_agent_consent_page(
         user_key = consent_user_key(params)
         if user_key is None:
             # No provisionable subject on the handle (no local user, no
-            # verified IdP claims): nothing to create for — the pre-P4
-            # terminal empty state.
+            # verified IdP claims): nothing to create for, so the terminal
+            # empty state rather than a create form.
             return pages.render_no_agents_page(app_name)
-        if user_id is not None:
-            # Existing user, zero agent rows ever: the form footer tells the
-            # truth about the arm the submit will take (mirror of the POST's
-            # post-provisioning check — same effective-permission math).
-            approval_note = (
-                pages.CREATE_NOTE_ACTIVE
-                if await authorize_svc.user_can_create_active_agent(user_id)
-                else pages.CREATE_NOTE_PENDING
-            )
-        else:
-            # Deferred provisioning: the user row does not exist yet, so the
-            # arm is undecidable here — neutral wording, decided on the POST.
-            approval_note = pages.CREATE_NOTE_NEUTRAL
+        # The footer tells the truth about the arm the submit will take —
+        # same helper the submit's validation re-render uses, so the two
+        # renders of this form cannot disagree.
+        approval_note = await approval_note_for_user(user_id, authorize_svc)
         create_state = mint_agent_create_state(ctx, consent_token=consent_token, user_key=user_key)
         return pages.render_agent_create_page(
             params,
@@ -206,12 +200,11 @@ async def _render_agent_consent_page(
     allowlist = (
         frozenset(oauth_client.allowed_scopes) if oauth_client.allowed_scopes is not None else None
     )
-    # The candidate set shown per agent: requested ∩ allowlist, OIDC stripped
-    # (D11). Granted/lacking marking against each agent's live scopes happens
-    # in pages.render_agent_options.
-    candidates = [s for s in requested if s not in OIDC_PASSTHROUGH_SCOPES]
-    if allowlist is not None:
-        candidates = [s for s in candidates if s in allowlist]
+    # The candidate set shown per agent, from the SAME function the grant's
+    # scope math starts from, so the page cannot advertise a scope the grant
+    # would drop. Granted/lacking marking against each agent's live scopes
+    # happens in pages.render_agent_options.
+    candidates = candidate_agent_scopes(requested, allowlist)
 
     return pages.render_agent_consent_page(
         params, consent_token=consent_token, agents=agents, candidate_scopes=candidates
@@ -241,7 +234,6 @@ async def consent_submit(
     ),
     ctx: Context = Depends(get_ctx),
     authorize_svc: AuthorizeService = Depends(get_authorize_service),
-    grant_svc: OAuthGrantService = Depends(get_oauth_grant_service),
 ) -> RedirectResponse:
     """Process the consent form submission. Mints the auth code only on approval.
 
@@ -272,7 +264,7 @@ async def consent_submit(
 
     oauth_client: OAuthClientView | None = None
     if not is_platform_client(client_id, ctx):
-        # Mid-flow D7 re-check (see oauth_callback): a client denied between
+        # Mid-flow client-gate re-check (see oauth_callback): a client denied between
         # the consent page render and this submit must not provision a user
         # row or mint a code — even on the Deny arm we return the human error
         # rather than an OAuth redirect the denied client could observe.
@@ -318,12 +310,11 @@ async def consent_submit(
     if oauth_client is not None and oauth_client.consent_model == OAuthConsentModel.AGENT.value:
         # Consent→agent binding: validate the posted agent server-side
         # (exists + active + owned by the consenting user — the picker's
-        # option list IS that predicate), recompute the D2 scope
+        # option list IS that predicate), recompute the scope
         # intersection, mint the grant row (+ audit + oauth_grant.created),
         # and stamp grant_id on the code. Validation failures render the
         # human error page — never an OAuth redirect with a code.
         approval = await authorize_svc.approve_agent_consent(
-            grant_svc,
             user_id=user_id,
             client_id=client_id,
             client_name=oauth_client.name,

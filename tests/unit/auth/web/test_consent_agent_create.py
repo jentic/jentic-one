@@ -191,7 +191,10 @@ def _mock_authorize_svc(
     svc.issue_authorization_code = AsyncMock(return_value="code_x")
     svc.record_consent_decision = AsyncMock()
     # The consent workflows run for real on top of the stubbed reads above,
-    # so these router tests keep exercising the whole decision tree.
+    # so these router tests keep exercising the whole decision tree. The
+    # collaborators the bodies construct (AgentService, OAuthGrantService) are
+    # patched per test; nothing in either body touches the database directly,
+    # so the MagicMock standing in for ``self`` never reaches one.
     svc.approve_agent_consent = partial(AuthorizeService.approve_agent_consent, svc)
     svc.create_agent_from_consent = partial(AuthorizeService.create_agent_from_consent, svc)
     return svc
@@ -346,7 +349,7 @@ def test_only_nonactive_agents_keeps_terminal_empty_state(
 # ---------- POST /oauth/consent/agent ----------
 
 
-@patch("jentic_one.auth.web.deps.AgentService")
+@patch("jentic_one.auth.services.authorize_service.AgentService")
 @patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_create_happy_path_creates_agent_and_reenters_consent(
@@ -399,7 +402,7 @@ def test_create_happy_path_creates_agent_and_reenters_consent(
     assert 'value="agnt_created" required checked' in followup.text
 
 
-@patch("jentic_one.auth.web.deps.AgentService")
+@patch("jentic_one.auth.services.authorize_service.AgentService")
 @patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_create_provisions_deferred_user_then_creates(
@@ -428,7 +431,7 @@ def test_create_provisions_deferred_user_then_creates(
     assert agent_svc.create.await_args.kwargs["owner_id"] == "usr_new"
 
 
-@patch("jentic_one.auth.web.deps.AgentService")
+@patch("jentic_one.auth.services.authorize_service.AgentService")
 @patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_create_replayed_blob_rejected(
@@ -464,7 +467,7 @@ def test_create_replayed_blob_rejected(
     agent_svc.create.assert_awaited_once()  # only the first submit created
 
 
-@patch("jentic_one.auth.web.deps.AgentService")
+@patch("jentic_one.auth.services.authorize_service.AgentService")
 @patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_create_expired_blob_rejected(
@@ -498,7 +501,7 @@ def test_create_expired_blob_rejected(
     agent_svc.create.assert_not_awaited()
 
 
-@patch("jentic_one.auth.web.deps.AgentService")
+@patch("jentic_one.auth.services.authorize_service.AgentService")
 @patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_create_wrong_purpose_blob_rejected(
@@ -550,7 +553,7 @@ def test_create_wrong_purpose_blob_rejected(
     agent_svc.create.assert_not_awaited()
 
 
-@patch("jentic_one.auth.web.deps.AgentService")
+@patch("jentic_one.auth.services.authorize_service.AgentService")
 @patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_create_blob_spliced_onto_other_handle_rejected(
@@ -591,7 +594,7 @@ def test_create_blob_spliced_onto_other_handle_rejected(
     agent_svc.create.assert_not_awaited()
 
 
-@patch("jentic_one.auth.web.deps.AgentService")
+@patch("jentic_one.auth.services.authorize_service.AgentService")
 @patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_create_expired_consent_handle_rejected(
@@ -617,7 +620,7 @@ def test_create_expired_consent_handle_rejected(
     agent_svc.create.assert_not_awaited()
 
 
-@patch("jentic_one.auth.web.deps.AgentService")
+@patch("jentic_one.auth.services.authorize_service.AgentService")
 @patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_create_invalid_name_rerenders_form_with_inline_error(
@@ -673,7 +676,7 @@ def test_create_invalid_name_rerenders_form_with_inline_error(
     agent_svc.create.assert_awaited_once()
 
 
-@patch("jentic_one.auth.web.deps.AgentService")
+@patch("jentic_one.auth.services.authorize_service.AgentService")
 @patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_create_invalid_name_rerender_escapes_hostile_input(
@@ -700,7 +703,7 @@ def test_create_invalid_name_rerender_escapes_hostile_input(
     assert "&lt;script&gt;" in resp.text
 
 
-@patch("jentic_one.auth.web.deps.AgentService")
+@patch("jentic_one.auth.services.authorize_service.AgentService")
 @patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_create_race_agent_appeared_skips_creation_and_reenters_consent(
@@ -732,7 +735,7 @@ def test_create_race_agent_appeared_skips_creation_and_reenters_consent(
     agent_svc.create.assert_not_awaited()
 
 
-@patch("jentic_one.auth.web.deps.AgentService")
+@patch("jentic_one.auth.services.authorize_service.AgentService")
 @patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_create_skipped_when_user_owns_only_nonactive_agents(
@@ -762,7 +765,7 @@ def test_create_skipped_when_user_owns_only_nonactive_agents(
     svc.owner_has_any_agents.assert_awaited_once_with("usr_new")
 
 
-@patch("jentic_one.auth.web.deps.AgentService")
+@patch("jentic_one.auth.services.authorize_service.AgentService")
 @patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_create_rejected_for_user_consent_model_client(
@@ -791,7 +794,7 @@ def test_create_rejected_for_user_consent_model_client(
     agent_svc.create.assert_not_awaited()
 
 
-@patch("jentic_one.auth.web.deps.AgentService")
+@patch("jentic_one.auth.services.authorize_service.AgentService")
 @patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_create_gated_client_rejected_midflow(
@@ -918,7 +921,7 @@ def test_pending_agent_reentry_renders_awaiting_page(
     assert payload["agent_id"] == "agnt_p"
 
 
-@patch("jentic_one.auth.web.deps.AgentService")
+@patch("jentic_one.auth.services.authorize_service.AgentService")
 @patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_create_unpermissioned_lands_pending_and_awaiting_page(
@@ -957,7 +960,7 @@ def test_create_unpermissioned_lands_pending_and_awaiting_page(
     svc.user_can_create_active_agent.assert_awaited_once_with("usr_new")
 
 
-@patch("jentic_one.auth.web.deps.AgentService")
+@patch("jentic_one.auth.services.authorize_service.AgentService")
 @patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_parallel_submits_create_exactly_one_agent(
@@ -1282,7 +1285,7 @@ def test_consent_approve_provisions_with_hosted_domain(
     assert svc.provision_from_claims.await_args.args[0].hosted_domain == "jentic.com"
 
 
-@patch("jentic_one.auth.web.deps.AgentService")
+@patch("jentic_one.auth.services.authorize_service.AgentService")
 @patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_agent_create_provisions_with_hosted_domain(

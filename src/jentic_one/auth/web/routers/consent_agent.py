@@ -4,12 +4,12 @@ Flow overview:
   POST /oauth/consent/agent         — create the consenting user's first agent
   GET /oauth/consent/agent/status   — poll a pending agent's approval
 
-Inline agent creation (P4): deferred provisioning means a first-time user
+Deferred provisioning means a first-time user
 reaching consent for a ``consent_model='agent'`` client owns no agents, so the
 zero-agents arm renders a create-agent form: POST /oauth/consent/agent
 verifies a signed, single-use ``agent-create``-purpose blob bound to the
 consent handle AND the authenticated subject, re-validates the handle and the
-D7 client gate, and hands the workflow to
+client approval+active gate, and hands the workflow to
 :meth:`AuthorizeService.create_agent_from_consent` — which re-checks the
 zero-agents predicate (an agent appearing in between skips creation; a
 per-subject ``set_if_absent`` marker makes parallel submits create exactly
@@ -17,9 +17,9 @@ one) and creates the agent as the consenting user through the same
 ``AgentService.create`` path the SPA uses (default agent scopes, same audit +
 event).
 
-The creation posture is a hybrid mirroring the platform's two existing doors
-(security review on P4 — the SPA's POST /agents gates on ``agents:write``,
-and this public mid-flow endpoint must not out-privilege it):
+The creation posture mirrors the platform's two existing doors — the SPA's
+POST /agents gates on ``agents:write``, and this public mid-flow endpoint
+must not out-privilege it:
 
 - the consenting user's effective permissions include ``agents:write`` (same
   implication math as the web gate; org:admin implies it) → the agent is
@@ -46,7 +46,6 @@ from fastapi import APIRouter, Depends, Form, Query, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
-from jentic_one.auth.services.agent_service import AgentService
 from jentic_one.auth.services.authorize_service import AuthorizeService
 from jentic_one.auth.services.errors import InvalidGrantError
 from jentic_one.auth.web import pages
@@ -58,14 +57,10 @@ from jentic_one.auth.web.consent_state import (
     consume_agent_create_state,
     load_consent_handle,
     mint_agent_create_state,
-    mint_agent_status_state,
     verify_agent_create_state,
     verify_agent_status_state,
 )
-from jentic_one.auth.web.deps import (
-    get_agent_service,
-    get_authorize_service,
-)
+from jentic_one.auth.web.deps import get_authorize_service
 from jentic_one.auth.web.flow import (
     check_approval_status_rate_limit,
     check_rate_limit,
@@ -73,8 +68,11 @@ from jentic_one.auth.web.flow import (
     get_cached_oauth_client,
     is_platform_client,
 )
+from jentic_one.auth.web.flow_pages import (
+    approval_note_for_user,
+    mint_and_render_agent_awaiting_page,
+)
 from jentic_one.auth.web.schemas.authorize import ConsentAgentStatusResponse
-from jentic_one.shared.config import effective_auth_base_url
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorStatus
 from jentic_one.shared.models.oauth_clients import OAuthConsentModel
@@ -93,29 +91,6 @@ router = APIRouter()
 _AGENT_NAME_MAX_LENGTH = 255
 
 _AGENT_NAME_ERROR_MESSAGE = f"Enter an agent name (1\u2013{_AGENT_NAME_MAX_LENGTH} characters)."
-
-
-def _base_url(request: Request, ctx: Context) -> str:
-    return effective_auth_base_url(ctx.config).rstrip("/") or str(request.base_url).rstrip("/")
-
-
-def render_agent_awaiting_page(
-    params: dict[str, object],
-    request: Request,
-    ctx: Context,
-    *,
-    consent_token: str,
-    agent_id: str,
-    agent_name: str,
-) -> HTMLResponse:
-    """Render the awaiting page with a status blob bound to this handle + agent."""
-    return pages.render_agent_awaiting_page(
-        params,
-        consent_token=consent_token,
-        status_state=mint_agent_status_state(ctx, consent_token=consent_token, agent_id=agent_id),
-        agent_name=agent_name,
-        base_url=_base_url(request, ctx),
-    )
 
 
 def _agent_tri_state(status: str | None) -> Literal["pending", "approved", "denied"]:
@@ -162,18 +137,18 @@ async def consent_agent_create(
     ),
     ctx: Context = Depends(get_ctx),
     authorize_svc: AuthorizeService = Depends(get_authorize_service),
-    agent_svc: AgentService = Depends(get_agent_service),
 ) -> HTMLResponse | RedirectResponse:
-    """Create the consenting user's first agent from the zero-agents consent page (P4).
+    """Create the consenting user's first agent from the zero-agents consent page.
 
     The form is rendered only when the consenting user owns zero agents in
-    any status (the G12(b) first-run dead-end). This submit verifies the signed
-    single-use ``agent-create`` blob (bound to the consent handle AND the
-    authenticated subject — no ambient credential is honored, so a cross-site
-    form cannot drive it: it would need both the unguessable handle and a
-    blob minted for that very handle), re-validates the handle and the D7
-    client gate, provisions the user row if deferred provisioning left none
-    (an affirmative user action, unlike rendering), re-checks the zero-agents
+    any status — otherwise consent is a first-run dead end. This submit
+    verifies the signed single-use ``agent-create`` blob (bound to the consent
+    handle AND the authenticated subject — no ambient credential is honored,
+    so a cross-site form cannot drive it: it would need both the unguessable
+    handle and a blob minted for that very handle), re-validates the handle
+    and the client approval+active gate, provisions the user row if deferred
+    provisioning left none (an affirmative user action, unlike rendering),
+    re-checks the zero-agents
     predicate (an agent appearing in between skips creation — idempotent),
     creates the agent through the same ``AgentService.create`` path as the
     SPA (owner = the consenting user, default agent scopes, same audit +
@@ -185,12 +160,11 @@ async def consent_agent_create(
     client → ``access_denied``; an invalid agent name → the form re-rendered
     with the error inline and a fresh blob.
 
-    Creation posture (security review — the hybrid): the arm is decided
-    server-side AFTER the subject is resolved/provisioned, against the same
-    effective-permission math as POST /agents' ``agents:write`` gate. A
-    permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
-    unpermissioned one gets a PENDING agent (the POST /register posture) and
-    the awaiting-approval page. A per-subject ``set_if_absent`` slot claim
+    Creation posture: the arm is decided server-side AFTER the subject is
+    resolved/provisioned, against the same effective-permission math as POST
+    /agents' ``agents:write`` gate. A permissioned user gets ACTIVE + a 303
+    re-entry; an unpermissioned one gets a PENDING agent (the POST /register
+    posture) and the awaiting-approval page. A per-subject ``set_if_absent`` slot claim
     makes N parallel submits (N distinct blobs from N renders) create exactly
     one agent — losers re-enter consent, which renders the picker or the
     awaiting page as appropriate.
@@ -223,7 +197,7 @@ async def consent_agent_create(
     client_id = str(params.get("client_id") or "")
     oauth_client: OAuthClientView | None = None
     if not is_platform_client(client_id, ctx):
-        # Mid-flow D7 re-check (see consent_submit): a client denied between
+        # Mid-flow client-gate re-check (see consent_submit): a client denied between
         # the form render and this submit must not cause resource creation.
         oauth_client = await get_cached_oauth_client(request, client_id, ctx)
         if oauth_client is None or not client_gate_passes(oauth_client):
@@ -247,22 +221,20 @@ async def consent_agent_create(
             params,
             consent_token=consent_token,
             create_state=fresh,
-            approval_note=await _approval_note_for_params(params, authorize_svc),
+            approval_note=await _approval_note(params, authorize_svc),
             agent_name=name,
             error=_AGENT_NAME_ERROR_MESSAGE,
         )
 
     raw_local_user_id = params.get("local_user_id")
-    slot_key = user_key
     result = await authorize_svc.create_agent_from_consent(
-        agent_svc,
         claims=claims_from_params(params),
         local_user_id=str(raw_local_user_id) if raw_local_user_id else None,
         user_email=str(params.get("user_email") or ""),
         origin=derive_origin(request.headers.get("user-agent")),
         agent_name=name,
         client_id=client_id,
-        claim_create_slot=lambda: claim_agent_create_slot(slot_key, request),
+        claim_create_slot=lambda: claim_agent_create_slot(user_key, request),
     )
     if result.outcome == "error":
         return RedirectResponse(url=f"/error?error={result.error}", status_code=302)
@@ -270,7 +242,7 @@ async def consent_agent_create(
         # PENDING arm: park on the awaiting page — it polls the status
         # endpoint (blob bound to this handle + this agent) and
         # auto-continues into consent on approval.
-        return render_agent_awaiting_page(
+        return mint_and_render_agent_awaiting_page(
             params,
             request,
             ctx,
@@ -290,15 +262,13 @@ async def consent_agent_create(
     )
 
 
-async def _approval_note_for_params(
-    params: dict[str, object], authorize_svc: AuthorizeService
-) -> str:
+async def _approval_note(params: dict[str, object], authorize_svc: AuthorizeService) -> str:
     """The create-form footer note for a validation re-render (read-only).
 
-    Mirrors the GET render's arm detection: local/already-resolved users get
-    the truthful ACTIVE/PENDING wording, a not-yet-provisioned IdP subject
-    the neutral one. Resolution is read-only — a re-render must not create a
-    user row.
+    Resolves the handle's subject the same way the consent page's zero-agents
+    render does, then defers the wording to the one shared helper, so the form
+    says the same thing on a first render and on a re-render. Resolution is
+    read-only — a re-render must not create a user row.
     """
     raw_local_user_id = params.get("local_user_id")
     if raw_local_user_id:
@@ -306,11 +276,7 @@ async def _approval_note_for_params(
     else:
         claims = claims_from_params(params)
         user_id = await authorize_svc.resolve_existing_user_id(claims) if claims else None
-    if user_id is None:
-        return pages.CREATE_NOTE_NEUTRAL
-    if await authorize_svc.user_can_create_active_agent(user_id):
-        return pages.CREATE_NOTE_ACTIVE
-    return pages.CREATE_NOTE_PENDING
+    return await approval_note_for_user(user_id, authorize_svc)
 
 
 @router.get(
@@ -332,7 +298,7 @@ async def consent_agent_status_endpoint(
     ctx: Context = Depends(get_ctx),
     authorize_svc: AuthorizeService = Depends(get_authorize_service),
 ) -> ConsentAgentStatusResponse:
-    """Minimal tri-state poll for the pending-agent awaiting page (P4 hybrid).
+    """Minimal tri-state poll for the pending-agent awaiting page.
 
     Anonymous but keyed by the signed ``agent-status`` blob — never a bare
     agent id, so the endpoint cannot be used to enumerate or probe agents:
