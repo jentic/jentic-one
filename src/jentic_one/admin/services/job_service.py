@@ -7,7 +7,6 @@ from typing import Any
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.repos import AuditRepository, JobRepository
 from jentic_one.admin.scoping.filters import build_access_filters
-from jentic_one.admin.services._support.pagination import Page, decode_cursor, encode_cursor
 from jentic_one.admin.services.errors import JobAwaitingApprovalError, JobNotFoundError
 from jentic_one.admin.services.metrics import audit_events_counter
 from jentic_one.admin.services.schemas.jobs import JobFilter, JobView
@@ -16,6 +15,7 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.models.actors import actor_type_label_from_id
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
 from jentic_one.shared.models.jobs import JobKind, JobStatus
+from jentic_one.shared.pagination import Page, decode_cursor, encode_cursor
 
 
 def _job_actor_type(created_by: str | None, stored: str) -> str:
@@ -58,7 +58,7 @@ class JobService:
         cursor_dt = None
         cursor_id: str | None = None
         if cursor is not None:
-            cursor_dt, cursor_id = decode_cursor(cursor)
+            cursor_dt, cursor_id = decode_cursor(cursor, id_kind="str")
 
         async with self._ctx.admin_db.session() as session:
             jobs = await JobRepository.list_all(

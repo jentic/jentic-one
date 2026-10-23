@@ -7,12 +7,13 @@ from collections.abc import Sequence
 from datetime import datetime
 from enum import Enum, auto
 
-from sqlalchemy import and_, delete, or_, select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.registry.core.schema.notes import Note
+from jentic_one.shared.db.keyset import desc_keyset_predicate
 from jentic_one.shared.db.utils import utcnow
 
 
@@ -101,10 +102,7 @@ class NoteRepository:
 
         if cursor_created_at is not None and cursor_id is not None:
             stmt = stmt.where(
-                or_(
-                    Note.created_at < cursor_created_at,
-                    and_(Note.created_at == cursor_created_at, Note.id < cursor_id),
-                )
+                desc_keyset_predicate(Note.created_at, Note.id, cursor_created_at, cursor_id)
             )
         if api_ids is not None:
             stmt = stmt.where(Note.resource_api_id.in_(api_ids))

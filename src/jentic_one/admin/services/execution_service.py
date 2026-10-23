@@ -7,7 +7,6 @@ from typing import Any
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.admin.repos import ExecutionRecordRepository
 from jentic_one.admin.scoping.filters import build_access_filters
-from jentic_one.admin.services._support.pagination import Page, decode_cursor, encode_cursor
 from jentic_one.admin.services.errors import ExecutionNotFoundError
 from jentic_one.admin.services.schemas.executions import (
     ApiInfo,
@@ -16,6 +15,7 @@ from jentic_one.admin.services.schemas.executions import (
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
+from jentic_one.shared.pagination import Page, decode_cursor, encode_cursor
 
 
 class ExecutionService:
@@ -41,7 +41,7 @@ class ExecutionService:
         cursor_ts: Any = None
         cursor_id: str | None = None
         if cursor is not None:
-            cursor_ts, cursor_id = decode_cursor(cursor)
+            cursor_ts, cursor_id = decode_cursor(cursor, id_kind="str")
 
         async with self._ctx.admin_db.session() as session:
             records = await ExecutionRecordRepository.list_all(

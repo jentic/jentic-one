@@ -47,7 +47,7 @@ from jentic_one.shared.models import (
     OverlayDeprecationReason,
     OverlayStatus,
 )
-from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
+from jentic_one.shared.pagination import decode_cursor, encode_cursor
 from jentic_one.shared.url_validation import validate_upstream_url_async
 
 logger = structlog.get_logger(__name__)
@@ -470,7 +470,7 @@ class OverlayService:
         cursor_created_at: datetime | None = None
         cursor_id: str | None = None
         if cursor is not None:
-            cursor_created_at, cursor_id = decode_cursor_str(cursor)
+            cursor_created_at, cursor_id = decode_cursor(cursor, id_kind="str")
 
         api = await self._resolve_api(vendor, name, version)
 

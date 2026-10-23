@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from sqlalchemy import and_, case, delete, or_, select, update
+from sqlalchemy import case, delete, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +16,7 @@ from sqlalchemy.orm import selectinload
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.shared.db.errors import DatabaseIntegrityError
+from jentic_one.shared.db.keyset import desc_keyset_predicate
 from jentic_one.shared.models import ApiRevisionSourceType, ApiRevisionState
 
 # The unique constraints whose violation means "this revision already exists".
@@ -473,12 +474,8 @@ class ApiRevisionRepository:
         )
         if cursor_created_at is not None and cursor_id is not None:
             stmt = stmt.where(
-                or_(
-                    ApiRevision.created_at < cursor_created_at,
-                    and_(
-                        ApiRevision.created_at == cursor_created_at,
-                        ApiRevision.id < cursor_id,
-                    ),
+                desc_keyset_predicate(
+                    ApiRevision.created_at, ApiRevision.id, cursor_created_at, cursor_id
                 )
             )
         if states:

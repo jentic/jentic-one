@@ -7,7 +7,6 @@ from typing import Any
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.repos import EventRepository
 from jentic_one.admin.scoping.filters import build_access_filters
-from jentic_one.admin.services._support.pagination import Page, decode_cursor, encode_cursor
 from jentic_one.admin.services.errors import EventNotFoundError
 from jentic_one.admin.services.schemas.events import (
     EventFilter,
@@ -15,6 +14,7 @@ from jentic_one.admin.services.schemas.events import (
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
+from jentic_one.shared.pagination import Page, decode_cursor, encode_cursor
 
 
 class EventService:
@@ -39,7 +39,7 @@ class EventService:
     ) -> Page[EventView]:
         cursor_tuple = None
         if cursor is not None:
-            cursor_dt, cursor_id = decode_cursor(cursor)
+            cursor_dt, cursor_id = decode_cursor(cursor, id_kind="str")
             cursor_tuple = (cursor_dt, cursor_id)
 
         async with self._ctx.admin_db.session() as session:

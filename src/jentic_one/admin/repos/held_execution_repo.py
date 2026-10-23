@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.admin.core.schema.held_executions import HeldExecution
+from jentic_one.shared.db.keyset import desc_keyset_predicate
 from jentic_one.shared.db.utils import db_now
 
 _PENDING = "pending"
@@ -58,8 +59,9 @@ class HeldExecutionRepository:
             stmt = stmt.where(HeldExecution.agent_id == agent_id)
         if cursor_created_at is not None and cursor_id is not None:
             stmt = stmt.where(
-                (HeldExecution.created_at < cursor_created_at)
-                | ((HeldExecution.created_at == cursor_created_at) & (HeldExecution.id < cursor_id))
+                desc_keyset_predicate(
+                    HeldExecution.created_at, HeldExecution.id, cursor_created_at, cursor_id
+                )
             )
         stmt = stmt.order_by(HeldExecution.created_at.desc(), HeldExecution.id.desc())
         result = await session.execute(stmt.limit(limit))

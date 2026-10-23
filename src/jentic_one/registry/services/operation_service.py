@@ -17,7 +17,7 @@ from jentic_one.registry.services.errors import (
     RevisionNotFoundError,
 )
 from jentic_one.shared.context import Context
-from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
+from jentic_one.shared.pagination import decode_cursor, encode_cursor
 
 if TYPE_CHECKING:
     from jentic_one.registry.core.schema.api_revisions import ApiRevision
@@ -122,7 +122,7 @@ class OperationService:
         cursor_created_at = None
         cursor_id: str | None = None
         if cursor is not None:
-            cursor_created_at, cursor_id = decode_cursor_str(cursor)
+            cursor_created_at, cursor_id = decode_cursor(cursor, id_kind="str")
 
         rows = await OperationRepository.list_page_for_revision(
             session,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 from collections.abc import AsyncGenerator, Iterator, MutableMapping
 from datetime import UTC, datetime
@@ -493,3 +494,18 @@ async def test_list_and_detail_agree_on_update_available_for_published_over_cata
     detail = detail_resp.json()
     assert detail["source_url"] is None  # the caveat precondition: manually published
     assert detail["update_available"] is True  # must match the list, not short-circuit off
+
+
+#: Cursors that base64-decode to JSON of the wrong shape (#1956).
+_WRONG_SHAPE_CURSORS = [
+    base64.b64encode(raw.encode()).decode()
+    for raw in ("null", "[1]", '{"t": 1, "id": "x"}', '{"t": "2024-01-01", "id": 1}')
+]
+
+
+@pytest.mark.parametrize("cursor", _WRONG_SHAPE_CURSORS)
+def test_list_wrong_shape_cursor_returns_400(authed_client: TestClient, cursor: str) -> None:
+    """A tampered cursor is a 400, never a 500."""
+    resp = authed_client.get("/apis", params={"cursor": cursor})
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Invalid pagination cursor"
