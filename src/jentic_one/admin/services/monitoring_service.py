@@ -133,11 +133,18 @@ class MonitoringService:
         return await self._cache.get_or_load(days, _load)
 
     async def _query(self, days: int) -> ExecutionStats:
-        cutoff = datetime.now(tz=UTC) - timedelta(days=days)
+        # Both routes resolve "now" the same way, so the overview and the usage
+        # charts agree on which minute the window ends in. The upper bound also
+        # keeps a row stamped in the future out of the totals: `total` and
+        # `success_rate_percent` below are sums over these buckets, so an
+        # unbounded window let one such row inflate both without expiring.
+        _, until_ts = self._resolve_window(None, None)
+        until = datetime.fromtimestamp(until_ts, tz=UTC)
+        cutoff = until - timedelta(days=days)
 
-        async with self._ctx.admin_db.session() as session:
-            daily_rows = await MonitoringRepository.daily_buckets(session, cutoff)
-            top_rows = await MonitoringRepository.top_operations(session, cutoff)
+        async with self._ctx.admin_db.read_snapshot() as session:
+            daily_rows = await MonitoringRepository.daily_buckets(session, cutoff, until)
+            top_rows = await MonitoringRepository.top_operations(session, cutoff, until)
 
         total = sum(b.total for b in daily_rows)
         success = sum(b.success for b in daily_rows)
@@ -311,9 +318,14 @@ class MonitoringService:
             return None
         api_vendor: str | None = None
         api_name: str | None = None
-        if filters.api_id and "/" in filters.api_id:
-            api_vendor = filters.api_id.split("/")[0]
-            api_name = filters.api_id.split("/", 1)[1]
+        if filters.api_id:
+            # `api_id` is `vendor/name`. A value carrying no `/` names the
+            # vendor alone and filters on that: dropping it instead would
+            # answer a narrower question with org-wide totals under a 200,
+            # which is the one outcome a filter must never produce. An
+            # unmatched vendor correctly returns nothing.
+            api_vendor, _, rest = filters.api_id.partition("/")
+            api_name = rest or None
         f = UsageQueryFilters(
             api_vendor=api_vendor,
             api_name=api_name,
@@ -339,7 +351,13 @@ class MonitoringService:
 
         repo_filters = self._build_repo_filters(filters)
 
-        async with self._ctx.admin_db.session() as session:
+        # One snapshot for every figure describing the window, so the response
+        # cannot contradict itself: each statement would otherwise take its own
+        # snapshot, and a commit landing between them leaves `total` disagreeing
+        # with the sum of its buckets, or top rows summing past it. The body is
+        # then cached and re-served for the whole TTL, so one interleaved write
+        # is visible for 30s.
+        async with self._ctx.admin_db.read_snapshot() as session:
             stats_row = await MonitoringRepository.overall_stats(
                 session, cutoff, until_dt, filters=repo_filters
             )
@@ -360,6 +378,12 @@ class MonitoringService:
                 filters=repo_filters,
             )
 
+        # Deliberately outside the snapshot: `active_now` counts the jobs a
+        # worker is running at the moment of the request, so reading it at the
+        # window's snapshot would report a figure already known to be stale.
+        async with self._ctx.admin_db.read_session() as session:
+            active_now = await MonitoringRepository.active_now(session, filters=repo_filters)
+
         return UsageStats(
             since=since,
             until=until,
@@ -372,7 +396,7 @@ class MonitoringService:
             avg_ms=stats_row.avg_ms,
             p50_ms=stats_row.p50_ms,
             p95_ms=stats_row.p95_ms,
-            active_now=stats_row.active_now,
+            active_now=active_now,
             buckets=[
                 {
                     "ts": b.ts,
