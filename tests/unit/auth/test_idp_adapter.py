@@ -14,12 +14,9 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.algorithms import RSAAlgorithm
 from pydantic import SecretStr
 
-from jentic_one.auth.core.idp import (
-    GoogleOidcAdapter,
-    OidcAdapter,
-    build_idp_adapter,
-)
+from jentic_one.auth.core.idp import GoogleOidcAdapter, OidcAdapter, get_idp_adapter
 from jentic_one.auth.core.idp.adapter import IdpClaims
+from jentic_one.auth.core.idp.factory import build_idp_adapter
 from jentic_one.auth.services.errors import InvalidGrantError
 from jentic_one.shared.config import IdpConfig
 
@@ -248,6 +245,45 @@ def test_factory_selects_google_adapter(google_config: IdpConfig) -> None:
 def test_factory_falls_back_to_generic_for_standard_oidc(idp_config: IdpConfig) -> None:
     adapter = build_idp_adapter(idp_config)
     assert type(adapter) is OidcAdapter
+
+
+def test_get_idp_adapter_reuses_one_adapter_per_config(idp_config: IdpConfig) -> None:
+    """Pins #1960: request paths share one adapter, so its discovery/JWKS caches persist."""
+    first = get_idp_adapter(idp_config)
+    assert first is not None
+    assert get_idp_adapter(idp_config) is first
+    assert get_idp_adapter(idp_config.model_copy(deep=True)) is first
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"issuer": "https://other-idp.example.com"},
+        {"client_id": "other-client"},
+        {"client_secret": SecretStr("rotated-secret")},
+        {"scopes": ["openid"]},
+    ],
+)
+def test_get_idp_adapter_rebuilds_on_config_change(
+    idp_config: IdpConfig, change: dict[str, Any]
+) -> None:
+    first = get_idp_adapter(idp_config)
+    assert get_idp_adapter(idp_config.model_copy(update=change)) is not first
+
+
+def test_get_idp_adapter_is_isolated_from_in_place_config_mutation(
+    idp_config: IdpConfig,
+) -> None:
+    adapter = get_idp_adapter(idp_config)
+    assert adapter is not None
+    idp_config.issuer = "https://mutated.example.com"
+
+    assert adapter.issuer == "https://idp.example.com"
+    assert get_idp_adapter(idp_config) is not adapter
+
+
+def test_get_idp_adapter_disabled_is_none() -> None:
+    assert get_idp_adapter(IdpConfig(enabled=False)) is None
 
 
 # ── Upstream exchange_code: PKCE, id_token verification, userinfo sub ────────

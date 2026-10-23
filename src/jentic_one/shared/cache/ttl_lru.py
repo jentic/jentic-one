@@ -31,11 +31,12 @@ Invariants :class:`AsyncTTLCache` holds for every caller:
   storage for that value while keeping the single-flight coalescing.
 
 Metrics: a cache reports to ``{prefix}.hits`` / ``.misses`` / ``.evictions`` on
-the meter its owner names (``metrics_scope``), so a cache that moves onto this
-primitive keeps emitting its counters under the instrumentation scope they were
-created in. ``misses`` counts **every caller that does not find a fresh entry**,
-including the waiters a single-flight load coalesces and the callers a failed
-load raises to, so ``hits + misses`` is the number of ``get_or_load`` calls.
+the meter its owner names (``metrics_scope``), which is the instrumentation
+scope the exporter labels the series with, so each counter stays with the area
+that owns it. ``misses`` counts **every caller that does not find a fresh
+entry**, including the waiters a single-flight load coalesces and the callers a
+failed load raises to, so ``hits + misses`` is the number of ``get_or_load``
+calls.
 """
 
 from __future__ import annotations
