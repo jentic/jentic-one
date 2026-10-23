@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.external_identities import ExternalIdentity
@@ -48,13 +48,38 @@ class ExternalIdentityRepository:
         return result.scalars().first()
 
     @staticmethod
-    async def pin_issuer(
-        session: AsyncSession, ext_id: ExternalIdentity, issuer: str
-    ) -> ExternalIdentity:
-        """Key an unscoped link to ``issuer`` so later lookups match it by issuer."""
-        ext_id.issuer = issuer
+    async def has_link_under_other_issuer(
+        session: AsyncSession, provider: str, issuer: str
+    ) -> bool:
+        """Whether any link of ``provider`` is keyed to a real issuer other than ``issuer``."""
+        stmt = (
+            select(ExternalIdentity.id)
+            .where(
+                ExternalIdentity.provider == provider,
+                ExternalIdentity.issuer.not_in(("", provider, issuer)),
+            )
+            .limit(1)
+        )
+        result = await session.execute(stmt)
+        return result.first() is not None
+
+    @staticmethod
+    async def pin_issuer(session: AsyncSession, ext_id: ExternalIdentity, issuer: str) -> bool:
+        """Key an unscoped link to ``issuer`` so later lookups match it by issuer.
+
+        The update applies only while the row still carries the issuer it was
+        read with, so of two concurrent first logins exactly one pins it.
+        Returns whether this call pinned it.
+        """
+        stmt = (
+            update(ExternalIdentity)
+            .where(ExternalIdentity.id == ext_id.id, ExternalIdentity.issuer == ext_id.issuer)
+            .values(issuer=issuer)
+            .execution_options(synchronize_session=False)
+        )
+        result = await session.execute(stmt)
         await session.flush()
-        return ext_id
+        return int(result.rowcount) == 1  # type: ignore[attr-defined]
 
     @staticmethod
     async def get_by_provider_subject(

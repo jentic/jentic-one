@@ -18,6 +18,7 @@ from jentic_one.admin.core.permissions import (
     compute_effective,
 )
 from jentic_one.admin.core.schema.agents import Agent
+from jentic_one.admin.core.schema.external_identities import ExternalIdentity
 from jentic_one.admin.repos import (
     ActorPermissionGrantRepository,
     AgentRepository,
@@ -304,8 +305,8 @@ class AuthorizeService:
                 session, issuer, claims.external_subject
             )
             if ext_id is None:
-                ext_id = await ExternalIdentityRepository.get_unscoped(
-                    session, self._auth_config.idp.provider, claims.external_subject
+                ext_id = await self._adoptable_unscoped_link(
+                    session, self._auth_config.idp.provider, issuer, claims.external_subject
                 )
             if ext_id is not None:
                 return ext_id.user_id
@@ -743,29 +744,34 @@ class AuthorizeService:
             )
             if ext_id is not None:
                 return ext_id.user_id
-            # A link with no real issuer (written before links were keyed by
-            # issuer) resolves for the configured provider's issuer, exactly as
-            # a provider-keyed lookup would, and is pinned to that issuer on
-            # first use so no other issuer can resolve it afterwards.
-            unscoped = await ExternalIdentityRepository.get_unscoped(
-                session, provider, claims.external_subject
+            # A link with no real issuer is pinned to the issuer that adopts it,
+            # so no other issuer can resolve it afterwards.
+            unscoped = await self._adoptable_unscoped_link(
+                session, provider, issuer, claims.external_subject
             )
             if unscoped is not None:
                 before_issuer = unscoped.issuer
-                await ExternalIdentityRepository.pin_issuer(session, unscoped, issuer)
-                await record_audit(
-                    session,
-                    action=AuditAction.UPDATE,
-                    target_type=AuditTargetType.USER,
-                    target_id=unscoped.user_id,
-                    actor_type=ActorType.USER,
-                    actor_id=unscoped.user_id,
-                    before={"external_identity_issuer": before_issuer},
-                    after={"external_identity_issuer": issuer},
-                    reason=f"keyed external identity ({provider}) to its issuer",
-                    origin=None,
+                if await ExternalIdentityRepository.pin_issuer(session, unscoped, issuer):
+                    await record_audit(
+                        session,
+                        action=AuditAction.UPDATE,
+                        target_type=AuditTargetType.USER,
+                        target_id=unscoped.user_id,
+                        actor_type=ActorType.USER,
+                        actor_id=unscoped.user_id,
+                        before={"external_identity_issuer": before_issuer},
+                        after={"external_identity_issuer": issuer},
+                        reason=f"keyed external identity ({provider}) to its issuer",
+                        origin=None,
+                    )
+                    return unscoped.user_id
+                # A concurrent first login pinned it first: it resolves only if
+                # that login pinned it to this issuer.
+                ext_id = await ExternalIdentityRepository.get_by_issuer_subject(
+                    session, issuer, claims.external_subject
                 )
-                return unscoped.user_id
+                if ext_id is not None:
+                    return ext_id.user_id
 
         try:
             async with self._ctx.admin_db.transaction() as session:
@@ -870,6 +876,34 @@ class AuthorizeService:
             if ext_id is not None:
                 return ext_id.user_id
             raise InvalidGrantError("concurrent identity creation failed")
+
+    @staticmethod
+    async def _adoptable_unscoped_link(
+        session: AsyncSession, provider: str, issuer: str, external_subject: str
+    ) -> ExternalIdentity | None:
+        """The link with no real issuer that ``issuer`` may resolve for ``external_subject``.
+
+        Such a link (``issuer`` empty or equal to ``provider``) was written
+        before links were keyed by issuer, under whichever issuer the provider
+        was configured with then; the configured issuer adopts it on first
+        sign-in. A link of the provider keyed to a different real issuer shows
+        the provider has signed in through another issuer since links were
+        keyed, so the unscoped link may belong to that issuer, and the same
+        subject at another issuer can be a different person: it is not
+        adopted, and its user can still sign in through a verified-email match.
+        """
+        link = await ExternalIdentityRepository.get_unscoped(session, provider, external_subject)
+        if link is None:
+            return None
+        if await ExternalIdentityRepository.has_link_under_other_issuer(session, provider, issuer):
+            _logger.warning(
+                "external_identity_unscoped_link_not_adopted",
+                provider=provider,
+                issuer=issuer,
+                external_identity_id=link.id,
+            )
+            return None
+        return link
 
     async def _audit_admission_rejected(self, claims: IdpClaims, provider: str) -> None:
         """Record a rejected external-IdP login in its own committed transaction.

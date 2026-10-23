@@ -37,13 +37,14 @@ from httpx import Response
 from httpx2 import Response as ClientResponse
 from jwt.algorithms import ECAlgorithm, RSAAlgorithm
 from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.core.schema.authorization_codes import AuthorizationCode
 from jentic_one.admin.core.schema.external_identities import ExternalIdentity
 from jentic_one.admin.core.schema.user_permission_grants import UserPermissionGrant
 from jentic_one.admin.core.schema.users import User
-from jentic_one.admin.repos import UserRepository
+from jentic_one.admin.repos import ExternalIdentityRepository, UserRepository
 from jentic_one.auth.core.idp import (
     AdmissionDecision,
     IdpClaims,
@@ -53,6 +54,7 @@ from jentic_one.auth.core.idp import (
     set_default_idp_grants,
 )
 from jentic_one.auth.services.authorize_service import AuthorizeService
+from jentic_one.auth.services.errors import InvalidGrantError
 from jentic_one.auth.web.app import create_app
 from jentic_one.shared.config import IdpConfig, PlatformClientConfig, SigningKeyConfig
 from jentic_one.shared.context import Context
@@ -686,3 +688,146 @@ async def test_unscoped_external_identity_signs_in_and_pins_to_issuer(
             )
         ).scalars()
         assert list(after) == [FAKE_IDP_ISSUER]
+
+
+async def _seed_linked_user(ctx: Context, *, email: str, subject: str, issuer: str) -> str:
+    """A local user with one ``FAKE_PROVIDER`` link keyed to ``issuer``; returns the user id."""
+    async with ctx.admin_db.transaction() as session:
+        user = await UserRepository.create(
+            session,
+            email=email,
+            first_name="Ada",
+            last_name="Lovelace",
+            auth_provider=FAKE_PROVIDER,
+            invite_state=InviteState.ACCEPTED,
+            created_by="self",
+        )
+        session.add(
+            ExternalIdentity(
+                provider=FAKE_PROVIDER,
+                issuer=issuer,
+                external_subject=subject,
+                user_id=user.id,
+                email=email,
+                created_by=user.id,
+            )
+        )
+        return user.id
+
+
+async def _issuers_of(ctx: Context, subject: str) -> list[tuple[str, str]]:
+    async with ctx.admin_db.session() as session:
+        rows = await session.execute(
+            select(ExternalIdentity.issuer, ExternalIdentity.user_id)
+            .where(ExternalIdentity.external_subject == subject)
+            .order_by(ExternalIdentity.issuer)
+        )
+        return [(issuer, user_id) for issuer, user_id in rows.all()]
+
+
+@respx.mock
+async def test_unscoped_link_is_not_adopted_once_the_provider_signed_in_through_another_issuer(
+    oidc_context: Context, _cleanup: None
+) -> None:
+    """A provider link keyed to another issuer means the unscoped link may be that issuer's.
+
+    The configured issuer then neither resolves nor pins the unscoped link: an
+    unverified email is refused, and a verified one links the account afresh
+    under the configured issuer, leaving the unscoped link untouched.
+    """
+    subject = "unscoped-subject-8"
+    email = "unscoped-8@example.com"
+    user_id = await _seed_linked_user(oidc_context, email=email, subject=subject, issuer="")
+    await _seed_linked_user(
+        oidc_context,
+        email="earlier-issuer@example.com",
+        subject="earlier-issuer-subject",
+        issuer="https://idp-earlier.test",
+    )
+    probe = IdpClaims(
+        external_subject=subject,
+        email=email,
+        first_name="Ada",
+        last_name="Lovelace",
+        email_verified=False,
+        issuer=FAKE_IDP_ISSUER,
+    )
+    assert await AuthorizeService(oidc_context).resolve_existing_user_id(probe) is None
+
+    _stub_idp(sub=subject, email=email, email_verified=False)
+    with TestClient(_build_app(oidc_context), follow_redirects=False) as client:
+        start = _begin_authorize(client, state="s1", nonce="n1")
+        refused = client.get(
+            "/oauth/callback", params={"code": "fake-idp-code", "state": start.signed_state}
+        )
+    assert refused.status_code == 302, refused.text
+    assert urlparse(refused.headers["location"]).path == "/error", refused.headers["location"]
+    assert await _issuers_of(oidc_context, subject) == [("", user_id)]
+
+    verified = IdpClaims(
+        external_subject=subject,
+        email=email,
+        first_name="Ada",
+        last_name="Lovelace",
+        email_verified=True,
+        issuer=FAKE_IDP_ISSUER,
+    )
+    assert await AuthorizeService(oidc_context).provision_from_claims(verified) == user_id
+    assert await _issuers_of(oidc_context, subject) == [("", user_id), (FAKE_IDP_ISSUER, user_id)]
+
+
+@pytest.mark.parametrize("winner_issuer", [FAKE_IDP_ISSUER, "https://idp-other.test"])
+async def test_concurrent_first_logins_pin_an_unscoped_link_once(
+    oidc_context: Context,
+    _cleanup: None,
+    monkeypatch: pytest.MonkeyPatch,
+    winner_issuer: str,
+) -> None:
+    """Only the login whose pin lands keys the link; the other resolves it only for that issuer.
+
+    A concurrent login pins the link (to ``winner_issuer``) between this login
+    reading it and pinning it. This login's pin then matches no row and records
+    no audit entry; it resolves the user when the winner pinned the same issuer,
+    and otherwise falls through to the email match, which refuses an unverified
+    email.
+    """
+    subject = "unscoped-subject-9"
+    email = "unscoped-9@example.com"
+    user_id = await _seed_linked_user(
+        oidc_context, email=email, subject=subject, issuer=FAKE_PROVIDER
+    )
+    pin_issuer = ExternalIdentityRepository.pin_issuer
+
+    async def _pinned_concurrently(
+        session: AsyncSession, ext_id: ExternalIdentity, issuer: str
+    ) -> bool:
+        async with oidc_context.admin_db.transaction() as other:
+            row = await ExternalIdentityRepository.get_unscoped(other, FAKE_PROVIDER, subject)
+            assert row is not None
+            assert await pin_issuer(other, row, winner_issuer)
+        return await pin_issuer(session, ext_id, issuer)
+
+    monkeypatch.setattr(ExternalIdentityRepository, "pin_issuer", _pinned_concurrently)
+    claims = IdpClaims(
+        external_subject=subject,
+        email=email,
+        first_name="Ada",
+        last_name="Lovelace",
+        email_verified=False,
+        issuer=FAKE_IDP_ISSUER,
+    )
+    service = AuthorizeService(oidc_context)
+    if winner_issuer == FAKE_IDP_ISSUER:
+        assert await service.provision_from_claims(claims) == user_id
+    else:
+        with pytest.raises(InvalidGrantError, match="not verified"):
+            await service.provision_from_claims(claims)
+    assert await _issuers_of(oidc_context, subject) == [(winner_issuer, user_id)]
+    async with oidc_context.admin_db.session() as session:
+        audited = await session.execute(
+            select(AuditEntry.id).where(
+                AuditEntry.target_id == user_id,
+                AuditEntry.reason == f"keyed external identity ({FAKE_PROVIDER}) to its issuer",
+            )
+        )
+        assert audited.all() == []
