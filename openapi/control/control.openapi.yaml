@@ -1348,7 +1348,7 @@ components:
           anyOf:
           - type: string
           - type: 'null'
-          description: Who the resulting revision is attributed to; defaults to the caller.
+          description: Who the resulting revision is attributed to. Honoured only for an organisation admin (`org:admin`); for anyone else the revision is attributed to the caller.
           examples:
           - usr_6968b3987ee4c3ec0b4ee3b9
           title: Submitted By
@@ -1403,7 +1403,7 @@ components:
           anyOf:
           - type: string
           - type: 'null'
-          description: Who the resulting revision is attributed to; defaults to the caller.
+          description: Who the resulting revision is attributed to. Honoured only for an organisation admin (`org:admin`); for anyone else the revision is attributed to the caller.
           examples:
           - usr_6968b3987ee4c3ec0b4ee3b9
           title: Submitted By
@@ -18426,8 +18426,8 @@ paths:
 
         If the draft declares different server hosts than the API's current (or last
         live) revision, or serves a host over plaintext http that was https-only, and
-        the API has credentials bound to agents, the caller also needs
-        ``credentials:write``; otherwise the promote is refused with 403
+        the API has credentials bound to agents, the caller must be an organisation
+        admin (``org:admin``); otherwise the promote is refused with 403
         ``host_change_requires_operator``.
       operationId: promoteRevision
       parameters:

@@ -107,8 +107,8 @@ def _host_change_held(pin_key: str) -> UnauthorizedRevisionPinError:
     return UnauthorizedRevisionPinError(
         detail=(
             f"Pinned draft revision {pin_key} serves different server hosts than the "
-            "API's live revision, and the API has bound credentials; an operator "
-            "holding 'credentials:write' must promote or pin it."
+            "API's live revision; an organisation admin ('org:admin') must promote "
+            "or pin it."
         ),
         type="host_change_requires_operator",
     )
@@ -133,7 +133,7 @@ async def discover_via_pins(
     the caller gets the ordinary ``operation_not_found``. A held draft (its hosts
     changed on a credential-bound API) that serves the URL is refused with 403
     ``host_change_requires_operator``: routing through it would send the API's
-    bound credentials to hosts no operator approved.
+    bound credentials to hosts nobody approved.
     """
     for vendor, name, version in sorted(pins):
         revision = pins[(vendor, name, version)]

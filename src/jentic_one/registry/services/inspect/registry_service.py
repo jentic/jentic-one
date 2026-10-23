@@ -94,11 +94,11 @@ class RegistryService:
         - ``archived`` revision → ``ARCHIVED`` (→ 422; resurrect by re-promoting),
         - unpublished ``draft`` not owned by the caller → ``FORBIDDEN`` (→ 403),
         - ``draft`` held for server-host review, for a caller without
-          ``credentials:write`` (even its submitter) → ``FORBIDDEN`` (→ 403),
+          ``org:admin`` (even its submitter) → ``FORBIDDEN`` (→ 403),
         - owned ``draft`` whose server hosts differ from the API's live ones, on
-          an API with bound credentials, for a caller without
-          ``credentials:write`` → ``HOST_CHANGE_HELD`` (→ 403): pinning it would
-          send those credentials to hosts no operator approved, which
+          an API with bound credentials, for a caller without ``org:admin`` →
+          ``HOST_CHANGE_HELD`` (→ 403): pinning it would send those credentials
+          to hosts nobody approved, which
           promoting it would refuse (``registry/ingest/host_change_guard.py``),
         - ``published`` revision, or an owned ``draft`` → ``RESOLVED``.
 
@@ -126,8 +126,9 @@ class RegistryService:
 
         if revision.state == ApiRevisionState.DRAFT:
             # A draft with an origin is an import held for server-host review
-            # (``registry/ingest/host_change_guard.py``): only an operator who could
-            # promote it may route through it, not the agent that submitted it.
+            # (``registry/ingest/host_change_guard.py``): only an organisation admin,
+            # who could promote it, may route through it, not the agent that
+            # submitted it.
             if revision.origin is not None:
                 if not may_approve_host_change(identity.permissions):
                     return RevisionPinResult(RevisionPinOutcome.FORBIDDEN)

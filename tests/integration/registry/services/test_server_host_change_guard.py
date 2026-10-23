@@ -1,12 +1,13 @@
 """Integration tests for the server-host change guard (real registry/control/admin DBs).
 
 A catalog re-import or a draft promote that changes the server hosts of an API
-with credentials bound to an agent is held for operator review
-(``credentials:write``):
+with credentials bound to an agent is held for an organisation admin
+(``org:admin``):
 
 - catalog re-import without approval → kept as a DRAFT, current revision unchanged;
-- operator-approved re-import, unchanged hosts, or no bindings → flows as before;
-- promote of a host-changing draft → 403 without ``credentials:write``, allowed with it;
+- admin-approved re-import, unchanged hosts, or no bindings → flows as before;
+- promote of a host-changing draft → 403 without ``org:admin`` (``credentials:write``
+  is not enough), allowed with it;
 - an https → http downgrade counts as a change, an http → https upgrade does not;
 - archiving the current revision first does not skip the check;
 - a held draft's hosts are not routable, and pinning it is refused, until promoted.
@@ -60,6 +61,7 @@ _OPERATOR = Identity(
     actor_type=ActorType.USER,
     permissions=["apis:write", "credentials:write"],
 )
+_ADMIN = Identity(sub="usr_admin", actor_type=ActorType.USER, permissions=["org:admin"])
 
 
 def _spec(host: str, *, marker: str, scheme: str = "https") -> str:
@@ -257,7 +259,7 @@ async def test_catalog_reimport_host_change_held_for_wildcard_credential(
     assert str((await _api(registry_db)).current_revision_id) == base["revision_id"]
 
 
-async def test_operator_approved_reimport_becomes_current(
+async def test_admin_approved_reimport_becomes_current(
     integration_context: Context,
     registry_db: DatabaseSession,
     control_db: DatabaseSession,
@@ -304,7 +306,7 @@ async def test_reimport_host_change_without_bindings_flows_automatically(
     assert str((await _api(registry_db)).current_revision_id) == rev["revision_id"]
 
 
-async def test_promote_held_draft_requires_operator(
+async def test_promote_held_draft_requires_org_admin(
     integration_context: Context,
     registry_db: DatabaseSession,
     control_db: DatabaseSession,
@@ -320,8 +322,12 @@ async def test_promote_held_draft_requires_operator(
     assert exc_info.value.current_hosts == ["https://old.example.com"]
     assert exc_info.value.new_hosts == ["https://new.example.com"]
     assert str((await _api(registry_db)).current_revision_id) == base_id
+    # ``credentials:write`` does not approve sending other users' credentials elsewhere.
+    with pytest.raises(HostChangeRequiresOperatorError):
+        await svc.promote(_VENDOR, _NAME, _VERSION, held["revision_id"], identity=_OPERATOR)
+    assert str((await _api(registry_db)).current_revision_id) == base_id
 
-    view = await svc.promote(_VENDOR, _NAME, _VERSION, held["revision_id"], identity=_OPERATOR)
+    view = await svc.promote(_VENDOR, _NAME, _VERSION, held["revision_id"], identity=_ADMIN)
 
     assert str(view.current_revision_id) == held["revision_id"]
     # A promoted catalog draft goes live as IMPORTED, so the next catalog
@@ -334,7 +340,7 @@ async def test_promote_held_draft_requires_operator(
     assert await _state(registry_db, held["revision_id"]) == ApiRevisionState.ARCHIVED
 
 
-async def test_promote_manual_draft_host_change_requires_operator(
+async def test_promote_manual_draft_host_change_requires_org_admin(
     integration_context: Context,
     registry_db: DatabaseSession,
     control_db: DatabaseSession,
@@ -349,10 +355,17 @@ async def test_promote_manual_draft_host_change_requires_operator(
     assert draft["state"] == ApiRevisionState.DRAFT
     svc = RevisionService(integration_context)
 
-    with pytest.raises(HostChangeRequiresOperatorError):
-        await svc.promote(_VENDOR, _NAME, _VERSION, draft["revision_id"], identity=_WRITER)
+    for identity in (_WRITER, _OPERATOR):
+        with pytest.raises(HostChangeRequiresOperatorError) as refused:
+            await svc.promote(_VENDOR, _NAME, _VERSION, draft["revision_id"], identity=identity)
+        # The detail states the rule, not whether anyone has bound the API's credentials.
+        detail = str(refused.value)
+        assert "org:admin" in detail
+        assert "bound" not in detail
+        assert "session" not in detail
+    assert await _state(registry_db, draft["revision_id"]) == ApiRevisionState.DRAFT
 
-    await svc.promote(_VENDOR, _NAME, _VERSION, draft["revision_id"], identity=_OPERATOR)
+    await svc.promote(_VENDOR, _NAME, _VERSION, draft["revision_id"], identity=_ADMIN)
     assert await _state(registry_db, draft["revision_id"]) == ApiRevisionState.PUBLISHED
 
 
@@ -481,10 +494,14 @@ async def test_held_draft_is_not_routable_or_pinnable_until_promoted(
         operator_pin = await resolver.resolve_revision_pin(
             vendor=_VENDOR, name=_NAME, version=_VERSION, rev_label=rev_label, identity=_OPERATOR
         )
-        assert operator_pin.outcome == RevisionPinOutcome.RESOLVED
+        assert operator_pin.outcome == RevisionPinOutcome.FORBIDDEN
+        admin_pin = await resolver.resolve_revision_pin(
+            vendor=_VENDOR, name=_NAME, version=_VERSION, rev_label=rev_label, identity=_ADMIN
+        )
+        assert admin_pin.outcome == RevisionPinOutcome.RESOLVED
 
     await RevisionService(integration_context).promote(
-        _VENDOR, _NAME, _VERSION, held["revision_id"], identity=_OPERATOR
+        _VENDOR, _NAME, _VERSION, held["revision_id"], identity=_ADMIN
     )
 
     async with registry_db.session() as session:
@@ -505,12 +522,16 @@ async def test_own_draft_with_new_hosts_is_not_pinnable_on_a_bound_api(
 
     Pinning routes calls through the draft without a promote, so a draft that
     moves the API to new hosts would carry its bound credentials there. Only an
-    operator may pin it; a draft on the live hosts still resolves for its owner.
+    organisation admin may pin it (``credentials:write`` is not enough); a draft
+    on the live hosts still resolves for its owner.
     """
     handler, _ = await _base_then_bind(integration_context, control_db, admin_db)
-    # The submitter itself, also holding the operator scope.
+    # The submitter itself, also holding ``credentials:write`` or ``org:admin``.
     writer_operator = Identity(
         sub=_WRITER.sub, actor_type=ActorType.USER, permissions=_OPERATOR.permissions
+    )
+    writer_admin = Identity(
+        sub=_WRITER.sub, actor_type=ActorType.USER, permissions=_ADMIN.permissions
     )
     moved_source = _source("new.example.com", marker="manual-moved")
     moved_source.pop("origin")
@@ -533,28 +554,32 @@ async def test_own_draft_with_new_hosts_is_not_pinnable_on_a_bound_api(
     held = await _pin(moved["revision_id"], _WRITER)
     assert held.outcome is RevisionPinOutcome.HOST_CHANGE_HELD
     assert held.revision_id == uuid.UUID(moved["revision_id"])
-    operator_pin = await _pin(moved["revision_id"], writer_operator)
-    assert operator_pin.outcome is RevisionPinOutcome.RESOLVED
+    assert (
+        await _pin(moved["revision_id"], writer_operator)
+    ).outcome is RevisionPinOutcome.HOST_CHANGE_HELD
+    assert (await _pin(moved["revision_id"], writer_admin)).outcome is RevisionPinOutcome.RESOLVED
     assert (await _pin(same["revision_id"], _WRITER)).outcome is RevisionPinOutcome.RESOLVED
 
     # The broker refuses the held draft when it is the one serving the URL.
     resolver = InProcessRegistryResolver(registry_db, ctx=integration_context)
     pins = {(_VENDOR, _NAME, _VERSION): f"rev_{uuid.UUID(moved['revision_id']).hex}"}
-    with pytest.raises(UnauthorizedRevisionPinError) as refused:
-        await discover_via_pins(
-            resolver,
-            method="GET",
-            url="https://new.example.com/v1/widgets",
-            pins=pins,
-            identity=_WRITER,
-        )
-    assert refused.value.type == "host_change_requires_operator"
+    for identity in (_WRITER, writer_operator):
+        with pytest.raises(UnauthorizedRevisionPinError) as refused:
+            await discover_via_pins(
+                resolver,
+                method="GET",
+                url="https://new.example.com/v1/widgets",
+                pins=pins,
+                identity=identity,
+            )
+        assert refused.value.type == "host_change_requires_operator"
+        assert "bound" not in refused.value.detail
     routed = await discover_via_pins(
         resolver,
         method="GET",
         url="https://new.example.com/v1/widgets",
         pins=pins,
-        identity=writer_operator,
+        identity=writer_admin,
     )
     assert routed is not None and routed[1] == uuid.UUID(moved["revision_id"])
 

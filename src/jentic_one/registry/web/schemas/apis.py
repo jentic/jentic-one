@@ -67,7 +67,11 @@ class ApiSourceUrl(BaseModel):
     )
     submitted_by: str | None = Field(
         default=None,
-        description="Who the resulting revision is attributed to; defaults to the caller.",
+        description=(
+            "Who the resulting revision is attributed to. Honoured only for an "
+            "organisation admin (`org:admin`); for anyone else the revision is "
+            "attributed to the caller."
+        ),
         examples=[ex.USER_ID],
     )
 
@@ -105,7 +109,11 @@ class ApiSourceInline(BaseModel):
     )
     submitted_by: str | None = Field(
         default=None,
-        description="Who the resulting revision is attributed to; defaults to the caller.",
+        description=(
+            "Who the resulting revision is attributed to. Honoured only for an "
+            "organisation admin (`org:admin`); for anyone else the revision is "
+            "attributed to the caller."
+        ),
         examples=[ex.USER_ID],
     )
 
