@@ -209,6 +209,7 @@ async def test_agent_archive_cancels_queued_jobs_in_the_archive_transaction(
 @pytest.fixture()
 def user_deps() -> Iterator[dict[str, MagicMock]]:
     with (
+        patch(f"{_USER_SVC}.AgentRepository") as agents,
         patch(f"{_USER_SVC}.UserRepository") as users,
         patch(f"{_USER_SVC}.UserPermissionGrantRepository") as grants,
         patch(f"{_USER_SVC}.ExternalIdentityRepository") as external,
@@ -218,6 +219,7 @@ def user_deps() -> Iterator[dict[str, MagicMock]]:
         patch(f"{_USER_SVC}.ensure_not_last_active_admin", new_callable=AsyncMock),
         patch(f"{_USER_SVC}.cancel_queued_executions_for_actor", new_callable=AsyncMock) as cancel,
     ):
+        agents.list_ids_by_owner = AsyncMock(return_value=[])
         users.get_by_id = AsyncMock(return_value=MagicMock(id="usr_target", deleted_at=None))
         users.disable = AsyncMock()
         users.enable = AsyncMock()
