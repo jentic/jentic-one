@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 import pytest
-from sqlalchemy import String, Table, func, select
+from sqlalchemy import String, Table, delete, func, select
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -309,6 +309,26 @@ async def test_incremental_failures_escalate_error_then_critical(session: AsyncS
     await _emit(session, config)
     severities = sorted(e.severity for e in await _repeated_events(session))
     assert severities == [EventSeverity.CRITICAL.value, EventSeverity.ERROR.value]
+
+
+async def test_active_critical_suppresses_a_lower_severity_error(session: AsyncSession) -> None:
+    """An active CRITICAL also deduplicates ERROR: once the key is CRITICAL in the
+    window, the count dipping back into the ERROR band emits nothing new. (A
+    CRITICAL is still never deduplicated by an ERROR — see the escalation test.)
+    """
+    config = SecurityConfig(
+        execution_repeated_failure_threshold=5,
+        execution_repeated_failure_critical_threshold=20,
+    )
+    await _add_failures(session, 20)
+    await _emit(session, config)
+    assert [e.severity for e in await _repeated_events(session)] == [EventSeverity.CRITICAL.value]
+
+    # The window now holds only an ERROR-band count while the CRITICAL is active.
+    await session.execute(delete(ExecutionRecord))
+    await _add_failures(session, 8)
+    await _emit(session, config)
+    assert [e.severity for e in await _repeated_events(session)] == [EventSeverity.CRITICAL.value]
 
 
 async def test_failures_outside_window_not_counted(session: AsyncSession) -> None:

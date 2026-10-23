@@ -126,6 +126,16 @@ auth limiters and single-use markers and the control connect limiters; in a
 broker process the rate limiter, circuit breaker and idempotency store. The
 app lifespan closes it once, after every surface teardown.
 
+The same backend carries the repeated-failure counters that gate the
+`execution.repeated_failure` database scan. On a shared backend the count is
+cluster-wide, so failures spread across replicas still reach the threshold.
+Several worker processes serving one broker count as several instances on the
+`memory` backend: each process keeps its own counters, so the event fires late
+— or, for a thin spread, not at all — and the counter is therefore not built
+when the broker is told it runs in more than one process. A shared store that
+evicts live keys (every counter key carries a TTL) makes the gate undercount
+without raising, so size it to hold them.
+
 ## The memory shared-state backend is bounded
 
 > **Warning: the default `memory` shared-state backend is bounded and fails

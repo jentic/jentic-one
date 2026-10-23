@@ -195,6 +195,38 @@ class BaseStateBackendContract:
                     continue
                 raise AssertionError(f"incr_with_ttl accepted amount={amount}")
 
+    # -- windowed counters ---------------------------------------------------
+
+    async def test_incr_and_read_increments_then_reads_in_order(self) -> None:
+        """One round trip: every ``incr`` key is bumped, then every ``read`` key
+        is returned in request order, with a missing key as ``None``."""
+        async with self._backend() as backend:
+            a, b, marker = self._key("wc"), self._key("wc"), self._key("wc")
+            await backend.set(marker, b"1", ttl_s=60.0)
+            counts, reads = await backend.incr_and_read(
+                [a, b], [self._key("wc"), marker], ttl_s=60.0
+            )
+            assert counts == [1, 1]
+            assert reads == [None, b"1"]
+            counts, reads = await backend.incr_and_read([a], [b], ttl_s=60.0)
+            assert counts == [2]
+            assert reads == [b"1"]
+
+    async def test_incr_and_read_accepts_no_increments(self) -> None:
+        async with self._backend() as backend:
+            assert await backend.incr_and_read([], [self._key("wc")], ttl_s=60.0) == ([], [None])
+
+    async def test_incr_and_read_keeps_the_creating_deadline(self) -> None:
+        # The bucket must expire a fixed span after it was created, so a steady
+        # trickle of failures cannot hold one window open indefinitely.
+        async with self._backend() as backend:
+            key = self._key("wc")
+            await backend.incr_and_read([key], [], ttl_s=self.ttl_s * 2)
+            await self.advance(self.ttl_s * 1.2)
+            assert await backend.incr_and_read([key], [], ttl_s=self.ttl_s * 2) == ([2], [])
+            await self.advance(self.ttl_s * 1.6)
+            assert await backend.incr_and_read([key], [], ttl_s=self.ttl_s * 2) == ([1], [])
+
     # -- token buckets -------------------------------------------------------
 
     async def test_token_bucket_allows_the_burst_then_denies(self) -> None:

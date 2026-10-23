@@ -54,7 +54,10 @@ from jentic_one.shared.events import (
     valid_trace_id_or_minted,
     valid_trace_id_or_none,
 )
-from jentic_one.shared.events.repeated_failure import maybe_emit_repeated_failure
+from jentic_one.shared.events.repeated_failure import (
+    RepeatedFailureCounter,
+    maybe_emit_repeated_failure,
+)
 from jentic_one.shared.jobs.handlers import JobResultPayload
 from jentic_one.shared.jobs.hold import ENCRYPTED_PAYLOAD_KEY
 from jentic_one.shared.jobs.operation_payload import operation_from_job_payload
@@ -161,6 +164,7 @@ class ExecutionHandler:
         execution_authorizer: ExecutionAuthorizer | None = None,
         encryption: EncryptionService | None = None,
         actor_status: ActorStatusReader | None = None,
+        repeated_failure_counter: RepeatedFailureCounter | None = None,
     ) -> None:
         if credential_injector is not None and execution_authorizer is None:
             # Fail closed at wiring time: injecting credentials for a queued
@@ -183,6 +187,7 @@ class ExecutionHandler:
         self._egress = egress
         self._security_config = security_config or SecurityConfig()
         self._encryption = encryption
+        self._repeated_failure_counter = repeated_failure_counter
 
     async def execute(
         self,
@@ -700,6 +705,7 @@ class ExecutionHandler:
                 operation=operation,
                 trace_id=event_trace_id,
                 config=self._security_config,
+                failure_counter=self._repeated_failure_counter,
             )
 
 

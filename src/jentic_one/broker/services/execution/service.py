@@ -36,7 +36,10 @@ from jentic_one.shared.events import (
     emit_event,
     valid_trace_id_or_none,
 )
-from jentic_one.shared.events.repeated_failure import maybe_emit_repeated_failure
+from jentic_one.shared.events.repeated_failure import (
+    RepeatedFailureCounter,
+    maybe_emit_repeated_failure,
+)
 from jentic_one.shared.executions import record_execution
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ExecutionStatus
@@ -128,6 +131,7 @@ async def run_execution(
     actor_type: str,
     origin: str | None = None,
     security_config: SecurityConfig | None = None,
+    repeated_failure_counter: RepeatedFailureCounter | None = None,
     signing: SigV4Material | None = None,
     has_idempotency_key: bool = False,
     emit_lifecycle: bool = True,
@@ -233,6 +237,7 @@ async def run_execution(
                     credential_id=ctx_req.credential_id,
                     operation=ctx_req.operation,
                     security_config=security_config,
+                    repeated_failure_counter=repeated_failure_counter,
                     origin=origin,
                 )
             if isinstance(exc, CircuitOpenError):
@@ -311,6 +316,7 @@ async def run_execution(
                 credential_id=ctx_req.credential_id,
                 operation=ctx_req.operation,
                 security_config=security_config,
+                repeated_failure_counter=repeated_failure_counter,
                 error_tags=error_tags,
                 origin=origin,
             )
@@ -332,6 +338,7 @@ async def persist_streaming_execution(
     actor_type: str,
     origin: str | None = None,
     security_config: SecurityConfig | None = None,
+    repeated_failure_counter: RepeatedFailureCounter | None = None,
 ) -> None:
     """Persist an execution record for a streaming-path execution.
 
@@ -393,6 +400,7 @@ async def persist_streaming_execution(
         credential_id=ctx_req.credential_id,
         operation=ctx_req.operation,
         security_config=security_config,
+        repeated_failure_counter=repeated_failure_counter,
         error_tags=error_tags,
         origin=origin,
     )
@@ -447,6 +455,7 @@ async def _emit_execution_lifecycle(
     credential_id: str | None = None,
     operation: OperationInfo | None = None,
     security_config: SecurityConfig | None = None,
+    repeated_failure_counter: RepeatedFailureCounter | None = None,
     error_tags: set[EventTag] | None = None,
     origin: str | None = None,
 ) -> None:
@@ -513,4 +522,5 @@ async def _emit_execution_lifecycle(
             operation=operation,
             trace_id=event_trace_id,
             config=security_config,
+            failure_counter=repeated_failure_counter,
         )

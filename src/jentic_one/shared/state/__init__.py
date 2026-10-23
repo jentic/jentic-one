@@ -11,6 +11,7 @@ from jentic_one.shared.state.backend import (
     RateLimitStore,
     SharedStateBackend,
     StateBackendCapacityError,
+    WindowCounterStore,
     key_namespace,
 )
 from jentic_one.shared.state.factory import (
@@ -42,6 +43,7 @@ __all__ = [
     "StateBackendBuilder",
     "StateBackendCapacityError",
     "StateBackendConfig",
+    "WindowCounterStore",
     "build_state_backend",
     "key_namespace",
     "register_state_backend",
