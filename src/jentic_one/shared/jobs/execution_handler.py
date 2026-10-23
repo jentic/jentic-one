@@ -3,9 +3,10 @@
 The handler is the async half of "one pipeline, two callers": it does **not**
 issue its own ``httpx`` calls. It resolves credentials
 (via the injected ``CredentialInjector``), applies them to the outbound
-URL/headers exactly like the sync router's ``_apply_injection`` (headers **and**
-query **and** cookies — an ``apiKey in: query``/``cookie`` credential is never
-dropped), then dispatches through the injected ``UpstreamExecutor`` — the broker
+URL/headers through the same ``shared.http.injection.apply_injection`` the sync
+router uses (headers **and** query **and** cookies — an ``apiKey in: query``/
+``cookie`` credential is never dropped, and the caller's own cookies captured at
+enqueue are kept), then dispatches through the injected ``UpstreamExecutor`` — the broker
 adapter over the **same** composed runner the sync path uses (circuit breaker +
 per-host bulkhead + response-size cap + error-origin enrichment), with the
 ``executions`` row persisted by the pipeline. The handler keeps only the
@@ -36,9 +37,7 @@ from __future__ import annotations
 import base64
 import json
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlencode, urlparse, urlunparse
 
 import structlog
 
@@ -55,8 +54,9 @@ from jentic_one.shared.events import (
     valid_trace_id_or_none,
 )
 from jentic_one.shared.events.repeated_failure import maybe_emit_repeated_failure
+from jentic_one.shared.http.injection import apply_injection
 from jentic_one.shared.jobs.handlers import JobResultPayload
-from jentic_one.shared.jobs.hold import ENCRYPTED_PAYLOAD_KEY
+from jentic_one.shared.jobs.hold import ENCRYPTED_PAYLOAD_KEY, INBOUND_COOKIE_PAYLOAD_KEY
 from jentic_one.shared.jobs.operation_payload import operation_from_job_payload
 from jentic_one.shared.jobs.protocols import (
     ActorStatusReader,
@@ -85,7 +85,6 @@ from jentic_one.shared.models.events import (
     thirdparty_auth_error_tag,
 )
 from jentic_one.shared.schemas import OperationInfo
-from jentic_one.shared.url import apply_server_variables
 from jentic_one.shared.url_validation import validate_upstream_url_async
 
 if TYPE_CHECKING:
@@ -143,6 +142,9 @@ _HELD_PAYLOAD_UNDECRYPTABLE_PROBLEM: dict[str, Any] = {
     "error_origin": "broker",
 }
 
+#: What a run with no credential injector applies: nothing but the caller's cookies.
+_NO_INJECTION = InjectedAuth(headers={}, query_params={}, cookies={})
+
 #: A pre-injection refusal: the log ``reason`` and the problem-body builder.
 _PreInjectionDenial = tuple[str, Callable[[str], dict[str, object]]]
 
@@ -183,6 +185,21 @@ class ExecutionHandler:
         self._egress = egress
         self._security_config = security_config or SecurityConfig()
         self._encryption = encryption
+
+    def _inbound_cookie(self, payload: dict[str, Any], *, job_id: str) -> str | None:
+        """The caller's ``Cookie`` the broker captured at enqueue, decrypted.
+
+        A payload without one yields ``None``. One this worker has no keyset to
+        decrypt is dropped and logged: the run goes ahead without the
+        caller's cookies rather than failing a call the broker accepted.
+        """
+        blob = payload.get(INBOUND_COOKIE_PAYLOAD_KEY)
+        if not isinstance(blob, str) or not blob:
+            return None
+        if self._encryption is None:
+            logger.warning("queued_execution_cookie_undecryptable", job_id=job_id)
+            return None
+        return self._encryption.decrypt(blob)
 
     async def execute(
         self,
@@ -310,11 +327,12 @@ class ExecutionHandler:
             pinned_credential_id = verdict.credential_id
 
         # The request headers the broker kept for the run (Content-Type and
-        # friends); injected credentials are applied over them.
+        # friends) and the caller's own cookies; injected credentials are
+        # applied over them.
         headers: dict[str, str] = _str_map(payload.get("headers")) or {}
-        credential_id: str | None = None
-        credential_name: str | None = None
-        signing = None
+        inbound_cookie = self._inbound_cookie(payload, job_id=job_id)
+        injection = _NO_INJECTION
+        injected_defaults: dict[str, str] | None = None
         if self._credential_injector is not None and api_vendor:
             if identity is None:
                 # Unreachable while the constructor's wiring invariant holds
@@ -336,14 +354,19 @@ class ExecutionHandler:
                 request_server_variables=server_variables,
                 server_variables_unresolved=server_variables_unresolved,
             )
-            applied = _apply_injection(upstream_url, injection, server_variable_defaults)
-            upstream_url = applied.url
-            headers = _merge_headers(headers, applied.headers)
-            credential_id = injection.credential_id
-            credential_name = injection.credential_name
-            signing = injection.signing
-            if injection.server_variables or server_variable_defaults:
-                upstream_url = await validate_upstream_url_async(upstream_url, self._egress)
+            injected_defaults = server_variable_defaults
+        upstream_url, headers = apply_injection(
+            headers,
+            upstream_url,
+            injection,
+            inbound_cookie=inbound_cookie,
+            server_variable_defaults=injected_defaults,
+        )
+        credential_id = injection.credential_id
+        credential_name = injection.credential_name
+        signing = injection.signing
+        if injection.server_variables or injected_defaults:
+            upstream_url = await validate_upstream_url_async(upstream_url, self._egress)
 
         status = ExecutionStatus.COMPLETED
         http_status: int | None = None
@@ -703,54 +726,8 @@ class ExecutionHandler:
             )
 
 
-@dataclass(frozen=True, slots=True)
-class AppliedAuth:
-    """Result of applying injected credentials to an outbound request."""
-
-    url: str
-    headers: dict[str, str]
-
-
 def _str_map(value: Any) -> dict[str, str] | None:
     """A payload ``{str: str}`` mapping, or ``None`` when absent/malformed."""
     if not isinstance(value, dict):
         return None
     return {str(k): str(v) for k, v in value.items()} or None
-
-
-def _merge_headers(replayed: dict[str, str], injected: dict[str, str]) -> dict[str, str]:
-    """``replayed`` overlaid by ``injected``; an injected name wins in any case."""
-    injected_names = {name.lower() for name in injected}
-    merged = {k: v for k, v in replayed.items() if k.lower() not in injected_names}
-    merged.update(injected)
-    return merged
-
-
-def _apply_injection(
-    upstream_url: str,
-    injection: InjectedAuth,
-    server_variable_defaults: dict[str, str] | None = None,
-) -> AppliedAuth:
-    """Apply injected auth to the outbound URL + headers (worker side).
-
-    Mirrors the sync router's ``_apply_injection``: server-variable credentials
-    are substituted into the URL template, query-param credentials are merged
-    into the URL query, and cookie credentials into a ``Cookie`` header, so an
-    ``apiKey in: query`` / ``apiKey in: cookie`` credential is applied rather
-    than silently dropped.
-    """
-    if injection.server_variables or server_variable_defaults:
-        upstream_url = apply_server_variables(
-            upstream_url, injection.server_variables, server_variable_defaults
-        )
-
-    if injection.query_params:
-        parsed = urlparse(upstream_url)
-        sep = "&" if parsed.query else ""
-        new_query = parsed.query + sep + urlencode(injection.query_params)
-        upstream_url = urlunparse(parsed._replace(query=new_query))
-
-    headers = dict(injection.headers)
-    if injection.cookies:
-        headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in injection.cookies.items())
-    return AppliedAuth(url=upstream_url, headers=headers)

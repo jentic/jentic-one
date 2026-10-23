@@ -18,8 +18,9 @@ class InjectedAuth:
 
     Carries headers, query params, cookies, **and** server variables so an
     ``apiKey in: query`` or ``apiKey in: cookie`` credential is never silently
-    dropped (a headers-only return would lose both). Cookie entries are merged
-    into the outbound ``Cookie`` header by the call-site (sync router / worker).
+    dropped (a headers-only return would lose both). Cookie entries are appended
+    to the caller's outbound ``Cookie`` by ``shared.http.injection.apply_injection``,
+    which the sync router and the worker both call.
     Server-variable entries are substituted into the upstream URL template.
 
     ``signing`` carries **decrypted** SigV4 material (exactly as the plaintext
