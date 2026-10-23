@@ -39,10 +39,24 @@ _ALLOWED_ID_TOKEN_ALGS: frozenset[str] = frozenset(
     }
 )
 
-#: Cache TTL for upstream JWKS documents (seconds). On unknown ``kid`` or key
-#: verification failure against a cached JWKS, ``exchange_code`` forces one
-#: immediate refresh to handle upstream key rotation cleanly.
+#: Cache TTL for upstream JWKS documents (seconds). On an unknown ``kid`` or a
+#: signature that no cached key verifies, ``exchange_code`` forces one refresh
+#: to pick up upstream key rotation.
 _JWKS_CACHE_TTL_SECONDS: float = 300.0
+
+#: Minimum interval between forced JWKS refreshes (seconds), so a run of tokens
+#: with unknown keys costs at most one upstream JWKS fetch per interval.
+_JWKS_FORCED_REFRESH_INTERVAL_SECONDS: float = 60.0
+
+#: Clock-skew allowance (seconds) for the id_token ``exp``, ``iat`` and ``nbf`` checks.
+_ID_TOKEN_LEEWAY_SECONDS: int = 60
+
+
+class _UpstreamKeyMismatchError(InvalidGrantError):
+    """No key in the upstream JWKS verifies the id_token: unknown ``kid`` or bad signature.
+
+    The one id_token failure a JWKS refresh can cure (upstream key rotation).
+    """
 
 
 class OidcAdapter:
@@ -59,6 +73,7 @@ class OidcAdapter:
         self._discovery: dict[str, object] | None = None
         self._jwks_cache: dict[str, Any] | None = None
         self._jwks_fetched_at: float = 0.0
+        self._jwks_forced_at: float | None = None
 
     # ── Endpoint defaults (overridable by provider subclasses) ────────────────
     # Subclasses override the `_default_*_endpoint` hooks to plug in well-known
@@ -174,6 +189,10 @@ class OidcAdapter:
                 return disc_iss.rstrip("/")
         return ""
 
+    @property
+    def config(self) -> IdpConfig:
+        return self._config
+
     def _issuer_aliases(self) -> frozenset[str]:
         """Other ``iss`` spellings the provider documents for ``_expected_issuer()``."""
         return frozenset()
@@ -196,21 +215,31 @@ class OidcAdapter:
             raise InvalidGrantError(f"Unsupported upstream id_token algorithm: {alg!r}")
 
         kid = header.get("kid")
-        try:
-            jwk_set = jwt.PyJWKSet.from_dict(jwks_data)
-        except (jwt.PyJWTError, ValueError, KeyError, TypeError) as exc:
-            raise InvalidGrantError("Invalid upstream JWKS") from exc
+        # Only a signing key whose type fits ``alg`` can verify the id_token: a
+        # key declaring another use (``enc``) or another ``alg`` is skipped, and
+        # binding each key to ``alg`` drops keys of another type (an RSA key
+        # for an ``ES256`` header).
+        candidates: list[jwt.PyJWK] = []
+        for raw_key in jwks_data.get("keys", []):
+            if not isinstance(raw_key, dict):
+                continue
+            if raw_key.get("use") not in (None, "sig") or raw_key.get("alg") not in (None, alg):
+                continue
+            try:
+                candidates.append(jwt.PyJWK(raw_key, algorithm=alg))
+            except (jwt.PyJWTError, ValueError, KeyError, TypeError):
+                continue
 
         signing_key: Any = None
         if isinstance(kid, str) and kid:
-            for jwk_key in jwk_set.keys:
+            for jwk_key in candidates:
                 if jwk_key.key_id == kid:
                     signing_key = jwk_key.key
                     break
             if signing_key is None:
-                raise InvalidGrantError("No matching key in upstream JWKS for kid")
-        elif len(jwk_set.keys) == 1:
-            signing_key = jwk_set.keys[0].key
+                raise _UpstreamKeyMismatchError("No matching key in upstream JWKS for kid")
+        elif len(candidates) == 1:
+            signing_key = candidates[0].key
         else:
             raise InvalidGrantError("Upstream id_token is missing kid header")
 
@@ -226,10 +255,19 @@ class OidcAdapter:
                 signing_key,
                 algorithms=[alg],
                 audience=self._config.client_id,
+                leeway=_ID_TOKEN_LEEWAY_SECONDS,
                 options={"require": required_claims, "verify_iss": False},
             )
-        except jwt.PyJWTError as exc:
+        except jwt.InvalidSignatureError as exc:
+            raise _UpstreamKeyMismatchError("Upstream id_token verification failed") from exc
+        # PyJWT reports a key it cannot use with ``alg`` as TypeError/ValueError.
+        except (jwt.PyJWTError, TypeError, ValueError) as exc:
             raise InvalidGrantError("Upstream id_token verification failed") from exc
+
+        # OIDC Core 3.1.3.7: an ``azp`` names the party the token was issued to.
+        azp = claims.get("azp")
+        if azp is not None and azp != self._config.client_id:
+            raise InvalidGrantError("Upstream id_token azp does not match client_id")
 
         token_iss = claims.get("iss")
         if not isinstance(token_iss, str) or not token_iss:
@@ -305,9 +343,14 @@ class OidcAdapter:
                     jwks_data,
                     expected_nonce=nonce,
                 )
-            except InvalidGrantError:
-                if not had_cached_jwks:
+            except _UpstreamKeyMismatchError:
+                now = time.monotonic()
+                if not had_cached_jwks or (
+                    self._jwks_forced_at is not None
+                    and now - self._jwks_forced_at < _JWKS_FORCED_REFRESH_INTERVAL_SECONDS
+                ):
                     raise
+                self._jwks_forced_at = now
                 jwks_data = await self._fetch_jwks(client, force_refresh=True)
                 id_token_claims = self._verify_id_token(
                     raw_id_token,
