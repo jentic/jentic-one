@@ -162,7 +162,7 @@ func (m *catalogBrowser) importEntry(apiID string) tea.Cmd {
 			return catImportMsg{apiID: apiID, err: err}
 		}
 		if job.Status != catJobCompleted {
-			return catImportMsg{apiID: apiID, err: fmt.Errorf("%s: %s", job.Status, cmdcore.ValueOr(job.Error, "no detail"))}
+			return catImportMsg{apiID: apiID, err: fmt.Errorf("%s: %s", job.Status, cmdcore.ValueOr(deref(job.Error), "no detail"))}
 		}
 		result, err := client.JobResult(ctx, jobID)
 		if err != nil {

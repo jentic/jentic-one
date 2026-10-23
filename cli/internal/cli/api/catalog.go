@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jentic/jentic-one/cli/client/generated/control"
 	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/jentic/jentic-one/cli/internal/theme"
@@ -319,7 +320,7 @@ func (a *app) catalogImport(ctx context.Context, o *catalogImportOptions, apiID 
 		return err
 	}
 	if job.Status != catJobCompleted {
-		return fmt.Errorf("import %s: %s", job.Status, cmdcore.ValueOr(job.Error, "no detail"))
+		return fmt.Errorf("import %s: %s", job.Status, cmdcore.ValueOr(deref(job.Error), "no detail"))
 	}
 
 	result, err := client.JobResult(ctx, jobID)
@@ -358,7 +359,7 @@ func (a *app) catalogImport(ctx context.Context, o *catalogImportOptions, apiID 
 // corrupt the JSON stdout the agent parses.
 func (a *app) pollImportJob(
 	ctx context.Context, client *catalogClient, jobID string, timeout time.Duration,
-) (*catalogJob, error) {
+) (*control.JobResponse, error) {
 	return pollImportJobProgress(ctx, client, jobID, timeout, a.Err)
 }
 
@@ -371,7 +372,7 @@ func pollImportJobProgress(
 	jobID string,
 	timeout time.Duration,
 	progress io.Writer,
-) (*catalogJob, error) {
+) (*control.JobResponse, error) {
 	if timeout <= 0 {
 		timeout = 2 * time.Minute
 	}
