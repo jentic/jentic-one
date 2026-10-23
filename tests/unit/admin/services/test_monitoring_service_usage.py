@@ -20,7 +20,6 @@ from jentic_one.admin.services.monitoring_service import (
     MonitoringService,
     UsageFilters,
     UsageStats,
-    _UsageCacheEntry,
 )
 from jentic_one.admin.web.schemas.monitoring import GroupBy
 
@@ -89,7 +88,7 @@ async def test_usage_cache_returns_cached_result_within_ttl() -> None:
         top=[],
     )
     cache_key = (1000, 87400, GroupBy.API, 10, UsageFilters())
-    svc._usage_cache[cache_key] = _UsageCacheEntry(result=cached, cached_at=time.monotonic())
+    svc._usage_cache.put(cache_key, cached, stamped_at=time.monotonic())
 
     result = await svc.get_usage_stats(since=1000, until=87400, group_by=GroupBy.API, top_limit=10)
     assert result is cached
@@ -167,9 +166,7 @@ async def test_cached_entry_expires_after_ttl() -> None:
         top=[],
     )
     cache_key = (1000, 87400, GroupBy.API, 10, UsageFilters())
-    svc._usage_cache[cache_key] = _UsageCacheEntry(
-        result=cached, cached_at=time.monotonic() - (_CACHE_TTL_SECONDS + 1)
-    )
+    svc._usage_cache.put(cache_key, cached, stamped_at=time.monotonic() - (_CACHE_TTL_SECONDS + 1))
 
     fresh = UsageStats(
         since=1000,
@@ -268,8 +265,8 @@ async def test_filters_are_included_in_cache_key() -> None:
 
     key1 = (1000, 87400, GroupBy.API, 10, UsageFilters())
     key2 = (1000, 87400, GroupBy.API, 10, UsageFilters(agent_id="agt_abc"))
-    svc._usage_cache[key1] = _UsageCacheEntry(result=cached1, cached_at=time.monotonic())
-    svc._usage_cache[key2] = _UsageCacheEntry(result=cached2, cached_at=time.monotonic())
+    svc._usage_cache.put(key1, cached1, stamped_at=time.monotonic())
+    svc._usage_cache.put(key2, cached2, stamped_at=time.monotonic())
 
     result1 = await svc.get_usage_stats(since=1000, until=87400)
     result2 = await svc.get_usage_stats(
@@ -394,34 +391,29 @@ async def test_empty_filters_pass_none_to_repository() -> None:
     assert mock_stats.call_args[1]["filters"] is None
 
 
-def test_cache_eviction_removes_stale_entries() -> None:
+def test_stale_usage_entries_are_not_served() -> None:
     ctx = _make_ctx()
     svc = MonitoringService(ctx)
     now = time.monotonic()
-    stale_time = now - 200.0
 
-    for i in range(5):
-        key = (i, i + 100, GroupBy.API, 10, UsageFilters())
-        svc._usage_cache[key] = _UsageCacheEntry(result=MagicMock(), cached_at=stale_time)
-
+    stale_keys = [(i, i + 100, GroupBy.API, 10, UsageFilters()) for i in range(5)]
+    for key in stale_keys:
+        svc._usage_cache.put(key, MagicMock(), stamped_at=now - 200.0)
     fresh_key = (999, 1099, GroupBy.API, 10, UsageFilters())
-    svc._usage_cache[fresh_key] = _UsageCacheEntry(result=MagicMock(), cached_at=now)
+    svc._usage_cache.put(fresh_key, MagicMock(), stamped_at=now)
 
-    svc._evict_stale_usage_entries(now)
-    assert len(svc._usage_cache) == 1
-    assert fresh_key in svc._usage_cache
+    assert all(svc._usage_cache.get(key) is None for key in stale_keys)
+    assert svc._usage_cache.get(fresh_key) is not None
+    assert svc._usage_cache.keys() == [fresh_key]
 
 
-def test_cache_eviction_caps_at_max_entries() -> None:
+def test_usage_cache_caps_at_max_entries() -> None:
     ctx = _make_ctx()
     svc = MonitoringService(ctx)
-    now = time.monotonic()
 
     for i in range(_USAGE_CACHE_MAX_ENTRIES + 10):
-        key = (i, i + 100, GroupBy.API, 10, UsageFilters())
-        svc._usage_cache[key] = _UsageCacheEntry(
-            result=MagicMock(), cached_at=now - (_USAGE_CACHE_MAX_ENTRIES + 10 - i)
-        )
+        svc._usage_cache.put((i, i + 100, GroupBy.API, 10, UsageFilters()), MagicMock())
 
-    svc._evict_stale_usage_entries(now)
-    assert len(svc._usage_cache) <= _USAGE_CACHE_MAX_ENTRIES
+    assert len(svc._usage_cache) == _USAGE_CACHE_MAX_ENTRIES
+    # The least recently stored entries are the ones evicted.
+    assert (0, 100, GroupBy.API, 10, UsageFilters()) not in svc._usage_cache
