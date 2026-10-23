@@ -28,7 +28,7 @@ from jentic_one.broker.web.routers.execute import (
 from jentic_one.shared.config import EncryptionConfig
 from jentic_one.shared.crypto.encryption import EncryptionService
 from jentic_one.shared.jobs.execution_handler import ExecutionHandler
-from jentic_one.shared.jobs.hold import INBOUND_COOKIE_PAYLOAD_KEY
+from jentic_one.shared.jobs.hold import ENCRYPTED_PAYLOAD_KEY, INBOUND_COOKIE_PAYLOAD_KEY
 from jentic_one.shared.jobs.protocols import (
     ActorAuthority,
     InjectedAuth,
@@ -185,9 +185,15 @@ class _FakeSession:
     """The handler touches the session only through best-effort event writes."""
 
 
-async def _async_outbound(request: Request, injection: InjectedAuth) -> tuple[str, dict[str, str]]:
-    """Enqueue ``request`` as the async route does, then run it as the worker does."""
-    payload = _async_job_payload(
+async def _async_outbound(
+    request: Request, injection: InjectedAuth, *, held: bool = False
+) -> tuple[str, dict[str, str]]:
+    """Enqueue ``request`` as the async route does, then run it as the worker does.
+
+    ``held`` wraps the payload the way ``_handle_hold`` does: the whole payload,
+    cookie ciphertext included, encrypted again under ``ENCRYPTED_PAYLOAD_KEY``.
+    """
+    payload: dict[str, Any] = _async_job_payload(
         ExecuteRequestContext(
             upstream_url=_URL,
             method="POST",
@@ -201,6 +207,8 @@ async def _async_outbound(request: Request, injection: InjectedAuth) -> tuple[st
         headers=replay_headers(request.headers),
         inbound_cookie_enc=_captured_cookie(request, _keyed_ctx()),
     )
+    if held:
+        payload = {ENCRYPTED_PAYLOAD_KEY: _ENCRYPTION.encrypt(json.dumps(payload))}
     executor = _RecordingExecutor()
     handler = ExecutionHandler(
         executor=executor,
@@ -260,3 +268,30 @@ async def test_sync_and_async_send_identical_upstream_requests(
     assert _lowered(async_headers) == _lowered(sync_headers)
     if inbound_cookies:
         assert _lowered(async_headers)["cookie"].startswith("; ".join(inbound_cookies))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "inbound_cookies",
+    [[], ["sid=agent-session; theme=dark"], ["a=1", "b=2"]],
+    ids=["no-inbound-cookie", "inbound-cookie", "split-inbound-cookie"],
+)
+async def test_held_payload_sends_the_same_upstream_request_as_sync(
+    inbound_cookies: list[str],
+) -> None:
+    """A held job's cookie sits inside the encrypted payload; the worker unwraps
+    the outer layer, then the cookie, and sends what the sync route sends."""
+    injection = InjectedAuth(
+        headers={"Authorization": "Bearer tok"},
+        query_params=_QUERY_CRED,
+        cookies={"session": "cval"},
+    )
+    sync_url, sync_headers = _apply_injection(_URL, injection, _request(cookies=inbound_cookies))
+    held_url, held_headers = await _async_outbound(
+        _request(cookies=inbound_cookies), injection, held=True
+    )
+
+    assert held_url == sync_url
+    assert _lowered(held_headers) == _lowered(sync_headers)
+    if inbound_cookies:
+        assert _lowered(held_headers)["cookie"].startswith("; ".join(inbound_cookies))

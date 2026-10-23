@@ -364,6 +364,45 @@ async def test_handler_without_a_keyset_drops_the_captured_cookie() -> None:
 
 
 @pytest.mark.asyncio
+async def test_handler_with_a_different_key_drops_the_captured_cookie() -> None:
+    """A cookie encrypted under a key the worker no longer holds (rotated out
+    while the job sat queued) is dropped like a missing keyset, not retried."""
+    worker_encryption = EncryptionService(
+        EncryptionConfig.model_validate(
+            {
+                "active_id": "v2",
+                "entries": [{"id": "v2", "material": base64.b64encode(b"z" * 32).decode()}],
+            }
+        )
+    )
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+    )
+    handler = ExecutionHandler(executor=executor, encryption=worker_encryption)
+
+    with structlog.testing.capture_logs() as logs:
+        result = await handler.execute(
+            "job-cookie-wrongkey",
+            SessionScope(_FakeSession()),
+            payload=_payload(
+                **{INBOUND_COOKIE_PAYLOAD_KEY: _COOKIE_ENCRYPTION.encrypt("sid=agent")}
+            ),
+            created_by="usr_test",
+            actor_type="user",
+        )
+
+    assert result.body["status"] == "completed"
+    req = executor.last_request
+    assert req is not None
+    assert "Cookie" not in req.headers
+    assert any(
+        e["event"] == "queued_execution_cookie_undecryptable"
+        and e.get("reason") == "decryption_failed"
+        for e in logs
+    )
+
+
+@pytest.mark.asyncio
 async def test_handler_no_injector_sends_no_auth() -> None:
     executor = _RecordingExecutor(
         UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)

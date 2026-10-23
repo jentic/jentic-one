@@ -441,12 +441,15 @@ def retry_safe(method: str, idempotency_key: str | None) -> bool:
 
 
 def retry_after_seconds(headers: httpx.Headers) -> int | None:
-    """The broker's ``Retry-After`` in whole seconds (Go: ``agentops.RetryAfterSeconds``).
+    """The broker's ``Retry-After`` in whole seconds.
 
     Parsed by the same :func:`~jentic_one.shared.http.retry_after.parse_retry_after`
-    the broker uses: delay-seconds (a fraction rounds up), or an HTTP-date
-    converted to the seconds remaining (floored at zero). ``None`` when absent or
-    unparseable, so no made-up delay is relayed.
+    the broker uses: delay-seconds (a fraction rounds up, a sign or exponent is
+    rejected), or an HTTP-date converted to the seconds remaining (floored at
+    zero). ``None`` when absent or unparseable, so no made-up delay is relayed.
+    The Go CLI's ``agentops.RetryAfterSeconds`` reads delay-seconds with
+    ``strconv.ParseFloat`` and does not round, so the two lanes can differ on a
+    fractional, signed or exponent value.
     """
     return parse_retry_after(headers.get("Retry-After"))
 

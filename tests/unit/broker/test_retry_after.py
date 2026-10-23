@@ -13,6 +13,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from email.utils import format_datetime
 
+import pytest
+
 from jentic_one.broker.core.retry_after import parse_retry_after_seconds
 
 # A fixed "now" (2021-01-01T00:00:00Z) so date math is deterministic.
@@ -76,6 +78,7 @@ def test_fractional_retry_after_rounds_up() -> None:
     assert parse_retry_after_seconds({"Retry-After": "1.5"}, now_epoch=_NOW) == 2
 
 
+@pytest.mark.usefixtures("non_utc_local_time")
 def test_retry_after_http_date_minus_zero_zone_is_utc() -> None:
     when = datetime.fromtimestamp(_NOW + 45, tz=UTC).strftime("%a, %d %b %Y %H:%M:%S -0000")
     assert parse_retry_after_seconds({"Retry-After": when}, now_epoch=_NOW) == 45

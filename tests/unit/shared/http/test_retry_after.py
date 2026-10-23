@@ -8,28 +8,16 @@ resolved in UTC, and a past date resolving to zero.
 
 from __future__ import annotations
 
-import time
-from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
 
 import pytest
 
-from jentic_one.shared.http.retry_after import parse_retry_after
+from jentic_one.shared.http.retry_after import MAX_RETRY_AFTER_S, parse_retry_after
 
 # A fixed "now" (2021-01-01T00:00:00Z) so date math is deterministic.
 _NOW = 1_609_459_200.0
 _NOW_DT = datetime.fromtimestamp(_NOW, tz=UTC)
-
-
-@pytest.fixture()
-def non_utc_local_time(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """Run with a local zone far from UTC, so a naive date read as local is wrong."""
-    monkeypatch.setenv("TZ", "Asia/Kolkata")
-    time.tzset()
-    yield
-    monkeypatch.undo()
-    time.tzset()
 
 
 def test_integer_seconds() -> None:
@@ -82,8 +70,22 @@ def test_absent_or_blank_is_none(raw: str | None) -> None:
     assert parse_retry_after(raw, now_epoch=_NOW) is None
 
 
-@pytest.mark.parametrize(
-    "raw", ["soon", "-5", "+5", "1e3", "inf", "nan", "1_0", ".5", "5.", "١٢", "9" * 400]
-)
+@pytest.mark.parametrize("raw", ["soon", "-5", "+5", "1e3", "inf", "nan", "1_0", ".5", "5.", "١٢"])
 def test_not_a_delay_or_date_is_none(raw: str) -> None:
     assert parse_retry_after(raw, now_epoch=_NOW) is None
+
+
+def test_large_integer_seconds_are_exact() -> None:
+    # Parsed as an integer, not through ``float``, so no precision is lost.
+    assert parse_retry_after("86399", now_epoch=_NOW) == 86_399
+    assert parse_retry_after("00042", now_epoch=_NOW) == 42
+
+
+@pytest.mark.parametrize("raw", ["86401", "9" * 300, "9" * 5000, "123456789.5"])
+def test_huge_delay_is_capped(raw: str) -> None:
+    assert parse_retry_after(raw, now_epoch=_NOW) == MAX_RETRY_AFTER_S
+
+
+def test_far_future_http_date_is_capped() -> None:
+    when = format_datetime(_NOW_DT + timedelta(days=30), usegmt=True)
+    assert parse_retry_after(when, now_epoch=_NOW) == MAX_RETRY_AFTER_S
