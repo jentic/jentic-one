@@ -119,16 +119,24 @@ class BrokerEchoUser(_BrokerUser):
 
 
 class AdminMonitoringUser(FastHttpUser):
-    """A dashboard viewer: the admin monitoring reads, not a brokered call.
+    """A dashboard viewer: the full monitoring view fan-out, as the subject under test.
 
-    Every other user class here drives the broker's data plane. This one drives
-    the admin control plane, whose cost lives in aggregation over
-    ``admin.execution_records`` behind a 30 s TTL cache rather than in an upstream
-    hop — a different bottleneck, and the one a dashboard actually exercises.
+    Most classes here drive the broker's data plane, but two others also read the
+    app surface: :class:`ImportUser` and :class:`ControlReadUser`, the latter
+    already polling ``/monitoring/executions?days=1`` once per four requests. The
+    difference is role, not endpoint.
 
-    One task is one *view*: the overview strip plus a tab per group-by, which is
-    the fan-out the cache exists to absorb. Each request is named so the Locust
-    table breaks latency down per endpoint.
+    :class:`ControlReadUser` is *background contention* — a light, mostly-``/executions``
+    mix at 1 RPS by default, there so broker measurements face realistic competing
+    admin reads. This class is the *measurement target*: one task is one whole
+    view, the overview strip plus a tab per group-by, because that fan-out is what
+    the 30 s TTL cache exists to absorb and what decides whether a dashboard feels
+    fast. Run this one when monitoring is the subject; leave ``ControlReadUser`` in
+    the mix when the broker is.
+
+    Both read with ``admin_token``, so a run including both attributes their load
+    to one caller. Each request here is named so the Locust table breaks latency
+    down per endpoint.
 
     ``tests.perf.bench_monitoring`` is the scripted counterpart (latency ramp,
     aggregate consistency under concurrent writes, cache pressure); use this class
