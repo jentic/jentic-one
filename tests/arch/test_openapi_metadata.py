@@ -261,7 +261,9 @@ def test_every_parameter_has_a_valid_example(generated_control_spec: dict[str, A
             "Parameters without a valid example:\n"
             + "\n".join(violations)
             + "\n\nFix: add openapi_examples=ex.example(...) to the parameter, using "
-            "jentic_one.shared.web.openapi_examples. " + _GUIDE_HINT
+            "jentic_one.shared.web.openapi_examples. A new canonical value is defined "
+            "in jentic_one/shared/web/openapi_meta/examples.py (with a _VALUE_SUMMARIES "
+            "label) and re-exported through openapi_examples. " + _GUIDE_HINT
         )
 
 
