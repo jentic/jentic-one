@@ -43,7 +43,8 @@ PASSTHROUGH_CACHE_CONTROL = "private, no-store"
 # allow-list of headers that describe the body, the response the caller wants,
 # and the API version a vendor requires — never the caller's credentials,
 # cookies, hop-by-hop or broker headers. The run re-injects upstream
-# credentials itself.
+# credentials itself; the caller's ``Cookie`` rides separately, encrypted
+# (``INBOUND_COOKIE_PAYLOAD_KEY`` in ``shared/jobs/hold.py``).
 REPLAY_HEADERS: frozenset[str] = frozenset(
     {
         "accept",
@@ -98,9 +99,10 @@ def forward_headers(inbound: Mapping[str, str], injected: Mapping[str, str]) -> 
     computes the outbound length from the body actually sent. Injected auth
     headers win on conflict.
 
-    ``Cookie`` is intentionally **not** special-cased here: a cookie-located
-    credential is merged explicitly at the call site by appending to the
-    forwarded ``Cookie`` rather than overwriting it.
+    ``Cookie`` is intentionally **not** special-cased here: the router passes
+    the result to :func:`~jentic_one.shared.http.injection.apply_injection`,
+    which appends cookie credentials to the caller's ``Cookie`` rather than
+    overwriting it.
     """
     out = {
         key: value

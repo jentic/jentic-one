@@ -3,7 +3,7 @@
 These assert the handler delegates to the injected ``UpstreamExecutor`` (the
 broker pipeline adapter) instead of issuing its own HTTP, and applies injected
 credentials to the outbound URL/headers — headers **and** query **and** cookies
-— mirroring the sync router's ``_apply_injection``.
+— through the ``shared.http.injection.apply_injection`` the sync router uses.
 
 The lifecycle event write goes through ``emit_event`` → ``EventRepository`` and
 needs a real DB; the handler swallows its failure (best-effort), so a fake
@@ -12,6 +12,7 @@ session that has no real backing is fine for these pure-logic unit tests.
 
 from __future__ import annotations
 
+import base64
 import re
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -20,8 +21,11 @@ import pytest
 import structlog
 from sqlalchemy.exc import OperationalError
 
+from jentic_one.shared.config import EncryptionConfig
+from jentic_one.shared.crypto.encryption import EncryptionService
 from jentic_one.shared.db.errors import DatabaseIntegrityError, DatabaseUnavailableError
 from jentic_one.shared.jobs.execution_handler import ExecutionHandler
+from jentic_one.shared.jobs.hold import INBOUND_COOKIE_PAYLOAD_KEY
 from jentic_one.shared.jobs.protocols import (
     ActorAuthority,
     ExecutionRecordNotPersistedError,
@@ -270,6 +274,93 @@ async def test_handler_applies_header_query_and_cookie_credentials() -> None:
     assert req.headers["Authorization"] == "Bearer tok"
     assert "api_key=qsecret" in req.url
     assert req.headers["Cookie"] == "session=csecret"
+
+
+_COOKIE_ENCRYPTION = EncryptionService(
+    EncryptionConfig.model_validate(
+        {
+            "active_id": "v1",
+            "entries": [{"id": "v1", "material": base64.b64encode(b"k" * 32).decode()}],
+        }
+    )
+)
+
+
+@pytest.mark.asyncio
+async def test_handler_appends_cookie_creds_to_the_captured_inbound_cookie() -> None:
+    """Pins #1957: the caller's cookies captured at enqueue reach the upstream,
+    with cookie credentials appended rather than replacing them."""
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+    )
+    handler = ExecutionHandler(
+        executor=executor,
+        credential_injector=_FakeInjector(
+            InjectedAuth(headers={}, query_params={}, cookies={"session": "csecret"})
+        ),
+        execution_authorizer=_FakeAuthorizer(),
+        actor_status=_FakeActorStatus(),
+        encryption=_COOKIE_ENCRYPTION,
+    )
+
+    await handler.execute(
+        "job-cookie",
+        SessionScope(_FakeSession()),
+        payload=_payload(
+            **{INBOUND_COOKIE_PAYLOAD_KEY: _COOKIE_ENCRYPTION.encrypt("sid=agent; theme=dark")}
+        ),
+        created_by="usr_test",
+        actor_type="user",
+    )
+
+    req = executor.last_request
+    assert req is not None
+    assert req.headers == {"Cookie": "sid=agent; theme=dark; session=csecret"}
+
+
+@pytest.mark.asyncio
+async def test_handler_without_injector_still_sends_the_captured_cookie() -> None:
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+    )
+    handler = ExecutionHandler(executor=executor, encryption=_COOKIE_ENCRYPTION)
+
+    await handler.execute(
+        "job-cookie-noinj",
+        SessionScope(_FakeSession()),
+        payload=_payload(**{INBOUND_COOKIE_PAYLOAD_KEY: _COOKIE_ENCRYPTION.encrypt("sid=agent")}),
+        created_by="usr_test",
+        actor_type="user",
+    )
+
+    req = executor.last_request
+    assert req is not None
+    assert req.headers == {"Cookie": "sid=agent"}
+
+
+@pytest.mark.asyncio
+async def test_handler_without_a_keyset_drops_the_captured_cookie() -> None:
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+    )
+    handler = ExecutionHandler(executor=executor)
+
+    with structlog.testing.capture_logs() as logs:
+        result = await handler.execute(
+            "job-cookie-nokey",
+            SessionScope(_FakeSession()),
+            payload=_payload(
+                **{INBOUND_COOKIE_PAYLOAD_KEY: _COOKIE_ENCRYPTION.encrypt("sid=agent")}
+            ),
+            created_by="usr_test",
+            actor_type="user",
+        )
+
+    assert result.body["status"] == "completed"
+    req = executor.last_request
+    assert req is not None
+    assert req.headers == {}
+    assert any(e["event"] == "queued_execution_cookie_undecryptable" for e in logs)
 
 
 @pytest.mark.asyncio
