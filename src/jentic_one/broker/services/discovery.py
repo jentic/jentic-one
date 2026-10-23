@@ -10,19 +10,38 @@ lifecycle, so discovery is an in-process DB read behind a protocol.
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 
 from jentic_one.broker.core.exceptions import (
     InvalidRevisionPinError,
     UnauthorizedRevisionPinError,
 )
 from jentic_one.broker.core.revisions import rev_label
+from jentic_one.broker.repos.actor_status import ActorStatusResolver
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import (
     RegistryResolverProtocol,
     ResolveResult,
     RevisionPinOutcome,
 )
+from jentic_one.shared.context import Context
+from jentic_one.shared.models import ActorType
 from jentic_one.shared.schemas import APIReference
+
+
+@dataclass(frozen=True, slots=True)
+class PinnedRevision:
+    """A ``Jentic-Revision`` pin the caller may route through.
+
+    ``pin_key`` is the pin as the caller wrote it, for error details.
+    ``credential_owner_required`` means the revision's server hosts still need
+    approval, so the call may only use a credential the caller owns
+    (:func:`require_pinned_credential_owner`).
+    """
+
+    revision_id: uuid.UUID
+    pin_key: str
+    credential_owner_required: bool = False
 
 
 async def discover(
@@ -45,8 +64,8 @@ async def resolve_pin_for_api(
     api: APIReference,
     pins: dict[tuple[str, str, str], str],
     identity: Identity,
-) -> uuid.UUID | None:
-    """Resolve the ``Jentic-Revision`` pin (if any) for a discovered API to a ``revision_id``.
+) -> PinnedRevision | None:
+    """Resolve the ``Jentic-Revision`` pin (if any) for a discovered API to a revision.
 
     Looks up whether ``pins`` names the discovered ``(vendor, name, version)``; if
     not, returns ``None`` (resolve against ``current_revision_id`` as today). When
@@ -57,6 +76,10 @@ async def resolve_pin_for_api(
     - ``FORBIDDEN`` → :class:`UnauthorizedRevisionPinError` (403),
     - ``HOST_CHANGE_HELD`` → :class:`UnauthorizedRevisionPinError` (403
       ``host_change_requires_operator``).
+
+    A resolved pin whose draft still needs server-host approval comes back with
+    ``credential_owner_required`` set; the caller checks the selected credential
+    with :func:`require_pinned_credential_owner` before using it.
 
     Each error detail names the pin as the caller wrote it (``pins`` keeps the
     caller's spelling), so an agent that sent a ``revision_id`` finds that same
@@ -79,7 +102,9 @@ async def resolve_pin_for_api(
     )
 
     if result.outcome is RevisionPinOutcome.RESOLVED and result.revision_id is not None:
-        return result.revision_id
+        return PinnedRevision(
+            result.revision_id, pin_key, credential_owner_required=result.credential_owner_required
+        )
     if result.outcome is RevisionPinOutcome.HOST_CHANGE_HELD:
         raise _host_change_held(pin_key)
     if result.outcome is RevisionPinOutcome.FORBIDDEN:
@@ -104,14 +129,46 @@ def _pin_key(vendor: str, name: str, version: str, revision: str) -> str:
 
 
 def _host_change_held(pin_key: str) -> UnauthorizedRevisionPinError:
+    # States the rule only: whether anyone has a bound credential or an open
+    # session on the API is not the caller's to learn from this refusal.
     return UnauthorizedRevisionPinError(
         detail=(
             f"Pinned draft revision {pin_key} serves different server hosts than the "
-            "API's live revision, and the API has bound credentials; an operator "
-            "holding 'credentials:write' must promote or pin it."
+            "API's live revision; routing through it requires 'org:admin', or "
+            "'credentials:write' and a credential the caller owns."
         ),
         type="host_change_requires_operator",
     )
+
+
+async def require_pinned_credential_owner(
+    ctx: Context,
+    *,
+    pinned: PinnedRevision,
+    identity: Identity,
+    credential_owner: str | None,
+) -> None:
+    """Refuse a call through a pinned host-changing draft with a credential the caller doesn't own.
+
+    A no-op unless ``pinned.credential_owner_required``. The caller owns the
+    credential when it created it or, for an agent, when its owning user did
+    (``parent_actor_id``, else read from the agent row). Anything else,
+    including a credential with no recorded creator, raises 403
+    ``host_change_requires_operator``: the credential's owner has not approved
+    the new hosts.
+    """
+    if not pinned.credential_owner_required:
+        return
+    if credential_owner is not None:
+        if credential_owner == identity.sub:
+            return
+        if identity.actor_type is ActorType.AGENT:
+            owner = identity.parent_actor_id or await ActorStatusResolver(
+                ctx.admin_db
+            ).agent_owner_id(identity.sub)
+            if owner is not None and credential_owner == owner:
+                return
+    raise _host_change_held(pinned.pin_key)
 
 
 async def discover_via_pins(
@@ -121,7 +178,7 @@ async def discover_via_pins(
     url: str,
     pins: dict[tuple[str, str, str], str],
     identity: Identity,
-) -> tuple[ResolveResult, uuid.UUID] | None:
+) -> tuple[ResolveResult, PinnedRevision] | None:
     """Resolve a URL that no live revision serves through the request's own pins.
 
     Unpinned discovery only consults each API's live revision, so a URL defined
@@ -133,7 +190,7 @@ async def discover_via_pins(
     the caller gets the ordinary ``operation_not_found``. A held draft (its hosts
     changed on a credential-bound API) that serves the URL is refused with 403
     ``host_change_requires_operator``: routing through it would send the API's
-    bound credentials to hosts no operator approved.
+    bound credentials to hosts nobody approved.
     """
     for vendor, name, version in sorted(pins):
         revision = pins[(vendor, name, version)]
@@ -152,7 +209,10 @@ async def discover_via_pins(
         resolved = await discover(resolver, method=method, url=url, revision_id=result.revision_id)
         if resolved is None:
             continue
+        pin_key = _pin_key(vendor, name, version, revision)
         if result.outcome is RevisionPinOutcome.HOST_CHANGE_HELD:
-            raise _host_change_held(_pin_key(vendor, name, version, revision))
-        return resolved, result.revision_id
+            raise _host_change_held(pin_key)
+        return resolved, PinnedRevision(
+            result.revision_id, pin_key, credential_owner_required=result.credential_owner_required
+        )
     return None

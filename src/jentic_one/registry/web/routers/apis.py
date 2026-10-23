@@ -39,6 +39,7 @@ from jentic_one.registry.web.schemas.apis import (
     SecuritySchemeListResponse,
 )
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import ORG_ADMIN
 from jentic_one.shared.context import Context
 from jentic_one.shared.jobs.enqueue import enqueue_job
 from jentic_one.shared.models import ApiRevisionSourceType, ApiRevisionState
@@ -192,14 +193,16 @@ async def import_apis(
     ctx: Context = Depends(get_ctx),
 ) -> JSONResponse:
     """Import OpenAPI/Arazzo content as new API revisions (async)."""
-    # Attribute each resulting revision to the authenticated principal unless the
-    # client supplied an explicit `submitted_by` override (e.g. importing on
-    # behalf of someone else). The job row's `created_by` records the caller
-    # either way; this default carries the same principal through the ingest
-    # pipeline onto ApiRevision.submitted_by.
+    # Attribute each resulting revision to the authenticated principal. Only an
+    # organisation admin may name someone else in `submitted_by` (importing on
+    # their behalf): a draft's submitter is who may pin it, so anyone else's
+    # value is replaced with the caller. The job row's `created_by` records the
+    # caller either way; this carries the principal through the ingest pipeline
+    # onto ApiRevision.submitted_by.
+    may_attribute = ORG_ADMIN in identity.permissions
     sources = [s.model_dump(mode="json") for s in body.sources]
     for source in sources:
-        if source.get("submitted_by") is None:
+        if not may_attribute or source.get("submitted_by") is None:
             source["submitted_by"] = identity.sub
     async with ctx.admin_db.transaction() as session:
         job_id = await enqueue_job(
@@ -680,8 +683,9 @@ async def promote_revision(
 
     If the draft declares different server hosts than the API's current (or last
     live) revision, or serves a host over plaintext http that was https-only, and
-    the API has credentials bound to agents, the caller also needs
-    ``credentials:write``; otherwise the promote is refused with 403
+    the API has credentials bound to agents, the caller must be an organisation
+    admin (``org:admin``), or hold ``credentials:write`` and own every credential
+    for the API; otherwise the promote is refused with 403
     ``host_change_requires_operator``.
     """
     svc = RevisionService(ctx)
