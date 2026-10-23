@@ -1,4 +1,4 @@
-"""Unit tests for the async single-flight request-coalescing helper (§05 R3.1)."""
+"""Unit tests for the async single-flight request-coalescing helper."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from jentic_one.broker.core.singleflight import SingleFlight
+from jentic_one.shared.cache.singleflight import SingleFlight
 
 
 @pytest.mark.asyncio

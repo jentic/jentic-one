@@ -12,15 +12,16 @@ Future instead of launching their own lookup. The single result *or exception*
 is delivered to all waiters, and the in-flight entry is removed in a ``finally``
 so a failed lookup never pins a poisoned Future (a later caller re-runs it).
 
-Pure and dependency-free so every read-mostly cache (token, binding-derivation,
-…) can coalesce consistently. Single-flight is **per instance** — it collapses
-the herd within a node, which is where the amplification hurts.
+Pure and dependency-free so every read-mostly cache coalesces the same way;
+:class:`jentic_one.shared.cache.ttl_lru.AsyncTTLCache` builds on it. Single-flight
+is **per instance** — it collapses the herd within a node, which is where the
+amplification hurts.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Hashable
 
 # Default ceiling on concurrently in-flight keys. The map only holds entries for
 # the brief window a lookup is running, so this bounds a pathological burst of
@@ -41,14 +42,14 @@ class SingleFlight[V]:
         if max_in_flight < 1:
             raise ValueError("max_in_flight must be >= 1")
         self._max_in_flight = max_in_flight
-        self._in_flight: dict[str, asyncio.Future[V]] = {}
+        self._in_flight: dict[Hashable, asyncio.Future[V]] = {}
 
     @property
     def in_flight_count(self) -> int:
         """Number of lookups currently running (for tests/metrics)."""
         return len(self._in_flight)
 
-    async def do(self, key: str, fn: Callable[[], Awaitable[V]]) -> V:
+    async def do(self, key: Hashable, fn: Callable[[], Awaitable[V]]) -> V:
         """Run ``fn`` for ``key`` once, sharing the result with concurrent callers.
 
         The first caller for an idle ``key`` runs ``fn``; concurrent callers await
