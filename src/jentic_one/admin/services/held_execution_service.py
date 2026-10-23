@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import base64
 import json
-from datetime import datetime
 from typing import Any
 
 import structlog
@@ -29,7 +28,6 @@ from jentic_one.admin.repos import AgentRepository, AuditRepository, JobResultRe
 from jentic_one.admin.repos.held_execution_repo import HeldExecutionRepository
 from jentic_one.admin.repos.job_repo import JobRepository
 from jentic_one.admin.scoping.filters import build_access_filters
-from jentic_one.admin.services._support.pagination import Page, decode_cursor, encode_cursor
 from jentic_one.admin.services.errors import (
     HeldExecutionAlreadyDecidedError,
     HeldExecutionForbiddenError,
@@ -61,6 +59,7 @@ from jentic_one.shared.models.audit import AuditAction, AuditTargetType
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.models.held_executions import ApprovalDecision, HeldExecutionState
 from jentic_one.shared.models.jobs import JobKind, JobStatus
+from jentic_one.shared.pagination import Page, decode_cursor, encode_cursor
 
 logger = structlog.get_logger(__name__)
 
@@ -97,10 +96,7 @@ class HeldExecutionService:
         cursor: str | None = None,
         limit: int = 25,
     ) -> Page[HeldExecutionView]:
-        cursor_dt: datetime | None = None
-        cursor_id: str | None = None
-        if cursor is not None:
-            cursor_dt, cursor_id = decode_cursor(cursor)
+        cursor_key = decode_cursor(cursor, id_kind="str") if cursor is not None else None
         filters = build_access_filters(identity, HeldExecution)
         async with self._ctx.admin_db.session() as session:
             rows = await HeldExecutionRepository.list_all(
@@ -108,8 +104,7 @@ class HeldExecutionService:
                 state=state.value if state is not None else None,
                 agent_id=agent_id,
                 limit=limit + 1,
-                cursor_created_at=cursor_dt,
-                cursor_id=cursor_id,
+                cursor=cursor_key,
                 filters=filters,
             )
             statuses = await JobRepository.held_execution_statuses(

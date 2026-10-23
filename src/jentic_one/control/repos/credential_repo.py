@@ -16,6 +16,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.oauth_app_registrations import OAuthAppRegistration
 from jentic_one.control.core.schema.oauth_tokens import OAuthToken
+from jentic_one.shared.db.keyset import apply_desc_keyset
 from jentic_one.shared.models.api_identity import slugify_api_field
 from jentic_one.shared.models.credentials import StoredCredentialType
 
@@ -189,12 +190,7 @@ class CredentialRepository:
         stmt = select(Credential).order_by(Credential.created_at.desc(), Credential.id.desc())
         if vendor is not None:
             stmt = stmt.where(Credential.api_vendor == vendor)
-        if cursor is not None:
-            cursor_ts, cursor_id = cursor
-            stmt = stmt.where(
-                (Credential.created_at < cursor_ts)
-                | ((Credential.created_at == cursor_ts) & (Credential.id < cursor_id))
-            )
+        stmt = apply_desc_keyset(stmt, Credential.created_at, Credential.id, cursor)
         if filters is not None:
             for f in filters:
                 stmt = stmt.where(f)

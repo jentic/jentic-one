@@ -7,24 +7,34 @@ import math
 import uuid
 from base64 import b64decode, b64encode
 from datetime import UTC, datetime
-from typing import Generic, TypeVar
+from typing import Any, Generic, Literal, TypeVar
 
 from pydantic import BaseModel
 
 T = TypeVar("T")
 
+#: The check a ``(timestamp, id)`` cursor's id must pass (see :func:`decode_cursor`).
+CursorIdKind = Literal["uuid", "str"]
+
 __all__ = [
+    "MAX_CURSOR_LENGTH",
+    "CursorIdKind",
     "InvalidCursorError",
     "InvalidSearchCursorError",
     "Page",
     "decode_catalog_cursor",
     "decode_cursor",
-    "decode_cursor_str",
     "decode_search_cursor",
     "encode_catalog_cursor",
     "encode_cursor",
     "encode_search_cursor",
 ]
+
+
+#: Longest cursor any decoder accepts. Minted cursors are well under 200
+#: characters; the cap rejects an oversized (e.g. deeply nested) payload before
+#: it reaches the JSON parser.
+MAX_CURSOR_LENGTH = 1024
 
 
 class InvalidCursorError(ValueError):
@@ -49,31 +59,47 @@ def encode_cursor(timestamp: datetime, id: str) -> str:
     return b64encode(json.dumps(payload).encode()).decode()
 
 
-def decode_cursor(cursor: str) -> tuple[datetime, str]:
-    """Decode a cursor back into (created_at, id) with UUID validation."""
+def _load_cursor_payload(cursor: str) -> dict[str, Any]:
+    """Base64-decode and JSON-parse ``cursor``, requiring a JSON object.
+
+    Any oversized, undecodable, unparsable or non-object payload (``null``,
+    ``[1]``, a bare number, thousands of nested ``[``) raises
+    :class:`InvalidCursorError`, so every decoder rejects a tampered cursor the
+    same way and none leaks a ``TypeError`` or ``RecursionError``.
+    """
+    if not isinstance(cursor, str) or len(cursor) > MAX_CURSOR_LENGTH:
+        raise InvalidCursorError("Invalid pagination cursor")
     try:
         payload = json.loads(b64decode(cursor.encode()).decode())
-        ts = datetime.fromisoformat(payload["t"])
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=UTC)
-        uuid.UUID(payload["id"])
-        return ts, payload["id"]
-    except (ValueError, KeyError, json.JSONDecodeError) as exc:
+    except (ValueError, TypeError, AttributeError, RecursionError) as exc:
         raise InvalidCursorError("Invalid pagination cursor") from exc
+    if not isinstance(payload, dict):
+        raise InvalidCursorError("Invalid pagination cursor")
+    return payload
 
 
-def decode_cursor_str(cursor: str) -> tuple[datetime, str]:
-    """Decode a cursor back into (created_at, id) without UUID validation."""
+def decode_cursor(cursor: str, *, id_kind: CursorIdKind) -> tuple[datetime, str]:
+    """Decode a cursor back into ``(timestamp, id)``.
+
+    ``id_kind`` names the check the id must pass: ``"uuid"`` for listings
+    keyed by UUID primary keys, ``"str"`` for KSUID and other string keys.
+    Every malformed cursor raises :class:`InvalidCursorError`, which the
+    admin, auth, control and registry surfaces map to 400 ``invalid_cursor``.
+    """
+    payload = _load_cursor_payload(cursor)
     try:
-        payload = json.loads(b64decode(cursor.encode()).decode())
-        ts = datetime.fromisoformat(payload["t"])
+        raw_ts = payload["t"]
+        raw_id = payload["id"]
+        if not isinstance(raw_ts, str) or not isinstance(raw_id, str):
+            raise ValueError("cursor fields must be strings")
+        ts = datetime.fromisoformat(raw_ts)
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=UTC)
-        if not isinstance(payload["id"], str):
-            raise ValueError("id must be a string")
-        return ts, payload["id"]
-    except (ValueError, KeyError, json.JSONDecodeError) as exc:
+        if id_kind == "uuid":
+            uuid.UUID(raw_id)
+    except (ValueError, TypeError, KeyError) as exc:
         raise InvalidCursorError("Invalid pagination cursor") from exc
+    return ts, raw_id
 
 
 def encode_search_cursor(distance: float, operation_id: str) -> str:
@@ -85,10 +111,19 @@ def encode_search_cursor(distance: float, operation_id: str) -> str:
 def decode_search_cursor(cursor: str) -> tuple[float, str]:
     """Decode a search cursor back into (distance, operation_id)."""
     try:
-        payload = json.loads(b64decode(cursor.encode()).decode())
-        return float(payload["d"]), str(payload["id"])
-    except (ValueError, KeyError, json.JSONDecodeError) as exc:
+        payload = _load_cursor_payload(cursor)
+        distance = payload["d"]
+        operation_id = payload["id"]
+        if isinstance(distance, bool) or not isinstance(distance, int | float):
+            raise ValueError("distance must be a number")
+        if not isinstance(operation_id, str):
+            raise ValueError("id must be a string")
+        result = float(distance)
+        if not math.isfinite(result):
+            raise ValueError("distance must be finite")
+    except (InvalidCursorError, ValueError, TypeError, KeyError) as exc:
         raise InvalidSearchCursorError("Invalid search cursor") from exc
+    return result, operation_id
 
 
 def encode_catalog_cursor(api_id: str, score: float | None = None) -> str:
@@ -107,15 +142,19 @@ def encode_catalog_cursor(api_id: str, score: float | None = None) -> str:
 
 def decode_catalog_cursor(cursor: str) -> tuple[str, float | None]:
     """Decode a catalog cursor into ``(api_id, score)`` (``score`` None for browse)."""
+    payload = _load_cursor_payload(cursor)
     try:
-        payload = json.loads(b64decode(cursor.encode()).decode())
         api_id = payload["id"]
         if not isinstance(api_id, str):
             raise ValueError("id must be a string")
         raw_score = payload.get("s")
-        score = None if raw_score is None else float(raw_score)
-        if score is not None and not math.isfinite(score):
-            raise ValueError("score must be finite")
-        return api_id, score
-    except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+        score: float | None = None
+        if raw_score is not None:
+            if isinstance(raw_score, bool) or not isinstance(raw_score, int | float):
+                raise ValueError("score must be a number")
+            score = float(raw_score)
+            if not math.isfinite(score):
+                raise ValueError("score must be finite")
+    except (ValueError, TypeError, KeyError) as exc:
         raise InvalidCursorError("Invalid pagination cursor") from exc
+    return api_id, score

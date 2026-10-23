@@ -5,12 +5,13 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.shared.db.ids import generate_ksuid
+from jentic_one.shared.db.keyset import apply_desc_keyset, asc_keyset_predicate
 from jentic_one.shared.db.utils import insert_append_only_row
 
 
@@ -125,14 +126,7 @@ class EventRepository:
         filters: list[ColumnElement[bool]] | None = None,
     ) -> list[Event]:
         stmt = select(Event).order_by(Event.created_at.desc(), Event.id.desc()).limit(limit)
-        if cursor is not None:
-            cursor_dt, cursor_id = cursor
-            stmt = stmt.where(
-                or_(
-                    Event.created_at < cursor_dt,
-                    and_(Event.created_at == cursor_dt, Event.id < cursor_id),
-                )
-            )
+        stmt = apply_desc_keyset(stmt, Event.created_at, Event.id, cursor)
         if event_type is not None:
             stmt = stmt.where(Event.type.in_(event_type))
         if severity is not None:
@@ -176,12 +170,7 @@ class EventRepository:
         cursor_dt, cursor_id = cursor
         stmt = (
             select(Event)
-            .where(
-                or_(
-                    Event.created_at > cursor_dt,
-                    and_(Event.created_at == cursor_dt, Event.id > cursor_id),
-                )
-            )
+            .where(asc_keyset_predicate(Event.created_at, Event.id, cursor_dt, cursor_id))
             .order_by(Event.created_at.asc(), Event.id.asc())
             .limit(limit)
         )

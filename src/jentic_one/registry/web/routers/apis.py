@@ -7,7 +7,7 @@ from typing import Annotated
 import yaml
 from fastapi import APIRouter, Depends, Path, Query, Request, Response
 from fastapi.responses import JSONResponse
-from jentic.problem_details import BadRequest, ProblemDetailException
+from jentic.problem_details import ProblemDetailException
 
 from jentic_one.registry.services.api_service import ApiService, ApiView
 from jentic_one.registry.services.operation_service import OperationService, OperationSummaryPage
@@ -43,7 +43,6 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.jobs.enqueue import enqueue_job
 from jentic_one.shared.models import ApiRevisionSourceType, ApiRevisionState
 from jentic_one.shared.models.jobs import JobKind
-from jentic_one.shared.pagination import InvalidCursorError
 from jentic_one.shared.web import get_ctx, get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.links import build_link
@@ -81,10 +80,7 @@ async def list_apis(
     public catalog of importable-but-not-yet-imported APIs is a separate surface
     (``GET /catalog``); the two are not blended.
     """
-    try:
-        page = await api_svc.list_all(vendor=vendor, cursor=cursor, limit=limit)
-    except InvalidCursorError:
-        raise BadRequest(detail="Invalid pagination cursor", instance="/apis") from None
+    page = await api_svc.list_all(vendor=vendor, cursor=cursor, limit=limit)
 
     data: list[ApiResponse] = []
     for item in page.data:
@@ -340,20 +336,14 @@ async def list_api_revisions(
     `GET /apis/{vendor}/{name}/{version}/revisions/{revision_id}`.
     """
     svc = RevisionService(ctx)
-    try:
-        page = await svc.list_revisions(
-            vendor=vendor,
-            name=name,
-            version=version,
-            states=state,
-            cursor=cursor,
-            limit=limit,
-        )
-    except InvalidCursorError:
-        raise BadRequest(
-            detail="Invalid pagination cursor",
-            instance=request.url.path,
-        ) from None
+    page = await svc.list_revisions(
+        vendor=vendor,
+        name=name,
+        version=version,
+        states=state,
+        cursor=cursor,
+        limit=limit,
+    )
 
     data: list[ApiRevisionResponse] = []
     for item in page.data:
@@ -524,15 +514,9 @@ async def list_api_operations(
     revision.
     """
     svc = OperationService(ctx)
-    try:
-        page = await svc.list_for_live_revision(
-            vendor=vendor, name=name, version=version, cursor=cursor, limit=limit
-        )
-    except InvalidCursorError:
-        raise BadRequest(
-            detail="Invalid pagination cursor",
-            instance=request.url.path,
-        ) from None
+    page = await svc.list_for_live_revision(
+        vendor=vendor, name=name, version=version, cursor=cursor, limit=limit
+    )
 
     resp = _build_operations_response(page, request)
     return JSONResponse(content=resp.model_dump(mode="json", by_alias=True))
@@ -580,20 +564,14 @@ async def list_api_revision_operations(
     for full detail. 404 if the API or revision does not exist.
     """
     svc = OperationService(ctx)
-    try:
-        page = await svc.list_for_revision(
-            vendor=vendor,
-            name=name,
-            version=version,
-            revision_id=revision_id,
-            cursor=cursor,
-            limit=limit,
-        )
-    except InvalidCursorError:
-        raise BadRequest(
-            detail="Invalid pagination cursor",
-            instance=request.url.path,
-        ) from None
+    page = await svc.list_for_revision(
+        vendor=vendor,
+        name=name,
+        version=version,
+        revision_id=revision_id,
+        cursor=cursor,
+        limit=limit,
+    )
 
     resp = _build_operations_response(page, request)
     return JSONResponse(content=resp.model_dump(mode="json", by_alias=True))

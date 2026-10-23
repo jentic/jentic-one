@@ -21,7 +21,6 @@ from jentic_one.registry.web.schemas.search import (
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
-from jentic_one.shared.pagination import InvalidSearchCursorError
 from jentic_one.shared.web import get_ctx, get_current_identity
 from jentic_one.shared.web.links import build_link
 
@@ -56,12 +55,6 @@ async def search_operations(
             status_code=501,
             detail=str(exc),
             type="search_unsupported",
-        ) from exc
-    except InvalidSearchCursorError as exc:
-        raise ProblemDetailException(
-            status_code=422,
-            detail=str(exc),
-            type="invalid_cursor",
         ) from exc
     except InvalidApiFilterError as exc:
         raise ProblemDetailException(
