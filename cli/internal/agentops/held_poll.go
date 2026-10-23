@@ -68,8 +68,9 @@ func (e *HeldReadError) Error() string {
 
 func (e *HeldReadError) Unwrap() error { return e.Err }
 
-// HeldUnexpectedResponseError is a 2xx read of a held execution that carried
-// no held execution document.
+// HeldUnexpectedResponseError is a read of a held execution that carried no
+// held execution document: a 2xx with no body, or no response at all
+// (Status 0).
 type HeldUnexpectedResponseError struct {
 	ID     string
 	Status int
@@ -80,15 +81,16 @@ func (e *HeldUnexpectedResponseError) Error() string {
 }
 
 // GetHeldExecution reads one held execution. A 404 is a *HeldNotFoundError,
-// any other failure a *HeldReadError, and a 2xx with no document a
-// *HeldUnexpectedResponseError.
+// any other failure a *HeldReadError, and a 2xx with no document (or no
+// response at all) a *HeldUnexpectedResponseError. It returns no other error
+// type.
 func GetHeldExecution(ctx context.Context, client HeldExecutionGetter, heldExecutionID string) (*HeldExecution, error) {
 	resp, err := client.GetHeldExecutionWithResponse(ctx, heldExecutionID)
 	if err != nil {
 		return nil, &HeldReadError{ID: heldExecutionID, Err: err}
 	}
 	if resp == nil {
-		return nil, &HeldReadError{ID: heldExecutionID, Err: &HTTPError{}}
+		return nil, &HeldUnexpectedResponseError{ID: heldExecutionID}
 	}
 	code := resp.StatusCode()
 	if code == http.StatusNotFound {

@@ -16,14 +16,20 @@ import (
 // (tests/unit/mcp/test_held_poll_golden.py replays the same files): the
 // server-side view, the control-plane read the CLI receives for it (detail,
 // and the /result document once the call finished), and the poll payload
-// both surfaces must answer.
+// both surfaces must answer. A case may cap the result size
+// (max_result_bytes), carry the /result body verbatim (result.raw), or fail
+// the /result read (result_fetch_error; the payload's result_error is then
+// the prefix of the message).
 type heldPollGolden struct {
 	Detail json.RawMessage `json:"detail"`
 	Result *struct {
 		ContentType string          `json:"content_type"`
 		Body        json.RawMessage `json:"body"`
+		Raw         *string         `json:"raw"`
 	} `json:"result"`
-	Payload map[string]any `json:"payload"`
+	MaxResultBytes   int64          `json:"max_result_bytes"`
+	ResultFetchError bool           `json:"result_fetch_error"`
+	Payload          map[string]any `json:"payload"`
 }
 
 func heldPollGoldenDir() string {
@@ -56,12 +62,22 @@ func TestMCPGetExecutionResult_HeldPollPayloadMatchesSharedGoldens(t *testing.T)
 					w.Header().Set("Content-Type", "application/json")
 					_, _ = w.Write(g.Detail)
 				case "/executions/holds/held_1/result":
+					if g.ResultFetchError {
+						w.Header().Set("Content-Type", "application/problem+json")
+						w.WriteHeader(http.StatusInternalServerError)
+						_, _ = io.WriteString(w, `{"title":"boom","status":500}`)
+						return
+					}
 					if g.Result == nil {
 						t.Errorf("unexpected result read for %s", name)
 						w.WriteHeader(http.StatusConflict)
 						return
 					}
 					w.Header().Set("Content-Type", g.Result.ContentType)
+					if g.Result.Raw != nil {
+						_, _ = io.WriteString(w, *g.Result.Raw)
+						return
+					}
 					_, _ = w.Write(g.Result.Body)
 				default:
 					t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
@@ -72,6 +88,9 @@ func TestMCPGetExecutionResult_HeldPollPayloadMatchesSharedGoldens(t *testing.T)
 			t.Cleanup(srv.Close)
 
 			s := stampedTestMCPServer(t)
+			if g.MaxResultBytes > 0 {
+				s.maxResultBytes = g.MaxResultBytes
+			}
 			res, err := s.handleGetExecutionResult(activeCtxWithBroker(srv.URL, srv.URL),
 				callToolRequest("get_execution_result", `{"held_execution_id":"held_1","timeout":0}`))
 			if err != nil || res.IsError {
@@ -79,6 +98,15 @@ func TestMCPGetExecutionResult_HeldPollPayloadMatchesSharedGoldens(t *testing.T)
 			}
 			got := decodeToolJSON(t, res)
 			delete(got, "instance")
+			if g.ResultFetchError {
+				gotErr, _ := got["result_error"].(string)
+				wantPrefix, _ := g.Payload["result_error"].(string)
+				if wantPrefix == "" || !strings.HasPrefix(gotErr, wantPrefix) {
+					t.Errorf("result_error = %q, want prefix %q", gotErr, wantPrefix)
+				}
+				delete(got, "result_error")
+				delete(g.Payload, "result_error")
+			}
 			if !reflect.DeepEqual(got, g.Payload) {
 				gotJSON, _ := json.MarshalIndent(got, "", "  ")
 				wantJSON, _ := json.MarshalIndent(g.Payload, "", "  ")

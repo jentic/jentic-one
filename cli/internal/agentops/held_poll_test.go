@@ -159,4 +159,9 @@ func TestGetHeldExecution(t *testing.T) {
 	if !errors.As(err, &unexpected) || unexpected.Status != 200 {
 		t.Errorf("200 without a document: err = %v, want *HeldUnexpectedResponseError", err)
 	}
+
+	_, err = GetHeldExecution(context.Background(), fakeHeldGetter{}, "held_1")
+	if !errors.As(err, &unexpected) || unexpected.Status != 0 {
+		t.Errorf("no response: err = %v, want *HeldUnexpectedResponseError with status 0", err)
+	}
 }

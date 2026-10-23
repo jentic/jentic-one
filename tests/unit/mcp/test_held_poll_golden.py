@@ -3,11 +3,15 @@
 The frozen cases under ``cli/tests/golden/testdata/held_poll`` hold a held
 execution as the admin service sees it (``view``), the control-plane read the
 CLI receives for it (``detail``, plus the ``/result`` document once the call
-finished) and the ``get_execution_result`` payload both surfaces answer. The
-Go side replays ``detail``/``result`` through its MCP tool
+finished) and the ``get_execution_result`` payload both surfaces answer. A case
+may also cap the result size (``max_result_bytes``) or fail the ``/result``
+read (``result_fetch_error``; the payload's ``result_error`` is then the prefix
+of the message). The Go side replays ``detail``/``result`` through its MCP tool
 (``cli/internal/cli/api/mcp_held_golden_test.go``); this replays ``view``
-through the mount and the held-executions route — one source of truth, so a
-drift on either side fails against the identical file.
+through the held-executions route and the mount's own payload assembly
+(``held_result_wanted`` deciding the ``/result`` read, ``held_poll_payload``
+attaching its outcome) — one source of truth, so a drift on either side fails
+against the identical file.
 """
 
 from __future__ import annotations
@@ -23,7 +27,8 @@ from starlette.requests import Request
 from jentic_one.admin.services.schemas.held_executions import HeldExecutionDetailView
 from jentic_one.admin.services.schemas.jobs import JobResultView
 from jentic_one.admin.web.routers.held_executions import _detail_response
-from jentic_one.mcp.tools import _attach_result_view, held_poll_payload
+from jentic_one.mcp import execute as ex
+from jentic_one.mcp.tools import held_poll_payload, held_result_wanted
 
 _GOLDEN_DIR = (
     Path(__file__).resolve().parents[3] / "cli" / "tests" / "golden" / "testdata" / "held_poll"
@@ -63,24 +68,37 @@ def test_detail_route_answers_the_golden_read(path: Path) -> None:
     assert detail == golden["detail"]
 
 
+def _result_view(view: HeldExecutionDetailView, result: dict[str, Any]) -> JobResultView:
+    """The ``/result`` document of a golden as the admin service reads it."""
+    raw = result["raw"].encode() if "raw" in result else json.dumps(result["body"]).encode()
+    return JobResultView(
+        id="jres_1",
+        job_id=view.job_id,
+        kind="execution",
+        body=result.get("body", {}),
+        content_type=result["content_type"],
+        raw_body=raw,
+        created_at=datetime(2026, 10, 6, 12, 6, tzinfo=UTC),
+    )
+
+
 @pytest.mark.parametrize("path", _CASES, ids=lambda p: p.stem)
-def test_poll_payload_matches_the_golden(path: Path) -> None:
+def test_poll_payload_matches_the_golden(path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     golden = _load(path)
+    if "max_result_bytes" in golden:
+        monkeypatch.setattr(ex, "MAX_RESULT_BYTES", golden["max_result_bytes"])
     view = HeldExecutionDetailView.model_validate(golden["view"])
-    payload = held_poll_payload(view, _BASE_URL)
     result = golden["result"]
-    if result is not None:
-        assert "agent_directive" not in payload, "a result rides only once the call finished"
-        _attach_result_view(
-            JobResultView(
-                id="jres_1",
-                job_id=view.job_id,
-                kind="execution",
-                body=result["body"],
-                content_type=result["content_type"],
-                raw_body=json.dumps(result["body"]).encode(),
-                created_at=datetime(2026, 10, 6, 12, 6, tzinfo=UTC),
-            ),
-            payload,
-        )
-    assert payload == golden["payload"]
+    fetch_error = bool(golden.get("result_fetch_error"))
+
+    wanted = held_result_wanted(view)
+    assert wanted == (result is not None or fetch_error), "the /result read the golden implies"
+    fetched: JobResultView | Exception | None = None
+    if wanted:
+        fetched = RuntimeError("boom") if fetch_error else _result_view(view, result)
+    payload = held_poll_payload(view, _BASE_URL, fetched)
+
+    want = dict(golden["payload"])
+    if fetch_error:
+        assert payload.pop("result_error").startswith(want.pop("result_error"))
+    assert payload == want

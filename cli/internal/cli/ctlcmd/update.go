@@ -284,10 +284,11 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 // Package-level seams over update's external effects (release lookup, CLI
 // swap, skill refresh, stack rebuild, local build and migrations, Docker
 // calls) so the update flow can be tested end to end without network,
-// binaries, or a Docker daemon. The Docker image build and compose
-// migrations seams are shared with install and start, so every command
-// that runs the docker stack goes through the same fakeable calls. Tests
-// that swap these globals must not run with t.Parallel().
+// binaries, or a Docker daemon. installDocker (install.go) and
+// ensureDockerSchema (start.go) call the image build and compose migrations
+// through buildStackImages and runComposeMigrations as well; install_docker_test.go
+// and start_schema_test.go drive them through these seams. Tests that swap
+// these globals must not run with t.Parallel().
 var (
 	latestReleaseTag     = update.LatestReleaseTag
 	swapCLI              = (*app).updateCLI

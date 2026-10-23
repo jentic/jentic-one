@@ -927,10 +927,17 @@ func (s *mcpServer) followHeldExecution(
 			Details: map[string]any{"held_execution_id": heldExecutionID},
 		})
 	case errors.As(err, &readErr):
-		err = readErr.Err
+		s.logger.Warn("get_execution_result failed", "held_execution_id", heldExecutionID, "error", readErr.Err)
+		return nil, false, s.heldPollError(ctx, heldExecutionID, reviewURL, readErr.Err)
+	default:
+		// agentops.GetHeldExecution returns only the typed errors above.
+		s.logger.Warn("get_execution_result failed", "held_execution_id", heldExecutionID, "error", err)
+		return nil, false, s.softError(ctx, &ux.CodedError{
+			Code:    ux.CodeInternalError,
+			Msg:     fmt.Sprintf("unexpected error reading held execution %s: %v", heldExecutionID, err),
+			Details: map[string]any{"held_execution_id": heldExecutionID},
+		})
 	}
-	s.logger.Warn("get_execution_result failed", "held_execution_id", heldExecutionID, "error", err)
-	return nil, false, s.heldPollError(ctx, heldExecutionID, reviewURL, err)
 }
 
 // heldPollPayload is the poll payload of one held execution read — plus its
@@ -940,10 +947,12 @@ func (s *mcpServer) followHeldExecution(
 // expires_at, execution_id?, result? | result_error? | truncated+total_bytes,
 // agent_directive?}: state is the decision, status where the call stands,
 // and agent_directive (stillHeldAgentDirective) rides only while the call
-// has not finished (agentops.HeldExecutionFinished). review_url is omitted
-// when the control plane sends none. The mounted app's
-// held_execution_poll_payload answers the same shape; the shared goldens
-// under cli/tests/golden/testdata/held_poll pin both.
+// has not finished (agentops.HeldExecutionFinished). A decided hold whose
+// call reports no status has finished with no result to collect; it carries
+// heldNoStatusResultError. review_url is omitted when the control plane sends
+// none. The mounted app's held_execution_poll_payload decides "finished" by
+// the same rule (approvals.held_call_finished) and answers the same shape;
+// the shared goldens under cli/tests/golden/testdata/held_poll pin both.
 func (s *mcpServer) heldPollPayload(
 	ctx context.Context, client heldResultClient, held *control.HeldExecutionDetailResponse,
 ) map[string]any {
@@ -966,6 +975,10 @@ func (s *mcpServer) heldPollPayload(
 	}
 	if !agentops.HeldExecutionFinished(held) {
 		payload["agent_directive"] = stillHeldAgentDirective
+		return payload
+	}
+	if held.ExecutionStatus == nil {
+		payload["result_error"] = heldNoStatusResultError
 		return payload
 	}
 	if agentops.HasHeldResult(agentops.HeldExecutionStatus(held)) {

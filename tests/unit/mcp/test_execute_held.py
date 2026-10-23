@@ -341,3 +341,38 @@ async def test_get_execution_result_requires_exactly_one_id(
     job_polls(["held"])
     with pytest.raises(MCPError):
         await dispatch_mcp_tool_call(_env(), "get_execution_result", arguments)
+
+
+@pytest.mark.parametrize(
+    ("state", "status", "finished"),
+    [
+        ("pending", "held", False),
+        ("approved", "queued", False),
+        ("approved", "running", False),
+        ("approved", "completed", True),
+        ("denied", "failed", True),
+        ("withdrawn", "cancelled", True),
+        ("pending", None, False),
+        ("approved", None, True),
+        ("denied", None, True),
+    ],
+)
+def test_held_call_finished_matches_the_cli_rule(
+    state: str, status: str | None, finished: bool
+) -> None:
+    assert approvals.held_call_finished(state, status) is finished
+
+
+async def test_short_wait_stops_on_a_decided_hold_with_no_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(approvals, "SHORT_WAIT_POLL_SECONDS", 0.0)
+    polls: list[str] = []
+
+    async def poll(held_execution_id: str) -> dict[str, Any]:
+        polls.append(held_execution_id)
+        return {"held_execution_id": held_execution_id, "state": "approved", "status": None}
+
+    payload = await approvals.short_wait(poll, "held_1", window=5.0)
+    assert payload is not None and payload["status"] is None
+    assert polls == ["held_1"]
