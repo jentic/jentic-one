@@ -1548,6 +1548,16 @@ class ControlConnectConfig(BaseModel):
             "`too_many_open_sessions`."
         ),
     )
+    rejection_cooldown_hours: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Hours after a human rejects an agent's connect or access-change "
+            "request during which the agent's repeat ask for the same target "
+            "(or binding) gets 429 `recently_rejected`. Off (0) by default: an "
+            "agent may ask again at once."
+        ),
+    )
 
 
 class ControlSurfaceConfig(BaseModel):

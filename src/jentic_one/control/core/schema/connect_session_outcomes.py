@@ -40,7 +40,7 @@ class ConnectSessionOutcome(ControlBase):
     __table_args__ = (
         Index("ix_connect_session_outcomes_session_id", "session_id", unique=True),
         Index("ix_connect_session_outcomes_ended_at", "ended_at"),
-        # An agent's outcomes by when they ended.
+        # An agent's outcomes by when they ended (the rejection-cooldown lookup).
         Index("ix_connect_session_outcomes_agent_ended_at", "agent_id", "ended_at"),
     )
 

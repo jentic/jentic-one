@@ -36,6 +36,7 @@ from jentic_one.control.services.integrations.errors import (
     ManualFlowsDisabledError,
     NoDeclaredSchemeError,
     NoOpForFlowError,
+    RecentlyRejectedError,
     ReservedAuthFieldError,
     SecuritySchemesLookupUnavailableError,
     TooManyOpenSessionsError,
@@ -670,6 +671,7 @@ _TARGET = "stripe-com/stripe-com-api/2024-06-20"
         (ReservedAuthFieldError("Host"), "BROKER_DENIED", None, "operator"),
         (SecuritySchemesLookupUnavailableError(), "BROKER_DENIED", None, "registry"),
         (TooManyOpenSessionsError("agent", 10), "BROKER_DENIED", None, "Do not open more"),
+        (RecentlyRejectedError(3600), "BROKER_DENIED", None, "Do not ask again"),
         (BindingSuspendedError("agt_1"), "BROKER_DENIED", None, "ask your operator to resume"),
     ],
 )

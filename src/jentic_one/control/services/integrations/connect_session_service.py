@@ -11,6 +11,7 @@ called on the concrete ``AuthCodeFlowHandler`` from
 
 from __future__ import annotations
 
+import math
 import secrets
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
@@ -122,6 +123,7 @@ from jentic_one.control.services.integrations.errors import (
     NothingToChangeError,
     OAuthAppChangedError,
     OwnClientInvalidError,
+    RecentlyRejectedError,
     ReviewStaleError,
     RevisionChangedError,
     RevisionRequiredError,
@@ -1144,7 +1146,9 @@ class ConnectSessionService:
 
         A repeat ask from an agent that already has an open session for the
         same target is :class:`ConnectOpenError` naming that session: the
-        agent amends it (``amend_session``) instead.
+        agent amends it (``amend_session``) instead. An agent
+        whose ask for the same target a human rejected within the cooldown
+        gets :class:`RecentlyRejectedError`.
         """
         agent = await self._require_session_agent_allowed(agent_id, identity)
         initiator_actor_id = identity.sub
@@ -1184,6 +1188,12 @@ class ConnectSessionService:
 
         api_scope = await self._vendor_api_scope(entry.vendor)
         await self._refuse_suspended_binding(agent_id, api_scope)
+        # The hold is on the agent asking again; a person can still connect for it.
+        await self._check_rejection_cooldown(
+            agent_id if agent_id == initiator_actor_id else None,
+            target_kind=TARGET_KIND_VENDOR,
+            vendor=vendor_key,
+        )
         # One open session per agent-started OAuth request: the same agent
         # asking again for the same vendor, app and scopes gets the open one.
         dedupe_key = (
@@ -1356,6 +1366,13 @@ class ConnectSessionService:
             vendor=view.vendor, name=view.name, version=view.version
         )
         await self._refuse_suspended_binding(agent_id, api_scope)
+        await self._check_rejection_cooldown(
+            agent_id if agent_id == initiator_actor_id else None,
+            target_kind=TARGET_KIND_API,
+            vendor=view.vendor,
+            api_name=view.name,
+            api_version=view.version,
+        )
 
         agent_started = agent_id is not None and agent_id == initiator_actor_id
 
@@ -1623,6 +1640,53 @@ class ConnectSessionService:
                 version=credential.api_version,
             ),
         )
+
+    async def _check_rejection_cooldown(
+        self,
+        agent_id: str | None,
+        *,
+        target_kind: str,
+        vendor: str,
+        api_name: str | None = None,
+        api_version: str | None = None,
+        credential_id: str | None = None,
+    ) -> None:
+        """Refuse an agent's repeat ask for a target a human rejected within the cooldown.
+
+        With ``credential_id`` the ask is an edit, and the target is that
+        binding: a rejected edit of it holds back the next one.
+        """
+        hours = self._ctx.config.control.connect.rejection_cooldown_hours
+        if agent_id is None or hours <= 0:
+            return
+        now = datetime.now(UTC)
+        cooldown = timedelta(hours=hours)
+        async with self._ctx.control_db.session() as session:
+            if credential_id is not None:
+                ended = await ConnectSessionOutcomeRepository.latest_edit_ended_at(
+                    session,
+                    agent_id=agent_id,
+                    credential_id=credential_id,
+                    outcome=OUTCOME_REJECTED,
+                    since=now - cooldown,
+                )
+            else:
+                ended = await ConnectSessionOutcomeRepository.latest_ended_at(
+                    session,
+                    agent_id=agent_id,
+                    outcome=OUTCOME_REJECTED,
+                    target_kind=target_kind,
+                    vendor=vendor,
+                    api_name=api_name,
+                    api_version=api_version,
+                    since=now - cooldown,
+                )
+        if ended is None:
+            return
+        if ended.tzinfo is None:
+            ended = ended.replace(tzinfo=UTC)
+        retry_after = max(1, math.ceil((ended + cooldown - now).total_seconds()))
+        raise RecentlyRejectedError(retry_after)
 
     async def _check_open_session_caps(
         self, agent_id: str | None, identity: Identity, agent: AgentOwnerRow | None
@@ -2041,6 +2105,11 @@ class ConnectSessionService:
             error = EditOpenError(own_open.id)
             error.point_at(credential_id, agent_id)
             raise error
+        # The hold is on the agent asking again; its owner can still make the change.
+        if identity.actor_type == ActorType.AGENT:
+            await self._check_rejection_cooldown(
+                agent_id, target_kind=TARGET_KIND_VENDOR, vendor="", credential_id=credential_id
+            )
         baseline = await self._binding_snapshot(agent_id, credential_id, binding.rule_set_id)
         baseline["suspended"] = binding.suspended
         try:
@@ -5356,8 +5425,8 @@ class ConnectSessionService:
                     outcome=_outcome_for(state, error_code),
                     error_code=error_code,
                     ended_at=datetime.now(UTC),
-                    # An edit's outcome names its binding's credential; a
-                    # create's has none.
+                    # An edit's outcome names its binding's credential (the
+                    # rejection cooldown keys on it); a create's has none.
                     credential_id=row.credential_id if row.intent == INTENT_EDIT else None,
                 )
                 if row.intent == INTENT_EDIT:
@@ -5603,8 +5672,9 @@ class ConnectSessionService:
         Only the target agent's owner (with ``credentials:write`` and
         ``agents:write``) or ``org:admin`` — never the poll token, never an
         agent; anyone else gets the same uniform 403 as the other session
-        routes. The session ends ``failed`` with ``error_code="rejected"``.
-        Rejecting an already-ended session is a no-op.
+        routes. The session ends ``failed`` with ``error_code="rejected"``,
+        and the agent's repeat ask for the same target is refused for the
+        rejection cooldown. Rejecting an already-ended session is a no-op.
         """
         async with self._ctx.control_db.session() as read_session:
             row = await ConnectSessionRepository.get_by_id(read_session, session_id)

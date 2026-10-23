@@ -426,6 +426,13 @@
           "minimum": 1,
           "title": "Max Open Sessions Per Owner",
           "type": "integer"
+        },
+        "rejection_cooldown_hours": {
+          "default": 0,
+          "description": "Hours after a human rejects an agent's connect or access-change request during which the agent's repeat ask for the same target (or binding) gets 429 `recently_rejected`. Off (0) by default: an agent may ask again at once.",
+          "minimum": 0,
+          "title": "Rejection Cooldown Hours",
+          "type": "integer"
         }
       },
       "title": "ControlConnectConfig",

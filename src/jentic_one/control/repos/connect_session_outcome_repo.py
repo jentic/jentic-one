@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import CursorResult, delete, select
+from sqlalchemy import CursorResult, delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -67,6 +67,66 @@ class ConnectSessionOutcomeRepository:
         stmt = select(ConnectSessionOutcome).where(ConnectSessionOutcome.session_id == session_id)
         result = await session.execute(stmt)
         return result.scalar_one_or_none()
+
+    @staticmethod
+    async def latest_ended_at(
+        session: AsyncSession,
+        *,
+        agent_id: str,
+        outcome: str,
+        target_kind: str,
+        vendor: str,
+        api_name: str | None,
+        api_version: str | None,
+        since: datetime,
+    ) -> datetime | None:
+        """When the agent's most recent ``outcome`` for this target ended, if after ``since``.
+
+        Only create sessions' outcomes count: an ended edit records its
+        credential and is looked up with :meth:`latest_edit_ended_at`, so a
+        rejected edit never holds back a new connect, nor the reverse.
+        """
+        stmt = select(func.max(ConnectSessionOutcome.ended_at)).where(
+            ConnectSessionOutcome.agent_id == agent_id,
+            ConnectSessionOutcome.outcome == outcome,
+            ConnectSessionOutcome.target_kind == target_kind,
+            ConnectSessionOutcome.vendor == vendor,
+            ConnectSessionOutcome.ended_at >= since,
+            ConnectSessionOutcome.credential_id.is_(None),
+        )
+        stmt = stmt.where(
+            ConnectSessionOutcome.api_name.is_(None)
+            if api_name is None
+            else ConnectSessionOutcome.api_name == api_name
+        )
+        stmt = stmt.where(
+            ConnectSessionOutcome.api_version.is_(None)
+            if api_version is None
+            else ConnectSessionOutcome.api_version == api_version
+        )
+        result = await session.execute(stmt)
+        value: datetime | None = result.scalar_one_or_none()
+        return value
+
+    @staticmethod
+    async def latest_edit_ended_at(
+        session: AsyncSession,
+        *,
+        agent_id: str,
+        credential_id: str,
+        outcome: str,
+        since: datetime,
+    ) -> datetime | None:
+        """When the agent's latest edit of a binding ended with ``outcome``, if after ``since``."""
+        stmt = select(func.max(ConnectSessionOutcome.ended_at)).where(
+            ConnectSessionOutcome.agent_id == agent_id,
+            ConnectSessionOutcome.credential_id == credential_id,
+            ConnectSessionOutcome.outcome == outcome,
+            ConnectSessionOutcome.ended_at >= since,
+        )
+        result = await session.execute(stmt)
+        value: datetime | None = result.scalar_one_or_none()
+        return value
 
     @staticmethod
     async def delete_ended_before(

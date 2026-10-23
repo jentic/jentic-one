@@ -723,6 +723,11 @@ type ControlConnectConfig struct {
 	// `manual_flows_enabled` is on; one more `:connect` gets 429
 	// `too_many_open_sessions`.
 	MaxOpenSessionsPerOwner int `json:"max_open_sessions_per_owner" yaml:"max_open_sessions_per_owner" mapstructure:"max_open_sessions_per_owner"`
+
+	// Hours after a human rejects an agent's connect or access-change request during
+	// which the agent's repeat ask for the same target (or binding) gets 429
+	// `recently_rejected`. Off (0) by default: an agent may ask again at once.
+	RejectionCooldownHours int `json:"rejection_cooldown_hours,omitempty,omitzero" yaml:"rejection_cooldown_hours,omitempty" mapstructure:"rejection_cooldown_hours,omitempty"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
@@ -756,6 +761,12 @@ func (j *ControlConnectConfig) UnmarshalJSON(value []byte) error {
 	}
 	if 1 > plain.MaxOpenSessionsPerOwner {
 		return fmt.Errorf("field %s: must be >= %v", "max_open_sessions_per_owner", 1)
+	}
+	if v, ok := raw["rejection_cooldown_hours"]; !ok || v == nil {
+		plain.RejectionCooldownHours = 0
+	}
+	if 0 > plain.RejectionCooldownHours {
+		return fmt.Errorf("field %s: must be >= %v", "rejection_cooldown_hours", 0)
 	}
 	*j = ControlConnectConfig(plain)
 	return nil

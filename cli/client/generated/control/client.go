@@ -11272,7 +11272,9 @@ type ClientInterface interface {
 	// Only the target agent's owner (holding ``credentials:write`` and
 	// ``agents:write``) or ``org:admin``; there is no poll-token path and an
 	// agent can never reject. Everyone else gets the uniform 403. The agent's
-	// ``/status`` then reports ``failed`` with ``error_code: rejected``. Closing the dialog
+	// ``/status`` then reports ``failed`` with ``error_code: rejected``. With a
+	// rejection cooldown set (off by default), its repeat ``:connect`` for the
+	// same target answers 429 ``recently_rejected`` until it lapses. Closing the dialog
 	// without rejecting makes no call; an unmount cancel stays ``cancelled``.
 	//
 	// Corresponds with POST /connect-sessions/{session_id}:reject (the `RejectConnectSession` operationId).
@@ -15224,7 +15226,9 @@ func (c *Client) ConfirmConnectSession(ctx context.Context, sessionId string, pa
 // Only the target agent's owner (holding “credentials:write“ and
 // “agents:write“) or “org:admin“; there is no poll-token path and an
 // agent can never reject. Everyone else gets the uniform 403. The agent's
-// “/status“ then reports “failed“ with “error_code: rejected“. Closing the dialog
+// “/status“ then reports “failed“ with “error_code: rejected“. With a
+// rejection cooldown set (off by default), its repeat “:connect“ for the
+// same target answers 429 “recently_rejected“ until it lapses. Closing the dialog
 // without rejecting makes no call; an unmount cancel stays “cancelled“.
 //
 // Corresponds with POST /connect-sessions/{session_id}:reject (the `RejectConnectSession` operationId).
@@ -28377,7 +28381,9 @@ type ClientWithResponsesInterface interface {
 	// Only the target agent's owner (holding ``credentials:write`` and
 	// ``agents:write``) or ``org:admin``; there is no poll-token path and an
 	// agent can never reject. Everyone else gets the uniform 403. The agent's
-	// ``/status`` then reports ``failed`` with ``error_code: rejected``. Closing the dialog
+	// ``/status`` then reports ``failed`` with ``error_code: rejected``. With a
+	// rejection cooldown set (off by default), its repeat ``:connect`` for the
+	// same target answers 429 ``recently_rejected`` until it lapses. Closing the dialog
 	// without rejecting makes no call; an unmount cancel stays ``cancelled``.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -47332,7 +47338,9 @@ func (c *ClientWithResponses) ConfirmConnectSessionWithResponse(ctx context.Cont
 // Only the target agent's owner (holding “credentials:write“ and
 // “agents:write“) or “org:admin“; there is no poll-token path and an
 // agent can never reject. Everyone else gets the uniform 403. The agent's
-// “/status“ then reports “failed“ with “error_code: rejected“. Closing the dialog
+// “/status“ then reports “failed“ with “error_code: rejected“. With a
+// rejection cooldown set (off by default), its repeat “:connect“ for the
+// same target answers 429 “recently_rejected“ until it lapses. Closing the dialog
 // without rejecting makes no call; an unmount cancel stays “cancelled“.
 //
 // Returns a wrapper object for the known response body format(s).

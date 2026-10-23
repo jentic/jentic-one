@@ -47,6 +47,7 @@ from jentic_one.control.services.integrations.errors import (
     EditOpenError,
     InvalidPollTokenError,
     NothingToChangeError,
+    RecentlyRejectedError,
     RevisionChangedError,
     RuleSetConfirmForbiddenError,
     SessionClosedError,
@@ -278,7 +279,7 @@ async def test_an_ended_edit_never_touches_the_credential_or_binding(
         created.session_id, poll_token=created.poll_token, identity=_AGENT_IDENTITY
     )
     assert status.status in ("failed", "expired")
-    # The binding is free for a new edit, however the last one ended.
+    # The binding is free for a new edit, however the last one ended (no cooldown by default).
     await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
 
 
@@ -537,16 +538,24 @@ async def test_only_the_initiator_or_its_reviewer_amends_and_only_with_the_sessi
         )
 
 
-async def test_the_agent_asks_again_right_after_a_rejection(
-    integration_context: Context, binding: str
+async def test_a_rejected_edit_holds_back_the_next_one_for_the_cooldown(
+    integration_context: Context, binding: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ctx = integration_context
+    # The cooldown is the same setting as for connect requests, off by default.
+    monkeypatch.setattr(ctx.config.control.connect, "rejection_cooldown_hours", 24)
     svc = ConnectSessionService(ctx)
     created = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
     await svc.reject_session(created.session_id, identity=_OWNER)
-    # A reviewer who rejects can ask for a revised request at once.
-    again = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_READ | {"path": "/v1/drafts"})]))
-    assert again.session_id != created.session_id
+    with pytest.raises(RecentlyRejectedError):
+        await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+
+    # The hold is on the agent: its owner can still ask for the change.
+    by_owner = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]), identity=_OWNER)
+    await svc.cancel_session(by_owner.session_id, poll_token=by_owner.poll_token, identity=_OWNER)
+
+    monkeypatch.setattr(ctx.config.control.connect, "rejection_cooldown_hours", 0)
+    await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
 
 
 async def test_a_cancelled_edit_does_not_hold_back_the_next_one(

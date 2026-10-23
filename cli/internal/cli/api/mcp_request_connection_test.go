@@ -580,6 +580,7 @@ func TestMCPRequestConnection_APITargetErrorCodes(t *testing.T) {
 			ux.CodeBrokerDenied, "", "enum",
 		},
 		{http.StatusTooManyRequests, `{"type":"too_many_open_sessions","detail":"cap"}`, ux.CodeBrokerDenied, "", "Do not open more"},
+		{http.StatusTooManyRequests, `{"type":"recently_rejected","detail":"rejected"}`, ux.CodeBrokerDenied, "", "Do not ask again"},
 		{
 			http.StatusConflict, `{"type":"connect_session_binding_suspended","detail":"suspended"}`,
 			ux.CodeBrokerDenied, "", "ask your operator to resume it",

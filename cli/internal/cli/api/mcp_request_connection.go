@@ -315,7 +315,7 @@ func connectRetryAfter(resp *control.IntegrationsConnectHTTPResp) float64 {
 //     auth_type_required/auth_type_not_declared (retry with auth_type),
 //     manual_flows_disabled / no_declared_scheme / host_variable_not_pinned
 //     (report to the user), too_many_open_sessions (do not open more),
-//     connect_session_binding_suspended (do not ask again).
+//     recently_rejected / connect_session_binding_suspended (do not ask again).
 //   - 404 (unknown vendor) / 400 (unsupported flow) — a correctable ask:
 //     RESOLVE_FAILED with the rediscovery/operator step.
 //   - 400 ambiguous_vendor — several shared OAuth apps serve the vendor and
