@@ -455,10 +455,30 @@ export async function getPermissionRuleSet(ruleSetId: string): Promise<RuleSetRe
 	}
 }
 
+/** The server's largest `GET /agents` page. */
+const AGENT_PAGE_LIMIT = 200;
+
+/** Cap on pages fetched for the picker, so a runaway cursor can't hang the SPA. */
+const AGENT_PICKER_MAX_PAGES = 50;
+
 /**
- * Thin adapter around the generated AgentsService so views/hooks in this
- * module never touch `@/shared/api` directly.
+ * Every agent the caller can see, for the agent pickers: follows
+ * `next_cursor` until the last page (or the page cap, which leaves
+ * `has_more` set).
  */
 export async function listAgentsForPicker(): Promise<AgentListResponse> {
-	return call(AgentsService.listAgents({ limit: 100 }), 'Failed to load agents.');
+	const data: AgentListResponse['data'] = [];
+	let cursor: string | null = null;
+	for (let i = 0; i < AGENT_PICKER_MAX_PAGES; i++) {
+		const page: AgentListResponse = await call(
+			AgentsService.listAgents({ cursor, limit: AGENT_PAGE_LIMIT }),
+			'Failed to load agents.',
+		);
+		data.push(...page.data);
+		if (!page.has_more || !page.next_cursor) {
+			return { data, has_more: false, next_cursor: null };
+		}
+		cursor = page.next_cursor;
+	}
+	return { data, has_more: true, next_cursor: cursor };
 }

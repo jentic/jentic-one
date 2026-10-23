@@ -84,9 +84,14 @@ export function useVendorAuthCapabilities(
 	});
 }
 
+/** The agent pickers' cache slice. */
+export const agentsPickerKey = [...sharedQueryKeys.agentsRoot, 'picker'] as const;
+
 export function useAgentsForPicker() {
 	return useQuery<AgentListResponse>({
-		queryKey: ['integrations', 'agents-picker'],
+		// Under the agents root, so agent mutations that invalidate it refresh
+		// the picker too.
+		queryKey: agentsPickerKey,
 		queryFn: listAgentsForPicker,
 		staleTime: 30_000,
 	});

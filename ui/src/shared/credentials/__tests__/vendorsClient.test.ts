@@ -5,6 +5,7 @@ import {
 	IntegrationsApiError,
 	confirmConnectSession,
 	getConnectSession,
+	listAgentsForPicker,
 	listAllVendorOperations,
 	pollConnectSessionStatus,
 } from '@/shared/credentials/api/vendors-client';
@@ -113,5 +114,36 @@ describe('vendors-client over the generated client', () => {
 		expect(all?.data.map((o) => o.operation_id)).toEqual(['a', 'b']);
 		expect(all?.has_more).toBe(false);
 		await expect(listAllVendorOperations('github.com', 'missing', '1')).resolves.toBeNull();
+	});
+});
+
+describe('listAgentsForPicker', () => {
+	it('follows next_cursor past the first page, so large orgs are not truncated', async () => {
+		const agent = (n: number) => ({
+			id: `agnt_${n}`,
+			name: `agent-${n}`,
+			status: 'active',
+		});
+		const limits: string[] = [];
+		worker.use(
+			http.get('/agents', ({ request }) => {
+				const params = new URL(request.url).searchParams;
+				limits.push(params.get('limit') ?? '');
+				const start = Number(params.get('cursor') ?? 0);
+				const end = Math.min(start + 200, 250);
+				return HttpResponse.json({
+					data: Array.from({ length: end - start }, (_, i) => agent(start + i)),
+					has_more: end < 250,
+					next_cursor: end < 250 ? String(end) : null,
+				});
+			}),
+		);
+
+		const res = await listAgentsForPicker();
+
+		expect(res.data).toHaveLength(250);
+		expect(res.data[res.data.length - 1]?.id).toBe('agnt_249');
+		expect(res.has_more).toBe(false);
+		expect(limits).toEqual(['200', '200']);
 	});
 });
