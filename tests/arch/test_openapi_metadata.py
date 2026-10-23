@@ -68,7 +68,7 @@ def test_every_operation_has_core_metadata(generated_control_spec: dict[str, Any
             "Generated operations are missing core metadata:\n"
             + "\n".join(violations)
             + f"\n\nFix: add summary= (or a docstring) and, for an unmapped path, a "
-            f"_TAG_RULES entry in openapi_meta.py. {_GUIDE_HINT}"
+            f"_TAG_RULES entry in openapi_meta/operation_ids.py. {_GUIDE_HINT}"
         )
 
 
@@ -91,7 +91,7 @@ def test_every_operation_tag_is_declared(generated_control_spec: dict[str, Any])
             "Operations reference tags not declared in OPENAPI_TAGS:\n"
             + "\n".join(violations)
             + f"\n\nFix: add the tag (with a description) to OPENAPI_TAGS and place it in an "
-            f"X_TAG_GROUPS group in openapi_meta.py. {_GUIDE_HINT}"
+            f"X_TAG_GROUPS group in openapi_meta/tags.py. {_GUIDE_HINT}"
         )
 
 
@@ -187,7 +187,7 @@ def test_error_responses_are_not_html(generated_control_spec: dict[str, Any]) ->
         pytest.fail(
             "Error responses documented as text/html:\n"
             + "\n".join(violations)
-            + "\n\nFix: _normalise_error_responses in openapi_meta.py should fold these "
+            + "\n\nFix: normalise_error_responses in openapi_meta/responses.py should fold these "
             f"into a JSON media type. {_GUIDE_HINT}"
         )
 

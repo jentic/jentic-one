@@ -17,7 +17,7 @@ A route passes when one of these holds:
 - it is listed in ``NON_IDENTITY_AUTH`` (authenticates with a non-platform
   credential, e.g. an RFC 7592 Registration-Access-Token);
 - its operationId is in ``PUBLIC_OPERATION_IDS``
-  (``src/jentic_one/shared/web/openapi_meta.py``), each entry carrying a ``#``
+  (``src/jentic_one/shared/web/openapi_meta/operation_ids.py``), each entry carrying a ``#``
   justification comment directly above it;
 - it is schema-hidden and listed in :data:`SCHEMA_HIDDEN_PUBLIC_OPERATIONS`
   with a justification, or it is a broker liveness/readiness probe
@@ -60,7 +60,7 @@ from jentic_one.shared.web.openapi_meta import PUBLIC_OPERATION_IDS, generate_op
 from .conftest import SRC_ROOT
 
 REPO_ROOT = SRC_ROOT.parent.parent
-OPENAPI_META = SRC_ROOT / "shared" / "web" / "openapi_meta.py"
+OPENAPI_META = SRC_ROOT / "shared" / "web" / "openapi_meta" / "operation_ids.py"
 GATE_CONFIG = REPO_ROOT / "config" / "local-sqlite.yaml"
 
 #: Every deployment shape ``jentic-one serve`` can build: the combined
@@ -301,8 +301,8 @@ def route_records(tmp_path_factory: pytest.TempPathFactory) -> list[RouteRecord]
 _FIX_AUTH = (
     "Fix: add `identity: Identity = get_current_identity(required_permissions=[...])` "
     "to the handler. If the route is intentionally public, add its operationId to "
-    "PUBLIC_OPERATION_IDS in src/jentic_one/shared/web/openapi_meta.py with a `#` "
-    "comment directly above the entry saying why it is safe unauthenticated (or, "
+    "PUBLIC_OPERATION_IDS in src/jentic_one/shared/web/openapi_meta/operation_ids.py with a "
+    "`#` comment directly above the entry saying why it is safe unauthenticated (or, "
     "for a schema-hidden route, to SCHEMA_HIDDEN_PUBLIC_OPERATIONS in this file)."
 )
 
@@ -399,7 +399,9 @@ def public_operation_id_entries(source: str) -> list[tuple[str, int]]:
                 for elt in ast.walk(value)
                 if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
             ]
-    raise AssertionError("PUBLIC_OPERATION_IDS assignment not found in openapi_meta.py")
+    raise AssertionError(
+        "PUBLIC_OPERATION_IDS assignment not found in openapi_meta/operation_ids.py"
+    )
 
 
 def find_unjustified_public_entries(source: str, filename: str) -> list[str]:
