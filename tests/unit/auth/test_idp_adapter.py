@@ -569,3 +569,57 @@ async def test_exchange_code_caches_jwks_and_refreshes_on_key_rotation(
     )
     assert jwks_route.call_count == 2
     assert userinfo["sub"] == "ext-user-123"
+
+
+@pytest.mark.parametrize(
+    ("configured_issuer", "token_iss", "accepted"),
+    [
+        (None, "https://accounts.google.com", True),
+        (None, "accounts.google.com", True),
+        (None, "https://accounts.google.com/", True),
+        (None, "https://other-idp.example.com", False),
+        # The bare spelling is Google's own: a custom issuer never accepts it.
+        ("https://idp.example.com", "accounts.google.com", False),
+    ],
+)
+@respx.mock
+async def test_google_exchange_code_accepts_both_documented_issuer_spellings(
+    configured_issuer: str | None, token_iss: str, accepted: bool
+) -> None:
+    """Google ID tokens carry either issuer spelling; both key the link under one issuer."""
+    config = IdpConfig(
+        enabled=True,
+        provider="google",
+        client_id="google-client",
+        client_secret=SecretStr("google-secret"),
+        issuer=configured_issuer or "",
+    )
+    adapter = GoogleOidcAdapter(config)
+    id_token = _sign_upstream_id_token(iss=token_iss, aud="google-client")
+    respx.post(adapter._token_endpoint).mock(
+        return_value=httpx.Response(200, json={"access_token": "up-tok", "id_token": id_token})
+    )
+    respx.get(f"{adapter.issuer}/.well-known/openid-configuration").mock(
+        return_value=httpx.Response(404)
+    )
+    respx.get(adapter._default_jwks_uri()).mock(
+        return_value=httpx.Response(200, json={"keys": [_RSA_JWK]})
+    )
+    respx.get(adapter._userinfo_endpoint).mock(
+        return_value=httpx.Response(
+            200, json={"sub": "ext-user-123", "email": "u@example.com", "email_verified": True}
+        )
+    )
+
+    call = adapter.exchange_code(
+        "auth-code-1",
+        redirect_uri="https://app.example.com/oauth/callback",
+        nonce="flow-nonce-1",
+    )
+    if not accepted:
+        with pytest.raises(InvalidGrantError, match="issuer mismatch"):
+            await call
+        return
+    userinfo = await call
+    assert userinfo["iss"] == "https://accounts.google.com"
+    assert adapter.map_claims(userinfo).issuer == "https://accounts.google.com"

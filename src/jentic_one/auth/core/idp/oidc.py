@@ -174,6 +174,10 @@ class OidcAdapter:
                 return disc_iss.rstrip("/")
         return ""
 
+    def _issuer_aliases(self) -> frozenset[str]:
+        """Other ``iss`` spellings the provider documents for ``_expected_issuer()``."""
+        return frozenset()
+
     def _verify_id_token(
         self,
         raw_id_token: str,
@@ -231,8 +235,13 @@ class OidcAdapter:
         if not isinstance(token_iss, str) or not token_iss:
             raise InvalidGrantError("Upstream id_token is missing iss claim")
         expected_iss = self._expected_issuer()
-        if not expected_iss or token_iss.rstrip("/") != expected_iss:
+        normalised_iss = token_iss.rstrip("/")
+        if not expected_iss or (
+            normalised_iss != expected_iss and normalised_iss not in self._issuer_aliases()
+        ):
             raise InvalidGrantError("Upstream id_token issuer mismatch")
+        # Every accepted spelling keys identities under one canonical issuer.
+        claims["iss"] = expected_iss
 
         token_sub = claims.get("sub")
         if not isinstance(token_sub, str) or not token_sub:
@@ -392,6 +401,13 @@ class GoogleOidcAdapter(OidcAdapter):
 
     def _default_jwks_uri(self) -> str:
         return self.JWKS_URI
+
+    def _issuer_aliases(self) -> frozenset[str]:
+        # Google documents both ``https://accounts.google.com`` and the bare
+        # ``accounts.google.com`` as the ``iss`` of its ID tokens.
+        if self.issuer == self.ISSUER:
+            return frozenset({"accounts.google.com"})
+        return frozenset()
 
     def map_claims(self, userinfo: dict[str, object]) -> IdpClaims:
         """Map Google claims, surfacing the `hd` (hosted-domain) claim.
