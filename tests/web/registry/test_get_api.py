@@ -197,3 +197,43 @@ async def test_get_api_matches_version_verbatim(
 
     assert authed_client.get("/apis/Acme/Payments/1.1.4").status_code == 200
     assert authed_client.get("/apis/acme/payments/1-1-4").status_code == 404
+
+
+async def test_list_vendor_filter_normalises_like_the_path(
+    authed_client: TestClient, web_context: Context
+) -> None:
+    """The ``GET /apis?vendor=`` filter folds spelling the same way the path does."""
+    await _seed_api(web_context, vendor="stripe-com", name="api", version="1")
+
+    for vendor in ("Stripe.com", "stripe-com"):
+        resp = authed_client.get("/apis", params={"vendor": vendor})
+        assert resp.status_code == 200
+        assert [item["api"]["vendor"] for item in resp.json()["data"]] == ["stripe-com"]
+
+    assert authed_client.get("/apis", params={"vendor": "..."}).status_code == 422
+
+
+async def test_mutating_and_overlay_routes_resolve_mixed_case_identity(
+    authed_client: TestClient, web_context: Context
+) -> None:
+    """A mutating route and the overlays router resolve the row through the normalised path."""
+    await _seed_api(web_context, vendor="stripe-com", name="api", version="1")
+
+    patched = authed_client.patch("/apis/Stripe.com/API/1", json={"display_name": "Stripe"})
+    assert patched.status_code == 200
+    assert patched.json()["display_name"] == "Stripe"
+    assert authed_client.get("/apis/stripe-com/api/1").json()["display_name"] == "Stripe"
+
+    overlays = authed_client.get("/apis/Stripe.com/API/1/overlays")
+    assert overlays.status_code == 200
+
+
+async def test_path_segment_with_no_slug_characters_is_rejected(
+    authed_client: TestClient,
+) -> None:
+    """A segment that slugifies to nothing is a 422 naming the segment, not a 404."""
+    resp = authed_client.get("/apis/---/x/1")
+    assert resp.status_code == 422
+    [error] = resp.json()["detail"]
+    assert error["loc"] == ["path", "vendor"]
+    assert "---" not in error["msg"]

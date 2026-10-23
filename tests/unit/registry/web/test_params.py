@@ -8,9 +8,14 @@ from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from pydantic import AfterValidator
 
-from jentic_one.registry.web.params import ApiNamePath, ApiVendorPath, ApiVersionPath
+from jentic_one.registry.web.params import (
+    ApiNamePath,
+    ApiVendorPath,
+    ApiVendorQuery,
+    ApiVersionPath,
+    normalise_api_field,
+)
 from jentic_one.registry.web.routers import apis, overlays
-from jentic_one.shared.models import slugify_api_field
 
 
 @pytest.fixture()
@@ -23,6 +28,10 @@ def echo_client() -> TestClient:
     ) -> dict[str, str]:
         return {"vendor": vendor, "name": name, "version": version}
 
+    @app.get("/apis")
+    async def _echo_list(vendor: ApiVendorQuery = None) -> dict[str, str | None]:
+        return {"vendor": vendor}
+
     return TestClient(app)
 
 
@@ -33,6 +42,7 @@ def echo_client() -> TestClient:
         ("/apis/stripe-com/api/1", ("stripe-com", "api", "1")),
         ("/apis/stripe.com/Payments API/1.1.4", ("stripe-com", "payments-api", "1.1.4")),
         ("/apis/acme/pets/V2", ("acme", "pets", "V2")),
+        ("/apis/acme/pets/%201%20", ("acme", "pets", "1")),
     ],
 )
 def test_path_params_normalise_vendor_and_name_but_keep_version(
@@ -58,7 +68,34 @@ def test_every_api_identity_route_slugifies_vendor_and_name(router: APIRouter) -
         params = {p.name: p for p in route.dependant.path_params}
         for field in ("vendor", "name"):
             metadata = params[field].field_info.metadata
-            assert AfterValidator(slugify_api_field) in metadata, (
+            assert AfterValidator(normalise_api_field) in metadata, (
                 f"{route.path}: {field} is not slug-normalised"
             )
-        assert not any(isinstance(m, AfterValidator) for m in params["version"].field_info.metadata)
+        assert AfterValidator(str.strip) in params["version"].field_info.metadata
+
+
+@pytest.mark.parametrize("path", ["/apis/---/x/1", "/apis/%2E/x/1", "/apis/acme/%20/1"])
+def test_path_segment_with_no_slug_characters_is_rejected(
+    echo_client: TestClient, path: str
+) -> None:
+    assert echo_client.get(path).status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ({"vendor": "Stripe.com"}, "stripe-com"),
+        ({"vendor": "stripe-com"}, "stripe-com"),
+        ({}, None),
+    ],
+)
+def test_list_vendor_filter_normalises_like_the_path(
+    echo_client: TestClient, query: dict[str, str], expected: str | None
+) -> None:
+    resp = echo_client.get("/apis", params=query)
+    assert resp.status_code == 200
+    assert resp.json() == {"vendor": expected}
+
+
+def test_list_vendor_filter_with_no_slug_characters_is_rejected(echo_client: TestClient) -> None:
+    assert echo_client.get("/apis", params={"vendor": "..."}).status_code == 422

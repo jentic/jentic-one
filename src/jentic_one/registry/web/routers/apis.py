@@ -19,7 +19,12 @@ from jentic_one.registry.services.revision_service import (
 from jentic_one.registry.services.spec_download_service import SpecDocument, SpecDownloadService
 from jentic_one.registry.web.content_negotiation import accepted_media_types
 from jentic_one.registry.web.deps import get_api_service
-from jentic_one.registry.web.params import ApiNamePath, ApiVendorPath, ApiVersionPath
+from jentic_one.registry.web.params import (
+    ApiNamePath,
+    ApiVendorPath,
+    ApiVendorQuery,
+    ApiVersionPath,
+)
 from jentic_one.registry.web.schemas.apis import (
     ApiImportLinksResponse,
     ApiImportRequest,
@@ -58,11 +63,7 @@ async def list_apis(
     request: Request,
     identity: Identity = get_current_identity(required_permissions=["apis:read"]),
     api_svc: ApiService = Depends(get_api_service),
-    vendor: str | None = Query(
-        default=None,
-        description="Only return APIs from this vendor.",
-        openapi_examples=ex.example(ex.API_VENDOR),
-    ),
+    vendor: ApiVendorQuery = None,
     cursor: str | None = Query(
         default=None,
         description="Opaque cursor from a previous page's `next_cursor`; omit for the first page.",
