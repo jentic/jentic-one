@@ -34,8 +34,8 @@ from httpx2 import Response
 
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
 from jentic_one.auth.services.authorize_service import AgentConsentOption, PendingAgentRef
-from jentic_one.auth.web import flow
-from jentic_one.auth.web.routers import authorize
+from jentic_one.auth.web import deps, flow
+from jentic_one.auth.web.routers import approval, authorize, consent, consent_agent
 from jentic_one.shared.config import AuthConfig
 from jentic_one.shared.state.backend import MemoryStateBackend
 
@@ -109,14 +109,17 @@ def _authorize_svc(
 
 def _app(svc: MagicMock) -> tuple[TestClient, MemoryStateBackend, MagicMock]:
     app = FastAPI()
+    app.include_router(approval.router)
     app.include_router(authorize.router)
+    app.include_router(consent.router)
+    app.include_router(consent_agent.router)
     ctx = MagicMock()
     ctx.config.auth = AuthConfig(canonical_base_url="https://auth.example.com", platform_clients=[])
     ctx.config.admin.auth.jwt_secret.get_secret_value.return_value = _SECRET
     app.state.ctx = ctx
     backend = MemoryStateBackend()
     app.state.auth_state_backend = backend
-    app.dependency_overrides[authorize.get_authorize_service] = lambda: svc
+    app.dependency_overrides[deps.get_authorize_service] = lambda: svc
     return TestClient(app, follow_redirects=False), backend, ctx
 
 

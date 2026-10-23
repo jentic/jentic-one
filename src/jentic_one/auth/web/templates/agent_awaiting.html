@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Awaiting agent approval | Jentic One</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="{fonts_url}" rel="stylesheet">
+    <style>{page_css}</style>
+</head>
+<body>
+    <div class="card">
+        {logo_block}
+        <div class="user-info">
+            <div class="label">Signed in as</div>
+            <div class="email">{user_email}</div>
+        </div>
+        <h1>Your agent <span class="app-name">{agent_name}</span> is awaiting
+            administrator approval</h1>
+        <p class="description">
+            This page checks automatically and continues the connection to
+            <span class="app-name">{app_name}</span> as soon as an
+            administrator approves your agent.
+        </p>
+        <div class="panel">
+            <p>Ask your Jentic One admin to approve
+                <span class="app-name">{agent_name}</span> on the Agents page:</p>
+            <div class="copy-row">
+                <input id="agents-link" readonly value="{agents_url}">
+                <button type="button" class="copy" id="copy-link">Copy</button>
+            </div>
+        </div>
+        <div class="status-line" id="agent-approval-status">Waiting for approval&hellip;</div>
+    </div>
+    <script id="agent-approval-config" type="application/json">{config_json}</script>
+    {page_script}
+</body>
+</html>
