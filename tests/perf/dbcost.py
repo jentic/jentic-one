@@ -63,6 +63,7 @@ from tests.perf.common import (
     upstream_base,
     write_result,
 )
+from tests.perf.monitoring_probe import Psql
 
 ROLES = ("registry_user", "control_user", "admin_user")
 METRICS = ("statements", "transactions", "tx_control", "writes", "ms")
@@ -99,24 +100,14 @@ ORDER BY s.calls DESC LIMIT 25;
 """
 
 
+#: Where SQL runs. ``None`` container = the compose stack's ``postgres`` service;
+#: ``--pg-container`` points it at a standalone one instead, so a measurement can
+#: run without the compose stack.
+PG: Psql = Psql()
+
+
 def psql(sql: str) -> list[list[str]]:
-    out = compose(
-        "exec",
-        "-T",
-        "postgres",
-        "psql",
-        "-U",
-        "postgres",
-        "-d",
-        "jentic",
-        "-At",
-        "-F",
-        "\t",
-        "-c",
-        sql,
-        capture=True,
-    )
-    return [line.split("\t") for line in out.strip().splitlines() if line]
+    return PG.rows(sql)
 
 
 def reset() -> None:
@@ -141,11 +132,34 @@ class IncompleteRunError(RuntimeError):
     """Not every measured call succeeded, so per-call counts would be wrong."""
 
 
-def measure(env: PerfEnv, variant: str, caller: str, n: int, rate: int) -> dict[str, Any]:
+def admin_probe(env: PerfEnv, path: str) -> tuple[Case, str, str]:
+    """Case/url/token for an admin GET, so the same stats machinery prices a read.
+
+    An admin read is served by the ``app`` surface, so a run using this probe must
+    leave ``app`` up — unlike the broker probe, which stops it to keep the app's
+    own polling out of the control/admin counts. The idle baseline therefore
+    includes that polling, which the subtraction in :func:`measure` removes.
+    """
+    case = Case(f"dbcost-admin-{path.strip('/').replace('/', '-')}", method="GET", body=None)
+    return case, f"{env.app_url}{path}", env.admin_token
+
+
+def measure(
+    env: PerfEnv,
+    variant: str,
+    caller: str,
+    n: int,
+    rate: int,
+    *,
+    probe: tuple[Case, str, str] | None = None,
+) -> dict[str, Any]:
     window_s = n / rate
-    case = Case(f"dbcost-{variant}-{caller}", caller=caller)
-    url = f"{env.broker_url}/{upstream_base(env.vendors['perf-noauth']['alias'])}{case.path}"
-    token = env.caller(caller).token
+    if probe is not None:
+        case, url, token = probe
+    else:
+        case = Case(f"dbcost-{variant}-{caller}", caller=caller)
+        url = f"{env.broker_url}/{upstream_base(env.vendors['perf-noauth']['alias'])}{case.path}"
+        token = env.caller(caller).token
     # Warm (or, for cold, at least load modules/pools) before measuring.
     oha(url, case, 20, 50, token)
     time.sleep(1)
@@ -195,9 +209,26 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--all", action="store_true", help="warm/cold x jak/at/jwt")
     parser.add_argument("-n", type=int, default=200, help="calls per measurement")
     parser.add_argument("--rate", type=int, default=10)
+    parser.add_argument(
+        "--probe",
+        choices=("broker", "admin"),
+        default="broker",
+        help="what to price: a brokered POST /execute, or an admin GET (--path)",
+    )
+    parser.add_argument(
+        "--path",
+        default="/monitoring/usage?group_by=api&top_limit=10",
+        help="admin path for --probe admin",
+    )
+    parser.add_argument(
+        "--pg-container",
+        help="Postgres container to run psql in; omit to use the compose 'postgres' service",
+    )
     args = parser.parse_args(argv)
     assert set(DB_VARIANTS.values()) <= set(VARIANTS)
 
+    global PG
+    PG = Psql(container=args.pg_container)
     env = PerfEnv.load()
     combos = (
         [(v, c) for v in DB_VARIANTS for c in ("jak", "at", "jwt")]

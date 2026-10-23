@@ -118,6 +118,45 @@ class BrokerEchoUser(_BrokerUser):
         )
 
 
+class AdminMonitoringUser(FastHttpUser):
+    """A dashboard viewer: the admin monitoring reads, not a brokered call.
+
+    Every other user class here drives the broker's data plane. This one drives
+    the admin control plane, whose cost lives in aggregation over
+    ``admin.execution_records`` behind a 30 s TTL cache rather than in an upstream
+    hop — a different bottleneck, and the one a dashboard actually exercises.
+
+    One task is one *view*: the overview strip plus a tab per group-by, which is
+    the fan-out the cache exists to absorb. Each request is named so the Locust
+    table breaks latency down per endpoint.
+
+    ``tests.perf.bench_monitoring`` is the scripted counterpart (latency ramp,
+    aggregate consistency under concurrent writes, cache pressure); use this class
+    for the interactive UI and shaped runs.
+    """
+
+    host = ENV.app_url
+    wait_time = constant_throughput(USER_RPS)
+    network_timeout = 60.0
+    connection_timeout = 10.0
+
+    #: Matches ``VIEW_PATHS`` in ``tests.perf.bench_monitoring``.
+    paths: ClassVar[tuple[str, ...]] = (
+        "/monitoring/executions?days=7",
+        "/monitoring/usage?group_by=api&top_limit=10",
+        "/monitoring/usage?group_by=agent&top_limit=10",
+        "/monitoring/usage?group_by=credential&top_limit=10",
+    )
+
+    def headers(self) -> dict[str, str]:
+        return _auth(ENV.admin_token)
+
+    @task
+    def dashboard_view(self) -> None:
+        for path in self.paths:
+            self.client.get(path, headers=self.headers(), name=path.split("?")[0])
+
+
 class MultiHostUser(_BrokerUser):
     """Spread load over the 5 extra upstream hosts (global pool vs per-host cap)."""
 
