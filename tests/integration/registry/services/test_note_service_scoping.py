@@ -9,12 +9,15 @@ any ``If-Match`` revision check, and the row is left unchanged.
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import delete, select
 
 from jentic_one.admin.core.schema.agents import Agent
+from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.admin.core.schema.users import User
+from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.notes import Note
 from jentic_one.registry.services.errors import NoteNotFoundError
@@ -22,7 +25,7 @@ from jentic_one.registry.services.note_service import NoteService, NoteView
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
-from jentic_one.shared.models import ActorType
+from jentic_one.shared.models import ActorType, ExecutionStatus
 
 pytestmark = pytest.mark.integration
 
@@ -294,3 +297,126 @@ async def test_agent_sees_only_its_own_notes(
     assert await _listed(integration_context, agent) == {own.id}
     with pytest.raises(NoteNotFoundError):
         await NoteService(integration_context).get(owner_note.id, identity=agent)
+
+
+# --- credential and execution note targets -----------------------------------
+#
+# Credential and execution records live outside the registry, so create stores
+# their ids as given and reads nothing from the target. The note stays scoped to
+# its author: the target's owner neither lists nor reads a note someone else
+# attached to it, and the owned-agent read widening follows the note's author,
+# not the target's owner.
+
+_TARGET_CREDENTIAL_ID = "cred_note_owner_target"
+_TARGET_EXECUTION_ID = "exec_note_owner_target"
+
+
+@pytest.fixture()
+async def owner_targets(
+    control_db: DatabaseSession, admin_db: DatabaseSession
+) -> AsyncGenerator[None, None]:
+    """A credential created by ``_OWNER`` and an execution run by ``_OWNER``."""
+
+    async def _wipe() -> None:
+        async with control_db.session() as session:
+            await session.execute(delete(Credential).where(Credential.id == _TARGET_CREDENTIAL_ID))
+            await session.commit()
+        async with admin_db.session() as session:
+            await session.execute(
+                delete(ExecutionRecord).where(ExecutionRecord.id == _TARGET_EXECUTION_ID)
+            )
+            await session.commit()
+
+    await _wipe()
+    async with control_db.transaction() as session:
+        session.add(
+            Credential(
+                id=_TARGET_CREDENTIAL_ID,
+                type="customer_api_key",
+                name="owner-cred",
+                api_vendor="note-test.com",
+                created_by=_OWNER.sub,
+            )
+        )
+    async with admin_db.transaction() as session:
+        session.add(
+            ExecutionRecord(
+                id=_TARGET_EXECUTION_ID,
+                trace_id="0" * 32,
+                started_at=datetime.now(UTC),
+                status=ExecutionStatus.COMPLETED,
+                actor_id=_OWNER.sub,
+                actor_type="user",
+            )
+        )
+    yield
+    await _wipe()
+
+
+async def _note_on_target(ctx: Context, target: str, identity: Identity) -> NoteView:
+    is_credential = target == "credential"
+    return await NoteService(ctx).create(
+        resource_credential_id=_TARGET_CREDENTIAL_ID if is_credential else None,
+        resource_execution_id=None if is_credential else _TARGET_EXECUTION_ID,
+        body="Note on another user's target",
+        identity=identity,
+    )
+
+
+async def _listed_by_target(ctx: Context, identity: Identity, target: str) -> set[str]:
+    page = await NoteService(ctx).list_page(
+        identity=identity,
+        credential_id=_TARGET_CREDENTIAL_ID if target == "credential" else None,
+        execution_id=_TARGET_EXECUTION_ID if target == "execution" else None,
+    )
+    assert page.has_more is False
+    return {view.id for view in page.data}
+
+
+@pytest.mark.parametrize("target", ["credential", "execution"])
+async def test_note_on_another_users_target_stays_author_scoped(
+    integration_context: Context, owner_targets: None, target: str
+) -> None:
+    svc = NoteService(integration_context)
+
+    view = await _note_on_target(integration_context, target, _OTHER)
+
+    # The view carries only the caller's input; no target field is resolved.
+    assert view.created_by == _OTHER.sub
+    assert view.resource_api_id is None
+    assert view.resource_operation_id is None
+    if target == "credential":
+        assert view.resource_credential_id == _TARGET_CREDENTIAL_ID
+        assert view.resource_execution_id is None
+    else:
+        assert view.resource_execution_id == _TARGET_EXECUTION_ID
+        assert view.resource_credential_id is None
+
+    # The target's owner neither lists nor reads it, even filtering by target.
+    assert view.id not in await _listed(integration_context, _OWNER)
+    assert await _listed_by_target(integration_context, _OWNER, target) == set()
+    with pytest.raises(NoteNotFoundError):
+        await svc.get(view.id, identity=_OWNER)
+
+    # The author and org:admin read it.
+    assert view.id in await _listed_by_target(integration_context, _OTHER, target)
+    assert (await svc.get(view.id, identity=_OTHER)).id == view.id
+    assert view.id in await _listed_by_target(integration_context, _ADMIN, target)
+
+
+@pytest.mark.parametrize("target", ["credential", "execution"])
+async def test_agent_note_on_another_users_target_visible_to_agent_owner_only(
+    integration_context: Context, owned_agents: None, owner_targets: None, target: str
+) -> None:
+    svc = NoteService(integration_context)
+
+    view = await _note_on_target(integration_context, target, _agent(_OTHER_AGENT))
+
+    # The agent's owner reads it through the owned-agent widening.
+    assert view.id in await _listed_by_target(integration_context, _OTHER, target)
+    assert (await svc.get(view.id, identity=_OTHER)).created_by == _OTHER_AGENT
+
+    # The target's owner does not.
+    assert await _listed_by_target(integration_context, _OWNER, target) == set()
+    with pytest.raises(NoteNotFoundError):
+        await svc.get(view.id, identity=_OWNER)
