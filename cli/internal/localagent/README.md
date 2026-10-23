@@ -31,7 +31,17 @@ Security design: [`docs/security/same-host/`](../../../docs/security/same-host/R
 
 | File | What it holds |
 | ---- | ------------- |
-| `localagent.go` | `Descriptor`/`Registry` (known agents), account lifecycle commands, the traverse-walk + rwx-leaf ACL grant model, config/provider seeding + secret scrubbing, `Classify` path bans, sudoers install/remove, trusted-workspace discovery |
+| `doc.go` | The package doc: what the package is for and the security model it implements |
+| `descriptor.go` | `Descriptor`/`Registry` (known agents), `SkillOnly`, `Known`/`Lookup` |
+| `account.go` | Agent account naming and default home/config paths, account lifecycle (create/delete commands, full name, operator home grant) and the sudoers rule install/remove |
+| `acl.go` | The traverse-walk + rwx-leaf ACL grant model: binary/dir-access probes, ancestor traverse grants, leaf grants and their revokes |
+| `homedir.go` | Agent home paths and ownership: reown/reclaim/delete, identity and profile removal, `IsUnderHome`, managed-home lookup and verification |
+| `agentexec.go` | Running commands as the agent user: the login/no-login bash argv, the probe `PATH`, the sensitive-env scrub and launch env allowlist, `runAsAgent` |
+| `binaries.go` | Agent `PATH` setup (local bin, shared bin dirs), operator binary lookup, copying/installing binaries into the agent home |
+| `seedconfig.go` | Config seeding from the operator's home (safe sources, copy/extract scripts, token caches) and secret/config scrubbing |
+| `provider.go` | Model-provider detection from the operator's config, provider config paths, agent path probes |
+| `danger.go` | `Classify` path bans (`DangerVerdict`), canonicalization and case-aware path comparison, `OperatorHome` |
+| `workspaces.go` | Trusted-workspace discovery from the operator's agent config |
 | `confine.go` | Per-session confinement: prereq probing (`AgentUserPrereqs`), `SessionAccess` (single source of truth for what a session reaches), SBPL profile builder (macOS), `bwrap` argv builder (Linux), `ConfineLaunchCmd` |
 | `serviceaccount.go` | The MCP service-account profile (`_jentic-<runtime>`): account + 0700 home creation, root-side context export, the argv-pinned MCP sudoers rule, teardown |
 | `servicebinary.go` | The root-owned jentic copy (`/usr/local/libexec/jentic/jentic`) the MCP sudoers rule and sudo-shim entry pin: atomic root-side install/refresh, removal, staleness check |
@@ -40,7 +50,7 @@ Security design: [`docs/security/same-host/`](../../../docs/security/same-host/R
 
 ## Adding a new runnable agent
 
-One data row, no code: add a `Descriptor` to `Registry` in `localagent.go`
+One data row, no code: add a `Descriptor` to `Registry` in `descriptor.go`
 (ID, binary, probe paths, install command, `SingleBinary`, `ConfigPaths`, and —
 if the agent keeps a separable credential file inside its config tree —
 `SecretConfigPaths` so seeding scrubs it). If the agent is a skill target but
