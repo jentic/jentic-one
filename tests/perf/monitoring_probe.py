@@ -88,6 +88,7 @@ def seed_executions(
     actors: int,
     apis: int,
     analyze: bool = True,
+    id_offset: int = 0,
 ) -> int:
     """Insert ``count`` execution records set-based, spread back over ``spread_s`` seconds.
 
@@ -95,6 +96,11 @@ def seed_executions(
     index, so a reseed at the same parameters produces the same distribution and a
     comparison between runs stays meaningful. Statuses alternate over the real
     ``ExecutionStatus`` values (``completed``/``failed``) in a 4:1 ratio.
+
+    ``id_offset`` shifts the series the ``trace_id`` derives from. A repeated call
+    at offset 0 writes the same trace ids each time, which these aggregates do not
+    care about but a trace-id-filtered measurement would, so the write loop in the
+    consistency phase advances it per batch to keep them distinct.
 
     Seam for the larger ladder: this covers one table at the volumes a laptop can
     hold. The xs/s/m/l multi-table seeder (``make perf-seed SCALE=…``) lands
@@ -105,7 +111,7 @@ def seed_executions(
     duration = "(ARRAY[" + ",".join(_DURATIONS) + "])[(g % 5) + 1]"
     sql = f"""
     INSERT INTO admin.execution_records ({_SEED_COLUMNS})
-    SELECT md5(g::text),
+    SELECT md5((g + {id_offset})::text),
            now() - ((g % {spread_s}) * interval '1 second'),
            {duration},
            {status},
@@ -235,9 +241,15 @@ class MonitoringClient:
 
 
 def percentiles(values: list[float]) -> dict[str, float]:
-    """p50/p95/p99 by nearest-rank on a sorted copy (empty -> zeros)."""
+    """p50/p95/p99 by nearest-rank on a sorted copy (empty -> zeros).
+
+    ``n`` rides along because nearest-rank resolution is set by the sample size:
+    a quantile is only as meaningful as the number of samples behind it, and at
+    n=40 a p99 is just the second-highest value. Every caller records it so a
+    reader can tell a real tail from one sample.
+    """
     if not values:
-        return {"p50": 0.0, "p95": 0.0, "p99": 0.0, "min": 0.0, "max": 0.0, "mean": 0.0}
+        return {"p50": 0.0, "p95": 0.0, "p99": 0.0, "min": 0.0, "max": 0.0, "mean": 0.0, "n": 0.0}
     ordered = sorted(values)
 
     def at(q: float) -> float:
@@ -251,6 +263,7 @@ def percentiles(values: list[float]) -> dict[str, float]:
         "min": ordered[0],
         "max": ordered[-1],
         "mean": sum(ordered) / len(ordered),
+        "n": float(len(ordered)),
     }
 
 
@@ -327,24 +340,36 @@ def usage_violations(body: dict[str, Any]) -> list[str]:
 
 
 def executions_violations(body: dict[str, Any]) -> list[str]:
-    """Internal-consistency checks on ``GET /monitoring/executions``."""
+    """Cross-statement consistency checks on ``GET /monitoring/executions``.
+
+    The route is served by two statements in one ``read committed`` session —
+    ``daily_buckets`` then ``top_operations`` — so a commit landing between them
+    leaves the two describing different snapshots. That span is the only place a
+    body can contradict itself, so it is the only thing worth checking.
+
+    Comparisons within one statement carry no information and are deliberately
+    absent: ``total_executions`` and ``success_rate_percent`` are both summed in
+    Python from the ``daily_buckets`` rows the response already carries, so
+    re-summing those rows can never disagree and the rate cannot leave 0..100;
+    and per-bucket ``success``/``failed`` are disjoint ``FILTER`` counts inside a
+    single ``GROUP BY`` row, so neither can exceed that row's own ``total``.
+
+    ``top_operations`` reads a subset of the rows ``daily_buckets`` counts (it
+    requires a non-null operation and api, and keeps only the top ten), so its
+    totals sum to at most ``total_executions`` whenever both statements share a
+    snapshot. Exceeding it means they did not. The check is sound for any data;
+    it is *sharp* for :func:`seed_executions`, whose seven operations all fit
+    under that limit and are never null, making the sum exactly equal and any
+    interleaved commit visible.
+    """
     out: list[str] = []
     total = body.get("total_executions")
-    rate = body.get("success_rate_percent")
     if not _finite(total) or float(total) < 0:
+        # A shape guard, not an arithmetic one: this catches a serialisation
+        # defect, not a snapshot disagreement.
         out.append(f"total_executions is not a non-negative number: {total!r}")
-    if not _finite(rate) or not (0.0 <= float(rate) <= 100.0):
-        out.append(f"success_rate_percent outside 0..100: {rate!r}")
-    buckets = body.get("daily_buckets") or []
-    summed = sum(float(b.get("total", 0)) for b in buckets if _finite(b.get("total")))
-    if buckets and _finite(total) and summed != float(total):
-        out.append(f"daily bucket totals sum to {summed:g} but total_executions is {total}")
-    for b in buckets:
-        if (
-            _finite(b.get("success"))
-            and _finite(b.get("failed"))
-            and _finite(b.get("total"))
-            and float(b["success"]) + float(b["failed"]) > float(b["total"])
-        ):
-            out.append(f"daily bucket {b.get('date')}: success+failed exceeds total")
+    top = body.get("top_operations") or []
+    summed = sum(float(r["total"]) for r in top if _finite(r.get("total")))
+    if top and _finite(total) and summed > float(total):
+        out.append(f"top_operations totals sum to {summed:g}, above total_executions {total}")
     return out
