@@ -3502,7 +3502,10 @@ type VendorRegistryConfig struct {
 // from claim), and processes it. A job left “RUNNING“ past that deadline by a
 // crashed worker/pod is reclaimed on a later poll. A handler failure requeues the
 // job with capped exponential backoff up to “max_attempts“ claims; beyond that
-// it is dead-lettered (poison-message handling) rather than looped forever.
+// it is dead-lettered (poison-message handling) rather than looped forever. A
+// handler that raises “NonRetryableJobError“ (a failure no retry can change,
+// such as an import whose spec fails validation) fails the job on that attempt
+// instead.
 //
 // Each claim is a single atomic “UPDATE“ (“FOR UPDATE SKIP LOCKED“ on
 // Postgres, a serialised write transaction on SQLite), so any number of worker

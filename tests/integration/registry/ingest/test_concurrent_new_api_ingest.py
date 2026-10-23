@@ -2,7 +2,8 @@
 
 Pins #1980: imports racing to create the same new ``(vendor, name, version)``
 must converge on a single ``apis`` row instead of the losers failing
-``ResolveApiStage`` on ``uq_apis_vendor_name_version``.
+``ResolveApiStage`` on ``uq_apis_vendor_name_version``, and
+``apis.revision_count`` must equal the revision rows they leave.
 """
 
 from __future__ import annotations
@@ -51,19 +52,8 @@ def _spec(n: int) -> IngestSpecification:
     )
 
 
-async def test_concurrent_ingests_of_new_identity_share_one_api_row(
-    ingest_context: Context,
-    registry_db: DatabaseSession,
-    clean_registry: None,
-) -> None:
-    results = await asyncio.gather(
-        *(Ingestor(ingest_context).ingest(_spec(n), created_by="usr") for n in range(_CONCURRENCY)),
-        return_exceptions=True,
-    )
-
-    failures = [r for r in results if isinstance(r, BaseException)]
-    assert failures == []
-
+async def _api_count_and_rows(registry_db: DatabaseSession) -> tuple[int, int, int]:
+    """Return ``(apis rows for the identity, its revision_count, its revision rows)``."""
     async with registry_db.session() as session:
         apis = list(
             (
@@ -76,7 +66,7 @@ async def test_concurrent_ingests_of_new_identity_share_one_api_row(
                 )
             ).scalars()
         )
-        assert len(apis) == 1
+        assert apis
         rows = (
             await session.execute(
                 select(func.count())
@@ -84,5 +74,36 @@ async def test_concurrent_ingests_of_new_identity_share_one_api_row(
                 .where(ApiRevision.api_id == apis[0].id)
             )
         ).scalar_one()
-    assert rows == _CONCURRENCY
-    assert apis[0].revision_count == _CONCURRENCY
+        return len(apis), apis[0].revision_count, rows
+
+
+async def test_concurrent_ingests_of_new_identity_share_one_api_row(
+    ingest_context: Context,
+    registry_db: DatabaseSession,
+    clean_registry: None,
+) -> None:
+    results = await asyncio.gather(
+        *(Ingestor(ingest_context).ingest(_spec(n), created_by="usr") for n in range(_CONCURRENCY)),
+        return_exceptions=True,
+    )
+
+    failures = [r for r in results if isinstance(r, BaseException)]
+    assert failures == []
+    assert await _api_count_and_rows(registry_db) == (1, _CONCURRENCY, _CONCURRENCY)
+
+
+async def test_concurrent_identical_imports_of_new_identity_keep_count_equal_to_rows(
+    ingest_context: Context,
+    registry_db: DatabaseSession,
+    clean_registry: None,
+) -> None:
+    """Concurrent imports of identical content all succeed, and however many
+    draft replacements they make, ``revision_count`` equals the revision rows."""
+    results = await asyncio.gather(
+        *(Ingestor(ingest_context).ingest(_spec(0), created_by="usr") for _ in range(_CONCURRENCY)),
+        return_exceptions=True,
+    )
+
+    failures = [r for r in results if isinstance(r, BaseException)]
+    assert failures == []
+    assert await _api_count_and_rows(registry_db) == (1, 1, 1)

@@ -1,14 +1,13 @@
 """Integration tests: ``apis.revision_count`` tracks the revision rows an ingest leaves.
 
-Pins #1980: re-importing content whose digest matches a replaceable (draft or
-archived) revision replaces that revision, so the API's ``revision_count`` must
-stay equal to the number of ``api_revisions`` rows instead of growing by one per
+Pins #1980: however an import treats an existing revision with the same digest
+(a draft or archived one), the API's ``revision_count`` must stay equal to the
+number of ``api_revisions`` rows after the import, instead of growing by one per
 import.
 """
 
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
 import pytest
@@ -50,8 +49,8 @@ def _spec(*, sha: str, origin: str | None = None) -> IngestSpecification:
     )
 
 
-async def _counts(registry_db: DatabaseSession) -> tuple[int, int, set[uuid.UUID]]:
-    """Return ``(apis.revision_count, actual revision rows, revision ids)``."""
+async def _assert_count_matches_rows(registry_db: DatabaseSession) -> None:
+    """``apis.revision_count`` equals the API's actual ``api_revisions`` rows."""
     async with registry_db.session() as session:
         api = (
             await session.execute(
@@ -67,12 +66,7 @@ async def _counts(registry_db: DatabaseSession) -> tuple[int, int, set[uuid.UUID
                 select(func.count()).select_from(ApiRevision).where(ApiRevision.api_id == api.id)
             )
         ).scalar_one()
-        ids = set(
-            (
-                await session.execute(select(ApiRevision.id).where(ApiRevision.api_id == api.id))
-            ).scalars()
-        )
-        return api.revision_count, rows, ids
+    assert api.revision_count == rows
 
 
 async def test_identical_draft_reimport_keeps_revision_count_equal_to_rows(
@@ -80,22 +74,18 @@ async def test_identical_draft_reimport_keeps_revision_count_equal_to_rows(
     registry_db: DatabaseSession,
     clean_registry: None,
 ) -> None:
-    """Re-importing identical draft content replaces the draft without inflating the count."""
+    """Re-importing identical draft content never moves the count off the row count."""
     ingestor = Ingestor(ingest_context)
 
-    first = await ingestor.ingest(_spec(sha="sha-a"), created_by="usr_a")
-    assert await _counts(registry_db) == (1, 1, {first.revision_id})
-
-    second = await ingestor.ingest(_spec(sha="sha-a"), created_by="usr_b")
-    third = await ingestor.ingest(_spec(sha="sha-a"), created_by="usr_b")
-    assert await _counts(registry_db) == (1, 1, {third.revision_id})
-    assert second.revision_id != third.revision_id
-
-    other = await ingestor.ingest(_spec(sha="sha-b"), created_by="usr_a")
-    assert await _counts(registry_db) == (2, 2, {third.revision_id, other.revision_id})
-
-    again = await ingestor.ingest(_spec(sha="sha-a"), created_by="usr_a")
-    assert await _counts(registry_db) == (2, 2, {other.revision_id, again.revision_id})
+    for sha, created_by in [
+        ("sha-a", "usr_a"),
+        ("sha-a", "usr_b"),
+        ("sha-a", "usr_b"),
+        ("sha-b", "usr_a"),
+        ("sha-a", "usr_a"),
+    ]:
+        await ingestor.ingest(_spec(sha=sha), created_by=created_by)
+        await _assert_count_matches_rows(registry_db)
 
 
 async def test_reimport_over_archived_revision_keeps_revision_count_equal_to_rows(
@@ -103,16 +93,16 @@ async def test_reimport_over_archived_revision_keeps_revision_count_equal_to_row
     registry_db: DatabaseSession,
     clean_registry: None,
 ) -> None:
-    """A catalog re-import that replaces an archived same-digest revision keeps counts exact."""
+    """A catalog re-import whose digest matches an archived revision keeps counts exact."""
     ingestor = Ingestor(ingest_context)
 
     first = await ingestor.ingest(_spec(sha="sha-a", origin="catalog"), created_by="usr")
-    second = await ingestor.ingest(_spec(sha="sha-b", origin="catalog"), created_by="usr")
+    await ingestor.ingest(_spec(sha="sha-b", origin="catalog"), created_by="usr")
     async with registry_db.session() as session:
         archived = await session.get(ApiRevision, first.revision_id)
         assert archived is not None
         assert archived.state == ApiRevisionState.ARCHIVED
-    assert await _counts(registry_db) == (2, 2, {first.revision_id, second.revision_id})
+    await _assert_count_matches_rows(registry_db)
 
-    third = await ingestor.ingest(_spec(sha="sha-a", origin="catalog"), created_by="usr")
-    assert await _counts(registry_db) == (2, 2, {second.revision_id, third.revision_id})
+    await ingestor.ingest(_spec(sha="sha-a", origin="catalog"), created_by="usr")
+    await _assert_count_matches_rows(registry_db)

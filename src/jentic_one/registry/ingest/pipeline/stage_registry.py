@@ -23,6 +23,14 @@ Contract:
 - The stage class's ``name`` ClassVar is the key logs, spans, and the
   ``stages_total``/``stage_duration`` metrics are labelled with — keep it as
   unique as the registration name.
+- What a stage raises decides whether the import job is retried. Raise an
+  :class:`~jentic_one.registry.ingest.errors.IngestStageError` (with no
+  underlying exception as its ``__cause__`` or unsuppressed ``__context__``)
+  only for a refusal a retry cannot change, such as a document the stage
+  rejects: the job fails on that attempt. Let any other exception escape (a
+  database or network error, or a bug): the stage wraps it as "failed
+  unexpectedly" and the job is retried with backoff. Raising an
+  ``IngestStageError`` *from* such an exception keeps it retryable too.
 - Feature gating is the stage's own job: read your registered config section
   from ``ctx.config`` (see :class:`PipelineContext`) and return early when
   disabled. The factory seam stays config-blind on purpose — it keeps

@@ -3,7 +3,8 @@
 Pins #1980: a path template that names the same parameter twice (Cloudflare's
 ``/accounts/{account_id}/.../accounts/{account_id}``) must compile into a regex
 whose repeat is a back-reference to the first capture, so both segments carry
-the same value and the parameter is reported once.
+the same value and the parameter is reported once. Distinct parameters whose
+names sanitize to the same group name must still capture independently.
 """
 
 from __future__ import annotations
@@ -11,10 +12,12 @@ from __future__ import annotations
 import pytest
 
 from jentic_one.registry.core.url_index import (
+    URLIndexEntry,
     build_index_entry,
     build_path_regex,
     build_server_index_entries,
     expand_path_template,
+    path_param_group_names,
     resolve_server_variable_groups,
 )
 
@@ -80,3 +83,60 @@ def test_build_server_index_entries_repeated_operation_param(
             expand_path_template(_TEMPLATE, resolved.path_params)
             == "/accounts/acc1/addressing/address_maps/map1/accounts/acc1"
         )
+
+
+def _resolve(expansion_entries: list[URLIndexEntry], host: str, path: str) -> list[dict[str, str]]:
+    found = []
+    for entry in expansion_entries:
+        host_m = entry.host_regex.match(host)
+        path_m = entry.path_regex.fullmatch(path)
+        if host_m is None or path_m is None:
+            continue
+        resolved = resolve_server_variable_groups(host_m.groupdict(), path_m.groupdict())
+        if resolved is not None:
+            found.append(resolved.path_params)
+    return found
+
+
+def test_distinct_params_sanitizing_to_one_group_capture_separately() -> None:
+    """``{a.b}`` and ``{a_b}`` are different parameters: each gets its own capture."""
+    template = "/x/{a.b}/y/{a_b}"
+    regex = build_path_regex(template)
+
+    match = regex.fullmatch("/x/1/y/2")
+    assert match is not None
+    assert match.groupdict() == {"a_b": "1", "a_b__2": "2"}
+    assert expand_path_template(template, match.groupdict()) == "/x/1/y/2"
+
+
+def test_group_allocation_skips_a_suffix_another_param_already_holds() -> None:
+    names = path_param_group_names("/{a.b}/{a_b__2}/{a_b}")
+    assert names == {"a.b": "a_b", "a_b__2": "a_b__2", "a_b": "a_b__3"}
+
+
+def test_operation_param_keeps_its_group_over_a_colliding_server_placeholder() -> None:
+    """A server base-path placeholder that sanitizes onto an operation parameter
+    takes the suffixed group, so ``expand_path_template`` on the operation path
+    reads the operation's own value."""
+    expansion = build_server_index_entries("https://api.example.com/{a.b}", None, "/y/{a_b}")
+
+    found = _resolve(expansion.entries, "api.example.com", "/1/y/2")
+    assert found == [{"a_b__2": "1", "a_b": "2"}]
+    assert expand_path_template("/y/{a_b}", found[0]) == "/y/2"
+
+
+def test_server_placeholder_and_operation_param_with_one_name_back_reference() -> None:
+    expansion = build_server_index_entries("https://api.example.com/{acct}", None, "/x/{acct}")
+
+    assert _resolve(expansion.entries, "api.example.com", "/1/x/1") == [{"acct": "1"}]
+    assert _resolve(expansion.entries, "api.example.com", "/1/x/2") == []
+
+
+def test_fallback_entry_names_operation_params_first() -> None:
+    """The default-expanded fallback (a variable in the port) allocates the same way."""
+    expansion = build_server_index_entries(
+        "https://api.example.com:{port}/{a.b}", {"port": {"default": "8443"}}, "/y/{a_b}"
+    )
+
+    found = _resolve(expansion.entries, "api.example.com:8443", "/1/y/2")
+    assert found == [{"a_b__2": "1", "a_b": "2"}]
