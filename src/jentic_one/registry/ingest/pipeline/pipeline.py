@@ -5,7 +5,7 @@ from __future__ import annotations
 import structlog
 from opentelemetry.trace.status import Status, StatusCode
 
-from jentic_one.registry.ingest.exc import IngestPipelineError, IngestStageError
+from jentic_one.registry.ingest.errors import IngestPipelineError, IngestStageError
 from jentic_one.registry.ingest.models import IngestSpecification, SpecType
 from jentic_one.registry.ingest.observability import tracer
 from jentic_one.registry.ingest.pipeline.ctx import PipelineContext

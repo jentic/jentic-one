@@ -257,7 +257,9 @@ paths:
       `Jentic-Revision` request header. The header is
       multi-valued — repeat it (or comma-separate) once per API
       you want to pin, with each value of the form
-      `vendor:name:version=rev_…`.
+      `vendor:name:version=<revision_id>` — the `revision_id` exactly
+      as the control plane's revision list returns it (the
+      `rev_<revision_id without hyphens>` label is equivalent).
 
       The Broker forwards the pin into the control-plane
       `POST /lookup/operation` call so URL → `operation_id`
@@ -269,7 +271,10 @@ paths:
       returns `403`. Pinning an unknown or `archived` revision
       returns `422` — `archived` revisions are deliberately not
       pinnable from the hot path; resurrect them by re-promoting
-      instead. The chosen revisions are recorded on the resulting
+      instead. Pinning the same API to two different revisions in
+      one header returns `422 invalid_revision_pin`; repeating the
+      same revision (in either form) is allowed. The chosen
+      revisions are recorded on the resulting
       `ExecutionRecord` (`pinned_revisions` field on the control
       plane) so audit can answer "did this execution use a pinned
       revision?" without parsing headers.
@@ -302,6 +307,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
         "409":
           $ref: "#/components/responses/Conflict"
         "413":
@@ -354,6 +361,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
         "409":
           $ref: "#/components/responses/Conflict"
         "413":
@@ -405,6 +414,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
         "409":
           $ref: "#/components/responses/Conflict"
         "413":
@@ -453,6 +464,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
         "409":
           $ref: "#/components/responses/Conflict"
         "413":
@@ -502,6 +515,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
         "409":
           $ref: "#/components/responses/Conflict"
         "413":
@@ -540,6 +555,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
         "409":
           $ref: "#/components/responses/Conflict"
         "413":
@@ -577,6 +594,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
         "409":
           $ref: "#/components/responses/Conflict"
         "413":
@@ -700,7 +719,14 @@ components:
         Pin upstream-API resolution to a specific `ApiRevision`
         instead of the API's `current_revision_id`. Multi-valued —
         repeat the header (or comma-separate) once per API you
-        want to pin. Each value is `vendor:name:version=rev_…`.
+        want to pin. Each value is `vendor:name:version=<revision_id>`:
+        `vendor`, `name` and `version` are the API's `api` reference,
+        and `<revision_id>` is the revision's `revision_id` exactly as
+        the control plane returns it (`GET
+        /apis/{vendor}/{name}/{version}/revisions`, the revision get,
+        an import job's result, or `jentic apis revisions`). The
+        equivalent `rev_<revision_id without hyphens>` label is
+        accepted too.
 
         Use cases:
 
@@ -718,20 +744,23 @@ components:
 
         Pinning a `draft` revision the caller doesn't have
         access to returns `403`. Pinning an unknown or
-        `archived` revision returns `422`. The chosen revisions
+        `archived` revision returns `422`. Pinning the same API
+        to two different revisions in one header returns
+        `422 invalid_revision_pin`; repeating the same revision
+        (in either form) is allowed. The chosen revisions
         are recorded on the resulting `ExecutionRecord`
         (`pinned_revisions` field on the control plane).
       example:
-        - stripe:payments:2023-10-16=rev_01HMY1Q0AB
+        - stripe:payments:2023-10-16=3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
       schema:
         type: array
         items:
           type: string
-          pattern: ^[a-z0-9-]+:[^=:]+:[^=]+=rev_[A-Za-z0-9]+$
+          pattern: '^[a-z0-9-]+:[^=:]+:[^=]+=(?:rev_[0-9A-Fa-f]{32}|[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})$'
         examples:
-          - - stripe:payments:2023-10-16=rev_01HMY1Q0AB
-          - - stripe:payments:2023-10-16=rev_01HMY1Q0AB
-            - shopify:admin:2024-01=rev_01HMY7B3QN
+          - - stripe:payments:2023-10-16=3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
+          - - stripe:payments:2023-10-16=rev_3f2b8c1e7d4a4e9ba6c51d2e3f4a5b6c
+            - shopify:admin:2024-01=8a1d4c2e-5b6f-4a7e-9c3d-2e1f0a9b8c7d
       style: simple
       explode: false
     JenticCredentialName:
@@ -825,6 +854,16 @@ components:
                     created_at: "2026-09-01T00:00:00Z"
               items:
                 $ref: "#/components/schemas/CredentialCandidate"
+            allowed_methods:
+              type: array
+              description: |
+                The HTTP methods the upstream URL is registered for, on a
+                `method_not_allowed` 405. Mirrored in the `Allow` response
+                header.
+              examples:
+                - [GET, PUT]
+              items:
+                type: string
             intent_id:
               type: string
               description: |
@@ -1318,7 +1357,8 @@ components:
         token lacking the required `capabilities:execute` permission
         (`type: insufficient_scope`, the RFC 6750 code), attempting to pin a `draft`
         revision they don't own, using a credential they aren't bound to
-        (`no_credential_binding`), or being denied by a binding's
+        (`no_credential_binding`), holding only a suspended binding for the
+        API (`credential_binding_suspended`), or being denied by a binding's
         permission rules. Body is RFC 9457 `application/problem+json`.
       content:
         application/problem+json:
@@ -1356,6 +1396,27 @@ components:
                     to that credential (in the dashboard, or via POST
                     /agents/{agent_id}/credentials) — only a human can grant the
                     binding. Once bound, retry this call.
+            credential_binding_suspended:
+              summary: The caller's binding for this API is suspended by its operator.
+              value:
+                type: credential_binding_suspended
+                title: The credential binding for this API is suspended
+                status: 403
+                detail: The credential binding for this API is suspended
+                error_origin: broker
+                instance: /api.example.com/v1/users
+                agent_directive:
+                  strategy: prompt_human
+                  parameters:
+                    api:
+                      vendor: api.example.com
+                      name: main
+                      version: "1.0.0"
+                  human_readable_instruction: >-
+                    Your operator has suspended your access to 'api.example.com/main'.
+                    Ask your operator whether they will resume it — only they can. Do
+                    not request a new connection for this API. Once they resume it,
+                    retry this call.
     NotFound:
       description: |
         Upstream URL doesn't resolve to a registered API operation, or
@@ -1376,6 +1437,37 @@ components:
                 detail: Operation not found — unregistered upstream URL.
                 error_origin: broker
                 instance: /api.example.com/v1/unknown
+    MethodNotAllowed:
+      description: |
+        The upstream URL matches a registered API operation, but not for
+        the request's HTTP method (`method_not_allowed`). The broker answers
+        before dispatch, so the upstream never saw the call. The `Allow`
+        header and the `allowed_methods` member name the methods the URL
+        is registered for; resend with one of them. Body is RFC 9457
+        `application/problem+json`. A 405 the upstream itself returns is
+        mirrored with `error_origin: upstream` instead.
+      headers:
+        Allow:
+          description: Comma-separated HTTP methods the upstream URL is registered for.
+          schema:
+            type: string
+            examples:
+              - GET, PUT
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/BrokerProblem"
+          examples:
+            method_not_allowed:
+              summary: The URL is registered only for other HTTP methods.
+              value:
+                type: method_not_allowed
+                title: "Method not allowed; allowed: GET, PUT"
+                status: 405
+                detail: "Method not allowed; allowed: GET, PUT"
+                error_origin: broker
+                instance: /api.example.com/v1/widgets
+                allowed_methods: [GET, PUT]
     Conflict:
       description: |
         Conflict (RFC 9457 `application/problem+json`), distinguished by
@@ -1393,6 +1485,11 @@ components:
         - `idempotency_in_progress` — a request with this `Idempotency-Key`
           is still being processed. The response carries a `Retry-After`
           header; retry after that delay to obtain the replayed result.
+        - `ambiguous_match` — the upstream URL matches more than one
+          registered operation with equal specificity, so the broker cannot
+          tell which API the call is for. Raised before dispatch; the
+          registered specs overlap and need an operator fix (or a
+          `Jentic-Revision` pin that disambiguates).
       content:
         application/problem+json:
           schema:
@@ -1436,6 +1533,15 @@ components:
                 detail: Idempotency-Key reused with a different request.
                 error_origin: broker
                 instance: /api.example.com/v1/orders
+            ambiguous_match:
+              summary: The upstream URL matches several registered operations equally.
+              value:
+                type: ambiguous_match
+                title: "Ambiguous URL match: 2 candidates with equal specificity"
+                status: 409
+                detail: "Ambiguous URL match: 2 candidates with equal specificity"
+                error_origin: broker
+                instance: /api.example.com/v1/widgets
     CredentialNotProvisioned:
       description: |
         A bound credential is an unusable dependency, so the broker cannot
@@ -1496,9 +1602,18 @@ components:
               summary: Jentic-Revision pins a revision that does not exist.
               value:
                 type: unknown_revision_pin
-                title: "Unknown revision pin: api.example.com/main/9.9.9"
+                title: "Unknown revision pin: stripe:payments:2023-10-16=3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"
                 status: 422
-                detail: "Unknown revision pin: api.example.com/main/9.9.9"
+                detail: "Unknown revision pin: stripe:payments:2023-10-16=3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"
+                error_origin: broker
+                instance: /api.example.com/v1/users
+            invalid_revision_pin:
+              summary: A Jentic-Revision value is not of the form vendor:name:version=<revision_id>.
+              value:
+                type: invalid_revision_pin
+                title: "Malformed Jentic-Revision value: 'stripe:payments:2023-10-16=latest' (expected vendor:name:version=<revision_id>, with the revision_id from GET /apis/{vendor}/{name}/{version}/revisions)"
+                status: 422
+                detail: "Malformed Jentic-Revision value: 'stripe:payments:2023-10-16=latest' (expected vendor:name:version=<revision_id>, with the revision_id from GET /apis/{vendor}/{name}/{version}/revisions)"
                 error_origin: broker
                 instance: /api.example.com/v1/users
     TooManyRequests:
@@ -1545,9 +1660,11 @@ components:
     ServerError:
       description: |
         Unexpected broker-side failure — a bug, a panic, or an outbound
-        request the broker itself built and could not send. Should be
-        rare; report with the `traceparent` header for triage. Body is
-        RFC 9457 `application/problem+json`.
+        request the broker itself built and could not send
+        (`upstream_request_invalid`, e.g. an injected credential header
+        with an illegal byte; fix the stored credential rather than
+        retrying). Should be rare; report with the `traceparent` header
+        for triage. Body is RFC 9457 `application/problem+json`.
       content:
         application/problem+json:
           schema:
@@ -1560,6 +1677,18 @@ components:
                 title: Internal Server Error
                 status: 500
                 detail: An unexpected error occurred.
+                instance: /api.example.com/v1/users
+            upstream_request_invalid:
+              summary: >-
+                The broker built an outbound request its HTTP client refused to send
+                (e.g. an injected credential header carrying an illegal byte); fix the
+                stored credential rather than retrying.
+              value:
+                type: upstream_request_invalid
+                title: Upstream transport error (LocalProtocolError)
+                status: 500
+                detail: Upstream transport error (LocalProtocolError)
+                error_origin: broker
                 instance: /api.example.com/v1/users
     ServiceUnavailable:
       description: |
@@ -1605,6 +1734,15 @@ components:
                 status: 503
                 detail: The Idempotency-Key claim could not be recorded, so the request was not executed; retry after the indicated delay.
                 error_origin: broker
+            too_many_candidates:
+              summary: The URL index returned more candidates than the broker can rank; nothing was dispatched.
+              value:
+                type: too_many_candidates
+                title: URL index returned too many candidates
+                status: 503
+                detail: URL index returned too many candidates
+                error_origin: broker
+                instance: /api.example.com/v1/widgets
     PayloadTooLarge:
       description: |
         Request body exceeded the broker's per-`Content-Type` size cap

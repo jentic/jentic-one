@@ -133,6 +133,14 @@ class UserManagementForbiddenError(AdminServiceError):
         self.user_id = user_id
 
 
+class UserDeletedError(ConflictError):
+    """Raised when an action targets a deleted user: delete is terminal."""
+
+    def __init__(self, action: str) -> None:
+        super().__init__(f"Cannot {action} a deleted user")
+        self.action = action
+
+
 class LastActiveAdminError(ConflictError):
     """Raised when an operation would leave the deployment with no active org:admin."""
 

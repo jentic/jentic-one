@@ -89,9 +89,9 @@
         }
       },
       "JenticRevision": {
-        "description": "Pin upstream-API resolution to a specific `ApiRevision`\ninstead of the API's `current_revision_id`. Multi-valued —\nrepeat the header (or comma-separate) once per API you\nwant to pin. Each value is `vendor:name:version=rev_…`.\n\nUse cases:\n\n- Test a `draft` revision against existing credentials\n  before promoting it.\n- Reproduce a historical execution against an `archived`\n  spec for diagnostic purposes (refused by default;\n  archived revisions are not pinnable from the hot path).\n\nThe Broker forwards the pin into the control-plane\n`POST /lookup/operation` call so URL → `operation_id`\nresolution sees the requested spec. When the header is\nabsent or the URL doesn't match a pinned API, the Broker\nresolves against `current_revision_id` as today.\n\nPinning a `draft` revision the caller doesn't have\naccess to returns `403`. Pinning an unknown or\n`archived` revision returns `422`. The chosen revisions\nare recorded on the resulting `ExecutionRecord`\n(`pinned_revisions` field on the control plane).\n",
+        "description": "Pin upstream-API resolution to a specific `ApiRevision`\ninstead of the API's `current_revision_id`. Multi-valued —\nrepeat the header (or comma-separate) once per API you\nwant to pin. Each value is `vendor:name:version=<revision_id>`:\n`vendor`, `name` and `version` are the API's `api` reference,\nand `<revision_id>` is the revision's `revision_id` exactly as\nthe control plane returns it (`GET\n/apis/{vendor}/{name}/{version}/revisions`, the revision get,\nan import job's result, or `jentic apis revisions`). The\nequivalent `rev_<revision_id without hyphens>` label is\naccepted too.\n\nUse cases:\n\n- Test a `draft` revision against existing credentials\n  before promoting it.\n- Reproduce a historical execution against an `archived`\n  spec for diagnostic purposes (refused by default;\n  archived revisions are not pinnable from the hot path).\n\nThe Broker forwards the pin into the control-plane\n`POST /lookup/operation` call so URL → `operation_id`\nresolution sees the requested spec. When the header is\nabsent or the URL doesn't match a pinned API, the Broker\nresolves against `current_revision_id` as today.\n\nPinning a `draft` revision the caller doesn't have\naccess to returns `403`. Pinning an unknown or\n`archived` revision returns `422`. Pinning the same API\nto two different revisions in one header returns\n`422 invalid_revision_pin`; repeating the same revision\n(in either form) is allowed. The chosen revisions\nare recorded on the resulting `ExecutionRecord`\n(`pinned_revisions` field on the control plane).\n",
         "example": [
-          "stripe:payments:2023-10-16=rev_01HMY1Q0AB"
+          "stripe:payments:2023-10-16=3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"
         ],
         "explode": false,
         "in": "header",
@@ -100,15 +100,15 @@
         "schema": {
           "examples": [
             [
-              "stripe:payments:2023-10-16=rev_01HMY1Q0AB"
+              "stripe:payments:2023-10-16=3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"
             ],
             [
-              "stripe:payments:2023-10-16=rev_01HMY1Q0AB",
-              "shopify:admin:2024-01=rev_01HMY7B3QN"
+              "stripe:payments:2023-10-16=rev_3f2b8c1e7d4a4e9ba6c51d2e3f4a5b6c",
+              "shopify:admin:2024-01=8a1d4c2e-5b6f-4a7e-9c3d-2e1f0a9b8c7d"
             ]
           ],
           "items": {
-            "pattern": "^[a-z0-9-]+:[^=:]+:[^=]+=rev_[A-Za-z0-9]+$",
+            "pattern": "^[a-z0-9-]+:[^=:]+:[^=]+=(?:rev_[0-9A-Fa-f]{32}|[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})$",
             "type": "string"
           },
           "type": "array"
@@ -212,6 +212,17 @@
                   "type": "ambiguous_credential_binding"
                 }
               },
+              "ambiguous_match": {
+                "summary": "The upstream URL matches several registered operations equally.",
+                "value": {
+                  "detail": "Ambiguous URL match: 2 candidates with equal specificity",
+                  "error_origin": "broker",
+                  "instance": "/api.example.com/v1/widgets",
+                  "status": 409,
+                  "title": "Ambiguous URL match: 2 candidates with equal specificity",
+                  "type": "ambiguous_match"
+                }
+              },
               "idempotency_conflict": {
                 "summary": "Idempotency-Key reused with a different request.",
                 "value": {
@@ -229,7 +240,7 @@
             }
           }
         },
-        "description": "Conflict (RFC 9457 `application/problem+json`), distinguished by\nthe problem `type`:\n\n- `ambiguous_credential_binding` — several credentials the caller\n  is bound to cover the target API at the same specificity. The\n  body lists the candidates (`id`, `name`, `last4`, `created_at`);\n  resend with the `Jentic-Credential-Name` or `Jentic-Credential-Id`\n  request header to pick one.\n- `idempotency_conflict` — the same `Idempotency-Key` was already\n  used with a different request (method, upstream URL, resolved\n  credential, or body). Reusing a key for a different request is\n  rejected; pick a new key.\n- `idempotency_in_progress` — a request with this `Idempotency-Key`\n  is still being processed. The response carries a `Retry-After`\n  header; retry after that delay to obtain the replayed result.\n"
+        "description": "Conflict (RFC 9457 `application/problem+json`), distinguished by\nthe problem `type`:\n\n- `ambiguous_credential_binding` — several credentials the caller\n  is bound to cover the target API at the same specificity. The\n  body lists the candidates (`id`, `name`, `last4`, `created_at`);\n  resend with the `Jentic-Credential-Name` or `Jentic-Credential-Id`\n  request header to pick one.\n- `idempotency_conflict` — the same `Idempotency-Key` was already\n  used with a different request (method, upstream URL, resolved\n  credential, or body). Reusing a key for a different request is\n  rejected; pick a new key.\n- `idempotency_in_progress` — a request with this `Idempotency-Key`\n  is still being processed. The response carries a `Retry-After`\n  header; retry after that delay to obtain the replayed result.\n- `ambiguous_match` — the upstream URL matches more than one\n  registered operation with equal specificity, so the broker cannot\n  tell which API the call is for. Raised before dispatch; the\n  registered specs overlap and need an operator fix (or a\n  `Jentic-Revision` pin that disambiguates).\n"
       },
       "CredentialNotProvisioned": {
         "content": {
@@ -524,6 +535,28 @@
         "content": {
           "application/problem+json": {
             "examples": {
+              "credential_binding_suspended": {
+                "summary": "The caller's binding for this API is suspended by its operator.",
+                "value": {
+                  "agent_directive": {
+                    "human_readable_instruction": "Your operator has suspended your access to 'api.example.com/main'. Ask your operator whether they will resume it — only they can. Do not request a new connection for this API. Once they resume it, retry this call.",
+                    "parameters": {
+                      "api": {
+                        "name": "main",
+                        "vendor": "api.example.com",
+                        "version": "1.0.0"
+                      }
+                    },
+                    "strategy": "prompt_human"
+                  },
+                  "detail": "The credential binding for this API is suspended",
+                  "error_origin": "broker",
+                  "instance": "/api.example.com/v1/users",
+                  "status": 403,
+                  "title": "The credential binding for this API is suspended",
+                  "type": "credential_binding_suspended"
+                }
+              },
               "insufficient_scope": {
                 "summary": "Token lacks the `capabilities:execute` permission.",
                 "value": {
@@ -563,7 +596,45 @@
             }
           }
         },
-        "description": "Caller authenticated but not entitled to execute — most often a\ntoken lacking the required `capabilities:execute` permission\n(`type: insufficient_scope`, the RFC 6750 code), attempting to pin a `draft`\nrevision they don't own, using a credential they aren't bound to\n(`no_credential_binding`), or being denied by a binding's\npermission rules. Body is RFC 9457 `application/problem+json`.\n"
+        "description": "Caller authenticated but not entitled to execute — most often a\ntoken lacking the required `capabilities:execute` permission\n(`type: insufficient_scope`, the RFC 6750 code), attempting to pin a `draft`\nrevision they don't own, using a credential they aren't bound to\n(`no_credential_binding`), holding only a suspended binding for the\nAPI (`credential_binding_suspended`), or being denied by a binding's\npermission rules. Body is RFC 9457 `application/problem+json`.\n"
+      },
+      "MethodNotAllowed": {
+        "content": {
+          "application/problem+json": {
+            "examples": {
+              "method_not_allowed": {
+                "summary": "The URL is registered only for other HTTP methods.",
+                "value": {
+                  "allowed_methods": [
+                    "GET",
+                    "PUT"
+                  ],
+                  "detail": "Method not allowed; allowed: GET, PUT",
+                  "error_origin": "broker",
+                  "instance": "/api.example.com/v1/widgets",
+                  "status": 405,
+                  "title": "Method not allowed; allowed: GET, PUT",
+                  "type": "method_not_allowed"
+                }
+              }
+            },
+            "schema": {
+              "$ref": "#/components/schemas/BrokerProblem"
+            }
+          }
+        },
+        "description": "The upstream URL matches a registered API operation, but not for\nthe request's HTTP method (`method_not_allowed`). The broker answers\nbefore dispatch, so the upstream never saw the call. The `Allow`\nheader and the `allowed_methods` member name the methods the URL\nis registered for; resend with one of them. Body is RFC 9457\n`application/problem+json`. A 405 the upstream itself returns is\nmirrored with `error_origin: upstream` instead.\n",
+        "headers": {
+          "Allow": {
+            "description": "Comma-separated HTTP methods the upstream URL is registered for.",
+            "schema": {
+              "examples": [
+                "GET, PUT"
+              ],
+              "type": "string"
+            }
+          }
+        }
       },
       "NotFound": {
         "content": {
@@ -624,6 +695,17 @@
                   "title": "Internal Server Error",
                   "type": "server_error"
                 }
+              },
+              "upstream_request_invalid": {
+                "summary": "The broker built an outbound request its HTTP client refused to send (e.g. an injected credential header carrying an illegal byte); fix the stored credential rather than retrying.",
+                "value": {
+                  "detail": "Upstream transport error (LocalProtocolError)",
+                  "error_origin": "broker",
+                  "instance": "/api.example.com/v1/users",
+                  "status": 500,
+                  "title": "Upstream transport error (LocalProtocolError)",
+                  "type": "upstream_request_invalid"
+                }
               }
             },
             "schema": {
@@ -631,7 +713,7 @@
             }
           }
         },
-        "description": "Unexpected broker-side failure — a bug, a panic, or an outbound\nrequest the broker itself built and could not send. Should be\nrare; report with the `traceparent` header for triage. Body is\nRFC 9457 `application/problem+json`.\n"
+        "description": "Unexpected broker-side failure — a bug, a panic, or an outbound\nrequest the broker itself built and could not send\n(`upstream_request_invalid`, e.g. an injected credential header\nwith an illegal byte; fix the stored credential rather than\nretrying). Should be rare; report with the `traceparent` header\nfor triage. Body is RFC 9457 `application/problem+json`.\n"
       },
       "ServiceUnavailable": {
         "content": {
@@ -665,6 +747,17 @@
                   "status": 503,
                   "title": "Server at capacity; retry shortly.",
                   "type": "server_at_capacity"
+                }
+              },
+              "too_many_candidates": {
+                "summary": "The URL index returned more candidates than the broker can rank; nothing was dispatched.",
+                "value": {
+                  "detail": "URL index returned too many candidates",
+                  "error_origin": "broker",
+                  "instance": "/api.example.com/v1/widgets",
+                  "status": 503,
+                  "title": "URL index returned too many candidates",
+                  "type": "too_many_candidates"
                 }
               }
             },
@@ -763,14 +856,25 @@
         "content": {
           "application/problem+json": {
             "examples": {
-              "unknown_revision_pin": {
-                "summary": "Jentic-Revision pins a revision that does not exist.",
+              "invalid_revision_pin": {
+                "summary": "A Jentic-Revision value is not of the form vendor:name:version=<revision_id>.",
                 "value": {
-                  "detail": "Unknown revision pin: api.example.com/main/9.9.9",
+                  "detail": "Malformed Jentic-Revision value: 'stripe:payments:2023-10-16=latest' (expected vendor:name:version=<revision_id>, with the revision_id from GET /apis/{vendor}/{name}/{version}/revisions)",
                   "error_origin": "broker",
                   "instance": "/api.example.com/v1/users",
                   "status": 422,
-                  "title": "Unknown revision pin: api.example.com/main/9.9.9",
+                  "title": "Malformed Jentic-Revision value: 'stripe:payments:2023-10-16=latest' (expected vendor:name:version=<revision_id>, with the revision_id from GET /apis/{vendor}/{name}/{version}/revisions)",
+                  "type": "invalid_revision_pin"
+                }
+              },
+              "unknown_revision_pin": {
+                "summary": "Jentic-Revision pins a revision that does not exist.",
+                "value": {
+                  "detail": "Unknown revision pin: stripe:payments:2023-10-16=3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c",
+                  "error_origin": "broker",
+                  "instance": "/api.example.com/v1/users",
+                  "status": 422,
+                  "title": "Unknown revision pin: stripe:payments:2023-10-16=3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c",
                   "type": "unknown_revision_pin"
                 }
               }
@@ -919,6 +1023,19 @@
             "properties": {
               "agent_directive": {
                 "$ref": "#/components/schemas/AgentDirective"
+              },
+              "allowed_methods": {
+                "description": "The HTTP methods the upstream URL is registered for, on a\n`method_not_allowed` 405. Mirrored in the `Allow` response\nheader.\n",
+                "examples": [
+                  [
+                    "GET",
+                    "PUT"
+                  ]
+                ],
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
               },
               "candidates": {
                 "description": "The caller's own credentials that matched ambiguously\n(`ambiguous_credential_binding`, `ambiguous_credential`) or\nthat a credential-selection header failed to match\n(`credential_id_not_found`, `credential_name_not_found`).\nPick one and resend with `Jentic-Credential-Id`.\n",
@@ -1390,6 +1507,9 @@
           "404": {
             "$ref": "#/components/responses/NotFound"
           },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
           "409": {
             "$ref": "#/components/responses/Conflict"
           },
@@ -1420,7 +1540,7 @@
           "Executions"
         ]
       },
-      "description": "Forward a request to the upstream API URL specified in the path. The\nHTTP method you use on this endpoint is the method the broker sends to\nthe upstream service — every standard method (`GET`, `POST`, `PUT`,\n`PATCH`, `DELETE`, `HEAD`, `OPTIONS`) is supported.\n\nRequest headers and body are forwarded as-is. The broker injects the\ncaller's stored credentials for the target API.\n\nThe path, query, and header parameters listed below apply to every\nmethod. Per-method operations only differ in semantic intent and (for\nmethods that conventionally carry a body) in `requestBody` shape.\n\n### Sync vs async\n\nBy default, the broker waits up to 30 seconds for the upstream\nresponse. Control this with the `Prefer` header:\n\n- `Prefer: wait=30` — wait up to 30 seconds, then fall back to async.\n- `Prefer: respond-async` — always queue and return `202` immediately.\n\nAsync executions return a `202` with a polling link into the control plane.\n\n### Error handling\n\nPlatform-level errors (auth failures, missing credentials) return an\nRFC 9457 Problem Details (`application/problem+json`) body using the\nshared `ProblemDetails` schema from\n[jentic/api-problem-details](https://github.com/jentic/api-problem-details).\nField-level validation failures populate the `errors[]` extension.\n\n### Idempotency\n\nOptional `Idempotency-Key` request header (IETF\ndraft-ietf-httpapi-idempotency-key). If present, the broker\nrecords the key for 24 hours and replays the original response\nfor any subsequent request that reuses it — including `202`\nhandles, so retrying a queued async request returns the *same*\n`job_id` instead of double-queueing the upstream call. Keys are\nscoped per-caller and should be unique per logical operation\n(UUIDv4 recommended, max 255 chars).\n\nReplays are signalled with `Idempotent-Replayed: true` on the\nresponse. If the same key is reused with a different request\nbody or upstream URL, the broker returns `409 Conflict`.\n\n### Proxied upstream headers\n\nOn synchronous `200` responses, upstream API response headers are\nforwarded as-is. Hop-by-hop headers (RFC 7230 §6.1) and the\nbroker's own trace/metadata headers are not proxied — every\nbroker-added header lives under the `Jentic-*` namespace, so\n`Jentic-*` is unambiguously the broker's and anything else\nbelongs to the upstream.\n\n### Security\n\nThe Broker validates every `upstream_url` against the set of\nregistered APIs before forwarding. Arbitrary URLs that do not\nresolve to a known, registered API endpoint are rejected with\n`404` — the Broker is **not** an open proxy. This allowlist\ncheck is the spec's primary SSRF mitigation boundary:\ncredentials are never injected into requests targeting\nunregistered hosts.\n\n### Revision pinning\n\nBy default the Broker resolves the upstream URL against the\ntarget API's `current_revision_id` (the `published` revision\nregistered on the control plane). To test a `draft` revision\nwith real credentials before promoting it, attach the\n`Jentic-Revision` request header. The header is\nmulti-valued — repeat it (or comma-separate) once per API\nyou want to pin, with each value of the form\n`vendor:name:version=rev_…`.\n\nThe Broker forwards the pin into the control-plane\n`POST /lookup/operation` call so URL → `operation_id`\nresolution sees the requested spec. When the header is\nabsent or the URL doesn't match a pinned API, the Broker\nresolves against `current_revision_id` as today.\n\nPinning a `draft` revision the caller doesn't have access to\nreturns `403`. Pinning an unknown or `archived` revision\nreturns `422` — `archived` revisions are deliberately not\npinnable from the hot path; resurrect them by re-promoting\ninstead. The chosen revisions are recorded on the resulting\n`ExecutionRecord` (`pinned_revisions` field on the control\nplane) so audit can answer \"did this execution use a pinned\nrevision?\" without parsing headers.\n",
+      "description": "Forward a request to the upstream API URL specified in the path. The\nHTTP method you use on this endpoint is the method the broker sends to\nthe upstream service — every standard method (`GET`, `POST`, `PUT`,\n`PATCH`, `DELETE`, `HEAD`, `OPTIONS`) is supported.\n\nRequest headers and body are forwarded as-is. The broker injects the\ncaller's stored credentials for the target API.\n\nThe path, query, and header parameters listed below apply to every\nmethod. Per-method operations only differ in semantic intent and (for\nmethods that conventionally carry a body) in `requestBody` shape.\n\n### Sync vs async\n\nBy default, the broker waits up to 30 seconds for the upstream\nresponse. Control this with the `Prefer` header:\n\n- `Prefer: wait=30` — wait up to 30 seconds, then fall back to async.\n- `Prefer: respond-async` — always queue and return `202` immediately.\n\nAsync executions return a `202` with a polling link into the control plane.\n\n### Error handling\n\nPlatform-level errors (auth failures, missing credentials) return an\nRFC 9457 Problem Details (`application/problem+json`) body using the\nshared `ProblemDetails` schema from\n[jentic/api-problem-details](https://github.com/jentic/api-problem-details).\nField-level validation failures populate the `errors[]` extension.\n\n### Idempotency\n\nOptional `Idempotency-Key` request header (IETF\ndraft-ietf-httpapi-idempotency-key). If present, the broker\nrecords the key for 24 hours and replays the original response\nfor any subsequent request that reuses it — including `202`\nhandles, so retrying a queued async request returns the *same*\n`job_id` instead of double-queueing the upstream call. Keys are\nscoped per-caller and should be unique per logical operation\n(UUIDv4 recommended, max 255 chars).\n\nReplays are signalled with `Idempotent-Replayed: true` on the\nresponse. If the same key is reused with a different request\nbody or upstream URL, the broker returns `409 Conflict`.\n\n### Proxied upstream headers\n\nOn synchronous `200` responses, upstream API response headers are\nforwarded as-is. Hop-by-hop headers (RFC 7230 §6.1) and the\nbroker's own trace/metadata headers are not proxied — every\nbroker-added header lives under the `Jentic-*` namespace, so\n`Jentic-*` is unambiguously the broker's and anything else\nbelongs to the upstream.\n\n### Security\n\nThe Broker validates every `upstream_url` against the set of\nregistered APIs before forwarding. Arbitrary URLs that do not\nresolve to a known, registered API endpoint are rejected with\n`404` — the Broker is **not** an open proxy. This allowlist\ncheck is the spec's primary SSRF mitigation boundary:\ncredentials are never injected into requests targeting\nunregistered hosts.\n\n### Revision pinning\n\nBy default the Broker resolves the upstream URL against the\ntarget API's `current_revision_id` (the `published` revision\nregistered on the control plane). To test a `draft` revision\nwith real credentials before promoting it, attach the\n`Jentic-Revision` request header. The header is\nmulti-valued — repeat it (or comma-separate) once per API\nyou want to pin, with each value of the form\n`vendor:name:version=<revision_id>` — the `revision_id` exactly\nas the control plane's revision list returns it (the\n`rev_<revision_id without hyphens>` label is equivalent).\n\nThe Broker forwards the pin into the control-plane\n`POST /lookup/operation` call so URL → `operation_id`\nresolution sees the requested spec. When the header is\nabsent or the URL doesn't match a pinned API, the Broker\nresolves against `current_revision_id` as today.\n\nPinning a `draft` revision the caller doesn't have access to\nreturns `403`. Pinning an unknown or `archived` revision\nreturns `422` — `archived` revisions are deliberately not\npinnable from the hot path; resurrect them by re-promoting\ninstead. Pinning the same API to two different revisions in\none header returns `422 invalid_revision_pin`; repeating the\nsame revision (in either form) is allowed. The chosen\nrevisions are recorded on the resulting\n`ExecutionRecord` (`pinned_revisions` field on the control\nplane) so audit can answer \"did this execution use a pinned\nrevision?\" without parsing headers.\n",
       "get": {
         "description": "Forward a `GET` to the upstream service. No request body. Typically\nused for resource reads and listings; the upstream response is\nreturned verbatim on `200`, or queued and surfaced via `202` when\nthe wait window is exceeded or `Prefer: respond-async` is set.\n",
         "operationId": "executeGet",
@@ -1442,6 +1562,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
           },
           "409": {
             "$ref": "#/components/responses/Conflict"
@@ -1495,6 +1618,9 @@
           "404": {
             "$ref": "#/components/responses/NotFound"
           },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
           "409": {
             "$ref": "#/components/responses/Conflict"
           },
@@ -1546,6 +1672,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
           },
           "409": {
             "$ref": "#/components/responses/Conflict"
@@ -1637,6 +1766,9 @@
           "404": {
             "$ref": "#/components/responses/NotFound"
           },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
           "409": {
             "$ref": "#/components/responses/Conflict"
           },
@@ -1709,6 +1841,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
           },
           "409": {
             "$ref": "#/components/responses/Conflict"
@@ -1783,6 +1918,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
           },
           "409": {
             "$ref": "#/components/responses/Conflict"

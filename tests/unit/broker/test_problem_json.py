@@ -8,25 +8,15 @@ from typing import Any, cast
 
 import pytest
 import structlog
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import DBAPIError
 
-from jentic_one.broker.core.exceptions import (
+from jentic_one.broker.core.directives import (
     AgentDirective,
     AgentStrategy,
-    CredentialNeedsReconnectError,
-    CredentialNotProvisionedError,
-    CredentialRefreshTransientError,
-    CredentialUndecryptableError,
-    DeadlineExceededError,
-    ErrorOrigin,
-    OperationNotFoundError,
-    TooManyCandidatesError,
-    UpstreamResponseTooLargeError,
-    UpstreamTimeoutError,
-    UpstreamTransportError,
     ambiguous_credential_binding_directive,
+    credential_binding_suspended_directive,
     credential_identity_mismatch_directive,
     direct_action_denied_directive,
     direct_credential_identity_mismatch_directive,
@@ -34,19 +24,40 @@ from jentic_one.broker.core.exceptions import (
     suggested_permission_rules,
     switch_toolkit_directive,
 )
+from jentic_one.broker.core.errors import (
+    AmbiguousCredentialMatchError,
+    BrokerError,
+    CredentialNeedsReconnectError,
+    CredentialNotProvisionedError,
+    CredentialRefreshTransientError,
+    CredentialUndecryptableError,
+    DeadlineExceededError,
+    UpstreamResponseTooLargeError,
+    UpstreamTimeoutError,
+    UpstreamTransportError,
+)
 from jentic_one.broker.core.headers import JenticHeader
 from jentic_one.broker.core.problem import STATUS_BY_ERROR, broker_error_problem
 from jentic_one.broker.web.errors import (
     handle_broker_error,
+    handle_discovery_error,
     install_broker_error_handlers,
     problem_response,
 )
 from jentic_one.control.web.schemas.permission_rules import PermissionRuleSchema
 from jentic_one.shared.access_guidance import ConnectTarget
+from jentic_one.shared.broker.execution import ErrorOrigin
 from jentic_one.shared.broker.protocols import IdentityMismatch
 from jentic_one.shared.db.errors import (
     DatabaseCommitOutcomeUnknownError,
     DatabaseUnavailableError,
+)
+from jentic_one.shared.discovery.errors import (
+    AmbiguousMatchError,
+    DiscoveryError,
+    MethodNotAllowedError,
+    OperationNotFoundError,
+    TooManyCandidatesError,
 )
 from jentic_one.shared.web.errors import DB_COMMIT_OUTCOME_UNKNOWN_DETAIL
 
@@ -94,9 +105,22 @@ def test_directive_factories_emit_known_strategies() -> None:
             )
         ),
         direct_action_denied_directive(),
+        credential_binding_suspended_directive(vendor="acme", name="widgets", version="1.0.0"),
     ]
     for d in directives:
         assert d.strategy in _ALLOWED_STRATEGIES, d.strategy
+
+
+def test_credential_binding_suspended_directive_asks_the_operator_only() -> None:
+    """A suspended binding is the operator's to lift: no connect leg of any kind."""
+    d = credential_binding_suspended_directive(vendor="acme", name="widgets", version="1.0.0")
+    assert d.strategy == "prompt_human"
+    assert d.parameters == {"api": {"vendor": "acme", "name": "widgets", "version": "1.0.0"}}
+    instruction = d.human_readable_instruction
+    assert "operator" in instruction
+    assert "suspended" in instruction
+    assert "jentic connect" not in instruction
+    assert "request_connection" not in instruction
 
 
 def test_no_credential_binding_directive_names_surviving_commands() -> None:
@@ -394,7 +418,7 @@ def test_problem_response_merges_extra_and_headers() -> None:
 
 
 def test_status_table_maps_taxonomy() -> None:
-    assert STATUS_BY_ERROR[OperationNotFoundError] == 404
+    assert STATUS_BY_ERROR[AmbiguousCredentialMatchError] == 409
     assert STATUS_BY_ERROR[UpstreamTimeoutError] == 504
     assert STATUS_BY_ERROR[UpstreamTransportError] == 502
 
@@ -416,7 +440,6 @@ def test_status_table_maps_credential_errors() -> None:
         (CredentialUndecryptableError("undecryptable"), 424),
         (CredentialNeedsReconnectError("reconnect"), 401),
         (CredentialRefreshTransientError("transient"), 502),
-        (OperationNotFoundError("missing"), 404),
     ],
 )
 async def test_handler_maps_credential_errors(error: Any, expected_status: int) -> None:
@@ -425,7 +448,7 @@ async def test_handler_maps_credential_errors(error: Any, expected_status: int) 
 
 
 def test_broker_error_carries_contract() -> None:
-    err = OperationNotFoundError(
+    err = BrokerError(
         "no match",
         origin=ErrorOrigin.BROKER,
         directive=AgentDirective(strategy="fatal", human_readable_instruction="give up"),
@@ -443,7 +466,6 @@ def test_broker_error_carries_contract() -> None:
         (DeadlineExceededError("late"), 504, "deadline_exceeded"),
         (CredentialRefreshTransientError("cred_1: Timeout"), 502, "refresh_transient_error"),
         (UpstreamResponseTooLargeError("too big"), 502, "upstream_response_too_large"),
-        (TooManyCandidatesError("too many"), 503, "too_many_candidates"),
         (UpstreamTransportError("transport"), 502, "upstream_transport_error"),
     ],
     ids=lambda v: type(v).__name__ if isinstance(v, Exception) else str(v),
@@ -541,3 +563,62 @@ def test_commit_outcome_unknown_asks_the_client_to_check_before_retrying() -> No
     assert body["type"] == "database_unavailable"
     assert body["detail"] == DB_COMMIT_OUTCOME_UNKNOWN_DETAIL
     assert "agent_directive" not in body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("exc", "status", "want_type"),
+    [
+        (
+            OperationNotFoundError(detail="Operation not found — unregistered upstream URL."),
+            404,
+            "operation_not_found",
+        ),
+        (MethodNotAllowedError(["GET", "PUT"]), 405, "method_not_allowed"),
+        (AmbiguousMatchError(2), 409, "ambiguous_match"),
+        (TooManyCandidatesError(), 503, "too_many_candidates"),
+    ],
+    ids=lambda v: type(v).__name__ if isinstance(v, Exception) else str(v),
+)
+async def test_discovery_errors_render_as_broker_problems(
+    exc: DiscoveryError, status: int, want_type: str
+) -> None:
+    """#1962: the shared discovery errors (raised by the broker for an unregistered
+    URL, and by the in-process registry resolver) render as broker problems:
+    their own status and ``type``, ``broker`` origin, and ``Allow`` on a 405."""
+    request = Request(
+        {"type": "http", "method": "GET", "path": "/api.example.com/x", "headers": []}
+    )
+    resp = await handle_discovery_error(request, exc)
+    assert resp.status_code == status
+    assert resp.media_type == "application/problem+json"
+    assert resp.headers[JenticHeader.ERROR_ORIGIN.value] == "broker"
+    expected: dict[str, Any] = {
+        "type": want_type,
+        "title": exc.detail,
+        "status": status,
+        "detail": exc.detail,
+        "error_origin": "broker",
+        "instance": "/api.example.com/x",
+    }
+    if isinstance(exc, MethodNotAllowedError):
+        expected["allowed_methods"] = ["GET", "PUT"]
+        assert resp.headers["Allow"] == "GET, PUT"
+    else:
+        assert "Allow" not in resp.headers
+    assert _body(resp) == expected
+
+
+def test_installed_handlers_render_a_raised_discovery_error() -> None:
+    """A discovery error escaping a broker route is a typed problem, never a 500."""
+    app = FastAPI()
+    install_broker_error_handlers(app)
+
+    @app.get("/boom")
+    async def boom() -> None:
+        raise TooManyCandidatesError()
+
+    resp = TestClient(app).get("/boom")
+    assert resp.status_code == 503
+    assert resp.json()["type"] == "too_many_candidates"
+    assert resp.headers[JenticHeader.ERROR_ORIGIN.value] == "broker"

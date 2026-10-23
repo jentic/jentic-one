@@ -481,7 +481,7 @@ def _expected_split_refs(subchart: str) -> dict[str, str]:
 def test_render_app_secrets_split_mounts_only_what_each_surface_reads() -> None:
     """generate=true hands each Python surface exactly the secrets its code reads.
 
-    The expectation is derived from shared/config.py GUARDED_FIELD_SURFACES (the same
+    The expectation is derived from shared/config/_secrets.py GUARDED_FIELD_SURFACES (the same
     table that relaxes the production guard for a standalone surface), so the
     chart and the loader cannot drift apart: a surface the chart starves of a
     secret it reads would fail its production boot; a surface handed one it
@@ -1244,3 +1244,47 @@ def test_render_bundled_postgres_raises_connection_ceiling() -> None:
     sts = next(doc for doc in docs if doc.get("kind") == "StatefulSet")
     container = sts["spec"]["template"]["spec"]["containers"][0]
     assert container["args"] == ["-c", "max_connections=200"]
+
+
+def _install_notes(*args: str) -> str:
+    """Render the chart's NOTES.txt (``helm template`` never renders it)."""
+    if shutil.which("helm") is None:
+        pytest.skip("helm not installed")
+    result = subprocess.run(
+        ["helm", "install", "jentic", str(CHART_DIR), "--dry-run=client", *args],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.split("NOTES:", 1)[1]
+
+
+@pytest.mark.smoke
+@pytest.mark.parametrize(
+    ("values", "overrides", "warned"),
+    [
+        ("local-combined.yaml", (), None),
+        # The parts shape enables the gateway, so its exemption is exercised.
+        ("local-parts.yaml", ("--set", "gateway.replicas=3"), None),
+        # A disabled surface's replicas never render a pod, so it never warns.
+        ("local-combined.yaml", ("--set", "control.replicas=2"), None),
+        ("local-combined.yaml", ("--set", "app.replicas=2"), "app.replicas=2"),
+        (
+            "local-parts.yaml",
+            ("--set", "broker.replicas=3", "--set", "registry.replicas=2"),
+            "registry.replicas=2, broker.replicas=3",
+        ),
+    ],
+)
+def test_notes_warn_when_a_stateful_surface_runs_more_than_one_replica(
+    values: str, overrides: tuple[str, ...], warned: str | None
+) -> None:
+    """One process per surface: >1 replica warns (gateway exempt) and never fails."""
+    notes = _install_notes("-f", str(VALUES_DIR / values), *overrides)
+    if warned is None:
+        assert "WARNING" not in notes
+    else:
+        assert "WARNING: more than one replica" in notes
+        assert warned in notes
+        assert "register_state_backend" in notes

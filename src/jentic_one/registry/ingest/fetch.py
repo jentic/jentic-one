@@ -11,7 +11,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from jentic_one.registry.ingest.api_identifier import resolve_api_identifier
-from jentic_one.registry.ingest.exc import IngestStageError
+from jentic_one.registry.ingest.errors import IngestStageError
 from jentic_one.registry.ingest.models import IngestSpecification, SpecType
 from jentic_one.shared.bounded_read import (
     ResponseTooLargeError,

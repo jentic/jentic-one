@@ -18,6 +18,11 @@ class ConnectRequest(BaseModel):
     # configured redirect_uri prefers that; otherwise it uses this. None for
     # providers that don't use a redirect (e.g. Pipedream-hosted flows).
     redirect_uri: str | None = None
+    # Set by ``ConnectService.begin`` (never from the HTTP body): the hash of
+    # the browser-binding cookie and the host the browser called the API on.
+    # The provider signs both into the state.
+    browser_binding_hash: str | None = None
+    browser_host: str | None = None
 
 
 class AuthCodeChallenge(BaseModel):
@@ -79,6 +84,13 @@ class ConnectState(BaseModel):
     # callback refuses the grant if any other agent was bound meanwhile, since
     # re-authorizing widens the credential for every agent bound to it.
     sole_agent_id: str | None = None
+    # SHA-256 (hex) of the browser-binding cookie value set on the browser
+    # that started the flow; the callback refuses a request whose cookie does
+    # not hash to it. ``browser_host`` is the host that browser called the
+    # API on (where the cookie lives), used to hop a loopback callback across
+    # ``localhost`` / ``127.0.0.1`` aliases to the host holding the cookie.
+    browser_binding_hash: str | None = None
+    browser_host: str | None = None
 
 
 class ConnectCallback(BaseModel):

@@ -1528,6 +1528,7 @@
           "key": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -1558,6 +1559,7 @@
           "name": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -3211,6 +3213,7 @@
           "name": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -3226,6 +3229,7 @@
           "password": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -3292,6 +3296,7 @@
           "username": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -3732,6 +3737,7 @@
           "name": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -3788,6 +3794,7 @@
           "token": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -9448,6 +9455,115 @@
         "title": "NoAuthCreateRequest",
         "type": "object"
       },
+      "NoAuthUpdateRequest": {
+        "description": "Update request for no_auth credentials (label, enablement, server variables).",
+        "examples": [
+          {
+            "active": true,
+            "name": "Open-Meteo",
+            "runtime_config": {
+              "headers": {
+                "Stripe-Version": "2024-04-10"
+              },
+              "query_params": {
+                "locale": "en-GB"
+              }
+            },
+            "server_variables": {
+              "region": "eu"
+            },
+            "type": "no_auth"
+          }
+        ],
+        "properties": {
+          "active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Enable or disable the credential for injection; omit to leave unchanged.",
+            "examples": [
+              true
+            ],
+            "title": "Active"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "New label for the credential; omit to leave unchanged.",
+            "examples": [
+              "Open-Meteo"
+            ],
+            "title": "Name"
+          },
+          "runtime_config": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RuntimeConfig"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Per-upstream-call overrides; reserved and not currently applied.",
+            "examples": [
+              {
+                "headers": {
+                  "Stripe-Version": "2024-04-10"
+                },
+                "query_params": {
+                  "locale": "en-GB"
+                }
+              }
+            ]
+          },
+          "server_variables": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Replacement OpenAPI server-variable values; omit to leave unchanged.",
+            "examples": [
+              {
+                "region": "eu"
+              }
+            ],
+            "title": "Server Variables"
+          },
+          "type": {
+            "const": "no_auth",
+            "description": "Credential type; always `no_auth`.",
+            "examples": [
+              "no_auth"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "NoAuthUpdateRequest",
+        "type": "object"
+      },
       "NoteApiReference": {
         "additionalProperties": false,
         "description": "Loose ``(vendor, name, version)`` identity tuple for a registered API.",
@@ -10064,13 +10180,14 @@
           "client_secret": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "description": "Replacement client secret; omit to leave unchanged. token_url and scopes are applied only together with it.",
+            "description": "Replacement client secret; omit to leave unchanged. Required when `token_url` moves to a different origin. Rejected with 400 on `device_code` credentials (public client) and on credentials that use a shared app registration.",
             "examples": [
               "example-secret"
             ],
@@ -10080,6 +10197,7 @@
           "name": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -10125,7 +10243,7 @@
                 "type": "null"
               }
             ],
-            "description": "Replacement OAuth scopes; applied only when client_secret is sent.",
+            "description": "Replacement OAuth scopes; omit to leave unchanged, send `[]` to clear them. Each item is a single non-empty scope token without whitespace. Rejected with 400 on credentials that use a shared app registration, and on `device_code` credentials while a device flow is pending.",
             "examples": [
               [
                 "read_write"
@@ -10156,13 +10274,14 @@
           "token_url": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "description": "Replacement token endpoint URL; applied only when client_secret is sent.",
+            "description": "Replacement token endpoint URL; omit to leave unchanged. A change of origin (scheme, host or port) requires `client_secret` in the same request and disconnects the credential until it is reconnected; on `device_code` credentials it is rejected with 400. Rejected with 400 on credentials that use a shared app registration, and on `device_code` credentials while a device flow is pending.",
             "examples": [
               "https://connect.stripe.com/oauth/token"
             ],
@@ -17355,6 +17474,7 @@
           "access_key_id": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -17385,6 +17505,7 @@
           "aws_region": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -17400,6 +17521,7 @@
           "aws_service": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -17424,6 +17546,7 @@
           "name": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -17460,6 +17583,7 @@
           "secret_access_key": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -17496,6 +17620,7 @@
           "session_token": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -18903,7 +19028,7 @@
       "name": "Jentic Platform Team",
       "url": "https://jentic.com/"
     },
-    "description": "## Overview ##\nThe **Jentic Control Plane API** is the unified HTTP surface of the\nJentic platform's control plane — every administrative and\nmetadata-facing endpoint outside the Broker data plane.\n\nThe control plane is the administrative counterpart to the\n[Broker](../broker/swagger) data plane: where the Broker executes\nupstream API calls on behalf of agents, the control plane is where\nhumans, operators, and agents configure *what* the Broker is\nallowed to do, *for whom*, *with which credentials*, *against\nwhich registered APIs*, and *with what telemetry retained*.\n\n## Components ##\nHigh-level components for the control plane API.\n- **[Core / Access](#tag/Credentials)** — credentials, direct\n  agent↔credential bindings, and PBAC grants and runtime params. Owns *who can\n  call what, with which secret*.\n- **[Registry](#tag/APIs)** — registered APIs, immutable\n  revisions, operations, search, lookup. Owns *what APIs are\n  registered for this deployment and what they look like at any\n  given revision*.\n- **[Admin / Audit](#tag/Users)** — users, permissions,\n  execution telemetry, async-job tracker, and dashboard event\n  stream. Owns *who can sign in with what permissions* together\n  with *what actually happened* — the human roster, the\n  append-only records of brokered executions, the unified\n  `Job` resource that both Registry imports and Broker\n  async-execution calls feed into, and a curated `/events`\n  surface for dashboards and operators.\n\n## Authentication ##\n\nToday the platform ships a local username + password identity\nprovider for human users, alongside agent identity (Dynamic Client\nRegistration + RFC 7523 JWT-bearer assertions) — every authenticated operation expects\n`Authorization: Bearer <token>` (`BearerAuth`, an opaque `at_`\ntoken) except `GET /health`, `POST /auth/login`,\n`POST /users:create-admin`, and `POST /users:redeem-invite`.\nHuman tokens are issued by `POST /auth/login` with a fixed 1-hour\nTTL and can be re-minted before expiry via `POST /auth/refresh`\n(sliding session, bounded by an absolute window —\n`admin.auth.session_ttl_seconds`, 12 hours by default); agents\nobtain tokens from `POST /oauth/token` (see\n`BearerAuth`). The `permissions` claim on a token is a snapshot at\nissue time; permission changes take effect at the next re-issue —\nthe next refresh or re-login (≤ 1 hour with the default TTL).\n\nThe platform ships **no default credentials**. On a fresh\ninstall the users table is empty, so `GET /health` returns\n`setup_required: true` with `next_step: create_admin`. The\noperator creates the first administrator with `POST\n/users:create-admin {email, password}` — a one-time,\nunauthenticated, self-closing endpoint: it succeeds only while\nthe users table is empty and returns `410 setup_already_complete`\nonce any user exists (a single-row setup sentinel is the\nconcurrency backstop, so two racing callers — even with different\nemails — cannot both bootstrap). It grants `org:admin`, sets the operator's chosen\npassword (so `must_change_password` is **false** — no forced\nrotation), and returns a ready-to-use `LoginResponse`\n(auto-login). After the first user exists `setup_required` flips\nto `false`. See the **Users** tag for the full onboarding\nwalkthrough.\n\nExternal SSO providers (Okta, AWS Cognito, Auth0, Azure AD)\nplug in via the `User.auth_provider: external` hook plus an\n`external_subject_id` mapping; no concrete provider ships in\nthis revision. Agent identity (separate from human users) uses\nDynamic Client Registration (`POST /register`) with the agent's\nJWKS, then RFC 7523 JWT-bearer assertions exchanged at\n`POST /oauth/token` for an opaque access token.\n\n## Cross-cutting conventions\n\n- Every API reference uses the loose\n  `APIReference(vendor, name, version)` data structure. There is no\n  foreign key between Core, Registry, and Admin / Audit — the\n  tuple is the only join.\n- **Error shape.** Every error response is RFC 9457 Problem\n  Details (`application/problem+json`) using the shared\n  `ProblemDetails` schema from\n  [jentic/api-problem-details](https://github.com/jentic/api-problem-details).\n  Field-level validation failures (`422`) populate `errors[]`;\n  transport-level conditions reuse the same shape with status-\n  and `type`-specific payloads.\n- **JSON casing.** Field names in request and response bodies are\n  `snake_case` throughout, including discriminator values\n  (`type: api_key`, `type: bearer_token`, …). The one historical\n  camelCase exception is the OpenAPI keyword `apiKey` itself when\n  it appears in re-exported `securitySchemes.type` values; that's\n  an OpenAPI artefact, not platform style.\n- **Pagination.** List endpoints are cursor-paginated with opaque\n  `next_cursor` round-trips. `has_more=false` means done. List\n  envelopes are intentionally slim — `{data, has_more,\n  next_cursor}` — and **do not** carry HAL-style `_links` (no\n  `self`, `next`, or `prev`); cursors are forward-only and\n  `next_cursor` already encodes the next page. Individual resource\n  responses still use `_links` where it carries non-trivial\n  information (e.g. `Job._links.result`, `AsyncQueuedResponse._links.self`,\n  `Event._links`).\n- **Authentication.** All operations require `Authorization:\n  Bearer <token>` — an opaque access token (prefixed `at_`, not a\n  JWT), obtained from `POST /oauth/token` (see `BearerAuth` for the\n  per-actor grants) — except the unauthenticated\n  `GET /health`, `POST /auth/login`, `POST /users:create-admin`,\n  and `POST /users:redeem-invite`. See the `Users` tag for the\n  first-run setup and invite-redemption flows.\n- **Header namespace.** All Jentic-specific HTTP headers — request\n  and response, broker and control-plane — live under the\n  `Jentic-*` namespace **without** the legacy `X-` prefix\n  (RFC 6648 deprecates `X-` for new protocols). `Jentic-*` is\n  unambiguously a platform header; anything else on a brokered\n  response belongs to the upstream API. Standard headers\n  (`Authorization`, `Prefer`, `Idempotency-Key`, `Accept`,\n  `traceparent`, `tracestate`) keep their RFC names.\n- **Append-only audit.** Admin / Audit records are never mutated\n  after the fact; retention is enforced via purge policy, not\n  edit.\n- **Trace correlation.** Every Broker call records a W3C\n  `trace_id` on its `ExecutionRecord` and on any `Event` derived\n  from it. To walk the executions you can see under one logical request, use\n  `GET /executions?trace_id=…`.\n- **Event stream.** The dashboard / operator UI consumes the\n  `/events` resource (paginated list + SSE stream). Some events\n  are informational, some require action — see the `Events` tag.\n- **Revision pinning.** Every `Api` carries one `published`\n  revision (`current_revision_id`) plus zero or more `draft` and\n  `archived` siblings. The Broker's hot path resolves against\n  `current_revision_id` by default; agents can target a specific\n  `draft` revision per call via the Broker's `Jentic-Revision`\n  header. Control-plane reads (`Search`, `Inspect`,\n  `Lookup`) accept matching `revision_id` / `revision_pins`\n  parameters so dashboards can preview an unpromoted revision\n  before flipping `:promote`.\n- **ID prefixes.** Resource identifiers use a stable short prefix.\n  Treat the prefix as part of the ID — never strip it. The\n  complete table:\n\n  | Prefix | Resource | Notes |\n  |---|---|---|\n  | `tk_` | Toolkit ID | Retired (theme-5): the toolkit surface and its tables are gone (Phase 6b). Ids still appear in historical records (execution attribution, audit). |\n  | `ck_` | Toolkit-key record | Retired (theme-5): key records are gone with the toolkit tables (Phase 6b). Ids survive only in audit history. |\n  | `cred_` | Credential ID | |\n  | `exec_` | Execution record | Returned in the `Jentic-Execution-Id` response header on every brokered call. |\n  | `job_` | Async job | UUIDs also accepted on inputs for backward compatibility. |\n  | `evt_` | Event | ULID-shaped. |\n  | `op_` | Registered operation | |\n  | `rev_` | API revision | ULID-shaped. |\n  | `usr_` | User | Org member. Resolves via `GET /users/{user_id}`. Used in `decided_by` and similar audit references. |\n  | `inv_` | Invite token | One-time token issued at user creation. Plaintext value shown **once** at issue / re-issue; `:redeem-invite` consumes it. |\n  | `areq_` | Access request (retired) | Retired (theme 7): the access-request flow is gone. Ids still appear in stored audit/event records. |\n  | `note_` | Note | ULID-shaped. Free-form annotation attached to a registry resource — see the `Notes` tag. |\n  | `ovr_` | Overlay | ULID-shaped. OpenAPI Overlay 1.0 document attached to an `Api` aggregate — see the `Overlays` tag. |\n  | `jntc_live_` | Plaintext toolkit API key value (retired) | Never issued anymore. A value migrated before Phase 6b keeps authenticating — as its successor agent — until the deprecation window closes (no earlier than 2026-12-01); rotate holders to the successor agent's `jak_` key. |\n  | `sak_` | Plaintext service-account API key value (retired) | Retired in 0.41: refused with `401` (the detail names the retirement). Each service account was migrated to an agent; mint a `jak_` key for that agent. |\n\n  Surfaces still being designed (agent identity, OAuth brokers)\n  will add their own prefixes when they land.\n",
+    "description": "## Overview ##\nThe **Jentic Control Plane API** is the unified HTTP surface of the\nJentic platform's control plane — every administrative and\nmetadata-facing endpoint outside the Broker data plane.\n\nThe control plane is the administrative counterpart to the\n[Broker](../broker/swagger) data plane: where the Broker executes\nupstream API calls on behalf of agents, the control plane is where\nhumans, operators, and agents configure *what* the Broker is\nallowed to do, *for whom*, *with which credentials*, *against\nwhich registered APIs*, and *with what telemetry retained*.\n\n## Components ##\nHigh-level components for the control plane API.\n- **[Core / Access](#tag/Credentials)** — credentials, direct\n  agent↔credential bindings, and PBAC grants and runtime params. Owns *who can\n  call what, with which secret*.\n- **[Registry](#tag/APIs)** — registered APIs, immutable\n  revisions, operations, search, lookup. Owns *what APIs are\n  registered for this deployment and what they look like at any\n  given revision*.\n- **[Admin / Audit](#tag/Users)** — users, permissions,\n  execution telemetry, async-job tracker, and dashboard event\n  stream. Owns *who can sign in with what permissions* together\n  with *what actually happened* — the human roster, the\n  append-only records of brokered executions, the unified\n  `Job` resource that both Registry imports and Broker\n  async-execution calls feed into, and a curated `/events`\n  surface for dashboards and operators.\n\n## Authentication ##\n\nToday the platform ships a local username + password identity\nprovider for human users, alongside agent identity (Dynamic Client\nRegistration + RFC 7523 JWT-bearer assertions) — every authenticated operation expects\n`Authorization: Bearer <token>` (`BearerAuth`, an opaque `at_`\ntoken) except `GET /health`, `POST /auth/login`,\n`POST /users:create-admin`, and `POST /users:redeem-invite`.\nHuman tokens are issued by `POST /auth/login` with a fixed 1-hour\nTTL and can be re-minted before expiry via `POST /auth/refresh`\n(sliding session, bounded by an absolute window —\n`admin.auth.session_ttl_seconds`, 12 hours by default); agents\nobtain tokens from `POST /oauth/token` (see\n`BearerAuth`). The `permissions` claim on a token is a snapshot at\nissue time; permission changes take effect at the next re-issue —\nthe next refresh or re-login (≤ 1 hour with the default TTL).\n\nThe platform ships **no default credentials**. On a fresh\ninstall the users table is empty, so `GET /health` returns\n`setup_required: true` with `next_step: create_admin`. The\noperator creates the first administrator with `POST\n/users:create-admin {email, password}` — a one-time,\nunauthenticated, self-closing endpoint: it succeeds only while\nthe users table is empty and returns `410 setup_already_complete`\nonce any user exists (a single-row setup sentinel is the\nconcurrency backstop, so two racing callers — even with different\nemails — cannot both bootstrap). It grants `org:admin`, sets the operator's chosen\npassword (so `must_change_password` is **false** — no forced\nrotation), and returns a ready-to-use `LoginResponse`\n(auto-login). After the first user exists `setup_required` flips\nto `false`. See the **Users** tag for the full onboarding\nwalkthrough.\n\nExternal SSO providers (Okta, AWS Cognito, Auth0, Azure AD)\nplug in via the `User.auth_provider: external` hook plus an\n`external_subject_id` mapping; no concrete provider ships in\nthis revision. Agent identity (separate from human users) uses\nDynamic Client Registration (`POST /register`) with the agent's\nJWKS, then RFC 7523 JWT-bearer assertions exchanged at\n`POST /oauth/token` for an opaque access token.\n\n## Cross-cutting conventions\n\n- Every API reference uses the loose\n  `APIReference(vendor, name, version)` data structure. There is no\n  foreign key between Core, Registry, and Admin / Audit — the\n  tuple is the only join.\n- **Error shape.** Every error response is RFC 9457 Problem\n  Details (`application/problem+json`) using the shared\n  `ProblemDetails` schema from\n  [jentic/api-problem-details](https://github.com/jentic/api-problem-details).\n  Field-level validation failures (`422`) populate `errors[]`;\n  transport-level conditions reuse the same shape with status-\n  and `type`-specific payloads.\n- **JSON casing.** Field names in request and response bodies are\n  `snake_case` throughout, including discriminator values\n  (`type: api_key`, `type: bearer_token`, …). The one historical\n  camelCase exception is the OpenAPI keyword `apiKey` itself when\n  it appears in re-exported `securitySchemes.type` values; that's\n  an OpenAPI artefact, not platform style.\n- **Pagination.** List endpoints are cursor-paginated with opaque\n  `next_cursor` round-trips. `has_more=false` means done. List\n  envelopes are intentionally slim — `{data, has_more,\n  next_cursor}` — and **do not** carry HAL-style `_links` (no\n  `self`, `next`, or `prev`); cursors are forward-only and\n  `next_cursor` already encodes the next page. Individual resource\n  responses still use `_links` where it carries non-trivial\n  information (e.g. `Job._links.result`, `AsyncQueuedResponse._links.self`,\n  `Event._links`).\n- **Authentication.** All operations require `Authorization:\n  Bearer <token>` — an opaque access token (prefixed `at_`, not a\n  JWT), obtained from `POST /oauth/token` (see `BearerAuth` for the\n  per-actor grants) — except the unauthenticated\n  `GET /health`, `POST /auth/login`, `POST /users:create-admin`,\n  and `POST /users:redeem-invite`. See the `Users` tag for the\n  first-run setup and invite-redemption flows.\n- **Header namespace.** All Jentic-specific HTTP headers — request\n  and response, broker and control-plane — live under the\n  `Jentic-*` namespace **without** the legacy `X-` prefix\n  (RFC 6648 deprecates `X-` for new protocols). `Jentic-*` is\n  unambiguously a platform header; anything else on a brokered\n  response belongs to the upstream API. Standard headers\n  (`Authorization`, `Prefer`, `Idempotency-Key`, `Accept`,\n  `traceparent`, `tracestate`) keep their RFC names.\n- **Append-only audit.** Admin / Audit records are never mutated\n  after the fact; retention is enforced via purge policy, not\n  edit.\n- **Trace correlation.** Every Broker call records a W3C\n  `trace_id` on its `ExecutionRecord` and on any `Event` derived\n  from it. To walk the executions you can see under one logical request, use\n  `GET /executions?trace_id=…`.\n- **Event stream.** The dashboard / operator UI consumes the\n  `/events` resource (paginated list + SSE stream). Some events\n  are informational, some require action — see the `Events` tag.\n- **Revision pinning.** Every `Api` carries one `published`\n  revision (`current_revision_id`) plus zero or more `draft` and\n  `archived` siblings. The Broker's hot path resolves against\n  `current_revision_id` by default; agents can target a specific\n  `draft` revision per call via the Broker's `Jentic-Revision`\n  header (`vendor:name:version=<revision_id>`, with the\n  `revision_id` from the revision list). `revision_id` is an unprefixed UUID;\n  the header also accepts the equivalent `rev_<revision_id without hyphens>`\n  label, a header-only encoding rather than a resource ID. Control-plane\n  reads (`Search`, `Inspect`, `Lookup`) accept matching `revision_id` / `revision_pins`\n  parameters so dashboards can preview an unpromoted revision\n  before flipping `:promote`.\n- **ID prefixes.** Resource identifiers use a stable short prefix.\n  Treat the prefix as part of the ID — never strip it. The\n  complete table:\n\n  | Prefix | Resource | Notes |\n  |---|---|---|\n  | `tk_` | Toolkit ID | Retired (theme-5): the toolkit surface and its tables are gone (Phase 6b). Ids still appear in historical records (execution attribution, audit). |\n  | `ck_` | Toolkit-key record | Retired (theme-5): key records are gone with the toolkit tables (Phase 6b). Ids survive only in audit history. |\n  | `cred_` | Credential ID | |\n  | `exec_` | Execution record | Returned in the `Jentic-Execution-Id` response header on every brokered call. |\n  | `job_` | Async job | UUIDs also accepted on inputs for backward compatibility. |\n  | `evt_` | Event | ULID-shaped. |\n  | `op_` | Registered operation | |\n  | `usr_` | User | Org member. Resolves via `GET /users/{user_id}`. Used in `decided_by` and similar audit references. |\n  | `inv_` | Invite token | One-time token issued at user creation. Plaintext value shown **once** at issue / re-issue; `:redeem-invite` consumes it. |\n  | `areq_` | Access request (retired) | Retired (theme 7): the access-request flow is gone. Ids still appear in stored audit/event records. |\n  | `note_` | Note | ULID-shaped. Free-form annotation attached to a registry resource — see the `Notes` tag. |\n  | `ovr_` | Overlay | ULID-shaped. OpenAPI Overlay 1.0 document attached to an `Api` aggregate — see the `Overlays` tag. |\n  | `jntc_live_` | Plaintext toolkit API key value (retired) | Never issued anymore. A value migrated before Phase 6b keeps authenticating — as its successor agent — until the deprecation window closes (no earlier than 2026-12-01); rotate holders to the successor agent's `jak_` key. |\n  | `sak_` | Plaintext service-account API key value (retired) | Retired in 0.41: refused with `401` (the detail names the retirement). Each service account was migrated to an agent; mint a `jak_` key for that agent. |\n\n  Surfaces still being designed (agent identity, OAuth brokers)\n  will add their own prefixes when they land.\n",
     "license": {
       "identifier": "Apache-2.0",
       "name": "Apache-2.0"
@@ -22657,7 +22782,7 @@
       },
       "description": "`GET`: Get an agent. `PATCH`: Update an agent. `DELETE`: Archive Agent.",
       "get": {
-        "description": "Get one agent's profile and lifecycle state.\n\nReturns the agent's name, description, owner, `status`, approval or\ndenial details, and whether it currently has an API key (`has_api_key`).\nReadable by the agent itself, its owner, and `org:admin`; an agent outside\nthe caller's visibility answers 404.",
+        "description": "Get one agent's profile and lifecycle state.\n\nReturns the agent's name, description, owner, `status`, approval or\ndenial details, and whether it currently has an API key (`has_api_key`).\nReadable by the agent itself, its owner, `org:admin`, and a caller holding\n`agents:read` (implied by `agents:write`); an agent outside the caller's\nvisibility answers 404.",
         "operationId": "getAgent",
         "parameters": [
           {
@@ -22830,7 +22955,7 @@
         ]
       },
       "patch": {
-        "description": "Partially update an agent's `name`, `description` or `owner_id`.\n\nOnly the fields present in the body change; an empty body returns the\nagent unchanged. Allowed for the agent's owner or an `org:admin` (anyone\nelse gets 404). Changing `owner_id` transfers ownership, is\n`org:admin`-only, and revokes every active OAuth client grant bound to\nthe agent, so the new owner must re-consent any connected client. The\nagent's API key, permissions and credential bindings are unaffected. An\narchived agent cannot be updated (409). Returns the updated agent.",
+        "description": "Partially update an agent's `name`, `description` or `owner_id`.\n\nOnly the fields present in the body change; an empty body returns the\nagent unchanged. Allowed for the agent's owner or an `org:admin` (anyone\nelse gets 404). Changing `owner_id` transfers ownership, is\n`org:admin`-only, revokes every active OAuth client grant bound to the\nagent (so the new owner must re-consent any connected client), and\nsuspends active credential bindings to credentials outside the new\nowner's ownership. The agent's API key and permissions are unaffected. An\narchived agent cannot be updated (409). Returns the updated agent.",
         "operationId": "updateAgent",
         "parameters": [
           {
@@ -23366,7 +23491,7 @@
     "/agents/{agent_id}/credentials": {
       "description": "`GET`: List an agent's credential bindings. `POST`: Bind a credential to an agent.",
       "get": {
-        "description": "List the credentials bound directly to an agent.\n\nEach binding names the credential, the API it serves, when it was bound,\nwhether it is `suspended` (and why), and any attached permission\n`rule_set_id`. Credential secrets are never returned. Readable by the\nagent itself, its owner, and `org:admin` (404 otherwise). The list is not\npaginated.",
+        "description": "List the credentials bound directly to an agent.\n\nEach binding names the credential, the API it serves, when it was bound,\nwhether it is `suspended` (and why), and any attached permission\n`rule_set_id`. Credential secrets are never returned. Readable like\n`GET /agents/{agent_id}`: by the agent itself, its owner, `org:admin`, and a\ncaller holding `agents:read` (implied by `agents:write`); 404 otherwise.\nThe list is not paginated.",
         "operationId": "listAgentCredentials",
         "parameters": [
           {
@@ -32364,7 +32489,7 @@
     "/auth/refresh": {
       "description": "`POST`: Refresh session token.",
       "post": {
-        "description": "Re-mint the caller's login JWT before it expires (sliding session).\n\nOnly user login JWTs are refreshable; permissions and the\n``must_change_password`` gate are re-read from the database at re-mint.\nRefusal modes: 401 ``session_expired`` once the original authentication is\nolder than the absolute window (``admin.auth.session_ttl_seconds``), 401\n``invalid_credentials`` for deactivated users, non-user tokens, or opaque\n(non-JWT) credentials. Clients should then send the user back to login.",
+        "description": "Re-mint the caller's login JWT before it expires (sliding session).\n\nOnly user login JWTs are refreshable; permissions and the\n``must_change_password`` gate are re-read from the database at re-mint.\nRefusal modes: 401 ``session_expired`` once the original authentication is\nolder than the absolute window (``admin.auth.session_ttl_seconds``), 401\n``unauthorized`` from the auth gate for a disabled, deleted or unknown user,\nand 401 ``invalid_credentials`` for non-user tokens or opaque (non-JWT)\ncredentials. Clients should then send the user back to login.",
         "operationId": "refreshSession",
         "responses": {
           "200": {
@@ -34617,7 +34742,7 @@
     "/connect-sessions/{session_id}:cancel": {
       "description": "`POST`: Cancel an in-flight connect session.",
       "post": {
-        "description": "Terminate a still-active session at the user's request.\n\nGated like ``/status`` — the ``poll_token`` the SPA already holds, or\nthe target agent's owner / ``org:admin`` without it.\n\nA still-existing but already-terminal session is a 204 no-op — a\n\"Cancel\" click racing the poll scanner doesn't error. A session\nthat has already been cascade-deleted (unhappy-terminal path in\n``_mark_terminal``) surfaces as 403, matching ``/status`` — the\ncaller can't distinguish \"gone\" from \"your poll_token is wrong\",\nwhich is the enumeration-oracle guard. The SPA's cancel-on-unmount\nis fire-and-forget and ``.catch``es the 403, so this doesn't leak\ninto the UX.",
+        "description": "Terminate a still-active session at the user's request.\n\nGated like ``/status`` — the ``poll_token`` the SPA already holds, or\nthe target agent's owner / ``org:admin`` without it. The audit entry\nfor the cancel names the caller, with the session's initiator alongside.\n\nA still-existing but already-terminal session is a 204 no-op — a\n\"Cancel\" click racing the poll scanner doesn't error. A session\nthat has already been cascade-deleted (unhappy-terminal path in\n``_mark_terminal``) surfaces as 403, matching ``/status`` — the\ncaller can't distinguish \"gone\" from \"your poll_token is wrong\",\nwhich is the enumeration-oracle guard. The SPA's cancel-on-unmount\nis fire-and-forget and ``.catch``es the 403, so this doesn't leak\ninto the UX.",
         "operationId": "cancelConnectSession",
         "parameters": [
           {
@@ -34802,7 +34927,7 @@
     "/connect-sessions/{session_id}:confirm": {
       "description": "`POST`: Confirm a connect session.",
       "post": {
-        "description": "Called by the review page after the human confirms selections.\n\nThe body's ``kind`` picks the variant (no ``kind`` is the OAuth\nvariant): OAuth scopes, a secret for a ``manual_*`` session\n(``api_key`` / ``bearer`` / ``basic``), the approver's own OAuth client\nfor an ``awaiting_app`` session, or a credential the approver already\nholds (``existing_credential``, ``reauthorize``). Secrets are write-only:\nthey never appear in a response, audit entry or log.\n\nShares the ``:connect`` per-actor rate bucket — this is the endpoint\nthat actually fires the vendor's device-authorization call, and a\nfailed ``begin`` leaves the session retryable, so it must not be\nfree to hammer during a vendor incident. Gated like the review read\n(``poll_token`` or owner / ``org:admin``; 403 otherwise).",
+        "description": "Called by the review page after the human confirms selections.\n\nThe body's ``kind`` picks the variant (no ``kind`` is the OAuth\nvariant): OAuth scopes, a secret for a ``manual_*`` session\n(``api_key`` / ``bearer`` / ``basic``), the approver's own OAuth client\nfor an ``awaiting_app`` session, or a credential the approver already\nholds (``existing_credential``, ``reauthorize``). Secrets are write-only:\nthey never appear in a response, audit entry or log.\n\nShares the ``:connect`` per-actor rate bucket — this is the endpoint\nthat actually fires the vendor's device-authorization call, and a\nfailed ``begin`` leaves the session retryable, so it must not be\nfree to hammer during a vendor incident. Gated like the review read\n(``poll_token`` or owner / ``org:admin``; 403 otherwise). An agent\nwhose binding to a credential covering the session's API is suspended\n(including one picked at confirm) is refused with 409\n``connect_session_binding_suspended``.\n\nA response carrying an ``authorize_url`` also sets a short-lived\n``HttpOnly`` cookie scoped to the OAuth callback path: the vendor\nsign-in completes only in the approver's browser that called this\nendpoint, whoever opened the session.",
         "operationId": "confirmConnectSession",
         "parameters": [
           {
@@ -34995,7 +35120,7 @@
                 }
               }
             },
-            "description": "Session not awaiting confirmation, its OAuth app, scheme or hosts changed, or the review is stale"
+            "description": "Session not awaiting confirmation, its OAuth app, scheme or hosts changed, the review is stale, or the agent's binding for the API is suspended"
           },
           "422": {
             "content": {
@@ -36222,6 +36347,7 @@
                     "api_key": "#/components/schemas/ApiKeyUpdateRequest",
                     "basic": "#/components/schemas/BasicAuthUpdateRequest",
                     "bearer_token": "#/components/schemas/BearerTokenUpdateRequest",
+                    "no_auth": "#/components/schemas/NoAuthUpdateRequest",
                     "oauth2": "#/components/schemas/OAuth2UpdateRequest",
                     "sigv4": "#/components/schemas/Sigv4UpdateRequest"
                   },
@@ -36239,6 +36365,9 @@
                   },
                   {
                     "$ref": "#/components/schemas/OAuth2UpdateRequest"
+                  },
+                  {
+                    "$ref": "#/components/schemas/NoAuthUpdateRequest"
                   },
                   {
                     "$ref": "#/components/schemas/Sigv4UpdateRequest"
@@ -37974,7 +38103,7 @@
     "/credentials/{credential_id}/connect": {
       "description": "`POST`: Begin OAuth connect flow.",
       "post": {
-        "description": "Initiate the OAuth connect flow for a credential.\n\nDiscriminates on the provider's returned challenge: OAuth2\nauthorization-code providers return an ``authorize_url`` for popup\nredirect; device-flow providers return ``user_code`` /\n``verification_uri`` for the RFC 8628 human step.",
+        "description": "Initiate the OAuth connect flow for a credential.\n\nDiscriminates on the provider's returned challenge: OAuth2\nauthorization-code providers return an ``authorize_url`` for popup\nredirect; device-flow providers return ``user_code`` /\n``verification_uri`` for the RFC 8628 human step.\n\nAn ``authorize_url`` response also sets a short-lived ``HttpOnly``\ncookie scoped to the OAuth callback path: the callback completes only\nin the browser that called this endpoint, so call it from the browser\nthat opens the ``authorize_url``.",
         "operationId": "connectCredential",
         "parameters": [
           {
@@ -38805,7 +38934,7 @@
     "/events/stream": {
       "description": "`GET`: Stream Events.",
       "get": {
-        "description": "Stream events as Server-Sent Events.",
+        "description": "Stream events as Server-Sent Events.\n\nThe open stream re-verifies the caller at the first poll or page after each\n`admin.events.stream_recheck_seconds` interval (default 5 s) elapses. Each\npage is scoped by the caller's current permissions, so a narrower\npermission set narrows the stream. Permissions are those the credential\ncarries: API keys and user `at_` access tokens resolve them live, while a\nlogin session JWT and an agent `at_` access token carry the set they were\nissued with. The stream keeps re-verifying the token it was opened with,\nso for those a permission change applies once that token expires and the\nclient reconnects. The stream ends\nwith a `stream_closed` frame (`{\"type\": \"stream_closed\", \"reason\": ...}`)\nonce the credential stops verifying (`refused`: expired, revoked, or its\nuser or agent disabled or deleted), the caller no longer holds\n`events:read` or `org:admin` or must rotate their password (`forbidden`),\nor the check or the event store cannot be answered (`unavailable`).\nA reconnect is authenticated afresh.",
         "operationId": "streamEvents",
         "parameters": [
           {
@@ -41729,7 +41858,7 @@
     "/integrations:connect": {
       "description": "`POST`: Start an integration connect session.",
       "post": {
-        "description": "Both entrypoints (agent + UI) use this endpoint.\n\nAgent callers: `agent_id` in the payload is refused (the caller *is*\nthe agent — spoofing another agent's id is a permission-boundary\nviolation). The caller's own identity is injected instead. UI / user\ncallers: `agent_id` is optional and must name an agent the caller owns\n(`org:admin` may name any agent); any other id is refused with 400\n`connect_session_agent_not_found`, the same as an unknown agent. Naming\nan owned agent also takes `agents:write`, which confirming for it needs\n(403 `connect_session_confirmation_forbidden` otherwise), and an active\nagent (409 `connect_session_agent_inactive` otherwise). When\nnamed, confirm creates the direct agent-credential binding + permission\nrules; when omitted, the credential connects unbound and an agent can\nbe bound later through the credentials API.",
+        "description": "Both entrypoints (agent + UI) use this endpoint.\n\nAgent callers: `agent_id` in the payload is refused (the caller *is*\nthe agent — spoofing another agent's id is a permission-boundary\nviolation). The caller's own identity is injected instead. UI / user\ncallers: `agent_id` is optional and must name an agent the caller owns\n(`org:admin` may name any agent); any other id is refused with 400\n`connect_session_agent_not_found`, the same as an unknown agent. Naming\nan owned agent also takes `agents:write`, which confirming for it needs\n(403 `connect_session_confirmation_forbidden` otherwise), and an active\nagent (409 `connect_session_agent_inactive` otherwise). An agent whose\nbinding to a credential covering the requested API is suspended gets\n409 `connect_session_binding_suspended`: only the operator can resume\nthat binding, so a new connect for the same API is refused. When\nnamed, confirm creates the direct agent-credential binding + permission\nrules; when omitted, the credential connects unbound and an agent can\nbe bound later through the credentials API.",
         "operationId": "integrationsConnect",
         "requestBody": {
           "content": {
@@ -41865,7 +41994,7 @@
                 }
               }
             },
-            "description": "The API declares no supported scheme, or its hosts cannot be pinned"
+            "description": "The API declares no supported scheme, its hosts cannot be pinned, the agent is inactive, or the agent's binding for the API is suspended"
           },
           "422": {
             "content": {
@@ -43745,7 +43874,7 @@
     "/notes": {
       "description": "`POST`: Create Note. `GET`: List Notes.",
       "get": {
-        "description": "List notes with optional filters and cursor pagination.",
+        "description": "List notes with optional filters and cursor pagination.\n\nReturns the caller's own notes; a user also sees the notes of agents they own.",
         "operationId": "listNotes",
         "parameters": [
           {
@@ -44461,7 +44590,7 @@
       },
       "description": "`GET`: Get Note. `PATCH`: Update Note. `DELETE`: Delete Note.",
       "get": {
-        "description": "Retrieve a single note by ID.",
+        "description": "Retrieve a single note by ID.\n\nA user can read the notes of agents they own, but only a note's author (or\nan org admin) can update or delete it.",
         "operationId": "getNote",
         "parameters": [
           {
@@ -46843,7 +46972,7 @@
     "/oauth/consent/agent/status": {
       "description": "`GET`: Poll pending-agent approval status (consent awaiting page).",
       "get": {
-        "description": "Minimal tri-state poll for the pending-agent awaiting page (P4 hybrid).\n\nAnonymous but keyed by the signed ``agent-status`` blob — never a bare\nagent id, so the endpoint cannot be used to enumerate or probe agents:\nthe id it reports on is the one SIGNED into the blob, which only the\nconsent flow mints, and only for an agent it verified belongs to the\nhandle's subject. The response carries ONLY the tri-state — no name,\nowner, or scopes — and non-terminal lifecycle states (disabled, archived,\na vanished row) all read as ``pending``, so possession of a blob is not a\nlifecycle oracle either. Any verification failure (bad signature, wrong\npurpose, expired ``iat``, malformed blob) is a 400 ``invalid_grant``; the\npage treats a 400 as terminal (\"retry the connection\") because the blob\nshares the consent handle's lifetime — a retry re-enters the flow, which\nre-parks on a fresh awaiting page while the agent stays pending. Shares\nthe approval-status poll's own per-IP rate bucket (same cadence, same\ncaller shape).",
+        "description": "Minimal tri-state poll for the pending-agent awaiting page (P4 hybrid).\n\nAnonymous but keyed by the signed ``agent-status`` blob — never a bare\nagent id, so the endpoint cannot be used to enumerate or probe agents:\nthe id it reports on is the one SIGNED into the blob, which only the\nconsent flow mints, and only for an agent it verified belongs to the\nhandle's subject. The response carries ONLY the tri-state — no name,\nowner, or scopes — and non-terminal lifecycle states (disabled, archived,\na vanished row) all read as ``pending``, so possession of a blob is not a\nlifecycle oracle either. Any verification failure (bad signature, wrong\npurpose, expired ``iat``, malformed blob) is a 400 ``invalid_grant``; the\npage treats a 400 as terminal (\"retry the connection\") because the blob\nshares the consent handle's lifetime — a retry re-enters the flow, which\nre-parks on a fresh awaiting page while the agent stays pending. Shares\nthe approval-status poll's own per-client-network rate bucket (same\ncadence, same caller shape).",
         "operationId": "consentAgentStatus",
         "parameters": [
           {
@@ -47176,7 +47305,7 @@
     "/oauth/revoke": {
       "description": "`POST`: Revoke Endpoint.",
       "post": {
-        "description": "Revoke a token (RFC 7009). Always returns 200 for valid requests.\n\nTwo client-authentication arms, negotiated on the request content type by\n``_RevocationRoute`` (this function body IS the JSON arm — form-encoded\nrequests never reach it):\n\n- **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —\n  the shape MCP OAuth clients send, G11): `token` + optional\n  `token_type_hint` + `client_id`. Public (secret-less) clients\n  authenticate by client_id **lineage binding** — the call revokes\n  anything only when the token exists and was issued to that `client_id`;\n  everything else is a 200 no-op (no token-validity oracle). Revoking an\n  access token kills that token only; revoking a **refresh token is a full\n  disconnect** — every token of the consent grant AND the grant row itself\n  die, so reconnecting requires fresh consent (deliberately beyond the\n  RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm\n  is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at\n  64 KiB declared body length, and per-IP rate limited; its errors speak\n  the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.\n- **JSON** (any other content type — the pre-G11 contract, byte-identical\n  including 422 shapes): requires a platform bearer identity; revokes the\n  caller's own token (access → that token, refresh → its family). Used by\n  `jentic logout`.\n\nRevocation residual: a revoked **access** token dies on the control-plane\nresolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)\nmay honour an already-cached verdict for up to 30 s — the same residual as\nthe UI `:revoke` kill switch and the G10 transfer sweep.",
+        "description": "Revoke a token (RFC 7009). Always returns 200 for valid requests.\n\nTwo client-authentication arms, negotiated on the request content type by\n``_RevocationRoute`` (this function body IS the JSON arm — form-encoded\nrequests never reach it):\n\n- **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —\n  the shape MCP OAuth clients send, G11): `token` + optional\n  `token_type_hint` + `client_id`. Public (secret-less) clients\n  authenticate by client_id **lineage binding** — the call revokes\n  anything only when the token exists and was issued to that `client_id`;\n  everything else is a 200 no-op (no token-validity oracle). Revoking an\n  access token kills that token only; revoking a **refresh token is a full\n  disconnect** — every token of the consent grant AND the grant row itself\n  die, so reconnecting requires fresh consent (deliberately beyond the\n  RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm\n  is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at\n  64 KiB declared body length, and rate limited per client network\n  (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect\n  (RFC 7009 §2.2.1), not Problem Details.\n- **JSON** (any other content type — the pre-G11 contract, byte-identical\n  including 422 shapes): requires a platform bearer identity; revokes the\n  caller's own token (access → that token, refresh → its family). Used by\n  `jentic logout`.\n\nRevocation residual: a revoked **access** token dies on the control-plane\nresolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)\nmay honour an already-cached verdict for up to 30 s — the same residual as\nthe UI `:revoke` kill switch and the G10 transfer sweep.",
         "operationId": "revokeEndpoint",
         "requestBody": {
           "content": {
@@ -47301,7 +47430,7 @@
                 }
               }
             },
-            "description": "Form-encoded (RFC 7009) requests only: per-IP rate limit exceeded (`Retry-After` header set; RFC 6749 §5.2 dialect body, `error=slow_down` per RFC 8628 §3.5)."
+            "description": "Form-encoded (RFC 7009) requests only: per-client-network rate limit exceeded (`Retry-After` header set; RFC 6749 §5.2 dialect body, `error=slow_down` per RFC 8628 §3.5)."
           },
           "500": {
             "content": {
@@ -47594,7 +47723,7 @@
                 }
               }
             },
-            "description": "Per-client+IP rate limit exceeded (`Retry-After` header set; RFC 6749 §5.2 dialect body, `error=slow_down` per RFC 8628 §3.5)."
+            "description": "Per-client_id + client-network rate limit exceeded (`Retry-After` header set; RFC 6749 §5.2 dialect body, `error=slow_down` per RFC 8628 §3.5)."
           },
           "500": {
             "content": {
@@ -50599,7 +50728,7 @@
     },
     "/users/{user_id}": {
       "delete": {
-        "description": "Delete a user account (terminal-but-kept).\n\nThe row is retained — the account is anonymized (tombstone email) and\ndeactivated so history and audit references stay resolvable — but the\naction is terminal: there is no re-enable arm. For the reversible kill\nswitch use ``:disable`` / ``:enable`` instead.",
+        "description": "Delete a user account (terminal-but-kept).\n\nThe row is retained — the account is anonymized (tombstone email) and\ndeactivated so history and audit references stay resolvable — but the\naction is terminal: there is no re-enable arm. For the reversible kill\nswitch use ``:disable`` / ``:enable`` instead. Deleting a user also cancels\ntheir outstanding invites: redeeming one answers 409\n``invite_already_redeemed``, the same as an invite replaced by a reissue.\nIdempotent: deleting an already-deleted user answers 204 and changes\nnothing.",
         "operationId": "deleteUser",
         "parameters": [
           {
@@ -50986,7 +51115,7 @@
         ]
       },
       "patch": {
-        "description": "Update a user's profile fields.\n\nScoped like `GET /users/{user_id}`: org admins can update any user; anyone\nelse only themselves. Any other user answers 404.",
+        "description": "Update a user's profile fields.\n\nScoped like `GET /users/{user_id}`: org admins can update any user; anyone\nelse only themselves. Any other user answers 404. A deleted user cannot be\nedited (409).",
         "operationId": "updateUser",
         "parameters": [
           {
@@ -51146,7 +51275,7 @@
                 }
               }
             },
-            "description": "The email is already in use"
+            "description": "The email is already in use, or the user has been deleted"
           },
           "422": {
             "content": {
@@ -51224,7 +51353,7 @@
     "/users/{user_id}/permissions": {
       "description": "`PUT`: Set User Permissions.",
       "put": {
-        "description": "Set the assigned permissions for a user.",
+        "description": "Set the assigned permissions for a user.\n\nA deleted user's permissions cannot be changed (409).",
         "operationId": "setUserPermissions",
         "parameters": [
           {
@@ -51385,7 +51514,7 @@
                 }
               }
             },
-            "description": "Would remove org:admin from the last active org:admin"
+            "description": "Would remove org:admin from the last active org:admin, or the user has been deleted"
           },
           "422": {
             "content": {
@@ -51463,7 +51592,7 @@
     "/users/{user_id}:disable": {
       "description": "`POST`: Disable User.",
       "post": {
-        "description": "Disable a user account.",
+        "description": "Disable a user account.\n\nA deleted user is already permanently inactive and cannot be disabled (409).",
         "operationId": "disableUser",
         "parameters": [
           {
@@ -51574,7 +51703,7 @@
                 }
               }
             },
-            "description": "The user is the last active org:admin"
+            "description": "The user is the last active org:admin, or the user has been deleted"
           },
           "422": {
             "content": {
@@ -51652,7 +51781,7 @@
     "/users/{user_id}:enable": {
       "description": "`POST`: Enable User.",
       "post": {
-        "description": "Enable a user account.",
+        "description": "Enable a disabled user account.\n\nA deleted user cannot be re-enabled (409). Login sessions issued before the\naccount was disabled stay revoked; the user signs in again.",
         "operationId": "enableUser",
         "parameters": [
           {
@@ -51730,6 +51859,40 @@
               }
             },
             "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The requested resource does not exist or is not visible to you.",
+                  "instance": "/example/path",
+                  "status": 404,
+                  "title": "Not Found",
+                  "type": "not_found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request conflicts with the current state of the resource.",
+                  "instance": "/example/path",
+                  "status": 409,
+                  "title": "Conflict",
+                  "type": "conflict"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "The user has been deleted"
           },
           "422": {
             "content": {
@@ -51896,6 +52059,40 @@
               }
             },
             "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The requested resource does not exist or is not visible to you.",
+                  "instance": "/example/path",
+                  "status": 404,
+                  "title": "Not Found",
+                  "type": "not_found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request conflicts with the current state of the resource.",
+                  "instance": "/example/path",
+                  "status": 409,
+                  "title": "Conflict",
+                  "type": "conflict"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "The user has already redeemed an invite, or has been deleted"
           },
           "422": {
             "content": {

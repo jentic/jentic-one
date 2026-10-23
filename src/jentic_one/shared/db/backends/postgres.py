@@ -2,16 +2,24 @@
 
 from __future__ import annotations
 
+import math
 import socket
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import cache
 from typing import Any, ClassVar
 
 import asyncpg
 import structlog
+from sqlalchemy import event
 from sqlalchemy.engine import URL
+from sqlalchemy.engine.interfaces import DBAPIConnection
+from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.pool import ConnectionPoolEntry
 
 from jentic_one.shared.config import (
+    POOL_PRE_PING_IDLE_S,
     TCP_KEEPALIVE_COUNT,
     TCP_KEEPALIVE_IDLE_S,
     TCP_KEEPALIVE_INTERVAL_S,
@@ -154,3 +162,74 @@ class PostgresBackend(DatabaseBackend):
         if config.pool_recycle_s > 0:
             kwargs["pool_recycle"] = config.pool_recycle_s
         return kwargs
+
+
+def _is_driver_closed(dbapi_connection: Any) -> bool:
+    driver = getattr(dbapi_connection, "driver_connection", None)
+    is_closed = getattr(driver, "is_closed", None)
+    return bool(is_closed()) if callable(is_closed) else False
+
+
+def configure_idle_gated_pre_ping(
+    engine: AsyncEngine,
+    *,
+    idle_s: float = POOL_PRE_PING_IDLE_S,
+    clock: Callable[[], float] = time.monotonic,
+) -> None:
+    """Gate ``pool_pre_ping`` wire checks on how long a connection sat idle.
+
+    Records each connection's monotonic checkin timestamp and skips the
+    dialect's ``do_ping`` round trip when the connection is checked back out
+    within ``idle_s`` seconds, unless the underlying driver connection already
+    reports itself closed. Connections idle for at least ``idle_s`` seconds
+    run the full dialect ``do_ping``. No-op when ``pool_pre_ping`` is disabled
+    on ``engine``, ``idle_s <= 0``, or ``idle_s`` is non-finite.
+    """
+    sync_engine = engine.sync_engine
+    if (
+        not getattr(sync_engine.pool, "_pre_ping", False)
+        or not math.isfinite(idle_s)
+        or idle_s <= 0
+    ):
+        return
+
+    dialect = sync_engine.dialect
+    raw_do_ping = dialect.do_ping
+    # Keyed by id(dbapi_connection): the pool's ConnectionPoolEntry holds a
+    # strong reference to dbapi_connection for the entire time it sits checked
+    # in, and checkout/close/close_detached pop the entry before the object can
+    # be collected or its address reused. Avoids WeakKeyDictionary, which fails
+    # with TypeError on slotted DBAPI wrappers (AdaptedConnection) and C
+    # extensions (sqlite3.Connection) when driver_connection is None.
+    last_checkin: dict[int, float] = {}
+
+    @event.listens_for(sync_engine, "checkin")
+    def _record_checkin(
+        dbapi_connection: DBAPIConnection | None, _record: ConnectionPoolEntry
+    ) -> None:
+        if dbapi_connection is not None:
+            last_checkin[id(dbapi_connection)] = clock()
+
+    @event.listens_for(sync_engine, "checkout")
+    def _clear_on_checkout(
+        dbapi_connection: DBAPIConnection,
+        _record: ConnectionPoolEntry,
+        _proxy: Any,
+    ) -> None:
+        last_checkin.pop(id(dbapi_connection), None)
+
+    @event.listens_for(sync_engine, "close")
+    def _clear_on_close(dbapi_connection: DBAPIConnection, _record: ConnectionPoolEntry) -> None:
+        last_checkin.pop(id(dbapi_connection), None)
+
+    @event.listens_for(sync_engine, "close_detached")
+    def _clear_on_close_detached(dbapi_connection: DBAPIConnection) -> None:
+        last_checkin.pop(id(dbapi_connection), None)
+
+    def _do_ping_if_idle(dbapi_connection: DBAPIConnection) -> bool:
+        checked_in_at = last_checkin.pop(id(dbapi_connection), None)
+        if checked_in_at is not None and (clock() - checked_in_at) < idle_s:
+            return not _is_driver_closed(dbapi_connection)
+        return bool(raw_do_ping(dbapi_connection))
+
+    dialect.do_ping = _do_ping_if_idle  # type: ignore[method-assign]

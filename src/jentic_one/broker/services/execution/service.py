@@ -18,7 +18,7 @@ import structlog
 from opentelemetry import trace
 
 from jentic_one.broker.adapters.runners.base import RunnerRequest, UpstreamRunner
-from jentic_one.broker.core.exceptions import BrokerError, CircuitOpenError
+from jentic_one.broker.core.errors import BrokerError, CircuitOpenError
 from jentic_one.broker.core.execution import mint_execution_id
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.default_broker import DefaultBroker
@@ -41,7 +41,12 @@ from jentic_one.shared.executions import record_execution
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.actors import origin_or_none
-from jentic_one.shared.models.events import ErrorSource, EventSeverity, EventTag, EventType
+from jentic_one.shared.models.events import (
+    EventSeverity,
+    EventTag,
+    EventType,
+    thirdparty_auth_error_tag,
+)
 from jentic_one.shared.schemas import APIReference, OperationInfo
 from jentic_one.shared.tracing import jentic_tracestate, pack_jentic_tracestate
 
@@ -60,14 +65,6 @@ _execution_duration = _meter.create_histogram(
 )
 
 _circuit_event_last_emitted: dict[str, datetime] = {}
-
-#: Upstream auth-rejection status → third-party ``auth_failure`` tag. 401 is an
-#: RFC-tight authentication rejection; 403 mixes auth + authorization (kept as a
-#: distinct, lower-precision tag so the funnel can separate them downstream).
-_THIRDPARTY_AUTH_TAGS: dict[int, ErrorSource] = {
-    401: ErrorSource.AUTH_THIRDPARTY_UNAUTHORIZED,
-    403: ErrorSource.AUTH_THIRDPARTY_FORBIDDEN,
-}
 
 
 def _should_emit_circuit_event(host: str, cooldown_s: int = 15) -> bool:
@@ -133,13 +130,15 @@ async def run_execution(
     security_config: SecurityConfig | None = None,
     signing: SigV4Material | None = None,
     has_idempotency_key: bool = False,
+    emit_lifecycle: bool = True,
 ) -> ExecutionOutcome:
     """Run the upstream call through the injected ``Broker`` and persist the record.
 
-    ``admin_db`` is the admin ``DatabaseSession``. The record and its lifecycle
-    events are written in one ``admin_db.transaction()`` opened only after the
-    upstream call returns or raises, so no admin connection (and, on SQLite, no
-    write lock) is held while the upstream is awaited.
+    ``admin_db`` is the admin ``DatabaseSession``. The record (and, when
+    ``emit_lifecycle`` is true, its lifecycle events) is written in one
+    ``admin_db.transaction()`` opened only after the upstream call returns or
+    raises, so no admin connection (and, on SQLite, no write lock) is held while
+    the upstream is awaited.
 
     On a transport-level failure the broker's pipeline raises a ``BrokerError``;
     we commit a FAILED record before re-raising so the central handler can map
@@ -153,6 +152,12 @@ async def run_execution(
 
     ``has_idempotency_key`` tells the retry gate the caller sent an
     ``Idempotency-Key``; ``headers`` never carries it (it is broker-consumed).
+
+    ``emit_lifecycle`` controls whether ``run_execution`` emits the
+    ``execution.completed`` / ``execution.failed`` event in the record
+    transaction. The sync router leaves it ``True``; ``PipelineExecutor`` sets
+    it ``False`` because ``ExecutionHandler`` writes the lifecycle event (with
+    ``job_id``) and runs repeated-failure detection for queued jobs.
     """
     execution_id = execution_id or mint_execution_id()
     started_at = datetime.now(UTC)
@@ -174,7 +179,6 @@ async def run_execution(
         body=body,
         timeout_s=timeout,
         signing=signing,
-        has_idempotency_key=has_idempotency_key,
     )
     exec_context = ExecutionContext(
         execution_id=execution_id,
@@ -217,20 +221,20 @@ async def run_execution(
                 actor_type=actor_type,
                 origin=origin,
             )
-            await _emit_execution_lifecycle(
-                session,
-                execution_id=execution_id,
-                status=ExecutionStatus.FAILED,
-                error_msg=exc.detail[:128],
-                trace_id=ctx_req.trace_id,
-                actor_id=actor_id,
-                actor_type=actor_type,
-                toolkit_id=ctx_req.toolkit_id,
-                credential_id=ctx_req.credential_id,
-                operation=ctx_req.operation,
-                security_config=security_config,
-                origin=origin,
-            )
+            if emit_lifecycle:
+                await _emit_execution_lifecycle(
+                    session,
+                    execution_id=execution_id,
+                    status=ExecutionStatus.FAILED,
+                    error_msg=exc.detail[:128],
+                    trace_id=ctx_req.trace_id,
+                    actor_id=actor_id,
+                    actor_type=actor_type,
+                    credential_id=ctx_req.credential_id,
+                    operation=ctx_req.operation,
+                    security_config=security_config,
+                    origin=origin,
+                )
             if isinstance(exc, CircuitOpenError):
                 host = urlparse(ctx_req.upstream_url).netloc or "<unknown>"
                 if _should_emit_circuit_event(host):
@@ -281,35 +285,35 @@ async def run_execution(
             origin=origin,
         )
 
-        # Third-party auth failure: the upstream rejected the auth the user
-        # configured (401/403). Only when a credential path was attempted
-        # (api_vendor set) — a vendorless call has no auth to reject. Tagged by
-        # status so 401 (credential rejection) stays distinct from 403
-        # (permission/business). We fold this into the EXECUTION_FAILED event as a
-        # tag rather than emit a separate ``auth_failure``: the flat telemetry
-        # payload carries no per-request correlation id, so two events sharing a
-        # timestamp are indistinguishable from two concurrent requests downstream —
-        # a separate event would permanently skew the funnel (see #446 review).
-        thirdparty_tag = _THIRDPARTY_AUTH_TAGS.get(result.status_code)
-        error_tags: set[EventTag] | None = (
-            {thirdparty_tag} if thirdparty_tag is not None and ctx_req.api_vendor else None
-        )
+        if emit_lifecycle:
+            # Third-party auth failure: the upstream rejected the auth the user
+            # configured (401/403). Only when a credential path was attempted
+            # (api_vendor set) — a vendorless call has no auth to reject. Tagged by
+            # status so 401 (credential rejection) stays distinct from 403
+            # (permission/business). We fold this into the EXECUTION_FAILED event as a
+            # tag rather than emit a separate ``auth_failure``: the flat telemetry
+            # payload carries no per-request correlation id, so two events sharing a
+            # timestamp are indistinguishable from two concurrent requests downstream —
+            # a separate event would permanently skew the funnel (see #446 review).
+            thirdparty_tag = thirdparty_auth_error_tag(result.status_code, ctx_req.api_vendor)
+            error_tags: set[EventTag] | None = (
+                {thirdparty_tag} if thirdparty_tag is not None else None
+            )
 
-        await _emit_execution_lifecycle(
-            session,
-            execution_id=execution_id,
-            status=status,
-            error_msg=error_msg,
-            trace_id=ctx_req.trace_id,
-            actor_id=actor_id,
-            actor_type=actor_type,
-            toolkit_id=ctx_req.toolkit_id,
-            credential_id=ctx_req.credential_id,
-            operation=ctx_req.operation,
-            security_config=security_config,
-            error_tags=error_tags,
-            origin=origin,
-        )
+            await _emit_execution_lifecycle(
+                session,
+                execution_id=execution_id,
+                status=status,
+                error_msg=error_msg,
+                trace_id=ctx_req.trace_id,
+                actor_id=actor_id,
+                actor_type=actor_type,
+                credential_id=ctx_req.credential_id,
+                operation=ctx_req.operation,
+                security_config=security_config,
+                error_tags=error_tags,
+                origin=origin,
+            )
 
     return outcome
 
@@ -331,9 +335,9 @@ async def persist_streaming_execution(
 ) -> None:
     """Persist an execution record for a streaming-path execution.
 
-    Called from the background task after the streaming response body completes
-    (or terminates with an error). Shares metrics instrumentation with the
-    buffered path for observability parity.
+    Called once after the streaming response body ends, on every outcome
+    (completed, failed mid-body, client disconnect). Shares metrics
+    instrumentation with the buffered path for observability parity.
     """
     operation_id = ctx_req.operation_id
     _executions_total.add(1, {"operation": operation_id or "", "status": status})
@@ -375,10 +379,8 @@ async def persist_streaming_execution(
     # credential path attempted (api_vendor set) means the auth the user configured
     # was rejected upstream. Folded into EXECUTION_FAILED as a tag, not a separate
     # ``auth_failure`` event, to keep the correlation-id-free funnel un-skewed.
-    thirdparty_tag = _THIRDPARTY_AUTH_TAGS.get(http_status) if http_status is not None else None
-    error_tags: set[EventTag] | None = (
-        {thirdparty_tag} if thirdparty_tag is not None and ctx_req.api_vendor else None
-    )
+    thirdparty_tag = thirdparty_auth_error_tag(http_status, ctx_req.api_vendor)
+    error_tags: set[EventTag] | None = {thirdparty_tag} if thirdparty_tag is not None else None
 
     await _emit_execution_lifecycle(
         session,
@@ -388,7 +390,6 @@ async def persist_streaming_execution(
         trace_id=ctx_req.trace_id,
         actor_id=actor_id,
         actor_type=actor_type,
-        toolkit_id=ctx_req.toolkit_id,
         credential_id=ctx_req.credential_id,
         operation=ctx_req.operation,
         security_config=security_config,
@@ -443,7 +444,6 @@ async def _emit_execution_lifecycle(
     trace_id: str | None,
     actor_id: str,
     actor_type: str,
-    toolkit_id: str | None = None,
     credential_id: str | None = None,
     operation: OperationInfo | None = None,
     security_config: SecurityConfig | None = None,
@@ -509,7 +509,6 @@ async def _emit_execution_lifecycle(
             session,
             actor_id=actor_id,
             actor_type=actor_type,
-            toolkit_id=toolkit_id,
             credential_id=credential_id,
             operation=operation,
             trace_id=event_trace_id,

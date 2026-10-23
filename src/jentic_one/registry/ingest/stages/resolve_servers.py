@@ -6,7 +6,7 @@ from typing import Any, ClassVar
 
 import structlog
 
-from jentic_one.registry.ingest.exc import ServerUrlProblem
+from jentic_one.registry.ingest.errors import ServerUrlProblem
 from jentic_one.registry.ingest.models import IngestSpecification
 from jentic_one.registry.ingest.pipeline.ctx import PipelineContext
 from jentic_one.registry.ingest.server_urls import (

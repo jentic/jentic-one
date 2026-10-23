@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 
 from jentic_one.shared.config import DatabaseConfig
 from jentic_one.shared.db.backends import (
+    configure_idle_gated_pre_ping,
     configure_sqlite_pragmas,
     enable_sqlite_manual_begin,
     get_backend,
@@ -176,6 +177,11 @@ class DatabaseSession:
                 busy_timeout_ms=self._config.busy_timeout_ms,
             )
             enable_sqlite_manual_begin(self._engine)
+        else:
+            configure_idle_gated_pre_ping(
+                self._engine,
+                idle_s=self._config.pool_pre_ping_idle_s,
+            )
         self._session_factory = async_sessionmaker(
             bind=self._engine,
             expire_on_commit=False,

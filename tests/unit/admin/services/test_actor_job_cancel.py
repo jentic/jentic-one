@@ -209,20 +209,26 @@ async def test_agent_archive_cancels_queued_jobs_in_the_archive_transaction(
 @pytest.fixture()
 def user_deps() -> Iterator[dict[str, MagicMock]]:
     with (
+        patch(f"{_USER_SVC}.AgentRepository") as agents,
         patch(f"{_USER_SVC}.UserRepository") as users,
         patch(f"{_USER_SVC}.UserPermissionGrantRepository") as grants,
         patch(f"{_USER_SVC}.ExternalIdentityRepository") as external,
+        patch(f"{_USER_SVC}.InviteTokenRepository") as invites,
         patch(f"{_USER_SVC}.AuditRepository") as audit,
         patch(f"{_USER_SVC}.ensure_can_manage"),
         patch(f"{_USER_SVC}.ensure_not_last_active_admin", new_callable=AsyncMock),
         patch(f"{_USER_SVC}.cancel_queued_executions_for_actor", new_callable=AsyncMock) as cancel,
     ):
-        users.get_by_id = AsyncMock(return_value=MagicMock(id="usr_target"))
+        agents.list_ids_by_owner = AsyncMock(return_value=[])
+        users.get_by_id = AsyncMock(return_value=MagicMock(id="usr_target", deleted_at=None))
         users.disable = AsyncMock()
         users.enable = AsyncMock()
         users.update = AsyncMock()
+        users.mark_deleted = AsyncMock(return_value=True)
+        users.revoke_login_sessions = AsyncMock()
         grants.get_permission_sets = AsyncMock(return_value={})
         external.delete_for_user = AsyncMock()
+        invites.get_active_for_user = AsyncMock(return_value=[])
         audit.record = AsyncMock()
         cancel.return_value = 0
         yield {"users": users, "audit": audit, "cancel": cancel}

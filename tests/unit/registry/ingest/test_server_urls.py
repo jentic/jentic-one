@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from jentic_one.registry.core.server_hosts import is_hostless_server_url
-from jentic_one.registry.ingest.exc import (
+from jentic_one.registry.ingest.errors import (
     SERVER_URL_ERROR_MAX_CHARS,
     IngestStageError,
     RelativeServerUrlError,

@@ -21,10 +21,11 @@ the control/admin numbers. It is restarted on exit, whatever else fails.
 
 Counting: ``statements`` is real SQL only; ``BEGIN``/``COMMIT``/``ROLLBACK`` are
 reported separately as ``tx_control``. ``transactions`` counts ``BEGIN`` — when
-``pool_pre_ping`` is enabled (the default) each connection checkout's ping runs
-in its own ``BEGIN``/``ROLLBACK``; a read-only session opened with
-``DatabaseSession.read_session`` runs in autocommit and adds no ``BEGIN`` of its
-own, so it costs one transaction (the ping) where any other session costs two.
+``pool_pre_ping`` is enabled (the default) a checkout whose connection has sat
+idle for at least ``pool_pre_ping_idle_s`` seconds (or every checkout when
+``pool_pre_ping_idle_s`` is ``0``) runs its ping in its own ``BEGIN``/``ROLLBACK``;
+a read-only session opened with ``DatabaseSession.read_session`` runs in
+autocommit and adds no ``BEGIN`` of its own.
 ``writes`` counts ``INSERT``/``UPDATE``/``DELETE``/``MERGE`` statements,
 including a data-modifying ``WITH … INSERT/UPDATE/DELETE`` (a ``SELECT … FOR
 UPDATE`` is a read and is not counted).

@@ -8,7 +8,7 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from jentic_one.registry.ingest.exc import IngestStageError
+from jentic_one.registry.ingest.errors import IngestStageError
 from jentic_one.registry.ingest.fetch import UrlSource, load_specification
 from jentic_one.shared.config import EgressConfig, IngestConfig
 from tests.harness.http_doubles import CHUNK_SIZE, CountingChunkedStream, chunked_client

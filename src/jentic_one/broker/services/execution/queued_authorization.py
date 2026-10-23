@@ -7,9 +7,10 @@ before any credential is resolved:
 
 1. the enqueuing actor must still be active (the sync path's token-resolution
    check, answered from the actor row since the worker holds no token);
-2. an agent must still hold the execute permission (the sync path's
-   ``require_execute_permission``, answered from the live grant rows an agent's
-   credentials resolve their scopes from);
+2. the actor must still hold the execute permission (the sync path's
+   ``require_execute_permission``, answered from the live grant rows — an
+   agent's ``actor_permission_grants``, a user's implication-expanded
+   ``user_permission_grants``); both come from one read;
 3. the actor's bindings for the API are re-derived, so a removed or
    suspended binding (or a disabled credential) no longer resolves;
 4. the binding's permission rules are re-evaluated for the operation.
@@ -21,12 +22,10 @@ Implements the shared ``ExecutionAuthorizer`` protocol.
 
 from __future__ import annotations
 
-from urllib.parse import urlparse
-
 import structlog
 
-from jentic_one.broker.core.exceptions import BrokerError, OperationNotFoundError
-from jentic_one.broker.core.problem import broker_error_problem
+from jentic_one.broker.core.errors import BrokerError
+from jentic_one.broker.core.problem import broker_error_problem, discovery_error_problem
 from jentic_one.broker.repos.actor_status import ActorStatusResolver
 from jentic_one.broker.services.execution.authorization import authorize_execution
 from jentic_one.shared.auth.identity import Identity
@@ -37,48 +36,19 @@ from jentic_one.shared.broker.protocols import (
     RuleVerdict,
 )
 from jentic_one.shared.context import Context
+from jentic_one.shared.discovery.errors import OperationNotFoundError
 from jentic_one.shared.jobs.hold import approval_required_problem, get_approved_by_job_id
 from jentic_one.shared.jobs.protocols import QueuedExecutionRequest, QueuedExecutionVerdict
+from jentic_one.shared.jobs.queued_denials import (
+    inactive_actor_problem,
+    insufficient_scope_problem,
+    queued_execution_instance,
+)
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.permissions.evaluation import rule_request_path
 from jentic_one.shared.schemas import APIReference
 
 logger = structlog.get_logger(__name__)
-
-# Mirrors the sync edge's 401 for a caller whose actor is no longer active
-# (``require_broker_identity`` → ``Unauthorized(type="unauthorized")``).
-_INACTIVE_ACTOR_DETAIL = "The actor that queued this execution is no longer active."
-
-
-def _inactive_actor_problem(instance: str) -> dict[str, object]:
-    return {
-        "type": "unauthorized",
-        "title": "Unauthorized",
-        "status": 401,
-        "detail": _INACTIVE_ACTOR_DETAIL,
-        "instance": instance,
-    }
-
-
-def _insufficient_scope_problem(instance: str) -> dict[str, object]:
-    """Mirrors the sync edge's 403 from ``require_execute_permission``."""
-    return {
-        "type": "insufficient_scope",
-        "title": "Forbidden",
-        "status": 403,
-        "detail": f"Insufficient scope: '{BROKER_EXECUTE_PERMISSION}' required",
-        "instance": instance,
-    }
-
-
-def _broker_path(upstream_url: str) -> str:
-    """The broker request path a sync call to ``upstream_url`` would have had.
-
-    Used as the problem ``instance`` so a queued denial names the same
-    occurrence the sync route's ``request.url.path`` would.
-    """
-    parsed = urlparse(upstream_url)
-    return f"/{parsed.netloc}{parsed.path}"
 
 
 class QueuedExecutionAuthorizer:
@@ -100,24 +70,25 @@ class QueuedExecutionAuthorizer:
 
     async def authorize(self, request: QueuedExecutionRequest) -> QueuedExecutionVerdict:
         """Allow (with the current injection boundary) or deny (with a problem body)."""
-        instance = _broker_path(request.upstream_url)
+        instance = queued_execution_instance(request.upstream_url)
 
-        if not await self._actor_status.is_active(
-            actor_id=request.actor_id, actor_type=request.actor_type
-        ):
+        # One read answers both gates (liveness, then the execute permission),
+        # in the sync edge's order: authentication before scope.
+        authority = await self._actor_status.authority(
+            actor_id=request.actor_id,
+            actor_type=request.actor_type,
+            permission=BROKER_EXECUTE_PERMISSION,
+        )
+        if not authority.active:
             logger.info(
                 "queued_execution_denied",
                 reason="actor_inactive",
                 actor_id=request.actor_id,
                 actor_type=request.actor_type,
             )
-            return QueuedExecutionVerdict(allowed=False, problem=_inactive_actor_problem(instance))
+            return QueuedExecutionVerdict(allowed=False, problem=inactive_actor_problem(instance))
 
-        if not await self._actor_status.holds_permission(
-            actor_id=request.actor_id,
-            actor_type=request.actor_type,
-            permission=BROKER_EXECUTE_PERMISSION,
-        ):
+        if not authority.holds_permission:
             logger.info(
                 "queued_execution_denied",
                 reason="insufficient_scope",
@@ -125,7 +96,7 @@ class QueuedExecutionAuthorizer:
                 actor_type=request.actor_type,
             )
             return QueuedExecutionVerdict(
-                allowed=False, problem=_insufficient_scope_problem(instance)
+                allowed=False, problem=insufficient_scope_problem(instance)
             )
 
         if not (request.api_vendor and request.api_name and request.api_version):
@@ -134,12 +105,11 @@ class QueuedExecutionAuthorizer:
             # sync route never gets this far for an unregistered operation.
             return QueuedExecutionVerdict(
                 allowed=False,
-                problem=broker_error_problem(
+                problem=discovery_error_problem(
                     OperationNotFoundError(
-                        "Operation not found — unregistered upstream URL.",
-                        type="operation_not_found",
-                        instance=instance,
-                    )
+                        detail="Operation not found — unregistered upstream URL."
+                    ),
+                    instance=instance,
                 ),
             )
 
