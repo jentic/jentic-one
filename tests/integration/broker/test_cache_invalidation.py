@@ -12,7 +12,10 @@ with zero wait for the cache TTL.
 
 from __future__ import annotations
 
+import hashlib
+import secrets
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import FastAPI
@@ -268,6 +271,7 @@ async def user_lifecycle_state(jwt_broker_context: Context) -> AsyncGenerator[No
         user_ids = select(User.id).where(User.created_by == _USER_MARKER)
         async with ctx.admin_db.session() as session:
             agent_ids = select(Agent.id).where(Agent.owner_id.in_(user_ids))
+            await session.execute(delete(AccessToken).where(AccessToken.actor_id.in_(user_ids)))
             await session.execute(
                 delete(AgentCredential).where(AgentCredential.agent_id.in_(agent_ids))
             )
@@ -303,6 +307,24 @@ async def _seed_user(ctx: Context, name: str, *, permissions: set[str] | None = 
         return user.id
 
 
+async def _issue_user_access_token(ctx: Context, user_id: str) -> str:
+    """Store an opaque access token for ``user_id`` and return its plaintext."""
+    token = f"at_{secrets.token_urlsafe(32)}"
+    async with ctx.admin_db.transaction() as session:
+        session.add(
+            AccessToken(
+                token_hash=hashlib.sha256(token.encode()).hexdigest(),
+                actor_id=user_id,
+                actor_type="user",
+                scopes=["apis:read"],
+                token_family_id=generate_ksuid("fam"),
+                expires_at=datetime.now(UTC) + timedelta(hours=1),
+                created_by=_USER_MARKER,
+            )
+        )
+    return token
+
+
 async def test_user_disable_delete_and_enable_immediately_invalidate_broker_caches(
     jwt_broker_context: Context, user_lifecycle_state: None
 ) -> None:
@@ -324,16 +346,18 @@ async def test_user_disable_delete_and_enable_immediately_invalidate_broker_cach
         identity=admin,
     )
     api_key = await AgentAuthService(ctx).register_api_key(agent.id, identity=admin)
+    user_token = await _issue_user_access_token(ctx, user_id)
     users = UserService(ctx)
 
     async def assert_live(expected: bool) -> None:
         assert await actor_status.is_active(actor_id=user_id, actor_type="user") is expected
         assert await actor_status.is_active(actor_id=agent.id, actor_type="agent") is expected
-        if expected:
-            assert (await token_validator.validate(api_key)).sub == agent.id
-        else:
-            with pytest.raises(TokenValidationError):
-                await token_validator.validate(api_key)
+        for token, sub in ((user_token, user_id), (api_key, agent.id)):
+            if expected:
+                assert (await token_validator.validate(token)).sub == sub
+            else:
+                with pytest.raises(TokenValidationError):
+                    await token_validator.validate(token)
 
     # Warm every cache with a positive verdict.
     await assert_live(True)

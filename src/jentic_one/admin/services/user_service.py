@@ -503,9 +503,11 @@ class UserService:
 
         Runs after the account change commits. An owned agent's effective
         status follows its owner's account, so the agents' cached token and
-        status verdicts go stale with the user's. In-process only: another
-        broker process keeps its entries until ``resolve_cache_ttl_seconds``
-        expires them.
+        status verdicts go stale with the user's. The per-agent eviction also
+        drops each agent's binding and rule cache entries, which do not depend
+        on the owner's status; they reload on the next request. In-process
+        only: another broker process keeps its entries until
+        ``resolve_cache_ttl_seconds`` expires them.
         """
         self._ctx.invalidate_broker_caches(user_id=user_id)
         for agent_id in owned_agent_ids:
