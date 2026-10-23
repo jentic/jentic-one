@@ -895,15 +895,14 @@ class WorkerLoop:
         ``job.failed_permanently``, the event a dead-lettered job carries.
         """
         is_import = kind == JobKind.IMPORT
-        if await self._terminal_job(
+        await self._terminal_job(
             job.id,
             JobStatus.FAILED,
             error,
             event_summary_prefix="Import failed" if is_import else "Job failed",
             claim_attempts=job.attempts,
             event_type=EventType.IMPORT_FAILED if is_import else EventType.JOB_FAILED_PERMANENTLY,
-        ):
-            logger.info("job_failed_no_retry", job_id=job.id, attempts=job.attempts)
+        )
 
     async def _fail_job(self, job_id: str, error: str) -> None:
         """Mark a job terminally ``FAILED`` (non-retryable, e.g. no handler)."""

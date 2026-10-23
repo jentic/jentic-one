@@ -11,7 +11,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from jentic_one.registry.ingest.api_identifier import resolve_api_identifier
-from jentic_one.registry.ingest.errors import IngestStageError
+from jentic_one.registry.ingest.errors import IngestStageError, RetryableFetchError
 from jentic_one.registry.ingest.models import IngestSpecification, SpecType
 from jentic_one.shared.config import IngestConfig
 from jentic_one.shared.egress import build_pinned_transport
@@ -331,12 +331,28 @@ def parse_spec_content(raw: str, *, filename: str | None = None) -> dict[str, An
 _DEFAULT_INGEST_CONFIG = IngestConfig()
 
 
+#: Upstream statuses that signal a temporary condition: request timeout, too
+#: early, and rate limiting. Every 5xx is treated the same way.
+_TRANSIENT_CLIENT_STATUSES = frozenset({408, 425, 429})
+
+
+def _is_transient_status(status_code: int) -> bool:
+    """True when a later fetch of the same URL may get a different answer."""
+    return status_code >= 500 or status_code in _TRANSIENT_CLIENT_STATUSES
+
+
 async def load_specification(
     source: UrlSource | InlineSource,
     *,
     config: IngestConfig | None = None,
 ) -> IngestSpecification:
-    """Load and parse a spec from a URL or inline content into an IngestSpecification."""
+    """Load and parse a spec from a URL or inline content into an IngestSpecification.
+
+    Raises :class:`RetryableFetchError` when reaching a URL fails for a reason a
+    later attempt may not repeat, and :class:`IngestStageError` for every other
+    failure (a refused URL, an unusable response, unparseable content, or an
+    unresolvable API identity).
+    """
     cfg = config or _DEFAULT_INGEST_CONFIG
     max_bytes = cfg.max_spec_bytes
     size_limit_label = f"{max_bytes / (1024 * 1024):.1f} MB"
@@ -386,10 +402,13 @@ async def load_specification(
         except IngestStageError:
             raise
         except httpx.HTTPError as exc:
-            raise IngestStageError(f"failed to fetch URL: {exc}") from exc
+            raise RetryableFetchError(f"failed to fetch URL: {exc}") from exc
 
         if resp.status_code < 200 or resp.status_code >= 300:
-            raise IngestStageError(f"non-success status {resp.status_code} fetching {source.url}")
+            message = f"non-success status {resp.status_code} fetching {source.url}"
+            if _is_transient_status(resp.status_code):
+                raise RetryableFetchError(message)
+            raise IngestStageError(message)
 
         content_length = resp.headers.get("content-length")
         if content_length and content_length.isdigit() and int(content_length) > max_bytes:

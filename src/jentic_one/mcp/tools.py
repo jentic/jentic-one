@@ -638,8 +638,10 @@ _IMPORT_POLL_STEP_SECONDS = 0.25
 _IMPORT_POLL_MAX_SECONDS = 2.0
 
 #: The stable leading fragment of ``DuplicateRevisionError``'s message
-#: (``registry/ingest/errors.py`` — also what the worker's IntegrityError
-#: translation mints for a lost one-active race, ``import_service.py``).
+#: (``registry/ingest/errors.py`` — also what ``import_service.py`` mints for an
+#: identical-content IntegrityError at commit). A lost race for the one-active
+#: revision slot reads differently (``ACTIVE_REVISION_CONFLICT_ERROR``): the
+#: competing revision can hold other content, so it never matches here.
 #: ``job.error`` is truncated to 128 chars after a ~42-char wrapper prefix, so
 #: only the message head survives: match this fragment, never the full message.
 _DUPLICATE_CONTENT_FRAGMENT = "identical content already exists"
@@ -663,8 +665,9 @@ _SINGLE_SOURCE_IMPORT_FAILURE_PREFIX = ALL_SOURCES_FAILED_PREFIX_TEMPLATE.format
 _JOB_TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled", "dead_letter"})
 
 #: the one non-failure terminal status: its result document rides the poll
-#: payload, and its residual ``job.error`` (never cleared by the worker) is
-#: exempt from the duplicate-content remap.
+#: payload, and it is exempt from the duplicate-content remap (the worker
+#: clears ``job.error`` on completion; the exemption keeps that independent of
+#: the worker).
 _JOB_COMPLETED = "completed"
 
 #: the job kind the catalog import loop rides (``JobKind.IMPORT``).
@@ -701,10 +704,10 @@ def _already_imported_payload(job_id: str) -> dict[str, Any]:
     """The duplicate-content short-circuit envelope (import_api + the job poll).
 
     The wording says "already present", never "you imported this before": the
-    same ``job.error`` fragment also covers a lost concurrent-import race
-    (the ``ix_api_revisions_one_active`` collision), where "already imported"
-    means "another import just won" — the recovery (search_apis) is identical
-    either way. This mapping is what keeps the pinned description's
+    same ``job.error`` fragment also covers a lost concurrent race to store the
+    identical content (the ``uq_api_revisions_api_id_spec_digest`` collision),
+    where "already imported" means "another import just won" — the recovery
+    (search_apis) is identical either way. This mapping is what keeps the pinned description's
     "re-importing converges (idempotent)" true on this backend.
     """
     return {
@@ -749,15 +752,13 @@ async def _track_import_job(
     must surface that as a failure, never as a clean "still running" result.
 
     The duplicate-content check runs on EVERY poll, including non-terminal
-    requeued states: the worker treats a duplicate ingest as retryable
-    (exponential backoff to a terminal DEAD_LETTER, ~30s+ total), so waiting
-    for a terminal status would burn the whole wait budget on a job that can
-    never succeed. ``job.error`` is populated while requeued, which is what
-    makes the early exit possible. A COMPLETED job is exempt: the worker never
-    clears ``job.error`` (requeue writes it; neither claim nor completion
-    resets it), so a job that failed once with the duplicate message and
-    succeeded on a later attempt carries the stale fragment forever — its
-    completed result is always more honest than its residual error.
+    requeued states. The worker fails an import whose only failure is the
+    duplicate on its first attempt (``NonRetryableJobError``), but a job can
+    also sit requeued with the duplicate in ``job.error`` (e.g. its overlay
+    recovery raised and is retried), and waiting for a terminal status would
+    spend the wait budget on it. A COMPLETED job is exempt: its result is the
+    outcome, whatever an earlier attempt wrote to ``job.error`` (the worker
+    clears it on completion).
     """
     svc = JobService(ctx)
     deadline = time.monotonic() + _IMPORT_WAIT_BUDGET_SECONDS
@@ -969,9 +970,9 @@ async def _finish_import(env: CallEnv, api_id: str, job_id: str) -> mcp_types.Ca
             extra={"job_id": job_id},
         ) from exc
     if duplicate_content:
-        # Identical content already present (or a concurrent import just won
-        # the one-active race): short-circuit honestly instead of letting the
-        # job burn its retry backoff to DEAD_LETTER inside the wait budget.
+        # Identical content already present (or a concurrent import of the
+        # same content just won): short-circuit honestly with already_imported
+        # instead of reporting the job's failed status.
         return tool_result(env.ctx, _already_imported_payload(job_id))
     if job.status not in _JOB_TERMINAL_STATUSES:
         # Budget lapsed with the job still running: a normal result — the
@@ -1373,14 +1374,12 @@ async def job_poll_payload(env: CallEnv, job_id: str) -> dict[str, Any]:
         # The same duplicate-content short-circuit import_api makes: a
         # duplicate import job polled here reports already_imported (the
         # content is present — possibly a lost concurrent race), never a
-        # scary dead_letter after the worker burns its retry backoff.
+        # bare failed status.
         # Gated on the single-source wrapper: a multi-source job (POST /apis)
         # whose failure is only PARTLY the duplicate keeps its honest
-        # dead-letter payload — see _is_single_source_duplicate_failure.
-        # COMPLETED jobs are exempt: the worker never clears job.error, so a
-        # job that failed once with the duplicate message and succeeded on a
-        # later attempt carries the stale fragment — its completed result is
-        # always more honest than its residual error.
+        # failure payload — see _is_single_source_duplicate_failure.
+        # COMPLETED jobs are exempt: the completed result is the outcome,
+        # whatever an earlier attempt wrote to job.error.
         return _already_imported_payload(job.id)
 
     payload: dict[str, Any] = {

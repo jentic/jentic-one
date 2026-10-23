@@ -9,7 +9,7 @@ from typing import Any, ClassVar
 import structlog
 from opentelemetry.trace.status import Status, StatusCode
 
-from jentic_one.registry.ingest.errors import IngestStageError
+from jentic_one.registry.ingest.errors import IngestStageError, UnexpectedStageError
 from jentic_one.registry.ingest.observability import stage_duration, stages_total, tracer
 from jentic_one.registry.ingest.pipeline.ctx import PipelineContext
 
@@ -50,7 +50,9 @@ class BasePipelineStage(abc.ABC):
                 status = "error"
                 span.record_exception(exc)
                 span.set_status(Status(StatusCode.ERROR, str(exc)))
-                log.error("stage_failed", stage=self.name)
+                # A stage raises an ingest error on purpose (a refused document,
+                # a duplicate): a caller-fixable outcome, not a system fault.
+                log.warning("stage_failed", stage=self.name, error=exc.message)
                 raise
             except Exception as exc:
                 status = "error"
@@ -66,7 +68,7 @@ class BasePipelineStage(abc.ABC):
                 # The raised message lands in operator-visible job error records, so
                 # it never echoes the raw exception text (DB/driver internals); the
                 # detail stays in the server-side log and span above.
-                raise IngestStageError(f"Stage '{self.name}' failed unexpectedly") from exc
+                raise UnexpectedStageError(f"Stage '{self.name}' failed unexpectedly") from exc
             else:
                 log.info("stage_complete")
             finally:

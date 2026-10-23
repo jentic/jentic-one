@@ -33,6 +33,26 @@ class NonRetryableIngestJobError(IngestJobError, NonRetryableJobError):
     """
 
 
+class UnexpectedStageError(IngestStageError):
+    """Raised when a pipeline stage hits an exception it did not anticipate.
+
+    The stage chains the original exception as ``__cause__`` and keeps its text
+    out of the message (it may carry database or driver internals). The import
+    job is retried: the cause may be transient.
+    """
+
+
+class RetryableFetchError(IngestStageError):
+    """Raised when fetching a URL source fails in a way a later attempt may not repeat.
+
+    Covers a network error or timeout reaching the URL and an upstream status
+    that signals a temporary condition (5xx, 408, 425, 429). Every other fetch
+    refusal (an unsafe URL, too many redirects, another 4xx, an oversized
+    response) and every failure to parse or identify fetched content is a plain
+    :class:`IngestStageError`, which fails the import job without a retry.
+    """
+
+
 class CatalogIdentityConflictError(IngestStageError):
     """Raised when a catalog import collides with a different catalog entry's identity.
 

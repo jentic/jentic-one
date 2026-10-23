@@ -310,67 +310,82 @@ async def test_load_server_hosts_ignores_operation_servers(
     assert result[rev_id] == "global.example.com"
 
 
-@pytest.mark.skipif(
+_postgres_only = pytest.mark.skipif(
     os.environ.get("JENTIC_TEST_BACKEND", "postgres").lower() == "sqlite",
     reason="concurrent writers need Postgres (SQLite serializes them with BEGIN IMMEDIATE)",
 )
-async def test_upsert_of_new_identity_waits_for_concurrent_insert(
-    registry_db: DatabaseSession, clean_registry: None
-) -> None:
-    """Pins #1980: an upsert racing another transaction's insert of the same new
-    identity must resolve to that row once it commits, not fail on
-    ``uq_apis_vendor_name_version``.
 
-    Transaction A inserts the identity and holds its transaction open; B's upsert
-    starts while the row is still uncommitted (so B's locking read finds nothing)
-    and blocks on A. Only once B is observed waiting on a lock does A commit.
+_RACE_IDENTITY = {"vendor": "race.example.com", "name": "new-api", "version": "1.0.0"}
+
+
+async def _race_upsert_behind_uncommitted_insert(
+    registry_db: DatabaseSession,
+    *,
+    a_kwargs: dict[str, str],
+    b_kwargs: dict[str, str],
+) -> tuple[Api, asyncio.Task[Api]]:
+    """Run upsert B while transaction A's insert of the same new identity is uncommitted.
+
+    A upserts (inserting the identity) and keeps its transaction open. B starts
+    its own transaction, records its backend pid, and upserts; its locking read
+    cannot see A's row. A commits only once ``pg_blocking_pids`` shows B's own
+    backend waiting on A. Returns A's row and B's (finished) task.
     """
-    identity = {"vendor": "race.example.com", "name": "new-api", "version": "1.0.0"}
-    b_started = asyncio.Event()
+    b_pid: asyncio.Future[int] = asyncio.get_running_loop().create_future()
 
     async def upsert_b() -> Api:
         async with registry_db.transaction() as session:
-            b_started.set()
-            api = await ApiRepository.upsert(
-                session, **identity, display_name="From B", created_by="usr_b"
-            )
-            assert api.current_revision is None
-            return api
+            b_pid.set_result((await session.execute(text("SELECT pg_backend_pid()"))).scalar_one())
+            return await ApiRepository.upsert(session, **_RACE_IDENTITY, **b_kwargs)
 
     async with registry_db.transaction() as session_a:
-        api_a = await ApiRepository.upsert(
-            session_a, **identity, catalog_api_id="race.example.com", created_by="usr_a"
-        )
+        api_a = await ApiRepository.upsert(session_a, **_RACE_IDENTITY, **a_kwargs)
         task_b = asyncio.create_task(upsert_b())
-        await b_started.wait()
+        pid = await b_pid
         async with registry_db.session() as probe:
             for _ in range(500):
-                waiting = (
+                blocked = (
                     await probe.execute(
-                        text(
-                            "SELECT count(*) FROM pg_locks l"
-                            " JOIN pg_stat_activity a ON a.pid = l.pid"
-                            " WHERE NOT l.granted AND a.datname = current_database()"
-                        )
+                        text("SELECT cardinality(pg_blocking_pids(:pid)) > 0"), {"pid": pid}
                     )
                 ).scalar_one()
-                if waiting:
+                if blocked:
                     break
                 await asyncio.sleep(0.01)
             else:
                 pytest.fail("upsert B never blocked on transaction A")
         assert not task_b.done()
 
-    api_b = await task_b
+    await asyncio.wait([task_b])
+    return api_a, task_b
+
+
+@_postgres_only
+async def test_upsert_of_new_identity_waits_for_concurrent_insert(
+    registry_db: DatabaseSession, clean_registry: None
+) -> None:
+    """Pins #1980: an upsert racing another transaction's insert of the same new
+    identity must resolve to that row once it commits, not fail on
+    ``uq_apis_vendor_name_version``.
+    """
+    api_a, task_b = await _race_upsert_behind_uncommitted_insert(
+        registry_db,
+        a_kwargs={"catalog_api_id": "race.example.com", "created_by": "usr_a"},
+        b_kwargs={"display_name": "From B", "created_by": "usr_b"},
+    )
+
+    api_b = task_b.result()
     assert api_b.id == api_a.id
+    # The re-read keeps the joined-eager relationship loaded (no async lazy load).
+    assert api_b.current_revision is None
     async with registry_db.session() as session:
         rows = list(
             (
                 await session.execute(
                     select(Api).where(
-                        Api.vendor == identity["vendor"],
-                        Api.name == identity["name"],
-                        Api.version == identity["version"],
+                        Api.vendor == _RACE_IDENTITY["vendor"],
+                        Api.name == _RACE_IDENTITY["name"],
+                        Api.version == _RACE_IDENTITY["version"],
                     )
                 )
             ).scalars()
@@ -381,27 +396,25 @@ async def test_upsert_of_new_identity_waits_for_concurrent_insert(
     assert rows[0].created_by == "usr_a"
 
 
-async def test_upsert_new_identity_still_enforces_catalog_guard_after_insert(
+@_postgres_only
+async def test_upsert_losing_new_identity_race_enforces_catalog_guard(
     registry_db: DatabaseSession, clean_registry: None
 ) -> None:
-    """The catalog-identity guard applies to a row another import created first."""
-    async with registry_db.transaction() as session:
-        await ApiRepository.upsert(
-            session,
-            vendor="guard.example.com",
-            name="api",
-            version="1",
-            catalog_api_id="guard.example.com/a",
-            created_by="usr",
-        )
+    """The catalog-identity guard applies to the row a concurrent import inserted
+    first: the loser of the insert race raises CatalogApiIdConflictError, and
+    the winner's catalog id is left untouched.
+    """
+    _api_a, task_b = await _race_upsert_behind_uncommitted_insert(
+        registry_db,
+        a_kwargs={"catalog_api_id": "race.example.com/a", "created_by": "usr_a"},
+        b_kwargs={"catalog_api_id": "race.example.com/b", "created_by": "usr_b"},
+    )
 
-    async with registry_db.transaction() as session:
-        with pytest.raises(CatalogApiIdConflictError):
-            await ApiRepository.upsert(
-                session,
-                vendor="guard.example.com",
-                name="api",
-                version="1",
-                catalog_api_id="guard.example.com/b",
-                created_by="usr",
-            )
+    exc = task_b.exception()
+    assert isinstance(exc, CatalogApiIdConflictError)
+    assert exc.stored_id == "race.example.com/a"
+    async with registry_db.session() as session:
+        stored = (
+            await session.execute(select(Api).where(Api.vendor == _RACE_IDENTITY["vendor"]))
+        ).scalar_one()
+    assert stored.catalog_api_id == "race.example.com/a"
