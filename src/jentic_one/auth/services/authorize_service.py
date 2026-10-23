@@ -303,6 +303,10 @@ class AuthorizeService:
             ext_id = await ExternalIdentityRepository.get_by_issuer_subject(
                 session, issuer, claims.external_subject
             )
+            if ext_id is None:
+                ext_id = await ExternalIdentityRepository.get_unscoped(
+                    session, self._auth_config.idp.provider, claims.external_subject
+                )
             if ext_id is not None:
                 return ext_id.user_id
             if claims.email_verified:
@@ -739,6 +743,29 @@ class AuthorizeService:
             )
             if ext_id is not None:
                 return ext_id.user_id
+            # A link with no real issuer (written before links were keyed by
+            # issuer) resolves for the configured provider's issuer, exactly as
+            # a provider-keyed lookup would, and is pinned to that issuer on
+            # first use so no other issuer can resolve it afterwards.
+            unscoped = await ExternalIdentityRepository.get_unscoped(
+                session, provider, claims.external_subject
+            )
+            if unscoped is not None:
+                before_issuer = unscoped.issuer
+                await ExternalIdentityRepository.pin_issuer(session, unscoped, issuer)
+                await record_audit(
+                    session,
+                    action=AuditAction.UPDATE,
+                    target_type=AuditTargetType.USER,
+                    target_id=unscoped.user_id,
+                    actor_type=ActorType.USER,
+                    actor_id=unscoped.user_id,
+                    before={"external_identity_issuer": before_issuer},
+                    after={"external_identity_issuer": issuer},
+                    reason=f"keyed external identity ({provider}) to its issuer",
+                    origin=None,
+                )
+                return unscoped.user_id
 
         try:
             async with self._ctx.admin_db.transaction() as session:
