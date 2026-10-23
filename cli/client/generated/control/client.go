@@ -9941,8 +9941,9 @@ type ClientInterface interface {
 	//
 	// Returns the agent's name, description, owner, `status`, approval or
 	// denial details, and whether it currently has an API key (`has_api_key`).
-	// Readable by the agent itself, its owner, and `org:admin`; an agent outside
-	// the caller's visibility answers 404.
+	// Readable by the agent itself, its owner, `org:admin`, and a caller holding
+	// `agents:read` (implied by `agents:write`); an agent outside the caller's
+	// visibility answers 404.
 	//
 	// Corresponds with GET /agents/{agent_id} (the `GetAgent` operationId).
 	GetAgent(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -10015,9 +10016,10 @@ type ClientInterface interface {
 	//
 	// Each binding names the credential, the API it serves, when it was bound,
 	// whether it is `suspended` (and why), and any attached permission
-	// `rule_set_id`. Credential secrets are never returned. Readable by the
-	// agent itself, its owner, and `org:admin` (404 otherwise). The list is not
-	// paginated.
+	// `rule_set_id`. Credential secrets are never returned. Readable like
+	// `GET /agents/{agent_id}`: by the agent itself, its owner, `org:admin`, and a
+	// caller holding `agents:read` (implied by `agents:write`); 404 otherwise.
+	// The list is not paginated.
 	//
 	// Corresponds with GET /agents/{agent_id}/credentials (the `ListAgentCredentials` operationId).
 	ListAgentCredentials(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -13038,8 +13040,9 @@ func (c *Client) ArchiveAgent(ctx context.Context, agentId string, params *Archi
 //
 // Returns the agent's name, description, owner, `status`, approval or
 // denial details, and whether it currently has an API key (`has_api_key`).
-// Readable by the agent itself, its owner, and `org:admin`; an agent outside
-// the caller's visibility answers 404.
+// Readable by the agent itself, its owner, `org:admin`, and a caller holding
+// `agents:read` (implied by `agents:write`); an agent outside the caller's
+// visibility answers 404.
 //
 // Corresponds with GET /agents/{agent_id} (the `GetAgent` operationId).
 func (c *Client) GetAgent(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -13162,9 +13165,10 @@ func (c *Client) GetAgentApiKeyHistory(ctx context.Context, agentId string, reqE
 //
 // Each binding names the credential, the API it serves, when it was bound,
 // whether it is `suspended` (and why), and any attached permission
-// `rule_set_id`. Credential secrets are never returned. Readable by the
-// agent itself, its owner, and `org:admin` (404 otherwise). The list is not
-// paginated.
+// `rule_set_id`. Credential secrets are never returned. Readable like
+// `GET /agents/{agent_id}`: by the agent itself, its owner, `org:admin`, and a
+// caller holding `agents:read` (implied by `agents:write`); 404 otherwise.
+// The list is not paginated.
 //
 // Corresponds with GET /agents/{agent_id}/credentials (the `ListAgentCredentials` operationId).
 func (c *Client) ListAgentCredentials(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -26463,8 +26467,9 @@ type ClientWithResponsesInterface interface {
 	//
 	// Returns the agent's name, description, owner, `status`, approval or
 	// denial details, and whether it currently has an API key (`has_api_key`).
-	// Readable by the agent itself, its owner, and `org:admin`; an agent outside
-	// the caller's visibility answers 404.
+	// Readable by the agent itself, its owner, `org:admin`, and a caller holding
+	// `agents:read` (implied by `agents:write`); an agent outside the caller's
+	// visibility answers 404.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -26543,9 +26548,10 @@ type ClientWithResponsesInterface interface {
 	//
 	// Each binding names the credential, the API it serves, when it was bound,
 	// whether it is `suspended` (and why), and any attached permission
-	// `rule_set_id`. Credential secrets are never returned. Readable by the
-	// agent itself, its owner, and `org:admin` (404 otherwise). The list is not
-	// paginated.
+	// `rule_set_id`. Credential secrets are never returned. Readable like
+	// `GET /agents/{agent_id}`: by the agent itself, its owner, `org:admin`, and a
+	// caller holding `agents:read` (implied by `agents:write`); 404 otherwise.
+	// The list is not paginated.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -44464,8 +44470,9 @@ func (c *ClientWithResponses) ArchiveAgentWithResponse(ctx context.Context, agen
 //
 // Returns the agent's name, description, owner, `status`, approval or
 // denial details, and whether it currently has an API key (`has_api_key`).
-// Readable by the agent itself, its owner, and `org:admin`; an agent outside
-// the caller's visibility answers 404.
+// Readable by the agent itself, its owner, `org:admin`, and a caller holding
+// `agents:read` (implied by `agents:write`); an agent outside the caller's
+// visibility answers 404.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -44574,9 +44581,10 @@ func (c *ClientWithResponses) GetAgentApiKeyHistoryWithResponse(ctx context.Cont
 //
 // Each binding names the credential, the API it serves, when it was bound,
 // whether it is `suspended` (and why), and any attached permission
-// `rule_set_id`. Credential secrets are never returned. Readable by the
-// agent itself, its owner, and `org:admin` (404 otherwise). The list is not
-// paginated.
+// `rule_set_id`. Credential secrets are never returned. Readable like
+// `GET /agents/{agent_id}`: by the agent itself, its owner, `org:admin`, and a
+// caller holding `agents:read` (implied by `agents:write`); 404 otherwise.
+// The list is not paginated.
 //
 // Returns a wrapper object for the known response body format(s).
 //
