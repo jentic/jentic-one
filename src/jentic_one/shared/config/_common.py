@@ -11,6 +11,10 @@ class ConfigError(Exception):
     """Raised when configuration is invalid or incomplete."""
 
 
+# Tracebacks and logs name the public package, not this private module.
+ConfigError.__module__ = "jentic_one.shared.config"
+
+
 def _normalize_optional_base_url(value: str | None) -> str | None:
     """Validator for optional public base-URL fields.
 

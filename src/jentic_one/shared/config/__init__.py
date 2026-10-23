@@ -2,18 +2,18 @@
 
 The schema is split across the submodules of this package; every name is
 re-exported here so callers import from ``jentic_one.shared.config``.
+
+The private helpers that tests and extensions reach for (``_deep_merge``,
+``_ONESHOT_CONFIG_CACHE`` and the like) are re-exported with redundant
+``as`` aliases, so they resolve here but stay out of ``__all__``.
 """
 
 from __future__ import annotations
 
-from jentic_one.shared.config._common import (
-    ConfigError,
-    _csv_to_list,
-    _deep_merge,
-)
-from jentic_one.shared.config._secrets import (
-    GUARDED_FIELD_SURFACES,
-)
+from jentic_one.shared.config._common import ConfigError
+from jentic_one.shared.config._common import _csv_to_list as _csv_to_list
+from jentic_one.shared.config._common import _deep_merge as _deep_merge
+from jentic_one.shared.config._secrets import GUARDED_FIELD_SURFACES
 from jentic_one.shared.config.admin import (
     AdminAuthConfig,
     AdminConfig,
@@ -89,12 +89,12 @@ from jentic_one.shared.config.encryption import (
     EncryptionConfig,
     EncryptionKey,
 )
+from jentic_one.shared.config.loader import _CONFIG_EXTENSIONS as _CONFIG_EXTENSIONS
+from jentic_one.shared.config.loader import _ONESHOT_CONFIG_CACHE as _ONESHOT_CONFIG_CACHE
+from jentic_one.shared.config.loader import _apps_for_secret_guard as _apps_for_secret_guard
+from jentic_one.shared.config.loader import _env_overrides as _env_overrides
+from jentic_one.shared.config.loader import _oneshot_cache_key as _oneshot_cache_key
 from jentic_one.shared.config.loader import (
-    _CONFIG_EXTENSIONS,
-    _ONESHOT_CONFIG_CACHE,
-    _apps_for_secret_guard,
-    _env_overrides,
-    _oneshot_cache_key,
     load_config,
     oneshot_config_source_active,
     register_config,
@@ -137,8 +137,6 @@ __all__ = [
     "TCP_KEEPALIVE_COUNT",
     "TCP_KEEPALIVE_IDLE_S",
     "TCP_KEEPALIVE_INTERVAL_S",
-    "_CONFIG_EXTENSIONS",
-    "_ONESHOT_CONFIG_CACHE",
     "AdminAuthConfig",
     "AdminConfig",
     "AdminEventsConfig",
@@ -200,11 +198,6 @@ __all__ = [
     "VendorRegistryConfig",
     "VendorScopeConfig",
     "WorkerConfig",
-    "_apps_for_secret_guard",
-    "_csv_to_list",
-    "_deep_merge",
-    "_env_overrides",
-    "_oneshot_cache_key",
     "bind_origin",
     "broker_links_root_on_broker",
     "check_public_url_consistency",
