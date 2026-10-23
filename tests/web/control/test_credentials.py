@@ -11,6 +11,7 @@ Exercises the real HTTP path (router → service → DB) to pin two invariants:
 
 from __future__ import annotations
 
+import base64
 from collections.abc import AsyncGenerator, Iterator
 from datetime import datetime
 
@@ -1931,3 +1932,20 @@ def test_a_rule_comment_is_saved_and_read_back(
     assert cred_writer_client.put(base, json=echoed).status_code == 200
     too_long = [{"effect": "deny", "path": "/x", "comment": "x" * 501}]
     assert cred_writer_client.put(base, json=too_long).status_code == 422
+
+
+#: Cursors that base64-decode to JSON of the wrong shape (#1956).
+_WRONG_SHAPE_CURSORS = [
+    base64.b64encode(raw.encode()).decode()
+    for raw in ("null", "[1]", '{"t": 1, "id": "x"}', '{"t": "2024-01-01", "id": 1}')
+]
+
+
+@pytest.mark.parametrize("cursor", _WRONG_SHAPE_CURSORS)
+def test_list_credentials_wrong_shape_cursor_returns_400(
+    cred_writer_client: TestClient, cursor: str
+) -> None:
+    """A tampered cursor on the control surface is a 400 ``invalid_cursor``, never a 500."""
+    resp = cred_writer_client.get("/credentials", params={"cursor": cursor})
+    assert resp.status_code == 400
+    assert resp.json()["type"] == "invalid_cursor"

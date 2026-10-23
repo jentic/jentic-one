@@ -201,10 +201,7 @@ class NoteService:
         created_by: str | None = None,
         identity: Identity,
     ) -> NotePage:
-        cursor_created_at: datetime | None = None
-        cursor_id: str | None = None
-        if cursor is not None:
-            cursor_created_at, cursor_id = decode_cursor(cursor, id_kind="str")
+        cursor_key = decode_cursor(cursor, id_kind="str") if cursor is not None else None
 
         api_ids: list[uuid.UUID] | None = None
         if api is not None:
@@ -234,8 +231,7 @@ class NoteService:
             rows = await NoteRepository.list_page(
                 session,
                 limit=limit + 1,
-                cursor_created_at=cursor_created_at,
-                cursor_id=cursor_id,
+                cursor=cursor_key,
                 api_ids=api_ids,
                 operation_id=operation_id,
                 execution_id=execution_id,

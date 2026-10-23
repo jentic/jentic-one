@@ -155,10 +155,7 @@ class ApiService:
         blended into one list (that conflated "what you have" with "what you could
         have" and broke pagination). The Discover UI composes the two surfaces.
         """
-        cursor_created_at = None
-        cursor_id: str | None = None
-        if cursor is not None:
-            cursor_created_at, cursor_id = decode_cursor(cursor, id_kind="uuid")
+        cursor_key = decode_cursor(cursor, id_kind="uuid") if cursor is not None else None
 
         items: list[ApiPageItem] = []
         next_cursor: str | None = None
@@ -167,8 +164,7 @@ class ApiService:
             rows = await ApiRepository.list_page(
                 session,
                 limit=limit + 1,
-                cursor_created_at=cursor_created_at,
-                cursor_id=cursor_id,
+                cursor=cursor_key,
                 vendor=vendor,
             )
 

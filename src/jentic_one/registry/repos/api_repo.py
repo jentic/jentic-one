@@ -16,7 +16,7 @@ from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.security_schemes import SecurityScheme
 from jentic_one.registry.core.schema.servers import Server
-from jentic_one.shared.db.keyset import desc_keyset_predicate
+from jentic_one.shared.db.keyset import apply_desc_keyset
 
 
 class CatalogApiIdConflictError(Exception):
@@ -240,15 +240,11 @@ class ApiRepository:
         session: AsyncSession,
         *,
         limit: int = 50,
-        cursor_created_at: datetime | None = None,
-        cursor_id: str | None = None,
+        cursor: tuple[datetime, str] | None = None,
         vendor: str | None = None,
     ) -> list[Api]:
         stmt = select(Api).order_by(Api.created_at.desc(), Api.id.desc()).limit(limit)
-        if cursor_created_at is not None and cursor_id is not None:
-            stmt = stmt.where(
-                desc_keyset_predicate(Api.created_at, Api.id, cursor_created_at, cursor_id)
-            )
+        stmt = apply_desc_keyset(stmt, Api.created_at, Api.id, cursor)
         if vendor is not None:
             stmt = stmt.where(Api.vendor == vendor)
         result = await session.execute(stmt)

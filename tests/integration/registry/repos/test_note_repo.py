@@ -130,8 +130,7 @@ async def test_list_page_cursor_pagination(registry_db: DatabaseSession, sample_
             session,
             api_ids=[sample_api.id],
             limit=3,
-            cursor_created_at=last.created_at,
-            cursor_id=last.id,
+            cursor=(last.created_at, last.id),
         )
 
     assert len(second_page) == 2

@@ -505,7 +505,7 @@ _WRONG_SHAPE_CURSORS = [
 
 @pytest.mark.parametrize("cursor", _WRONG_SHAPE_CURSORS)
 def test_list_wrong_shape_cursor_returns_400(authed_client: TestClient, cursor: str) -> None:
-    """A tampered cursor is a 400, never a 500."""
+    """A tampered cursor is a 400 ``invalid_cursor``, never a 500."""
     resp = authed_client.get("/apis", params={"cursor": cursor})
     assert resp.status_code == 400
-    assert resp.json()["detail"] == "Invalid pagination cursor"
+    assert resp.json()["type"] == "invalid_cursor"

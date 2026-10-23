@@ -12,7 +12,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.services.errors import JobNotFoundError
-from jentic_one.shared.db.keyset import desc_keyset_predicate
+from jentic_one.shared.db.keyset import apply_desc_keyset
 from jentic_one.shared.models import JobKind, JobStatus
 
 
@@ -86,8 +86,7 @@ class JobRepository:
         session: AsyncSession,
         *,
         limit: int = 25,
-        cursor: datetime | None = None,
-        cursor_id: str | None = None,
+        cursor: tuple[datetime, str] | None = None,
         kind: str | None = None,
         status: list[str] | None = None,
         since: datetime | None = None,
@@ -95,8 +94,7 @@ class JobRepository:
         filters: Sequence[ColumnElement[bool]] | None = None,
     ) -> list[Job]:
         stmt = select(Job).order_by(Job.created_at.desc(), Job.id.desc()).limit(limit)
-        if cursor is not None and cursor_id is not None:
-            stmt = stmt.where(desc_keyset_predicate(Job.created_at, Job.id, cursor, cursor_id))
+        stmt = apply_desc_keyset(stmt, Job.created_at, Job.id, cursor)
         if kind is not None:
             stmt = stmt.where(Job.kind == kind)
         if status:

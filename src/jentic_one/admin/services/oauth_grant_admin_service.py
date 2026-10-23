@@ -95,10 +95,7 @@ class OAuthGrantAdminService:
         ):
             raise InvalidInputError(f"unsupported status filter: {status}")
 
-        cursor_dt = None
-        cursor_id = None
-        if cursor is not None:
-            cursor_dt, cursor_id = decode_cursor(cursor, id_kind="str")
+        cursor_key = decode_cursor(cursor, id_kind="str") if cursor is not None else None
 
         access_filters = build_access_filters(identity, OAuthClientGrant)
         async with self._ctx.admin_db.session() as session:
@@ -109,8 +106,7 @@ class OAuthGrantAdminService:
                 user_id=user_id,
                 status=status,
                 limit=limit + 1,
-                cursor_created_at=cursor_dt,
-                cursor_id=cursor_id,
+                cursor=cursor_key,
                 filters=access_filters,
             )
             has_more = len(grants) > limit

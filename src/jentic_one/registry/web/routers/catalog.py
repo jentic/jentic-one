@@ -23,7 +23,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response
 from fastapi.responses import JSONResponse
-from jentic.problem_details import BadRequest, ProblemDetailException
+from jentic.problem_details import ProblemDetailException
 
 from jentic_one.registry.services.catalog.service import CatalogEntryView, CatalogService
 from jentic_one.registry.web.deps import get_catalog_service
@@ -40,7 +40,6 @@ from jentic_one.registry.web.schemas.catalog import (
     PreviewParameterResponse,
 )
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.pagination import InvalidCursorError
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.links import build_link
@@ -141,18 +140,15 @@ async def list_catalog(
             instance="/catalog",
         )
 
-    try:
-        page = await svc.list_all(
-            q=q,
-            registered_only=registered_only,
-            unregistered_only=unregistered_only,
-            outdated_only=outdated_only,
-            cursor=cursor,
-            limit=limit,
-            include_snoozed=include_snoozed,
-        )
-    except InvalidCursorError:
-        raise BadRequest(detail="Invalid pagination cursor", instance="/catalog") from None
+    page = await svc.list_all(
+        q=q,
+        registered_only=registered_only,
+        unregistered_only=unregistered_only,
+        outdated_only=outdated_only,
+        cursor=cursor,
+        limit=limit,
+        include_snoozed=include_snoozed,
+    )
 
     resp = CatalogListResponse(
         data=[_entry_response(request, v) for v in page.data],

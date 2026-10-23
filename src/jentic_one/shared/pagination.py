@@ -17,6 +17,7 @@ T = TypeVar("T")
 CursorIdKind = Literal["uuid", "str"]
 
 __all__ = [
+    "MAX_CURSOR_LENGTH",
     "CursorIdKind",
     "InvalidCursorError",
     "InvalidSearchCursorError",
@@ -28,6 +29,12 @@ __all__ = [
     "encode_cursor",
     "encode_search_cursor",
 ]
+
+
+#: Longest cursor any decoder accepts. Minted cursors are well under 200
+#: characters; the cap rejects an oversized (e.g. deeply nested) payload before
+#: it reaches the JSON parser.
+MAX_CURSOR_LENGTH = 1024
 
 
 class InvalidCursorError(ValueError):
@@ -55,13 +62,16 @@ def encode_cursor(timestamp: datetime, id: str) -> str:
 def _load_cursor_payload(cursor: str) -> dict[str, Any]:
     """Base64-decode and JSON-parse ``cursor``, requiring a JSON object.
 
-    Any undecodable, unparsable or non-object payload (``null``, ``[1]``, a
-    bare number) raises :class:`InvalidCursorError`, so every decoder rejects
-    a tampered cursor the same way and none leaks a ``TypeError``.
+    Any oversized, undecodable, unparsable or non-object payload (``null``,
+    ``[1]``, a bare number, thousands of nested ``[``) raises
+    :class:`InvalidCursorError`, so every decoder rejects a tampered cursor the
+    same way and none leaks a ``TypeError`` or ``RecursionError``.
     """
+    if not isinstance(cursor, str) or len(cursor) > MAX_CURSOR_LENGTH:
+        raise InvalidCursorError("Invalid pagination cursor")
     try:
         payload = json.loads(b64decode(cursor.encode()).decode())
-    except (ValueError, TypeError, AttributeError) as exc:
+    except (ValueError, TypeError, AttributeError, RecursionError) as exc:
         raise InvalidCursorError("Invalid pagination cursor") from exc
     if not isinstance(payload, dict):
         raise InvalidCursorError("Invalid pagination cursor")
@@ -73,8 +83,8 @@ def decode_cursor(cursor: str, *, id_kind: CursorIdKind) -> tuple[datetime, str]
 
     ``id_kind`` names the check the id must pass: ``"uuid"`` for listings
     keyed by UUID primary keys, ``"str"`` for KSUID and other string keys.
-    Every malformed cursor raises :class:`InvalidCursorError`, which every
-    surface maps to a 400.
+    Every malformed cursor raises :class:`InvalidCursorError`, which the
+    admin, auth, control and registry surfaces map to 400 ``invalid_cursor``.
     """
     payload = _load_cursor_payload(cursor)
     try:
@@ -138,9 +148,13 @@ def decode_catalog_cursor(cursor: str) -> tuple[str, float | None]:
         if not isinstance(api_id, str):
             raise ValueError("id must be a string")
         raw_score = payload.get("s")
-        score = None if raw_score is None else float(raw_score)
-        if score is not None and not math.isfinite(score):
-            raise ValueError("score must be finite")
+        score: float | None = None
+        if raw_score is not None:
+            if isinstance(raw_score, bool) or not isinstance(raw_score, int | float):
+                raise ValueError("score must be a number")
+            score = float(raw_score)
+            if not math.isfinite(score):
+                raise ValueError("score must be finite")
     except (ValueError, TypeError, KeyError) as exc:
         raise InvalidCursorError("Invalid pagination cursor") from exc
     return api_id, score
