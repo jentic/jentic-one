@@ -3,11 +3,16 @@ import { http, HttpResponse } from 'msw';
 import { worker } from '@/mocks/browser';
 import {
 	IntegrationsApiError,
+	cancelConnectSession,
 	confirmConnectSession,
 	getConnectSession,
+	getVendorAuthCapabilities,
 	listAgentsForPicker,
 	listAllVendorOperations,
+	listOpenConnectRequests,
 	pollConnectSessionStatus,
+	rejectConnectSession,
+	startIntegrationConnect,
 } from '@/shared/credentials/api/vendors-client';
 
 /**
@@ -89,6 +94,112 @@ describe('vendors-client over the generated client', () => {
 		expect(err).toBeInstanceOf(IntegrationsApiError);
 		expect((err as IntegrationsApiError).status).toBeNull();
 		expect((err as IntegrationsApiError).code).toBeNull();
+		// The fetch TypeError's own text, not the call's fallback message.
+		expect((err as IntegrationsApiError).message).toBe('Failed to fetch');
+	});
+
+	it('posts the connect body and returns the 201 session', async () => {
+		let body: unknown = null;
+		worker.use(
+			http.post('/integrations\\:connect', async ({ request }) => {
+				body = await request.json();
+				return HttpResponse.json(
+					{
+						session_id: 'cs_9',
+						approval_url: '/connect?approve=cs_9',
+						poll_token: 'tok_9',
+						resolved_flow: 'manual_api_key',
+					},
+					{ status: 201 },
+				);
+			}),
+		);
+
+		const res = await startIntegrationConnect({ vendor: 'github.com', agent_id: 'agnt_1' });
+
+		expect(res).toMatchObject({ session_id: 'cs_9', poll_token: 'tok_9' });
+		expect(body).toEqual({ vendor: 'github.com', agent_id: 'agnt_1' });
+	});
+
+	it('resolves cancel and reject on 204 with no body', async () => {
+		const seen: string[] = [];
+		worker.use(
+			http.post('/connect-sessions/:id\\:cancel', ({ params, request }) => {
+				const token = new URL(request.url).searchParams.get('poll_token');
+				seen.push(`cancel ${String(params.id)} ${token}`);
+				return new HttpResponse(null, { status: 204 });
+			}),
+			http.post('/connect-sessions/:id\\:reject', ({ params }) => {
+				seen.push(`reject ${String(params.id)}`);
+				return new HttpResponse(null, { status: 204 });
+			}),
+		);
+
+		await expect(cancelConnectSession('cs_1', 'tok_1')).resolves.toBeUndefined();
+		await expect(rejectConnectSession('cs_2')).resolves.toBeUndefined();
+
+		expect(seen).toEqual(['cancel cs_1 tok_1', 'reject cs_2']);
+	});
+
+	it('maps a cancel or reject problem body to IntegrationsApiError', async () => {
+		const forbidden = () =>
+			HttpResponse.json(
+				{ type: 'forbidden', title: 'Forbidden', status: 403, detail: 'Not yours.' },
+				{ status: 403, headers: { 'Content-Type': 'application/problem+json' } },
+			);
+		worker.use(
+			http.post('/connect-sessions/:id\\:cancel', forbidden),
+			http.post('/connect-sessions/:id\\:reject', forbidden),
+		);
+
+		for (const run of [
+			() => cancelConnectSession('cs_1'),
+			() => rejectConnectSession('cs_1'),
+		]) {
+			const err = await run().catch((e: unknown) => e);
+			expect(err).toBeInstanceOf(IntegrationsApiError);
+			expect((err as IntegrationsApiError).status).toBe(403);
+			expect((err as IntegrationsApiError).code).toBe('forbidden');
+			expect((err as IntegrationsApiError).message).toBe('Not yours.');
+		}
+	});
+
+	it('sends the OAuth app registration id only when one is pinned', async () => {
+		const seen: (string | null)[] = [];
+		worker.use(
+			http.get('/vendors/:key/auth-capabilities', ({ request, params }) => {
+				expect(params.key).toBe('github.com');
+				seen.push(new URL(request.url).searchParams.get('oauth_app_registration_id'));
+				return HttpResponse.json({
+					vendor: 'github.com',
+					display_name: 'GitHub',
+					flows: [],
+					scopes: [],
+				});
+			}),
+		);
+
+		await getVendorAuthCapabilities('github.com', 'oar_1');
+		await getVendorAuthCapabilities('github.com', null);
+		await getVendorAuthCapabilities('github.com');
+
+		expect(seen).toEqual(['oar_1', null, null]);
+	});
+
+	it('maps a connect-request list failure to IntegrationsApiError', async () => {
+		worker.use(
+			http.get('/connect-sessions', () =>
+				HttpResponse.json(
+					{ type: 'forbidden', title: 'Forbidden', status: 403, detail: 'No access.' },
+					{ status: 403, headers: { 'Content-Type': 'application/problem+json' } },
+				),
+			),
+		);
+
+		const err = await listOpenConnectRequests().catch((e: unknown) => e);
+
+		expect(err).toBeInstanceOf(IntegrationsApiError);
+		expect((err as IntegrationsApiError).status).toBe(403);
 	});
 
 	it('follows operation pages and reads a 404 as not yet imported', async () => {

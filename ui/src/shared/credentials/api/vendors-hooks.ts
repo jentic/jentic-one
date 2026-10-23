@@ -89,8 +89,10 @@ export const agentsPickerKey = [...sharedQueryKeys.agentsRoot, 'picker'] as cons
 
 export function useAgentsForPicker() {
 	return useQuery<AgentListResponse>({
-		// Under the agents root, so agent mutations that invalidate it refresh
-		// the picker too.
+		// Under the agents root, so agent mutations and `agent.*` stream events
+		// that invalidate it refresh the picker too. The cost: a mounted picker
+		// refetches every page (one request per 200 agents, capped at
+		// AGENT_PICKER_MAX_PAGES) on each such invalidation.
 		queryKey: agentsPickerKey,
 		queryFn: listAgentsForPicker,
 		staleTime: 30_000,

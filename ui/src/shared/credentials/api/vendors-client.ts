@@ -298,7 +298,10 @@ const OPEN_CONNECT_PAGE_LIMIT = 200;
 export async function listOpenConnectRequests(): Promise<ConnectSessionSummaryResponse[]> {
 	const pages = await Promise.all(
 		OPEN_CONNECT_STATES.map((state) =>
-			IntegrationsService.listConnectSessions({ state, limit: OPEN_CONNECT_PAGE_LIMIT }),
+			call(
+				IntegrationsService.listConnectSessions({ state, limit: OPEN_CONNECT_PAGE_LIMIT }),
+				'Failed to load connect requests.',
+			),
 		),
 	);
 	return pages

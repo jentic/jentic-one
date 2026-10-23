@@ -25,6 +25,7 @@ import type {
 	IntegrationsConnectRequest,
 	IntegrationsConnectResponse,
 	OAuthConfirmSessionRequest,
+	OperationSummaryListResponse,
 	OperationSummaryResponse,
 	OwnOAuthClientConfirmSessionRequest,
 	PermissionRuleSchema,
@@ -130,8 +131,11 @@ export type VendorOperation = Pick<
 	'operation_id' | 'method' | 'path' | 'name' | 'description'
 >;
 
-export interface VendorOperationsPage {
+/**
+ * One page of a vendor's operations: the generated list page, narrowed to
+ * {@link VendorOperation} rows, with `next_cursor` always present.
+ */
+export type VendorOperationsPage = Pick<OperationSummaryListResponse, 'has_more'> & {
 	data: VendorOperation[];
-	has_more: boolean;
 	next_cursor: string | null;
-}
+};
