@@ -14,7 +14,7 @@ import pytest
 
 from .conftest import SRC_ROOT
 
-CONFIG_FILE = SRC_ROOT / "shared" / "config.py"
+CONFIG_PACKAGE = SRC_ROOT / "shared" / "config"
 
 SECRET_NAME_PARTS = ("secret", "password", "pepper", "token", "key")
 
@@ -67,7 +67,9 @@ def _check_file(filepath: Path) -> list[str]:
 @pytest.mark.arch
 def test_secrets_are_secretstr() -> None:
     """Secret-like config fields must be typed ``SecretStr``."""
-    violations = _check_file(CONFIG_FILE)
+    config_files = sorted(CONFIG_PACKAGE.glob("*.py"))
+    assert config_files, f"no config modules found under {CONFIG_PACKAGE}"
+    violations = [v for path in config_files for v in _check_file(path)]
     assert not violations, "Secret config fields must use pydantic.SecretStr:\n" + "\n".join(
         violations
     )

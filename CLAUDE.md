@@ -90,7 +90,7 @@ src/jentic_one/
 │   └── admin/        # Admin DB migrations
 └── shared/           # Shared utilities (imported by every module)
     ├── __init__.py   # Re-exports Context, AppConfig, DatabaseSession, etc.
-    ├── config.py     # Configuration schema (pydantic) and YAML+env loader
+    ├── config/       # Configuration schema (pydantic) and YAML+env loader
     ├── context.py    # Central Context object (holds config + DB sessions)
     ├── logging.py    # Structured logging facade (no stdlib logging elsewhere)
     ├── metrics.py    # Metrics facade (only sanctioned place to add instruments)

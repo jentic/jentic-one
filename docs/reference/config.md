@@ -5,7 +5,7 @@
      tests/arch/test_config_reference_conformance.py. -->
 
 Every configuration key jentic-one reads, generated from the
-[`AppConfig`](../../src/jentic_one/shared/config.py) Pydantic model — the same
+[`AppConfig`](../../src/jentic_one/shared/config/app.py) Pydantic model — the same
 source of truth behind [`config/config-schema.json`](../../config/config-schema.json)
 and the `jenticctl install` wizard. How the config system works (loading,
 `Context`, hot reload) is covered in

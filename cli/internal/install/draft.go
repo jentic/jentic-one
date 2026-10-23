@@ -17,7 +17,7 @@ const (
 	RuntimeDocker = "docker" // containerized via docker compose
 )
 
-// Database backends (mirrors DatabaseConfig.backend in shared/config.py).
+// Database backends (mirrors DatabaseConfig.backend in shared/config/database.py).
 const (
 	BackendSQLite   = "sqlite"
 	BackendPostgres = "postgres"
@@ -264,7 +264,7 @@ func (d *Draft) CanonicalBaseURL() string {
 	return d.BaseURL()
 }
 
-// backendDerivedBaseURL mirrors the backend's bind_origin (shared/config.py)
+// backendDerivedBaseURL mirrors the backend's bind_origin (shared/config/app.py)
 // for the server block this draft renders: http://{host}:{port}, with the
 // all-interfaces bind reported as 127.0.0.1. Under Docker the in-container
 // bind is always 0.0.0.0 (see toConfig), so the backend derives 127.0.0.1.
