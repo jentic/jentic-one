@@ -26,9 +26,10 @@ async def _ensure_user_accepts_token(ctx: Context, user_id: str, generation: obj
     ``active``) must take effect on the very next request.
 
     ``generation`` is the token's ``sgen`` claim (absent → ``0``). The row's
-    generation moves on at disable, delete and password change/reset, so a
-    token minted before any of those stays refused even once the account is
-    active again; the bundle a password change returns carries the new value.
+    generation moves on at disable, delete, password change/reset and a
+    permission edit that narrows the user's effective set, so a token minted
+    before any of those stays refused even once the account is active again;
+    the bundle a password change returns carries the new value.
     """
     try:
         status = await read_user_status(ctx.admin_db, user_id)
@@ -134,8 +135,12 @@ async def verify_token(token: str, *, secret: str, ctx: Context) -> Identity:
     a 401 — the caller is not admitted either way.
 
     When the JWT already embeds ``permissions`` in its claims (e.g. login
-    JWTs), those are trusted directly — no permission lookup. Otherwise falls
-    back to the database-resolved permission path for backwards compatibility.
+    JWTs), those are trusted directly — no permission lookup. For a login JWT
+    that is sound because narrowing a user's permissions revokes their login
+    sessions (``PermissionService.set_assigned``), so the generation check
+    above refuses any token whose embedded set is wider than the user's
+    current grants. Otherwise falls back to the database-resolved permission
+    path for backwards compatibility.
     """
     claims = decode_jwt(token, secret)
     actor_type_claim = claims.get("actor_type")

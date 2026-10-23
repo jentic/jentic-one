@@ -38917,7 +38917,7 @@
     "/events/stream": {
       "description": "`GET`: Stream Events.",
       "get": {
-        "description": "Stream events as Server-Sent Events.\n\nThe open stream re-verifies the caller at the first poll or page after each\n`admin.events.stream_recheck_seconds` interval (default 5 s) elapses. Each\npage is scoped by the caller's current permissions, so a narrower\npermission set narrows the stream. Permissions are those the credential\ncarries: API keys and user `at_` access tokens resolve them live, while a\nlogin session JWT and an agent `at_` access token carry the set they were\nissued with. The stream keeps re-verifying the token it was opened with,\nso for those a permission change applies once that token expires and the\nclient reconnects. The stream ends\nwith a `stream_closed` frame (`{\"type\": \"stream_closed\", \"reason\": ...}`)\nonce the credential stops verifying (`refused`: expired, revoked, or its\nuser or agent disabled or deleted), the caller no longer holds\n`events:read` or `org:admin` or must rotate their password (`forbidden`),\nor the check or the event store cannot be answered (`unavailable`).\nA reconnect is authenticated afresh.",
+        "description": "Stream events as Server-Sent Events.\n\nThe open stream re-verifies the caller at the first poll or page after each\n`admin.events.stream_recheck_seconds` interval (default 5 s) elapses. Each\npage is scoped by the caller's current permissions, so a narrower\npermission set narrows the stream. Permissions are those the credential\ncarries: API keys and `at_` access tokens resolve them live (an ephemeral\nagent `at_` keeps the subset it was minted with). A login session JWT\ncarries the set it was issued with, but removing any of a user's effective\npermissions revokes their login sessions, so a stream opened with one ends\n(`refused`) at the next check. The stream keeps re-verifying the token it\nwas opened with, so a permission added to a user reaches a login-session\nstream once the client reconnects with a newer login JWT. The stream ends\nwith a `stream_closed` frame (`{\"type\": \"stream_closed\", \"reason\": ...}`)\nonce the credential stops verifying (`refused`: expired, revoked, or its\nuser or agent disabled or deleted), the caller no longer holds\n`events:read` or `org:admin` or must rotate their password (`forbidden`),\nor the check or the event store cannot be answered (`unavailable`).\nA reconnect is authenticated afresh.",
         "operationId": "streamEvents",
         "parameters": [
           {
@@ -51336,7 +51336,7 @@
     "/users/{user_id}/permissions": {
       "description": "`PUT`: Set User Permissions.",
       "put": {
-        "description": "Set the assigned permissions for a user.\n\nA deleted user's permissions cannot be changed (409).",
+        "description": "Set the assigned permissions for a user.\n\nA deleted user's permissions cannot be changed (409). When the new set\nremoves any of the user's effective permissions, their login sessions\nend: every login JWT issued before the change is refused (401), and the\nuser signs in again for a token with the narrower set. This includes a\ncaller narrowing their own permissions.",
         "operationId": "setUserPermissions",
         "parameters": [
           {

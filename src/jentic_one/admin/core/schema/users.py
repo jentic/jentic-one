@@ -44,8 +44,9 @@ class User(AuditableMixin, AdminBase):
     invite_state: Mapped[str] = mapped_column(String(16), nullable=False, server_default="pending")
     # Login-session generation, carried by every login JWT as ``sgen``: the
     # shared verifier refuses a user token whose claim differs (#1139). Bumped
-    # on disable, delete and password change/reset, so re-enabling a user does
-    # not revive tokens minted before the disable.
+    # on disable, delete, password change/reset and any permission edit that
+    # narrows the user's effective set, so re-enabling a user does not revive
+    # tokens minted before the disable.
     session_generation: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )

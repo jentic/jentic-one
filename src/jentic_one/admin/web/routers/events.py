@@ -246,11 +246,13 @@ async def stream_events(
     `admin.events.stream_recheck_seconds` interval (default 5 s) elapses. Each
     page is scoped by the caller's current permissions, so a narrower
     permission set narrows the stream. Permissions are those the credential
-    carries: API keys and user `at_` access tokens resolve them live, while a
-    login session JWT and an agent `at_` access token carry the set they were
-    issued with. The stream keeps re-verifying the token it was opened with,
-    so for those a permission change applies once that token expires and the
-    client reconnects. The stream ends
+    carries: API keys and `at_` access tokens resolve them live (an ephemeral
+    agent `at_` keeps the subset it was minted with). A login session JWT
+    carries the set it was issued with, but removing any of a user's effective
+    permissions revokes their login sessions, so a stream opened with one ends
+    (`refused`) at the next check. The stream keeps re-verifying the token it
+    was opened with, so a permission added to a user reaches a login-session
+    stream once the client reconnects with a newer login JWT. The stream ends
     with a `stream_closed` frame (`{"type": "stream_closed", "reason": ...}`)
     once the credential stops verifying (`refused`: expired, revoked, or its
     user or agent disabled or deleted), the caller no longer holds
