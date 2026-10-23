@@ -75,7 +75,7 @@ class IngestSpecification(BaseModel):
     #: (which must capture the current revision as the new overlay's superseded target). NULL
     #: for non-overlay ingests. Server-set (never client-controlled), like ``supersede_active``.
     overlay_id: str | None = None
-    #: Operator approval for a server-host change (``credentials:write``), stamped by
+    #: Approval for a server-host change (``org:admin``), stamped by
     #: the scope-checked catalog enqueue path. Server-set, like ``supersede_active``.
     host_change_approved: bool = False
     #: Set by the ``Ingestor`` (never by a source) when this catalog ingest must not

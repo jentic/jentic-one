@@ -31172,7 +31172,7 @@
     "/apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote": {
       "description": "`POST`: Promote Revision.",
       "post": {
-        "description": "Promote a draft revision to published, archiving the current one.\n\nIf the draft declares different server hosts than the API's current (or last\nlive) revision, or serves a host over plaintext http that was https-only, and\nthe API has credentials bound to agents, the caller must be an organisation\nadmin (``org:admin``), or hold ``credentials:write`` and own every credential\nfor the API; otherwise the promote is refused with 403\n``host_change_requires_operator``.",
+        "description": "Promote a draft revision to published, archiving the current one.\n\nIf the draft declares different server hosts than the API's current (or last\nlive) revision, or serves a host over plaintext http that was https-only, and\nthe API has credentials bound to agents, the caller must be an organisation\nadmin (``org:admin``); otherwise the promote is refused with 403\n``host_change_requires_operator``.",
         "operationId": "promoteRevision",
         "parameters": [
           {

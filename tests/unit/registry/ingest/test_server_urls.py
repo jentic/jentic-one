@@ -684,7 +684,7 @@ async def test_stage_keeps_reingests_inspect_only(fields: dict[str, Any]) -> Non
 )
 async def test_stage_never_resolves_an_overlay_over_a_url_import(fields: dict[str, Any]) -> None:
     """An overlay over a legacy host-less URL import must not give the API a
-    host: the confirmer never saw it, and it would skip the ``credentials:write``
+    host: the confirmer never saw it, and it would skip the ``org:admin``
     review a promote of the same change needs. The servers stay as declared."""
     content = _spec([{"url": "/api/v3"}])
     ctx = _ctx(content, source_type=ApiRevisionSourceType.INLINE, origin="overlay", **fields)

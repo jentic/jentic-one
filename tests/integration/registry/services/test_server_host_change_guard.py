@@ -1,12 +1,13 @@
 """Integration tests for the server-host change guard (real registry/control/admin DBs).
 
 A catalog re-import or a draft promote that changes the server hosts of an API
-with credentials bound to an agent is held for an approver: an organisation
-admin, or a ``credentials:write`` holder that owns every credential for the API:
+with credentials bound to an agent is held for an organisation admin
+(``org:admin``):
 
 - catalog re-import without approval → kept as a DRAFT, current revision unchanged;
-- approved re-import, unchanged hosts, or no bindings → flows as before;
-- promote of a host-changing draft → 403 unless the caller is an approver;
+- admin-approved re-import, unchanged hosts, or no bindings → flows as before;
+- promote of a host-changing draft → 403 without ``org:admin`` (``credentials:write``
+  is not enough), allowed with it;
 - an https → http downgrade counts as a change, an http → https upgrade does not;
 - archiving the current revision first does not skip the check;
 - a held draft's hosts are not routable, and pinning it is refused, until promoted.
@@ -25,14 +26,8 @@ from sqlalchemy import delete, select, update
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.audit import AuditEntry
-from jentic_one.admin.core.schema.users import User
 from jentic_one.broker.core.exceptions import UnauthorizedRevisionPinError
-from jentic_one.broker.services.discovery import (
-    PinnedRevision,
-    discover_via_pins,
-    require_pinned_credential_owner,
-)
-from jentic_one.control.core.schema.connect_sessions import ConnectSession
+from jentic_one.broker.services.discovery import discover_via_pins
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
@@ -60,19 +55,9 @@ _NAME = "widgets"
 _VERSION = "1.0.0"
 _AGENT_PREFIX = "hostguard-agent"
 
-#: Creator of the credential ``_bind_credential`` stores.
-_CREDENTIAL_OWNER_ID = "usr_x"
-
 _WRITER = Identity(sub="usr_writer", actor_type=ActorType.USER, permissions=["apis:write"])
-#: ``credentials:write`` but owns none of the API's credentials.
 _OPERATOR = Identity(
     sub="usr_operator",
-    actor_type=ActorType.USER,
-    permissions=["apis:write", "credentials:write"],
-)
-#: ``credentials:write`` and the creator of the API's credential.
-_CREDENTIAL_OWNER = Identity(
-    sub=_CREDENTIAL_OWNER_ID,
     actor_type=ActorType.USER,
     permissions=["apis:write", "credentials:write"],
 )
@@ -133,7 +118,6 @@ async def clean_state(
             await session.execute(delete(Api))
             await session.commit()
         async with control_db.session() as session:
-            await session.execute(delete(ConnectSession).where(ConnectSession.vendor == _VENDOR))
             await session.execute(delete(Credential).where(Credential.api_vendor == _VENDOR))
             await session.commit()
         async with admin_db.session() as session:
@@ -166,33 +150,31 @@ async def _bind_credential(
     *,
     wildcard: bool = False,
     bind: bool = True,
-    created_by: str = _CREDENTIAL_OWNER_ID,
-) -> str:
+) -> None:
     """A credential covering the API, bound to an agent (suspended, to show it still counts)."""
     async with control_db.session() as session:
         credential_id = generate_ksuid("cred")
         credential = Credential(
             id=credential_id,
             type=StoredCredentialType.API_KEY,
-            name=f"cred-hostguard-{credential_id[-6:]}",
+            name="cred-hostguard",
             api_vendor=_VENDOR,
             api_name=None if wildcard else _NAME,
             api_version=None if wildcard else _VERSION,
-            created_by=created_by,
+            created_by="usr_x",
         )
         session.add(credential)
         await session.commit()
     if not bind:
-        return credential_id
+        return
     async with admin_db.session() as session:
-        agent = Agent(name=f"{_AGENT_PREFIX}-{credential_id[-6:]}", registered_by=created_by)
+        agent = Agent(name=f"{_AGENT_PREFIX}-1", registered_by="usr_x")
         session.add(agent)
         await session.flush()
         session.add(
             AgentCredentialBinding(agent_id=agent.id, credential_id=credential_id, suspended=True)
         )
         await session.commit()
-    return credential_id
 
 
 async def _api(registry_db: DatabaseSession) -> Api:
@@ -277,7 +259,7 @@ async def test_catalog_reimport_host_change_held_for_wildcard_credential(
     assert str((await _api(registry_db)).current_revision_id) == base["revision_id"]
 
 
-async def test_operator_approved_reimport_becomes_current(
+async def test_admin_approved_reimport_becomes_current(
     integration_context: Context,
     registry_db: DatabaseSession,
     control_db: DatabaseSession,
@@ -324,7 +306,7 @@ async def test_reimport_host_change_without_bindings_flows_automatically(
     assert str((await _api(registry_db)).current_revision_id) == rev["revision_id"]
 
 
-async def test_promote_held_draft_requires_operator(
+async def test_promote_held_draft_requires_org_admin(
     integration_context: Context,
     registry_db: DatabaseSession,
     control_db: DatabaseSession,
@@ -340,6 +322,10 @@ async def test_promote_held_draft_requires_operator(
     assert exc_info.value.current_hosts == ["https://old.example.com"]
     assert exc_info.value.new_hosts == ["https://new.example.com"]
     assert str((await _api(registry_db)).current_revision_id) == base_id
+    # ``credentials:write`` does not approve sending other users' credentials elsewhere.
+    with pytest.raises(HostChangeRequiresOperatorError):
+        await svc.promote(_VENDOR, _NAME, _VERSION, held["revision_id"], identity=_OPERATOR)
+    assert str((await _api(registry_db)).current_revision_id) == base_id
 
     view = await svc.promote(_VENDOR, _NAME, _VERSION, held["revision_id"], identity=_ADMIN)
 
@@ -354,7 +340,7 @@ async def test_promote_held_draft_requires_operator(
     assert await _state(registry_db, held["revision_id"]) == ApiRevisionState.ARCHIVED
 
 
-async def test_promote_manual_draft_host_change_requires_operator(
+async def test_promote_manual_draft_host_change_requires_org_admin(
     integration_context: Context,
     registry_db: DatabaseSession,
     control_db: DatabaseSession,
@@ -369,10 +355,17 @@ async def test_promote_manual_draft_host_change_requires_operator(
     assert draft["state"] == ApiRevisionState.DRAFT
     svc = RevisionService(integration_context)
 
-    with pytest.raises(HostChangeRequiresOperatorError):
-        await svc.promote(_VENDOR, _NAME, _VERSION, draft["revision_id"], identity=_WRITER)
+    for identity in (_WRITER, _OPERATOR):
+        with pytest.raises(HostChangeRequiresOperatorError) as refused:
+            await svc.promote(_VENDOR, _NAME, _VERSION, draft["revision_id"], identity=identity)
+        # The detail states the rule, not whether anyone has bound the API's credentials.
+        detail = str(refused.value)
+        assert "org:admin" in detail
+        assert "bound" not in detail
+        assert "session" not in detail
+    assert await _state(registry_db, draft["revision_id"]) == ApiRevisionState.DRAFT
 
-    await svc.promote(_VENDOR, _NAME, _VERSION, draft["revision_id"], identity=_CREDENTIAL_OWNER)
+    await svc.promote(_VENDOR, _NAME, _VERSION, draft["revision_id"], identity=_ADMIN)
     assert await _state(registry_db, draft["revision_id"]) == ApiRevisionState.PUBLISHED
 
 
@@ -498,17 +491,14 @@ async def test_held_draft_is_not_routable_or_pinnable_until_promoted(
             vendor=_VENDOR, name=_NAME, version=_VERSION, rev_label=rev_label, identity=_WRITER
         )
         assert pin.outcome == RevisionPinOutcome.FORBIDDEN
-        # ``credentials:write`` may route through it only with its own credential.
         operator_pin = await resolver.resolve_revision_pin(
             vendor=_VENDOR, name=_NAME, version=_VERSION, rev_label=rev_label, identity=_OPERATOR
         )
-        assert operator_pin.outcome == RevisionPinOutcome.RESOLVED
-        assert operator_pin.credential_owner_required is True
+        assert operator_pin.outcome == RevisionPinOutcome.FORBIDDEN
         admin_pin = await resolver.resolve_revision_pin(
             vendor=_VENDOR, name=_NAME, version=_VERSION, rev_label=rev_label, identity=_ADMIN
         )
         assert admin_pin.outcome == RevisionPinOutcome.RESOLVED
-        assert admin_pin.credential_owner_required is False
 
     await RevisionService(integration_context).promote(
         _VENDOR, _NAME, _VERSION, held["revision_id"], identity=_ADMIN
@@ -531,14 +521,17 @@ async def test_own_draft_with_new_hosts_is_not_pinnable_on_a_bound_api(
     """A submitter's own draft (no origin) is held by the host guard when pinned.
 
     Pinning routes calls through the draft without a promote, so a draft that
-    moves the API to new hosts would carry its bound credentials there. Without
-    ``credentials:write`` the pin is held; with it, the broker must still check
-    the credential it uses. A draft on the live hosts resolves for its owner.
+    moves the API to new hosts would carry its bound credentials there. Only an
+    organisation admin may pin it (``credentials:write`` is not enough); a draft
+    on the live hosts still resolves for its owner.
     """
     handler, _ = await _base_then_bind(integration_context, control_db, admin_db)
-    # The submitter itself, also holding the operator scope.
+    # The submitter itself, also holding ``credentials:write`` or ``org:admin``.
     writer_operator = Identity(
         sub=_WRITER.sub, actor_type=ActorType.USER, permissions=_OPERATOR.permissions
+    )
+    writer_admin = Identity(
+        sub=_WRITER.sub, actor_type=ActorType.USER, permissions=_ADMIN.permissions
     )
     moved_source = _source("new.example.com", marker="manual-moved")
     moved_source.pop("origin")
@@ -561,39 +554,34 @@ async def test_own_draft_with_new_hosts_is_not_pinnable_on_a_bound_api(
     held = await _pin(moved["revision_id"], _WRITER)
     assert held.outcome is RevisionPinOutcome.HOST_CHANGE_HELD
     assert held.revision_id == uuid.UUID(moved["revision_id"])
-    operator_pin = await _pin(moved["revision_id"], writer_operator)
-    assert operator_pin.outcome is RevisionPinOutcome.RESOLVED
-    assert operator_pin.credential_owner_required is True
-    writer_admin = Identity(sub=_WRITER.sub, actor_type=ActorType.USER, permissions=["org:admin"])
-    admin_pin = await _pin(moved["revision_id"], writer_admin)
-    assert admin_pin.outcome is RevisionPinOutcome.RESOLVED
-    assert admin_pin.credential_owner_required is False
-    same_pin = await _pin(same["revision_id"], _WRITER)
-    assert same_pin.outcome is RevisionPinOutcome.RESOLVED
-    assert same_pin.credential_owner_required is False
+    assert (
+        await _pin(moved["revision_id"], writer_operator)
+    ).outcome is RevisionPinOutcome.HOST_CHANGE_HELD
+    assert (await _pin(moved["revision_id"], writer_admin)).outcome is RevisionPinOutcome.RESOLVED
+    assert (await _pin(same["revision_id"], _WRITER)).outcome is RevisionPinOutcome.RESOLVED
 
     # The broker refuses the held draft when it is the one serving the URL.
     resolver = InProcessRegistryResolver(registry_db, ctx=integration_context)
     pins = {(_VENDOR, _NAME, _VERSION): f"rev_{uuid.UUID(moved['revision_id']).hex}"}
-    with pytest.raises(UnauthorizedRevisionPinError) as refused:
-        await discover_via_pins(
-            resolver,
-            method="GET",
-            url="https://new.example.com/v1/widgets",
-            pins=pins,
-            identity=_WRITER,
-        )
-    assert refused.value.type == "host_change_requires_operator"
+    for identity in (_WRITER, writer_operator):
+        with pytest.raises(UnauthorizedRevisionPinError) as refused:
+            await discover_via_pins(
+                resolver,
+                method="GET",
+                url="https://new.example.com/v1/widgets",
+                pins=pins,
+                identity=identity,
+            )
+        assert refused.value.type == "host_change_requires_operator"
+        assert "bound" not in refused.value.detail
     routed = await discover_via_pins(
         resolver,
         method="GET",
         url="https://new.example.com/v1/widgets",
         pins=pins,
-        identity=writer_operator,
+        identity=writer_admin,
     )
-    assert routed is not None
-    assert routed[1].revision_id == uuid.UUID(moved["revision_id"])
-    assert routed[1].credential_owner_required is True
+    assert routed is not None and routed[1] == uuid.UUID(moved["revision_id"])
 
 
 async def test_own_draft_with_new_hosts_is_pinnable_when_nothing_is_bound(
@@ -636,172 +624,3 @@ async def test_reimport_host_change_with_unbound_credential_flows_automatically(
 
     assert rev["state"] == ApiRevisionState.IMPORTED
     assert str((await _api(registry_db)).current_revision_id) == rev["revision_id"]
-
-
-async def _manual_host_change_draft(
-    integration_context: Context, control_db: DatabaseSession, admin_db: DatabaseSession
-) -> str:
-    """A bound API on ``old.example.com`` plus a manual draft moving it to ``new.example.com``."""
-    handler, _ = await _base_then_bind(integration_context, control_db, admin_db)
-    draft_source = _source("new.example.com", marker="manual-moved")
-    draft_source.pop("origin")
-    draft = await _run(handler, draft_source)
-    assert draft["state"] == ApiRevisionState.DRAFT
-    revision_id: str = draft["revision_id"]
-    return revision_id
-
-
-_OWNERS_AGENT = Identity(
-    sub="agt_owned",
-    actor_type=ActorType.AGENT,
-    permissions=["apis:write", "credentials:write"],
-    parent_actor_id=_CREDENTIAL_OWNER_ID,
-)
-_OWNER_WITHOUT_SCOPE = Identity(
-    sub=_CREDENTIAL_OWNER_ID, actor_type=ActorType.USER, permissions=["apis:write"]
-)
-
-
-@pytest.mark.parametrize(
-    ("identity", "foreign_credential", "allowed"),
-    [
-        pytest.param(_ADMIN, True, True, id="org-admin"),
-        pytest.param(_CREDENTIAL_OWNER, False, True, id="owner-of-every-credential"),
-        pytest.param(_OWNERS_AGENT, False, True, id="agent-of-the-owner"),
-        pytest.param(_OPERATOR, False, False, id="credentials-write-without-ownership"),
-        pytest.param(_CREDENTIAL_OWNER, True, False, id="owner-of-only-some-credentials"),
-        pytest.param(_OWNER_WITHOUT_SCOPE, False, False, id="owner-without-credentials-write"),
-    ],
-)
-async def test_promote_host_change_needs_org_admin_or_ownership_of_every_credential(
-    integration_context: Context,
-    registry_db: DatabaseSession,
-    control_db: DatabaseSession,
-    admin_db: DatabaseSession,
-    clean_state: None,
-    identity: Identity,
-    foreign_credential: bool,
-    allowed: bool,
-) -> None:
-    """``credentials:write`` alone does not approve moving another user's credential.
-
-    A foreign credential that is not bound still counts: binding it later would
-    send it to the new hosts without anyone having approved them for it.
-    """
-    draft_id = await _manual_host_change_draft(integration_context, control_db, admin_db)
-    if foreign_credential:
-        await _bind_credential(control_db, admin_db, bind=False, created_by="usr_someone_else")
-    svc = RevisionService(integration_context)
-
-    if allowed:
-        await svc.promote(_VENDOR, _NAME, _VERSION, draft_id, identity=identity)
-        assert await _state(registry_db, draft_id) == ApiRevisionState.PUBLISHED
-        return
-    with pytest.raises(HostChangeRequiresOperatorError) as refused:
-        await svc.promote(_VENDOR, _NAME, _VERSION, draft_id, identity=identity)
-    assert await _state(registry_db, draft_id) == ApiRevisionState.DRAFT
-    detail = str(refused.value)
-    assert "org:admin" in detail
-    # The rule only: nothing about who has bound credentials or open sessions.
-    assert "bound" not in detail
-    assert "session" not in detail
-
-
-async def test_promote_host_change_with_another_users_open_session_is_refused(
-    integration_context: Context,
-    registry_db: DatabaseSession,
-    control_db: DatabaseSession,
-    admin_db: DatabaseSession,
-    clean_state: None,
-) -> None:
-    """An open connect session filling someone else's credential blocks the owner's promote."""
-    draft_id = await _manual_host_change_draft(integration_context, control_db, admin_db)
-    pending_id = await _bind_credential(
-        control_db, admin_db, bind=False, created_by="usr_someone_else"
-    )
-    session_id = generate_ksuid("cs")
-    async with control_db.session() as session:
-        session.add(
-            ConnectSession(
-                id=session_id,
-                credential_id=pending_id,
-                target_kind="api",
-                vendor=_VENDOR,
-                api_name=_NAME,
-                api_version=_VERSION,
-                initiator_actor_id="usr_someone_else",
-                state="created",
-                resolved_flow="device_authorization",
-                poll_token_hash=f"{session_id:0<64}"[:64],
-            )
-        )
-        await session.commit()
-    svc = RevisionService(integration_context)
-
-    with pytest.raises(HostChangeRequiresOperatorError):
-        await svc.promote(_VENDOR, _NAME, _VERSION, draft_id, identity=_CREDENTIAL_OWNER)
-
-    await svc.promote(_VENDOR, _NAME, _VERSION, draft_id, identity=_ADMIN)
-    assert await _state(registry_db, draft_id) == ApiRevisionState.PUBLISHED
-
-
-@pytest.fixture()
-async def owned_agent(admin_db: DatabaseSession) -> AsyncGenerator[tuple[str, str], None]:
-    """``(owner_user_id, agent_id)``: a real user and an agent it owns."""
-    user = User(
-        email=f"hostguard-{uuid.uuid4().hex[:8]}@example.com",
-        first_name="Host",
-        last_name="Guard",
-        active=True,
-    )
-    async with admin_db.session() as session:
-        session.add(user)
-        await session.flush()
-        agent = Agent(name=f"{_AGENT_PREFIX}-owned", registered_by=user.id, owner_id=user.id)
-        session.add(agent)
-        await session.commit()
-        ids = (user.id, agent.id)
-    yield ids
-    async with admin_db.session() as session:
-        await session.execute(delete(Agent).where(Agent.id == ids[1]))
-        await session.execute(delete(User).where(User.id == ids[0]))
-        await session.commit()
-
-
-async def test_pinned_host_change_routes_only_with_the_callers_own_credential(
-    integration_context: Context, owned_agent: tuple[str, str]
-) -> None:
-    """A draft pinned with ``credential_owner_required`` carries only a credential the caller owns.
-
-    An agent owns what its owning user created (read from the agent row when
-    the identity does not carry ``parent_actor_id``); another user's credential,
-    shared or not, and a credential with no recorded creator are refused.
-    """
-    owner_id, agent_id = owned_agent
-    pinned = PinnedRevision(
-        uuid.uuid4(), "hostguard:widgets:1.0.0=r", credential_owner_required=True
-    )
-    agent = Identity(sub=agent_id, actor_type=ActorType.AGENT, permissions=["credentials:write"])
-    user = Identity(sub=owner_id, actor_type=ActorType.USER, permissions=["credentials:write"])
-
-    for identity in (agent, user):
-        await require_pinned_credential_owner(
-            integration_context, pinned=pinned, identity=identity, credential_owner=owner_id
-        )
-    await require_pinned_credential_owner(
-        integration_context,
-        pinned=PinnedRevision(pinned.revision_id, pinned.pin_key),
-        identity=agent,
-        credential_owner="usr_someone_else",
-    )
-    for credential_owner in ("usr_someone_else", None):
-        with pytest.raises(UnauthorizedRevisionPinError) as refused:
-            await require_pinned_credential_owner(
-                integration_context,
-                pinned=pinned,
-                identity=agent,
-                credential_owner=credential_owner,
-            )
-        assert refused.value.type == "host_change_requires_operator"
-        assert pinned.pin_key in refused.value.detail
-        assert "bound" not in refused.value.detail

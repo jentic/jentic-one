@@ -10603,8 +10603,7 @@ type ClientInterface interface {
 	// If the draft declares different server hosts than the API's current (or last
 	// live) revision, or serves a host over plaintext http that was https-only, and
 	// the API has credentials bound to agents, the caller must be an organisation
-	// admin (``org:admin``), or hold ``credentials:write`` and own every credential
-	// for the API; otherwise the promote is refused with 403
+	// admin (``org:admin``); otherwise the promote is refused with 403
 	// ``host_change_requires_operator``.
 	//
 	// Corresponds with POST /apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote (the `PromoteRevision` operationId).
@@ -14201,8 +14200,7 @@ func (c *Client) ArchiveRevision(ctx context.Context, vendor string, name string
 // If the draft declares different server hosts than the API's current (or last
 // live) revision, or serves a host over plaintext http that was https-only, and
 // the API has credentials bound to agents, the caller must be an organisation
-// admin (“org:admin“), or hold “credentials:write“ and own every credential
-// for the API; otherwise the promote is refused with 403
+// admin (“org:admin“); otherwise the promote is refused with 403
 // “host_change_requires_operator“.
 //
 // Corresponds with POST /apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote (the `PromoteRevision` operationId).
@@ -27183,8 +27181,7 @@ type ClientWithResponsesInterface interface {
 	// If the draft declares different server hosts than the API's current (or last
 	// live) revision, or serves a host over plaintext http that was https-only, and
 	// the API has credentials bound to agents, the caller must be an organisation
-	// admin (``org:admin``), or hold ``credentials:write`` and own every credential
-	// for the API; otherwise the promote is refused with 403
+	// admin (``org:admin``); otherwise the promote is refused with 403
 	// ``host_change_requires_operator``.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -45485,8 +45482,7 @@ func (c *ClientWithResponses) ArchiveRevisionWithResponse(ctx context.Context, v
 // If the draft declares different server hosts than the API's current (or last
 // live) revision, or serves a host over plaintext http that was https-only, and
 // the API has credentials bound to agents, the caller must be an organisation
-// admin (“org:admin“), or hold “credentials:write“ and own every credential
-// for the API; otherwise the promote is refused with 403
+// admin (“org:admin“); otherwise the promote is refused with 403
 // “host_change_requires_operator“.
 //
 // Returns a wrapper object for the known response body format(s).

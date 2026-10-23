@@ -58,24 +58,16 @@ class RevisionPinOutcome(StrEnum):
     HOST_CHANGE_HELD = "host_change_held"
     """The caller's own ``draft`` serves different server hosts than the API's live
     revision, the API has bound credentials, and the caller lacks
-    ``credentials:write`` (→ 403 ``host_change_requires_operator``).
+    ``org:admin`` (→ 403 ``host_change_requires_operator``).
     ``revision_id`` is set so the broker can tell whether the draft serves the URL."""
 
 
 @dataclass(frozen=True, slots=True)
 class RevisionPinResult:
-    """The resolved ``revision_id`` (``RESOLVED``, ``HOST_CHANGE_HELD``) plus the outcome.
-
-    ``credential_owner_required`` is set on a ``RESOLVED`` draft whose server
-    hosts still need approval: the caller holds ``credentials:write`` but is
-    not an organisation admin, so the broker may route through the draft only
-    with a credential the caller (or, for an agent, its owning user) created,
-    and otherwise refuses with 403 ``host_change_requires_operator``.
-    """
+    """The resolved ``revision_id`` (``RESOLVED``, ``HOST_CHANGE_HELD``) plus the outcome."""
 
     outcome: RevisionPinOutcome
     revision_id: uuid.UUID | None = None
-    credential_owner_required: bool = False
 
 
 @runtime_checkable

@@ -95,6 +95,5 @@ async def test_host_change_requires_operator_maps_to_403() -> None:
     detail = str(body["detail"])
     assert "new.example.com" in detail
     assert "org:admin" in detail
-    assert "credentials:write" in detail
     # The rule, not whether anyone has bound the API's credentials.
     assert "bound" not in detail
