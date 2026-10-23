@@ -6,7 +6,7 @@
  */
 import type { ReactNode } from 'react';
 import type { PermissionRule as DisplayRule } from '@/shared/lib';
-import type { PermissionRule as EditorRule } from '@/shared/credentials/api/vendors-types';
+import type { PermissionRule as EditorRule } from '@/shared/credentials/api/connect-types';
 import type { BindingPermissionRule } from '@/modules/agents/api';
 
 /** A compact label/value pair used in the attribution / key meta grids. */

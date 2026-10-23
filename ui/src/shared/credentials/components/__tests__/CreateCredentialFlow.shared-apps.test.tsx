@@ -4,7 +4,7 @@ import { worker } from '@/mocks/browser';
 import { renderWithProviders, screen, userEvent, within } from '@/__tests__/test-utils';
 import { CredentialType } from '@/shared/api';
 import type { SelectedApi } from '@/shared/credentials/api/apis-hooks';
-import type { VendorSummary } from '@/shared/credentials/api/vendors-types';
+import type { VendorSummary } from '@/shared/credentials/api/connect-types';
 import { CreateCredentialFlow } from '@/shared/credentials/components/CreateCredentialFlow';
 import { resetCredentialsStore } from '@/shared/credentials/mocks/handlers';
 

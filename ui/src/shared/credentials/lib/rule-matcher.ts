@@ -27,7 +27,7 @@
 //   op templates. See ``templatePathToRegex``. Kept in lockstep with
 //   Python ``matching.py::_template_path_to_regex``.
 
-import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
+import type { PermissionRule } from '@/shared/credentials/api/connect-types';
 
 export type MatchMode = 'regex' | 'prefix' | 'exact';
 

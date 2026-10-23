@@ -27,7 +27,7 @@ import type {
 	PermissionRule,
 	ReviewSession,
 	VendorAuthCapabilities,
-} from '@/shared/credentials/api/vendors-types';
+} from '@/shared/credentials/api/connect-types';
 
 /**
  * VendorConnectFlow is the credentials dialog's vendor-approval sub-flow,
@@ -1395,7 +1395,7 @@ describe('VendorConnectFlow — connect-wizard regressions', () => {
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		await waitFor(() => expect(confirmBody).not.toBeNull());
 		expect(confirmToken).toBe('tok_ops');
-		expect(confirmBody!.permission_rules[0]).toMatchObject({
+		expect(confirmBody!.permission_rules?.[0]).toMatchObject({
 			effect: 'allow',
 			path: '/issues',
 			match_mode: 'prefix',

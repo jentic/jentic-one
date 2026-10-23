@@ -28,7 +28,7 @@
 // and this UI-only path can evolve without breaking that contract.
 
 import RandExp from 'randexp';
-import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
+import type { PermissionRule } from '@/shared/credentials/api/connect-types';
 import { evaluateRuleEffect, type RuleOutcome } from '@/shared/credentials/lib/rule-matcher';
 
 /**

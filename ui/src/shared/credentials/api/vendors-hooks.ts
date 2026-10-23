@@ -50,7 +50,7 @@ import type {
 	StatusResponse,
 	VendorAuthCapabilities,
 	VendorListResponse,
-} from '@/shared/credentials/api/vendors-types';
+} from '@/shared/credentials/api/connect-types';
 
 const KEYS = {
 	// A token-less (owner / admin) read keys on `''`, apart from any token holder's.

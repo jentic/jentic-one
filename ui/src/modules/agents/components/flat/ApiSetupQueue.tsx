@@ -56,7 +56,7 @@ import {
 	useApplyBindingRules,
 	useBindCredentialToAgents,
 } from '@/shared/credentials/api/vendors-hooks';
-import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
+import type { PermissionRule } from '@/shared/credentials/api/connect-types';
 import {
 	AccessRulesStep,
 	useDeviceAwareConnect,

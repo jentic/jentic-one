@@ -10,7 +10,7 @@ import {
 	isEmptyAllowRule,
 	type PermissionRuleInput,
 } from '@/shared/ui';
-import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
+import type { PermissionRule } from '@/shared/credentials/api/connect-types';
 import type { apiScopeReach } from '@/shared/credentials/lib/apiIdentity';
 
 /** The access choice; `null` until one is made. */

@@ -21,7 +21,7 @@ import {
 } from '@/modules/agents/components/detail/shared';
 import { RuleListEditor, type OpsApiReference } from '@/shared/credentials/components';
 import { useVendorOperations } from '@/shared/credentials/api/vendors-hooks';
-import type { PermissionRule as EditorRule } from '@/shared/credentials/api/vendors-types';
+import type { PermissionRule as EditorRule } from '@/shared/credentials/api/connect-types';
 
 /**
  * Inline editor for the permission rules on one direct agent↔credential
