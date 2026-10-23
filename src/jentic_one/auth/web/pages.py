@@ -7,15 +7,26 @@ free of any templating library. The security posture of every page:
 - static structure only — every dynamic value is HTML-escaped before it is
   formatted in, and the visual theme (``{page_css}``/``{logo_block}``) is the
   static, drift-guarded constant pair from :mod:`jentic_one.auth.web.theme`;
-- page script is a static fragment (``*_script.html``, not a format
-  template, so its braces need no doubling); every dynamic value it reads
+- page script is a static fragment (``*_script.html``) that is never
+  ``str.format``ed, so its braces need no doubling; every dynamic value it
+  reads
   comes from one JSON ``<script type="application/json">`` block, the single
   escaped seam between server data and page script, ``\\u003c``-escaped so
   no value can close the block;
 - every response carries :data:`~jentic_one.auth.web.flow.CONSENT_SECURITY_HEADERS`.
 
 The render functions here only render: signed flow blobs are minted by the
-callers (:mod:`jentic_one.auth.web.consent_state`) and passed in.
+callers (:mod:`jentic_one.auth.web.consent_state`) and passed in; the two
+pages that need a mint paired with their render have that pair in
+:mod:`jentic_one.auth.web.flow_pages`.
+
+Every template is read at import time and a missing one is deliberately
+fatal: the markup IS the page, so a wheel that shipped without it could only
+serve a broken consent screen. (Contrast ``assets/auth.css`` in
+:mod:`jentic_one.auth.web.theme`, which degrades to an empty string because a
+missing stylesheet costs only the visual theme.) The packaging regression
+that would cause it is caught before release by the non-empty assertion in
+``tests/unit/auth/web/test_authorize_pages_golden.py``.
 """
 
 from __future__ import annotations
@@ -29,24 +40,27 @@ from fastapi.responses import HTMLResponse
 
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
 from jentic_one.auth.services.authorize_service import AgentConsentOption
-from jentic_one.auth.services.scope_descriptions import scope_to_permission_description
 from jentic_one.auth.web.flow import CONSENT_SECURITY_HEADERS, FONTS_URL, SPA_TOKEN_STORAGE_KEY
+from jentic_one.auth.web.scope_descriptions import scope_to_permission_description
 from jentic_one.auth.web.theme import AUTH_PAGE_CSS, LOGO_BLOCK_HTML
 
 
-def _load_template(name: str, *, fragment: bool = False) -> str:
+def _load_template(name: str, *, strip_final_newline: bool = False) -> str:
     """Read a packaged template once at import time.
 
-    Full-page templates are used exactly as stored. Fragment files (inline
-    scripts, the agent option block) carry a POSIX final newline that is not
-    part of the fragment, so it is stripped.
+    Full-page templates are used exactly as stored. Files interpolated INTO a
+    page (the inline scripts, the agent option block) carry a POSIX final
+    newline that is not part of the fragment, so callers strip it.
+
+    An unreadable template raises, failing this module's import — see the
+    module docstring for why that is the intended posture.
     """
     text = (
         importlib.resources.files("jentic_one.auth.web")
         .joinpath("templates", name)
         .read_text(encoding="utf-8")
     )
-    return text.removesuffix("\n") if fragment else text
+    return text.removesuffix("\n") if strip_final_newline else text
 
 
 #: How often the approval-pending and agent-awaiting pages poll their status
@@ -73,16 +87,16 @@ _CONSENT_PAGE_TEMPLATE = _load_template("consent.html")
 # The approval-pending page for a registered-but-unapproved client, plus its
 # poll / inline-decision / auto-continue script.
 _AWAITING_APPROVAL_PAGE_TEMPLATE = _load_template("awaiting_approval.html")
-_APPROVAL_PENDING_SCRIPT = _load_template("approval_pending_script.html", fragment=True)
+_APPROVAL_PENDING_SCRIPT = _load_template("approval_pending_script.html", strip_final_newline=True)
 
 # The agent-picker consent variant (consent_model='agent' clients only — the
 # 'user' template stays separate). The redirect-URI origin is rendered
 # prominently (client-claimed names are untrusted — phishing counter), and
 # the permission list is replaced by an agent picker whose per-agent scope
-# lists show the D2 intersection: scopes the agent lacks render greyed-out so
-# the user sees the ceiling.
+# lists show the requested ∩ allowlist candidates: scopes the agent lacks
+# render greyed-out so the user sees the ceiling.
 _AGENT_CONSENT_PAGE_TEMPLATE = _load_template("agent_consent.html")
-_AGENT_OPTION_TEMPLATE = _load_template("agent_option.html", fragment=True)
+_AGENT_OPTION_TEMPLATE = _load_template("agent_option.html", strip_final_newline=True)
 
 # The terminal zero-agents empty state, HTTP 200, no code minted: for a
 # handle that names no provisionable subject, and for users whose agents were
@@ -106,13 +120,13 @@ _NO_AGENTS_UNAVAILABLE_DESCRIPTION = (
     "            from your application."
 )
 
-# The zero-agents create-agent form (P4), rendered when the consent handle
+# The zero-agents create-agent form, rendered when the consent handle
 # names a provisionable subject AND the resolved user owns no agent rows at
 # all. No page script, so no JSON seam is needed.
 _CREATE_AGENT_PAGE_TEMPLATE = _load_template("create_agent.html")
 
 #: Footer note on the create form — set per arm so the form never promises
-#: the wrong outcome (security review on P4). The GET render detects the arm
+#: the wrong outcome. The GET render detects the arm
 #: for already-provisioned users; a not-yet-provisioned IdP subject gets the
 #: neutral wording because the definitive check runs post-provisioning on the
 #: POST.
@@ -139,7 +153,7 @@ CREATE_NOTE_NEUTRAL = (
 # re-minting — the status blob shares the consent handle's lifetime, so once
 # it expires the continue leg is dead anyway.
 _AGENT_AWAITING_PAGE_TEMPLATE = _load_template("agent_awaiting.html")
-_AGENT_PENDING_SCRIPT = _load_template("agent_pending_script.html", fragment=True)
+_AGENT_PENDING_SCRIPT = _load_template("agent_pending_script.html", strip_final_newline=True)
 
 _INVALID_CONSENT_PAGE = "<html><body><h1>Invalid or expired consent request</h1></body></html>"
 
@@ -381,7 +395,7 @@ def render_agent_create_page(
     agent_name: str = "",
     error: str | None = None,
 ) -> HTMLResponse:
-    """Render the inline create-agent form (P4) with the consent-page posture.
+    """Render the inline create-agent form with the consent-page posture.
 
     ``approval_note`` is one of the static ``CREATE_NOTE_*`` constants — the
     per-arm footer wording (never request-derived), so the form never promises
@@ -420,7 +434,7 @@ def render_agent_awaiting_page(
     JSON block, and the agent's user-chosen name only ever lands in
     HTML-escaped text nodes. The continue leg is the fixed same-origin consent
     path for THIS handle — re-entering it re-validates handle liveness and (on
-    the approve submit) the D7 client gate server-side.
+    the approve submit) the client approval+active gate server-side.
     """
     agents_url = f"{base_url}{AGENTS_SPA_PATH}"
     config_json = _page_config_json(

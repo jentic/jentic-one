@@ -34,7 +34,7 @@ from httpx2 import Response
 
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
 from jentic_one.auth.services.authorize_service import AgentConsentOption, PendingAgentRef
-from jentic_one.auth.web import deps, flow
+from jentic_one.auth.web import deps, flow, pages
 from jentic_one.auth.web.routers import approval, authorize, consent, consent_agent
 from jentic_one.shared.config import AuthConfig
 from jentic_one.shared.state.backend import MemoryStateBackend
@@ -311,3 +311,23 @@ def test_approval_pending_page(oauth_client_view: MagicMock) -> None:
         },
     )
     _assert_golden("approval_pending", resp)
+
+
+def test_every_page_template_is_packaged_and_non_empty() -> None:
+    """Pins that every page template reaches the installed package non-empty.
+
+    ``pages.py`` reads all of its markup at import time and lets an
+    unreadable template raise, so a build that dropped ``templates/*.html``
+    from the wheel would take the whole auth surface down — /token included,
+    not just the consent pages. The golden cases above would catch empty
+    markup too, but only for pages they render; this names the constants
+    directly so a newly added template cannot ship unguarded.
+    """
+    template_constants = {
+        name: value
+        for name, value in vars(pages).items()
+        if name.endswith(("_TEMPLATE", "_SCRIPT")) and isinstance(value, str)
+    }
+    assert len(template_constants) == 9, sorted(template_constants)
+    for name, markup in template_constants.items():
+        assert markup.strip(), name

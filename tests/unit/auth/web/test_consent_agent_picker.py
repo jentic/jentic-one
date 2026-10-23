@@ -140,7 +140,10 @@ def _mock_authorize_svc(
     svc.record_consent_decision = AsyncMock()
     svc.issue_authorization_code = AsyncMock(return_value="code_grant")
     # The consent workflows run for real on top of the stubbed reads above,
-    # so these router tests keep exercising the whole decision tree.
+    # so these router tests keep exercising the whole decision tree. The
+    # collaborators the bodies construct (AgentService, OAuthGrantService) are
+    # patched per test; nothing in either body touches the database directly,
+    # so the MagicMock standing in for ``self`` never reaches one.
     svc.approve_agent_consent = partial(AuthorizeService.approve_agent_consent, svc)
     svc.create_agent_from_consent = partial(AuthorizeService.create_agent_from_consent, svc)
     return svc
@@ -297,7 +300,7 @@ def test_user_model_page_unchanged_no_picker(
 # ---------- consent submit (POST) ----------
 
 
-@patch("jentic_one.auth.web.deps.OAuthGrantService")
+@patch("jentic_one.auth.services.authorize_service.OAuthGrantService")
 @patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_agent_model_approve_mints_grant_and_grant_bearing_code(
@@ -352,7 +355,7 @@ def test_agent_model_approve_mints_grant_and_grant_bearing_code(
     svc.record_consent_decision.assert_not_awaited()
 
 
-@patch("jentic_one.auth.web.deps.OAuthGrantService")
+@patch("jentic_one.auth.services.authorize_service.OAuthGrantService")
 @patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_agent_model_deny_mints_nothing(
@@ -382,7 +385,7 @@ def test_agent_model_deny_mints_nothing(
     svc.provision_from_claims.assert_not_awaited()
 
 
-@patch("jentic_one.auth.web.deps.OAuthGrantService")
+@patch("jentic_one.auth.services.authorize_service.OAuthGrantService")
 @patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_agent_model_invalid_agent_selection_rejected(
@@ -413,7 +416,7 @@ def test_agent_model_invalid_agent_selection_rejected(
     svc.issue_authorization_code.assert_not_awaited()
 
 
-@patch("jentic_one.auth.web.deps.OAuthGrantService")
+@patch("jentic_one.auth.services.authorize_service.OAuthGrantService")
 @patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_agent_model_mint_time_refusal_renders_error_page(
@@ -446,7 +449,7 @@ def test_agent_model_mint_time_refusal_renders_error_page(
     svc.issue_authorization_code.assert_not_awaited()
 
 
-@patch("jentic_one.auth.web.deps.OAuthGrantService")
+@patch("jentic_one.auth.services.authorize_service.OAuthGrantService")
 @patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_agent_model_missing_agent_id_rejected(
@@ -475,7 +478,7 @@ def test_agent_model_missing_agent_id_rejected(
     svc.issue_authorization_code.assert_not_awaited()
 
 
-@patch("jentic_one.auth.web.deps.OAuthGrantService")
+@patch("jentic_one.auth.services.authorize_service.OAuthGrantService")
 @patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_agent_model_empty_effective_scope_set_rejected(
@@ -510,7 +513,7 @@ def test_agent_model_empty_effective_scope_set_rejected(
     svc.issue_authorization_code.assert_not_awaited()
 
 
-@patch("jentic_one.auth.web.deps.OAuthGrantService")
+@patch("jentic_one.auth.services.authorize_service.OAuthGrantService")
 @patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_user_model_submit_byte_identical(

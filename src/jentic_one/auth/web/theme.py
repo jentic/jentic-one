@@ -1,7 +1,7 @@
 """Shared visual theme for the server-rendered auth pages.
 
 The interactive OAuth flow's browser pages (``/login``, ``/oauth/consent``,
-the no-agents empty state, and — in a follow-up — the approval-pending page)
+the no-agents empty state, the approval-pending page)
 are hand-rolled HTML templates, deliberately free of any templating
 library (see the module docstrings in ``pages.py`` and
 ``routers/local_login.py`` for the JSON-seam security pattern). This module

@@ -124,25 +124,45 @@ class PendingAgentRef:
     name: str
 
 
+def candidate_agent_scopes(
+    requested: list[str],
+    allowlist: frozenset[str] | None,
+) -> list[str]:
+    """The scopes an agent-bound grant could carry: requested ∩ client allowlist.
+
+    OIDC passthrough scopes (``openid`` and friends) are stripped first:
+    agent-bound grants carry no OIDC identity, so they must never enter the
+    granted set. Order follows the request.
+
+    This is the half of the grant-scope rule that does not depend on which
+    agent the user picks, so the consent page shows exactly this list per
+    agent option and :func:`effective_agent_scopes` starts from it — one
+    function, so the page can never advertise a scope the grant would drop.
+    """
+    candidates = [s for s in requested if s not in OIDC_PASSTHROUGH_SCOPES]
+    if allowlist is None:
+        return candidates
+    return [s for s in candidates if s in allowlist]
+
+
 def effective_agent_scopes(
     requested: list[str],
     allowlist: frozenset[str] | None,
     agent_permissions: frozenset[str],
 ) -> list[str]:
-    """The D2 grant-scope intersection: requested ∩ client allowlist ∩ the agent's
+    """The grant-scope intersection: requested ∩ client allowlist ∩ the agent's
     live permissions.
 
     Named for what it returns — a set of OAuth2 scopes for the grant row — even
     though the third operand is read from ``actor_permission_grants``.
 
-    ``openid``/OIDC passthrough scopes are stripped first (D11): agent-bound
-    grants carry no OIDC identity, so they must never enter the granted set.
-    Order follows the request so the consent page and the grant row agree.
+    The first two operands come from :func:`candidate_agent_scopes` (which the
+    consent page also calls), so the page and the grant row agree by
+    construction; the agent's live permission set is the ceiling applied on
+    top. Order follows the request.
     """
-    effective = [s for s in requested if s not in OIDC_PASSTHROUGH_SCOPES]
-    if allowlist is not None:
-        effective = [s for s in effective if s in allowlist]
-    return [s for s in effective if s in agent_permissions]
+    candidates = candidate_agent_scopes(requested, allowlist)
+    return [s for s in candidates if s in agent_permissions]
 
 
 @dataclass(frozen=True, slots=True)
@@ -482,7 +502,6 @@ class AuthorizeService:
 
     async def approve_agent_consent(
         self,
-        grant_service: OAuthGrantService,
         *,
         user_id: str,
         client_id: str,
@@ -495,10 +514,12 @@ class AuthorizeService:
 
         The browser's selection is never trusted: the agent must be one of
         the consenting user's own ACTIVE agents (the picker's own predicate),
-        and the D2 scope intersection is recomputed here. The grant row (+
-        audit + ``oauth_grant.created``) is minted through ``grant_service``.
-        Every failure returns an ``error`` code and mints nothing.
+        and the requested ∩ allowlist ∩ agent-permissions scope intersection
+        is recomputed here. The grant row (+ audit + ``oauth_grant.created``)
+        is minted through :class:`OAuthGrantService`. Every failure returns an
+        ``error`` code and mints nothing.
         """
+        grant_service = OAuthGrantService(self._ctx)
         if not agent_id:
             _logger.warning("oauth_consent_agent_missing", client_id=client_id)
             return AgentConsentApproval(error="invalid_agent_selection")
@@ -541,7 +562,6 @@ class AuthorizeService:
 
     async def create_agent_from_consent(
         self,
-        agent_service: AgentService,
         *,
         claims: IdpClaims | None,
         local_user_id: str | None,
@@ -551,11 +571,11 @@ class AuthorizeService:
         client_id: str,
         claim_create_slot: Callable[[], Awaitable[bool]],
     ) -> ConsentAgentCreateResult:
-        """Create the consenting user's first agent from the consent page (P4).
+        """Create the consenting user's first agent from the consent page.
 
         The caller has already verified + burned the signed create blob,
-        re-validated the consent handle and the D7 client gate, and validated
-        ``agent_name``. This runs the workflow:
+        re-validated the consent handle and the client approval+active gate,
+        and validated ``agent_name``. This runs the workflow:
 
         1. resolve the user — a local-login handle names it; an IdP handle is
            resolved read-only and, when deferred provisioning left no row,
@@ -567,9 +587,18 @@ class AuthorizeService:
         4. decide the arm with the same effective-permission math as POST
            /agents' ``agents:write`` gate — ACTIVE when the user holds it,
            otherwise PENDING (the POST /register posture);
-        5. create the agent through ``agent_service.create`` (owner = the
+        5. create the agent through :class:`AgentService` (owner = the
            consenting user, default agent permissions, same audit + event).
+
+        ``claim_create_slot`` is injected rather than reached from
+        ``self._ctx`` because the atomic marker it sets lives in the app's
+        shared auth-state backend (``app.state.auth_state_backend``), which
+        ``Context`` does not expose; see
+        :func:`jentic_one.auth.web.consent_state.claim_agent_create_slot` for
+        the only production implementation. Keeping it a parameter also lets
+        the workflow be exercised without a web layer.
         """
+        agent_service = AgentService(self._ctx)
         if local_user_id:
             user_id = local_user_id
         else:

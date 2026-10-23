@@ -8,20 +8,15 @@ repository mocking. The web suites cover the request plumbing around them.
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
-
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import select
 
-from jentic_one.admin.core.schema.actor_permission_grants import ActorPermissionGrant
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
-from jentic_one.auth.services.agent_service import AgentService
 from jentic_one.auth.services.authorize_service import (
     AuthorizeService,
     ConsentAgentCreateResult,
 )
-from jentic_one.auth.services.oauth_grant_service import OAuthGrantService
 from jentic_one.shared.auth.permission_catalog import AGENTS_WRITE
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorStatus
@@ -38,26 +33,6 @@ pytestmark = pytest.mark.integration
 
 _OWNER = "usr_svc_consent_owner"
 _OTHER = "usr_svc_consent_other"
-
-
-@pytest.fixture()
-async def clean_owned_agents(
-    integration_context: Context, clean_grants: None
-) -> AsyncGenerator[None, None]:
-    """Remove agents the workflow creates (stamped ``created_by=<owner>``, so
-    the SEED_MARKER-scoped ``clean_grants`` cleanup does not reach them)."""
-
-    async def _delete() -> None:
-        async with integration_context.admin_db.transaction() as session:
-            owned = select(Agent.id).where(Agent.owner_id.in_([_OWNER, _OTHER]))
-            await session.execute(
-                delete(ActorPermissionGrant).where(ActorPermissionGrant.actor_id.in_(owned))
-            )
-            await session.execute(delete(Agent).where(Agent.owner_id.in_([_OWNER, _OTHER])))
-
-    await _delete()
-    yield
-    await _delete()
 
 
 async def _agents_of(ctx: Context, owner_id: str) -> list[Agent]:
@@ -82,11 +57,10 @@ async def _create(
     ctx: Context, slot: _Slot, *, local_user_id: str | None = _OWNER
 ) -> ConsentAgentCreateResult:
     return await AuthorizeService(ctx).create_agent_from_consent(
-        AgentService(ctx),
         claims=None,
         local_user_id=local_user_id,
         user_email=f"{_OWNER}@grants.test",
-        origin=Origin.WEB,
+        origin=Origin.DASHBOARD,
         agent_name="consent-created",
         client_id=CLIENT_ID,
         claim_create_slot=slot,
@@ -103,7 +77,7 @@ async def _create(
 )
 async def test_create_agent_from_consent_arm_follows_agents_write(
     integration_context: Context,
-    clean_owned_agents: None,
+    clean_grants: None,
     permissions: list[str],
     expected_status: ActorStatus,
     expected_outcome: str,
@@ -132,7 +106,7 @@ async def test_create_agent_from_consent_arm_follows_agents_write(
 
 @pytest.mark.asyncio
 async def test_create_agent_from_consent_skips_when_user_owns_any_agent(
-    integration_context: Context, clean_owned_agents: None
+    integration_context: Context, clean_grants: None
 ) -> None:
     """An owner whose only agent is DISABLED is not first-run: nothing is
     created and the slot is never claimed."""
@@ -151,7 +125,7 @@ async def test_create_agent_from_consent_skips_when_user_owns_any_agent(
 
 @pytest.mark.asyncio
 async def test_create_agent_from_consent_lost_slot_creates_nothing(
-    integration_context: Context, clean_owned_agents: None
+    integration_context: Context, clean_grants: None
 ) -> None:
     ctx = integration_context
     await seed_user(ctx, _OWNER)
@@ -167,7 +141,7 @@ async def test_create_agent_from_consent_lost_slot_creates_nothing(
 
 @pytest.mark.asyncio
 async def test_create_agent_from_consent_without_subject_fails_closed(
-    integration_context: Context, clean_owned_agents: None
+    integration_context: Context, clean_grants: None
 ) -> None:
     """No local user and no IdP claims: the invalid_consent error, nothing created."""
     slot = _Slot()
@@ -188,7 +162,7 @@ async def _grants_for(ctx: Context, agent_id: str) -> list[OAuthClientGrant]:
 
 @pytest.mark.asyncio
 async def test_approve_agent_consent_mints_grant_for_scope_intersection(
-    integration_context: Context, clean_owned_agents: None
+    integration_context: Context, clean_grants: None
 ) -> None:
     """The grant carries requested ∩ allowlist ∩ the agent's live permissions,
     OIDC scopes stripped, in request order."""
@@ -198,7 +172,6 @@ async def test_approve_agent_consent_mints_grant_for_scope_intersection(
     await seed_client(ctx, allowed_scopes=["apis:read", "apis:write"])
 
     approval = await AuthorizeService(ctx).approve_agent_consent(
-        OAuthGrantService(ctx),
         user_id=_OWNER,
         client_id=CLIENT_ID,
         client_name="Grant Channel App",
@@ -217,7 +190,7 @@ async def test_approve_agent_consent_mints_grant_for_scope_intersection(
 
 @pytest.mark.asyncio
 async def test_approve_agent_consent_rejects_ineligible_selections(
-    integration_context: Context, clean_owned_agents: None
+    integration_context: Context, clean_grants: None
 ) -> None:
     """Missing, foreign, and pending agents are rejected, as is a selection
     with no grantable scope — and none of them mints a grant."""
@@ -240,7 +213,6 @@ async def test_approve_agent_consent_rejects_ineligible_selections(
     ]
     for agent_id, expected_error in cases:
         approval = await svc.approve_agent_consent(
-            OAuthGrantService(ctx),
             user_id=_OWNER,
             client_id=CLIENT_ID,
             client_name="Grant Channel App",

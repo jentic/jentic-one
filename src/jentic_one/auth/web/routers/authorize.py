@@ -56,7 +56,7 @@ from jentic_one.auth.web.flow import (
     write_idp_consent_handle,
     write_local_consent_handle,
 )
-from jentic_one.auth.web.routers.approval import render_approval_pending_page
+from jentic_one.auth.web.flow_pages import mint_and_render_approval_pending_page
 from jentic_one.shared.auth.permission_catalog import OIDC_PASSTHROUGH_SCOPES
 from jentic_one.shared.config import effective_auth_base_url
 from jentic_one.shared.context import Context
@@ -77,8 +77,9 @@ async def _is_allowed_redirect_uri(
     Platform clients are validated against their configured redirect_uris.
     Third-party clients are looked up in the oauth_clients registry.
     Unknown client_ids are rejected, and so are unapproved (pending/denied)
-    rows — the D7 approval gate fails closed on the existing error path.
-    (The human "awaiting approval" page is future work.)
+    rows — the approval+active gate fails closed here. A pending client that
+    reaches /authorize with a VALID redirect_uri is handled before this gate,
+    by the approval-pending page (``routers/approval.py``).
     """
     if is_platform_client(client_id, ctx):
         return platform_client_allows_redirect(redirect_uri, client_id, ctx)
@@ -202,7 +203,7 @@ async def authorize_endpoint(
                 client_id=client_id,
                 approval_status=unapproved.approval_status,
             )
-            return render_approval_pending_page(
+            return mint_and_render_approval_pending_page(
                 request,
                 ctx,
                 client=unapproved,

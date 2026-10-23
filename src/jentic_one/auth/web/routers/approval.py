@@ -1,4 +1,4 @@
-"""Approval-in-flow endpoints behind the approval-pending page (D-approval-in-flow, P2).
+"""Approval endpoints behind the approval-pending page.
 
 A registered-but-unapproved client at /authorize renders a live
 approval-pending page instead of a dead stop (see ``routers/authorize.py``).
@@ -16,17 +16,14 @@ client.
 from __future__ import annotations
 
 from typing import Literal
-from urllib.parse import urlencode, urlsplit
 
 import structlog
 from fastapi import APIRouter, Depends, Query, Request, Response
-from fastapi.responses import HTMLResponse
 
 from jentic_one.admin.services.oauth_client_service import OAuthClientService
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
 from jentic_one.auth.services.errors import InvalidGrantError
-from jentic_one.auth.web import pages
-from jentic_one.auth.web.consent_state import mint_approval_state, verify_approval_state
+from jentic_one.auth.web.consent_state import verify_approval_state
 from jentic_one.auth.web.flow import (
     check_approval_status_rate_limit,
     client_gate_passes,
@@ -37,7 +34,6 @@ from jentic_one.auth.web.schemas.authorize import (
     OAuthApprovalStatusResponse,
 )
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.config import effective_auth_base_url
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.oauth_clients import OAuthClientApprovalStatus
 from jentic_one.shared.web import get_current_identity
@@ -55,7 +51,7 @@ def _approval_tri_state(
 ) -> Literal["pending", "approved", "denied"]:
     """Collapse a client row into the poll tri-state.
 
-    ``approved`` only when the full D7 gate passes (approved AND active), so a
+    ``approved`` only when the full client gate passes (approved AND active), so a
     kill-switched client is never announced as ready. A missing row reads as
     ``pending`` — rows are never deleted in normal operation, and answering
     anything else would turn the endpoint into a deletion oracle.
@@ -67,83 +63,6 @@ def _approval_tri_state(
     if client_gate_passes(client):
         return "approved"
     return "pending"
-
-
-def _safe_deny_redirect(
-    client: OAuthClientView, redirect_uri: str, state: str | None
-) -> str | None:
-    """The access_denied redirect for the deny arm — only when provably safe.
-
-    Safe means the request's redirect_uri is in the client's OWN registered
-    set (registration already enforces https/loopback-http schemes) and parses
-    as an http(s) URL. Anything else returns None and the page renders a
-    terminal message instead of navigating.
-    """
-    if redirect_uri not in client.redirect_uris:
-        return None
-    if urlsplit(redirect_uri).scheme not in ("http", "https"):
-        return None
-    params: dict[str, str] = {"error": "access_denied"}
-    if state:
-        params["state"] = state
-    separator = "&" if "?" in redirect_uri else "?"
-    return f"{redirect_uri}{separator}{urlencode(params)}"
-
-
-def render_approval_pending_page(
-    request: Request,
-    ctx: Context,
-    *,
-    client: OAuthClientView,
-    response_type: str,
-    client_id: str,
-    redirect_uri: str,
-    code_challenge: str,
-    code_challenge_method: str,
-    scope: str,
-    state: str | None,
-    nonce: str | None,
-) -> HTMLResponse:
-    """Render the approval-pending page for an unapproved client.
-
-    The page carries the ORIGINAL authorize parameters in a signed
-    approval-state blob (its poll + inline-decision key) and a resume URL that
-    re-runs this request client-side.
-    """
-    approval_state = mint_approval_state(
-        ctx,
-        client_id=client_id,
-        redirect_uri=redirect_uri,
-        code_challenge=code_challenge,
-        scope=scope,
-        state=state,
-        nonce=nonce,
-    )
-
-    # The resume leg re-runs the ORIGINAL authorize request client-side; once
-    # the admin approves, this URL 302s to the IdP like any approved client.
-    resume_params: dict[str, str] = {
-        "response_type": response_type,
-        "client_id": client_id,
-        "redirect_uri": redirect_uri,
-        "code_challenge": code_challenge,
-        "code_challenge_method": code_challenge_method,
-        "scope": scope,
-    }
-    if state:
-        resume_params["state"] = state
-    if nonce:
-        resume_params["nonce"] = nonce
-    resume_url = f"/authorize?{urlencode(resume_params)}"
-
-    base_url = effective_auth_base_url(ctx.config).rstrip("/") or str(request.base_url).rstrip("/")
-    return pages.render_approval_pending_page(
-        client=client,
-        approval_state=approval_state,
-        resume_url=resume_url,
-        deny_redirect=_safe_deny_redirect(client, redirect_uri, state),
-        base_url=base_url,
-    )
 
 
 @router.get(
