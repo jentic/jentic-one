@@ -31,9 +31,6 @@ hold that comes up while its agent's owner is disabled is refused, not
 deferred: re-enabling the owner restores new requests, and refused work must
 be submitted again.
 
-:meth:`ActorStatusResolver.agent_owner_id` reads an agent's owning user for
-checks that compare it with a credential's creator.
-
 The broker's self-contained JWT path asks the liveness question alone
 (:meth:`ActorStatusResolver.is_active`, behind a short-TTL cache) once a signed
 agent token's claims check out.
@@ -69,7 +66,6 @@ _AGENT_STATUS_SQL = (
 _AGENT_STATUS = text(
     f"SELECT {_AGENT_STATUS_SQL} AS status, a.owner_id FROM agents a WHERE a.id = :actor_id"
 )
-_AGENT_OWNER = text("SELECT a.owner_id FROM agents a WHERE a.id = :actor_id")
 _AGENT_AUTHORITY = text(
     f"SELECT {_AGENT_STATUS_SQL} AS status, a.owner_id,"
     " EXISTS (SELECT 1 FROM actor_permission_grants g"
@@ -111,12 +107,6 @@ class ActorStatusResolver:
             status = await read_user_status(self._admin_db, actor_id)
             return status is not None and status.accepts_credentials
         return False
-
-    async def agent_owner_id(self, agent_id: str) -> str | None:
-        """The agent's owning user id, or ``None`` when ownerless or missing."""
-        async with self._admin_db.read_session() as session:
-            row = (await session.execute(_AGENT_OWNER, {"actor_id": agent_id})).first()
-        return None if row is None else row.owner_id
 
     async def authority(self, *, actor_id: str, actor_type: str, permission: str) -> ActorAuthority:
         """The actor's liveness and whether it holds ``permission``, from one query."""

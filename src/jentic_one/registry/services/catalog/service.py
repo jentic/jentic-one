@@ -25,7 +25,7 @@ from typing import Any
 
 import structlog
 
-from jentic_one.registry.ingest.host_change_guard import is_host_change_admin
+from jentic_one.registry.ingest.host_change_guard import may_approve_host_change
 from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.registry.repos.catalog_repo import CatalogRepository
 from jentic_one.registry.repos.catalog_update_check_repo import CatalogUpdateCheckRepository
@@ -987,7 +987,7 @@ class CatalogService:
 
         If the re-import would change the server hosts of an API with bound credentials,
         only an organisation admin makes it current; otherwise the worker keeps the new
-        revision as a draft for review, which an approver can promote (see
+        revision as a draft for an organisation admin to review and promote (see
         ``registry/ingest/host_change_guard.py``).
         """
         entry = await self.get(api_id)
@@ -995,12 +995,12 @@ class CatalogService:
         source = await self._import_source_for(entry, identity)
         if supersede_overlay_id is not None:
             source["supersede_active"] = "true"
-        if is_host_change_admin(identity.permissions):
+        if may_approve_host_change(identity.permissions):
             # Server-host change guard: an organisation admin may let a re-import that
             # changes the API's server hosts become current even when the API has
             # bound credentials. Everyone else gets such a revision held as a draft
-            # for review; credential ownership is checked when it is promoted.
-            # Server-set only; client schemas cannot carry it.
+            # for an organisation admin to review and promote. Server-set only; client
+            # schemas cannot carry it.
             source["host_change_approved"] = "true"
         payload: dict[str, Any] = {"sources": [source]}
         if supersede_overlay_id is not None:

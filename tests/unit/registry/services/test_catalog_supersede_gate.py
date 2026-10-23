@@ -316,10 +316,6 @@ async def test_import_entry_stamps_host_change_approval_for_org_admin() -> None:
 async def test_import_entry_no_host_change_approval_without_org_admin(
     perms: list[str],
 ) -> None:
-    """Without ``org:admin`` a host change is held as a draft, whatever else is held.
-
-    ``credentials:write`` alone does not approve it: whether the caller owns the
-    API's credentials is checked when the held draft is promoted.
-    """
+    """Without ``org:admin`` a host change is held as a draft (``credentials:write`` included)."""
     payload = await _import_payload(perms)
     assert "host_change_approved" not in payload["sources"][0]

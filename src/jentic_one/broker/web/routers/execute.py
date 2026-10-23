@@ -73,10 +73,8 @@ from jentic_one.broker.core.server_timing import ServerTimingStage, stage
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
 from jentic_one.broker.services.credentials.resolver import ResolvedCredential
 from jentic_one.broker.services.discovery import (
-    PinnedRevision,
     discover,
     discover_via_pins,
-    require_pinned_credential_owner,
     resolve_pin_for_api,
 )
 from jentic_one.broker.services.execution.authorization import (
@@ -713,7 +711,6 @@ async def _handle(
     with stage(ServerTimingStage.DISCOVER):
         resolved = await discover(resolver, method=method, url=upstream_url)
         pinned_revisions: dict[str, str] | None = None
-        pinned: PinnedRevision | None = None
         if resolved is None and pins:
             # No live revision serves this URL; a pinned (e.g. never-promoted draft)
             # revision still may.
@@ -721,10 +718,10 @@ async def _handle(
                 resolver, method=method, url=upstream_url, pins=pins, identity=identity
             )
             if via_pin is not None:
-                resolved, pinned = via_pin
+                resolved, pinned_revision_id = via_pin
                 pinned_revisions = {
                     f"{resolved.api.vendor}:{resolved.api.name}:{resolved.api.version}": str(
-                        pinned.revision_id
+                        pinned_revision_id
                     )
                 }
         if resolved is None:
@@ -738,21 +735,21 @@ async def _handle(
         # If a pin applies to the discovered API, translate it to a revision_id
         # in-process (no control-plane HTTP) and re-resolve against the pinned spec.
         if pins and pinned_revisions is None:
-            pinned = await resolve_pin_for_api(
+            revision_id = await resolve_pin_for_api(
                 resolver, api=resolved.api, pins=pins, identity=identity
             )
-            if pinned is not None:
-                in_pinned = await discover(
-                    resolver, method=method, url=upstream_url, revision_id=pinned.revision_id
+            if revision_id is not None:
+                pinned = await discover(
+                    resolver, method=method, url=upstream_url, revision_id=revision_id
                 )
-                if in_pinned is None:
+                if pinned is None:
                     raise OperationNotFoundError(
                         detail="Operation not found in the pinned revision."
                     )
-                resolved = in_pinned
+                resolved = pinned
                 pinned_revisions = {
                     f"{resolved.api.vendor}:{resolved.api.name}:{resolved.api.version}": str(
-                        pinned.revision_id
+                        revision_id
                     )
                 }
 
@@ -790,15 +787,6 @@ async def _handle(
         )
     selected_credential = authorization.selected_credential
     allowed_credential_ids = authorization.allowed_credential_ids
-    if pinned is not None:
-        # A pinned draft whose server hosts still need approval may carry only a
-        # credential the caller owns; checked before any hold, queue or call.
-        await require_pinned_credential_owner(
-            ctx,
-            pinned=pinned,
-            identity=identity,
-            credential_owner=selected_credential.created_by,
-        )
     if selected_credential is not None:
         # Attribution is known at selection time on the direct path, so the
         # 202/streaming metadata carries it too (the buffered path re-stamps

@@ -5,9 +5,7 @@ changes an API's server hosts is held for operator review only when the API
 has stored credentials that some agent is bound to (direct agent bindings
 are the only binding form since theme-5 Phase 6b dropped the toolkit tables),
 or an open connect session that targets it, because only then does the host
-change redirect where a stored (or about-to-be-entered) secret is sent. The
-owner queries list who created those credentials, so the guard can tell
-whether the caller owns every one of them.
+change redirect where a stored (or about-to-be-entered) secret is sent.
 
 Registry, control and admin are **separate databases**, and the registry
 module may import neither ``admin`` nor ``control`` ORM, so both legs run as
@@ -31,11 +29,6 @@ _COVERING_CREDENTIALS = text(
     f"SELECT c.id FROM credentials c WHERE {credential_coverage_where()} ORDER BY c.id"
 )
 
-# control DB — who created each credential covering the API identity.
-_COVERING_CREDENTIAL_OWNERS = text(
-    f"SELECT DISTINCT c.created_by FROM credentials c WHERE {credential_coverage_where()}"
-)
-
 # control DB — an open connect session targeting the API identity. Its pending
 # credential is not bound yet, but a human may be about to enter a secret that
 # goes to the hosts pinned at ``:connect``.
@@ -43,15 +36,6 @@ _OPEN_API_TARGET_SESSION = text(
     "SELECT 1 FROM connect_sessions WHERE target_kind = 'api' "
     "AND state IN ('created', 'awaiting_app', 'polling') "
     "AND vendor = :vendor AND api_name = :name AND api_version = :version LIMIT 1"
-)
-
-# control DB — who created the credential each open connect session targeting
-# the API identity fills. ``created_by`` may be NULL; no caller owns that one.
-_OPEN_API_TARGET_SESSION_OWNERS = text(
-    "SELECT DISTINCT c.created_by FROM connect_sessions s "
-    "JOIN credentials c ON c.id = s.credential_id WHERE s.target_kind = 'api' "
-    "AND s.state IN ('created', 'awaiting_app', 'polling') "
-    "AND s.vendor = :vendor AND s.api_name = :name AND s.api_version = :version"
 )
 
 # admin DB — direct agent bindings to those credentials.
@@ -74,31 +58,6 @@ class CredentialBindingPresenceRepository:
             )
         ).all()
         return [row[0] for row in rows]
-
-    @staticmethod
-    async def covering_credential_owners(
-        session: AsyncSession, *, vendor: str, name: str, version: str
-    ) -> set[str | None]:
-        """Creators of every credential covering the API identity (**control** DB session)."""
-        rows = (
-            await session.execute(
-                _COVERING_CREDENTIAL_OWNERS, {"vendor": vendor, "name": name, "version": version}
-            )
-        ).all()
-        return {row[0] for row in rows}
-
-    @staticmethod
-    async def open_api_target_session_owners(
-        session: AsyncSession, *, vendor: str, name: str, version: str
-    ) -> set[str | None]:
-        """Creators of the credentials open connect sessions on the API fill (**control** DB)."""
-        rows = (
-            await session.execute(
-                _OPEN_API_TARGET_SESSION_OWNERS,
-                {"vendor": vendor, "name": name, "version": version},
-            )
-        ).all()
-        return {row[0] for row in rows}
 
     @staticmethod
     async def any_open_api_target_session(

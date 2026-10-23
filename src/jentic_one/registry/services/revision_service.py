@@ -11,8 +11,7 @@ from urllib.parse import urlparse
 from pydantic import BaseModel
 
 from jentic_one.registry.ingest.host_change_guard import (
-    is_host_change_admin,
-    may_make_host_change_current,
+    may_approve_host_change,
     pending_host_change,
 )
 from jentic_one.registry.repos.api_repo import ApiRepository
@@ -235,9 +234,9 @@ class RevisionService:
                     "promote",
                 )
 
-            if not is_host_change_admin(identity.permissions):
-                await self._require_host_change_approval(
-                    session, api.id, revision_uuid, vendor, name, version, identity=identity
+            if not may_approve_host_change(identity.permissions):
+                await self._require_no_host_change(
+                    session, api.id, revision_uuid, vendor, name, version
                 )
 
             # One vendor per host: the revision's URL-index rows exist from import
@@ -294,7 +293,7 @@ class RevisionService:
         )
         return view
 
-    async def _require_host_change_approval(
+    async def _require_no_host_change(
         self,
         session: Any,
         api_id: uuid.UUID,
@@ -302,15 +301,11 @@ class RevisionService:
         vendor: str,
         name: str,
         version: str,
-        *,
-        identity: Identity,
     ) -> None:
         """Refuse a promote that changes the server hosts of a credential-bound API.
 
-        Not called for an organisation admin. Anyone else needs
-        ``credentials:write`` and ownership of every credential covering the API
-        (``may_make_host_change_current``). Same rules as the catalog re-import
-        guard (``registry/ingest/host_change_guard.py``); see
+        Only called for callers without ``org:admin``. Same rules as the
+        catalog re-import guard (``registry/ingest/host_change_guard.py``); see
         ``pending_host_change`` for the baseline and the never-live case.
         """
         held = await pending_host_change(
@@ -323,10 +318,6 @@ class RevisionService:
             version=version,
         )
         if held is None:
-            return
-        if await may_make_host_change_current(
-            self._ctx, identity, vendor=vendor, name=name, version=version
-        ):
             return
         current_hosts, new_hosts = held
         raise HostChangeRequiresOperatorError(

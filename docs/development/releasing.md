@@ -238,6 +238,16 @@ section below.
   `param="toolkit_id"`, the route and the caller's `actor_id` (never the
   value); use it to find the callers to update. The generated UI and Go
   clients no longer expose the parameter.
+- **A server-host change on an API with bound credentials needs `org:admin`.**
+  Promoting a draft whose server hosts differ from the API's live ones (or
+  move to plaintext `http`), pinning such a draft with `Jentic-Revision`, and
+  letting a catalog re-import with new hosts go current all need `org:admin`;
+  `credentials:write` no longer approves them. Anyone else gets `403
+  host_change_requires_operator` (a catalog re-import is kept as a draft), and
+  an organisation admin promotes the draft.
+- **`submitted_by` on `POST /apis` is honoured only for `org:admin`.** For
+  anyone else the resulting revision is attributed to the caller, so a draft
+  can no longer be imported on another actor's behalf without `org:admin`.
 
 ## Upgrading to the pluggable shared-state release
 

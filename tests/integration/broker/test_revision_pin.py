@@ -211,17 +211,13 @@ async def test_published_pin_resolves_in_process_no_http(
     resolver = InProcessRegistryResolver(registry_db)
     pins = {(VENDOR, NAME, VERSION): _label(seeded["published"])}
 
-    pinned = await resolve_pin_for_api(
+    revision_id = await resolve_pin_for_api(
         resolver, api=_api_ref(), pins=pins, identity=_identity(OWNER)
     )
-    assert pinned is not None
-    assert pinned.revision_id == seeded["published"]
-    assert pinned.credential_owner_required is False
+    assert revision_id == seeded["published"]
 
     # Discovery against the pinned revision resolves the operation.
-    resolved = await discover(
-        resolver, method="GET", url=PUBLISHED_URL, revision_id=pinned.revision_id
-    )
+    resolved = await discover(resolver, method="GET", url=PUBLISHED_URL, revision_id=revision_id)
     assert resolved is not None
     assert resolved.api.vendor == VENDOR
 
@@ -232,11 +228,10 @@ async def test_owned_draft_pin_resolves(
     resolver = InProcessRegistryResolver(registry_db)
     pins = {(VENDOR, NAME, VERSION): _label(seeded["owned_draft"])}
 
-    pinned = await resolve_pin_for_api(
+    revision_id = await resolve_pin_for_api(
         resolver, api=_api_ref(), pins=pins, identity=_identity(OWNER)
     )
-    assert pinned is not None
-    assert pinned.revision_id == seeded["owned_draft"]
+    assert revision_id == seeded["owned_draft"]
 
 
 async def test_foreign_draft_pin_forbidden(
@@ -275,10 +270,10 @@ async def test_no_pin_for_api_returns_none(
     resolver = InProcessRegistryResolver(registry_db)
     pins = {("other", "thing", "v9"): _label(seeded["published"])}
 
-    pinned = await resolve_pin_for_api(
+    revision_id = await resolve_pin_for_api(
         resolver, api=_api_ref(), pins=pins, identity=_identity(OWNER)
     )
-    assert pinned is None
+    assert revision_id is None
 
 
 async def test_resolver_outcomes_directly(
@@ -383,8 +378,8 @@ async def test_draft_only_url_resolves_only_through_its_pin(
         resolver, method="GET", url=draft_url, pins=pins, identity=_identity(OWNER)
     )
     assert found is not None
-    resolved, pinned = found
-    assert pinned.revision_id == seeded["owned_draft"]
+    resolved, revision_id = found
+    assert revision_id == seeded["owned_draft"]
     assert resolved.api == _api_ref()
 
 
