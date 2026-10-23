@@ -9,7 +9,7 @@ import pytest
 import yaml
 
 from jentic_one.registry.ingest import fetch
-from jentic_one.registry.ingest.exc import IngestStageError
+from jentic_one.registry.ingest.errors import IngestStageError
 from jentic_one.registry.ingest.fetch import InlineSource, load_specification
 from jentic_one.shared.config import IngestConfig
 

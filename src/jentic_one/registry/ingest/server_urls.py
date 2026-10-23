@@ -49,7 +49,7 @@ from jentic_one.registry.core.server_hosts import (
     expand_variable_defaults,
     is_hostless_server_url,
 )
-from jentic_one.registry.ingest.exc import RelativeServerUrlError, ServerUrlProblem
+from jentic_one.registry.ingest.errors import RelativeServerUrlError, ServerUrlProblem
 from jentic_one.registry.ingest.parsers.openapi import HTTP_METHODS
 from jentic_one.registry.ingest.schemas import ServerUrlChanges
 

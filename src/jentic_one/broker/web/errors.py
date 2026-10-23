@@ -1,6 +1,6 @@
 """Central problem+json exception handlers for the broker (the B-004 handler).
 
-Maps the domain-exception taxonomy (``broker/core/exceptions.py``) and the
+Maps the domain-exception taxonomy (``broker/core/errors.py``) and the
 shared operation-discovery errors (``shared/discovery/errors.py``) to
 ``application/problem+json`` and **also** overrides FastAPI's
 ``RequestValidationError`` and Starlette's ``HTTPException`` (including the
@@ -23,7 +23,7 @@ from fastapi.responses import JSONResponse
 from starlette import exceptions as starlette_exceptions
 
 from jentic_one.broker.core.directives import AgentDirective
-from jentic_one.broker.core.exceptions import BrokerError
+from jentic_one.broker.core.errors import BrokerError
 from jentic_one.broker.core.headers import JenticHeader
 from jentic_one.broker.core.problem import (
     discovery_error_headers,

@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import structlog
 
-from jentic_one.broker.core.exceptions import BrokerError
+from jentic_one.broker.core.errors import BrokerError
 from jentic_one.broker.core.problem import broker_error_problem, discovery_error_problem
 from jentic_one.broker.repos.actor_status import ActorStatusResolver
 from jentic_one.broker.services.execution.authorization import authorize_execution

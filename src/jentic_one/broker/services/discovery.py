@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import uuid
 
-from jentic_one.broker.core.exceptions import (
+from jentic_one.broker.core.errors import (
     InvalidRevisionPinError,
     UnauthorizedRevisionPinError,
 )

@@ -14,7 +14,7 @@ from collections.abc import AsyncGenerator
 import pytest
 from sqlalchemy import delete
 
-from jentic_one.broker.core.exceptions import (
+from jentic_one.broker.core.errors import (
     AmbiguousCredentialMatchError,
     CredentialNotProvisionedError,
     InvalidCredentialNameError,

@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from jentic_one.broker.core.exceptions import (
+from jentic_one.broker.core.errors import (
     AmbiguousCredentialMatchError,
     InvalidCredentialNameError,
 )

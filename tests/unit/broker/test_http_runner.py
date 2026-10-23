@@ -15,7 +15,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 import jentic_one.broker.adapters.runners.http as http_runner_mod
 from jentic_one.broker.adapters.runners.base import RunnerRequest
 from jentic_one.broker.adapters.runners.http import HttpRunner, _HostBulkhead
-from jentic_one.broker.core.exceptions import (
+from jentic_one.broker.core.errors import (
     BrokerError,
     UpstreamTimeoutError,
     UpstreamTransportError,

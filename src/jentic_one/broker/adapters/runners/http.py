@@ -37,7 +37,7 @@ from jentic_one.broker.adapters.runners.base import (
     UpstreamRunner,
 )
 from jentic_one.broker.core.directives import switch_toolkit_directive
-from jentic_one.broker.core.exceptions import (
+from jentic_one.broker.core.errors import (
     BrokerError,
     UpstreamBodyInterruptedError,
     UpstreamResponseTooLargeError,

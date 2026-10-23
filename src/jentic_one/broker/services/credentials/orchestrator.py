@@ -25,14 +25,14 @@ from jentic_one.broker.core.directives import (
     connect_parameters,
     suggested_permission_rules,
 )
-from jentic_one.broker.core.exceptions import (
+from jentic_one.broker.core.errors import (
     AmbiguousCredentialMatchError,
     CredentialNeedsReconnectError,
     CredentialRefreshTransientError,
     CredentialUndecryptableError,
     InvalidCredentialNameError,
 )
-from jentic_one.broker.core.exceptions import (
+from jentic_one.broker.core.errors import (
     CredentialNotProvisionedError as DomainCredentialNotProvisionedError,
 )
 from jentic_one.broker.core.injection import inject_auth

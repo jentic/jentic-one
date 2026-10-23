@@ -14,7 +14,11 @@ import structlog
 from pydantic import TypeAdapter, ValidationError
 from structlog.contextvars import bind_contextvars, unbind_contextvars
 
-from jentic_one.registry.ingest.exc import BaseIngestError, DuplicateRevisionError, IngestJobError
+from jentic_one.registry.ingest.errors import (
+    BaseIngestError,
+    DuplicateRevisionError,
+    IngestJobError,
+)
 from jentic_one.registry.ingest.fetch import IngestSource, load_specification
 from jentic_one.registry.ingest.ingestor import Ingestor
 from jentic_one.registry.repos.api_repo import ApiRepository

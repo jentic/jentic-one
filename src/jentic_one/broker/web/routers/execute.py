@@ -36,7 +36,7 @@ from jentic_one.broker.core.directives import (
     approval_pending_limit_directive,
     switch_toolkit_directive,
 )
-from jentic_one.broker.core.exceptions import (
+from jentic_one.broker.core.errors import (
     ApprovalHoldUnavailableError,
     ApprovalPendingLimitError,
     IdempotencyConflictError,

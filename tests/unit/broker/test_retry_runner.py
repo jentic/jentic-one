@@ -23,7 +23,7 @@ from jentic_one.broker.adapters.runners.base import (
 )
 from jentic_one.broker.adapters.runners.deadline import DeadlineRunner
 from jentic_one.broker.adapters.runners.retry import RetryRunner, _is_idempotent
-from jentic_one.broker.core.exceptions import UpstreamTimeoutError
+from jentic_one.broker.core.errors import UpstreamTimeoutError
 from jentic_one.broker.services.execution.pipeline import build_runner
 from jentic_one.shared.broker.execution import ErrorOrigin
 from jentic_one.shared.config import RetryConfig

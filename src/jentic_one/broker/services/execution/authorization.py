@@ -7,7 +7,7 @@ module owns that verdict: derive the caller's bindings for the discovered API
 theme-5 Phase 6b), select the credential, and evaluate
 the binding's permission rules — all **before** any secret is decrypted or
 audited. A denial raises the broker domain taxonomy
-(``broker/core/exceptions.py``); the web edge maps it to problem+json and the
+(``broker/core/errors.py``); the web edge maps it to problem+json and the
 worker records it on the job result (see :mod:`.queued_authorization`).
 """
 
@@ -30,7 +30,7 @@ from jentic_one.broker.core.directives import (
     no_credential_binding_directive,
     suggested_permission_rules,
 )
-from jentic_one.broker.core.exceptions import (
+from jentic_one.broker.core.errors import (
     ActionDeniedError,
     BrokerError,
     CredentialBindingSuspendedError,

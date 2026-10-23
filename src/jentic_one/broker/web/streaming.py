@@ -56,7 +56,7 @@ from jentic_one.broker.adapters.runners.base import (
     StreamingResult,
     StreamingUpstreamRunner,
 )
-from jentic_one.broker.core.exceptions import (
+from jentic_one.broker.core.errors import (
     BrokerError,
     UpstreamBodyInterruptedError,
     UpstreamTimeoutError,

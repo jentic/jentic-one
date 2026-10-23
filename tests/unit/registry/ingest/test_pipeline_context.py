@@ -6,7 +6,7 @@ import uuid
 
 import pytest
 
-from jentic_one.registry.ingest.exc import (
+from jentic_one.registry.ingest.errors import (
     MissingProducedKeyError,
     MissingRequiredKeysError,
     WrongTypeProducedError,

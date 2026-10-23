@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import Any
 
 from jentic_one.broker.core.directives import AgentDirective
-from jentic_one.broker.core.exceptions import (
+from jentic_one.broker.core.errors import (
     ActionDeniedError,
     AmbiguousCredentialMatchError,
     ApprovalHoldUnavailableError,

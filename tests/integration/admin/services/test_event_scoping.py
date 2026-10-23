@@ -29,7 +29,7 @@ from jentic_one.admin.services.schemas.events import (
     Heartbeat,
 )
 from jentic_one.auth.services.agent_service import AgentService
-from jentic_one.broker.core.exceptions import (
+from jentic_one.broker.core.errors import (
     CredentialNeedsReconnectError,
     CredentialUndecryptableError,
 )

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from jentic_one.broker.core.exceptions import ActionDeniedError
+from jentic_one.broker.core.errors import ActionDeniedError
 from jentic_one.broker.repos.credential_binding_resolver import CredentialBindingResolver
 from jentic_one.broker.services.execution.authorization import derive_credential_bindings
 from jentic_one.shared.auth.identity import Identity

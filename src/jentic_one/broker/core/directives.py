@@ -3,7 +3,7 @@
 A directive is the machine-actionable recovery instruction a broker problem+json
 body carries in its ``agent_directive`` member, so an autonomous-agent caller
 can recover without reading docs. The error taxonomy in
-``broker/core/exceptions.py`` carries one on each error that has a deterministic
+``broker/core/errors.py`` carries one on each error that has a deterministic
 recovery; the builders here produce the standard directives for each case.
 
 Pure module — **no** FastAPI/httpx/DB imports.

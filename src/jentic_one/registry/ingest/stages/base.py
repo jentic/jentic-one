@@ -9,7 +9,7 @@ from typing import Any, ClassVar
 import structlog
 from opentelemetry.trace.status import Status, StatusCode
 
-from jentic_one.registry.ingest.exc import IngestStageError
+from jentic_one.registry.ingest.errors import IngestStageError
 from jentic_one.registry.ingest.observability import stage_duration, stages_total, tracer
 from jentic_one.registry.ingest.pipeline.ctx import PipelineContext
 

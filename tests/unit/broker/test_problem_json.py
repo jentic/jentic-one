@@ -24,7 +24,7 @@ from jentic_one.broker.core.directives import (
     suggested_permission_rules,
     switch_toolkit_directive,
 )
-from jentic_one.broker.core.exceptions import (
+from jentic_one.broker.core.errors import (
     AmbiguousCredentialMatchError,
     BrokerError,
     CredentialNeedsReconnectError,
