@@ -710,7 +710,7 @@ func (a *app) installDocker(ctx context.Context, draft *install.Draft, configPat
 		}
 		fmt.Fprintln(a.Out)
 		fmt.Fprint(a.Out, plan.RenderDockerBuildHeader())
-		if err := plan.BuildImages(a.Out); err != nil {
+		if err := buildStackImages(plan, a.Out); err != nil {
 			return fmt.Errorf("image build failed: %w", err)
 		}
 		if plan.FromGit {
@@ -758,7 +758,7 @@ func (a *app) installDocker(ctx context.Context, draft *install.Draft, configPat
 	// depends_on makes compose start (and health-wait) the db automatically.
 	fmt.Fprintln(a.Out)
 	fmt.Fprint(a.Out, install.RenderMigrateHeader(configPath))
-	if err := install.RunComposeMigrations(a.Out, cfg.ComposePath); err != nil {
+	if err := runComposeMigrations(a.Out, cfg.ComposePath); err != nil {
 		return a.migrationFailure(cfg.ComposePath, dataVolumes, freshVolumes, err)
 	}
 	draft.MigrationsDone = true
@@ -768,7 +768,7 @@ func (a *app) installDocker(ctx context.Context, draft *install.Draft, configPat
 	}
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, install.RenderStartHeader())
-	if err := install.ComposeUp(a.Out, cfg.ComposePath); err != nil {
+	if err := composeUp(a.Out, cfg.ComposePath); err != nil {
 		// Non-fatal: the stack is built and configured; the user can bring it up
 		// with `jenticctl start` from the printed next steps.
 		fmt.Fprintln(a.Out, install.RenderStartWarning(err))
