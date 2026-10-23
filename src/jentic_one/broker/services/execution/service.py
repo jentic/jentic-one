@@ -18,7 +18,7 @@ import structlog
 from opentelemetry import trace
 
 from jentic_one.broker.adapters.runners.base import RunnerRequest, UpstreamRunner
-from jentic_one.broker.core.exceptions import BrokerError, CircuitOpenError
+from jentic_one.broker.core.errors import BrokerError, CircuitOpenError
 from jentic_one.broker.core.execution import mint_execution_id
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.default_broker import DefaultBroker

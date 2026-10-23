@@ -22,7 +22,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import delete
 
-from jentic_one.broker.core.exceptions import ActionDeniedError, CredentialNotProvisionedError
+from jentic_one.broker.core.errors import ActionDeniedError, CredentialNotProvisionedError
 from jentic_one.broker.repos.credential_binding_resolver import CredentialBindingResolver
 from jentic_one.broker.repos.open_connect_session import (
     _OPEN_SESSION_FOR_API,

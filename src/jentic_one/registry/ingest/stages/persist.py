@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import ClassVar
 
-from jentic_one.registry.ingest.exc import HostOwnedByOtherVendorIngestError
+from jentic_one.registry.ingest.errors import HostOwnedByOtherVendorIngestError
 from jentic_one.registry.ingest.pipeline.ctx import PipelineContext
 from jentic_one.registry.ingest.stages.base import BasePipelineStage
 from jentic_one.registry.repos import (

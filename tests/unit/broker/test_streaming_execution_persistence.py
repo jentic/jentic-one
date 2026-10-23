@@ -19,7 +19,7 @@ import structlog
 
 from jentic_one.broker.adapters.runners.base import RunnerRequest, StreamingResult
 from jentic_one.broker.adapters.runners.http import HttpRunner
-from jentic_one.broker.core.exceptions import (
+from jentic_one.broker.core.errors import (
     UpstreamBodyInterruptedError,
     UpstreamResponseTooLargeError,
     UpstreamTimeoutError,

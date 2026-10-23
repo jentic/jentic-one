@@ -14,7 +14,7 @@ from collections.abc import AsyncGenerator
 import pytest
 from sqlalchemy import delete
 
-from jentic_one.broker.core.exceptions import ActionDeniedError
+from jentic_one.broker.core.errors import ActionDeniedError
 from jentic_one.broker.repos.connectable_registrations import ConnectableRegistrationReader
 from jentic_one.broker.repos.credential_binding_resolver import CredentialBindingResolver
 from jentic_one.broker.services.credentials.connect_target import resolve_connect_target

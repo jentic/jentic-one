@@ -25,7 +25,7 @@ from sqlalchemy import delete, select, update
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.audit import AuditEntry
-from jentic_one.broker.core.exceptions import UnauthorizedRevisionPinError
+from jentic_one.broker.core.errors import UnauthorizedRevisionPinError
 from jentic_one.broker.services.discovery import discover_via_pins
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.registry.core.schema.api_revisions import ApiRevision

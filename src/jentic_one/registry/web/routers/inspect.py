@@ -9,7 +9,6 @@ from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse, Response
 from jentic.problem_details import BadRequest, ProblemDetailException
 
-from jentic_one.registry.services.errors import OperationNotFoundError
 from jentic_one.registry.services.inspect.formatters.markdown import render_markdown
 from jentic_one.registry.services.inspect.formatters.openapi import render_openapi_yaml
 from jentic_one.registry.services.inspect.models import SUMMARY_LOAD_OPTIONS, OperationInspectResult
@@ -18,6 +17,7 @@ from jentic_one.registry.services.inspect.url_lookup import URLLookupService
 from jentic_one.registry.web.content_negotiation import accepted_media_types
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
+from jentic_one.shared.discovery.errors import OperationNotFoundError
 from jentic_one.shared.web import get_ctx, get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
 

@@ -1,4 +1,10 @@
-"""Domain exception hierarchy for the registry module."""
+"""Domain exception hierarchy for the registry module.
+
+The operation-discovery errors the inspect and URL-lookup services raise
+(``OperationNotFoundError``, ``MethodNotAllowedError``, ``AmbiguousMatchError``,
+``TooManyCandidatesError``) live in ``shared/discovery/errors.py``: the broker
+raises and renders the same types.
+"""
 
 from __future__ import annotations
 
@@ -93,39 +99,6 @@ class SpecFileMissingError(RegistryServiceError):
     def __init__(self, revision_id: str) -> None:
         super().__init__(f"Revision '{revision_id}' has no stored spec file")
         self.revision_id = revision_id
-
-
-class OperationNotFoundError(RegistryServiceError):
-    """Raised when an operation cannot be resolved by identifier."""
-
-    def __init__(self, identifier: str) -> None:
-        super().__init__(f"Operation '{identifier}' not found")
-        self.identifier = identifier
-
-
-class MethodNotAllowedError(RegistryServiceError):
-    """Raised when the URL exists but not for the requested HTTP method."""
-
-    def __init__(self, allowed_methods: list[str]) -> None:
-        super().__init__(f"Method not allowed; allowed: {', '.join(allowed_methods)}")
-        self.allowed_methods = allowed_methods
-
-
-class AmbiguousMatchError(RegistryServiceError):
-    """Raised when multiple URL index entries match with equal specificity."""
-
-    def __init__(self, candidate_count: int) -> None:
-        super().__init__(
-            f"Ambiguous URL match: {candidate_count} candidates with equal specificity"
-        )
-        self.candidate_count = candidate_count
-
-
-class TooManyCandidatesError(RegistryServiceError):
-    """Raised when the URL index returns more candidates than can be ranked."""
-
-    def __init__(self) -> None:
-        super().__init__("URL index returned too many candidates")
 
 
 class RevisionStateConflictError(RegistryServiceError):

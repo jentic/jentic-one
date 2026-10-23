@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from jentic_one.registry.ingest.exc import IngestStageError
+from jentic_one.registry.ingest.errors import IngestStageError
 from jentic_one.registry.ingest.models import ApiIdentifier
 from jentic_one.shared.models.api_identity import slugify_api_field
 

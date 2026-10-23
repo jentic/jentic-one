@@ -24,7 +24,7 @@ from mcp.shared.exceptions import MCPError
 import jentic_one.mcp.tools as tools_mod
 from jentic_one.admin.services.schemas.jobs import JobResultView, JobView
 from jentic_one.mcp.tools import CallEnv, dispatch_tool_call, validate_api_id
-from jentic_one.registry.ingest.exc import DuplicateRevisionError
+from jentic_one.registry.ingest.errors import DuplicateRevisionError
 from jentic_one.registry.services.errors import (
     CatalogEntryNotFoundError,
     OverlaySupersedeForbiddenError,

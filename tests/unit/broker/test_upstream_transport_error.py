@@ -26,7 +26,7 @@ from jentic_one.broker.adapters.runners.base import RunnerRequest
 from jentic_one.broker.adapters.runners.circuit import CircuitBreakerRunner
 from jentic_one.broker.adapters.runners.http import HttpRunner
 from jentic_one.broker.adapters.runners.retry import RetryRunner
-from jentic_one.broker.core.exceptions import BrokerError, CircuitOpenError
+from jentic_one.broker.core.errors import BrokerError, CircuitOpenError
 from jentic_one.broker.core.problem import status_for_broker_error
 from jentic_one.broker.web.errors import handle_broker_error
 from jentic_one.shared.dns_cache import clear_resolution_cache
