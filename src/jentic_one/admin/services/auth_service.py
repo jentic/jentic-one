@@ -410,19 +410,55 @@ class AuthService:
         ``must_change_password`` gate: the old token still carries the stale
         claim, so without a re-mint the client would loop. The new token reflects
         the cleared gate and current permissions.
+
+        The ``current_password`` check shares the login lockout state: a wrong
+        guess increments the failed-login count (locking the account at
+        ``admin.auth.failed_login_lockout_threshold``), and while
+        ``locked_until`` holds the change is refused without checking the
+        password. A session token therefore buys no more guesses than the
+        login form allows. A successful change resets the count.
         """
         if len(payload.new_password) < MIN_PASSWORD_LENGTH:
             raise InvalidInputError(PASSWORD_TOO_SHORT_MESSAGE)
 
+        config = self._ctx.config.admin.auth
         user_id = identity.sub
-        async with self._ctx.admin_db.transaction() as session:
+
+        # Verify on a read session and record the outcome in a separate write
+        # transaction: a failure must commit its count increment, and holding
+        # the read connection open across that write self-deadlocks under
+        # SQLite.
+        async with self._ctx.admin_db.session() as session:
             secret = await UserSecretRepository.get_by_user_id(session, user_id)
             if secret is None or secret.password_hash is None:
                 raise InvalidCredentialsError()
+            locked = secret.locked_until is not None and secret.locked_until > datetime.now(UTC)
+            password_valid = not locked and verify_password(
+                payload.current_password, secret.password_hash
+            )
+            failed_count = secret.failed_login_count
 
-            if not verify_password(payload.current_password, secret.password_hash):
-                raise InvalidCredentialsError()
+        if locked:
+            logger.warning("password_change_refused_account_locked", user_id=user_id)
+            raise AccountLockedError(user_id)
 
+        if not password_valid:
+            async with self._ctx.admin_db.transaction() as session:
+                await UserSecretRepository.record_failed_login(session, user_id)
+                if failed_count + 1 >= config.failed_login_lockout_threshold:
+                    locked_until = datetime.now(UTC) + timedelta(
+                        seconds=config.failed_login_lockout_seconds
+                    )
+                    await UserSecretRepository.lock_until(
+                        session, user_id, locked_until=locked_until
+                    )
+                    logger.warning("account_locked", user_id=user_id, locked_until=locked_until)
+                else:
+                    logger.warning("password_change_failed", user_id=user_id)
+            raise InvalidCredentialsError()
+
+        async with self._ctx.admin_db.transaction() as session:
+            await UserSecretRepository.reset_failed_logins(session, user_id)
             hashed = hash_password(payload.new_password)
             await UserSecretRepository.set_password_hash(
                 session, user_id, password_hash=hashed, created_by=user_id
