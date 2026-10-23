@@ -2886,6 +2886,35 @@
         "title": "AuditTargetType",
         "type": "string"
       },
+      "AuthCodeConfirmSessionResponse": {
+        "description": "Authorization-code result — browser redirect target; completion\nlands server-side at ``/credentials/oauth/callback`` and the client\nobserves it via ``/status``.",
+        "examples": [
+          {
+            "authorize_url": "https://github.com/login/oauth/authorize?client_id=Iv1.8a61f9b3a7aba766"
+          }
+        ],
+        "properties": {
+          "authorize_url": {
+            "description": "Vendor sign-in URL to open in the approver's browser.",
+            "examples": [
+              "https://github.com/login/oauth/authorize?client_id=Iv1.8a61f9b3a7aba766"
+            ],
+            "title": "Authorize Url",
+            "type": "string"
+          },
+          "kind": {
+            "const": "authorization_code",
+            "default": "authorization_code",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "authorize_url"
+        ],
+        "title": "AuthCodeConfirmSessionResponse",
+        "type": "object"
+      },
       "AuthorizationCodeRegistrationCreateRequest": {
         "additionalProperties": false,
         "description": "Create request for an authorization-code registration.",
@@ -4316,6 +4345,63 @@
         "title": "ConnectRequestBody",
         "type": "object"
       },
+      "ConnectSessionApiReferenceResponse": {
+        "description": "Where the vendor's OpenAPI lives in the registry.\n\n``version`` is nullable because the catalog auto-importer runs\nasynchronously — the SPA's rules-page preview polls this endpoint\nand shows an \"operations still importing…\" skeleton until it\nbecomes non-null and the operations endpoint returns 200.",
+        "examples": [
+          {
+            "name": "stripe",
+            "vendor": "stripe.com",
+            "version": "2024-04-10"
+          }
+        ],
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Registry name of the API; null if not yet known.",
+            "examples": [
+              "stripe"
+            ],
+            "title": "Name"
+          },
+          "vendor": {
+            "description": "Registry vendor of the API.",
+            "examples": [
+              "stripe.com"
+            ],
+            "title": "Vendor",
+            "type": "string"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Registry version of the API; null until the catalog import completes.",
+            "examples": [
+              "2024-04-10"
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "vendor",
+          "name",
+          "version"
+        ],
+        "title": "ConnectSessionApiReferenceResponse",
+        "type": "object"
+      },
       "ConnectSessionListResponse": {
         "description": "Cursor-paginated envelope of connect-session summaries.",
         "examples": [
@@ -4548,6 +4634,35 @@
           "credential_id"
         ],
         "title": "ConnectSessionSummaryResponse",
+        "type": "object"
+      },
+      "ConnectedConfirmSessionResponse": {
+        "description": "The confirm finished the session; ``credential_id`` is bound to the agent.",
+        "examples": [
+          {
+            "credential_id": "cred_6968b39855d91a3561684b32"
+          }
+        ],
+        "properties": {
+          "credential_id": {
+            "description": "ID of the credential bound to the agent.",
+            "examples": [
+              "cred_6968b39855d91a3561684b32"
+            ],
+            "title": "Credential Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "connected",
+            "default": "connected",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "credential_id"
+        ],
+        "title": "ConnectedConfirmSessionResponse",
         "type": "object"
       },
       "ConsentAgentStatusResponse": {
@@ -5833,6 +5948,77 @@
         "title": "DenyRequest",
         "type": "object"
       },
+      "DeviceAuthorizationConfirmSessionResponse": {
+        "description": "RFC 8628 device-code result — user types ``user_code`` at\n``verification_uri`` and the client polls ``/status`` until connected.\n\nDiscriminator matches ``ConnectChallengeResponse`` (the direct\ncredential-connect endpoint) — one wire value for the same concept\nacross both entry points.",
+        "examples": [
+          {
+            "poll_interval_seconds": 5,
+            "user_code": "WDJB-MJHT",
+            "verification_uri": "https://github.com/login/device",
+            "verification_uri_complete": "https://github.com/login/device?user_code=WDJB-MJHT"
+          }
+        ],
+        "properties": {
+          "kind": {
+            "const": "device_authorization",
+            "default": "device_authorization",
+            "title": "Kind",
+            "type": "string"
+          },
+          "poll_interval_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Seconds to wait between status polls.",
+            "examples": [
+              5
+            ],
+            "title": "Poll Interval Seconds"
+          },
+          "user_code": {
+            "description": "The code the user enters at `verification_uri`.",
+            "examples": [
+              "WDJB-MJHT"
+            ],
+            "title": "User Code",
+            "type": "string"
+          },
+          "verification_uri": {
+            "description": "Where the user enters `user_code`.",
+            "examples": [
+              "https://github.com/login/device"
+            ],
+            "title": "Verification Uri",
+            "type": "string"
+          },
+          "verification_uri_complete": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`verification_uri` with the code filled in, when the vendor offers one.",
+            "examples": [
+              "https://github.com/login/device?user_code=WDJB-MJHT"
+            ],
+            "title": "Verification Uri Complete"
+          }
+        },
+        "required": [
+          "user_code",
+          "verification_uri"
+        ],
+        "title": "DeviceAuthorizationConfirmSessionResponse",
+        "type": "object"
+      },
       "DeviceAuthorizationRegistrationCreateRequest": {
         "additionalProperties": false,
         "description": "Create request for a device-authorization registration.",
@@ -7116,6 +7302,133 @@
           "credential_id"
         ],
         "title": "ExistingCredentialConfirmSessionRequest",
+        "type": "object"
+      },
+      "ExistingCredentialResponse": {
+        "description": "A credential the viewer already holds for the target.\n\n``granted_scopes`` / ``missing_scopes`` are set for OAuth credentials\nonly; a static credential's upstream permissions are not visible to the\nplatform. ``can_reauthorize`` is false whenever another agent is bound\n(``other_bound_agent_ids``) — widening it would widen theirs too.",
+        "examples": [
+          {
+            "can_bind": true,
+            "can_reauthorize": false,
+            "credential_id": "cred_6968b39855d91a3561684b32",
+            "granted_scopes": [
+              "repo",
+              "read:org"
+            ],
+            "missing_scopes": [
+              "admin:org"
+            ],
+            "name": "GitHub (octocat)",
+            "other_bound_agent_ids": [
+              "agnt_6968b3984d1c238dbe7e2e29"
+            ],
+            "type": "oauth2"
+          }
+        ],
+        "properties": {
+          "can_bind": {
+            "description": "Whether the viewer may bind the credential to the agent.",
+            "examples": [
+              true
+            ],
+            "title": "Can Bind",
+            "type": "boolean"
+          },
+          "can_reauthorize": {
+            "description": "Whether the viewer may widen the credential's scopes.",
+            "examples": [
+              false
+            ],
+            "title": "Can Reauthorize",
+            "type": "boolean"
+          },
+          "credential_id": {
+            "description": "ID of the credential.",
+            "examples": [
+              "cred_6968b39855d91a3561684b32"
+            ],
+            "title": "Credential Id",
+            "type": "string"
+          },
+          "granted_scopes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Scopes the credential holds; null for a non-OAuth credential.",
+            "examples": [
+              [
+                "repo",
+                "read:org"
+              ]
+            ],
+            "title": "Granted Scopes"
+          },
+          "missing_scopes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Requested scopes the credential lacks; null for a non-OAuth credential.",
+            "examples": [
+              [
+                "admin:org"
+              ]
+            ],
+            "title": "Missing Scopes"
+          },
+          "name": {
+            "description": "Name of the credential.",
+            "examples": [
+              "GitHub (octocat)"
+            ],
+            "title": "Name",
+            "type": "string"
+          },
+          "other_bound_agent_ids": {
+            "description": "Other agents bound to the credential.",
+            "examples": [
+              [
+                "agnt_6968b3984d1c238dbe7e2e29"
+              ]
+            ],
+            "items": {
+              "type": "string"
+            },
+            "title": "Other Bound Agent Ids",
+            "type": "array"
+          },
+          "type": {
+            "description": "The credential's type.",
+            "examples": [
+              "oauth2"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "credential_id",
+          "name",
+          "type",
+          "can_bind",
+          "can_reauthorize"
+        ],
+        "title": "ExistingCredentialResponse",
         "type": "object"
       },
       "GovernedHostsResponse": {
@@ -8448,6 +8761,59 @@
           }
         },
         "title": "IntegrationsConnectRequest",
+        "type": "object"
+      },
+      "IntegrationsConnectResponse": {
+        "description": "A started connect session: where a human approves it and how to poll it.",
+        "examples": [
+          {
+            "approval_url": "https://jentic.example.com/connect?approve=cs_6968b3983b8b91c75627bee5",
+            "poll_token": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+            "resolved_flow": "authorization_code",
+            "session_id": "cs_6968b3983b8b91c75627bee5"
+          }
+        ],
+        "properties": {
+          "approval_url": {
+            "description": "URL a human opens to review and approve the session.",
+            "examples": [
+              "https://jentic.example.com/connect?approve=cs_6968b3983b8b91c75627bee5"
+            ],
+            "title": "Approval Url",
+            "type": "string"
+          },
+          "poll_token": {
+            "description": "Opaque capability for the session's status, review and cancel routes.",
+            "examples": [
+              "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+            ],
+            "title": "Poll Token",
+            "type": "string"
+          },
+          "resolved_flow": {
+            "description": "The flow the session runs, e.g. `authorization_code` or `manual_api_key`.",
+            "examples": [
+              "authorization_code"
+            ],
+            "title": "Resolved Flow",
+            "type": "string"
+          },
+          "session_id": {
+            "description": "Unique ID of the connect session.",
+            "examples": [
+              "cs_6968b3983b8b91c75627bee5"
+            ],
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "approval_url",
+          "poll_token",
+          "resolved_flow"
+        ],
+        "title": "IntegrationsConnectResponse",
         "type": "object"
       },
       "IntrospectResponse": {
@@ -15688,6 +16054,45 @@
         "title": "ReauthorizeConfirmSessionRequest",
         "type": "object"
       },
+      "ReauthorizeConfirmSessionResponse": {
+        "description": "The agent is bound to ``credential_id``; open ``authorize_url`` to grant more scopes.",
+        "examples": [
+          {
+            "authorize_url": "https://github.com/login/oauth/authorize?client_id=Iv1.8a61f9b3a7aba766",
+            "credential_id": "cred_6968b39855d91a3561684b32"
+          }
+        ],
+        "properties": {
+          "authorize_url": {
+            "description": "Vendor sign-in URL that grants the wider scopes.",
+            "examples": [
+              "https://github.com/login/oauth/authorize?client_id=Iv1.8a61f9b3a7aba766"
+            ],
+            "title": "Authorize Url",
+            "type": "string"
+          },
+          "credential_id": {
+            "description": "ID of the credential the agent is bound to.",
+            "examples": [
+              "cred_6968b39855d91a3561684b32"
+            ],
+            "title": "Credential Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "reauthorize",
+            "default": "reauthorize",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "credential_id",
+          "authorize_url"
+        ],
+        "title": "ReauthorizeConfirmSessionResponse",
+        "type": "object"
+      },
       "RedeemInviteRequest": {
         "description": "Payload for redeeming an invite token.",
         "examples": [
@@ -15995,6 +16400,693 @@
           "status"
         ],
         "title": "RegistrationStatusResponse",
+        "type": "object"
+      },
+      "ReviewAgentResponse": {
+        "description": "The agent the session binds and its owner.",
+        "examples": [
+          {
+            "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
+            "name": "invoice-reconciler",
+            "owner_id": "usr_6968b3987ee4c3ec0b4ee3b9",
+            "status": "active"
+          }
+        ],
+        "properties": {
+          "agent_id": {
+            "description": "ID of the agent.",
+            "examples": [
+              "agnt_6968b3984d1c238dbe7e2e29"
+            ],
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Name of the agent.",
+            "examples": [
+              "invoice-reconciler"
+            ],
+            "title": "Name"
+          },
+          "owner_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "ID of the agent's owner.",
+            "examples": [
+              "usr_6968b3987ee4c3ec0b4ee3b9"
+            ],
+            "title": "Owner Id"
+          },
+          "status": {
+            "description": "The agent's lifecycle status.",
+            "examples": [
+              "active"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "agent_id",
+          "status"
+        ],
+        "title": "ReviewAgentResponse",
+        "type": "object"
+      },
+      "ReviewProvenanceResponse": {
+        "description": "Where an API target's live revision came from (registry data).",
+        "examples": [
+          {
+            "catalog_api_id": "stripe.com",
+            "origin": "catalog",
+            "revision_id": "3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c",
+            "source_url": "https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json",
+            "submitted_by": "usr_6968b3987ee4c3ec0b4ee3b9"
+          }
+        ],
+        "properties": {
+          "catalog_api_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Catalog identity of the API, when it came from the catalog.",
+            "examples": [
+              "stripe.com"
+            ],
+            "title": "Catalog Api Id"
+          },
+          "origin": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`catalog` for a public-catalog import; anything else is a submitted spec.",
+            "examples": [
+              "catalog"
+            ],
+            "title": "Origin"
+          },
+          "revision_id": {
+            "description": "ID of the API's live registry revision.",
+            "examples": [
+              "3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"
+            ],
+            "title": "Revision Id",
+            "type": "string"
+          },
+          "source_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where the spec was fetched from, when known.",
+            "examples": [
+              "https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json"
+            ],
+            "title": "Source Url"
+          },
+          "submitted_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "ID of the actor who submitted the spec, when known.",
+            "examples": [
+              "usr_6968b3987ee4c3ec0b4ee3b9"
+            ],
+            "title": "Submitted By"
+          }
+        },
+        "required": [
+          "revision_id"
+        ],
+        "title": "ReviewProvenanceResponse",
+        "type": "object"
+      },
+      "ReviewSchemeResponse": {
+        "description": "The declared scheme an API target collects (snapshot from its spec).",
+        "examples": [
+          {
+            "authorization_url": "https://github.com/login/oauth/authorize",
+            "field_name": "X-Api-Key",
+            "location": "header",
+            "token_url": "https://github.com/login/oauth/access_token",
+            "type": "api_key"
+          }
+        ],
+        "properties": {
+          "authorization_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "An OAuth scheme's authorize URL; set only for a public-catalog spec.",
+            "examples": [
+              "https://github.com/login/oauth/authorize"
+            ],
+            "title": "Authorization Url"
+          },
+          "field_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Header, query or cookie name an API key is sent in.",
+            "examples": [
+              "X-Api-Key"
+            ],
+            "title": "Field Name"
+          },
+          "location": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where an API key goes: `header`, `query` or `cookie`.",
+            "examples": [
+              "header"
+            ],
+            "title": "Location"
+          },
+          "token_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "An OAuth scheme's token URL; set only for a public-catalog spec.",
+            "examples": [
+              "https://github.com/login/oauth/access_token"
+            ],
+            "title": "Token Url"
+          },
+          "type": {
+            "description": "The kind of secret the scheme collects.",
+            "enum": [
+              "api_key",
+              "bearer",
+              "basic",
+              "oauth2"
+            ],
+            "examples": [
+              "api_key"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "ReviewSchemeResponse",
+        "type": "object"
+      },
+      "ReviewScopeResponse": {
+        "description": "One scope in the review's catalogue, flagged default and requested.",
+        "examples": [
+          {
+            "classification": "write",
+            "default": true,
+            "description": "Full control of private repositories.",
+            "name": "repo",
+            "requested": true
+          }
+        ],
+        "properties": {
+          "classification": {
+            "description": "How much access the scope grants.",
+            "enum": [
+              "read",
+              "write",
+              "admin"
+            ],
+            "examples": [
+              "write"
+            ],
+            "title": "Classification",
+            "type": "string"
+          },
+          "default": {
+            "description": "Whether the vendor requests the scope by default.",
+            "examples": [
+              true
+            ],
+            "title": "Default",
+            "type": "boolean"
+          },
+          "description": {
+            "description": "What the scope lets the credential do.",
+            "examples": [
+              "Full control of private repositories."
+            ],
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "description": "The vendor's scope string.",
+            "examples": [
+              "repo"
+            ],
+            "title": "Name",
+            "type": "string"
+          },
+          "requested": {
+            "description": "Whether the session's initiator asked for the scope.",
+            "examples": [
+              true
+            ],
+            "title": "Requested",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "classification",
+          "default",
+          "requested",
+          "description"
+        ],
+        "title": "ReviewScopeResponse",
+        "type": "object"
+      },
+      "ReviewSessionResponse": {
+        "description": "What the review page shows the approver of a connect session.",
+        "examples": [
+          {
+            "agent": {
+              "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
+              "name": "invoice-reconciler",
+              "owner_id": "usr_6968b3987ee4c3ec0b4ee3b9",
+              "status": "active"
+            },
+            "api_reference": {
+              "name": "stripe",
+              "vendor": "stripe.com",
+              "version": "2024-04-10"
+            },
+            "can_confirm": true,
+            "digest": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+            "existing_credentials": [
+              {
+                "can_bind": true,
+                "can_reauthorize": false,
+                "credential_id": "cred_6968b39855d91a3561684b32",
+                "granted_scopes": [
+                  "repo",
+                  "read:org"
+                ],
+                "missing_scopes": [
+                  "admin:org"
+                ],
+                "name": "GitHub (octocat)",
+                "other_bound_agent_ids": [
+                  "agnt_6968b3984d1c238dbe7e2e29"
+                ],
+                "type": "oauth2"
+              }
+            ],
+            "pinned_hosts": [
+              "api.github.com"
+            ],
+            "provenance": {
+              "catalog_api_id": "stripe.com",
+              "origin": "catalog",
+              "revision_id": "3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c",
+              "source_url": "https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json",
+              "submitted_by": "usr_6968b3987ee4c3ec0b4ee3b9"
+            },
+            "reason": "Needs read access to triage issues in the platform repo.",
+            "requested_by_actor_id": "agnt_6968b3984d1c238dbe7e2e29",
+            "requested_permission_rules": [
+              {
+                "effect": "allow",
+                "match_mode": "prefix",
+                "methods": [
+                  "GET"
+                ],
+                "operations": [
+                  "listCharges"
+                ],
+                "path": "/v1/charges"
+              }
+            ],
+            "requested_scopes": [
+              "repo",
+              "read:org"
+            ],
+            "resolved_flow": "authorization_code",
+            "scheme": {
+              "authorization_url": "https://github.com/login/oauth/authorize",
+              "field_name": "X-Api-Key",
+              "location": "header",
+              "token_url": "https://github.com/login/oauth/access_token",
+              "type": "api_key"
+            },
+            "scopes": [
+              {
+                "classification": "write",
+                "default": true,
+                "description": "Full control of private repositories.",
+                "name": "repo",
+                "requested": true
+              }
+            ],
+            "session_id": "cs_6968b3983b8b91c75627bee5",
+            "state": "created",
+            "target_kind": "api",
+            "vendor_display_name": "GitHub",
+            "vendor_key": "github"
+          }
+        ],
+        "properties": {
+          "agent": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReviewAgentResponse"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The agent the session binds, and its owner.",
+            "examples": [
+              {
+                "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
+                "name": "invoice-reconciler",
+                "owner_id": "usr_6968b3987ee4c3ec0b4ee3b9",
+                "status": "active"
+              }
+            ]
+          },
+          "api_reference": {
+            "$ref": "#/components/schemas/ConnectSessionApiReferenceResponse",
+            "description": "Where the target's OpenAPI lives in the registry.",
+            "examples": [
+              {
+                "name": "stripe",
+                "vendor": "stripe.com",
+                "version": "2024-04-10"
+              }
+            ]
+          },
+          "can_confirm": {
+            "description": "Whether this viewer may confirm the session as it stands.",
+            "examples": [
+              true
+            ],
+            "title": "Can Confirm",
+            "type": "boolean"
+          },
+          "digest": {
+            "description": "Fingerprint of the review; echo it on `:confirm`.",
+            "examples": [
+              "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+            ],
+            "title": "Digest",
+            "type": "string"
+          },
+          "existing_credentials": {
+            "description": "Credentials the viewer already holds for the target.",
+            "examples": [
+              [
+                {
+                  "can_bind": true,
+                  "can_reauthorize": false,
+                  "credential_id": "cred_6968b39855d91a3561684b32",
+                  "granted_scopes": [
+                    "repo",
+                    "read:org"
+                  ],
+                  "missing_scopes": [
+                    "admin:org"
+                  ],
+                  "name": "GitHub (octocat)",
+                  "other_bound_agent_ids": [
+                    "agnt_6968b3984d1c238dbe7e2e29"
+                  ],
+                  "type": "oauth2"
+                }
+              ]
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ExistingCredentialResponse"
+            },
+            "title": "Existing Credentials",
+            "type": "array"
+          },
+          "pinned_hosts": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Hosts the credential may be sent to, pinned at `:connect`.",
+            "examples": [
+              [
+                "api.github.com"
+              ]
+            ],
+            "title": "Pinned Hosts"
+          },
+          "provenance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReviewProvenanceResponse"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where an API target's live revision came from.",
+            "examples": [
+              {
+                "catalog_api_id": "stripe.com",
+                "origin": "catalog",
+                "revision_id": "3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c",
+                "source_url": "https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json",
+                "submitted_by": "usr_6968b3987ee4c3ec0b4ee3b9"
+              }
+            ]
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Free-text reason given when the session was started.",
+            "examples": [
+              "Needs read access to triage issues in the platform repo."
+            ],
+            "title": "Reason"
+          },
+          "requested_by_actor_id": {
+            "description": "ID of the actor that started the session.",
+            "examples": [
+              "agnt_6968b3984d1c238dbe7e2e29"
+            ],
+            "title": "Requested By Actor Id",
+            "type": "string"
+          },
+          "requested_permission_rules": {
+            "description": "Permission rules the initiator asked for.",
+            "examples": [
+              [
+                {
+                  "effect": "allow",
+                  "match_mode": "prefix",
+                  "methods": [
+                    "GET"
+                  ],
+                  "operations": [
+                    "listCharges"
+                  ],
+                  "path": "/v1/charges"
+                }
+              ]
+            ],
+            "items": {
+              "$ref": "#/components/schemas/PermissionRuleSchema"
+            },
+            "title": "Requested Permission Rules",
+            "type": "array"
+          },
+          "requested_scopes": {
+            "description": "OAuth scopes the session asks for.",
+            "examples": [
+              [
+                "repo",
+                "read:org"
+              ]
+            ],
+            "items": {
+              "type": "string"
+            },
+            "title": "Requested Scopes",
+            "type": "array"
+          },
+          "resolved_flow": {
+            "description": "The flow the session runs.",
+            "examples": [
+              "authorization_code"
+            ],
+            "title": "Resolved Flow",
+            "type": "string"
+          },
+          "scheme": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReviewSchemeResponse"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The declared scheme an API target collects.",
+            "examples": [
+              {
+                "authorization_url": "https://github.com/login/oauth/authorize",
+                "field_name": "X-Api-Key",
+                "location": "header",
+                "token_url": "https://github.com/login/oauth/access_token",
+                "type": "api_key"
+              }
+            ]
+          },
+          "scopes": {
+            "description": "The vendor's scope catalogue, flagged default and requested.",
+            "examples": [
+              [
+                {
+                  "classification": "write",
+                  "default": true,
+                  "description": "Full control of private repositories.",
+                  "name": "repo",
+                  "requested": true
+                }
+              ]
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ReviewScopeResponse"
+            },
+            "title": "Scopes",
+            "type": "array"
+          },
+          "session_id": {
+            "description": "Unique ID of the connect session.",
+            "examples": [
+              "cs_6968b3983b8b91c75627bee5"
+            ],
+            "title": "Session Id",
+            "type": "string"
+          },
+          "state": {
+            "description": "Current lifecycle state of the session.",
+            "examples": [
+              "created"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "target_kind": {
+            "default": "vendor",
+            "description": "`vendor` for a vendor-registry key, `api` for a registry API.",
+            "enum": [
+              "vendor",
+              "api"
+            ],
+            "examples": [
+              "api"
+            ],
+            "title": "Target Kind",
+            "type": "string"
+          },
+          "vendor_display_name": {
+            "description": "Display name of the vendor.",
+            "examples": [
+              "GitHub"
+            ],
+            "title": "Vendor Display Name",
+            "type": "string"
+          },
+          "vendor_key": {
+            "description": "Vendor registry key the session connects.",
+            "examples": [
+              "github"
+            ],
+            "title": "Vendor Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "state",
+          "vendor_key",
+          "vendor_display_name",
+          "resolved_flow",
+          "reason",
+          "requested_by_actor_id",
+          "scopes",
+          "api_reference",
+          "digest",
+          "can_confirm"
+        ],
+        "title": "ReviewSessionResponse",
         "type": "object"
       },
       "RevokeRequest": {
@@ -17650,6 +18742,109 @@
         "title": "Sigv4UpdateRequest",
         "type": "object"
       },
+      "StatusResponse": {
+        "description": "A connect session's lifecycle status.",
+        "examples": [
+          {
+            "bound_scopes": [
+              "repo",
+              "read:org"
+            ],
+            "connected_as": "octocat",
+            "credential_id": "cred_6968b39855d91a3561684b32",
+            "error_code": "access_denied",
+            "status": "connected"
+          }
+        ],
+        "properties": {
+          "bound_scopes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Scopes the connected credential holds.",
+            "examples": [
+              [
+                "repo",
+                "read:org"
+              ]
+            ],
+            "title": "Bound Scopes"
+          },
+          "connected_as": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Upstream account the credential connected as; null until known.",
+            "examples": [
+              "octocat"
+            ],
+            "title": "Connected As"
+          },
+          "credential_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "ID of the connected credential; null until connected.",
+            "examples": [
+              "cred_6968b39855d91a3561684b32"
+            ],
+            "title": "Credential Id"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why a failed session failed, e.g. `rejected` or `access_denied`.",
+            "examples": [
+              "access_denied"
+            ],
+            "title": "Error Code"
+          },
+          "status": {
+            "description": "The session's lifecycle status.",
+            "enum": [
+              "pending",
+              "polling",
+              "connected",
+              "failed",
+              "expired"
+            ],
+            "examples": [
+              "connected"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "StatusResponse",
+        "type": "object"
+      },
       "TokenResponse": {
         "description": "Token endpoint success response.",
         "examples": [
@@ -18741,6 +19936,110 @@
         "title": "UserUpdateRequest",
         "type": "object"
       },
+      "VendorAuthCapabilitiesResponse": {
+        "description": "How to connect a vendor: its OAuth flows and scope catalogue.",
+        "examples": [
+          {
+            "display_name": "GitHub",
+            "flows": [
+              {
+                "kind": "authorization_code"
+              }
+            ],
+            "scopes": [
+              {
+                "classification": "write",
+                "default": true,
+                "description": "Full control of private repositories.",
+                "name": "repo"
+              }
+            ],
+            "vendor": "github"
+          }
+        ],
+        "properties": {
+          "display_name": {
+            "description": "Display name of the vendor.",
+            "examples": [
+              "GitHub"
+            ],
+            "title": "Display Name",
+            "type": "string"
+          },
+          "flows": {
+            "description": "OAuth flows the vendor supports.",
+            "examples": [
+              [
+                {
+                  "kind": "authorization_code"
+                }
+              ]
+            ],
+            "items": {
+              "$ref": "#/components/schemas/VendorFlowResponse"
+            },
+            "title": "Flows",
+            "type": "array"
+          },
+          "scopes": {
+            "description": "Every scope the vendor offers.",
+            "examples": [
+              [
+                {
+                  "classification": "write",
+                  "default": true,
+                  "description": "Full control of private repositories.",
+                  "name": "repo"
+                }
+              ]
+            ],
+            "items": {
+              "$ref": "#/components/schemas/VendorScopeResponse"
+            },
+            "title": "Scopes",
+            "type": "array"
+          },
+          "vendor": {
+            "description": "Vendor registry key.",
+            "examples": [
+              "github"
+            ],
+            "title": "Vendor",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vendor",
+          "display_name",
+          "flows",
+          "scopes"
+        ],
+        "title": "VendorAuthCapabilitiesResponse",
+        "type": "object"
+      },
+      "VendorFlowResponse": {
+        "description": "One OAuth flow the vendor supports.",
+        "examples": [
+          {
+            "kind": "authorization_code"
+          }
+        ],
+        "properties": {
+          "kind": {
+            "description": "The flow: `authorization_code` or `device_authorization`.",
+            "examples": [
+              "authorization_code"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "VendorFlowResponse",
+        "type": "object"
+      },
       "VendorListResponse": {
         "description": "The vendors the caller can connect a credential for.",
         "examples": [
@@ -18793,6 +20092,64 @@
           "data"
         ],
         "title": "VendorListResponse",
+        "type": "object"
+      },
+      "VendorScopeResponse": {
+        "description": "One OAuth scope in a vendor's catalogue.",
+        "examples": [
+          {
+            "classification": "write",
+            "default": true,
+            "description": "Full control of private repositories.",
+            "name": "repo"
+          }
+        ],
+        "properties": {
+          "classification": {
+            "description": "How much access the scope grants.",
+            "enum": [
+              "read",
+              "write",
+              "admin"
+            ],
+            "examples": [
+              "write"
+            ],
+            "title": "Classification",
+            "type": "string"
+          },
+          "default": {
+            "description": "Whether the scope is requested unless the user deselects it.",
+            "examples": [
+              true
+            ],
+            "title": "Default",
+            "type": "boolean"
+          },
+          "description": {
+            "description": "What the scope lets the credential do.",
+            "examples": [
+              "Full control of private repositories."
+            ],
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "description": "The vendor's scope string.",
+            "examples": [
+              "repo"
+            ],
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "classification",
+          "default",
+          "description"
+        ],
+        "title": "VendorScopeResponse",
         "type": "object"
       },
       "VendorSummaryResponse": {
@@ -34386,7 +35743,94 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "example": {
+                  "agent": {
+                    "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
+                    "name": "invoice-reconciler",
+                    "owner_id": "usr_6968b3987ee4c3ec0b4ee3b9",
+                    "status": "active"
+                  },
+                  "api_reference": {
+                    "name": "stripe",
+                    "vendor": "stripe.com",
+                    "version": "2024-04-10"
+                  },
+                  "can_confirm": true,
+                  "digest": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+                  "existing_credentials": [
+                    {
+                      "can_bind": true,
+                      "can_reauthorize": false,
+                      "credential_id": "cred_6968b39855d91a3561684b32",
+                      "granted_scopes": [
+                        "repo",
+                        "read:org"
+                      ],
+                      "missing_scopes": [
+                        "admin:org"
+                      ],
+                      "name": "GitHub (octocat)",
+                      "other_bound_agent_ids": [
+                        "agnt_6968b3984d1c238dbe7e2e29"
+                      ],
+                      "type": "oauth2"
+                    }
+                  ],
+                  "pinned_hosts": [
+                    "api.github.com"
+                  ],
+                  "provenance": {
+                    "catalog_api_id": "stripe.com",
+                    "origin": "catalog",
+                    "revision_id": "3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c",
+                    "source_url": "https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json",
+                    "submitted_by": "usr_6968b3987ee4c3ec0b4ee3b9"
+                  },
+                  "reason": "Needs read access to triage issues in the platform repo.",
+                  "requested_by_actor_id": "agnt_6968b3984d1c238dbe7e2e29",
+                  "requested_permission_rules": [
+                    {
+                      "effect": "allow",
+                      "match_mode": "prefix",
+                      "methods": [
+                        "GET"
+                      ],
+                      "operations": [
+                        "listCharges"
+                      ],
+                      "path": "/v1/charges"
+                    }
+                  ],
+                  "requested_scopes": [
+                    "repo",
+                    "read:org"
+                  ],
+                  "resolved_flow": "authorization_code",
+                  "scheme": {
+                    "authorization_url": "https://github.com/login/oauth/authorize",
+                    "field_name": "X-Api-Key",
+                    "location": "header",
+                    "token_url": "https://github.com/login/oauth/access_token",
+                    "type": "api_key"
+                  },
+                  "scopes": [
+                    {
+                      "classification": "write",
+                      "default": true,
+                      "description": "Full control of private repositories.",
+                      "name": "repo",
+                      "requested": true
+                    }
+                  ],
+                  "session_id": "cs_6968b3983b8b91c75627bee5",
+                  "state": "created",
+                  "target_kind": "api",
+                  "vendor_display_name": "GitHub",
+                  "vendor_key": "github"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewSessionResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -34593,7 +36037,19 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "example": {
+                  "bound_scopes": [
+                    "repo",
+                    "read:org"
+                  ],
+                  "connected_as": "octocat",
+                  "credential_id": "cred_6968b39855d91a3561684b32",
+                  "error_code": "access_denied",
+                  "status": "connected"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -35015,7 +36471,32 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "discriminator": {
+                    "mapping": {
+                      "authorization_code": "#/components/schemas/AuthCodeConfirmSessionResponse",
+                      "connected": "#/components/schemas/ConnectedConfirmSessionResponse",
+                      "device_authorization": "#/components/schemas/DeviceAuthorizationConfirmSessionResponse",
+                      "reauthorize": "#/components/schemas/ReauthorizeConfirmSessionResponse"
+                    },
+                    "propertyName": "kind"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/DeviceAuthorizationConfirmSessionResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthCodeConfirmSessionResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ConnectedConfirmSessionResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ReauthorizeConfirmSessionResponse"
+                    }
+                  ],
+                  "title": "Response Confirmconnectsession"
+                }
               }
             },
             "description": "Successful Response"
@@ -41889,7 +43370,15 @@
           "201": {
             "content": {
               "application/json": {
-                "schema": {}
+                "example": {
+                  "approval_url": "https://jentic.example.com/connect?approve=cs_6968b3983b8b91c75627bee5",
+                  "poll_token": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+                  "resolved_flow": "authorization_code",
+                  "session_id": "cs_6968b3983b8b91c75627bee5"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/IntegrationsConnectResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -52628,7 +54117,26 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "example": {
+                  "display_name": "GitHub",
+                  "flows": [
+                    {
+                      "kind": "authorization_code"
+                    }
+                  ],
+                  "scopes": [
+                    {
+                      "classification": "write",
+                      "default": true,
+                      "description": "Full control of private repositories.",
+                      "name": "repo"
+                    }
+                  ],
+                  "vendor": "github"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/VendorAuthCapabilitiesResponse"
+                }
               }
             },
             "description": "Successful Response"

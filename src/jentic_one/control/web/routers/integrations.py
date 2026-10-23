@@ -42,13 +42,13 @@ from jentic_one.control.web.connect_limits import ROUTE_LIMITER_ATTR, connect_li
 from jentic_one.control.web.deps import get_connect_session_service
 from jentic_one.control.web.schemas.integrations import (
     ApiKeyConfirmSessionRequest,
-    ApiReferenceResponse,
     AuthCodeConfirmSessionResponse,
     BasicConfirmSessionRequest,
     BearerConfirmSessionRequest,
     ConfirmSessionRequest,
     ConfirmSessionResponse,
     ConnectedConfirmSessionResponse,
+    ConnectSessionApiReferenceResponse,
     ConnectSessionListResponse,
     ConnectSessionState,
     ConnectSessionSummaryResponse,
@@ -141,7 +141,6 @@ async def _enforce_connect_rate_limit(request: Request, identity: Identity) -> N
     "/integrations:connect",
     status_code=201,
     summary="Start an integration connect session",
-    response_model=None,
     responses=with_responses(
         not_found("Unknown vendor or API, or API targets are not enabled"),
         conflict(
@@ -296,7 +295,6 @@ async def list_connect_sessions(
 @router.get(
     "/connect-sessions/{session_id}",
     summary="Get review data for a connect session",
-    response_model=None,
     responses=with_responses(conflict("The session's OAuth app changed; start a new session")),
 )
 async def get_connect_session(
@@ -354,7 +352,7 @@ def _review_response(data: ReviewData) -> ReviewSessionResponse:
         requested_permission_rules=[
             PermissionRuleSchema.model_validate(r) for r in data.requested_permission_rules
         ],
-        api_reference=ApiReferenceResponse(
+        api_reference=ConnectSessionApiReferenceResponse(
             vendor=data.api_vendor,
             name=data.api_name,
             version=data.api_version,
@@ -420,7 +418,6 @@ def _review_response(data: ReviewData) -> ReviewSessionResponse:
 @router.post(
     "/connect-sessions/{session_id}:confirm",
     summary="Confirm a connect session",
-    response_model=None,
     responses=with_responses(
         not_found(),
         conflict(
@@ -572,7 +569,6 @@ def _to_variant(
 @router.get(
     "/connect-sessions/{session_id}/status",
     summary="Poll a connect session's status",
-    response_model=None,
 )
 async def poll_connect_session_status(
     session_id: Annotated[
