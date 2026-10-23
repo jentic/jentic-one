@@ -135,11 +135,12 @@ async def verify_token(token: str, *, secret: str, ctx: Context) -> Identity:
     a 401 — the caller is not admitted either way.
 
     When the JWT already embeds ``permissions`` in its claims (e.g. login
-    JWTs), those are trusted directly — no permission lookup. That is sound
-    because narrowing a user's permissions revokes their login sessions
-    (``PermissionService.set_assigned``), so an embedded set is never wider
-    than the user's current grants. Otherwise falls
-    back to the database-resolved permission path for backwards compatibility.
+    JWTs), those are trusted directly — no permission lookup. For a login JWT
+    that is sound because narrowing a user's permissions revokes their login
+    sessions (``PermissionService.set_assigned``), so the generation check
+    above refuses any token whose embedded set is wider than the user's
+    current grants. Otherwise falls back to the database-resolved permission
+    path for backwards compatibility.
     """
     claims = decode_jwt(token, secret)
     actor_type_claim = claims.get("actor_type")

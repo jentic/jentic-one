@@ -138,22 +138,25 @@ class PermissionService:
             # Grants on a deleted row can never be exercised (delete is
             # terminal), so editing them would only write misleading audit.
             ensure_not_deleted(user, "change the permissions of")
-            previous = sorted(permission_sets[user_id])
             if ORG_ADMIN in permission_sets[user_id] and ORG_ADMIN not in permissions:
                 await ensure_not_last_active_admin(session, user_id)
 
-            grants = await UserPermissionGrantRepository.set_permissions(
+            new_set = set(permissions)
+            # Compare against the grants the write replaced, not the earlier
+            # read: a concurrent edit committed in between (one that added a
+            # permission a fresh login then picked up) must still count.
+            previous_set, grants = await UserPermissionGrantRepository.replace_permissions(
                 session,
                 user_id,
-                permissions=set(permissions),
+                permissions=new_set,
                 granted_by=granted_by,
                 created_by=granted_by,
             )
-            previous_set = set(previous)
-            new_set = set(permissions)
+            previous = sorted(previous_set)
             added = sorted(new_set - previous_set)
             removed = sorted(previous_set - new_set)
-            if _reduces_effective(previous_set, new_set):
+            sessions_revoked = _reduces_effective(previous_set, new_set)
+            if sessions_revoked:
                 await UserRepository.revoke_login_sessions(session, user_id)
 
             if added:
@@ -164,7 +167,7 @@ class PermissionService:
                     target_id=user_id,
                     actor_type=identity.actor_type,
                     actor_id=granted_by,
-                    before={"permissions": sorted(previous)},
+                    before={"permissions": previous},
                     after={"permissions": sorted(permissions)},
                     origin=identity.origin.value,
                 )
@@ -176,9 +179,12 @@ class PermissionService:
                     target_id=user_id,
                     actor_type=identity.actor_type,
                     actor_id=granted_by,
-                    before={"permissions": sorted(previous)},
+                    before={"permissions": previous},
                     after={"permissions": sorted(permissions)},
-                    reason=f"revoked: {', '.join(removed)}",
+                    reason=(
+                        f"revoked: {', '.join(removed)}"
+                        + ("; login sessions ended" if sessions_revoked else "")
+                    ),
                     origin=identity.origin.value,
                 )
         return [g.permission for g in grants]

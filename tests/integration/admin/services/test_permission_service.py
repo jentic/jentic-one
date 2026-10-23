@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 from jentic_one.admin.core.permissions import (
     CREDENTIALS_READ,
@@ -35,6 +35,7 @@ from jentic_one.admin.services.errors import (
 )
 from jentic_one.admin.services.permission_service import PermissionService
 from jentic_one.admin.services.schemas.auth import LoginPayload
+from jentic_one.shared.audit import AuditAction
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import DEFAULT_AGENT_PERMISSIONS, RETIRED_PERMISSIONS
 from jentic_one.shared.auth.tokens import InvalidTokenError
@@ -294,6 +295,16 @@ async def _grant_and_login(ctx: Context, user_id: str, permissions: set[str]) ->
     return bundle.access_token
 
 
+async def _revoke_reasons(ctx: Context, user_id: str) -> list[str | None]:
+    async with ctx.admin_db.session() as session:
+        result = await session.execute(
+            select(AuditEntry.reason).where(
+                AuditEntry.target_id == user_id, AuditEntry.action == AuditAction.REVOKE
+            )
+        )
+    return list(result.scalars().all())
+
+
 async def _verify(ctx: Context, token: str) -> Identity:
     return await verify_token(
         token, secret=ctx.config.admin.auth.jwt_secret.get_secret_value(), ctx=ctx
@@ -320,6 +331,9 @@ async def test_set_assigned_removing_a_permission_ends_existing_login_sessions(
         await _verify(ctx, token)
     with pytest.raises(InvalidCredentialsError):
         await AuthService(ctx).refresh(token)
+    assert await _revoke_reasons(ctx, login_user) == [
+        f"revoked: {EVENTS_READ}; login sessions ended"
+    ]
 
     relogin = await AuthService(ctx).login(LoginPayload(email=_LOGIN_EMAIL, password=_LOGIN_PW))
     identity = await _verify(ctx, relogin.access_token)
@@ -365,3 +379,24 @@ async def test_set_assigned_without_narrowing_keeps_login_sessions(
     await PermissionService(ctx).set_assigned(login_user, after, identity=org_admin)
 
     assert (await _verify(ctx, token)).sub == login_user
+    for reason in await _revoke_reasons(ctx, login_user):
+        assert reason is not None
+        assert not reason.endswith("login sessions ended")
+
+
+async def test_replace_permissions_returns_the_replaced_grants(
+    integration_context: Context, login_user: str
+) -> None:
+    """The replaced set is what the write removed, read at write time."""
+    ctx = integration_context
+    async with ctx.admin_db.transaction() as session:
+        replaced, _ = await UserPermissionGrantRepository.replace_permissions(
+            session, login_user, permissions={USERS_READ, EVENTS_READ}, created_by="usr_test"
+        )
+        assert replaced == set()
+    async with ctx.admin_db.transaction() as session:
+        replaced, grants = await UserPermissionGrantRepository.replace_permissions(
+            session, login_user, permissions={USERS_WRITE}, created_by="usr_test"
+        )
+    assert replaced == {USERS_READ, EVENTS_READ}
+    assert [g.permission for g in grants] == [USERS_WRITE]
