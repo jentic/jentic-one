@@ -321,8 +321,9 @@ class BrokerCacheInvalidatorProtocol(Protocol):
     ``control`` call ``ctx.invalidate_broker_caches(...)`` so an unbind, agent
     disable, API-key rotation/revocation, or credential delete/deactivation
     evicts stale entries immediately in single-process deployments without
-    importing ``jentic_one.broker``. Multi-process deployments remain bounded
-    by the configured cache TTLs.
+    importing ``jentic_one.broker``. ``admin`` calls it with ``user_id`` when a
+    user is disabled, deleted or re-enabled. Multi-process deployments remain
+    bounded by the configured cache TTLs.
     """
 
     def invalidate(
@@ -332,6 +333,7 @@ class BrokerCacheInvalidatorProtocol(Protocol):
         credential_id: str | None = None,
         rule_set_id: str | None = None,
         token: str | None = None,
+        user_id: str | None = None,
     ) -> None: ...
 
 

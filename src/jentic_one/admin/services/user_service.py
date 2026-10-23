@@ -7,6 +7,7 @@ from typing import Any
 from jentic_one.admin.core.permissions import IMPLICATION_MAP, compute_effective
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import (
+    AgentRepository,
     AuditRepository,
     ExternalIdentityRepository,
     InviteTokenRepository,
@@ -393,19 +394,22 @@ class UserService:
         user-deleted hooks still run on every successful delete, a repeat one
         included: that is how an operator re-runs a hook that failed.
         """
-        await self._delete_in_transaction(user_id, identity=identity)
+        owned_agent_ids = await self._delete_in_transaction(user_id, identity=identity)
+        self._invalidate_broker_caches(user_id, owned_agent_ids)
         await run_user_deleted_hooks(self._ctx, user_id, identity=identity)
 
-    async def _delete_in_transaction(self, user_id: str, *, identity: Identity) -> None:
+    async def _delete_in_transaction(self, user_id: str, *, identity: Identity) -> list[str]:
+        """Tombstone the user; return the ids of the agents it owns."""
         async with self._ctx.admin_db.transaction() as session:
             user = await self._load_manageable(session, user_id, identity)
+            owned_agent_ids = await AgentRepository.list_ids_by_owner(session, user_id)
             if user.deleted_at is not None:
-                return
+                return owned_agent_ids
             await ensure_not_last_active_admin(session, user_id)
             if not await UserRepository.mark_deleted(
                 session, user_id, email=_tombstone_email(user_id)
             ):
-                return
+                return owned_agent_ids
             await UserRepository.revoke_login_sessions(session, user_id)
             await ExternalIdentityRepository.delete_for_user(session, user_id)
             # An outstanding invite would otherwise still set a password on
@@ -430,6 +434,7 @@ class UserService:
             audit_events_counter.add(
                 1, {"action": AuditAction.DELETE, "target_type": AuditTargetType.USER}
             )
+        return owned_agent_ids
 
     async def disable(self, user_id: str, *, identity: Identity) -> bool:
         async with self._ctx.admin_db.transaction() as session:
@@ -439,6 +444,7 @@ class UserService:
             ensure_not_deleted(user, "disable")
             await ensure_not_last_active_admin(session, user_id)
             await UserRepository.disable(session, user_id)
+            owned_agent_ids = await AgentRepository.list_ids_by_owner(session, user_id)
             # Ends every login JWT issued so far for good: re-enabling the
             # user restores the account, not the sessions it had (#1139).
             await UserRepository.revoke_login_sessions(session, user_id)
@@ -467,6 +473,7 @@ class UserService:
             audit_events_counter.add(
                 1, {"action": AuditAction.DISABLE, "target_type": AuditTargetType.USER}
             )
+        self._invalidate_broker_caches(user_id, owned_agent_ids)
         return True
 
     async def enable(self, user_id: str, *, identity: Identity) -> bool:
@@ -476,6 +483,7 @@ class UserService:
             # audit references, never brought back to an active account.
             ensure_not_deleted(user, "enable")
             await UserRepository.enable(session, user_id)
+            owned_agent_ids = await AgentRepository.list_ids_by_owner(session, user_id)
             await AuditRepository.record(
                 session,
                 action=AuditAction.ENABLE,
@@ -487,7 +495,21 @@ class UserService:
             audit_events_counter.add(
                 1, {"action": AuditAction.ENABLE, "target_type": AuditTargetType.USER}
             )
+        self._invalidate_broker_caches(user_id, owned_agent_ids)
         return True
+
+    def _invalidate_broker_caches(self, user_id: str, owned_agent_ids: list[str]) -> None:
+        """Evict the broker's cached verdicts for ``user_id`` and the agents it owns.
+
+        Runs after the account change commits. An owned agent's effective
+        status follows its owner's account, so the agents' cached token and
+        status verdicts go stale with the user's. In-process only: another
+        broker process keeps its entries until ``resolve_cache_ttl_seconds``
+        expires them.
+        """
+        self._ctx.invalidate_broker_caches(user_id=user_id)
+        for agent_id in owned_agent_ids:
+            self._ctx.invalidate_broker_caches(agent_id=agent_id)
 
     async def reissue_invite(self, user_id: str, *, identity: Identity) -> InviteIssued:
         async with self._ctx.admin_db.session() as session:

@@ -211,8 +211,13 @@ class Context:
         credential_id: str | None = None,
         rule_set_id: str | None = None,
         token: str | None = None,
+        user_id: str | None = None,
     ) -> None:
         """Notify registered in-process broker caches to evict stale entries (#1837).
+
+        ``user_id`` evicts the user's cached token and actor-status verdicts.
+        ``agent_id`` evicts the same verdicts for the agent, plus its binding
+        and rule cache entries.
 
         No-op when no broker cache is wired onto this ``Context`` (e.g. a
         control-plane process in a multi-process deployment, where the broker's
@@ -224,6 +229,7 @@ class Context:
                 credential_id=credential_id,
                 rule_set_id=rule_set_id,
                 token=token,
+                user_id=user_id,
             )
 
     @property

@@ -1,13 +1,13 @@
 """Integration tests for in-process broker cache invalidation (#1837).
 
 Verifies that when ``install_broker_auth`` is wired onto a shared ``Context``,
-mutating paths in ``AgentService``, ``AgentAuthService``, ``TokenService`` and
-``CredentialService`` immediately evict the affected entries in:
+mutating paths in ``AgentService``, ``AgentAuthService``, ``TokenService``,
+``CredentialService`` and ``UserService`` immediately evict the affected entries in:
 - ``CachingCredentialDeriver``
 - ``AgentRuleEvaluator``
 - ``CachedTokenValidator`` (opaque tokens + API keys)
 - ``CachedActorStatus`` (JWT path)
-with zero wait for the 30 s cache TTL.
+with zero wait for the cache TTL.
 """
 
 from __future__ import annotations
@@ -16,14 +16,18 @@ from collections.abc import AsyncGenerator
 
 import pytest
 from fastapi import FastAPI
-from sqlalchemy import delete
+from pydantic import SecretStr
+from sqlalchemy import delete, select
 
 from jentic_one.admin.core.schema.access_tokens import AccessToken
 from jentic_one.admin.core.schema.actor_permission_grants import ActorPermissionGrant
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.agent_credentials import AgentCredential
 from jentic_one.admin.core.schema.agents import Agent
+from jentic_one.admin.core.schema.user_permission_grants import UserPermissionGrant
 from jentic_one.admin.core.schema.users import User
+from jentic_one.admin.repos import UserPermissionGrantRepository, UserRepository
+from jentic_one.admin.services.user_service import UserService
 from jentic_one.auth.services.agent_auth_service import AgentAuthService
 from jentic_one.auth.services.agent_service import AgentService
 from jentic_one.auth.services.schemas.agents import AgentCreatePayload
@@ -41,7 +45,9 @@ from jentic_one.shared.auth.errors import TokenValidationError
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION, ORG_ADMIN
 from jentic_one.shared.broker.protocols import RuleVerdict
+from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
+from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.models.credentials import CredentialType
 
 pytestmark = pytest.mark.integration
@@ -232,3 +238,112 @@ async def test_unbind_disable_revoke_and_credential_delete_immediately_invalidat
         agent_id=agent.id, vendor="acme-com", name="widgets", version="v1"
     )
     assert derived_after_delete.credentials == ()
+
+
+_USER_MARKER = "user-cache-inv"
+# Far longer than any test run: a verdict that changes is one the lifecycle
+# service evicted, never one that expired.
+_LONG_TTL_S = 3600.0
+_BROKER_JWT_SECRET = "user-cache-inv-broker-jwt-secret-0123456789"  # pragma: allowlist secret
+
+
+@pytest.fixture()
+async def jwt_broker_context(integration_config: AppConfig) -> AsyncGenerator[Context, None]:
+    """A ``Context`` whose broker verifies JWTs, so the actor-status cache is wired."""
+    broker = integration_config.broker.model_copy(
+        update={
+            "jwt_secret": SecretStr(_BROKER_JWT_SECRET),
+            "resolve_cache_ttl_seconds": _LONG_TTL_S,
+        }
+    )
+    async with Context(integration_config.model_copy(update={"broker": broker})) as ctx:
+        yield ctx
+
+
+@pytest.fixture()
+async def user_lifecycle_state(jwt_broker_context: Context) -> AsyncGenerator[None, None]:
+    ctx = jwt_broker_context
+
+    async def _clean() -> None:
+        user_ids = select(User.id).where(User.created_by == _USER_MARKER)
+        async with ctx.admin_db.session() as session:
+            agent_ids = select(Agent.id).where(Agent.owner_id.in_(user_ids))
+            await session.execute(
+                delete(AgentCredential).where(AgentCredential.agent_id.in_(agent_ids))
+            )
+            await session.execute(
+                delete(ActorPermissionGrant).where(ActorPermissionGrant.actor_id.in_(agent_ids))
+            )
+            await session.execute(delete(Agent).where(Agent.owner_id.in_(user_ids)))
+            await session.execute(
+                delete(UserPermissionGrant).where(UserPermissionGrant.user_id.in_(user_ids))
+            )
+            await session.execute(delete(User).where(User.created_by == _USER_MARKER))
+            await session.commit()
+
+    await _clean()
+    yield
+    await _clean()
+
+
+async def _seed_user(ctx: Context, name: str, *, permissions: set[str] | None = None) -> str:
+    async with ctx.admin_db.transaction() as session:
+        user = await UserRepository.create(
+            session,
+            email=f"{name}-{generate_ksuid('x')}@user-cache-inv.test",
+            first_name="Cache",
+            last_name=name,
+            active=True,
+            created_by=_USER_MARKER,
+        )
+        if permissions:
+            await UserPermissionGrantRepository.set_permissions(
+                session, user.id, permissions=permissions, created_by=_USER_MARKER
+            )
+        return user.id
+
+
+async def test_user_disable_delete_and_enable_immediately_invalidate_broker_caches(
+    jwt_broker_context: Context, user_lifecycle_state: None
+) -> None:
+    """Disabling, re-enabling and deleting a user reach the broker's cached verdicts
+    for the user and the agents it owns without waiting for the TTL (#1959)."""
+    ctx = jwt_broker_context
+    app = FastAPI()
+    install_broker_auth(app, ctx)
+    token_validator = app.state.broker_token_validator
+    actor_status = app.state.broker_cache_invalidator.actor_status
+    assert actor_status is not None
+
+    admin_id = await _seed_user(ctx, "admin", permissions={ORG_ADMIN})
+    admin = Identity(sub=admin_id, permissions=[ORG_ADMIN])
+    user_id = await _seed_user(ctx, "owner")
+    agent = await AgentService(ctx).create(
+        AgentCreatePayload(name="user-cache-inv-agent", permissions=[BROKER_EXECUTE_PERMISSION]),
+        owner_id=user_id,
+        identity=admin,
+    )
+    api_key = await AgentAuthService(ctx).register_api_key(agent.id, identity=admin)
+    users = UserService(ctx)
+
+    async def assert_live(expected: bool) -> None:
+        assert await actor_status.is_active(actor_id=user_id, actor_type="user") is expected
+        assert await actor_status.is_active(actor_id=agent.id, actor_type="agent") is expected
+        if expected:
+            assert (await token_validator.validate(api_key)).sub == agent.id
+        else:
+            with pytest.raises(TokenValidationError):
+                await token_validator.validate(api_key)
+
+    # Warm every cache with a positive verdict.
+    await assert_live(True)
+
+    await users.disable(user_id, identity=admin)
+    await assert_live(False)
+
+    # Re-enabling evicts the negative verdicts cached while disabled.
+    await users.enable(user_id, identity=admin)
+    await assert_live(True)
+
+    await users.delete(user_id, identity=admin)
+    await assert_live(False)
