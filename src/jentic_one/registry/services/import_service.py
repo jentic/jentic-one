@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
 import structlog
@@ -16,10 +17,14 @@ from structlog.contextvars import bind_contextvars, unbind_contextvars
 
 from jentic_one.registry.ingest.errors import (
     BaseIngestError,
+    CatalogIdentityConflictError,
     DuplicateRevisionError,
+    HostOwnedByOtherVendorIngestError,
     IngestJobError,
+    NonRetryableIngestJobError,
+    RelativeServerUrlError,
 )
-from jentic_one.registry.ingest.fetch import IngestSource, load_specification
+from jentic_one.registry.ingest.fetch import IngestSource, UrlSource, load_specification
 from jentic_one.registry.ingest.ingestor import Ingestor
 from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.registry.repos.overlay_repo import OverlayRepository
@@ -84,6 +89,71 @@ def _readable_source_error(exc: Exception) -> str:
     return _UNEXPECTED_SOURCE_ERROR
 
 
+# Ingest refusals that keep their meaning however they were raised (some chain
+# the repository error that detected them): the stored state or the document
+# decides them, so a retry meets the same refusal.
+_DETERMINISTIC_INGEST_ERRORS: tuple[type[BaseIngestError], ...] = (
+    DuplicateRevisionError,
+    CatalogIdentityConflictError,
+    HostOwnedByOtherVendorIngestError,
+    RelativeServerUrlError,
+)
+# Bounds the ``__cause__`` walk in _is_deterministic_source_failure.
+_MAX_CAUSE_DEPTH = 8
+
+
+class _SourcePhase(StrEnum):
+    """Which step of importing one source was running when it failed."""
+
+    VALIDATE = "validate"
+    LOAD_INLINE = "load_inline"
+    LOAD_URL = "load_url"
+    INGEST = "ingest"
+
+
+def _is_deterministic_source_failure(exc: Exception, *, phase: _SourcePhase) -> bool:
+    """True when a source failed for a reason no retry of the job can change.
+
+    Loading a ``url`` source raises the same ingest error type for a refused
+    connection or an upstream 5xx as for a document that does not parse, so a
+    failure in :attr:`_SourcePhase.LOAD_URL` stays retryable rather than being
+    guessed at.
+
+    Deterministic:
+
+    * the source payload fails its model (``ValidationError``);
+    * an inline source fails to load: loading inline content is a pure
+      function of the content (size cap, parse, identity resolution);
+    * the ingest pipeline refuses the spec: a duplicate revision (also the
+      raw integrity error of a lost duplicate race), a catalog identity
+      conflict, a host another vendor serves, an unusable server URL, or any
+      ingest error a stage raises itself, without an underlying cause
+      (validation of the document).
+
+    Everything else stays retryable: database and driver errors, network
+    errors, and the "Stage '…' failed unexpectedly" wrapper a stage puts
+    around an exception it did not anticipate.
+    """
+    if isinstance(exc, ValidationError):
+        return True
+    if phase == _SourcePhase.LOAD_URL:
+        return False
+    if phase == _SourcePhase.LOAD_INLINE:
+        return isinstance(exc, BaseIngestError)
+    if isinstance(exc, DatabaseIntegrityError):
+        return is_duplicate_revision_conflict(exc)
+    link: BaseException | None = exc
+    for _ in range(_MAX_CAUSE_DEPTH):
+        if isinstance(link, _DETERMINISTIC_INGEST_ERRORS):
+            return True
+        if not isinstance(link, BaseIngestError):
+            return False
+        if link.__cause__ is None:
+            return True
+        link = link.__cause__
+    return False
+
+
 class ImportHandler:
     """Handles kind=import jobs by processing API sources."""
 
@@ -106,7 +176,9 @@ class ImportHandler:
         """
         bind_contextvars(job_id=job_id)
         if created_by is None:
-            raise IngestJobError("import job is missing the triggering actor (created_by)")
+            raise NonRetryableIngestJobError(
+                "import job is missing the triggering actor (created_by)"
+            )
         try:
             payload = payload or {}
             sources = payload.get("sources", [])
@@ -118,14 +190,23 @@ class ImportHandler:
             resolved_actor_type: str = actor_type or ActorType.USER.value
             revisions: list[dict[str, Any]] = []
             failures: list[str] = []
+            # Whether every failure so far is one a retry cannot change.
+            all_failures_deterministic = True
             recovered_overlay_link = False
 
             logger.info("import_handler_start", source_count=len(sources), job_id=job_id)
 
             for idx, src in enumerate(sources):
+                phase = _SourcePhase.VALIDATE
                 try:
                     source = _source_adapter.validate_python(src)
+                    phase = (
+                        _SourcePhase.LOAD_URL
+                        if isinstance(source, UrlSource)
+                        else _SourcePhase.LOAD_INLINE
+                    )
                     spec = await load_specification(source, config=self._ctx.config.ingest)
+                    phase = _SourcePhase.INGEST
                     result = await Ingestor(self._ctx).ingest(spec, created_by=created_by)
                     revisions.append(
                         {
@@ -169,10 +250,25 @@ class ImportHandler:
                         origin=None,
                     )
                 except Exception as exc:
-                    logger.exception("import_source_failed", source_index=idx, job_id=job_id)
+                    readable_error = _readable_source_error(exc)
+                    if _is_deterministic_source_failure(exc, phase=phase):
+                        # A refused spec or payload is the caller's to fix, not
+                        # a system fault: no traceback.
+                        logger.warning(
+                            "import_source_failed",
+                            source_index=idx,
+                            job_id=job_id,
+                            retryable=False,
+                            error_type=type(exc).__name__,
+                            error=readable_error,
+                        )
+                    else:
+                        all_failures_deterministic = False
+                        logger.exception(
+                            "import_source_failed", source_index=idx, job_id=job_id, retryable=True
+                        )
                     failures.append(
-                        SOURCE_FAILURE_PREFIX_TEMPLATE.format(index=idx)
-                        + _readable_source_error(exc)
+                        SOURCE_FAILURE_PREFIX_TEMPLATE.format(index=idx) + readable_error
                     )
 
             logger.info(
@@ -268,17 +364,26 @@ class ImportHandler:
             # content already exists" *did* achieve its goal (the revision exists and
             # we linked it above) — treat it as success, not a failed job. Same for a
             # supersede re-import recovered on duplicate-retry (fresh upstream already
-            # served, overlay deprecated) — see _recover_supersede.
+            # served, overlay deprecated) — see _recover_supersede. Both recoveries
+            # run above, on the attempt that hit the duplicate, so a deterministic
+            # duplicate is only failed once recovery has had its chance.
+            #
+            # When every failure is deterministic the job fails without a retry
+            # (NonRetryableIngestJobError); one retryable failure keeps the
+            # worker's backoff budget for the whole job. The message is the same
+            # either way.
             if (
                 failures
                 and not revisions
                 and not recovered_overlay_link
                 and not recovered_supersede
             ):
-                raise IngestJobError(
-                    ALL_SOURCES_FAILED_PREFIX_TEMPLATE.format(count=len(sources))
-                    + "; ".join(failures)
+                message = ALL_SOURCES_FAILED_PREFIX_TEMPLATE.format(count=len(sources)) + "; ".join(
+                    failures
                 )
+                if all_failures_deterministic:
+                    raise NonRetryableIngestJobError(message)
+                raise IngestJobError(message)
 
             return JobResultPayload(
                 body={"revisions": revisions},

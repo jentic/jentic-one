@@ -5,10 +5,22 @@ from __future__ import annotations
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from jentic_one.registry.ingest.errors import DuplicateRevisionError, IngestStageError
+from jentic_one.registry.ingest.errors import (
+    CatalogIdentityConflictError,
+    DuplicateRevisionError,
+    HostOwnedByOtherVendorIngestError,
+    IngestPipelineError,
+    IngestStageError,
+    RelativeServerUrlError,
+    ServerUrlProblem,
+)
 from jentic_one.registry.ingest.fetch import IngestSource
 from jentic_one.registry.services.errors import HostOwnedByOtherVendorError
-from jentic_one.registry.services.import_service import _readable_source_error
+from jentic_one.registry.services.import_service import (
+    _is_deterministic_source_failure,
+    _readable_source_error,
+    _SourcePhase,
+)
 from jentic_one.shared.db.errors import (
     DatabaseConsistencyError,
     DatabaseDataError,
@@ -108,3 +120,127 @@ def test_source_validation_error_is_passed_through() -> None:
 
     assert message == str(exc_info.value)
     assert "url" in message
+
+
+def _chained[E: BaseException](outer: E, cause: BaseException) -> E:
+    """``outer`` raised ``from cause``, as a stage or the pipeline raises it."""
+    outer.__cause__ = cause
+    return outer
+
+
+def _through_pipeline(stage_error: IngestStageError) -> IngestPipelineError:
+    """The ``IngestPipelineError`` the pipeline raises over a failed stage."""
+    return _chained(IngestPipelineError(stage_error.message), stage_error)
+
+
+def _source_validation_error() -> ValidationError:
+    with pytest.raises(ValidationError) as exc_info:
+        TypeAdapter(IngestSource).validate_python({"type": "url"})
+    return exc_info.value
+
+
+_DUPLICATE_INTEGRITY = DatabaseIntegrityError(
+    'duplicate key value violates unique constraint "uq_api_revisions_api_id_spec_digest"'
+)
+_IDENTITY_CONFLICT = CatalogIdentityConflictError(
+    vendor="v", name="n", version="1", stored_id="a", incoming_id="b"
+)
+
+
+@pytest.mark.parametrize(
+    ("exc", "phase"),
+    [
+        pytest.param(_source_validation_error(), _SourcePhase.VALIDATE, id="source-payload"),
+        pytest.param(
+            IngestStageError("cannot resolve api_identifier: missing vendor"),
+            _SourcePhase.LOAD_INLINE,
+            id="inline-identity",
+        ),
+        pytest.param(
+            _chained(IngestStageError("failed to parse spec content"), ValueError("bad")),
+            _SourcePhase.LOAD_INLINE,
+            id="inline-parse",
+        ),
+        pytest.param(
+            _through_pipeline(IngestStageError("Missing 'openapi' key in specification content")),
+            _SourcePhase.INGEST,
+            id="document-validation",
+        ),
+        pytest.param(
+            _through_pipeline(DuplicateRevisionError()), _SourcePhase.INGEST, id="duplicate"
+        ),
+        pytest.param(
+            _through_pipeline(_chained(DuplicateRevisionError(), _DUPLICATE_INTEGRITY)),
+            _SourcePhase.INGEST,
+            id="duplicate-race-in-stage",
+        ),
+        pytest.param(_DUPLICATE_INTEGRITY, _SourcePhase.INGEST, id="duplicate-race-at-commit"),
+        pytest.param(
+            _through_pipeline(_chained(_IDENTITY_CONFLICT, RuntimeError("stored id"))),
+            _SourcePhase.INGEST,
+            id="catalog-identity-conflict",
+        ),
+        pytest.param(
+            _through_pipeline(HostOwnedByOtherVendorIngestError("api.example.com")),
+            _SourcePhase.INGEST,
+            id="host-owned-by-other-vendor",
+        ),
+        pytest.param(
+            _through_pipeline(RelativeServerUrlError(["/v1"], ServerUrlProblem.NO_BASE)),
+            _SourcePhase.INGEST,
+            id="relative-server-url",
+        ),
+    ],
+)
+def test_deterministic_source_failures(exc: Exception, phase: _SourcePhase) -> None:
+    """Pins #1980: failures a retry cannot change fail the import job at once."""
+    assert _is_deterministic_source_failure(exc, phase=phase) is True
+
+
+@pytest.mark.parametrize(
+    ("exc", "phase"),
+    [
+        pytest.param(
+            _chained(IngestStageError("failed to fetch URL: refused"), OSError("refused")),
+            _SourcePhase.LOAD_URL,
+            id="url-network",
+        ),
+        pytest.param(
+            IngestStageError("non-success status 503 fetching https://x"),
+            _SourcePhase.LOAD_URL,
+            id="url-5xx",
+        ),
+        pytest.param(RuntimeError("bug"), _SourcePhase.LOAD_INLINE, id="inline-unexpected"),
+        pytest.param(
+            _through_pipeline(
+                _chained(
+                    IngestStageError("Stage 'ResolveApiStage' failed unexpectedly"),
+                    DatabaseIntegrityError('violates unique constraint "uq_apis_vendor_name"'),
+                )
+            ),
+            _SourcePhase.INGEST,
+            id="stage-unexpected-db-error",
+        ),
+        pytest.param(
+            _through_pipeline(
+                _chained(
+                    IngestStageError("Stage 'BuildURLIndexStage' failed unexpectedly"),
+                    RuntimeError("regex"),
+                )
+            ),
+            _SourcePhase.INGEST,
+            id="stage-unexpected-bug",
+        ),
+        pytest.param(
+            DatabaseIntegrityError('violates unique constraint "uq_other"'),
+            _SourcePhase.INGEST,
+            id="other-integrity-at-commit",
+        ),
+        pytest.param(
+            DatabaseUnavailableError("connection lost"), _SourcePhase.INGEST, id="db-unavailable"
+        ),
+    ],
+)
+def test_retryable_source_failures(exc: Exception, phase: _SourcePhase) -> None:
+    """Pins #1980: transient and unexpected failures keep the retry budget."""
+    assert _is_deterministic_source_failure(exc, phase=phase) is False

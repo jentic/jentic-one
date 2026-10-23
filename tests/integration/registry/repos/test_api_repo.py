@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import update
+from sqlalchemy import select, text, update
 
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.operations import Operation
 from jentic_one.registry.core.schema.security_schemes import SecurityScheme
 from jentic_one.registry.core.schema.servers import Server
-from jentic_one.registry.repos.api_repo import ApiRepository
+from jentic_one.registry.repos.api_repo import ApiRepository, CatalogApiIdConflictError
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.pagination import Cursor
 
@@ -306,3 +308,100 @@ async def test_load_server_hosts_ignores_operation_servers(
         result = await ApiRepository.load_server_hosts(session, [rev_id])
 
     assert result[rev_id] == "global.example.com"
+
+
+@pytest.mark.skipif(
+    os.environ.get("JENTIC_TEST_BACKEND", "postgres").lower() == "sqlite",
+    reason="concurrent writers need Postgres (SQLite serializes them with BEGIN IMMEDIATE)",
+)
+async def test_upsert_of_new_identity_waits_for_concurrent_insert(
+    registry_db: DatabaseSession, clean_registry: None
+) -> None:
+    """Pins #1980: an upsert racing another transaction's insert of the same new
+    identity must resolve to that row once it commits, not fail on
+    ``uq_apis_vendor_name_version``.
+
+    Transaction A inserts the identity and holds its transaction open; B's upsert
+    starts while the row is still uncommitted (so B's locking read finds nothing)
+    and blocks on A. Only once B is observed waiting on a lock does A commit.
+    """
+    identity = {"vendor": "race.example.com", "name": "new-api", "version": "1.0.0"}
+    b_started = asyncio.Event()
+
+    async def upsert_b() -> Api:
+        async with registry_db.transaction() as session:
+            b_started.set()
+            api = await ApiRepository.upsert(
+                session, **identity, display_name="From B", created_by="usr_b"
+            )
+            assert api.current_revision is None
+            return api
+
+    async with registry_db.transaction() as session_a:
+        api_a = await ApiRepository.upsert(
+            session_a, **identity, catalog_api_id="race.example.com", created_by="usr_a"
+        )
+        task_b = asyncio.create_task(upsert_b())
+        await b_started.wait()
+        async with registry_db.session() as probe:
+            for _ in range(500):
+                waiting = (
+                    await probe.execute(
+                        text(
+                            "SELECT count(*) FROM pg_locks l"
+                            " JOIN pg_stat_activity a ON a.pid = l.pid"
+                            " WHERE NOT l.granted AND a.datname = current_database()"
+                        )
+                    )
+                ).scalar_one()
+                if waiting:
+                    break
+                await asyncio.sleep(0.01)
+            else:
+                pytest.fail("upsert B never blocked on transaction A")
+        assert not task_b.done()
+
+    api_b = await task_b
+    assert api_b.id == api_a.id
+    async with registry_db.session() as session:
+        rows = list(
+            (
+                await session.execute(
+                    select(Api).where(
+                        Api.vendor == identity["vendor"],
+                        Api.name == identity["name"],
+                        Api.version == identity["version"],
+                    )
+                )
+            ).scalars()
+        )
+    assert len(rows) == 1
+    assert rows[0].display_name == "From B"
+    assert rows[0].catalog_api_id == "race.example.com"
+    assert rows[0].created_by == "usr_a"
+
+
+async def test_upsert_new_identity_still_enforces_catalog_guard_after_insert(
+    registry_db: DatabaseSession, clean_registry: None
+) -> None:
+    """The catalog-identity guard applies to a row another import created first."""
+    async with registry_db.transaction() as session:
+        await ApiRepository.upsert(
+            session,
+            vendor="guard.example.com",
+            name="api",
+            version="1",
+            catalog_api_id="guard.example.com/a",
+            created_by="usr",
+        )
+
+    async with registry_db.transaction() as session:
+        with pytest.raises(CatalogApiIdConflictError):
+            await ApiRepository.upsert(
+                session,
+                vendor="guard.example.com",
+                name="api",
+                version="1",
+                catalog_api_id="guard.example.com/b",
+                created_by="usr",
+            )

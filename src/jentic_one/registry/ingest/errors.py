@@ -2,6 +2,8 @@
 
 from enum import StrEnum
 
+from jentic_one.shared.jobs.handlers import NonRetryableJobError
+
 
 class BaseIngestError(Exception):
     """Base for all ingest errors."""
@@ -20,7 +22,15 @@ class IngestStageError(BaseIngestError):
 
 
 class IngestJobError(BaseIngestError):
-    """Raised when an ingest job fails."""
+    """Raised when an ingest job fails; the worker retries it with backoff."""
+
+
+class NonRetryableIngestJobError(IngestJobError, NonRetryableJobError):
+    """Raised when an ingest job fails for a reason no retry can change.
+
+    The worker fails the job on the attempt that raised it instead of
+    requeueing it (see :class:`~jentic_one.shared.jobs.handlers.NonRetryableJobError`).
+    """
 
 
 class CatalogIdentityConflictError(IngestStageError):

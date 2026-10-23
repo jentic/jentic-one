@@ -258,19 +258,38 @@ def build_path_regex(path_template: str) -> re.Pattern[str]:
     """Build a regex for matching a path template with parameters.
 
     ``{param}`` matches a single path segment; ``{+param}`` is a catch-all that
-    matches across segments.
+    matches across segments. A parameter named more than once is captured at its
+    first position and back-referenced at every repeat (see
+    :func:`_path_param_group`).
     """
     parts = PATH_PARAM_RE.split(path_template)
     regex_parts: list[str] = []
+    seen_groups: set[str] = set()
     for i, part in enumerate(parts):
         if i % 2 == 0:
             regex_parts.append(re.escape(part))
         else:
-            name, is_catch_all = _split_param_token(part)
-            safe_name = _safe_param_name(name)
-            matcher = ".+" if is_catch_all else "[^/]+"
-            regex_parts.append(f"(?P<{safe_name}>{matcher})")
+            regex_parts.append(_path_param_group(part, seen_groups))
     return re.compile("^" + "".join(regex_parts) + "$")
+
+
+def _path_param_group(token: str, seen_groups: set[str]) -> str:
+    """Regex for one ``{token}`` path parameter, recording its group in ``seen_groups``.
+
+    The first occurrence of a name is a named capture group. A repeat (e.g.
+    ``/accounts/{account_id}/.../accounts/{account_id}``) is a ``(?P=name)``
+    back-reference: Python's ``re`` refuses a second group of the same name,
+    and a request only instantiates the template when every occurrence carries
+    the same value, which the back-reference enforces. The parameter therefore
+    appears once in ``groupdict()``, and :func:`expand_path_template` writes that
+    single value back into every occurrence.
+    """
+    name, is_catch_all = _split_param_token(token)
+    group = _safe_param_name(name)
+    if group in seen_groups:
+        return f"(?P={group})"
+    seen_groups.add(group)
+    return f"(?P<{group}>{'.+' if is_catch_all else '[^/]+'})"
 
 
 def expand_path_template(path_template: str, path_params: Mapping[str, str]) -> str | None:
@@ -660,8 +679,7 @@ def _render_server_template(
         if in_host:
             regex.append(r"[^:/]+")
         else:
-            name, is_catch_all = _split_param_token(part)
-            regex.append(f"(?P<{_safe_param_name(name)}>{'.+' if is_catch_all else '[^/]+'})")
+            regex.append(_path_param_group(part, seen_groups))
     return "".join(display), "".join(regex)
 
 
