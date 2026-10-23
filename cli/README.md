@@ -494,7 +494,7 @@ choose — nothing pre-seeded, nothing to rotate.
 > configured via Helm values under [`deploy/helm/values/`](../deploy/helm/values/), not this wizard).
 
 The generated file mirrors
-[`jentic_one.shared.config.AppConfig`](../src/jentic_one/shared/config.py). Since
+[`jentic_one.shared.config.AppConfig`](../src/jentic_one/shared/config/app.py). Since
 it lives under `~/.jentic` (not the cwd), point the app at it with
 `JENTIC_CONFIG_FILE=<path>` — the printed next-step commands already do this for
 you. SQLite databases default to `~/.jentic/data/`.

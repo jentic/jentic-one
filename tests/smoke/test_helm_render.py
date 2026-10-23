@@ -481,7 +481,7 @@ def _expected_split_refs(subchart: str) -> dict[str, str]:
 def test_render_app_secrets_split_mounts_only_what_each_surface_reads() -> None:
     """generate=true hands each Python surface exactly the secrets its code reads.
 
-    The expectation is derived from shared/config.py GUARDED_FIELD_SURFACES (the same
+    The expectation is derived from shared/config/_secrets.py GUARDED_FIELD_SURFACES (the same
     table that relaxes the production guard for a standalone surface), so the
     chart and the loader cannot drift apart: a surface the chart starves of a
     secret it reads would fail its production boot; a surface handed one it
