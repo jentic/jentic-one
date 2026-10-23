@@ -39,6 +39,7 @@ from jentic_one.shared.config import (
     EntitlementConfig,
     HeldExecutionsConfig,
     IdempotencyConfig,
+    IngestConfig,
     OAuthRateLimitConfig,
     RuntimeConfig,
     SigningKeyConfig,
@@ -213,6 +214,43 @@ def test_control_connect_manual_flows_default_on_and_env_overrides(
         yaml.dump({**sample_config_dict, "control": {"connect": {"manual_flows_ttl_hours": 0}}})
     )
     with pytest.raises(ConfigError, match="manual_flows_ttl_hours"):
+        load_config(bad)
+
+
+def test_import_request_and_preview_cache_limits(
+    config_file: Path, tmp_path: Path, sample_config_dict: dict[str, Any]
+):
+    config = load_config(config_file)
+    assert config.ingest.max_import_request_bytes is None
+    assert config.ingest.import_request_cap_bytes == 2 * config.ingest.max_spec_bytes
+    assert config.catalog.preview_cache_ttl_seconds == 300
+    assert config.catalog.preview_cache_max_entries == 16
+    assert config.catalog.preview_cache_failure_ttl_seconds == 30
+    # The default import cap tracks a raised per-spec cap.
+    assert IngestConfig(max_spec_bytes=1000).import_request_cap_bytes == 2000
+
+    env = {
+        "JENTIC__INGEST__MAX_IMPORT_REQUEST_BYTES": "1500",
+        "JENTIC__CATALOG__PREVIEW_CACHE_TTL_SECONDS": "0",
+        "JENTIC__CATALOG__PREVIEW_CACHE_MAX_ENTRIES": "4",
+        "JENTIC__CATALOG__PREVIEW_CACHE_FAILURE_TTL_SECONDS": "0",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.ingest.import_request_cap_bytes == 1500
+    assert config.catalog.preview_cache_ttl_seconds == 0
+    assert config.catalog.preview_cache_max_entries == 4
+    assert config.catalog.preview_cache_failure_ttl_seconds == 0
+
+    from_yaml = tmp_path / "limits.yaml"
+    from_yaml.write_text(
+        yaml.dump({**sample_config_dict, "ingest": {"max_import_request_bytes": 4096}})
+    )
+    assert load_config(from_yaml).ingest.import_request_cap_bytes == 4096
+
+    bad = tmp_path / "bad-limits.yaml"
+    bad.write_text(yaml.dump({**sample_config_dict, "ingest": {"max_import_request_bytes": 0}}))
+    with pytest.raises(ConfigError, match="max_import_request_bytes"):
         load_config(bad)
 
 

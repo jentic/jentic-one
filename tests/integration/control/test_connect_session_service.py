@@ -104,6 +104,7 @@ from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.web.deps import resolve_identity
 from jentic_one.wiring import InProcessCatalogAutoImporter
+from tests.harness.http_doubles import spec_client
 
 pytestmark = pytest.mark.integration
 
@@ -406,19 +407,9 @@ async def clean_registry_and_bindings(
     await _truncate()
 
 
-def _spec_client() -> AsyncMock:
+def _spec_client() -> AsyncClient:
     """An httpx.AsyncClient double serving the test spec for any GET."""
-    body = _TESTDEV_OPENAPI.encode()
-    response = AsyncMock()
-    response.status_code = 200
-    response.text = _TESTDEV_OPENAPI
-    response.content = body
-    response.headers = {"content-length": str(len(body))}
-    client = AsyncMock()
-    client.get = AsyncMock(return_value=response)
-    client.__aenter__ = AsyncMock(return_value=client)
-    client.__aexit__ = AsyncMock(return_value=None)
-    return client
+    return spec_client(_TESTDEV_OPENAPI)
 
 
 async def _import_testdev_from_catalog(ctx: Context, *, name: str | None = None) -> Api:

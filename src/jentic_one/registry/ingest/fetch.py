@@ -4,7 +4,7 @@ import hashlib
 import json
 import math
 from typing import Annotated, Any, Literal
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
 import httpx
 import yaml
@@ -13,6 +13,13 @@ from pydantic import BaseModel, Field
 from jentic_one.registry.ingest.api_identifier import resolve_api_identifier
 from jentic_one.registry.ingest.errors import IngestStageError
 from jentic_one.registry.ingest.models import IngestSpecification, SpecType
+from jentic_one.shared.bounded_read import (
+    ResponseTooLargeError,
+    UndecodableBodyError,
+    decode_body,
+    follow_redirects,
+    read_capped_body,
+)
 from jentic_one.shared.config import IngestConfig
 from jentic_one.shared.egress import build_pinned_transport
 from jentic_one.shared.models import ApiRevisionSourceType
@@ -366,43 +373,39 @@ async def load_specification(
                 follow_redirects=False,
                 transport=build_pinned_transport(cfg.egress),
             ) as client:
-                resp = await client.get(validated_url)
-                for _ in range(cfg.max_redirects):
-                    if resp.status_code < 300 or resp.status_code >= 400:
-                        break
-                    location = resp.headers.get("location")
-                    if not location:
-                        break
-                    # Resolve relative Location headers against the current URL.
-                    next_url = urljoin(validated_url, location)
-                    try:
-                        validated_url = await validate_upstream_url_async(next_url, cfg.egress)
-                    except ValueError as exc:
-                        raise IngestStageError(f"unsafe URL rejected: {exc}") from exc
-                    resp = await client.get(validated_url)
-                else:
-                    if 300 <= resp.status_code < 400:
-                        raise IngestStageError("too many redirects")
+                # Relative servers resolve against where the document was
+                # retrieved, so keep the URL the redirect chain ended on.
+                resp, validated_url = await follow_redirects(
+                    client,
+                    validated_url,
+                    headers=None,
+                    egress=cfg.egress,
+                    max_redirects=cfg.max_redirects,
+                    on_unsafe=lambda exc: IngestStageError(f"unsafe URL rejected: {exc}"),
+                    on_too_many=lambda: IngestStageError("too many redirects"),
+                )
+                try:
+                    if resp.status_code < 200 or resp.status_code >= 300:
+                        raise IngestStageError(
+                            f"non-success status {resp.status_code} fetching {source.url}"
+                        )
+                    body = await read_capped_body(resp, max_bytes)
+                finally:
+                    await resp.aclose()
         except IngestStageError:
             raise
+        except ResponseTooLargeError as exc:
+            raise IngestStageError(f"response exceeds {size_limit_label} size limit") from exc
+        except UndecodableBodyError as exc:
+            raise IngestStageError(f"failed to fetch URL: {exc}") from exc
         except httpx.HTTPError as exc:
             raise IngestStageError(f"failed to fetch URL: {exc}") from exc
-
-        if resp.status_code < 200 or resp.status_code >= 300:
-            raise IngestStageError(f"non-success status {resp.status_code} fetching {source.url}")
-
-        content_length = resp.headers.get("content-length")
-        if content_length and content_length.isdigit() and int(content_length) > max_bytes:
-            raise IngestStageError(f"response exceeds {size_limit_label} size limit")
-
-        if len(resp.content) > max_bytes:
-            raise IngestStageError(f"response exceeds {size_limit_label} size limit")
 
         url_path = urlparse(source.url).path
         url_filename = url_path.rsplit("/", 1)[-1] if "/" in url_path else None
 
-        content = parse_spec_content(resp.text, filename=url_filename)
-        sha = hashlib.sha256(resp.content).hexdigest()
+        content = parse_spec_content(decode_body(resp, body), filename=url_filename)
+        sha = hashlib.sha256(body).hexdigest()
         source_type = ApiRevisionSourceType.URL
         source_url = source.url
         retrieval_url = validated_url
