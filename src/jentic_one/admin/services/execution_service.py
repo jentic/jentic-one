@@ -38,17 +38,13 @@ class ExecutionService:
         limit: int = 25,
     ) -> Page[ExecutionView]:
         access_filters = build_access_filters(identity, ExecutionRecord)
-        cursor_ts: Any = None
-        cursor_id: str | None = None
-        if cursor is not None:
-            cursor_ts, cursor_id = decode_cursor(cursor, id_kind="str")
+        cursor_key = decode_cursor(cursor, id_kind="str") if cursor is not None else None
 
         async with self._ctx.admin_db.session() as session:
             records = await ExecutionRecordRepository.list_all(
                 session,
                 limit=limit + 1,
-                cursor_ts=cursor_ts,
-                cursor_id=cursor_id,
+                cursor=cursor_key,
                 trace_id=filter.trace_id,
                 status=filter.status,
                 from_=filter.from_,

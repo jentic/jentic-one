@@ -119,17 +119,13 @@ class OperationService:
         name: str,
         version: str,
     ) -> OperationSummaryPage:
-        cursor_created_at = None
-        cursor_id: str | None = None
-        if cursor is not None:
-            cursor_created_at, cursor_id = decode_cursor(cursor, id_kind="str")
+        cursor_key = decode_cursor(cursor, id_kind="str") if cursor is not None else None
 
         rows = await OperationRepository.list_page_for_revision(
             session,
             revision_id=revision.id,
             limit=limit + 1,
-            cursor_created_at=cursor_created_at,
-            cursor_id=cursor_id,
+            cursor=cursor_key,
         )
 
         has_more = len(rows) > limit

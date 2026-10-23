@@ -61,17 +61,13 @@ class ActorService:
         (a non-admin lists only themselves) and agents by
         ``build_access_filters(identity, Agent)``. ``org:admin`` lists everyone.
         """
-        cursor_dt = None
-        cursor_id: str | None = None
-        if cursor is not None:
-            cursor_dt, cursor_id = decode_cursor(cursor, id_kind="str")
+        cursor_key = decode_cursor(cursor, id_kind="str") if cursor is not None else None
 
         async with self._ctx.admin_db.session() as session:
             rows = await ActorDirectoryRepository.list_all(
                 session,
                 limit=limit + 1,
-                cursor_ts=cursor_dt,
-                cursor_id=cursor_id,
+                cursor=cursor_key,
                 agent_filters=build_access_filters(identity, Agent),
                 user_filters=build_access_filters(identity, User),
             )

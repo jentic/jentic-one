@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.admin.core.schema.held_executions import HeldExecution
-from jentic_one.shared.db.keyset import desc_keyset_predicate
+from jentic_one.shared.db.keyset import apply_desc_keyset
 from jentic_one.shared.db.utils import db_now
 
 _PENDING = "pending"
@@ -45,8 +45,7 @@ class HeldExecutionRepository:
         state: str | None = None,
         agent_id: str | None = None,
         limit: int = 25,
-        cursor_created_at: datetime | None = None,
-        cursor_id: str | None = None,
+        cursor: tuple[datetime, str] | None = None,
         filters: Sequence[ColumnElement[bool]] | None = None,
     ) -> list[HeldExecution]:
         """Approvals newest first, keyset-paginated on ``(created_at, id)``."""
@@ -57,12 +56,7 @@ class HeldExecutionRepository:
             stmt = stmt.where(HeldExecution.state == state)
         if agent_id is not None:
             stmt = stmt.where(HeldExecution.agent_id == agent_id)
-        if cursor_created_at is not None and cursor_id is not None:
-            stmt = stmt.where(
-                desc_keyset_predicate(
-                    HeldExecution.created_at, HeldExecution.id, cursor_created_at, cursor_id
-                )
-            )
+        stmt = apply_desc_keyset(stmt, HeldExecution.created_at, HeldExecution.id, cursor)
         stmt = stmt.order_by(HeldExecution.created_at.desc(), HeldExecution.id.desc())
         result = await session.execute(stmt.limit(limit))
         return list(result.scalars().all())

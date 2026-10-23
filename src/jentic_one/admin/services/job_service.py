@@ -55,17 +55,13 @@ class JobService:
         limit: int = 25,
     ) -> Page[JobView]:
         access_filters = build_access_filters(identity, Job)
-        cursor_dt = None
-        cursor_id: str | None = None
-        if cursor is not None:
-            cursor_dt, cursor_id = decode_cursor(cursor, id_kind="str")
+        cursor_key = decode_cursor(cursor, id_kind="str") if cursor is not None else None
 
         async with self._ctx.admin_db.session() as session:
             jobs = await JobRepository.list_all(
                 session,
                 limit=limit + 1,
-                cursor=cursor_dt,
-                cursor_id=cursor_id,
+                cursor=cursor_key,
                 kind=filter.kind,
                 status=filter.status,
                 since=filter.from_,

@@ -20,7 +20,6 @@ from jentic_one.registry.web.schemas.notes import (
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
-from jentic_one.shared.pagination import InvalidCursorError
 from jentic_one.shared.web import get_ctx, get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.links import build_link
@@ -186,23 +185,17 @@ async def list_notes(
     Returns the caller's own notes; a user also sees the notes of agents they own.
     """
     svc = NoteService(ctx)
-    try:
-        page = await svc.list_page(
-            limit=limit,
-            cursor=cursor,
-            api=api,
-            operation_id=operation_id,
-            execution_id=execution_id,
-            credential_id=credential_id,
-            type=type,
-            created_by=created_by,
-            identity=identity,
-        )
-    except InvalidCursorError:
-        raise BadRequest(
-            detail="Invalid pagination cursor",
-            instance=request.url.path,
-        ) from None
+    page = await svc.list_page(
+        limit=limit,
+        cursor=cursor,
+        api=api,
+        operation_id=operation_id,
+        execution_id=execution_id,
+        credential_id=credential_id,
+        type=type,
+        created_by=created_by,
+        identity=identity,
+    )
 
     data = [_build_response(request, item) for item in page.data]
     resp = NoteListResponse(data=data, has_more=page.has_more, next_cursor=page.next_cursor)

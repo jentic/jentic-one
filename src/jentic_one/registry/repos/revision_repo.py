@@ -16,7 +16,7 @@ from sqlalchemy.orm import selectinload
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.shared.db.errors import DatabaseIntegrityError
-from jentic_one.shared.db.keyset import desc_keyset_predicate
+from jentic_one.shared.db.keyset import apply_desc_keyset
 from jentic_one.shared.models import ApiRevisionSourceType, ApiRevisionState
 
 # The unique constraints whose violation means "this revision already exists".
@@ -462,8 +462,7 @@ class ApiRevisionRepository:
         *,
         api_id: uuid.UUID,
         limit: int = 50,
-        cursor_created_at: datetime | None = None,
-        cursor_id: str | None = None,
+        cursor: tuple[datetime, str] | None = None,
         states: list[str] | None = None,
     ) -> list[ApiRevision]:
         stmt = (
@@ -472,12 +471,7 @@ class ApiRevisionRepository:
             .order_by(ApiRevision.created_at.desc(), ApiRevision.id.desc())
             .limit(limit)
         )
-        if cursor_created_at is not None and cursor_id is not None:
-            stmt = stmt.where(
-                desc_keyset_predicate(
-                    ApiRevision.created_at, ApiRevision.id, cursor_created_at, cursor_id
-                )
-            )
+        stmt = apply_desc_keyset(stmt, ApiRevision.created_at, ApiRevision.id, cursor)
         if states:
             stmt = stmt.where(ApiRevision.state.in_(states))
         result = await session.execute(stmt)

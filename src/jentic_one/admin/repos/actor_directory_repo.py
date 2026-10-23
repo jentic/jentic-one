@@ -13,7 +13,7 @@ from sqlalchemy.sql.expression import CompoundSelect
 
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.users import User
-from jentic_one.shared.db.keyset import desc_keyset_predicate
+from jentic_one.shared.db.keyset import apply_desc_keyset
 from jentic_one.shared.models import ActorStatus, ActorType
 
 
@@ -58,18 +58,14 @@ class ActorDirectoryRepository:
         session: AsyncSession,
         *,
         limit: int = 1000,
-        cursor_ts: datetime | None = None,
-        cursor_id: str | None = None,
+        cursor: tuple[datetime, str] | None = None,
         agent_filters: Sequence[ColumnElement[bool]] = (),
         user_filters: Sequence[ColumnElement[bool]] = (),
     ) -> list[Any]:
         subq = _build_union(agent_filters, user_filters).subquery()
         stmt = select(subq).order_by(subq.c.created_at.desc(), subq.c.id.desc()).limit(limit)
 
-        if cursor_ts is not None and cursor_id is not None:
-            stmt = stmt.where(
-                desc_keyset_predicate(subq.c.created_at, subq.c.id, cursor_ts, cursor_id)
-            )
+        stmt = apply_desc_keyset(stmt, subq.c.created_at, subq.c.id, cursor)
 
         result = await session.execute(stmt)
         return list(result.all())

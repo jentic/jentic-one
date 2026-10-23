@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 import pytest
 
 from jentic_one.shared.pagination import (
+    MAX_CURSOR_LENGTH,
     CursorIdKind,
     InvalidCursorError,
     InvalidSearchCursorError,
@@ -181,6 +182,8 @@ _MALFORMED_CURSORS = [
     pytest.param(base64.b64encode(b"\xff\xfe").decode(), id="not-utf8"),
     pytest.param("not-valid-base64!!!", id="not-base64"),
     pytest.param("", id="empty"),
+    pytest.param(_b64("[" * 100_000), id="deeply-nested"),
+    pytest.param(_b64('{"id": "x", "t": "' + "a" * 2000 + '"}'), id="oversized"),
 ]
 
 _DECODERS: list[Callable[[str], object]] = [
@@ -221,3 +224,18 @@ def test_timestamp_cursor_rejects_numeric_timestamp(id_kind: CursorIdKind) -> No
     """``{"t": 1, "id": "x"}`` is a 400, not a ``TypeError`` from ``fromisoformat``."""
     with pytest.raises(InvalidCursorError):
         decode_cursor(_b64('{"t": 1, "id": "x"}'), id_kind=id_kind)
+
+
+@pytest.mark.parametrize("raw", ['{"id": "x", "s": true}', '{"id": "x", "s": "0.5"}'])
+def test_catalog_cursor_rejects_boolean_or_string_score(raw: str) -> None:
+    with pytest.raises(InvalidCursorError):
+        decode_catalog_cursor(_b64(raw))
+
+
+def test_deeply_nested_cursor_under_the_cap_is_rejected() -> None:
+    """A nested payload under the length cap is still an InvalidCursorError, not a 500."""
+    nested = _b64("[" * 700)
+    assert len(nested) <= MAX_CURSOR_LENGTH
+    for decode in _DECODERS:
+        with pytest.raises(InvalidCursorError):
+            decode(nested)

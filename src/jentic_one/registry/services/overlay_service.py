@@ -467,10 +467,7 @@ class OverlayService:
         cursor: str | None = None,
         status: str | None = None,
     ) -> OverlayPage:
-        cursor_created_at: datetime | None = None
-        cursor_id: str | None = None
-        if cursor is not None:
-            cursor_created_at, cursor_id = decode_cursor(cursor, id_kind="str")
+        cursor_key = decode_cursor(cursor, id_kind="str") if cursor is not None else None
 
         api = await self._resolve_api(vendor, name, version)
 
@@ -479,8 +476,7 @@ class OverlayService:
                 session,
                 api_id=api.id,
                 limit=limit + 1,
-                cursor_created_at=cursor_created_at,
-                cursor_id=cursor_id,
+                cursor=cursor_key,
                 status=status,
             )
 

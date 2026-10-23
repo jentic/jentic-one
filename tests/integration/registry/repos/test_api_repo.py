@@ -219,8 +219,7 @@ async def test_list_page_cursor_pagination(
         page2 = await ApiRepository.list_page(
             session,
             limit=2,
-            cursor_created_at=last.created_at,
-            cursor_id=str(last.id),
+            cursor=(last.created_at, str(last.id)),
         )
 
     assert len(page2) == 1
