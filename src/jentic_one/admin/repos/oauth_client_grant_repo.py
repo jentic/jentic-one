@@ -5,12 +5,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
+from jentic_one.shared.db.keyset import desc_keyset_predicate
 from jentic_one.shared.models.actors import ActorStatus
 from jentic_one.shared.models.oauth_clients import OAuthGrantStatus
 
@@ -156,12 +157,8 @@ class OAuthClientGrantRepository:
             stmt = stmt.where(OAuthClientGrant.status == status)
         if cursor_created_at is not None and cursor_id is not None:
             stmt = stmt.where(
-                or_(
-                    OAuthClientGrant.created_at < cursor_created_at,
-                    and_(
-                        OAuthClientGrant.created_at == cursor_created_at,
-                        OAuthClientGrant.id < cursor_id,
-                    ),
+                desc_keyset_predicate(
+                    OAuthClientGrant.created_at, OAuthClientGrant.id, cursor_created_at, cursor_id
                 )
             )
         for f in filters or ():

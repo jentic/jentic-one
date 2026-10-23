@@ -5,11 +5,12 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import datetime
 
-from sqlalchemy import literal, select, tuple_
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
+from jentic_one.shared.db.keyset import desc_keyset_predicate
 
 
 class ExecutionRecordRepository:
@@ -106,11 +107,10 @@ class ExecutionRecordRepository:
         )
         if cursor_ts is not None and cursor_id is not None:
             stmt = stmt.where(
-                tuple_(ExecutionRecord.started_at, ExecutionRecord.id)
-                < tuple_(literal(cursor_ts), literal(cursor_id))
+                desc_keyset_predicate(
+                    ExecutionRecord.started_at, ExecutionRecord.id, cursor_ts, cursor_id
+                )
             )
-        elif cursor_ts is not None:
-            stmt = stmt.where(ExecutionRecord.started_at < cursor_ts)
         if trace_id is not None:
             stmt = stmt.where(ExecutionRecord.trace_id == trace_id)
         if status is not None:

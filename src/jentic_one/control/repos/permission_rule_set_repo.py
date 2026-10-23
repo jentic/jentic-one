@@ -16,6 +16,7 @@ from jentic_one.control.core.schema.permission_rule_sets import (
     PermissionRuleSetRule,
 )
 from jentic_one.shared.db.ids import generate_ksuid
+from jentic_one.shared.db.keyset import apply_desc_keyset
 
 
 class PermissionRuleSetRepository:
@@ -86,12 +87,7 @@ class PermissionRuleSetRepository:
         stmt = select(PermissionRuleSet).order_by(
             PermissionRuleSet.created_at.desc(), PermissionRuleSet.id.desc()
         )
-        if cursor is not None:
-            cursor_ts, cursor_id = cursor
-            stmt = stmt.where(
-                (PermissionRuleSet.created_at < cursor_ts)
-                | ((PermissionRuleSet.created_at == cursor_ts) & (PermissionRuleSet.id < cursor_id))
-            )
+        stmt = apply_desc_keyset(stmt, PermissionRuleSet.created_at, PermissionRuleSet.id, cursor)
         result = await session.execute(stmt.limit(limit))
         return list(result.scalars().all())
 

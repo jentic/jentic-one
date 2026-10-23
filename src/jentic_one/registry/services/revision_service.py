@@ -106,7 +106,7 @@ class RevisionService:
         cursor_created_at = None
         cursor_id: str | None = None
         if cursor is not None:
-            cursor_created_at, cursor_id = decode_cursor(cursor)
+            cursor_created_at, cursor_id = decode_cursor(cursor, id_kind="uuid")
 
         async with self._ctx.registry_db.session() as session:
             api = await ApiRepository.get_by_identifier(session, vendor, name, version)

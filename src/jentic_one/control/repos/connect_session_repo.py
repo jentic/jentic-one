@@ -15,6 +15,7 @@ from jentic_one.control.core.schema.connect_sessions import (
     TARGET_KIND_VENDOR,
     ConnectSession,
 )
+from jentic_one.shared.db.keyset import apply_desc_keyset
 
 # The non-terminal states. A session outside these is frozen — no transition
 # (including the terminal sweep) may touch it. ``awaiting_app`` is an OAuth
@@ -109,12 +110,7 @@ class ConnectSessionRepository:
             stmt = stmt.where(ConnectSession.state == state)
         if vendor is not None:
             stmt = stmt.where(ConnectSession.vendor == vendor)
-        if cursor is not None:
-            cursor_ts, cursor_id = cursor
-            stmt = stmt.where(
-                (ConnectSession.created_at < cursor_ts)
-                | ((ConnectSession.created_at == cursor_ts) & (ConnectSession.id < cursor_id))
-            )
+        stmt = apply_desc_keyset(stmt, ConnectSession.created_at, ConnectSession.id, cursor)
         if filters is not None:
             for f in filters:
                 stmt = stmt.where(f)

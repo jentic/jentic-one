@@ -6,13 +6,14 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, String, case, literal, select, tuple_, union_all
+from sqlalchemy import Boolean, String, case, literal, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.sql.expression import CompoundSelect
 
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.users import User
+from jentic_one.shared.db.keyset import desc_keyset_predicate
 from jentic_one.shared.models import ActorStatus, ActorType
 
 
@@ -67,11 +68,8 @@ class ActorDirectoryRepository:
 
         if cursor_ts is not None and cursor_id is not None:
             stmt = stmt.where(
-                tuple_(subq.c.created_at, subq.c.id)
-                < tuple_(literal(cursor_ts), literal(cursor_id))
+                desc_keyset_predicate(subq.c.created_at, subq.c.id, cursor_ts, cursor_id)
             )
-        elif cursor_ts is not None:
-            stmt = stmt.where(subq.c.created_at < cursor_ts)
 
         result = await session.execute(stmt)
         return list(result.all())

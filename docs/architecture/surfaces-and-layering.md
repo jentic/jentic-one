@@ -10,7 +10,7 @@ Each surface is a package that owns its routes, services, and data access:
 
 ```
 src/jentic_one/
-├── registry/   # API catalog        (core/ ingest/ repos/ scoping/ services/ web/ pagination.py)
+├── registry/   # API catalog        (core/ ingest/ repos/ scoping/ services/ web/)
 ├── control/    # credentials layer  (core/ repos/ scoping/ services/ web/)
 ├── admin/      # operators & ops    (core/ repos/ scoping/ services/ web/)
 ├── auth/       # identity & tokens  (core/ repos/ services/ web/)

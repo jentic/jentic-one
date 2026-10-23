@@ -29,7 +29,7 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import EgressConfig, resolved_control_egress
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.audit import AuditReason
-from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
+from jentic_one.shared.pagination import decode_cursor, encode_cursor
 from jentic_one.shared.url_validation import validate_upstream_url_async
 
 
@@ -164,7 +164,7 @@ class OAuthAppRegistrationService:
         limit: int = 50,
     ) -> tuple[list[OAuthAppRegistrationView], bool, str | None]:
         """List registrations. Returns ``(data, has_more, next_cursor)``."""
-        decoded_cursor = decode_cursor_str(cursor) if cursor is not None else None
+        decoded_cursor = decode_cursor(cursor, id_kind="str") if cursor is not None else None
         async with self._ctx.control_db.session() as session:
             rows = await OAuthAppRegistrationRepository.list_page(
                 session,

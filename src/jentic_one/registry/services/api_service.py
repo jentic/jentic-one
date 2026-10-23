@@ -158,7 +158,7 @@ class ApiService:
         cursor_created_at = None
         cursor_id: str | None = None
         if cursor is not None:
-            cursor_created_at, cursor_id = decode_cursor(cursor)
+            cursor_created_at, cursor_id = decode_cursor(cursor, id_kind="uuid")
 
         items: list[ApiPageItem] = []
         next_cursor: str | None = None

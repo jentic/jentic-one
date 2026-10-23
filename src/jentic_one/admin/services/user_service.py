@@ -16,7 +16,6 @@ from jentic_one.admin.repos import (
 )
 from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.admin.services._support.actor_jobs import cancel_queued_executions_for_actor
-from jentic_one.admin.services._support.pagination import Page, decode_cursor, encode_cursor
 from jentic_one.admin.services._support.user_management import (
     ensure_can_change_email,
     ensure_can_manage,
@@ -44,6 +43,7 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import InviteState
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
+from jentic_one.shared.pagination import Page, decode_cursor, encode_cursor
 
 
 def _tombstone_email(user_id: str) -> str:
@@ -119,16 +119,14 @@ class UserService:
         ``invite_state`` filters on the derived state, so ``expired`` matches
         pending users whose invite has lapsed and ``pending`` excludes them.
         """
-        cursor_dt = None
-        if cursor is not None:
-            cursor_dt, _ = decode_cursor(cursor)
+        cursor_key = decode_cursor(cursor, id_kind="str") if cursor is not None else None
 
         access_filters = build_access_filters(identity, User)
         async with self._ctx.admin_db.session() as session:
             users = await UserRepository.list_all(
                 session,
                 limit=limit + 1,
-                cursor=cursor_dt,
+                cursor=cursor_key,
                 invite_state=invite_state,
                 filters=access_filters,
             )

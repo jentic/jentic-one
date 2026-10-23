@@ -20,7 +20,7 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import OAUTH_CLIENTS_WRITE, ORG_ADMIN
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.oauth_clients import OAuthGrantStatus
-from jentic_one.shared.pagination import Page, decode_cursor_str, encode_cursor
+from jentic_one.shared.pagination import Page, decode_cursor, encode_cursor
 
 #: Permissions that make a non-owner an admin for grant WRITE operations
 #: (``:revoke``). Broader than the usual ``ORG_ADMIN``-only idiom on purpose:
@@ -98,7 +98,7 @@ class OAuthGrantAdminService:
         cursor_dt = None
         cursor_id = None
         if cursor is not None:
-            cursor_dt, cursor_id = decode_cursor_str(cursor)
+            cursor_dt, cursor_id = decode_cursor(cursor, id_kind="str")
 
         access_filters = build_access_filters(identity, OAuthClientGrant)
         async with self._ctx.admin_db.session() as session:

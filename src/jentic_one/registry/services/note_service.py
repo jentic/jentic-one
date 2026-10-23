@@ -29,7 +29,7 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import ORG_ADMIN
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
-from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
+from jentic_one.shared.pagination import decode_cursor, encode_cursor
 
 logger = structlog.get_logger(__name__)
 
@@ -204,7 +204,7 @@ class NoteService:
         cursor_created_at: datetime | None = None
         cursor_id: str | None = None
         if cursor is not None:
-            cursor_created_at, cursor_id = decode_cursor_str(cursor)
+            cursor_created_at, cursor_id = decode_cursor(cursor, id_kind="str")
 
         api_ids: list[uuid.UUID] | None = None
         if api is not None:

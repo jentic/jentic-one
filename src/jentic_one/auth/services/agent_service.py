@@ -72,7 +72,7 @@ from jentic_one.shared.events import (
 from jentic_one.shared.jobs.hold import withdraw_pending_for_agent
 from jentic_one.shared.models import ActorStatus, ActorType, ActorVerb
 from jentic_one.shared.models.events import EventSeverity, EventType
-from jentic_one.shared.pagination import Page, decode_cursor_str, encode_cursor
+from jentic_one.shared.pagination import Page, decode_cursor, encode_cursor
 from jentic_one.shared.schemas import ServedApiRef
 
 logger = structlog.get_logger(__name__)
@@ -204,23 +204,21 @@ class AgentService:
         cursor: str | None = None,
         identity: Identity,
     ) -> Page[AgentView]:
-        cursor_dt = None
-        if cursor is not None:
-            cursor_dt, _ = decode_cursor_str(cursor)
+        cursor_key = decode_cursor(cursor, id_kind="str") if cursor is not None else None
 
         access_filters = build_access_filters(identity, Agent)
 
         async with self._ctx.admin_db.session() as session:
             if owner_id is not None:
                 agents = await AgentRepository.list_by_owner(
-                    session, owner_id, limit=limit + 1, cursor=cursor_dt, filters=access_filters
+                    session, owner_id, limit=limit + 1, cursor=cursor_key, filters=access_filters
                 )
             else:
                 agents = await AgentRepository.list_all(
                     session,
                     limit=limit + 1,
                     status=status,
-                    cursor=cursor_dt,
+                    cursor=cursor_key,
                     filters=access_filters,
                 )
             has_more = len(agents) > limit

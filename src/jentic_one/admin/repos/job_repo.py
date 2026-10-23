@@ -5,13 +5,14 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import datetime
 
-from sqlalchemy import and_, exists, func, or_, select, update
+from sqlalchemy import and_, exists, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.services.errors import JobNotFoundError
+from jentic_one.shared.db.keyset import desc_keyset_predicate
 from jentic_one.shared.models import JobKind, JobStatus
 
 
@@ -94,16 +95,8 @@ class JobRepository:
         filters: Sequence[ColumnElement[bool]] | None = None,
     ) -> list[Job]:
         stmt = select(Job).order_by(Job.created_at.desc(), Job.id.desc()).limit(limit)
-        if cursor is not None:
-            if cursor_id is not None:
-                stmt = stmt.where(
-                    or_(
-                        Job.created_at < cursor,
-                        and_(Job.created_at == cursor, Job.id < cursor_id),
-                    )
-                )
-            else:
-                stmt = stmt.where(Job.created_at < cursor)
+        if cursor is not None and cursor_id is not None:
+            stmt = stmt.where(desc_keyset_predicate(Job.created_at, Job.id, cursor, cursor_id))
         if kind is not None:
             stmt = stmt.where(Job.kind == kind)
         if status:

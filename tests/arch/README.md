@@ -53,6 +53,7 @@ vendored fallback under [`vendored/`](vendored/) guarded by
 
 - [`test_orm_conventions.py`](test_orm_conventions.py) — ORM model conventions
 - [`test_no_backref.py`](test_no_backref.py) — no SQLAlchemy `backref`
+- [`test_keyset_helper.py`](test_keyset_helper.py) — keyset pagination predicates come from `shared/db/keyset.py`, never hand-written
 - [`test_no_direct_db.py`](test_no_direct_db.py) — model modules never import DB internals directly
 - [`test_no_manual_commit.py`](test_no_manual_commit.py) — no production `session.commit()`/`rollback()`
 - [`test_migration_single_head.py`](test_migration_single_head.py) — exactly one alembic head per migration tree
