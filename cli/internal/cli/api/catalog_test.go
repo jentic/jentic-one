@@ -400,17 +400,17 @@ func TestCatalogFilterCycle(t *testing.T) {
 }
 
 func TestCatalogBrowserListRow(t *testing.T) {
-	m := &catalogBrowser{
-		entries: []catalogEntry{
+	m := &catalogBrowser{listBrowser: listBrowser[catalogEntry]{
+		items: []catalogEntry{
 			{APIID: "stripe.com", Registered: true},
 			{APIID: "slack.com", Registered: false},
 		},
 		cursor: 0,
-	}
-	if row := m.listRow(0); !strings.Contains(row, theme.SelectOn) || !strings.Contains(row, "stripe.com") {
+	}}
+	if row := m.catalogRow(0); !strings.Contains(row, theme.SelectOn) || !strings.Contains(row, "stripe.com") {
 		t.Errorf("registered row = %q", row)
 	}
-	if row := m.listRow(1); !strings.Contains(row, theme.SelectOff) || !strings.Contains(row, "slack.com") {
+	if row := m.catalogRow(1); !strings.Contains(row, theme.SelectOff) || !strings.Contains(row, "slack.com") {
 		t.Errorf("unregistered row = %q", row)
 	}
 }
@@ -453,11 +453,10 @@ func TestCatalogBrowserRefreshForbidden(t *testing.T) {
 
 func TestCatalogBrowserBackPeelsLevels(t *testing.T) {
 	m := &catalogBrowser{
-		entries:    []catalogEntry{{APIID: "acme.com"}},
-		previews:   map[string]*catalogPreview{"acme.com": {}},
-		previewErr: map[string]string{},
-		query:      "pay",
-		filter:     filterRegistered,
+		listBrowser: listBrowser[catalogEntry]{items: []catalogEntry{{APIID: "acme.com"}}, query: "pay"},
+		previews:    map[string]*catalogPreview{"acme.com": {}},
+		previewErr:  map[string]string{},
+		filter:      filterRegistered,
 	}
 
 	// 1st back: collapse the open preview.

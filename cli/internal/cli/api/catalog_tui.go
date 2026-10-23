@@ -9,7 +9,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
@@ -49,47 +48,38 @@ func (a *app) runCatalogBrowser(ctx context.Context) error {
 		return err
 	}
 	m := &catalogBrowser{
+		listBrowser: listBrowser[catalogEntry]{
+			st:        theme.StylesFromContext(ctx),
+			themeName: theme.ThemeNameFromContext(ctx),
+			listWidth: catalogListColumn,
+			limit:     catalogBrowseLimit,
+			width:     90,
+			height:    24,
+			loading:   true,
+		},
 		ctx:        ctx,
 		client:     client,
-		st:         theme.StylesFromContext(ctx),
-		themeName:  theme.ThemeNameFromContext(ctx),
-		limit:      catalogBrowseLimit,
-		width:      90,
-		height:     24,
 		previews:   map[string]*catalogPreview{},
 		previewErr: map[string]string{},
-		loading:    true,
 	}
 	_, err = tea.NewProgram(m).Run()
 	return err
 }
 
+// catalogBrowser is the catalog's two-column browser: the shared list of
+// catalog entries (its query is the catalog search), plus the filter,
+// counters, operation previews and in-flight import/refresh.
 type catalogBrowser struct {
+	listBrowser[catalogEntry]
+
 	ctx    context.Context
 	client *catalogClient
-
-	// st is the palette-bound style set (resolved from ctx at construction);
-	// themeName the resolved theme name for the logo gradient, so the browser
-	// re-tints under --theme light/no-color like every other surface.
-	st        theme.Styles
-	themeName string
-
-	entries    []catalogEntry
-	cursor     int
-	top        int
-	nextCursor string
-	hasMore    bool
 
 	total      int
 	registered int
 	ageSeconds *int
 
-	query  string
 	filter catalogFilter
-	limit  int
-
-	searching   bool
-	searchInput string
 
 	previews       map[string]*catalogPreview
 	previewErr     map[string]string
@@ -97,13 +87,6 @@ type catalogBrowser struct {
 
 	importing  string
 	refreshing bool
-	status     string
-
-	loading bool
-	err     string
-
-	width, height int
-	done          bool
 }
 
 // ── messages ─────────────────────────────────────────────────────────────────
@@ -257,20 +240,11 @@ func (m *catalogBrowser) onPage(msg catPageMsg) (tea.Model, tea.Cmd) {
 		m.err = catalogListErr(msg.err).Error()
 		return m, nil
 	}
-	m.err = ""
 	res := msg.result
-	if msg.reset {
-		m.entries = res.Data
-		m.cursor = 0
-		m.top = 0
-	} else {
-		m.entries = append(m.entries, res.Data...)
-	}
+	m.applyPage(res.Data, msg.reset, res.HasMore, res.NextCursor)
 	m.total = res.CatalogTotal
 	m.registered = res.RegisteredCount
 	m.ageSeconds = res.ManifestAgeSeconds
-	m.hasMore = res.HasMore && res.NextCursor != ""
-	m.nextCursor = res.NextCursor
 	return m, nil
 }
 
@@ -283,12 +257,12 @@ func (m *catalogBrowser) onImport(msg catImportMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	// Mark the entry as imported and bump the counter.
-	for i := range m.entries {
-		if m.entries[i].APIID == msg.apiID {
-			if !m.entries[i].Registered {
+	for i := range m.items {
+		if m.items[i].APIID == msg.apiID {
+			if !m.items[i].Registered {
 				m.registered++
 			}
-			m.entries[i].Registered = true
+			m.items[i].Registered = true
 		}
 	}
 	m.status = m.st.Successf("imported %s (%d revision(s))", msg.apiID, len(msg.result.Revisions))
@@ -297,34 +271,14 @@ func (m *catalogBrowser) onImport(msg catImportMsg) (tea.Model, tea.Cmd) {
 
 func (m *catalogBrowser) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.searching {
-		return m.onSearchKey(msg)
+		return m, m.onSearchKey(msg, m.reload)
+	}
+	if cmd, ok := m.onListKey(msg, m.loadMore); ok {
+		return m, cmd
 	}
 	switch msg.String() {
-	case "ctrl+c", "q":
-		m.done = true
-		return m, tea.Quit
 	case "b", "esc":
 		return m.back()
-	case "up", "k":
-		if m.cursor > 0 {
-			m.cursor--
-		}
-		return m, nil
-	case "down", "j":
-		if m.cursor < len(m.entries)-1 {
-			m.cursor++
-		}
-		// Prefetch the next page as the cursor nears the end.
-		if m.hasMore && !m.loading && m.cursor >= len(m.entries)-3 {
-			m.loading = true
-			return m, m.loadPage(false)
-		}
-		return m, nil
-	case "/":
-		m.searching = true
-		m.searchInput = m.query
-		m.status = ""
-		return m, nil
 	case "f":
 		m.filter = m.filter.next()
 		m.loading = true
@@ -373,38 +327,11 @@ func (m *catalogBrowser) back() (tea.Model, tea.Cmd) {
 	return m, tea.Quit
 }
 
-func (m *catalogBrowser) onSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		m.searching = false
-		return m, nil
-	case "enter":
-		m.searching = false
-		m.query = strings.TrimSpace(m.searchInput)
-		m.loading = true
-		return m, m.loadPage(true)
-	case "backspace":
-		if m.searchInput != "" {
-			m.searchInput = m.searchInput[:len(m.searchInput)-1]
-		}
-		return m, nil
-	case "ctrl+c":
-		m.done = true
-		return m, tea.Quit
-	default:
-		if len(msg.Runes) > 0 {
-			m.searchInput += string(msg.Runes)
-		}
-		return m, nil
-	}
-}
+// reload re-reads the list from its first page.
+func (m *catalogBrowser) reload() tea.Cmd { return m.loadPage(true) }
 
-func (m *catalogBrowser) current() (catalogEntry, bool) {
-	if m.cursor < 0 || m.cursor >= len(m.entries) {
-		return catalogEntry{}, false
-	}
-	return m.entries[m.cursor], true
-}
+// loadMore reads the next page of the list.
+func (m *catalogBrowser) loadMore() tea.Cmd { return m.loadPage(false) }
 
 func (m *catalogBrowser) maybeLoadPreview() tea.Cmd {
 	e, ok := m.current()
@@ -439,46 +366,20 @@ func (m *catalogBrowser) maybeImport() tea.Cmd {
 // ── view ─────────────────────────────────────────────────────────────────────
 
 func (m *catalogBrowser) View() string {
-	if m.done {
-		return ""
-	}
-
-	var b strings.Builder
-	// Brand the full-screen browser: Init clears the screen, wiping the global
-	// PersistentPreRun banner, so the logo is redrawn here (flush top, one blank
-	// line beneath — the spacing used by every other branded surface).
-	b.WriteString(theme.LogoFor(m.themeName))
-	b.WriteByte('\n')
-	b.WriteString(m.st.Heading.Render("Catalog"))
-	b.WriteString(m.st.Dim.Render("  " + m.headerStatus()))
-	b.WriteByte('\n')
-	b.WriteString(m.st.Dim.Render(m.filterLine()))
-	b.WriteString("\n\n")
-
-	if m.err != "" {
-		b.WriteString(m.st.Error.Render(m.err) + "\n\n")
-		b.WriteString(m.hintLine())
-		return b.String()
-	}
-	if m.loading && len(m.entries) == 0 {
-		b.WriteString(m.st.Dim.Render("loading …") + "\n\n")
-		b.WriteString(m.hintLine())
-		return b.String()
-	}
-	if len(m.entries) == 0 {
-		b.WriteString(m.st.Dim.Render("no matching entries") + "\n\n")
-		b.WriteString(m.hintLine())
-		return b.String()
-	}
-
-	body := lipgloss.JoinHorizontal(lipgloss.Top, m.listColumn(), m.detailColumn())
-	b.WriteString(body)
-	b.WriteString("\n\n")
+	footer := m.hintLine()
 	if m.status != "" {
-		b.WriteString(m.status + "\n")
+		footer = m.status + "\n" + footer
 	}
-	b.WriteString(m.hintLine())
-	return b.String()
+	return m.view(listFrame{
+		title:  "Catalog",
+		header: m.headerStatus(),
+		filter: m.filterLine(),
+		empty:  "no matching entries",
+		hint:   m.hintLine(),
+		footer: footer,
+		row:    m.catalogRow,
+		detail: m.detailBody,
+	})
 }
 
 func (m *catalogBrowser) headerStatus() string {
@@ -500,35 +401,9 @@ func (m *catalogBrowser) filterLine() string {
 	return strings.Join(parts, "   ")
 }
 
-func (m *catalogBrowser) visibleRows() int {
-	return browserVisibleRows(m.height)
-}
-
-func (m *catalogBrowser) listColumn() string {
-	return renderListColumn(m.st, m.cursor, &m.top, m.visibleRows(), len(m.entries), catalogListColumn, m.hasMore, m.listRow)
-}
-
-func (m *catalogBrowser) listRow(i int) string {
-	e := m.entries[i]
-	glyph := m.st.Dim.Render(theme.SelectOff)
-	if e.Registered {
-		glyph = m.st.Success.Render(theme.SelectOn)
-	}
-	name := truncate(e.APIID, catalogListColumn-3)
-	if i == m.cursor {
-		return glyph + " " + m.st.Accent.Render(name)
-	}
-	return glyph + " " + lipgloss.NewStyle().Foreground(theme.White).Render(name)
-}
-
-func (m *catalogBrowser) detailColumn() string {
-	detail := m.detailBody()
-	return lipgloss.NewStyle().
-		BorderStyle(lipgloss.NormalBorder()).
-		BorderForeground(theme.Muted).
-		BorderLeft(true).
-		PaddingLeft(2).
-		Render(detail)
+func (m *catalogBrowser) catalogRow(i int) string {
+	e := m.items[i]
+	return m.listRow(i, e.Registered, e.APIID)
 }
 
 func (m *catalogBrowser) detailBody() string {
@@ -564,14 +439,6 @@ func (m *catalogBrowser) detailBody() string {
 		b.WriteString(m.st.Dim.Render("press o to preview operations · i to import"))
 	}
 	return b.String()
-}
-
-func (m *catalogBrowser) detailWidth() int {
-	w := m.width - catalogListColumn - 6
-	if w < 20 {
-		w = 20
-	}
-	return w
 }
 
 func (m *catalogBrowser) previewBlock(p *catalogPreview) string {
@@ -617,46 +484,4 @@ func (m *catalogBrowser) hintLine() string {
 		return m.st.Dim.Render("type to search · enter apply · esc cancel")
 	}
 	return m.st.Dim.Render("↑/↓ move · / search · f filter · r refresh · o preview · i import · b back · q quit")
-}
-
-// wrapLines word-wraps s to width-rune lines, collapsing whitespace, and caps
-// the result at maxLines (the final kept line gets an ellipsis if text remains).
-func wrapLines(s string, width, maxLines int) []string {
-	if width < 1 || maxLines < 1 {
-		return nil
-	}
-	var lines []string
-	var cur string
-	for _, w := range strings.Fields(s) {
-		switch {
-		case cur == "":
-			cur = w
-		case len([]rune(cur))+1+len([]rune(w)) <= width:
-			cur += " " + w
-		default:
-			lines = append(lines, cur)
-			cur = w
-		}
-	}
-	if cur != "" {
-		lines = append(lines, cur)
-	}
-	// Cap to maxLines, marking the final kept line when text overflows.
-	if len(lines) > maxLines {
-		lines = lines[:maxLines]
-		lines[maxLines-1] = truncate(lines[maxLines-1]+" …", width)
-	}
-	return lines
-}
-
-// truncate shortens s to n runes with a trailing ellipsis when it overflows.
-func truncate(s string, n int) string {
-	if n <= 1 {
-		return s
-	}
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return string(r[:n-1]) + "…"
 }

@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
 
@@ -44,44 +43,34 @@ func (a *app) runApisBrowser(ctx context.Context) error {
 		return err
 	}
 	m := &apisBrowser{
-		ctx:       ctx,
-		client:    client,
-		st:        theme.StylesFromContext(ctx),
-		themeName: theme.ThemeNameFromContext(ctx),
-		limit:     apisBrowseLimit,
-		width:     90,
-		height:    24,
-		ops:       map[string]*operationListResult{},
-		opsErr:    map[string]string{},
-		loading:   true,
+		listBrowser: listBrowser[registeredAPI]{
+			st:        theme.StylesFromContext(ctx),
+			themeName: theme.ThemeNameFromContext(ctx),
+			listWidth: apisListColumn,
+			limit:     apisBrowseLimit,
+			width:     90,
+			height:    24,
+			loading:   true,
+		},
+		ctx:    ctx,
+		client: client,
+		ops:    map[string]*operationListResult{},
+		opsErr: map[string]string{},
 	}
 	_, err = tea.NewProgram(m).Run()
 	return err
 }
 
+// apisBrowser is the APIs browser: the shared list of registered APIs (its
+// query is the vendor filter), their operation previews, and the revisions
+// drilldown with its lifecycle actions.
 type apisBrowser struct {
+	listBrowser[registeredAPI]
+
 	ctx    context.Context
 	client *apiClient
 
-	// st is the palette-bound style set (resolved from ctx at construction) and
-	// themeName the resolved theme name for the logo gradient, so the browser
-	// re-tints under --theme light/no-color.
-	st        theme.Styles
-	themeName string
-
-	view apisView
-
-	// APIs list
-	apis       []registeredAPI
-	cursor     int
-	top        int
-	nextCursor string
-	hasMore    bool
-	limit      int
-
-	vendor      string
-	searching   bool
-	searchInput string
+	page apisView
 
 	ops        map[string]*operationListResult
 	opsErr     map[string]string
@@ -99,14 +88,7 @@ type apisBrowser struct {
 	confirm       confirmKind
 	confirmTarget string
 
-	status string
-	busy   bool
-
-	loading bool
-	err     string
-
-	width, height int
-	done          bool
+	busy bool
 }
 
 // ── messages ─────────────────────────────────────────────────────────────────
@@ -137,7 +119,7 @@ type apisActionMsg struct {
 // ── commands ─────────────────────────────────────────────────────────────────
 
 func (m *apisBrowser) loadPage(reset bool) tea.Cmd {
-	params := apiListParams{Vendor: m.vendor, Limit: m.limit}
+	params := apiListParams{Vendor: m.query, Limit: m.limit}
 	if !reset {
 		params.Cursor = m.nextCursor
 	}
@@ -237,17 +219,7 @@ func (m *apisBrowser) onPage(msg apisPageMsg) (tea.Model, tea.Cmd) {
 		m.err = apisListErr(msg.err).Error()
 		return m, nil
 	}
-	m.err = ""
-	res := msg.result
-	if msg.reset {
-		m.apis = res.Data
-		m.cursor = 0
-		m.top = 0
-	} else {
-		m.apis = append(m.apis, res.Data...)
-	}
-	m.hasMore = res.HasMore && res.NextCursor != ""
-	m.nextCursor = res.NextCursor
+	m.applyPage(msg.result.Data, msg.reset, msg.result.HasMore, msg.result.NextCursor)
 	return m, nil
 }
 
@@ -280,7 +252,7 @@ func (m *apisBrowser) onAction(msg apisActionMsg) (tea.Model, tea.Cmd) {
 	m.status = m.st.Successf("%s", msg.verb)
 	if msg.back {
 		// The whole API is gone — drop back to a freshly reloaded list.
-		m.view = viewAPIs
+		m.page = viewAPIs
 		m.loading = true
 		return m, m.loadPage(true)
 	}
@@ -294,40 +266,21 @@ func (m *apisBrowser) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.onConfirmKey(msg)
 	}
 	if m.searching {
-		return m.onSearchKey(msg)
+		return m, m.onSearchKey(msg, m.reload)
 	}
-	if m.view == viewRevisions {
+	if m.page == viewRevisions {
 		return m.onRevisionsKey(msg)
 	}
 	return m.onAPIsKey(msg)
 }
 
 func (m *apisBrowser) onAPIsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if cmd, ok := m.onListKey(msg, m.loadMore); ok {
+		return m, cmd
+	}
 	switch msg.String() {
-	case "ctrl+c", "q":
-		m.done = true
-		return m, tea.Quit
 	case "b", "esc":
 		return m.back()
-	case "up", "k":
-		if m.cursor > 0 {
-			m.cursor--
-		}
-		return m, nil
-	case "down", "j":
-		if m.cursor < len(m.apis)-1 {
-			m.cursor++
-		}
-		if m.hasMore && !m.loading && m.cursor >= len(m.apis)-3 {
-			m.loading = true
-			return m, m.loadPage(false)
-		}
-		return m, nil
-	case "/":
-		m.searching = true
-		m.searchInput = m.vendor
-		m.status = ""
-		return m, nil
 	case "r":
 		m.loading = true
 		m.status = ""
@@ -353,7 +306,7 @@ func (m *apisBrowser) onRevisionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.done = true
 		return m, tea.Quit
 	case "b", "esc":
-		m.view = viewAPIs
+		m.page = viewAPIs
 		m.status = ""
 		return m, nil
 	case "up", "k":
@@ -443,7 +396,7 @@ func (m *apisBrowser) openRevisions() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	m.view = viewRevisions
+	m.page = viewRevisions
 	m.revAPI = api.API
 	m.revs = nil
 	m.revCursor = 0
@@ -466,8 +419,8 @@ func (m *apisBrowser) back() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
-	if m.vendor != "" {
-		m.vendor = ""
+	if m.query != "" {
+		m.query = ""
 		m.loading = true
 		m.status = ""
 		return m, m.loadPage(true)
@@ -476,38 +429,11 @@ func (m *apisBrowser) back() (tea.Model, tea.Cmd) {
 	return m, tea.Quit
 }
 
-func (m *apisBrowser) onSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		m.searching = false
-		return m, nil
-	case "enter":
-		m.searching = false
-		m.vendor = strings.TrimSpace(m.searchInput)
-		m.loading = true
-		return m, m.loadPage(true)
-	case "backspace":
-		if m.searchInput != "" {
-			m.searchInput = m.searchInput[:len(m.searchInput)-1]
-		}
-		return m, nil
-	case "ctrl+c":
-		m.done = true
-		return m, tea.Quit
-	default:
-		if len(msg.Runes) > 0 {
-			m.searchInput += string(msg.Runes)
-		}
-		return m, nil
-	}
-}
+// reload re-reads the APIs list from its first page.
+func (m *apisBrowser) reload() tea.Cmd { return m.loadPage(true) }
 
-func (m *apisBrowser) current() (registeredAPI, bool) {
-	if m.cursor < 0 || m.cursor >= len(m.apis) {
-		return registeredAPI{}, false
-	}
-	return m.apis[m.cursor], true
-}
+// loadMore reads the next page of the APIs list.
+func (m *apisBrowser) loadMore() tea.Cmd { return m.loadPage(false) }
 
 func (m *apisBrowser) currentRev() (apiRevision, bool) {
 	if m.revCursor < 0 || m.revCursor >= len(m.revs) {
@@ -536,44 +462,25 @@ func (m *apisBrowser) maybeLoadOps() tea.Cmd {
 // ── view ─────────────────────────────────────────────────────────────────────
 
 func (m *apisBrowser) View() string {
-	if m.done {
-		return ""
-	}
-	var b strings.Builder
-	b.WriteString(theme.LogoFor(m.themeName))
-	b.WriteByte('\n')
-
-	if m.view == viewRevisions {
+	if m.page == viewRevisions {
+		if m.done {
+			return ""
+		}
+		var b strings.Builder
+		b.WriteString(theme.LogoFor(m.themeName))
+		b.WriteByte('\n')
 		return m.revisionsView(&b)
 	}
-
-	b.WriteString(m.st.Heading.Render("APIs"))
-	b.WriteString(m.st.Dim.Render("  " + m.headerStatus()))
-	b.WriteByte('\n')
-	b.WriteString(m.st.Dim.Render(m.filterLine()))
-	b.WriteString("\n\n")
-
-	if m.err != "" {
-		b.WriteString(m.st.Error.Render(m.err) + "\n\n")
-		b.WriteString(m.hintLine())
-		return b.String()
-	}
-	if m.loading && len(m.apis) == 0 {
-		b.WriteString(m.st.Dim.Render("loading …") + "\n\n")
-		b.WriteString(m.hintLine())
-		return b.String()
-	}
-	if len(m.apis) == 0 {
-		b.WriteString(m.st.Dim.Render("no APIs imported yet — try `jentic catalog`") + "\n\n")
-		b.WriteString(m.hintLine())
-		return b.String()
-	}
-
-	body := lipgloss.JoinHorizontal(lipgloss.Top, m.listColumn(), m.detailColumn())
-	b.WriteString(body)
-	b.WriteString("\n\n")
-	b.WriteString(m.footer())
-	return b.String()
+	return m.view(listFrame{
+		title:  "APIs",
+		header: m.headerStatus(),
+		filter: m.filterLine(),
+		empty:  "no APIs imported yet — try `jentic catalog`",
+		hint:   m.hintLine(),
+		footer: m.footer(),
+		row:    m.apiRow,
+		detail: m.detailBody,
+	})
 }
 
 func (m *apisBrowser) footer() string {
@@ -588,7 +495,7 @@ func (m *apisBrowser) footer() string {
 }
 
 func (m *apisBrowser) headerStatus() string {
-	n := len(m.apis)
+	n := len(m.items)
 	if m.hasMore {
 		return fmt.Sprintf("%d+ loaded", n)
 	}
@@ -599,40 +506,15 @@ func (m *apisBrowser) filterLine() string {
 	if m.searching {
 		return "vendor: " + m.searchInput + "▏"
 	}
-	if m.vendor != "" {
-		return fmt.Sprintf("vendor: %q", m.vendor)
+	if m.query != "" {
+		return fmt.Sprintf("vendor: %q", m.query)
 	}
 	return "all vendors"
 }
 
-func (m *apisBrowser) visibleRows() int {
-	return browserVisibleRows(m.height)
-}
-
-func (m *apisBrowser) listColumn() string {
-	return renderListColumn(m.st, m.cursor, &m.top, m.visibleRows(), len(m.apis), apisListColumn, m.hasMore, m.listRow)
-}
-
-func (m *apisBrowser) listRow(i int) string {
-	api := m.apis[i]
-	glyph := m.st.Dim.Render(theme.SelectOff)
-	if api.CurrentRevisionID != "" {
-		glyph = m.st.Success.Render(theme.SelectOn)
-	}
-	name := truncate(apiRefLabel(api.API), apisListColumn-3)
-	if i == m.cursor {
-		return glyph + " " + m.st.Accent.Render(name)
-	}
-	return glyph + " " + lipgloss.NewStyle().Foreground(theme.White).Render(name)
-}
-
-func (m *apisBrowser) detailColumn() string {
-	return lipgloss.NewStyle().
-		BorderStyle(lipgloss.NormalBorder()).
-		BorderForeground(theme.Muted).
-		BorderLeft(true).
-		PaddingLeft(2).
-		Render(m.detailBody())
+func (m *apisBrowser) apiRow(i int) string {
+	api := m.items[i]
+	return m.listRow(i, api.CurrentRevisionID != "", apiRefLabel(api.API))
 }
 
 func (m *apisBrowser) detailBody() string {
@@ -676,14 +558,6 @@ func (m *apisBrowser) detailBody() string {
 		b.WriteString(m.st.Dim.Render("press o to preview operations · enter to manage revisions"))
 	}
 	return b.String()
-}
-
-func (m *apisBrowser) detailWidth() int {
-	w := m.width - apisListColumn - 6
-	if w < 20 {
-		w = 20
-	}
-	return w
 }
 
 func (m *apisBrowser) opsBlock(ops *operationListResult) string {
@@ -759,7 +633,7 @@ func (m *apisBrowser) hintLine() string {
 	if m.searching {
 		return m.st.Dim.Render("type a vendor · enter apply · esc cancel")
 	}
-	if m.view == viewRevisions {
+	if m.page == viewRevisions {
 		return m.st.Dim.Render("↑/↓ move · p promote · a archive · x delete · b back · q quit")
 	}
 	return m.st.Dim.Render("↑/↓ move · / vendor · o preview · enter revisions · d delete · r refresh · b back · q quit")
