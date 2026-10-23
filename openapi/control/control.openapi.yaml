@@ -6,7 +6,7 @@ components:
 
         Used in responses and as the canonical identity tuple.
       examples:
-      - &id048
+      - &id049
         name: stripe
         vendor: stripe.com
         version: '2024-04-10'
@@ -616,7 +616,7 @@ components:
     ApiInfoResponse:
       description: API identification information.
       examples:
-      - &id053
+      - &id054
         host: api.stripe.com
         name: stripe
         vendor: stripe.com
@@ -1448,7 +1448,7 @@ components:
       additionalProperties: false
       description: A registry API identity to connect a credential for.
       examples:
-      - &id069
+      - &id070
         name: stripe
         vendor: stripe.com
         version: '2024-04-10'
@@ -2729,7 +2729,7 @@ components:
         and shows an "operations still importing…" skeleton until it
         becomes non-null and the operations endpoint returns 200.
       examples:
-      - &id148
+      - &id149
         name: stripe
         vendor: stripe.com
         version: '2024-04-10'
@@ -2807,6 +2807,68 @@ components:
       - data
       - has_more
       title: ConnectSessionListResponse
+      type: object
+    ConnectSessionStatusResponse:
+      description: A connect session's lifecycle status.
+      examples:
+      - &id245
+        bound_scopes: &id042
+        - repo
+        - read:org
+        connected_as: octocat
+        credential_id: cred_6968b39855d91a3561684b32
+        error_code: access_denied
+        status: connected
+      properties:
+        bound_scopes:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          description: Scopes the connected credential holds.
+          examples:
+          - *id042
+          title: Bound Scopes
+        connected_as:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Upstream account the credential connected as; null until known.
+          examples:
+          - octocat
+          title: Connected As
+        credential_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: ID of the connected credential; null until connected.
+          examples:
+          - cred_6968b39855d91a3561684b32
+          title: Credential Id
+        error_code:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Why a failed session failed, e.g. `rejected` or `access_denied`.
+          examples:
+          - access_denied
+          title: Error Code
+        status:
+          description: The session's lifecycle status.
+          enum:
+          - pending
+          - polling
+          - connected
+          - failed
+          - expired
+          examples:
+          - connected
+          title: Status
+          type: string
+      required:
+      - status
+      title: ConnectSessionStatusResponse
       type: object
     ConnectSessionSummaryResponse:
       description: Slim list row for the console — deliberately excludes ``poll_token``.
@@ -3014,7 +3076,7 @@ components:
       description: Paginated list of agents directly bound to a credential.
       examples:
       - &id249
-        data: &id042
+        data: &id043
         - agent_id: agnt_6968b3984d1c238dbe7e2e29
           agent_name: billing-assistant
           bound_at: '2026-01-15T09:30:00Z'
@@ -3028,7 +3090,7 @@ components:
         data:
           description: The page of bound agents.
           examples:
-          - *id042
+          - *id043
           items:
             $ref: '#/components/schemas/CredentialAgentResponse'
           title: Data
@@ -3139,12 +3201,12 @@ components:
     CredentialBindingEntry:
       description: Direct agent↔credential binding summary for the /me response (theme 5 phase 1).
       examples:
-      - &id075
+      - &id076
         bound_at: '2026-01-15T09:30:00Z'
         credential_id: cred_6968b39855d91a3561684b32
         name: Stripe production key
         rule_set_id: prs_6968b3987c22b63e87e79f05
-        serves: &id043
+        serves: &id044
         - api_name: stripe
           api_vendor: stripe.com
           api_version: '2024-04-10'
@@ -3184,7 +3246,7 @@ components:
           default: []
           description: The APIs the bound credential serves; empty if unresolvable.
           examples:
-          - *id043
+          - *id044
           items:
             $ref: '#/components/schemas/ServedApiRef'
           title: Serves
@@ -3213,7 +3275,7 @@ components:
       description: List of direct credential bindings.
       examples:
       - &id212
-        data: &id044
+        data: &id045
         - agent_id: agnt_6968b3984d1c238dbe7e2e29
           bound_at: '2026-01-15T09:30:00Z'
           credential_id: cred_6968b39855d91a3561684b32
@@ -3230,7 +3292,7 @@ components:
         data:
           description: The agent's direct credential bindings.
           examples:
-          - *id044
+          - *id045
           items:
             $ref: '#/components/schemas/CredentialBindingResponse'
           title: Data
@@ -3249,7 +3311,7 @@ components:
         id: acb_6968b3989a4f1c2e7d3b5a60
         name: Stripe production key
         rule_set_id: prs_6968b3987c22b63e87e79f05
-        serves: &id045
+        serves: &id046
         - api_name: stripe
           api_vendor: stripe.com
           api_version: '2024-04-10'
@@ -3301,7 +3363,7 @@ components:
           default: []
           description: The APIs the bound credential serves; empty if unresolvable.
           examples:
-          - *id045
+          - *id046
           items:
             $ref: '#/components/schemas/ServedApiRef'
           title: Serves
@@ -3364,7 +3426,7 @@ components:
         credential:
           $ref: '#/components/schemas/CredentialRedactedResponse'
           examples:
-          - &id046
+          - &id047
             active: true
             api:
               name: stripe
@@ -3406,15 +3468,15 @@ components:
       description: Paginated list of credentials.
       examples:
       - &id246
-        data: &id047
-        - *id046
+        data: &id048
+        - *id047
         has_more: true
         next_cursor: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
       properties:
         data:
           description: The page of credentials.
           examples:
-          - *id047
+          - *id048
           items:
             $ref: '#/components/schemas/CredentialRedactedResponse'
           title: Data
@@ -3449,7 +3511,7 @@ components:
     CredentialRedactedResponse:
       description: Redacted credential response (for read/list/patch).
       examples:
-      - *id046
+      - *id047
       properties:
         active:
           description: Whether the credential is enabled for injection.
@@ -3461,7 +3523,7 @@ components:
           $ref: '#/components/schemas/APIReference'
           description: The (vendor, name, version) API this credential targets.
           examples:
-          - *id048
+          - *id049
         catalog_api_id:
           anyOf:
           - type: string
@@ -3597,7 +3659,7 @@ components:
         id: usr_6968b3987ee4c3ec0b4ee3b9
         last_name: Lovelace
         must_change_password: false
-        permissions: &id049
+        permissions: &id050
         - users:write
         - users:read
         - agents:read
@@ -3649,7 +3711,7 @@ components:
         permissions:
           description: The user's effective permissions, including those implied by assigned ones.
           examples:
-          - *id049
+          - *id050
           items:
             type: string
           title: Permissions
@@ -3677,7 +3739,7 @@ components:
     DailyExecutionBucket:
       description: Execution counts for a single day.
       examples:
-      - &id057
+      - &id058
         date: '2026-01-15'
         failed: 8
         success: 120
@@ -3912,7 +3974,7 @@ components:
     EffectivePermission:
       description: A single effective permission with provenance.
       examples:
-      - &id127
+      - &id128
         implied_by: users:write
         name: users:read
       properties:
@@ -3940,7 +4002,7 @@ components:
 
         At least one of pointer, parameter, or header SHOULD be present to identify the error source.
       examples:
-      - &id136
+      - &id137
         code: JENTIC-V-001
         detail: Field 'name' must not be blank.
         header: Authorization
@@ -3997,7 +4059,7 @@ components:
     EventLinks:
       description: HAL-style links for an event.
       examples:
-      - &id050
+      - &id051
         action: https://jentic.example.com/events/evt_6968b398b04f002b6dbff4d1/action
         execution: https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf
         job: https://jentic.example.com/jobs/job_6968b3985e8c9902207afaeb
@@ -4041,12 +4103,12 @@ components:
       description: Paginated list of events.
       examples:
       - &id258
-        data: &id051
-        - _links: *id050
+        data: &id052
+        - _links: *id051
           actor_id: usr_6968b3987ee4c3ec0b4ee3b9
           actor_type: user
           created_at: '2026-01-15T09:30:00Z'
-          data: &id052
+          data: &id053
             job_id: job_6968b3985e8c9902207afaeb
             revision_id: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
           detail: The import produced 1 revision with 142 operations.
@@ -4062,7 +4124,7 @@ components:
         data:
           description: The page of events.
           examples:
-          - *id051
+          - *id052
           items:
             $ref: '#/components/schemas/EventResponse'
           title: Data
@@ -4090,11 +4152,11 @@ components:
       description: Event representation in API responses.
       examples:
       - &id261
-        _links: *id050
+        _links: *id051
         actor_id: usr_6968b3987ee4c3ec0b4ee3b9
         actor_type: user
         created_at: '2026-01-15T09:30:00Z'
-        data: *id052
+        data: *id053
         detail: The import produced 1 revision with 142 operations.
         event_id: evt_6968b398b04f002b6dbff4d1
         requires_action: false
@@ -4106,7 +4168,7 @@ components:
         _links:
           $ref: '#/components/schemas/EventLinks'
           examples:
-          - *id050
+          - *id051
         actor_id:
           anyOf:
           - type: string
@@ -4134,7 +4196,7 @@ components:
           additionalProperties: true
           description: Type-specific structured payload; empty object when there is none.
           examples:
-          - *id052
+          - *id053
           title: Data
           type: object
         detail:
@@ -4204,12 +4266,12 @@ components:
       description: Paginated list of executions.
       examples:
       - &id263
-        data: &id054
+        data: &id055
         - _links:
             self: https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf
           actor_id: agnt_6968b3984d1c238dbe7e2e29
           actor_type: agent
-          api: *id053
+          api: *id054
           created_at: '2026-01-15T09:30:00Z'
           credential_id: cred_6968b39855d91a3561684b32
           credential_name: Stripe production key
@@ -4221,7 +4283,7 @@ components:
           operation_method: GET
           operation_path: /v1/charges
           origin: agent
-          pinned_revisions: &id056
+          pinned_revisions: &id057
             stripe.com:stripe:2024-04-10: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
           started_at: '2026-01-15T09:30:00Z'
           status: completed
@@ -4234,7 +4296,7 @@ components:
         data:
           description: The page of execution records.
           examples:
-          - *id054
+          - *id055
           items:
             $ref: '#/components/schemas/ExecutionResponse'
           title: Data
@@ -4261,7 +4323,7 @@ components:
     ExecutionRecordLinks:
       description: HATEOAS links for an execution record.
       examples:
-      - &id055
+      - &id056
         self: https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf
       properties:
         self:
@@ -4278,10 +4340,10 @@ components:
       description: Execution record representation in API responses.
       examples:
       - &id268
-        _links: *id055
+        _links: *id056
         actor_id: agnt_6968b3984d1c238dbe7e2e29
         actor_type: agent
-        api: *id053
+        api: *id054
         created_at: '2026-01-15T09:30:00Z'
         credential_id: cred_6968b39855d91a3561684b32
         credential_name: Stripe production key
@@ -4293,7 +4355,7 @@ components:
         operation_method: GET
         operation_path: /v1/charges
         origin: agent
-        pinned_revisions: *id056
+        pinned_revisions: *id057
         started_at: '2026-01-15T09:30:00Z'
         status: completed
         toolkit_id: tk_6968b3981ec22d56dbbc91e8
@@ -4303,7 +4365,7 @@ components:
         _links:
           $ref: '#/components/schemas/ExecutionRecordLinks'
           examples:
-          - *id055
+          - *id056
         actor_id:
           description: ID of the actor that ran the execution.
           examples:
@@ -4322,7 +4384,7 @@ components:
           - type: 'null'
           description: The API that was called; null when it is not recorded.
           examples:
-          - *id053
+          - *id054
         created_at:
           description: When the execution record was created (RFC 3339).
           examples:
@@ -4415,7 +4477,7 @@ components:
           - type: 'null'
           description: Pinned API revisions used, keyed `vendor:name:version` with the revision ID as value; null when no pin applied.
           examples:
-          - *id056
+          - *id057
           title: Pinned Revisions
         started_at:
           description: When the execution started (RFC 3339).
@@ -4467,10 +4529,10 @@ components:
       description: Aggregated execution statistics for the dashboard.
       examples:
       - &id279
-        daily_buckets: &id058
-        - *id057
+        daily_buckets: &id059
+        - *id058
         success_rate_percent: 93.75
-        top_operations: &id059
+        top_operations: &id060
         - api_name: stripe
           api_vendor: stripe.com
           failed: 12
@@ -4481,7 +4543,7 @@ components:
         daily_buckets:
           description: Per-day execution counts, oldest first; days with no executions are omitted.
           examples:
-          - *id058
+          - *id059
           items:
             $ref: '#/components/schemas/DailyExecutionBucket'
           title: Daily Buckets
@@ -4495,7 +4557,7 @@ components:
         top_operations:
           description: The most-executed operations in the window, most executions first (up to 10).
           examples:
-          - *id059
+          - *id060
           items:
             $ref: '#/components/schemas/TopOperation'
           title: Top Operations
@@ -4522,7 +4584,7 @@ components:
         digest: 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
         expected_agent_id: agnt_6968b3984d1c238dbe7e2e29
         kind: existing_credential
-        permission_rules: &id060
+        permission_rules: &id061
         - effect: allow
           match_mode: prefix
           methods: *id029
@@ -4571,7 +4633,7 @@ components:
         permission_rules:
           description: Permission rules to bind for the agent (at most 100).
           examples:
-          - *id060
+          - *id061
           items:
             $ref: '#/components/schemas/PermissionRuleSchema'
           maxItems: 100
@@ -4593,17 +4655,17 @@ components:
         platform. ``can_reauthorize`` is false whenever another agent is bound
         (``other_bound_agent_ids``) — widening it would widen theirs too.
       examples:
-      - &id149
+      - &id150
         can_bind: true
         can_reauthorize: false
         credential_id: cred_6968b39855d91a3561684b32
-        granted_scopes: &id061
+        granted_scopes: &id062
         - repo
         - read:org
-        missing_scopes: &id062
+        missing_scopes: &id063
         - admin:org
         name: GitHub (octocat)
-        other_bound_agent_ids: &id063
+        other_bound_agent_ids: &id064
         - agnt_6968b3984d1c238dbe7e2e29
         type: oauth2
       properties:
@@ -4633,7 +4695,7 @@ components:
           - type: 'null'
           description: Scopes the credential holds; null for a non-OAuth credential.
           examples:
-          - *id061
+          - *id062
           title: Granted Scopes
         missing_scopes:
           anyOf:
@@ -4643,7 +4705,7 @@ components:
           - type: 'null'
           description: Requested scopes the credential lacks; null for a non-OAuth credential.
           examples:
-          - *id062
+          - *id063
           title: Missing Scopes
         name:
           description: Name of the credential.
@@ -4654,7 +4716,7 @@ components:
         other_bound_agent_ids:
           description: Other agents bound to the credential.
           examples:
-          - *id063
+          - *id064
           items:
             type: string
           title: Other Bound Agent Ids
@@ -4688,7 +4750,7 @@ components:
         convention.
       examples:
       - &id269
-        data: &id064
+        data: &id065
         - api.github.com
         - api.stripe.com
         - files.stripe.com:8443
@@ -4697,7 +4759,7 @@ components:
         data:
           description: Governed host entries, normalised (lowercased, FQDN root dot stripped, internationalised names IDNA/punycode-encoded), deduplicated, and sorted — the literal URL-index hosts the broker's discovery matches for the APIs the caller's bound credentials cover. An entry is a hostname, a bare IP literal, or either followed by a non-default port (`host[:port]` — default ports are already stripped). Compare case-insensitively (lowercase the incoming host before matching); a gate keying on hostname or SNI alone must strip any `:port` suffix from the entry first. Variable-bearing hosts (defaultless `{var}` server variables) are excluded — the broker's discovery never matches them. On a `5xx` retain the last known set; never fall back to an empty (intercept-nothing) list.
           examples:
-          - *id064
+          - *id065
           items:
             type: string
           title: Data
@@ -4770,7 +4832,7 @@ components:
       description: A held execution with the agent context and the held request a reviewer decides on.
       examples:
       - &id265
-        _links: &id065
+        _links: &id066
           execution: https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf
           result: https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result
           self: https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6
@@ -4794,7 +4856,7 @@ components:
         method: POST
         operation_id: listCharges
         path: /v1/refunds
-        request: &id066
+        request: &id067
           body: charge=ch_3MmlLrLkdIwHu7ix0snN0B15
           body_truncated: false
           method: POST
@@ -4807,7 +4869,7 @@ components:
         _links:
           $ref: '#/components/schemas/HeldExecutionLinksResponse'
           examples:
-          - *id065
+          - *id066
         agent_id:
           description: The agent whose call was held.
           examples:
@@ -4956,7 +5018,7 @@ components:
           - type: 'null'
           description: The held call.
           examples:
-          - *id066
+          - *id067
         review_url:
           description: Review page a signed-in reviewer opens to approve or deny the call. Carries no credential.
           examples:
@@ -5004,7 +5066,7 @@ components:
     HeldExecutionLinksResponse:
       description: HAL-style links for a held execution.
       examples:
-      - &id067
+      - &id068
         execution: https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf
         result: https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result
         self: https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6
@@ -5048,8 +5110,8 @@ components:
       description: A page of held executions.
       examples:
       - &id264
-        data: &id068
-        - _links: *id067
+        data: &id069
+        - _links: *id068
           agent_id: agnt_6968b3984d1c238dbe7e2e29
           api_name: stripe
           api_vendor: stripe.com
@@ -5077,7 +5139,7 @@ components:
         data:
           description: The page of held executions.
           examples:
-          - *id068
+          - *id069
           items:
             $ref: '#/components/schemas/HeldExecutionResponse'
           title: Data
@@ -5105,7 +5167,7 @@ components:
       description: A call held for a human decision, and where it stands.
       examples:
       - &id267
-        _links: *id067
+        _links: *id068
         agent_id: agnt_6968b3984d1c238dbe7e2e29
         api_name: stripe
         api_vendor: stripe.com
@@ -5131,7 +5193,7 @@ components:
         _links:
           $ref: '#/components/schemas/HeldExecutionLinksResponse'
           examples:
-          - *id067
+          - *id068
         agent_id:
           description: The agent whose call was held.
           examples:
@@ -5424,19 +5486,19 @@ components:
       examples:
       - &id272
         agent_id: agnt_6968b3984d1c238dbe7e2e29
-        api: *id069
+        api: *id070
         auth_type: oauth2
         name: GitHub (work)
         oauth_app_registration_id: oar_6968b39821e5f89a6975f501
         preferred_flow: authorization_code
         reason: Needs read access to triage issues in the platform repo.
-        requested_permission_rules: &id070
+        requested_permission_rules: &id071
         - effect: allow
           match_mode: prefix
           methods: *id029
           operations: *id030
           path: /v1/charges
-        requested_scopes: &id071
+        requested_scopes: &id072
         - repo
         - read:user
         vendor: github
@@ -5455,7 +5517,7 @@ components:
           - type: 'null'
           description: Registry API to connect a credential for. Exactly one of vendor or api.
           examples:
-          - *id069
+          - *id070
         auth_type:
           anyOf:
           - maxLength: 255
@@ -5503,7 +5565,7 @@ components:
         requested_permission_rules:
           description: Permission rules proposed for the agent, shown pre-filled on the review page; nothing is bound until confirm.
           examples:
-          - *id070
+          - *id071
           items:
             $ref: '#/components/schemas/PermissionRuleSchema'
           maxItems: 100
@@ -5512,7 +5574,7 @@ components:
         requested_scopes:
           description: Upstream scopes to request (at most 100).
           examples:
-          - *id071
+          - *id072
           items:
             type: string
           maxItems: 100
@@ -5549,6 +5611,7 @@ components:
           - dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
           title: Poll Token
           type: string
+          x-sensitive: true
         resolved_flow:
           description: The flow the session runs, e.g. `authorization_code` or `manual_api_key`.
           examples:
@@ -5658,7 +5721,7 @@ components:
     JobLinksResponse:
       description: Hypermedia links for a job.
       examples:
-      - &id072
+      - &id073
         execution: https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf
         result: https://jentic.example.com/jobs/job_6968b3985e8c9902207afaeb/result
         self: https://jentic.example.com/jobs/job_6968b3985e8c9902207afaeb
@@ -5693,8 +5756,8 @@ components:
       description: Paginated list of jobs.
       examples:
       - &id275
-        data: &id073
-        - _links: *id072
+        data: &id074
+        - _links: *id073
           actor_id: agnt_6968b3984d1c238dbe7e2e29
           actor_type: agent
           created_at: '2026-01-15T09:30:00Z'
@@ -5710,7 +5773,7 @@ components:
         data:
           description: The page of jobs.
           examples:
-          - *id073
+          - *id074
           items:
             $ref: '#/components/schemas/JobResponse'
           title: Data
@@ -5738,7 +5801,7 @@ components:
       description: Job representation in API responses.
       examples:
       - &id276
-        _links: *id072
+        _links: *id073
         actor_id: agnt_6968b3984d1c238dbe7e2e29
         actor_type: agent
         created_at: '2026-01-15T09:30:00Z'
@@ -5752,7 +5815,7 @@ components:
         _links:
           $ref: '#/components/schemas/JobLinksResponse'
           examples:
-          - *id072
+          - *id073
         actor_id:
           anyOf:
           - type: string
@@ -5834,7 +5897,7 @@ components:
         contain any private key material.
       examples:
       - &id215
-        jwks: &id074
+        jwks: &id075
           keys:
           - crv: Ed25519
             kid: agent-key-1
@@ -5845,7 +5908,7 @@ components:
           additionalProperties: true
           description: JWKS containing public keys
           examples:
-          - *id074
+          - *id075
           title: Jwks
           type: object
       required:
@@ -5980,16 +6043,16 @@ components:
       description: Identity response for an agent actor.
       examples:
       - approved_by: usr_6968b3987ee4c3ec0b4ee3b9
-        credential_bindings: &id076
-        - *id075
+        credential_bindings: &id077
+        - *id076
         id: agnt_6968b3984d1c238dbe7e2e29
         name: invoice-reconciler
         parent_agent_id: agnt_6968b3984d1c238dbe7e2e29
-        permissions: &id077
+        permissions: &id078
         - apis:read
         - capabilities:execute
         status: active
-        token_permissions: &id078
+        token_permissions: &id079
         - apis:read
         - capabilities:execute
         type: agent
@@ -6006,7 +6069,7 @@ components:
           default: []
           description: Credentials bound directly to the agent.
           examples:
-          - *id076
+          - *id077
           items:
             $ref: '#/components/schemas/CredentialBindingEntry'
           title: Credential Bindings
@@ -6034,7 +6097,7 @@ components:
         permissions:
           description: Permissions currently granted to the agent, read live rather than from the token.
           examples:
-          - *id077
+          - *id078
           items:
             type: string
           title: Permissions
@@ -6048,7 +6111,7 @@ components:
         token_permissions:
           description: Permissions in the presented bearer token; if narrower than `permissions`, obtain a new token to pick up newer grants.
           examples:
-          - *id078
+          - *id079
           items:
             type: string
           title: Token Permissions
@@ -6077,7 +6140,7 @@ components:
         id: usr_6968b3987ee4c3ec0b4ee3b9
         must_change_password: false
         name: Ada Lovelace
-        permissions: &id079
+        permissions: &id080
         - org:admin
         - agents:read
         status: active
@@ -6116,7 +6179,7 @@ components:
         permissions:
           description: Permissions carried by the caller's token.
           examples:
-          - *id079
+          - *id080
           items:
             type: string
           title: Permissions
@@ -6157,10 +6220,10 @@ components:
       - api: *id010
         name: Stripe live key
         provider: static
-        runtime_config: &id080
+        runtime_config: &id081
           headers: *id013
           query_params: *id014
-        server_variables: &id081
+        server_variables: &id082
           region: eu
         type: no_auth
       properties:
@@ -6187,7 +6250,7 @@ components:
           - type: 'null'
           description: Per-upstream-call overrides; reserved and not currently applied.
           examples:
-          - *id080
+          - *id081
         server_variables:
           anyOf:
           - additionalProperties:
@@ -6196,7 +6259,7 @@ components:
           - type: 'null'
           description: OpenAPI server-variable values for URL template substitution (at most 20).
           examples:
-          - *id081
+          - *id082
           title: Server Variables
         type:
           const: no_auth
@@ -6216,10 +6279,10 @@ components:
       examples:
       - active: true
         name: Open-Meteo
-        runtime_config: &id082
+        runtime_config: &id083
           headers: *id013
           query_params: *id014
-        server_variables: &id083
+        server_variables: &id084
           region: eu
         type: no_auth
       properties:
@@ -6246,7 +6309,7 @@ components:
           - type: 'null'
           description: Per-upstream-call overrides; reserved and not currently applied.
           examples:
-          - *id082
+          - *id083
         server_variables:
           anyOf:
           - additionalProperties:
@@ -6255,7 +6318,7 @@ components:
           - type: 'null'
           description: Replacement OpenAPI server-variable values; omit to leave unchanged.
           examples:
-          - *id083
+          - *id084
           title: Server Variables
         type:
           const: no_auth
@@ -6272,7 +6335,7 @@ components:
       additionalProperties: false
       description: Loose ``(vendor, name, version)`` identity tuple for a registered API.
       examples:
-      - &id084
+      - &id085
         name: stripe
         vendor: stripe.com
         version: '2024-04-10'
@@ -6317,8 +6380,8 @@ components:
         body: Stripe returns 401 unless the secret key is sent as a Bearer token; Basic auth with an empty password also works.
         confidence: observed
         related_execution_id: exec_6968b3982706c619fe73f0cf
-        resource: &id085
-          api: *id084
+        resource: &id086
+          api: *id085
           credential_id: cred_6968b39855d91a3561684b32
           execution_id: exec_6968b3982706c619fe73f0cf
           operation_id: op_f92d69f1621f381bce8aaff47053c61b069ffe34
@@ -6350,7 +6413,7 @@ components:
         resource:
           $ref: '#/components/schemas/NoteResource'
           examples:
-          - *id085
+          - *id086
         source:
           anyOf:
           - $ref: '#/components/schemas/NoteSource'
@@ -6374,7 +6437,7 @@ components:
       additionalProperties: false
       description: Exactly-one-of resource identifier for a note (request side).
       examples:
-      - api: *id084
+      - api: *id085
         credential_id: cred_6968b39855d91a3561684b32
         execution_id: exec_6968b3982706c619fe73f0cf
         operation_id: op_f92d69f1621f381bce8aaff47053c61b069ffe34
@@ -6385,7 +6448,7 @@ components:
           - type: 'null'
           description: API to attach the note to; set exactly one resource field.
           examples:
-          - *id084
+          - *id085
         credential_id:
           anyOf:
           - type: string
@@ -6494,12 +6557,12 @@ components:
         grant_type: client_credentials
         name: Stripe live key
         provider: static
-        runtime_config: &id086
+        runtime_config: &id087
           headers: *id013
           query_params: *id014
-        scopes: &id087
+        scopes: &id088
         - read_write
-        server_variables: &id088
+        server_variables: &id089
           region: eu
         token_url: https://connect.stripe.com/oauth/token
         type: oauth2
@@ -6559,7 +6622,7 @@ components:
           - type: 'null'
           description: Per-upstream-call overrides; reserved and not currently applied.
           examples:
-          - *id086
+          - *id087
         scopes:
           anyOf:
           - items:
@@ -6568,7 +6631,7 @@ components:
           - type: 'null'
           description: OAuth scopes to request.
           examples:
-          - *id087
+          - *id088
           title: Scopes
         server_variables:
           anyOf:
@@ -6578,7 +6641,7 @@ components:
           - type: 'null'
           description: OpenAPI server-variable values for URL template substitution (at most 20).
           examples:
-          - *id088
+          - *id089
           title: Server Variables
         token_url:
           anyOf:
@@ -6607,12 +6670,12 @@ components:
       - active: true
         client_secret: example-secret
         name: Stripe live key
-        runtime_config: &id089
+        runtime_config: &id090
           headers: *id013
           query_params: *id014
-        scopes: &id090
+        scopes: &id091
         - read_write
-        server_variables: &id091
+        server_variables: &id092
           region: eu
         token_url: https://connect.stripe.com/oauth/token
         type: oauth2
@@ -6650,7 +6713,7 @@ components:
           - type: 'null'
           description: Per-upstream-call overrides; reserved and not currently applied.
           examples:
-          - *id089
+          - *id090
         scopes:
           anyOf:
           - items:
@@ -6659,7 +6722,7 @@ components:
           - type: 'null'
           description: Replacement OAuth scopes; omit to leave unchanged, send `[]` to clear them. Each item is a single non-empty scope token without whitespace. Rejected with 400 on credentials that use a shared app registration, and on `device_code` credentials while a device flow is pending.
           examples:
-          - *id090
+          - *id091
           title: Scopes
         server_variables:
           anyOf:
@@ -6669,7 +6732,7 @@ components:
           - type: 'null'
           description: Replacement OpenAPI server-variable values; omit to leave unchanged.
           examples:
-          - *id091
+          - *id092
           title: Server Variables
         token_url:
           anyOf:
@@ -6702,7 +6765,7 @@ components:
       description: Paginated list of OAuth app registrations.
       examples:
       - &id283
-        data: &id092
+        data: &id093
         - api_vendor: github
           authorization_endpoint: https://github.com/login/device/code
           authorize_url: https://github.com/login/oauth/authorize
@@ -6710,7 +6773,7 @@ components:
           client_id: Iv1.a1b2c3d4
           created_at: '2026-01-15T09:30:00Z'
           created_by: usr_6968b3987ee4c3ec0b4ee3b9
-          default_scopes: &id093
+          default_scopes: &id094
           - repo
           - read:user
           dependent_credential_count: 4
@@ -6730,7 +6793,7 @@ components:
         data:
           description: The page of OAuth app registrations.
           examples:
-          - *id092
+          - *id093
           items:
             $ref: '#/components/schemas/OAuthAppRegistrationResponse'
           title: Data
@@ -6770,7 +6833,7 @@ components:
         client_id: Iv1.a1b2c3d4
         created_at: '2026-01-15T09:30:00Z'
         created_by: usr_6968b3987ee4c3ec0b4ee3b9
-        default_scopes: *id093
+        default_scopes: *id094
         dependent_credential_count: 4
         display_name: GitHub
         flow_kind: authorization_code
@@ -6840,7 +6903,7 @@ components:
           - type: 'null'
           description: Scopes requested by default; null if none are set.
           examples:
-          - *id093
+          - *id094
           title: Default Scopes
         dependent_credential_count:
           description: Number of credentials minted through this registration.
@@ -6958,7 +7021,7 @@ components:
       - &id285
         authorization_endpoint: https://github.com/login/device/code
         authorize_url: https://github.com/login/oauth/authorize
-        default_scopes: &id094
+        default_scopes: &id095
         - repo
         - read:user
         display_name: GitHub
@@ -6998,7 +7061,7 @@ components:
           - type: 'null'
           description: Replacement default scopes; omit to leave unchanged.
           examples:
-          - *id094
+          - *id095
           title: Default Scopes
         display_name:
           anyOf:
@@ -7390,8 +7453,8 @@ components:
       description: A list of OAuth clients.
       examples:
       - &id200
-        data: &id095
-        - &id102
+        data: &id096
+        - &id103
           active: true
           active_grant_count: 0
           allowed_scopes:
@@ -7416,7 +7479,7 @@ components:
         data:
           description: The OAuth clients.
           examples:
-          - *id095
+          - *id096
           items:
             $ref: '#/components/schemas/OAuthClientResponse'
           title: Data
@@ -7431,12 +7494,12 @@ components:
       - &id287
         application_type: native
         client_name: Cursor
-        grant_types: &id096
+        grant_types: &id097
         - authorization_code
         - refresh_token
-        redirect_uris: &id097
+        redirect_uris: &id098
         - https://client.example.com/oauth/callback
-        response_types: &id098
+        response_types: &id099
         - code
         scope: apis:read capabilities:execute
         software_id: com.example.mcp-client
@@ -7468,12 +7531,12 @@ components:
           - type: 'null'
           description: Subset of ['authorization_code', 'refresh_token'].
           examples:
-          - *id096
+          - *id097
           title: Grant Types
         redirect_uris:
           description: 1-20 redirect URIs. `https` always; `http` for loopback hosts only; RFC 8252 §7.1 private-use (custom) schemes are accepted for native apps (browser-executable and other dangerous schemes are rejected).
           examples:
-          - *id097
+          - *id098
           items:
             type: string
           maxItems: 20
@@ -7488,7 +7551,7 @@ components:
           - type: 'null'
           description: Only ['code'] is supported.
           examples:
-          - *id098
+          - *id099
           title: Response Types
         scope:
           anyOf:
@@ -7544,12 +7607,12 @@ components:
         client_id: oc_Xk3vQ9mT2pLw8RzN5bYc1HdF7gJs4AeU
         client_id_issued_at: 1767225600
         client_name: Cursor
-        grant_types: &id099
+        grant_types: &id100
         - authorization_code
         - refresh_token
-        redirect_uris: &id100
+        redirect_uris: &id101
         - https://client.example.com/oauth/callback
-        response_types: &id101
+        response_types: &id102
         - code
         scope: apis:read capabilities:execute
         software_id: com.example.mcp-client
@@ -7588,7 +7651,7 @@ components:
           - refresh_token
           description: Grant types the client may use.
           examples:
-          - *id099
+          - *id100
           items:
             type: string
           title: Grant Types
@@ -7596,7 +7659,7 @@ components:
         redirect_uris:
           description: The registered redirect URIs.
           examples:
-          - *id100
+          - *id101
           items:
             type: string
           title: Redirect Uris
@@ -7606,7 +7669,7 @@ components:
           - code
           description: Response types the client may use; always `code`.
           examples:
-          - *id101
+          - *id102
           items:
             type: string
           title: Response Types
@@ -7651,7 +7714,7 @@ components:
     OAuthClientResponse:
       description: An OAuth client in API responses.
       examples:
-      - *id102
+      - *id103
       properties:
         active:
           description: Whether the client is enabled; false for disabled, pending or denied clients.
@@ -7814,12 +7877,12 @@ components:
       examples:
       - &id204
         active: true
-        allowed_scopes: &id103
+        allowed_scopes: &id104
         - apis:read
         - capabilities:execute
         description: Billing assistant production deployment
         name: billing-assistant-prod
-        redirect_uris: &id104
+        redirect_uris: &id105
         - https://client.example.com/oauth/callback
         require_consent: true
       properties:
@@ -7839,7 +7902,7 @@ components:
           - type: 'null'
           description: Scope restriction list. Null means no change; an empty list denies all non-OIDC scopes; the wildcard ``["*"]`` resets to unrestricted.
           examples:
-          - *id103
+          - *id104
           title: Allowed Scopes
         description:
           anyOf:
@@ -7869,7 +7932,7 @@ components:
           - type: 'null'
           description: Replacement list of allowed OAuth callback URLs; null means no change.
           examples:
-          - *id104
+          - *id105
           title: Redirect Uris
         require_consent:
           anyOf:
@@ -7888,13 +7951,13 @@ components:
         The default variant — a body without ``kind`` is this one.
       examples:
       - agent_id: agnt_6968b3984d1c238dbe7e2e29
-        confirmed_scopes: &id105
+        confirmed_scopes: &id106
         - repo
         - read:user
         digest: 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
         expected_agent_id: agnt_6968b3984d1c238dbe7e2e29
         kind: oauth
-        permission_rules: &id106
+        permission_rules: &id107
         - effect: allow
           match_mode: prefix
           methods: *id029
@@ -7912,7 +7975,7 @@ components:
         confirmed_scopes:
           description: Upstream scopes the approver confirmed (at most 100).
           examples:
-          - *id105
+          - *id106
           items:
             type: string
           maxItems: 100
@@ -7946,7 +8009,7 @@ components:
         permission_rules:
           description: Permission rules to bind for the agent (at most 100).
           examples:
-          - *id106
+          - *id107
           items:
             $ref: '#/components/schemas/PermissionRuleSchema'
           maxItems: 100
@@ -7989,7 +8052,7 @@ components:
       description: A paginated list of OAuth grants (admin cross-view).
       examples:
       - &id206
-        data: &id107
+        data: &id108
         - agent_id: agnt_6968b3984d1c238dbe7e2e29
           agent_status: active
           can_revoke: true
@@ -8000,7 +8063,7 @@ components:
           last_used_at: '2026-01-19T08:12:00Z'
           oauth_client_id: oc_Xk3vQ9mT2pLw8RzN5bYc1HdF7gJs4AeU
           revoked_at: '2026-01-20T14:05:00Z'
-          scopes: &id108
+          scopes: &id109
           - apis:read
           - capabilities:execute
           status: revoked
@@ -8011,7 +8074,7 @@ components:
         data:
           description: The page of grants.
           examples:
-          - *id107
+          - *id108
           items:
             $ref: '#/components/schemas/OAuthGrantAdminResponse'
           title: Data
@@ -8048,7 +8111,7 @@ components:
         last_used_at: '2026-01-19T08:12:00Z'
         oauth_client_id: oc_Xk3vQ9mT2pLw8RzN5bYc1HdF7gJs4AeU
         revoked_at: '2026-01-20T14:05:00Z'
-        scopes: *id108
+        scopes: *id109
         status: revoked
         user_id: usr_6968b3987ee4c3ec0b4ee3b9
       properties:
@@ -8128,7 +8191,7 @@ components:
         scopes:
           description: Scopes granted at consent (the D2 intersection).
           examples:
-          - *id108
+          - *id109
           items:
             type: string
           title: Scopes
@@ -8164,7 +8227,7 @@ components:
       description: A paginated list of OAuth grants.
       examples:
       - &id216
-        data: &id109
+        data: &id110
         - agent_id: agnt_6968b3984d1c238dbe7e2e29
           agent_status: active
           can_revoke: true
@@ -8175,7 +8238,7 @@ components:
           last_used_at: '2026-01-24T08:15:00Z'
           oauth_client_id: oc_Xk3vQ9mT2pLw8RzN5bYc1HdF7gJs4AeU
           revoked_at: '2026-01-25T16:00:00Z'
-          scopes: &id110
+          scopes: &id111
           - apis:read
           - capabilities:execute
           status: revoked
@@ -8186,7 +8249,7 @@ components:
         data:
           description: The page of OAuth grants.
           examples:
-          - *id109
+          - *id110
           items:
             $ref: '#/components/schemas/OAuthGrantResponse'
           title: Data
@@ -8223,7 +8286,7 @@ components:
         last_used_at: '2026-01-24T08:15:00Z'
         oauth_client_id: oc_Xk3vQ9mT2pLw8RzN5bYc1HdF7gJs4AeU
         revoked_at: '2026-01-25T16:00:00Z'
-        scopes: *id110
+        scopes: *id111
         status: revoked
         user_id: usr_6968b3987ee4c3ec0b4ee3b9
       properties:
@@ -8303,7 +8366,7 @@ components:
         scopes:
           description: Scopes granted at consent (the D2 intersection).
           examples:
-          - *id110
+          - *id111
           items:
             type: string
           title: Scopes
@@ -8358,7 +8421,7 @@ components:
         data:
           description: The page of previewed operations.
           examples:
-          - - &id134
+          - - &id135
               description: ''
               method: GET
               operation_id: listCharges
@@ -8377,7 +8440,7 @@ components:
           $ref: '#/components/schemas/PreviewInfoResponse'
           description: The spec's `info` block.
           examples:
-          - &id133
+          - &id134
             description: Payments.
             title: Stripe
             version: '2024-01-01'
@@ -8422,8 +8485,8 @@ components:
     OperationResultResponse:
       description: A single search result matching the OperationResult spec.
       examples:
-      - &id164
-        _links: &id111
+      - &id165
+        _links: &id112
           inspect: https://jentic.example.com/inspect?id=GET%20https%3A%2F%2Fapi.stripe.com%2Fv1%2Fcharges
         api: *id019
         description: Returns a list of charges you've previously created, newest first.
@@ -8438,7 +8501,7 @@ components:
         _links:
           $ref: '#/components/schemas/SearchLinksResponse'
           examples:
-          - *id111
+          - *id112
         api:
           $ref: '#/components/schemas/ApiReferenceResponse'
           examples:
@@ -8510,7 +8573,7 @@ components:
     OperationSummaryLinksResponse:
       description: Hypermedia links for an operation summary.
       examples:
-      - &id112
+      - &id113
         inspect: https://jentic.example.com/inspect?operation_id=op_f92d69f1621f381bce8aaff47053c61b069ffe34&revision_id=3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
       properties:
         inspect:
@@ -8527,8 +8590,8 @@ components:
       description: Cursor-paginated list of operations.
       examples:
       - &id226
-        data: &id113
-        - _links: *id112
+        data: &id114
+        - _links: *id113
           api: *id019
           deprecated: false
           description: Returns a list of charges you've previously created, newest first.
@@ -8537,7 +8600,7 @@ components:
           operation_id: op_f92d69f1621f381bce8aaff47053c61b069ffe34
           path: /v1/charges
           revision_id: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
-          tags: &id114
+          tags: &id115
           - Charges
         has_more: true
         next_cursor: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
@@ -8545,7 +8608,7 @@ components:
         data:
           description: The page of operations.
           examples:
-          - *id113
+          - *id114
           items:
             $ref: '#/components/schemas/OperationSummaryResponse'
           title: Data
@@ -8572,7 +8635,7 @@ components:
     OperationSummaryResponse:
       description: Single operation in a paginated list.
       examples:
-      - _links: *id112
+      - _links: *id113
         api: *id019
         deprecated: false
         description: Returns a list of charges you've previously created, newest first.
@@ -8581,12 +8644,12 @@ components:
         operation_id: op_f92d69f1621f381bce8aaff47053c61b069ffe34
         path: /v1/charges
         revision_id: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
-        tags: *id114
+        tags: *id115
       properties:
         _links:
           $ref: '#/components/schemas/OperationSummaryLinksResponse'
           examples:
-          - *id112
+          - *id113
         api:
           $ref: '#/components/schemas/ApiReferenceResponse'
           examples:
@@ -8641,7 +8704,7 @@ components:
         tags:
           description: Tags the spec assigns to the operation.
           examples:
-          - *id114
+          - *id115
           items:
             type: string
           title: Tags
@@ -8681,7 +8744,7 @@ components:
         when it is applicable to the current status. They are not permission-scoped — the
         ``overlays:confirm`` gate on confirm/rollback is still enforced server-side (403).
       examples:
-      - &id115
+      - &id116
         api: https://jentic.example.com/apis/stripe.com/stripe/2024-04-10
         confirm: https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/overlays/ovr_6968b398ae1c9a6e2fe6520a:confirm
         deprecate: https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/overlays/ovr_6968b398ae1c9a6e2fe6520a
@@ -8733,8 +8796,8 @@ components:
       description: Cursor-paginated list of overlays.
       examples:
       - &id227
-        data: &id116
-        - _links: *id115
+        data: &id117
+        - _links: *id116
           api_id: debfc9ff-7c37-4a09-801a-575bd4963ddd
           confirmed_at: '2026-01-15T10:05:00Z'
           confirmed_by_execution_id: exec_6968b3982706c619fe73f0cf
@@ -8744,7 +8807,7 @@ components:
           created_by: agnt_6968b3984d1c238dbe7e2e29
           deprecated_at: '2026-01-17T16:45:00Z'
           deprecated_reason: rollback
-          document: &id117
+          document: &id118
             actions:
             - target: $.paths['/v1/charges'].get
               update:
@@ -8764,7 +8827,7 @@ components:
         data:
           description: The page of overlays.
           examples:
-          - *id116
+          - *id117
           items:
             $ref: '#/components/schemas/OverlayResponse'
           title: Data
@@ -8792,7 +8855,7 @@ components:
       description: Full overlay resource response.
       examples:
       - &id229
-        _links: *id115
+        _links: *id116
         api_id: debfc9ff-7c37-4a09-801a-575bd4963ddd
         confirmed_at: '2026-01-15T10:05:00Z'
         confirmed_by_execution_id: exec_6968b3982706c619fe73f0cf
@@ -8802,7 +8865,7 @@ components:
         created_by: agnt_6968b3984d1c238dbe7e2e29
         deprecated_at: '2026-01-17T16:45:00Z'
         deprecated_reason: rollback
-        document: *id117
+        document: *id118
         id: ovr_6968b398ae1c9a6e2fe6520a
         status: deprecated
         superseded_revision_id: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
@@ -8812,7 +8875,7 @@ components:
         _links:
           $ref: '#/components/schemas/OverlayLinksResponse'
           examples:
-          - *id115
+          - *id116
         api_id:
           description: ID of the API the overlay applies to.
           examples:
@@ -8888,7 +8951,7 @@ components:
           additionalProperties: true
           description: The OpenAPI Overlay document.
           examples:
-          - *id117
+          - *id118
           title: Document
           type: object
         id:
@@ -8949,7 +9012,7 @@ components:
       examples:
       - &id228
         contributed_by: docs-review-agent
-        document: &id118
+        document: &id119
           actions:
           - target: $.paths['/v1/charges'].get
             update:
@@ -8972,7 +9035,7 @@ components:
           additionalProperties: true
           description: OpenAPI Overlay document; must be a JSON object with an `actions` array.
           examples:
-          - *id118
+          - *id119
           title: Document
           type: object
         target_revision_id:
@@ -8992,7 +9055,7 @@ components:
       description: Payload for updating an existing overlay.
       examples:
       - &id230
-        document: &id119
+        document: &id120
           actions:
           - target: $.paths['/v1/charges'].get
             update:
@@ -9010,7 +9073,7 @@ components:
           - type: 'null'
           description: Replacement OpenAPI Overlay document; omit to keep the current one.
           examples:
-          - *id119
+          - *id120
           title: Document
         target_revision_id:
           anyOf:
@@ -9038,13 +9101,13 @@ components:
         authorize_url: https://github.com/login/oauth/authorize
         client_id: Iv1.a1b2c3d4
         client_secret: example-secret
-        confirmed_scopes: &id120
+        confirmed_scopes: &id121
         - repo
         - read:user
         digest: 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
         expected_agent_id: agnt_6968b3984d1c238dbe7e2e29
         kind: own_oauth_client
-        permission_rules: &id121
+        permission_rules: &id122
         - effect: allow
           match_mode: prefix
           methods: *id029
@@ -9090,7 +9153,7 @@ components:
         confirmed_scopes:
           description: Upstream scopes to request (at most 100).
           examples:
-          - *id120
+          - *id121
           items:
             type: string
           maxItems: 100
@@ -9122,7 +9185,7 @@ components:
         permission_rules:
           description: Permission rules to bind for the agent (at most 100).
           examples:
-          - *id121
+          - *id122
           items:
             $ref: '#/components/schemas/PermissionRuleSchema'
           maxItems: 100
@@ -9150,17 +9213,17 @@ components:
       description: List of available permissions.
       examples:
       - &id299
-        data: &id122
+        data: &id123
         - description: Create, update, and disable users
           grantable_by_caller: true
-          implies: &id123
+          implies: &id124
           - users:read
           name: users:write
       properties:
         data:
           description: The permissions in the catalogue.
           examples:
-          - *id122
+          - *id123
           items:
             $ref: '#/components/schemas/PermissionResponse'
           title: Data
@@ -9174,7 +9237,7 @@ components:
       examples:
       - description: Create, update, and disable users
         grantable_by_caller: true
-        implies: *id123
+        implies: *id124
         name: users:write
       properties:
         description:
@@ -9192,7 +9255,7 @@ components:
         implies:
           description: Permissions this one implies when granted.
           examples:
-          - *id123
+          - *id124
           items:
             type: string
           title: Implies
@@ -9214,21 +9277,21 @@ components:
       description: List of permission rules.
       examples:
       - &id250
-        data: &id124
+        data: &id125
         - _comment: Read-only access to charges.
           _system: false
           effect: allow
           match_mode: prefix
-          methods: &id125
+          methods: &id126
           - GET
-          operations: &id126
+          operations: &id127
           - listCharges
           path: /v1/charges
       properties:
         data:
           description: The binding's permission rules, in evaluation order.
           examples:
-          - *id124
+          - *id125
           items:
             $ref: '#/components/schemas/PermissionRuleReadSchema'
           title: Data
@@ -9240,13 +9303,13 @@ components:
     PermissionRuleReadSchema:
       description: Permission rule response (includes system fields).
       examples:
-      - &id160
+      - &id161
         _comment: Read-only access to charges.
         _system: false
         effect: allow
         match_mode: prefix
-        methods: *id125
-        operations: *id126
+        methods: *id126
+        operations: *id127
         path: /v1/charges
       properties:
         _comment:
@@ -9293,7 +9356,7 @@ components:
           - type: 'null'
           description: HTTP methods the rule matches; null matches all.
           examples:
-          - *id125
+          - *id126
           title: Methods
         operations:
           anyOf:
@@ -9303,7 +9366,7 @@ components:
           - type: 'null'
           description: OpenAPI operation IDs the rule matches; null matches all.
           examples:
-          - *id126
+          - *id127
           title: Operations
         path:
           anyOf:
@@ -9326,7 +9389,7 @@ components:
         denied (default-deny). A binding with zero rules therefore blocks all
         operations — users must explicitly add at least one allow rule.
       examples:
-      - &id130
+      - &id131
         effect: allow
         match_mode: prefix
         methods: *id029
@@ -9484,16 +9547,16 @@ components:
       description: 'Structured permissions view: assigned + effective.'
       examples:
       - &id181
-        assigned: &id128
+        assigned: &id129
         - users:write
         - agents:read
-        effective: &id129
-        - *id127
+        effective: &id130
+        - *id128
       properties:
         assigned:
           description: Permissions assigned directly to the user.
           examples:
-          - *id128
+          - *id129
           items:
             type: string
           title: Assigned
@@ -9501,7 +9564,7 @@ components:
         effective:
           description: All permissions the user holds, including those implied by assigned ones.
           examples:
-          - *id129
+          - *id130
           items:
             $ref: '#/components/schemas/EffectivePermission'
           title: Effective
@@ -9515,9 +9578,9 @@ components:
       description: Patch permission rules — add and/or remove.
       examples:
       - &id251
-        add: &id131
-        - *id130
-        remove: &id132
+        add: &id132
+        - *id131
+        remove: &id133
         - 0
         - 2
       properties:
@@ -9529,7 +9592,7 @@ components:
           - type: 'null'
           description: Rules to append after the existing user rules.
           examples:
-          - *id131
+          - *id132
           title: Add
         remove:
           anyOf:
@@ -9539,14 +9602,14 @@ components:
           - type: 'null'
           description: Zero-based indexes of user rules (excluding system rules) to delete; applied before `add`.
           examples:
-          - *id132
+          - *id133
           title: Remove
       title: PermissionsPatchRequest
       type: object
     PreviewInfoResponse:
       description: The `info` block fields surfaced in a preview.
       examples:
-      - *id133
+      - *id134
       properties:
         description:
           anyOf:
@@ -9581,7 +9644,7 @@ components:
     PreviewOperationResponse:
       description: A slimmed operation in a catalog spec preview.
       examples:
-      - *id134
+      - *id135
       properties:
         description:
           description: Operation description (empty string when absent).
@@ -9606,7 +9669,7 @@ components:
         parameters:
           description: Merged path- and operation-level parameters.
           examples:
-          - - &id135
+          - - &id136
               description: Page size.
               in: query
               name: limit
@@ -9656,7 +9719,7 @@ components:
       type: object
     PreviewParameterResponse:
       description: A slimmed parameter in an operation preview.
-      example: *id135
+      example: *id136
       properties:
         description:
           description: Parameter description (empty string when absent).
@@ -9732,7 +9795,7 @@ components:
           - type: 'null'
           description: An array of granular error details. Use when multiple validation errors or field-level problems need to be surfaced in a single response.
           examples:
-          - - *id136
+          - - *id137
           title: Errors
         instance:
           anyOf:
@@ -9778,8 +9841,8 @@ components:
       description: A list of stored provider configs (secrets redacted).
       examples:
       - &id197
-        data: &id137
-        - &id138
+        data: &id138
+        - &id139
           config:
             client_id: client_abc123
             client_secret: '***'
@@ -9793,7 +9856,7 @@ components:
         data:
           description: The stored provider configs.
           examples:
-          - *id137
+          - *id138
           items:
             $ref: '#/components/schemas/ProviderConfigResponse'
           title: Data
@@ -9805,7 +9868,7 @@ components:
     ProviderConfigResponse:
       description: A stored provider config with secret fields redacted.
       examples:
-      - *id138
+      - *id139
       properties:
         config:
           additionalProperties: true
@@ -9879,13 +9942,13 @@ components:
     ProviderDiscoveryEntryResponse:
       description: Discovery metadata for a single credential provider.
       examples:
-      - &id140
+      - &id141
         callback_url: https://jentic.example.com/api/v1/credentials/oauth/callback
         configured: true
         id: pipedream
         label: Pipedream
         managed: true
-        types: &id139
+        types: &id140
         - oauth2
         - api_key
       properties:
@@ -9924,7 +9987,7 @@ components:
         types:
           description: Wire-level credential types this provider supports.
           examples:
-          - *id139
+          - *id140
           items:
             $ref: '#/components/schemas/CredentialType'
           title: Types
@@ -9941,13 +10004,13 @@ components:
       description: Discovery response listing all available credential providers.
       examples:
       - &id248
-        providers: &id141
-        - *id140
+        providers: &id142
+        - *id141
       properties:
         providers:
           description: The available credential providers.
           examples:
-          - *id141
+          - *id142
           items:
             $ref: '#/components/schemas/ProviderDiscoveryEntryResponse'
           title: Providers
@@ -9968,8 +10031,8 @@ components:
         digest: 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
         expected_agent_id: agnt_6968b3984d1c238dbe7e2e29
         kind: reauthorize
-        permission_rules: &id142
-        - *id130
+        permission_rules: &id143
+        - *id131
       properties:
         agent_id:
           anyOf:
@@ -10013,7 +10076,7 @@ components:
         permission_rules:
           description: Permission rules to bind for the agent (at most 100).
           examples:
-          - *id142
+          - *id143
           items:
             $ref: '#/components/schemas/PermissionRuleSchema'
           maxItems: 100
@@ -10089,9 +10152,9 @@ components:
       examples:
       - &id300
         client_name: invoice-reconciler
-        grant_types: &id143
+        grant_types: &id144
         - urn:ietf:params:oauth:grant-type:jwt-bearer
-        jwks: &id144
+        jwks: &id145
           keys:
           - crv: Ed25519
             kid: agent-key-1
@@ -10116,12 +10179,12 @@ components:
           - type: 'null'
           description: Accepted for RFC 7591 compatibility and ignored; the agent uses the JWT-bearer grant.
           examples:
-          - *id143
+          - *id144
           title: Grant Types
         jwks:
           additionalProperties: true
           description: A JSON Web Key Set containing at least one Ed25519 public key (kty=OKP, crv=Ed25519). RSA and other key types are not accepted.
-          example: *id144
+          example: *id145
           title: Jwks
           type: object
         scope:
@@ -10152,7 +10215,7 @@ components:
       - &id301
         claim_token: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
         client_id: agnt_6968b3984d1c238dbe7e2e29
-        grant_types: &id145
+        grant_types: &id146
         - urn:ietf:params:oauth:grant-type:jwt-bearer
         registration_access_token: rat_example-secret
         registration_client_uri: https://jentic.example.com/register/agnt_6968b3984d1c238dbe7e2e29
@@ -10179,7 +10242,7 @@ components:
           - urn:ietf:params:oauth:grant-type:jwt-bearer
           description: Grant types the agent may use; always the JWT-bearer grant.
           examples:
-          - *id145
+          - *id146
           items:
             type: string
           title: Grant Types
@@ -10222,7 +10285,7 @@ components:
       examples:
       - &id302
         client_id: agnt_6968b3984d1c238dbe7e2e29
-        grant_types: &id146
+        grant_types: &id147
         - urn:ietf:params:oauth:grant-type:jwt-bearer
         status: active
         token_endpoint_auth_method: private_key_jwt
@@ -10238,7 +10301,7 @@ components:
           - urn:ietf:params:oauth:grant-type:jwt-bearer
           description: Grant types the agent may use; always the JWT-bearer grant.
           examples:
-          - *id146
+          - *id147
           items:
             type: string
           title: Grant Types
@@ -10264,7 +10327,7 @@ components:
     ReviewAgentResponse:
       description: The agent the session binds and its owner.
       examples:
-      - &id147
+      - &id148
         agent_id: agnt_6968b3984d1c238dbe7e2e29
         name: invoice-reconciler
         owner_id: usr_6968b3987ee4c3ec0b4ee3b9
@@ -10306,7 +10369,7 @@ components:
     ReviewProvenanceResponse:
       description: Where an API target's live revision came from (registry data).
       examples:
-      - &id150
+      - &id151
         catalog_api_id: stripe.com
         origin: catalog
         revision_id: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
@@ -10358,7 +10421,7 @@ components:
     ReviewSchemeResponse:
       description: The declared scheme an API target collects (snapshot from its spec).
       examples:
-      - &id151
+      - &id152
         authorization_url: https://github.com/login/oauth/authorize
         field_name: X-Api-Key
         location: header
@@ -10415,7 +10478,7 @@ components:
     ReviewScopeResponse:
       description: One scope in the review's catalogue, flagged default and requested.
       examples:
-      - &id152
+      - &id153
         classification: write
         default: true
         description: Full control of private repositories.
@@ -10468,26 +10531,26 @@ components:
       description: What the review page shows the approver of a connect session.
       examples:
       - &id244
-        agent: *id147
-        api_reference: *id148
+        agent: *id148
+        api_reference: *id149
         can_confirm: true
         digest: 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
-        existing_credentials: &id153
-        - *id149
-        pinned_hosts: &id154
+        existing_credentials: &id154
+        - *id150
+        pinned_hosts: &id155
         - api.github.com
-        provenance: *id150
+        provenance: *id151
         reason: Needs read access to triage issues in the platform repo.
         requested_by_actor_id: agnt_6968b3984d1c238dbe7e2e29
-        requested_permission_rules: &id155
-        - *id130
-        requested_scopes: &id156
+        requested_permission_rules: &id156
+        - *id131
+        requested_scopes: &id157
         - repo
         - read:org
         resolved_flow: authorization_code
-        scheme: *id151
-        scopes: &id157
-        - *id152
+        scheme: *id152
+        scopes: &id158
+        - *id153
         session_id: cs_6968b3983b8b91c75627bee5
         state: created
         target_kind: api
@@ -10500,12 +10563,12 @@ components:
           - type: 'null'
           description: The agent the session binds, and its owner.
           examples:
-          - *id147
+          - *id148
         api_reference:
           $ref: '#/components/schemas/ConnectSessionApiReferenceResponse'
           description: Where the target's OpenAPI lives in the registry.
           examples:
-          - *id148
+          - *id149
         can_confirm:
           description: Whether this viewer may confirm the session as it stands.
           examples:
@@ -10521,7 +10584,7 @@ components:
         existing_credentials:
           description: Credentials the viewer already holds for the target.
           examples:
-          - *id153
+          - *id154
           items:
             $ref: '#/components/schemas/ExistingCredentialResponse'
           title: Existing Credentials
@@ -10534,7 +10597,7 @@ components:
           - type: 'null'
           description: Hosts the credential may be sent to, pinned at `:connect`.
           examples:
-          - *id154
+          - *id155
           title: Pinned Hosts
         provenance:
           anyOf:
@@ -10542,7 +10605,7 @@ components:
           - type: 'null'
           description: Where an API target's live revision came from.
           examples:
-          - *id150
+          - *id151
         reason:
           anyOf:
           - type: string
@@ -10560,7 +10623,7 @@ components:
         requested_permission_rules:
           description: Permission rules the initiator asked for.
           examples:
-          - *id155
+          - *id156
           items:
             $ref: '#/components/schemas/PermissionRuleSchema'
           title: Requested Permission Rules
@@ -10568,7 +10631,7 @@ components:
         requested_scopes:
           description: OAuth scopes the session asks for.
           examples:
-          - *id156
+          - *id157
           items:
             type: string
           title: Requested Scopes
@@ -10585,11 +10648,11 @@ components:
           - type: 'null'
           description: The declared scheme an API target collects.
           examples:
-          - *id151
+          - *id152
         scopes:
           description: The vendor's scope catalogue, flagged default and requested.
           examples:
-          - *id157
+          - *id158
           items:
             $ref: '#/components/schemas/ReviewScopeResponse'
           title: Scopes
@@ -10759,8 +10822,8 @@ components:
       - &id296
         description: Allows GET requests to the Stripe API; denies everything else.
         name: Stripe read-only
-        rules: &id158
-        - *id130
+        rules: &id159
+        - *id131
       properties:
         description:
           anyOf:
@@ -10781,7 +10844,7 @@ components:
         rules:
           description: Initial ordered rule list (first-match-wins, default-deny).
           examples:
-          - *id158
+          - *id159
           items:
             $ref: '#/components/schemas/PermissionRuleSchema'
           maxItems: 100
@@ -10795,7 +10858,7 @@ components:
       description: Paginated list of rule sets.
       examples:
       - &id295
-        data: &id159
+        data: &id160
         - created_at: '2026-01-15T09:30:00Z'
           created_by: usr_6968b3987ee4c3ec0b4ee3b9
           curated: true
@@ -10809,7 +10872,7 @@ components:
         data:
           description: The page of rule sets.
           examples:
-          - *id159
+          - *id160
           items:
             $ref: '#/components/schemas/RuleSetSummaryResponse'
           title: Data
@@ -10844,8 +10907,8 @@ components:
         description: Allows GET requests to the Stripe API; denies everything else.
         name: Stripe read-only
         rule_set_id: prs_6968b3987c22b63e87e79f05
-        rules: &id161
-        - *id160
+        rules: &id162
+        - *id161
       properties:
         binding_count:
           description: How many agent-credential bindings currently point at this set.
@@ -10897,7 +10960,7 @@ components:
         rules:
           description: Ordered rule list (first-match-wins, default-deny).
           examples:
-          - *id161
+          - *id162
           items:
             $ref: '#/components/schemas/PermissionRuleReadSchema'
           title: Rules
@@ -11007,7 +11070,7 @@ components:
     RuntimeConfig:
       description: Optional per-upstream-call overrides.
       examples:
-      - &id171
+      - &id172
         headers: *id013
         query_params: *id014
       properties:
@@ -11053,12 +11116,12 @@ components:
       description: POST /search request body.
       examples:
       - &id303
-        apis: &id162
+        apis: &id163
         - stripe.com/stripe
         cursor: eyJkIjogMC4yODE2LCAiaWQiOiAib3BfZjkyZDY5ZjE2MjFmMzgxYmNlOGFhZmY0NzA1M2M2MWIwNjlmZmUzNCJ9
         limit: 10
         query: list recent charges
-        revision_pins: &id163
+        revision_pins: &id164
           stripe.com/stripe/2024-04-10: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
       properties:
         apis:
@@ -11069,7 +11132,7 @@ components:
           - type: 'null'
           description: Restrict results to these APIs. Each entry is a 'vendor[/name[/version]]' identifier of an imported API (e.g. 'github-com/api-github-com/1.1.4'); vendor and name are normalized like ingest, so raw spellings such as 'stripe.com/api' also resolve. The legacy colon-separated form 'vendor[:name[:version]]' is also accepted.
           examples:
-          - *id162
+          - *id163
           title: Apis
         cursor:
           anyOf:
@@ -11103,7 +11166,7 @@ components:
           - type: 'null'
           description: Pin specific APIs to a revision for this search. Keys are full 'vendor/name/version' identifiers (colon-separated also accepted); values are revision UUIDs.
           examples:
-          - *id163
+          - *id164
           title: Revision Pins
       required:
       - query
@@ -11113,15 +11176,15 @@ components:
       description: Cursor-paginated search results page.
       examples:
       - &id304
-        data: &id165
-        - *id164
+        data: &id166
+        - *id165
         has_more: true
         next_cursor: eyJkIjogMC4yODE2LCAiaWQiOiAib3BfZjkyZDY5ZjE2MjFmMzgxYmNlOGFhZmY0NzA1M2M2MWIwNjlmZmUzNCJ9
       properties:
         data:
           description: The page of matching operations.
           examples:
-          - *id165
+          - *id166
           items:
             $ref: '#/components/schemas/OperationResultResponse'
           title: Data
@@ -11148,11 +11211,11 @@ components:
     SecuritySchemeFlowResponse:
       description: A single OAuth2 flow within a security scheme.
       examples:
-      - &id167
+      - &id168
         authorization_url: https://connect.stripe.com/oauth/authorize
         flow_type: authorizationCode
         refresh_url: https://connect.stripe.com/oauth/token
-        scopes: &id166
+        scopes: &id167
           read_only: Read-only access
           read_write: Read and write access
         token_url: https://connect.stripe.com/oauth/token
@@ -11187,7 +11250,7 @@ components:
           - type: 'null'
           description: Available scopes mapped to their descriptions.
           examples:
-          - *id166
+          - *id167
           title: Scopes
         token_url:
           anyOf:
@@ -11205,11 +11268,11 @@ components:
       description: List of security schemes for an API's current revision.
       examples:
       - &id233
-        data: &id168
+        data: &id169
         - bearer_format: JWT
           description: Use your secret API key as the bearer token.
           flows:
-          - *id167
+          - *id168
           in_location: header
           name: bearerAuth
           open_id_connect_url: https://accounts.example.com/.well-known/openid-configuration
@@ -11220,7 +11283,7 @@ components:
         data:
           description: Security schemes declared by the API's current revision.
           examples:
-          - *id168
+          - *id169
           items:
             $ref: '#/components/schemas/SecuritySchemeResponse'
           title: Data
@@ -11234,8 +11297,8 @@ components:
       examples:
       - bearer_format: JWT
         description: Use your secret API key as the bearer token.
-        flows: &id169
-        - *id167
+        flows: &id170
+        - *id168
         in_location: header
         name: bearerAuth
         open_id_connect_url: https://accounts.example.com/.well-known/openid-configuration
@@ -11262,7 +11325,7 @@ components:
         flows:
           description: OAuth2 flows declared by the scheme; empty for other types.
           examples:
-          - *id169
+          - *id170
           items:
             $ref: '#/components/schemas/SecuritySchemeFlowResponse'
           title: Flows
@@ -11360,14 +11423,14 @@ components:
       description: Request body for setting user permissions.
       examples:
       - &id313
-        permissions: &id170
+        permissions: &id171
         - users:write
         - agents:read
       properties:
         permissions:
           description: Permissions to assign to the user; replaces the current assigned set.
           examples:
-          - *id170
+          - *id171
           items:
             type: string
           maxItems: 50
@@ -11386,9 +11449,9 @@ components:
         aws_service: execute-api
         name: Stripe live key
         provider: static
-        runtime_config: *id171
+        runtime_config: *id172
         secret_access_key: example-secret
-        server_variables: &id172
+        server_variables: &id173
           region: eu
         session_token: example-secret
         type: sigv4
@@ -11435,7 +11498,7 @@ components:
           - type: 'null'
           description: Per-upstream-call overrides; reserved and not currently applied.
           examples:
-          - *id171
+          - *id172
         secret_access_key:
           description: AWS secret access key. Stored encrypted; never returned after create.
           examples:
@@ -11451,7 +11514,7 @@ components:
           - type: 'null'
           description: OpenAPI server-variable values for URL template substitution (at most 20).
           examples:
-          - *id172
+          - *id173
           title: Server Variables
         session_token:
           anyOf:
@@ -11488,9 +11551,9 @@ components:
         aws_service: execute-api
         clear_session_token: false
         name: Stripe live key
-        runtime_config: *id171
+        runtime_config: *id172
         secret_access_key: example-secret
-        server_variables: &id173
+        server_variables: &id174
           region: eu
         session_token: example-secret
         type: sigv4
@@ -11552,7 +11615,7 @@ components:
           - type: 'null'
           description: Per-upstream-call overrides; reserved and not currently applied.
           examples:
-          - *id171
+          - *id172
         secret_access_key:
           anyOf:
           - minLength: 1
@@ -11571,7 +11634,7 @@ components:
           - type: 'null'
           description: Replacement OpenAPI server-variable values; omit to leave unchanged.
           examples:
-          - *id173
+          - *id174
           title: Server Variables
         session_token:
           anyOf:
@@ -11593,68 +11656,6 @@ components:
       required:
       - type
       title: Sigv4UpdateRequest
-      type: object
-    StatusResponse:
-      description: A connect session's lifecycle status.
-      examples:
-      - &id245
-        bound_scopes: &id174
-        - repo
-        - read:org
-        connected_as: octocat
-        credential_id: cred_6968b39855d91a3561684b32
-        error_code: access_denied
-        status: connected
-      properties:
-        bound_scopes:
-          anyOf:
-          - items:
-              type: string
-            type: array
-          - type: 'null'
-          description: Scopes the connected credential holds.
-          examples:
-          - *id174
-          title: Bound Scopes
-        connected_as:
-          anyOf:
-          - type: string
-          - type: 'null'
-          description: Upstream account the credential connected as; null until known.
-          examples:
-          - octocat
-          title: Connected As
-        credential_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          description: ID of the connected credential; null until connected.
-          examples:
-          - cred_6968b39855d91a3561684b32
-          title: Credential Id
-        error_code:
-          anyOf:
-          - type: string
-          - type: 'null'
-          description: Why a failed session failed, e.g. `rejected` or `access_denied`.
-          examples:
-          - access_denied
-          title: Error Code
-        status:
-          description: The session's lifecycle status.
-          enum:
-          - pending
-          - polling
-          - connected
-          - failed
-          - expired
-          examples:
-          - connected
-          title: Status
-          type: string
-      required:
-      - status
-      title: StatusResponse
       type: object
     TokenResponse:
       description: Token endpoint success response.
@@ -13173,7 +13174,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id138
+              example: *id139
               schema:
                 $ref: '#/components/schemas/ProviderConfigResponse'
           description: Successful Response
@@ -13286,7 +13287,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id138
+              example: *id139
               schema:
                 $ref: '#/components/schemas/ProviderConfigResponse'
           description: Successful Response
@@ -13692,7 +13693,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id102
+              example: *id103
               schema:
                 $ref: '#/components/schemas/OAuthClientResponse'
           description: Successful Response
@@ -13788,7 +13789,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id102
+              example: *id103
               schema:
                 $ref: '#/components/schemas/OAuthClientResponse'
           description: Successful Response
@@ -13977,7 +13978,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id102
+              example: *id103
               schema:
                 $ref: '#/components/schemas/OAuthClientResponse'
           description: Successful Response
@@ -14175,7 +14176,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id102
+              example: *id103
               schema:
                 $ref: '#/components/schemas/OAuthClientResponse'
           description: Successful Response
@@ -21106,7 +21107,7 @@ paths:
             application/json:
               example: *id245
               schema:
-                $ref: '#/components/schemas/StatusResponse'
+                $ref: '#/components/schemas/ConnectSessionStatusResponse'
           description: Successful Response
         '400':
           content:
@@ -21926,7 +21927,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id046
+              example: *id047
               schema:
                 $ref: '#/components/schemas/CredentialRedactedResponse'
           description: Successful Response
@@ -22037,7 +22038,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id046
+              example: *id047
               schema:
                 $ref: '#/components/schemas/CredentialRedactedResponse'
           description: Successful Response

@@ -802,7 +802,7 @@ def test_session_routes_declare_their_success_schemas_in_openapi() -> None:
         "$ref": "#/components/schemas/ReviewSessionResponse"
     }
     assert success_schema("/connect-sessions/{session_id}/status", "get", "200") == {
-        "$ref": "#/components/schemas/StatusResponse"
+        "$ref": "#/components/schemas/ConnectSessionStatusResponse"
     }
     confirm = success_schema("/connect-sessions/{session_id}:confirm", "post", "200")
     assert {variant["$ref"] for variant in confirm["oneOf"]} == {

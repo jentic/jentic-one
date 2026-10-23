@@ -21,6 +21,7 @@ var SensitiveFields = map[string][]string{
 	"ClaimRequest":                               []string{"token"},
 	"CreateAdminRequest":                         []string{"password"},
 	"CredentialCreateResponse":                   []string{"secret"},
+	"IntegrationsConnectResponse":                []string{"poll_token"},
 	"InviteIssuedResponse":                       []string{"token"},
 	"LoginRequest":                               []string{"password"},
 	"LoginResponse":                              []string{"access_token"},

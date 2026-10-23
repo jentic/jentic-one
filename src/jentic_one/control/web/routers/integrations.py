@@ -51,6 +51,7 @@ from jentic_one.control.web.schemas.integrations import (
     ConnectSessionApiReferenceResponse,
     ConnectSessionListResponse,
     ConnectSessionState,
+    ConnectSessionStatusResponse,
     ConnectSessionSummaryResponse,
     DeviceAuthorizationConfirmSessionResponse,
     ExistingCredentialConfirmSessionRequest,
@@ -66,7 +67,6 @@ from jentic_one.control.web.schemas.integrations import (
     ReviewSchemeResponse,
     ReviewScopeResponse,
     ReviewSessionResponse,
-    StatusResponse,
 )
 from jentic_one.control.web.schemas.permission_rules import PermissionRuleSchema
 from jentic_one.shared.auth.identity import Identity
@@ -591,7 +591,7 @@ async def poll_connect_session_status(
         required_permissions=["credentials:connect", "credentials:write"]
     ),
     svc: ConnectSessionService = Depends(get_connect_session_service),
-) -> StatusResponse:
+) -> ConnectSessionStatusResponse:
     """Poll the lifecycle status of a connect session.
 
     Returns the session's current ``status`` and, once it has connected, the
@@ -612,7 +612,7 @@ async def poll_connect_session_status(
     # and "not the owner / admin" — the uniform 403 is what closes the
     # session-id enumeration oracle; a 404 branch would reintroduce the split.
     result = await svc.get_status(session_id, poll_token=poll_token, identity=identity)
-    return StatusResponse(
+    return ConnectSessionStatusResponse(
         status=result.status,  # type: ignore[arg-type]
         connected_as=result.connected_as,
         credential_id=result.credential_id,

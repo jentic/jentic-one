@@ -296,7 +296,7 @@ export type { DeviceAuthorizationConfirmSessionResponse } from '@/shared/api/gen
 export type { AuthCodeConfirmSessionResponse } from '@/shared/api/generated/models/AuthCodeConfirmSessionResponse';
 export type { ConnectedConfirmSessionResponse } from '@/shared/api/generated/models/ConnectedConfirmSessionResponse';
 export type { ReauthorizeConfirmSessionResponse } from '@/shared/api/generated/models/ReauthorizeConfirmSessionResponse';
-export type { StatusResponse as ConnectSessionStatusResponse } from '@/shared/api/generated/models/StatusResponse';
+export type { ConnectSessionStatusResponse } from '@/shared/api/generated/models/ConnectSessionStatusResponse';
 export type { VendorListResponse } from '@/shared/api/generated/models/VendorListResponse';
 export type { VendorSummaryResponse } from '@/shared/api/generated/models/VendorSummaryResponse';
 export type { VendorAuthCapabilitiesResponse } from '@/shared/api/generated/models/VendorAuthCapabilitiesResponse';

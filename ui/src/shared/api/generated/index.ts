@@ -63,6 +63,7 @@ export type { ConnectedConfirmSessionResponse } from './models/ConnectedConfirmS
 export type { ConnectRequestBody } from './models/ConnectRequestBody';
 export type { ConnectSessionApiReferenceResponse } from './models/ConnectSessionApiReferenceResponse';
 export type { ConnectSessionListResponse } from './models/ConnectSessionListResponse';
+export { ConnectSessionStatusResponse } from './models/ConnectSessionStatusResponse';
 export { ConnectSessionSummaryResponse } from './models/ConnectSessionSummaryResponse';
 export { ConsentAgentStatusResponse } from './models/ConsentAgentStatusResponse';
 export type { CreateAdminRequest } from './models/CreateAdminRequest';
@@ -215,7 +216,6 @@ export type { ServedApiRef } from './models/ServedApiRef';
 export type { SetPermissionsRequest } from './models/SetPermissionsRequest';
 export type { Sigv4CreateRequest } from './models/Sigv4CreateRequest';
 export type { Sigv4UpdateRequest } from './models/Sigv4UpdateRequest';
-export { StatusResponse } from './models/StatusResponse';
 export type { TokenResponse } from './models/TokenResponse';
 export type { TopOperation } from './models/TopOperation';
 export type { UsageBucket } from './models/UsageBucket';

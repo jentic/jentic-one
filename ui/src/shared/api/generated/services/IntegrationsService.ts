@@ -8,6 +8,7 @@ import type { BasicConfirmSessionRequest } from '../models/BasicConfirmSessionRe
 import type { BearerConfirmSessionRequest } from '../models/BearerConfirmSessionRequest';
 import type { ConnectedConfirmSessionResponse } from '../models/ConnectedConfirmSessionResponse';
 import type { ConnectSessionListResponse } from '../models/ConnectSessionListResponse';
+import type { ConnectSessionStatusResponse } from '../models/ConnectSessionStatusResponse';
 import type { DeviceAuthorizationConfirmSessionResponse } from '../models/DeviceAuthorizationConfirmSessionResponse';
 import type { ExistingCredentialConfirmSessionRequest } from '../models/ExistingCredentialConfirmSessionRequest';
 import type { IntegrationsConnectRequest } from '../models/IntegrationsConnectRequest';
@@ -17,7 +18,6 @@ import type { OwnOAuthClientConfirmSessionRequest } from '../models/OwnOAuthClie
 import type { ReauthorizeConfirmSessionRequest } from '../models/ReauthorizeConfirmSessionRequest';
 import type { ReauthorizeConfirmSessionResponse } from '../models/ReauthorizeConfirmSessionResponse';
 import type { ReviewSessionResponse } from '../models/ReviewSessionResponse';
-import type { StatusResponse } from '../models/StatusResponse';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
@@ -138,7 +138,7 @@ export class IntegrationsService {
      * ``:connect`` can poll without full session-read rights. A missing session,
      * a ``poll_token`` mismatch, and a caller who is neither all answer a uniform
      * 403, so the endpoint is not a session-id enumeration oracle.
-     * @returns StatusResponse Successful Response
+     * @returns ConnectSessionStatusResponse Successful Response
      * @throws ApiError
      */
     public static pollConnectSessionStatus({
@@ -153,7 +153,7 @@ export class IntegrationsService {
          * Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
          */
         pollToken?: (string | null),
-    }): CancelablePromise<StatusResponse> {
+    }): CancelablePromise<ConnectSessionStatusResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/connect-sessions/{session_id}/status',

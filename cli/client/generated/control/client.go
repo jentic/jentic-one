@@ -219,6 +219,21 @@ func (e AuditTargetType) Valid() bool {
 	}
 }
 
+// Defines values for AuthCodeConfirmSessionResponseKind.
+const (
+	AuthCodeConfirmSessionResponseKindAuthorizationCode AuthCodeConfirmSessionResponseKind = "authorization_code"
+)
+
+// Valid indicates whether the value is a known member of the AuthCodeConfirmSessionResponseKind enum.
+func (e AuthCodeConfirmSessionResponseKind) Valid() bool {
+	switch e {
+	case AuthCodeConfirmSessionResponseKindAuthorizationCode:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AuthorizationCodeRegistrationCreateRequestFlowKind.
 const (
 	AuthorizationCodeRegistrationCreateRequestFlowKindAuthorizationCode AuthorizationCodeRegistrationCreateRequestFlowKind = "authorization_code"
@@ -281,13 +296,13 @@ func (e BasicConfirmSessionRequestKind) Valid() bool {
 
 // Defines values for BearerConfirmSessionRequestKind.
 const (
-	Bearer BearerConfirmSessionRequestKind = "bearer"
+	BearerConfirmSessionRequestKindBearer BearerConfirmSessionRequestKind = "bearer"
 )
 
 // Valid indicates whether the value is a known member of the BearerConfirmSessionRequestKind enum.
 func (e BearerConfirmSessionRequestKind) Valid() bool {
 	switch e {
-	case Bearer:
+	case BearerConfirmSessionRequestKindBearer:
 		return true
 	default:
 		return false
@@ -324,6 +339,33 @@ func (e BearerTokenUpdateRequestType) Valid() bool {
 	}
 }
 
+// Defines values for ConnectSessionStatusResponseStatus.
+const (
+	ConnectSessionStatusResponseStatusConnected ConnectSessionStatusResponseStatus = "connected"
+	ConnectSessionStatusResponseStatusExpired   ConnectSessionStatusResponseStatus = "expired"
+	ConnectSessionStatusResponseStatusFailed    ConnectSessionStatusResponseStatus = "failed"
+	ConnectSessionStatusResponseStatusPending   ConnectSessionStatusResponseStatus = "pending"
+	ConnectSessionStatusResponseStatusPolling   ConnectSessionStatusResponseStatus = "polling"
+)
+
+// Valid indicates whether the value is a known member of the ConnectSessionStatusResponseStatus enum.
+func (e ConnectSessionStatusResponseStatus) Valid() bool {
+	switch e {
+	case ConnectSessionStatusResponseStatusConnected:
+		return true
+	case ConnectSessionStatusResponseStatusExpired:
+		return true
+	case ConnectSessionStatusResponseStatusFailed:
+		return true
+	case ConnectSessionStatusResponseStatusPending:
+		return true
+	case ConnectSessionStatusResponseStatusPolling:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ConnectSessionSummaryResponseState.
 const (
 	ConnectSessionSummaryResponseStateAwaitingApp ConnectSessionSummaryResponseState = "awaiting_app"
@@ -342,6 +384,21 @@ func (e ConnectSessionSummaryResponseState) Valid() bool {
 	case ConnectSessionSummaryResponseStateCreated:
 		return true
 	case ConnectSessionSummaryResponseStatePolling:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ConnectedConfirmSessionResponseKind.
+const (
+	ConnectedConfirmSessionResponseKindConnected ConnectedConfirmSessionResponseKind = "connected"
+)
+
+// Valid indicates whether the value is a known member of the ConnectedConfirmSessionResponseKind enum.
+func (e ConnectedConfirmSessionResponseKind) Valid() bool {
+	switch e {
+	case ConnectedConfirmSessionResponseKindConnected:
 		return true
 	default:
 		return false
@@ -414,6 +471,21 @@ func (e CredentialType) Valid() bool {
 	case CredentialTypeOauth2:
 		return true
 	case CredentialTypeSigv4:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DeviceAuthorizationConfirmSessionResponseKind.
+const (
+	DeviceAuthorizationConfirmSessionResponseKindDeviceAuthorization DeviceAuthorizationConfirmSessionResponseKind = "device_authorization"
+)
+
+// Valid indicates whether the value is a known member of the DeviceAuthorizationConfirmSessionResponseKind enum.
+func (e DeviceAuthorizationConfirmSessionResponseKind) Valid() bool {
+	switch e {
+	case DeviceAuthorizationConfirmSessionResponseKindDeviceAuthorization:
 		return true
 	default:
 		return false
@@ -1031,13 +1103,91 @@ func (e PermissionRuleSchemaMatchMode) Valid() bool {
 
 // Defines values for ReauthorizeConfirmSessionRequestKind.
 const (
-	Reauthorize ReauthorizeConfirmSessionRequestKind = "reauthorize"
+	ReauthorizeConfirmSessionRequestKindReauthorize ReauthorizeConfirmSessionRequestKind = "reauthorize"
 )
 
 // Valid indicates whether the value is a known member of the ReauthorizeConfirmSessionRequestKind enum.
 func (e ReauthorizeConfirmSessionRequestKind) Valid() bool {
 	switch e {
-	case Reauthorize:
+	case ReauthorizeConfirmSessionRequestKindReauthorize:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReauthorizeConfirmSessionResponseKind.
+const (
+	ReauthorizeConfirmSessionResponseKindReauthorize ReauthorizeConfirmSessionResponseKind = "reauthorize"
+)
+
+// Valid indicates whether the value is a known member of the ReauthorizeConfirmSessionResponseKind enum.
+func (e ReauthorizeConfirmSessionResponseKind) Valid() bool {
+	switch e {
+	case ReauthorizeConfirmSessionResponseKindReauthorize:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReviewSchemeResponseType.
+const (
+	ReviewSchemeResponseTypeApiKey ReviewSchemeResponseType = "api_key"
+	ReviewSchemeResponseTypeBasic  ReviewSchemeResponseType = "basic"
+	ReviewSchemeResponseTypeBearer ReviewSchemeResponseType = "bearer"
+	ReviewSchemeResponseTypeOauth2 ReviewSchemeResponseType = "oauth2"
+)
+
+// Valid indicates whether the value is a known member of the ReviewSchemeResponseType enum.
+func (e ReviewSchemeResponseType) Valid() bool {
+	switch e {
+	case ReviewSchemeResponseTypeApiKey:
+		return true
+	case ReviewSchemeResponseTypeBasic:
+		return true
+	case ReviewSchemeResponseTypeBearer:
+		return true
+	case ReviewSchemeResponseTypeOauth2:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReviewScopeResponseClassification.
+const (
+	ReviewScopeResponseClassificationAdmin ReviewScopeResponseClassification = "admin"
+	ReviewScopeResponseClassificationRead  ReviewScopeResponseClassification = "read"
+	ReviewScopeResponseClassificationWrite ReviewScopeResponseClassification = "write"
+)
+
+// Valid indicates whether the value is a known member of the ReviewScopeResponseClassification enum.
+func (e ReviewScopeResponseClassification) Valid() bool {
+	switch e {
+	case ReviewScopeResponseClassificationAdmin:
+		return true
+	case ReviewScopeResponseClassificationRead:
+		return true
+	case ReviewScopeResponseClassificationWrite:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReviewSessionResponseTargetKind.
+const (
+	ReviewSessionResponseTargetKindApi    ReviewSessionResponseTargetKind = "api"
+	ReviewSessionResponseTargetKindVendor ReviewSessionResponseTargetKind = "vendor"
+)
+
+// Valid indicates whether the value is a known member of the ReviewSessionResponseTargetKind enum.
+func (e ReviewSessionResponseTargetKind) Valid() bool {
+	switch e {
+	case ReviewSessionResponseTargetKindApi:
+		return true
+	case ReviewSessionResponseTargetKindVendor:
 		return true
 	default:
 		return false
@@ -1068,6 +1218,27 @@ const (
 func (e Sigv4UpdateRequestType) Valid() bool {
 	switch e {
 	case Sigv4UpdateRequestTypeSigv4:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for VendorScopeResponseClassification.
+const (
+	VendorScopeResponseClassificationAdmin VendorScopeResponseClassification = "admin"
+	VendorScopeResponseClassificationRead  VendorScopeResponseClassification = "read"
+	VendorScopeResponseClassificationWrite VendorScopeResponseClassification = "write"
+)
+
+// Valid indicates whether the value is a known member of the VendorScopeResponseClassification enum.
+func (e VendorScopeResponseClassification) Valid() bool {
+	switch e {
+	case VendorScopeResponseClassificationAdmin:
+		return true
+	case VendorScopeResponseClassificationRead:
+		return true
+	case VendorScopeResponseClassificationWrite:
 		return true
 	default:
 		return false
@@ -2156,6 +2327,22 @@ type AuditResponse struct {
 // AuditTargetType Entity types that can be the target of an audited action.
 type AuditTargetType string
 
+// AuthCodeConfirmSessionResponse Authorization-code result — browser redirect target; completion
+// lands server-side at “/credentials/oauth/callback“ and the client
+// observes it via “/status“.
+//
+// Examples: {"authorize_url":"https://github.com/login/oauth/authorize?client_id=Iv1.8a61f9b3a7aba766"}
+type AuthCodeConfirmSessionResponse struct {
+	// AuthorizeUrl Vendor sign-in URL to open in the approver's browser.
+	//
+	// Examples: https://github.com/login/oauth/authorize?client_id=Iv1.8a61f9b3a7aba766
+	AuthorizeUrl string                              `json:"authorize_url"`
+	Kind         *AuthCodeConfirmSessionResponseKind `json:"kind,omitempty"`
+}
+
+// AuthCodeConfirmSessionResponseKind defines model for AuthCodeConfirmSessionResponse.Kind.
+type AuthCodeConfirmSessionResponseKind string
+
 // AuthorizationCodeRegistrationCreateRequest Create request for an authorization-code registration.
 //
 // Examples: {"api_vendor":"github","authorize_url":"https://github.com/login/oauth/authorize","catalog_api_id":"github.com/api.github.com","client_id":"Iv1.a1b2c3d4","client_secret":"\u003cpaste-client-secret-from-vendor-console\u003e","default_scopes":["repo","read:user"],"display_name":"GitHub","flow_kind":"authorization_code","name":"MyOrg GitHub","token_url":"https://github.com/login/oauth/access_token"}
@@ -2673,6 +2860,31 @@ type ConnectRequestBody struct {
 	Scopes *[]string `json:"scopes,omitempty"`
 }
 
+// ConnectSessionApiReferenceResponse Where the vendor's OpenAPI lives in the registry.
+//
+// “version“ is nullable because the catalog auto-importer runs
+// asynchronously — the SPA's rules-page preview polls this endpoint
+// and shows an "operations still importing…" skeleton until it
+// becomes non-null and the operations endpoint returns 200.
+//
+// Examples: {"name":"stripe","vendor":"stripe.com","version":"2024-04-10"}
+type ConnectSessionApiReferenceResponse struct {
+	// Name Registry name of the API; null if not yet known.
+	//
+	// Examples: stripe
+	Name *string `json:"name"`
+
+	// Vendor Registry vendor of the API.
+	//
+	// Examples: stripe.com
+	Vendor string `json:"vendor"`
+
+	// Version Registry version of the API; null until the catalog import completes.
+	//
+	// Examples: 2024-04-10
+	Version *string `json:"version"`
+}
+
 // ConnectSessionListResponse Cursor-paginated envelope of connect-session summaries.
 //
 // Examples: {"data":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","connected_as":"octocat","created_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","error_code":"access_denied","reason":"Needs read access to triage issues in the platform repo.","requested_by_actor_id":"agnt_6968b3984d1c238dbe7e2e29","session_id":"cs_6968b3983b8b91c75627bee5","state":"connected","vendor_display_name":"GitHub","vendor_key":"github"}],"has_more":true,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
@@ -2692,6 +2904,41 @@ type ConnectSessionListResponse struct {
 	// Examples: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
+
+// ConnectSessionStatusResponse A connect session's lifecycle status.
+//
+// Examples: {"bound_scopes":["repo","read:org"],"connected_as":"octocat","credential_id":"cred_6968b39855d91a3561684b32","error_code":"access_denied","status":"connected"}
+type ConnectSessionStatusResponse struct {
+	// BoundScopes Scopes the connected credential holds.
+	//
+	// Examples: ["repo","read:org"]
+	BoundScopes *[]string `json:"bound_scopes,omitempty"`
+
+	// ConnectedAs Upstream account the credential connected as; null until known.
+	//
+	// Examples: octocat
+	ConnectedAs *string `json:"connected_as,omitempty"`
+
+	// CredentialId ID of the connected credential; null until connected.
+	//
+	// Examples: cred_6968b39855d91a3561684b32
+	CredentialId *string `json:"credential_id,omitempty"`
+
+	// ErrorCode Why a failed session failed, e.g. `rejected` or `access_denied`.
+	//
+	// Examples: access_denied
+	ErrorCode *string `json:"error_code,omitempty"`
+
+	// Status The session's lifecycle status.
+	//
+	// Examples: connected
+	Status ConnectSessionStatusResponseStatus `json:"status"`
+}
+
+// ConnectSessionStatusResponseStatus The session's lifecycle status.
+//
+// Examples: connected
+type ConnectSessionStatusResponseStatus string
 
 // ConnectSessionSummaryResponse Slim list row for the console — deliberately excludes “poll_token“.
 //
@@ -2757,6 +3004,20 @@ type ConnectSessionSummaryResponse struct {
 //
 // Examples: connected
 type ConnectSessionSummaryResponseState string
+
+// ConnectedConfirmSessionResponse The confirm finished the session; “credential_id“ is bound to the agent.
+//
+// Examples: {"credential_id":"cred_6968b39855d91a3561684b32"}
+type ConnectedConfirmSessionResponse struct {
+	// CredentialId ID of the credential bound to the agent.
+	//
+	// Examples: cred_6968b39855d91a3561684b32
+	CredentialId string                               `json:"credential_id"`
+	Kind         *ConnectedConfirmSessionResponseKind `json:"kind,omitempty"`
+}
+
+// ConnectedConfirmSessionResponseKind defines model for ConnectedConfirmSessionResponse.Kind.
+type ConnectedConfirmSessionResponseKind string
 
 // ConsentAgentStatusResponse Minimal tri-state for the consent page's pending-agent awaiting page (P4).
 //
@@ -3197,6 +3458,41 @@ type DenyRequest struct {
 	Reason string `json:"reason"`
 }
 
+// DeviceAuthorizationConfirmSessionResponse RFC 8628 device-code result — user types “user_code“ at
+// “verification_uri“ and the client polls “/status“ until connected.
+//
+// Discriminator matches “ConnectChallengeResponse“ (the direct
+// credential-connect endpoint) — one wire value for the same concept
+// across both entry points.
+//
+// Examples: {"poll_interval_seconds":5,"user_code":"WDJB-MJHT","verification_uri":"https://github.com/login/device","verification_uri_complete":"https://github.com/login/device?user_code=WDJB-MJHT"}
+type DeviceAuthorizationConfirmSessionResponse struct {
+	Kind *DeviceAuthorizationConfirmSessionResponseKind `json:"kind,omitempty"`
+
+	// PollIntervalSeconds Seconds to wait between status polls.
+	//
+	// Examples: 5
+	PollIntervalSeconds *int `json:"poll_interval_seconds,omitempty"`
+
+	// UserCode The code the user enters at `verification_uri`.
+	//
+	// Examples: WDJB-MJHT
+	UserCode string `json:"user_code"`
+
+	// VerificationUri Where the user enters `user_code`.
+	//
+	// Examples: https://github.com/login/device
+	VerificationUri string `json:"verification_uri"`
+
+	// VerificationUriComplete `verification_uri` with the code filled in, when the vendor offers one.
+	//
+	// Examples: https://github.com/login/device?user_code=WDJB-MJHT
+	VerificationUriComplete *string `json:"verification_uri_complete,omitempty"`
+}
+
+// DeviceAuthorizationConfirmSessionResponseKind defines model for DeviceAuthorizationConfirmSessionResponse.Kind.
+type DeviceAuthorizationConfirmSessionResponseKind string
+
 // DeviceAuthorizationRegistrationCreateRequest Create request for a device-authorization registration.
 //
 // Examples: {"api_vendor":"github","authorization_endpoint":"https://github.com/login/device/code","catalog_api_id":"github.com/api.github.com","client_id":"Iv1.a1b2c3d4","default_scopes":["repo"],"display_name":"GitHub","flow_kind":"device_authorization","name":"MyOrg GitHub (device flow)","token_endpoint":"https://github.com/login/oauth/access_token"}
@@ -3616,6 +3912,56 @@ type ExistingCredentialConfirmSessionRequest struct {
 //
 // Examples: existing_credential
 type ExistingCredentialConfirmSessionRequestKind string
+
+// ExistingCredentialResponse A credential the viewer already holds for the target.
+//
+// “granted_scopes“ / “missing_scopes“ are set for OAuth credentials
+// only; a static credential's upstream permissions are not visible to the
+// platform. “can_reauthorize“ is false whenever another agent is bound
+// (“other_bound_agent_ids“) — widening it would widen theirs too.
+//
+// Examples: {"can_bind":true,"can_reauthorize":false,"credential_id":"cred_6968b39855d91a3561684b32","granted_scopes":["repo","read:org"],"missing_scopes":["admin:org"],"name":"GitHub (octocat)","other_bound_agent_ids":["agnt_6968b3984d1c238dbe7e2e29"],"type":"oauth2"}
+type ExistingCredentialResponse struct {
+	// CanBind Whether the viewer may bind the credential to the agent.
+	//
+	// Examples: true
+	CanBind bool `json:"can_bind"`
+
+	// CanReauthorize Whether the viewer may widen the credential's scopes.
+	//
+	// Examples: false
+	CanReauthorize bool `json:"can_reauthorize"`
+
+	// CredentialId ID of the credential.
+	//
+	// Examples: cred_6968b39855d91a3561684b32
+	CredentialId string `json:"credential_id"`
+
+	// GrantedScopes Scopes the credential holds; null for a non-OAuth credential.
+	//
+	// Examples: ["repo","read:org"]
+	GrantedScopes *[]string `json:"granted_scopes,omitempty"`
+
+	// MissingScopes Requested scopes the credential lacks; null for a non-OAuth credential.
+	//
+	// Examples: ["admin:org"]
+	MissingScopes *[]string `json:"missing_scopes,omitempty"`
+
+	// Name Name of the credential.
+	//
+	// Examples: GitHub (octocat)
+	Name string `json:"name"`
+
+	// OtherBoundAgentIds Other agents bound to the credential.
+	//
+	// Examples: ["agnt_6968b3984d1c238dbe7e2e29"]
+	OtherBoundAgentIds *[]string `json:"other_bound_agent_ids,omitempty"`
+
+	// Type The credential's type.
+	//
+	// Examples: oauth2
+	Type string `json:"type"`
+}
 
 // GovernedHostsResponse The caller's governed host set (canonical order) with its change digest.
 //
@@ -4094,6 +4440,31 @@ type IntegrationsConnectRequest struct {
 	//
 	// Examples: github
 	Vendor *string `json:"vendor,omitempty"`
+}
+
+// IntegrationsConnectResponse A started connect session: where a human approves it and how to poll it.
+//
+// Examples: {"approval_url":"https://jentic.example.com/connect?approve=cs_6968b3983b8b91c75627bee5","poll_token":"dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk","resolved_flow":"authorization_code","session_id":"cs_6968b3983b8b91c75627bee5"}
+type IntegrationsConnectResponse struct {
+	// ApprovalUrl URL a human opens to review and approve the session.
+	//
+	// Examples: https://jentic.example.com/connect?approve=cs_6968b3983b8b91c75627bee5
+	ApprovalUrl string `json:"approval_url"`
+
+	// PollToken Opaque capability for the session's status, review and cancel routes.
+	//
+	// Examples: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
+	PollToken string `json:"poll_token"`
+
+	// ResolvedFlow The flow the session runs, e.g. `authorization_code` or `manual_api_key`.
+	//
+	// Examples: authorization_code
+	ResolvedFlow string `json:"resolved_flow"`
+
+	// SessionId Unique ID of the connect session.
+	//
+	// Examples: cs_6968b3983b8b91c75627bee5
+	SessionId string `json:"session_id"`
 }
 
 // IntrospectResponse RFC 7662 introspection response.
@@ -6578,6 +6949,25 @@ type ReauthorizeConfirmSessionRequest struct {
 // Examples: reauthorize
 type ReauthorizeConfirmSessionRequestKind string
 
+// ReauthorizeConfirmSessionResponse The agent is bound to “credential_id“; open “authorize_url“ to grant more scopes.
+//
+// Examples: {"authorize_url":"https://github.com/login/oauth/authorize?client_id=Iv1.8a61f9b3a7aba766","credential_id":"cred_6968b39855d91a3561684b32"}
+type ReauthorizeConfirmSessionResponse struct {
+	// AuthorizeUrl Vendor sign-in URL that grants the wider scopes.
+	//
+	// Examples: https://github.com/login/oauth/authorize?client_id=Iv1.8a61f9b3a7aba766
+	AuthorizeUrl string `json:"authorize_url"`
+
+	// CredentialId ID of the credential the agent is bound to.
+	//
+	// Examples: cred_6968b39855d91a3561684b32
+	CredentialId string                                 `json:"credential_id"`
+	Kind         *ReauthorizeConfirmSessionResponseKind `json:"kind,omitempty"`
+}
+
+// ReauthorizeConfirmSessionResponseKind defines model for ReauthorizeConfirmSessionResponse.Kind.
+type ReauthorizeConfirmSessionResponseKind string
+
 // RedeemInviteRequest Payload for redeeming an invite token.
 //
 // Examples: {"invite_token":"dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk","password":"example-password"}
@@ -6685,6 +7075,236 @@ type RegistrationStatusResponse struct {
 	// Examples: private_key_jwt
 	TokenEndpointAuthMethod *string `json:"token_endpoint_auth_method,omitempty"`
 }
+
+// ReviewAgentResponse The agent the session binds and its owner.
+//
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","name":"invoice-reconciler","owner_id":"usr_6968b3987ee4c3ec0b4ee3b9","status":"active"}
+type ReviewAgentResponse struct {
+	// AgentId ID of the agent.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
+	AgentId string `json:"agent_id"`
+
+	// Name Name of the agent.
+	//
+	// Examples: invoice-reconciler
+	Name *string `json:"name,omitempty"`
+
+	// OwnerId ID of the agent's owner.
+	//
+	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
+	OwnerId *string `json:"owner_id,omitempty"`
+
+	// Status The agent's lifecycle status.
+	//
+	// Examples: active
+	Status string `json:"status"`
+}
+
+// ReviewProvenanceResponse Where an API target's live revision came from (registry data).
+//
+// Examples: {"catalog_api_id":"stripe.com","origin":"catalog","revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","source_url":"https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json","submitted_by":"usr_6968b3987ee4c3ec0b4ee3b9"}
+type ReviewProvenanceResponse struct {
+	// CatalogApiId Catalog identity of the API, when it came from the catalog.
+	//
+	// Examples: stripe.com
+	CatalogApiId *string `json:"catalog_api_id,omitempty"`
+
+	// Origin `catalog` for a public-catalog import; anything else is a submitted spec.
+	//
+	// Examples: catalog
+	Origin *string `json:"origin,omitempty"`
+
+	// RevisionId ID of the API's live registry revision.
+	//
+	// Examples: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
+	RevisionId string `json:"revision_id"`
+
+	// SourceUrl Where the spec was fetched from, when known.
+	//
+	// Examples: https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json
+	SourceUrl *string `json:"source_url,omitempty"`
+
+	// SubmittedBy ID of the actor who submitted the spec, when known.
+	//
+	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
+	SubmittedBy *string `json:"submitted_by,omitempty"`
+}
+
+// ReviewSchemeResponse The declared scheme an API target collects (snapshot from its spec).
+//
+// Examples: {"authorization_url":"https://github.com/login/oauth/authorize","field_name":"X-Api-Key","location":"header","token_url":"https://github.com/login/oauth/access_token","type":"api_key"}
+type ReviewSchemeResponse struct {
+	// AuthorizationUrl An OAuth scheme's authorize URL; set only for a public-catalog spec.
+	//
+	// Examples: https://github.com/login/oauth/authorize
+	AuthorizationUrl *string `json:"authorization_url,omitempty"`
+
+	// FieldName Header, query or cookie name an API key is sent in.
+	//
+	// Examples: X-Api-Key
+	FieldName *string `json:"field_name,omitempty"`
+
+	// Location Where an API key goes: `header`, `query` or `cookie`.
+	//
+	// Examples: header
+	Location *string `json:"location,omitempty"`
+
+	// TokenUrl An OAuth scheme's token URL; set only for a public-catalog spec.
+	//
+	// Examples: https://github.com/login/oauth/access_token
+	TokenUrl *string `json:"token_url,omitempty"`
+
+	// Type The kind of secret the scheme collects.
+	//
+	// Examples: api_key
+	Type ReviewSchemeResponseType `json:"type"`
+}
+
+// ReviewSchemeResponseType The kind of secret the scheme collects.
+//
+// Examples: api_key
+type ReviewSchemeResponseType string
+
+// ReviewScopeResponse One scope in the review's catalogue, flagged default and requested.
+//
+// Examples: {"classification":"write","default":true,"description":"Full control of private repositories.","name":"repo","requested":true}
+type ReviewScopeResponse struct {
+	// Classification How much access the scope grants.
+	//
+	// Examples: write
+	Classification ReviewScopeResponseClassification `json:"classification"`
+
+	// Default Whether the vendor requests the scope by default.
+	//
+	// Examples: true
+	Default bool `json:"default"`
+
+	// Description What the scope lets the credential do.
+	//
+	// Examples: Full control of private repositories.
+	Description string `json:"description"`
+
+	// Name The vendor's scope string.
+	//
+	// Examples: repo
+	Name string `json:"name"`
+
+	// Requested Whether the session's initiator asked for the scope.
+	//
+	// Examples: true
+	Requested bool `json:"requested"`
+}
+
+// ReviewScopeResponseClassification How much access the scope grants.
+//
+// Examples: write
+type ReviewScopeResponseClassification string
+
+// ReviewSessionResponse What the review page shows the approver of a connect session.
+//
+// Examples: {"agent":{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","name":"invoice-reconciler","owner_id":"usr_6968b3987ee4c3ec0b4ee3b9","status":"active"},"api_reference":{"name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"can_confirm":true,"digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","existing_credentials":[{"can_bind":true,"can_reauthorize":false,"credential_id":"cred_6968b39855d91a3561684b32","granted_scopes":["repo","read:org"],"missing_scopes":["admin:org"],"name":"GitHub (octocat)","other_bound_agent_ids":["agnt_6968b3984d1c238dbe7e2e29"],"type":"oauth2"}],"pinned_hosts":["api.github.com"],"provenance":{"catalog_api_id":"stripe.com","origin":"catalog","revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","source_url":"https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json","submitted_by":"usr_6968b3987ee4c3ec0b4ee3b9"},"reason":"Needs read access to triage issues in the platform repo.","requested_by_actor_id":"agnt_6968b3984d1c238dbe7e2e29","requested_permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"requested_scopes":["repo","read:org"],"resolved_flow":"authorization_code","scheme":{"authorization_url":"https://github.com/login/oauth/authorize","field_name":"X-Api-Key","location":"header","token_url":"https://github.com/login/oauth/access_token","type":"api_key"},"scopes":[{"classification":"write","default":true,"description":"Full control of private repositories.","name":"repo","requested":true}],"session_id":"cs_6968b3983b8b91c75627bee5","state":"created","target_kind":"api","vendor_display_name":"GitHub","vendor_key":"github"}
+type ReviewSessionResponse struct {
+	// Agent The agent the session binds, and its owner.
+	//
+	// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","name":"invoice-reconciler","owner_id":"usr_6968b3987ee4c3ec0b4ee3b9","status":"active"}
+	Agent *ReviewAgentResponse `json:"agent,omitempty"`
+
+	// ApiReference Where the target's OpenAPI lives in the registry.
+	//
+	// Examples: {"name":"stripe","vendor":"stripe.com","version":"2024-04-10"}
+	ApiReference ConnectSessionApiReferenceResponse `json:"api_reference"`
+
+	// CanConfirm Whether this viewer may confirm the session as it stands.
+	//
+	// Examples: true
+	CanConfirm bool `json:"can_confirm"`
+
+	// Digest Fingerprint of the review; echo it on `:confirm`.
+	//
+	// Examples: 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
+	Digest string `json:"digest"`
+
+	// ExistingCredentials Credentials the viewer already holds for the target.
+	//
+	// Examples: [{"can_bind":true,"can_reauthorize":false,"credential_id":"cred_6968b39855d91a3561684b32","granted_scopes":["repo","read:org"],"missing_scopes":["admin:org"],"name":"GitHub (octocat)","other_bound_agent_ids":["agnt_6968b3984d1c238dbe7e2e29"],"type":"oauth2"}]
+	ExistingCredentials *[]ExistingCredentialResponse `json:"existing_credentials,omitempty"`
+
+	// PinnedHosts Hosts the credential may be sent to, pinned at `:connect`.
+	//
+	// Examples: ["api.github.com"]
+	PinnedHosts *[]string `json:"pinned_hosts,omitempty"`
+
+	// Provenance Where an API target's live revision came from.
+	//
+	// Examples: {"catalog_api_id":"stripe.com","origin":"catalog","revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","source_url":"https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json","submitted_by":"usr_6968b3987ee4c3ec0b4ee3b9"}
+	Provenance *ReviewProvenanceResponse `json:"provenance,omitempty"`
+
+	// Reason Free-text reason given when the session was started.
+	//
+	// Examples: Needs read access to triage issues in the platform repo.
+	Reason *string `json:"reason"`
+
+	// RequestedByActorId ID of the actor that started the session.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
+	RequestedByActorId string `json:"requested_by_actor_id"`
+
+	// RequestedPermissionRules Permission rules the initiator asked for.
+	//
+	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	RequestedPermissionRules *[]PermissionRuleSchema `json:"requested_permission_rules,omitempty"`
+
+	// RequestedScopes OAuth scopes the session asks for.
+	//
+	// Examples: ["repo","read:org"]
+	RequestedScopes *[]string `json:"requested_scopes,omitempty"`
+
+	// ResolvedFlow The flow the session runs.
+	//
+	// Examples: authorization_code
+	ResolvedFlow string `json:"resolved_flow"`
+
+	// Scheme The declared scheme an API target collects.
+	//
+	// Examples: {"authorization_url":"https://github.com/login/oauth/authorize","field_name":"X-Api-Key","location":"header","token_url":"https://github.com/login/oauth/access_token","type":"api_key"}
+	Scheme *ReviewSchemeResponse `json:"scheme,omitempty"`
+
+	// Scopes The vendor's scope catalogue, flagged default and requested.
+	//
+	// Examples: [{"classification":"write","default":true,"description":"Full control of private repositories.","name":"repo","requested":true}]
+	Scopes []ReviewScopeResponse `json:"scopes"`
+
+	// SessionId Unique ID of the connect session.
+	//
+	// Examples: cs_6968b3983b8b91c75627bee5
+	SessionId string `json:"session_id"`
+
+	// State Current lifecycle state of the session.
+	//
+	// Examples: created
+	State string `json:"state"`
+
+	// TargetKind `vendor` for a vendor-registry key, `api` for a registry API.
+	//
+	// Examples: api
+	TargetKind *ReviewSessionResponseTargetKind `json:"target_kind,omitempty"`
+
+	// VendorDisplayName Display name of the vendor.
+	//
+	// Examples: GitHub
+	VendorDisplayName string `json:"vendor_display_name"`
+
+	// VendorKey Vendor registry key the session connects.
+	//
+	// Examples: github
+	VendorKey string `json:"vendor_key"`
+}
+
+// ReviewSessionResponseTargetKind `vendor` for a vendor-registry key, `api` for a registry API.
+//
+// Examples: api
+type ReviewSessionResponseTargetKind string
 
 // RevokeRequest Revocation endpoint request (RFC 7009) — JSON or form-encoded.
 //
@@ -7602,6 +8222,41 @@ type UserUpdateRequest struct {
 	LastName *string `json:"last_name,omitempty"`
 }
 
+// VendorAuthCapabilitiesResponse How to connect a vendor: its OAuth flows and scope catalogue.
+//
+// Examples: {"display_name":"GitHub","flows":[{"kind":"authorization_code"}],"scopes":[{"classification":"write","default":true,"description":"Full control of private repositories.","name":"repo"}],"vendor":"github"}
+type VendorAuthCapabilitiesResponse struct {
+	// DisplayName Display name of the vendor.
+	//
+	// Examples: GitHub
+	DisplayName string `json:"display_name"`
+
+	// Flows OAuth flows the vendor supports.
+	//
+	// Examples: [{"kind":"authorization_code"}]
+	Flows []VendorFlowResponse `json:"flows"`
+
+	// Scopes Every scope the vendor offers.
+	//
+	// Examples: [{"classification":"write","default":true,"description":"Full control of private repositories.","name":"repo"}]
+	Scopes []VendorScopeResponse `json:"scopes"`
+
+	// Vendor Vendor registry key.
+	//
+	// Examples: github
+	Vendor string `json:"vendor"`
+}
+
+// VendorFlowResponse One OAuth flow the vendor supports.
+//
+// Examples: {"kind":"authorization_code"}
+type VendorFlowResponse struct {
+	// Kind The flow: `authorization_code` or `device_authorization`.
+	//
+	// Examples: authorization_code
+	Kind string `json:"kind"`
+}
+
 // VendorListResponse The vendors the caller can connect a credential for.
 //
 // Examples: {"data":[{"catalog_api_id":"github.com/api.github.com","display_name":"GitHub","entry_id":"oar_6968b39821e5f89a6975f501","flow_kinds":["authorization_code"],"key":"github","name":"MyOrg GitHub","registration_id":"oar_6968b39821e5f89a6975f501","source":"db","vendor":"github.com/api.github.com"}]}
@@ -7611,6 +8266,36 @@ type VendorListResponse struct {
 	// Examples: [{"catalog_api_id":"github.com/api.github.com","display_name":"GitHub","entry_id":"oar_6968b39821e5f89a6975f501","flow_kinds":["authorization_code"],"key":"github","name":"MyOrg GitHub","registration_id":"oar_6968b39821e5f89a6975f501","source":"db","vendor":"github.com/api.github.com"}]
 	Data []VendorSummaryResponse `json:"data"`
 }
+
+// VendorScopeResponse One OAuth scope in a vendor's catalogue.
+//
+// Examples: {"classification":"write","default":true,"description":"Full control of private repositories.","name":"repo"}
+type VendorScopeResponse struct {
+	// Classification How much access the scope grants.
+	//
+	// Examples: write
+	Classification VendorScopeResponseClassification `json:"classification"`
+
+	// Default Whether the scope is requested unless the user deselects it.
+	//
+	// Examples: true
+	Default bool `json:"default"`
+
+	// Description What the scope lets the credential do.
+	//
+	// Examples: Full control of private repositories.
+	Description string `json:"description"`
+
+	// Name The vendor's scope string.
+	//
+	// Examples: repo
+	Name string `json:"name"`
+}
+
+// VendorScopeResponseClassification How much access the scope grants.
+//
+// Examples: write
+type VendorScopeResponseClassification string
 
 // VendorSummaryResponse A vendor, or one admin registration for it, that the caller can connect to.
 //
@@ -7957,6 +8642,11 @@ type ConfirmConnectSessionJSONBody struct {
 type ConfirmConnectSessionParams struct {
 	// PollToken Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
 	PollToken *string `form:"poll_token,omitempty" json:"poll_token,omitempty"`
+}
+
+// ConfirmConnectSession200JSONResponseBody defines parameters for ConfirmConnectSession.
+type ConfirmConnectSession200JSONResponseBody struct {
+	union json.RawMessage
 }
 
 // ListCredentialsParams defines parameters for ListCredentials.
@@ -8864,6 +9554,179 @@ func (t ConfirmConnectSessionJSONBody) MarshalJSON() ([]byte, error) {
 }
 
 func (t *ConfirmConnectSessionJSONBody) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsDeviceAuthorizationConfirmSessionResponse returns the union data inside the ConfirmConnectSession200JSONResponseBody as a DeviceAuthorizationConfirmSessionResponse
+func (t ConfirmConnectSession200JSONResponseBody) AsDeviceAuthorizationConfirmSessionResponse() (DeviceAuthorizationConfirmSessionResponse, error) {
+	var body DeviceAuthorizationConfirmSessionResponse
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromDeviceAuthorizationConfirmSessionResponse overwrites any union data inside the ConfirmConnectSession200JSONResponseBody as the provided DeviceAuthorizationConfirmSessionResponse
+func (t *ConfirmConnectSession200JSONResponseBody) FromDeviceAuthorizationConfirmSessionResponse(v DeviceAuthorizationConfirmSessionResponse) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"device_authorization"}`))
+	t.union = b
+	return err
+}
+
+// MergeDeviceAuthorizationConfirmSessionResponse performs a merge with any union data inside the ConfirmConnectSession200JSONResponseBody, using the provided DeviceAuthorizationConfirmSessionResponse
+func (t *ConfirmConnectSession200JSONResponseBody) MergeDeviceAuthorizationConfirmSessionResponse(v DeviceAuthorizationConfirmSessionResponse) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"device_authorization"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsAuthCodeConfirmSessionResponse returns the union data inside the ConfirmConnectSession200JSONResponseBody as a AuthCodeConfirmSessionResponse
+func (t ConfirmConnectSession200JSONResponseBody) AsAuthCodeConfirmSessionResponse() (AuthCodeConfirmSessionResponse, error) {
+	var body AuthCodeConfirmSessionResponse
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromAuthCodeConfirmSessionResponse overwrites any union data inside the ConfirmConnectSession200JSONResponseBody as the provided AuthCodeConfirmSessionResponse
+func (t *ConfirmConnectSession200JSONResponseBody) FromAuthCodeConfirmSessionResponse(v AuthCodeConfirmSessionResponse) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"authorization_code"}`))
+	t.union = b
+	return err
+}
+
+// MergeAuthCodeConfirmSessionResponse performs a merge with any union data inside the ConfirmConnectSession200JSONResponseBody, using the provided AuthCodeConfirmSessionResponse
+func (t *ConfirmConnectSession200JSONResponseBody) MergeAuthCodeConfirmSessionResponse(v AuthCodeConfirmSessionResponse) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"authorization_code"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsConnectedConfirmSessionResponse returns the union data inside the ConfirmConnectSession200JSONResponseBody as a ConnectedConfirmSessionResponse
+func (t ConfirmConnectSession200JSONResponseBody) AsConnectedConfirmSessionResponse() (ConnectedConfirmSessionResponse, error) {
+	var body ConnectedConfirmSessionResponse
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromConnectedConfirmSessionResponse overwrites any union data inside the ConfirmConnectSession200JSONResponseBody as the provided ConnectedConfirmSessionResponse
+func (t *ConfirmConnectSession200JSONResponseBody) FromConnectedConfirmSessionResponse(v ConnectedConfirmSessionResponse) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"connected"}`))
+	t.union = b
+	return err
+}
+
+// MergeConnectedConfirmSessionResponse performs a merge with any union data inside the ConfirmConnectSession200JSONResponseBody, using the provided ConnectedConfirmSessionResponse
+func (t *ConfirmConnectSession200JSONResponseBody) MergeConnectedConfirmSessionResponse(v ConnectedConfirmSessionResponse) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"connected"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsReauthorizeConfirmSessionResponse returns the union data inside the ConfirmConnectSession200JSONResponseBody as a ReauthorizeConfirmSessionResponse
+func (t ConfirmConnectSession200JSONResponseBody) AsReauthorizeConfirmSessionResponse() (ReauthorizeConfirmSessionResponse, error) {
+	var body ReauthorizeConfirmSessionResponse
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromReauthorizeConfirmSessionResponse overwrites any union data inside the ConfirmConnectSession200JSONResponseBody as the provided ReauthorizeConfirmSessionResponse
+func (t *ConfirmConnectSession200JSONResponseBody) FromReauthorizeConfirmSessionResponse(v ReauthorizeConfirmSessionResponse) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"reauthorize"}`))
+	t.union = b
+	return err
+}
+
+// MergeReauthorizeConfirmSessionResponse performs a merge with any union data inside the ConfirmConnectSession200JSONResponseBody, using the provided ReauthorizeConfirmSessionResponse
+func (t *ConfirmConnectSession200JSONResponseBody) MergeReauthorizeConfirmSessionResponse(v ReauthorizeConfirmSessionResponse) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"reauthorize"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t ConfirmConnectSession200JSONResponseBody) Discriminator() (string, error) {
+	var discriminator struct {
+		Discriminator string `json:"kind"`
+	}
+	err := json.Unmarshal(t.union, &discriminator)
+	return discriminator.Discriminator, err
+}
+
+func (t ConfirmConnectSession200JSONResponseBody) ValueByDiscriminator() (interface{}, error) {
+	discriminator, err := t.Discriminator()
+	if err != nil {
+		return nil, err
+	}
+	switch discriminator {
+	case "authorization_code":
+		return t.AsAuthCodeConfirmSessionResponse()
+	case "connected":
+		return t.AsConnectedConfirmSessionResponse()
+	case "device_authorization":
+		return t.AsDeviceAuthorizationConfirmSessionResponse()
+	case "reauthorize":
+		return t.AsReauthorizeConfirmSessionResponse()
+	default:
+		return nil, errors.New("unknown discriminator value: " + discriminator)
+	}
+}
+
+func (t ConfirmConnectSession200JSONResponseBody) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *ConfirmConnectSession200JSONResponseBody) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
@@ -35749,7 +36612,7 @@ type GetConnectSessionHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *interface{}
+	JSON200 *ReviewSessionResponse
 	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
 	ApplicationproblemJSON400 *ProblemDetail
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
@@ -35769,7 +36632,7 @@ type GetConnectSessionHTTPResp struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetConnectSessionHTTPResp) GetJSON200() *interface{} {
+func (r GetConnectSessionHTTPResp) GetJSON200() *ReviewSessionResponse {
 	return r.JSON200
 }
 
@@ -35846,7 +36709,7 @@ type PollConnectSessionStatusHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *interface{}
+	JSON200 *ConnectSessionStatusResponse
 	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
 	ApplicationproblemJSON400 *ProblemDetail
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
@@ -35864,7 +36727,7 @@ type PollConnectSessionStatusHTTPResp struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r PollConnectSessionStatusHTTPResp) GetJSON200() *interface{} {
+func (r PollConnectSessionStatusHTTPResp) GetJSON200() *ConnectSessionStatusResponse {
 	return r.JSON200
 }
 
@@ -36019,7 +36882,7 @@ type ConfirmConnectSessionHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *interface{}
+	JSON200 *ConfirmConnectSession200JSONResponseBody
 	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
 	ApplicationproblemJSON400 *ProblemDetail
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
@@ -36041,7 +36904,7 @@ type ConfirmConnectSessionHTTPResp struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ConfirmConnectSessionHTTPResp) GetJSON200() *interface{} {
+func (r ConfirmConnectSessionHTTPResp) GetJSON200() *ConfirmConnectSession200JSONResponseBody {
 	return r.JSON200
 }
 
@@ -38844,7 +39707,7 @@ type IntegrationsConnectHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *interface{}
+	JSON201 *IntegrationsConnectResponse
 	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
 	ApplicationproblemJSON400 *ProblemDetail
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
@@ -38868,7 +39731,7 @@ type IntegrationsConnectHTTPResp struct {
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r IntegrationsConnectHTTPResp) GetJSON201() *interface{} {
+func (r IntegrationsConnectHTTPResp) GetJSON201() *IntegrationsConnectResponse {
 	return r.JSON201
 }
 
@@ -43905,7 +44768,7 @@ type GetAuthCapabilitiesHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *interface{}
+	JSON200 *VendorAuthCapabilitiesResponse
 	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
 	ApplicationproblemJSON400 *ProblemDetail
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
@@ -43923,7 +44786,7 @@ type GetAuthCapabilitiesHTTPResp struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetAuthCapabilitiesHTTPResp) GetJSON200() *interface{} {
+func (r GetAuthCapabilitiesHTTPResp) GetJSON200() *VendorAuthCapabilitiesResponse {
 	return r.JSON200
 }
 
@@ -53870,7 +54733,7 @@ func ParseGetConnectSessionHTTPResp(rsp *http.Response) (*GetConnectSessionHTTPR
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest interface{}
+		var dest ReviewSessionResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -53952,7 +54815,7 @@ func ParsePollConnectSessionStatusHTTPResp(rsp *http.Response) (*PollConnectSess
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest interface{}
+		var dest ConnectSessionStatusResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -54098,7 +54961,7 @@ func ParseConfirmConnectSessionHTTPResp(rsp *http.Response) (*ConfirmConnectSess
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest interface{}
+		var dest ConfirmConnectSession200JSONResponseBody
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -56482,7 +57345,7 @@ func ParseIntegrationsConnectHTTPResp(rsp *http.Response) (*IntegrationsConnectH
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest interface{}
+		var dest IntegrationsConnectResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -60724,7 +61587,7 @@ func ParseGetAuthCapabilitiesHTTPResp(rsp *http.Response) (*GetAuthCapabilitiesH
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest interface{}
+		var dest VendorAuthCapabilitiesResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

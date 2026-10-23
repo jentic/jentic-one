@@ -5,7 +5,7 @@
 /**
  * A connect session's lifecycle status.
  */
-export type StatusResponse = {
+export type ConnectSessionStatusResponse = {
     /**
      * Scopes the connected credential holds.
      */
@@ -25,9 +25,9 @@ export type StatusResponse = {
     /**
      * The session's lifecycle status.
      */
-    status: StatusResponse.status;
+    status: ConnectSessionStatusResponse.status;
 };
-export namespace StatusResponse {
+export namespace ConnectSessionStatusResponse {
     /**
      * The session's lifecycle status.
      */

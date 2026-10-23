@@ -289,6 +289,7 @@ class IntegrationsConnectResponse(BaseModel):
         examples=[f"{ex.BASE_URL}/connect?approve={ex.CONNECT_SESSION_ID}"],
     )
     poll_token: str = Field(
+        json_schema_extra=SENSITIVE,
         description="Opaque capability for the session's status, review and cancel routes.",
         examples=[ex.OPAQUE_TOKEN],
     )
@@ -910,7 +911,7 @@ ConfirmSessionResponse = Annotated[
 # ---------------------------------------------------------------------------
 
 
-class StatusResponse(BaseModel):
+class ConnectSessionStatusResponse(BaseModel):
     """A connect session's lifecycle status."""
 
     status: Literal["pending", "polling", "connected", "failed", "expired"] = Field(

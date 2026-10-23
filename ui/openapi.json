@@ -4482,6 +4482,109 @@
         "title": "ConnectSessionListResponse",
         "type": "object"
       },
+      "ConnectSessionStatusResponse": {
+        "description": "A connect session's lifecycle status.",
+        "examples": [
+          {
+            "bound_scopes": [
+              "repo",
+              "read:org"
+            ],
+            "connected_as": "octocat",
+            "credential_id": "cred_6968b39855d91a3561684b32",
+            "error_code": "access_denied",
+            "status": "connected"
+          }
+        ],
+        "properties": {
+          "bound_scopes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Scopes the connected credential holds.",
+            "examples": [
+              [
+                "repo",
+                "read:org"
+              ]
+            ],
+            "title": "Bound Scopes"
+          },
+          "connected_as": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Upstream account the credential connected as; null until known.",
+            "examples": [
+              "octocat"
+            ],
+            "title": "Connected As"
+          },
+          "credential_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "ID of the connected credential; null until connected.",
+            "examples": [
+              "cred_6968b39855d91a3561684b32"
+            ],
+            "title": "Credential Id"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why a failed session failed, e.g. `rejected` or `access_denied`.",
+            "examples": [
+              "access_denied"
+            ],
+            "title": "Error Code"
+          },
+          "status": {
+            "description": "The session's lifecycle status.",
+            "enum": [
+              "pending",
+              "polling",
+              "connected",
+              "failed",
+              "expired"
+            ],
+            "examples": [
+              "connected"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "ConnectSessionStatusResponse",
+        "type": "object"
+      },
       "ConnectSessionSummaryResponse": {
         "description": "Slim list row for the console — deliberately excludes ``poll_token``.",
         "examples": [
@@ -8788,7 +8891,8 @@
               "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
             ],
             "title": "Poll Token",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           },
           "resolved_flow": {
             "description": "The flow the session runs, e.g. `authorization_code` or `manual_api_key`.",
@@ -18740,109 +18844,6 @@
           "type"
         ],
         "title": "Sigv4UpdateRequest",
-        "type": "object"
-      },
-      "StatusResponse": {
-        "description": "A connect session's lifecycle status.",
-        "examples": [
-          {
-            "bound_scopes": [
-              "repo",
-              "read:org"
-            ],
-            "connected_as": "octocat",
-            "credential_id": "cred_6968b39855d91a3561684b32",
-            "error_code": "access_denied",
-            "status": "connected"
-          }
-        ],
-        "properties": {
-          "bound_scopes": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Scopes the connected credential holds.",
-            "examples": [
-              [
-                "repo",
-                "read:org"
-              ]
-            ],
-            "title": "Bound Scopes"
-          },
-          "connected_as": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Upstream account the credential connected as; null until known.",
-            "examples": [
-              "octocat"
-            ],
-            "title": "Connected As"
-          },
-          "credential_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "ID of the connected credential; null until connected.",
-            "examples": [
-              "cred_6968b39855d91a3561684b32"
-            ],
-            "title": "Credential Id"
-          },
-          "error_code": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Why a failed session failed, e.g. `rejected` or `access_denied`.",
-            "examples": [
-              "access_denied"
-            ],
-            "title": "Error Code"
-          },
-          "status": {
-            "description": "The session's lifecycle status.",
-            "enum": [
-              "pending",
-              "polling",
-              "connected",
-              "failed",
-              "expired"
-            ],
-            "examples": [
-              "connected"
-            ],
-            "title": "Status",
-            "type": "string"
-          }
-        },
-        "required": [
-          "status"
-        ],
-        "title": "StatusResponse",
         "type": "object"
       },
       "TokenResponse": {
@@ -36048,7 +36049,7 @@
                   "status": "connected"
                 },
                 "schema": {
-                  "$ref": "#/components/schemas/StatusResponse"
+                  "$ref": "#/components/schemas/ConnectSessionStatusResponse"
                 }
               }
             },
