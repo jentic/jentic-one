@@ -19,6 +19,7 @@ from jentic_one.registry.services.revision_service import (
 from jentic_one.registry.services.spec_download_service import SpecDocument, SpecDownloadService
 from jentic_one.registry.web.content_negotiation import accepted_media_types
 from jentic_one.registry.web.deps import get_api_service
+from jentic_one.registry.web.params import ApiNamePath, ApiVendorPath, ApiVersionPath
 from jentic_one.registry.web.schemas.apis import (
     ApiImportLinksResponse,
     ApiImportRequest,
@@ -136,15 +137,9 @@ async def list_apis(
 @router.get("/apis/{vendor}/{name}/{version}", response_model=ApiResponse)
 async def get_api(
     request: Request,
-    vendor: Annotated[
-        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
-    ],
-    name: Annotated[
-        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
-    ],
-    version: Annotated[
-        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
-    ],
+    vendor: ApiVendorPath,
+    name: ApiNamePath,
+    version: ApiVersionPath,
     identity: Identity = get_current_identity(required_permissions=["apis:read"]),
     ctx: Context = Depends(get_ctx),
 ) -> JSONResponse:
@@ -166,15 +161,9 @@ async def get_api(
     responses=not_found(),
 )
 async def list_api_security_schemes(
-    vendor: Annotated[
-        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
-    ],
-    name: Annotated[
-        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
-    ],
-    version: Annotated[
-        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
-    ],
+    vendor: ApiVendorPath,
+    name: ApiNamePath,
+    version: ApiVersionPath,
     identity: Identity = get_current_identity(required_permissions=["apis:read"]),
     ctx: Context = Depends(get_ctx),
 ) -> JSONResponse:
@@ -300,15 +289,9 @@ def _build_revision_links(
 @router.get("/apis/{vendor}/{name}/{version}/revisions", summary="List an API's revisions")
 async def list_api_revisions(
     request: Request,
-    vendor: Annotated[
-        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
-    ],
-    name: Annotated[
-        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
-    ],
-    version: Annotated[
-        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
-    ],
+    vendor: ApiVendorPath,
+    name: ApiNamePath,
+    version: ApiVersionPath,
     identity: Identity = get_current_identity(required_permissions=["apis:read"]),
     ctx: Context = Depends(get_ctx),
     state: list[str] | None = Query(
@@ -391,15 +374,9 @@ async def list_api_revisions(
 )
 async def get_api_revision(
     request: Request,
-    vendor: Annotated[
-        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
-    ],
-    name: Annotated[
-        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
-    ],
-    version: Annotated[
-        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
-    ],
+    vendor: ApiVendorPath,
+    name: ApiNamePath,
+    version: ApiVersionPath,
     revision_id: Annotated[
         str,
         Path(description="ID of the API revision.", openapi_examples=ex.example(ex.REVISION_ID)),
@@ -490,15 +467,9 @@ def _build_operations_response(
 )
 async def list_api_operations(
     request: Request,
-    vendor: Annotated[
-        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
-    ],
-    name: Annotated[
-        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
-    ],
-    version: Annotated[
-        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
-    ],
+    vendor: ApiVendorPath,
+    name: ApiNamePath,
+    version: ApiVersionPath,
     identity: Identity = get_current_identity(required_permissions=["apis:read"]),
     ctx: Context = Depends(get_ctx),
     cursor: str | None = Query(
@@ -544,15 +515,9 @@ async def list_api_operations(
 )
 async def list_api_revision_operations(
     request: Request,
-    vendor: Annotated[
-        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
-    ],
-    name: Annotated[
-        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
-    ],
-    version: Annotated[
-        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
-    ],
+    vendor: ApiVendorPath,
+    name: ApiNamePath,
+    version: ApiVersionPath,
     revision_id: Annotated[
         str,
         Path(description="ID of the API revision.", openapi_examples=ex.example(ex.REVISION_ID)),
@@ -602,15 +567,9 @@ async def list_api_revision_operations(
 @router.patch("/apis/{vendor}/{name}/{version}")
 async def update_api(
     request: Request,
-    vendor: Annotated[
-        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
-    ],
-    name: Annotated[
-        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
-    ],
-    version: Annotated[
-        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
-    ],
+    vendor: ApiVendorPath,
+    name: ApiNamePath,
+    version: ApiVersionPath,
     body: ApiUpdateRequest,
     identity: Identity = get_current_identity(required_permissions=["apis:write"]),
     ctx: Context = Depends(get_ctx),
@@ -639,15 +598,9 @@ async def update_api(
     },
 )
 async def delete_api(
-    vendor: Annotated[
-        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
-    ],
-    name: Annotated[
-        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
-    ],
-    version: Annotated[
-        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
-    ],
+    vendor: ApiVendorPath,
+    name: ApiNamePath,
+    version: ApiVersionPath,
     identity: Identity = get_current_identity(required_permissions=["apis:write"]),
     ctx: Context = Depends(get_ctx),
 ) -> Response:
@@ -660,15 +613,9 @@ async def delete_api(
 @router.post("/apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote")
 async def promote_revision(
     request: Request,
-    vendor: Annotated[
-        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
-    ],
-    name: Annotated[
-        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
-    ],
-    version: Annotated[
-        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
-    ],
+    vendor: ApiVendorPath,
+    name: ApiNamePath,
+    version: ApiVersionPath,
     revision_id: Annotated[
         str,
         Path(description="ID of the API revision.", openapi_examples=ex.example(ex.REVISION_ID)),
@@ -697,15 +644,9 @@ async def promote_revision(
 )
 async def archive_revision(
     request: Request,
-    vendor: Annotated[
-        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
-    ],
-    name: Annotated[
-        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
-    ],
-    version: Annotated[
-        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
-    ],
+    vendor: ApiVendorPath,
+    name: ApiNamePath,
+    version: ApiVersionPath,
     revision_id: Annotated[
         str,
         Path(description="ID of the API revision.", openapi_examples=ex.example(ex.REVISION_ID)),
@@ -755,15 +696,9 @@ async def archive_revision(
     summary="Delete an archived API revision",
 )
 async def delete_revision(
-    vendor: Annotated[
-        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
-    ],
-    name: Annotated[
-        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
-    ],
-    version: Annotated[
-        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
-    ],
+    vendor: ApiVendorPath,
+    name: ApiNamePath,
+    version: ApiVersionPath,
     revision_id: Annotated[
         str,
         Path(description="ID of the API revision.", openapi_examples=ex.example(ex.REVISION_ID)),
@@ -815,15 +750,9 @@ def _spec_response(request: Request, doc: SpecDocument) -> Response:
 @router.get("/apis/{vendor}/{name}/{version}/openapi")
 async def get_api_spec(
     request: Request,
-    vendor: Annotated[
-        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
-    ],
-    name: Annotated[
-        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
-    ],
-    version: Annotated[
-        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
-    ],
+    vendor: ApiVendorPath,
+    name: ApiNamePath,
+    version: ApiVersionPath,
     identity: Identity = get_current_identity(required_permissions=["apis:read"]),
     ctx: Context = Depends(get_ctx),
     overlays: bool = Query(
@@ -852,15 +781,9 @@ async def get_api_spec(
 )
 async def get_api_revision_spec(
     request: Request,
-    vendor: Annotated[
-        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
-    ],
-    name: Annotated[
-        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
-    ],
-    version: Annotated[
-        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
-    ],
+    vendor: ApiVendorPath,
+    name: ApiNamePath,
+    version: ApiVersionPath,
     revision_id: Annotated[
         str,
         Path(description="ID of the API revision.", openapi_examples=ex.example(ex.REVISION_ID)),

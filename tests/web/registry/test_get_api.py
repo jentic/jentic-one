@@ -161,3 +161,39 @@ async def test_get_api_updated_at_fallback(authed_client: TestClient, web_contex
     assert resp.status_code == 200
     data = resp.json()
     assert data["updated_at"] == data["created_at"]
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/apis/Stripe.com/API/1", "/apis/stripe-com/api/1", "/apis/stripe.com/Api/1"],
+)
+async def test_get_api_normalises_vendor_and_name_like_search(
+    authed_client: TestClient, web_context: Context, path: str
+) -> None:
+    """Pins #1958: the path lookup accepts every vendor/name spelling the search
+    ``api`` filter does, and answers with the stored slug identity."""
+    await _seed_api(web_context, vendor="stripe-com", name="api", version="1", with_revision=True)
+
+    resp = authed_client.get(path)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["api"] == {
+        "vendor": "stripe-com",
+        "name": "api",
+        "version": "1",
+        "host": "api.acme.com",
+    }
+    assert data["_links"]["self"].endswith("/apis/stripe-com/api/1")
+
+    schemes = authed_client.get(f"{path}/security-schemes")
+    assert schemes.status_code == 200
+
+
+async def test_get_api_matches_version_verbatim(
+    authed_client: TestClient, web_context: Context
+) -> None:
+    """The version segment is never slugified, so ``1.1.4`` stays ``1.1.4``."""
+    await _seed_api(web_context, vendor="acme", name="payments", version="1.1.4")
+
+    assert authed_client.get("/apis/Acme/Payments/1.1.4").status_code == 200
+    assert authed_client.get("/apis/acme/payments/1-1-4").status_code == 404
