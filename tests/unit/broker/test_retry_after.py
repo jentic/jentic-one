@@ -69,3 +69,13 @@ def test_garbage_everything_returns_none() -> None:
 
 def test_empty_header_values_ignored() -> None:
     assert parse_retry_after_seconds({"Retry-After": "  "}, now_epoch=_NOW) is None
+
+
+def test_fractional_retry_after_rounds_up() -> None:
+    # The shared parser (#1957) accepts a fractional delay and rounds it up.
+    assert parse_retry_after_seconds({"Retry-After": "1.5"}, now_epoch=_NOW) == 2
+
+
+def test_retry_after_http_date_minus_zero_zone_is_utc() -> None:
+    when = datetime.fromtimestamp(_NOW + 45, tz=UTC).strftime("%a, %d %b %Y %H:%M:%S -0000")
+    assert parse_retry_after_seconds({"Retry-After": when}, now_epoch=_NOW) == 45
