@@ -49,6 +49,7 @@ from jentic_one.admin.services.errors import (
 from jentic_one.admin.services.held_execution_service import HeldExecutionService
 from jentic_one.admin.services.job_result_service import JobResultService
 from jentic_one.admin.services.job_service import JobService
+from jentic_one.admin.services.schemas.held_executions import HeldExecutionDetailView
 from jentic_one.admin.services.schemas.jobs import JobResultView, JobView
 from jentic_one.admin.services.user_service import UserService
 from jentic_one.auth.services.agent_service import AgentService
@@ -1305,18 +1306,8 @@ async def held_execution_poll_payload(env: CallEnv, held_execution_id: str) -> d
             "execute response — and call get_execution_result again with the exact value.",
             next_tool="get_execution_result",
         ) from None
-    payload: dict[str, Any] = {
-        "schema_version": SCHEMA_VERSION,
-        "held_execution_id": view.id,
-        "state": view.state,
-        "status": view.execution_status,
-        "review_url": env.base_url.rstrip("/") + review_page_path(view.id),
-        "expires_at": _rfc3339(view.expires_at),
-    }
-    if view.execution_id:
-        payload["execution_id"] = view.execution_id
-    if view.execution_status not in approvals.TERMINAL_JOB_STATUSES:
-        payload["agent_directive"] = STILL_HELD_AGENT_DIRECTIVE
+    payload = held_poll_payload(view, env.base_url)
+    if "agent_directive" in payload:
         return payload
     if view.execution_status in (_JOB_COMPLETED, _JOB_FAILED):
         try:
@@ -1329,6 +1320,29 @@ async def held_execution_poll_payload(env: CallEnv, held_execution_id: str) -> d
             )
             return payload
         _attach_result_view(result, payload)
+    return payload
+
+
+def held_poll_payload(view: HeldExecutionDetailView, base_url: str) -> dict[str, Any]:
+    """One held execution's poll payload, before any result is attached.
+
+    The directive to show the review page again rides only while the call has
+    not finished. The CLI's ``heldPollPayload`` answers the same shape from the
+    control plane's read of the same held execution; the shared goldens under
+    ``cli/tests/golden/testdata/held_poll`` pin both.
+    """
+    payload: dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "held_execution_id": view.id,
+        "state": view.state,
+        "status": view.execution_status,
+        "review_url": base_url.rstrip("/") + review_page_path(view.id),
+        "expires_at": _rfc3339(view.expires_at),
+    }
+    if view.execution_id:
+        payload["execution_id"] = view.execution_id
+    if view.execution_status not in approvals.TERMINAL_JOB_STATUSES:
+        payload["agent_directive"] = STILL_HELD_AGENT_DIRECTIVE
     return payload
 
 

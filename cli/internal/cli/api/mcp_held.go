@@ -245,7 +245,7 @@ func linksOrEmpty(links map[string]any) map[string]any {
 	return links
 }
 
-// heldShortWait polls the held execution for up to heldWaitBudget; the
+// heldShortWait follows the held execution for up to heldWaitBudget; the
 // finished poll payload, or nil when the window lapses (or a poll fails —
 // the held result still tells the model how to poll).
 func (s *mcpServer) heldShortWait(ctx context.Context, heldExecutionID string) map[string]any {
@@ -253,30 +253,11 @@ func (s *mcpServer) heldShortWait(ctx context.Context, heldExecutionID string) m
 	if budget <= 0 {
 		budget = defaultHeldWaitBudget
 	}
-	poll := s.heldWaitPoll
-	if poll <= 0 {
-		poll = heldWaitPoll
+	payload, finished, soft := s.followHeldExecution(ctx, heldExecutionID, budget)
+	if soft != nil || !finished {
+		return nil
 	}
-	deadline := time.Now().Add(budget)
-	var reviewURL string
-	for {
-		payload, soft := s.heldPollPayload(ctx, heldExecutionID, &reviewURL)
-		if soft != nil {
-			return nil
-		}
-		if isTerminalJobStatus(payload["status"]) {
-			return payload
-		}
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-time.After(min(poll, remaining)):
-		}
-	}
+	return payload
 }
 
 func (s *mcpServer) logHeldFrontDoor(req *mcp.CallToolRequest, door, heldExecutionID string) {

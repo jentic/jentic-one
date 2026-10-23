@@ -316,6 +316,25 @@ func TestMCPGetExecutionResult_TimeoutReturnsEarlyOnceFinished(t *testing.T) {
 	}
 }
 
+// TestMCPGetExecutionResult_DecidedHoldWithoutStatusIsFinished pins the one
+// "finished" rule (agentops.HeldExecutionFinished) on the MCP path: a hold
+// the control plane reports with no execution status but a decision that is
+// no longer pending has nothing left to wait for — the wait ends at once and
+// carries no still-held directive, exactly like `jentic execute --wait`.
+func TestMCPGetExecutionResult_DecidedHoldWithoutStatusIsFinished(t *testing.T) {
+	srv, _, polls := heldServers(t, "")
+	s := heldTestServer(t)
+	res, err := s.handleGetExecutionResult(activeCtxWithBroker(srv.URL, srv.URL),
+		callToolRequest("get_execution_result", `{"held_execution_id":"held_9","timeout":60}`))
+	if err != nil || res.IsError {
+		t.Fatalf("get_execution_result: err=%v result=%s", err, toolResultText(res))
+	}
+	payload := decodeToolJSON(t, res)
+	if _, ok := payload["agent_directive"]; ok || polls.Load() != 1 {
+		t.Errorf("payload=%v polls=%d, want one read and no agent_directive for a decided hold", payload, polls.Load())
+	}
+}
+
 func TestMCPGetExecutionResult_NegativeTimeoutAnswersAtOnce(t *testing.T) {
 	srv, _, polls := heldServers(t, "held")
 	s := heldTestServer(t)
