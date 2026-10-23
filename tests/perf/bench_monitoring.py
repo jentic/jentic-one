@@ -59,7 +59,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
-from tests.perf.common import PerfEnv, run_metadata, write_result
+from tests.perf.common import PerfEnv, exclusive_run, run_metadata, write_result
 from tests.perf.monitoring_probe import (
     Call,
     MonitoringClient,
@@ -96,8 +96,27 @@ def ramp(
     concurrency: list[int],
     views_per_level: int,
 ) -> list[dict[str, Any]]:
-    """Latency and table-touch rate at each concurrency level."""
+    """Serving latency and table-touch rate at each concurrency level.
+
+    Every path is fetched once before the first level, so the cold aggregation and
+    the module/pool warm-up land outside the measurement. Without that priming the
+    lowest level absorbs both and reports a tail that belongs to start-up, not to
+    load: it shows as a large p99 beside a small p50, and a non-zero
+    ``table_scans`` at that level alone.
+
+    With a primed cache these numbers are **cached-read serving latency**, not the
+    cost of aggregating. ``table_scans`` per level is what separates the two: zero
+    means every response came from the 30s TTL cache, so the latency is queueing
+    and serialisation. :func:`cache_pressure` is where aggregation gets priced.
+    """
     steps: list[dict[str, Any]] = []
+    primed = _one_view(client)
+    if any(c.status != 200 for c in primed):
+        bad = sorted({c.status for c in primed if c.status != 200})
+        raise ProbeError(
+            f"ramp priming saw {bad} — a refused call aggregates nothing, so the "
+            "ramp would measure refusals; re-authenticate and re-run"
+        )
     for level in concurrency:
         scans_before = execution_scans(psql)
         calls: list[Call] = []
@@ -167,8 +186,20 @@ def consistency(
 
     def write_loop() -> None:
         while not stop.is_set():
+            with lock:
+                # Distinct trace ids per batch; the offset is read under the lock
+                # so two writers never share a series.
+                offset = counts["writes"]
             try:
-                seed_executions(psql, write_batch, spread_s=3600, actors=8, apis=4, analyze=False)
+                seed_executions(
+                    psql,
+                    write_batch,
+                    spread_s=3600,
+                    actors=8,
+                    apis=4,
+                    analyze=False,
+                    id_offset=offset,
+                )
             except ProbeError:
                 return
             with lock:
@@ -218,8 +249,10 @@ def consistency(
         distinct.add(f"{v['path']}|{v['problem']}")
     print(
         f"  {counts['reads']} reads / {counts['writes']} rows written -> "
-        f"{len(violations)} invariant violations "
-        f"({len(distinct)} distinct; a cached inconsistent body is re-served for its whole TTL)",
+        f"{len(distinct)} distinct invariant violations "
+        f"({len(violations)} observations; one inconsistent body is cached and "
+        "re-served for its whole 30s TTL, so observations overstate how often "
+        "the defect occurs)",
         flush=True,
     )
     for kind, n in sorted(grouped.items(), key=lambda kv: -kv[1]):
@@ -295,15 +328,26 @@ def cache_pressure(
 
 
 def _resolve_auth(args: argparse.Namespace) -> tuple[str, str]:
-    """Base URL and admin token, from explicit flags or else from ``PerfEnv``."""
+    """Base URL and admin token, from explicit flags or else from ``PerfEnv``.
+
+    ``PerfEnv`` is only consulted for what the flags leave out, and login
+    credentials count as a way to supply the token: given a base URL and
+    ``--login-email``/``--login-password`` the client mints its own on the first
+    401, so a run against a standalone app needs no ``.perf-env.json`` and no
+    compose stack at all.
+    """
     token = Path(args.token_file).read_text().strip() if args.token_file else (args.token or "")
     base = args.base_url or ""
-    if not base or not token:
+    can_login = bool(args.login_email and args.login_password)
+    if not base or not (token or can_login):
         env = PerfEnv.load()
         base = base or env.app_url
         token = token or env.admin_token
         if not token:
-            raise SystemExit("no admin token: run `make perf-provision`, or pass --token-file")
+            raise SystemExit(
+                "no admin token: run `make perf-provision`, pass --token-file, "
+                "or pass --login-email with --login-password"
+            )
     return base, token
 
 
@@ -335,7 +379,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed-actors", type=int, default=25)
     parser.add_argument("--seed-apis", type=int, default=8)
     parser.add_argument("--concurrency", default="1,4,16,32")
-    parser.add_argument("--views", type=int, default=40, help="dashboard views per ramp step")
+    parser.add_argument(
+        "--views",
+        type=int,
+        default=250,
+        help="dashboard views per ramp step; each is 4 calls, so 250 gives 1000 "
+        "samples per step and 250 per path — enough for a p99 to mean something",
+    )
     parser.add_argument("--consistency-seconds", type=float, default=15.0)
     parser.add_argument("--consistency-readers", type=int, default=4)
     parser.add_argument("--consistency-writers", type=int, default=2)
@@ -373,51 +423,56 @@ def main(argv: list[str] | None = None) -> int:
         "reauth_enabled": credentials is not None,
     }
 
-    if args.seed:
-        print(f"seeding {args.seed} execution records…", flush=True)
-        total = seed_executions(
-            psql,
-            args.seed,
-            spread_s=args.seed_spread_s,
-            actors=args.seed_actors,
-            apis=args.seed_apis,
-        )
-        print(f"  admin.execution_records now holds {total} rows", flush=True)
-        payload["seeded"] = {"inserted": args.seed, "table_total": total}
+    # Every host-side tool serialises on results/.perf.lock: two of them
+    # driving the same app and Postgres would each read the other's latency
+    # and scan counts as its own, and both artifacts would still look sound.
+    with exclusive_run("monitoring"):
+        if args.seed:
+            print(f"seeding {args.seed} execution records…", flush=True)
+            total = seed_executions(
+                psql,
+                args.seed,
+                spread_s=args.seed_spread_s,
+                actors=args.seed_actors,
+                apis=args.seed_apis,
+            )
+            print(f"  admin.execution_records now holds {total} rows", flush=True)
+            payload["seeded"] = {"inserted": args.seed, "table_total": total}
 
-    if "ramp" in phases:
-        print("ramp — dashboard views at rising concurrency:", flush=True)
-        payload["ramp"] = ramp(
-            client,
-            psql,
-            concurrency=_int_list(args.concurrency),
-            views_per_level=args.views,
-        )
-    if "consistency" in phases:
-        print("consistency — aggregates while rows are inserted:", flush=True)
-        payload["consistency"] = consistency(
-            client,
-            psql,
-            seconds=args.consistency_seconds,
-            writers=args.consistency_writers,
-            write_batch=args.consistency_write_batch,
-            readers=args.consistency_readers,
-        )
-    if "cache" in phases:
-        print(
-            f"cache pressure — distinct shapes vs the {CACHE_MAX_ENTRIES}-entry bound:", flush=True
-        )
-        payload["cache"] = cache_pressure(
-            client,
-            psql,
-            shape_counts=_int_list(args.cache_shapes),
-            repeats=args.cache_repeats,
-        )
+        if "ramp" in phases:
+            print("ramp — dashboard views at rising concurrency:", flush=True)
+            payload["ramp"] = ramp(
+                client,
+                psql,
+                concurrency=_int_list(args.concurrency),
+                views_per_level=args.views,
+            )
+        if "consistency" in phases:
+            print("consistency — aggregates while rows are inserted:", flush=True)
+            payload["consistency"] = consistency(
+                client,
+                psql,
+                seconds=args.consistency_seconds,
+                writers=args.consistency_writers,
+                write_batch=args.consistency_write_batch,
+                readers=args.consistency_readers,
+            )
+        if "cache" in phases:
+            print(
+                f"cache pressure — distinct shapes vs the {CACHE_MAX_ENTRIES}-entry bound:",
+                flush=True,
+            )
+            payload["cache"] = cache_pressure(
+                client,
+                psql,
+                shape_counts=_int_list(args.cache_shapes),
+                repeats=args.cache_repeats,
+            )
 
-    payload["token_relogins"] = client.relogins
-    path = write_result("monitoring", payload)
-    print(f"wrote {path}")
-    print(f"ARTIFACT: {json.dumps(str(path))}")
+        payload["token_relogins"] = client.relogins
+        path = write_result("monitoring", payload)
+        print(f"wrote {path}")
+        print(f"ARTIFACT: {json.dumps(str(path))}")
     breaches = int(payload.get("consistency", {}).get("violation_count", 0))
     return 1 if breaches else 0
 
