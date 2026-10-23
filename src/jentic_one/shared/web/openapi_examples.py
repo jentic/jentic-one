@@ -6,6 +6,10 @@ values and :func:`example` live in
 :mod:`jentic_one.shared.web.openapi_meta.examples`, next to the generation-time
 passes that label and propagate them; this module re-exports that public
 catalogue.
+
+Do not define values here: add a new value (and its ``_VALUE_SUMMARIES`` label)
+to :mod:`jentic_one.shared.web.openapi_meta.examples`, then add it to the
+import list and ``__all__`` below.
 """
 
 from __future__ import annotations

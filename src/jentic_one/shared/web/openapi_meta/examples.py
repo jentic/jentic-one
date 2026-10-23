@@ -1,8 +1,12 @@
 """OpenAPI examples: the canonical parameter values and the spec example passes.
 
 The first half is the catalogue of canonical example values for path, query
-and header parameters; the second half is the generation-time passes that
-label, compose and propagate examples across the generated document.
+and header parameters. The second half is the generation-time passes that
+``install_openapi_metadata`` runs over the generated document: they label,
+compose and propagate examples, and also derive path-item summaries and
+descriptions (``summarise_path_item``, ``describe_path_item``,
+``describe_request_body``) and stamp ``oneOf`` discriminators
+(``add_oneof_discriminators``).
 
 Routers and schemas import the catalogue as ``ex`` from
 :mod:`jentic_one.shared.web.openapi_examples`, which re-exports it, and attach
@@ -84,6 +88,8 @@ REQUEST_ID = "req_6968b3984d1c238d"  # minted ``req_`` + 16 hex (see ``shared/lo
 
 API_VENDOR = "stripe.com"
 API_NAME = "stripe"
+#: An illustrative upstream API version, not the platform ``API_VERSION``
+#: (``__version__``) in :mod:`jentic_one.shared.web.openapi_meta.content`.
 API_VERSION = "2024-04-10"
 API_REF = f"{API_VENDOR}:{API_NAME}:{API_VERSION}"  # ``vendor[:name[:version]]`` filter
 API_VENDOR_NAME = f"{API_VENDOR}/{API_NAME}"  # ``vendor/name`` monitoring filter
@@ -181,7 +187,7 @@ _VALUE_SUMMARIES: dict[str, str] = {
 }
 
 
-# --- Spec example passes (run by ``install_openapi_metadata``) -------------
+# --- Spec passes: examples, summaries, descriptions, discriminators ----------
 
 
 def summarise_parameter_examples(operation: dict[str, Any]) -> None:
