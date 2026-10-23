@@ -184,8 +184,13 @@ async def test_cancelled_waiter_leaves_shared_lookup_intact() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cancelled_leader_hands_off_to_a_waiter() -> None:
-    """A cancelled leader aborts only its own lookup; one waiter re-runs it for the rest."""
+async def test_cancelling_the_first_caller_does_not_restart_the_lookup() -> None:
+    """The lookup outlives the caller that started it, so no waiter refetches.
+
+    Callers on a request path (the registry's catalog preview) rely on this: one
+    client disconnect must not throw away the fetch the other requests are
+    awaiting.
+    """
     calls = 0
     release = asyncio.Event()
     first_started = asyncio.Event()
@@ -204,20 +209,48 @@ async def test_cancelled_leader_hands_off_to_a_waiter() -> None:
     tasks[0].cancel()
     for _ in range(3):
         await asyncio.sleep(0)
-    # The hand-off re-installed exactly one flight for the surviving waiters.
+    # The original lookup is still the only one in flight.
     assert sf.in_flight_count == 1
     release.set()
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     assert tasks[0].cancelled()
     assert results[1:] == ["value"] * 4
-    assert calls == 2
+    assert calls == 1
     assert sf.in_flight_count == 0
 
 
 @pytest.mark.asyncio
-async def test_cancelled_leader_without_waiters_pins_nothing() -> None:
-    """A lone cancelled leader leaves no entry behind; the next call runs fresh."""
+async def test_cancelling_the_last_waiter_cancels_the_lookup() -> None:
+    """A lookup nobody is awaiting is cancelled rather than left running."""
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def lookup() -> str:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        return "never"
+
+    sf: SingleFlight[str] = SingleFlight()
+    tasks = [asyncio.create_task(sf.do("k", lookup)) for _ in range(3)]
+    await started.wait()
+    await asyncio.sleep(0)
+    for task in tasks:
+        task.cancel()
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    assert all(isinstance(r, asyncio.CancelledError) for r in results)
+    await asyncio.wait_for(cancelled.wait(), timeout=1)
+    assert sf.in_flight_count == 0
+
+
+@pytest.mark.asyncio
+async def test_lone_cancelled_caller_pins_nothing() -> None:
+    """A lone cancelled caller leaves no entry behind; the next call runs fresh."""
     started = asyncio.Event()
 
     async def hang() -> str:

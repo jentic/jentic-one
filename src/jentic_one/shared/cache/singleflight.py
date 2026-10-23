@@ -6,11 +6,18 @@ together and each launches its own expensive lookup (a *cache stampede*). The
 expensive path is then amplified by the exact concurrency the cache was meant
 to absorb.
 
-:class:`SingleFlight` collapses that herd: the **first** caller for a key
-installs an :class:`asyncio.Future`; concurrent callers await the in-flight
-Future instead of launching their own lookup. The single result *or exception*
-is delivered to all waiters, and the in-flight entry is removed in a ``finally``
-so a failed lookup never pins a poisoned Future (a later caller re-runs it).
+:class:`SingleFlight` collapses that herd: the **first** caller for a key starts
+one :class:`asyncio.Task` for the lookup and every caller — the first included —
+awaits it through :func:`asyncio.shield`. The single result *or exception* is
+delivered to all waiters, and the in-flight entry is removed in a ``finally`` so
+a failed lookup never pins a poisoned task (a later caller re-runs it).
+
+Running the lookup in its own task is what makes cancellation *per caller*:
+a caller that goes away (client disconnect, request timeout) stops waiting
+without disturbing the lookup the other callers are awaiting. The lookup is
+cancelled only when its **last** waiter goes, so nothing keeps running
+unobserved. Callers on a request path (the registry's catalog preview) depend on
+this: one cancelled request must not make the others refetch.
 
 Pure and dependency-free so every read-mostly cache coalesces the same way;
 :class:`jentic_one.shared.cache.ttl_lru.AsyncTTLCache` builds on it. Single-flight
@@ -22,11 +29,20 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Hashable
+from dataclasses import dataclass
 
 # Default ceiling on concurrently in-flight keys. The map only holds entries for
 # the brief window a lookup is running, so this bounds a pathological burst of
 # unique concurrent misses rather than steady-state size.
 DEFAULT_MAX_IN_FLIGHT = 10_000
+
+
+@dataclass(slots=True)
+class _Flight[V]:
+    """One running lookup and how many callers are currently awaiting it."""
+
+    task: asyncio.Task[V]
+    waiters: int = 0
 
 
 class SingleFlight[V]:
@@ -42,7 +58,7 @@ class SingleFlight[V]:
         if max_in_flight < 1:
             raise ValueError("max_in_flight must be >= 1")
         self._max_in_flight = max_in_flight
-        self._in_flight: dict[Hashable, asyncio.Future[V]] = {}
+        self._in_flight: dict[Hashable, _Flight[V]] = {}
 
     @property
     def in_flight_count(self) -> int:
@@ -52,54 +68,53 @@ class SingleFlight[V]:
     async def do(self, key: Hashable, fn: Callable[[], Awaitable[V]]) -> V:
         """Run ``fn`` for ``key`` once, sharing the result with concurrent callers.
 
-        The first caller for an idle ``key`` runs ``fn``; concurrent callers await
-        the same in-flight Future and receive the identical result or exception.
-        The in-flight entry is always removed before returning so a failed lookup
-        leaves nothing pinned.
+        The first caller for an idle ``key`` starts the lookup in its own task;
+        concurrent callers await that same task and receive the identical result
+        or exception. The in-flight entry is always removed before the lookup
+        returns, so a failed lookup leaves nothing pinned.
 
-        Cancellation is per caller. A cancelled waiter stops waiting without
-        touching the shared lookup. A cancelled leader aborts the lookup it was
-        running (it lives in the leader's task), and the surviving waiters elect
-        a new leader that re-runs ``fn`` once for all of them.
+        Cancellation is per caller: a cancelled caller stops waiting without
+        cancelling the lookup the others share. Cancelling the **last** waiter
+        cancels the lookup rather than leaving it running unobserved, and a
+        caller arriving afterwards starts a fresh one. A lookup that runs
+        uncoalesced (``max_in_flight`` reached) runs in its caller's task and so
+        dies with that caller.
         """
-        while (existing := self._in_flight.get(key)) is not None:
-            # ``asyncio.wait`` never cancels what it waits on, so cancelling this
-            # waiter (client disconnect, request timeout) raises here without
-            # cancelling the Future every other caller shares.
-            await asyncio.wait((existing,))
-            if not existing.cancelled():
-                return existing.result()
-            # The leader was cancelled mid-lookup and its entry is already gone:
-            # loop so one surviving waiter takes the lookup over for the rest.
+        flight = self._in_flight.get(key)
+        if flight is None:
+            # Map full and this is a new key: skip coalescing rather than grow
+            # unbounded. The lookup still runs correctly, just without herd
+            # collapse.
+            if len(self._in_flight) >= self._max_in_flight:
+                return await fn()
+            flight = _Flight(task=asyncio.create_task(self._run(key, fn)))
+            self._in_flight[key] = flight
 
-        # Map full and this is a new key: skip coalescing rather than grow
-        # unbounded. The lookup still runs correctly, just without herd collapse.
-        if len(self._in_flight) >= self._max_in_flight:
-            return await fn()
-
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future[V] = loop.create_future()
-        self._in_flight[key] = future
+        flight.waiters += 1
         try:
-            result = await fn()
+            return await asyncio.shield(flight.task)
         except asyncio.CancelledError:
-            # The leader's own cancellation aborts only its lookup. Cancelling the
-            # shared Future (rather than storing the CancelledError on it) tells
-            # the waiters to re-run the lookup instead of failing as cancelled.
-            future.cancel()
+            if flight.task.done():
+                if not flight.task.cancelled():
+                    # Retrieve the result/exception so asyncio does not log it as
+                    # "never retrieved" when this was the only caller left.
+                    flight.task.exception()
+            elif flight.waiters == 1:
+                # Last waiter gone: nobody wants this result, so stop the lookup
+                # rather than leave it running unobserved.
+                if self._in_flight.get(key) is flight:
+                    del self._in_flight[key]
+                flight.task.cancel()
             raise
-        except BaseException as exc:  # propagate to all waiters, pin nothing
-            future.set_exception(exc)
-            # The leader re-raises; waiters receive `exc` via their own await. We
-            # retrieve the exception here so Python doesn't log it as "never
-            # retrieved" when no concurrent waiter happens to be attached.
-            future.exception()
-            raise
-        else:
-            future.set_result(result)
-            return result
         finally:
-            # Remove only our own entry — a later generation may have re-installed
-            # this key after we finished.
-            if self._in_flight.get(key) is future:
+            flight.waiters -= 1
+
+    async def _run(self, key: Hashable, fn: Callable[[], Awaitable[V]]) -> V:
+        try:
+            return await fn()
+        finally:
+            # Release the slot only if it is still ours: a later generation may
+            # have re-installed this key after we were detached.
+            flight = self._in_flight.get(key)
+            if flight is not None and flight.task is asyncio.current_task():
                 del self._in_flight[key]

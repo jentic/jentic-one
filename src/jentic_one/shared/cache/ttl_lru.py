@@ -25,8 +25,14 @@ Invariants :class:`AsyncTTLCache` holds for every caller:
   per cache, not per key, so an invalidation also discards an unrelated load in
   flight: a load too many is cheap next to a stale verdict surviving a
   revocation.
-- **Failures are not cached.** A raised loader reaches every waiter and leaves
-  nothing stored; the next caller retries.
+- **Failures are not cached by default.** A raised loader reaches every waiter
+  and leaves nothing stored; the next caller retries. With
+  ``failure_ttl_seconds > 0`` the failure is also remembered for that long, so a
+  persistently failing key is not reloaded on every call (see
+  :class:`AsyncTTLCache`).
+- **Cancellation is per caller.** A caller that goes away does not cancel the
+  load the other callers are awaiting; the load is cancelled only once its last
+  waiter has gone (:class:`~jentic_one.shared.cache.singleflight.SingleFlight`).
 - A ``ttl_seconds`` of ``0`` (or a ``ttl_for`` that returns ``<= 0``) disables
   storage for that value while keeping the single-flight coalescing.
 
@@ -36,7 +42,10 @@ scope the exporter labels the series with, so each counter stays with the area
 that owns it. ``misses`` counts **every caller that does not find a fresh
 entry**, including the waiters a single-flight load coalesces and the callers a
 failed load raises to, so ``hits + misses`` is the number of ``get_or_load``
-calls.
+calls. A call answered by a remembered failure counts as a **hit**: these
+counters measure how many calls the cache answered without running the loader,
+which is what the cache exists to do, and the failure itself is reported by the
+caller's own error path.
 """
 
 from __future__ import annotations
@@ -73,6 +82,49 @@ def _counters_for(scope: str, prefix: str) -> tuple[Counter, Counter, Counter]:
         )
         _counters[(scope, prefix)] = counters
     return counters
+
+
+#: Exception ``args`` of these types are kept in a remembered failure (``str``
+#: args truncated to :data:`_MAX_FALLBACK_MESSAGE` characters); anything else is
+#: replaced by the exception's message (truncated the same way) so a remembered
+#: failure never references objects the loader built (bodies, responses,
+#: buffers) and never holds an unbounded message.
+_SCALAR_ARG_TYPES = (str, int, float, bool, type(None))
+_MAX_FALLBACK_MESSAGE = 1024
+
+
+@dataclass(frozen=True, slots=True)
+class _Failure:
+    """A loader failure reduced to its type and scalar args.
+
+    The live exception carries ``__traceback__``/``__cause__``/``__context__``,
+    whose frames keep every loader local (e.g. a capped response body) alive;
+    storing it would pin that memory for the whole failure TTL. Only the type
+    and plain-value args are kept, and each hit raises a fresh instance.
+    """
+
+    exc_type: type[Exception]
+    args: tuple[object, ...]
+
+    @classmethod
+    def detach(cls, exc: Exception) -> _Failure:
+        if all(isinstance(arg, _SCALAR_ARG_TYPES) for arg in exc.args):
+            return cls(
+                type(exc),
+                tuple(
+                    arg[:_MAX_FALLBACK_MESSAGE] if isinstance(arg, str) else arg for arg in exc.args
+                ),
+            )
+        return cls(type(exc), (str(exc)[:_MAX_FALLBACK_MESSAGE],))
+
+    def rebuild(self) -> Exception:
+        """A fresh, unchained instance of the remembered failure."""
+        try:
+            return self.exc_type(*self.args)
+        except Exception:
+            # A type whose constructor rejects its own args still reports as a
+            # failure, just not as its original type.
+            return RuntimeError(*self.args)
 
 
 @dataclass(slots=True)
@@ -173,6 +225,17 @@ class AsyncTTLCache[K: Hashable, V]:
     every store keeps the expiry and the owner's own TTL gate in agreement.
     Exactly one of the two is required.
 
+    ``failure_ttl_seconds`` turns on negative caching: with a positive value a
+    loader failure is remembered for that long, so a persistently failing key is
+    not reloaded on every call; with the default ``0`` the next caller after a
+    failure runs the loader again. Only the failure's type and scalar args are
+    remembered (never the exception object, whose traceback and cause chain
+    would keep the loader's locals alive), and each hit raises a fresh instance
+    with no ``__cause__``. Remembered failures obey the same generation fence as
+    values — a failure from a load that began before an invalidation is not
+    stored — and any invalidation drops all of them, since a remembered failure
+    is a verdict about a key the caller has just asked to be re-derived.
+
     ``metrics_prefix`` names the ``{prefix}.hits`` / ``.misses`` / ``.evictions``
     counters this instance reports to and ``metrics_scope`` the meter (the
     owner's area) they are created on; instances sharing both share the
@@ -183,6 +246,9 @@ class AsyncTTLCache[K: Hashable, V]:
     :meth:`put`, :meth:`get`, :meth:`keys` and :attr:`generation` are the seam
     this primitive's own tests and its callers' tests drive it through; the
     production paths use :meth:`get_or_load` and the ``invalidate_*`` family.
+    :func:`len`, :meth:`keys`, :meth:`__contains__` and the ``invalidate_*``
+    return counts describe the cached **values**; remembered failures are held
+    separately, under the same ``max_entries`` bound.
     """
 
     def __init__(
@@ -191,6 +257,7 @@ class AsyncTTLCache[K: Hashable, V]:
         max_entries: int,
         ttl_seconds: float | None = None,
         ttl_for: Callable[[V], float] | None = None,
+        failure_ttl_seconds: float = 0,
         metrics_scope: str | None = None,
         metrics_prefix: str | None = None,
         clock: Callable[[], float] = time.monotonic,
@@ -207,6 +274,12 @@ class AsyncTTLCache[K: Hashable, V]:
             self._ttl_for = lambda _value: fixed
         self._clock = clock
         self._store = TTLLRU[K, V](max_entries=max_entries, clock=clock)
+        self._failure_ttl_seconds = failure_ttl_seconds
+        self._failures: TTLLRU[K, _Failure] | None = (
+            TTLLRU[K, _Failure](max_entries=max_entries, clock=clock)
+            if failure_ttl_seconds > 0
+            else None
+        )
         self._flight: SingleFlight[V] = SingleFlight(max_in_flight=max_in_flight)
         self._generation = 0
         self._hits = 0
@@ -235,19 +308,37 @@ class AsyncTTLCache[K: Hashable, V]:
         """Return the fresh value for ``key``, running ``loader`` on a miss.
 
         Concurrent misses for ``key`` within one generation share a single
-        ``loader`` call and its result or exception.
+        ``loader`` call and its result or exception. With
+        ``failure_ttl_seconds > 0`` a remembered failure is re-raised as a fresh
+        instance instead of running ``loader``.
         """
         entry = self._store.get(key)
         if entry is not None:
             self._record_hit()
             return entry.value
+        if self._failures is not None:
+            failure = self._failures.get(key)
+            if failure is not None:
+                self._record_hit()
+                raise failure.value.rebuild()
         self._record_miss()
 
         generation = self._generation
 
         async def _load() -> V:
             started = self._clock()
-            value = await loader()
+            try:
+                value = await loader()
+            except Exception as exc:
+                # Fenced like a value: a failure derived before an invalidation
+                # must not outlive it.
+                if self._failures is not None and generation == self._generation:
+                    self._failures.put(
+                        key,
+                        _Failure.detach(exc),
+                        expires_at=started + self._failure_ttl_seconds,
+                    )
+                raise
             if generation == self._generation:
                 self._put(key, value, started)
             return value
@@ -264,6 +355,8 @@ class AsyncTTLCache[K: Hashable, V]:
         self._put(key, value, self._clock() if stamped_at is None else stamped_at)
 
     def _put(self, key: K, value: V, started: float) -> None:
+        if self._failures is not None:
+            self._failures.pop(key)
         ttl = self._ttl_for(value)
         if ttl <= 0:
             return
@@ -274,23 +367,36 @@ class AsyncTTLCache[K: Hashable, V]:
 
     def invalidate(self, key: K) -> bool:
         """Evict ``key`` and fence off loads already in flight; return whether it was cached."""
-        self._generation += 1
+        self._invalidated()
         return self._store.pop(key)
 
     def invalidate_prefix(self, prefix: str) -> int:
         """Evict every ``str`` key starting with ``prefix``; return the count."""
-        self._generation += 1
+        self._invalidated()
         return self._store.remove_where(lambda k, _v: isinstance(k, str) and k.startswith(prefix))
 
     def invalidate_where(self, predicate: Callable[[K, V], bool]) -> int:
         """Evict every entry ``predicate(key, value)`` selects; return the count."""
-        self._generation += 1
+        self._invalidated()
         return self._store.remove_where(predicate)
 
     def clear(self) -> None:
         """Evict everything and fence off loads already in flight."""
-        self._generation += 1
+        self._invalidated()
         self._store.clear()
+
+    def _invalidated(self) -> None:
+        """Bump the generation fence and forget every remembered failure.
+
+        ``predicate``-based invalidation cannot be evaluated against a failure
+        (there is no value to inspect), and a caller asking for a key to be
+        re-derived wants a retry rather than a cached error, so every
+        invalidation drops the whole negative cache. Failures are cheap to
+        re-derive compared to serving a stale verdict.
+        """
+        self._generation += 1
+        if self._failures is not None:
+            self._failures.clear()
 
     def keys(self) -> list[K]:
         """Snapshot of the stored keys, least recently used first (may include expired)."""
