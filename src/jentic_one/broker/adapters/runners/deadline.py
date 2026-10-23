@@ -31,8 +31,8 @@ from jentic_one.broker.adapters.runners.base import (
     StreamingUpstreamRunner,
     UpstreamRunner,
 )
+from jentic_one.broker.core.directives import AgentDirective
 from jentic_one.broker.core.exceptions import (
-    AgentDirective,
     BrokerError,
     DeadlineExceededError,
 )

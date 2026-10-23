@@ -5,13 +5,13 @@ from __future__ import annotations
 import pytest
 
 from jentic_one.broker.adapters.runners.base import RunnerRequest, RunnerResult
-from jentic_one.broker.core.exceptions import ErrorOrigin
 from jentic_one.broker.services.execution.pipeline import (
     BrokerExecutionPipeline,
     ExecutionContext,
     ExecutionOutcome,
     enrich_error_origin,
 )
+from jentic_one.shared.broker.execution import ErrorOrigin
 from jentic_one.shared.schemas import OperationInfo
 
 

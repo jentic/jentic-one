@@ -23,7 +23,6 @@ from jentic_one.broker.core.exceptions import (
     CredentialNotProvisionedError,
     CredentialRefreshTransientError,
     CredentialUndecryptableError,
-    ErrorOrigin,
 )
 from jentic_one.broker.services.credentials.errors import (
     AmbiguousCredentialError,
@@ -36,6 +35,7 @@ from jentic_one.broker.services.credentials.errors import (
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
 from jentic_one.broker.services.credentials.resolver import ResolvedCredential
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.broker.execution import ErrorOrigin
 from jentic_one.shared.broker.protocols import ConnectableRegistration
 from jentic_one.shared.config import (
     VendorAuthConfig,

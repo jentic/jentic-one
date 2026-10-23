@@ -23,16 +23,18 @@ from urllib.parse import urlparse
 import structlog
 
 from jentic_one.broker.core.denial import DenialReason
-from jentic_one.broker.core.exceptions import (
-    ActionDeniedError,
-    BrokerError,
-    CredentialBindingSuspendedError,
-    CredentialIdentityMismatchError,
+from jentic_one.broker.core.directives import (
     credential_binding_suspended_directive,
     direct_action_denied_directive,
     direct_credential_identity_mismatch_directive,
     no_credential_binding_directive,
     suggested_permission_rules,
+)
+from jentic_one.broker.core.exceptions import (
+    ActionDeniedError,
+    BrokerError,
+    CredentialBindingSuspendedError,
+    CredentialIdentityMismatchError,
 )
 from jentic_one.broker.services.credentials.connect_target import resolve_connect_target
 from jentic_one.broker.services.credentials.orchestrator import CredentialService

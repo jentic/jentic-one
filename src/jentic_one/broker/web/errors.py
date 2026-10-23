@@ -21,13 +21,11 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette import exceptions as starlette_exceptions
 
-from jentic_one.broker.core.exceptions import (
-    AgentDirective,
-    BrokerError,
-    ErrorOrigin,
-)
+from jentic_one.broker.core.directives import AgentDirective
+from jentic_one.broker.core.exceptions import BrokerError
 from jentic_one.broker.core.headers import JenticHeader
 from jentic_one.broker.core.problem import problem_body, status_for_broker_error
+from jentic_one.shared.broker.execution import ErrorOrigin
 from jentic_one.shared.db.errors import DatabaseCommitOutcomeUnknownError, DatabaseUnavailableError
 from jentic_one.shared.web.errors import (
     DB_COMMIT_OUTCOME_UNKNOWN_DETAIL,

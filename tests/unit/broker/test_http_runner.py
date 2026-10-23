@@ -17,10 +17,10 @@ from jentic_one.broker.adapters.runners.base import RunnerRequest
 from jentic_one.broker.adapters.runners.http import HttpRunner, _HostBulkhead
 from jentic_one.broker.core.exceptions import (
     BrokerError,
-    ErrorOrigin,
     UpstreamTimeoutError,
     UpstreamTransportError,
 )
+from jentic_one.shared.broker.execution import ErrorOrigin
 
 
 def _asgi_client(app: FastAPI) -> httpx.AsyncClient:

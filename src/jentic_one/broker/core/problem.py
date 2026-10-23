@@ -13,9 +13,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from jentic_one.broker.core.directives import AgentDirective
 from jentic_one.broker.core.exceptions import (
     ActionDeniedError,
-    AgentDirective,
     AmbiguousMatchError,
     ApprovalHoldUnavailableError,
     ApprovalPendingLimitError,
@@ -28,7 +28,6 @@ from jentic_one.broker.core.exceptions import (
     CredentialRefreshTransientError,
     CredentialUndecryptableError,
     DeadlineExceededError,
-    ErrorOrigin,
     IdempotencyConflictError,
     IdempotencyInProgressError,
     IdempotencyUnavailableError,
@@ -50,6 +49,7 @@ from jentic_one.broker.core.exceptions import (
     UpstreamTransportError,
     UpstreamUrlNotAllowedError,
 )
+from jentic_one.shared.broker.execution import ErrorOrigin
 
 # Domain exception → HTTP status error map.
 STATUS_BY_ERROR: dict[type[BrokerError], int] = {

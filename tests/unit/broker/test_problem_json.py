@@ -12,20 +12,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import DBAPIError
 
-from jentic_one.broker.core.exceptions import (
+from jentic_one.broker.core.directives import (
     AgentDirective,
     AgentStrategy,
-    CredentialNeedsReconnectError,
-    CredentialNotProvisionedError,
-    CredentialRefreshTransientError,
-    CredentialUndecryptableError,
-    DeadlineExceededError,
-    ErrorOrigin,
-    OperationNotFoundError,
-    TooManyCandidatesError,
-    UpstreamResponseTooLargeError,
-    UpstreamTimeoutError,
-    UpstreamTransportError,
     ambiguous_credential_binding_directive,
     credential_binding_suspended_directive,
     credential_identity_mismatch_directive,
@@ -34,6 +23,18 @@ from jentic_one.broker.core.exceptions import (
     no_credential_binding_directive,
     suggested_permission_rules,
     switch_toolkit_directive,
+)
+from jentic_one.broker.core.exceptions import (
+    CredentialNeedsReconnectError,
+    CredentialNotProvisionedError,
+    CredentialRefreshTransientError,
+    CredentialUndecryptableError,
+    DeadlineExceededError,
+    OperationNotFoundError,
+    TooManyCandidatesError,
+    UpstreamResponseTooLargeError,
+    UpstreamTimeoutError,
+    UpstreamTransportError,
 )
 from jentic_one.broker.core.headers import JenticHeader
 from jentic_one.broker.core.problem import STATUS_BY_ERROR, broker_error_problem
@@ -44,6 +45,7 @@ from jentic_one.broker.web.errors import (
 )
 from jentic_one.control.web.schemas.permission_rules import PermissionRuleSchema
 from jentic_one.shared.access_guidance import ConnectTarget
+from jentic_one.shared.broker.execution import ErrorOrigin
 from jentic_one.shared.broker.protocols import IdentityMismatch
 from jentic_one.shared.db.errors import (
     DatabaseCommitOutcomeUnknownError,

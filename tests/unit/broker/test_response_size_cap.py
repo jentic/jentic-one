@@ -15,7 +15,8 @@ import pytest
 
 from jentic_one.broker.adapters.runners.base import RunnerRequest
 from jentic_one.broker.adapters.runners.http import HttpRunner
-from jentic_one.broker.core.exceptions import ErrorOrigin, UpstreamResponseTooLargeError
+from jentic_one.broker.core.exceptions import UpstreamResponseTooLargeError
+from jentic_one.shared.broker.execution import ErrorOrigin
 
 
 class _RecordingStream:

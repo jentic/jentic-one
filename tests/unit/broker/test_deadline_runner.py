@@ -20,8 +20,9 @@ from jentic_one.broker.adapters.runners.base import (
     StreamingResult,
 )
 from jentic_one.broker.adapters.runners.deadline import DeadlineRunner
-from jentic_one.broker.core.exceptions import DeadlineExceededError, ErrorOrigin
+from jentic_one.broker.core.exceptions import DeadlineExceededError
 from jentic_one.broker.services.execution.pipeline import build_runner
+from jentic_one.shared.broker.execution import ErrorOrigin
 
 
 class _SlowRunner:
