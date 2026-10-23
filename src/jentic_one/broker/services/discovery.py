@@ -1,6 +1,6 @@
 """In-process operation discovery over the injected ``RegistryResolverProtocol``.
 
-A thin **service** (00-overview layering) over the resolver injected onto
+A thin **service** over the resolver injected onto
 ``app.state.broker_registry_resolver`` at startup (``wiring.install_broker_registry_resolver``).
 No ``httpx``, no ``registry_base_url``, no service token, and — critically — no
 ``jentic_one.registry`` import: the resolver owns its own registry-DB session
@@ -22,6 +22,7 @@ from jentic_one.shared.broker.protocols import (
     ResolveResult,
     RevisionPinOutcome,
 )
+from jentic_one.shared.discovery.errors import MethodNotAllowedError
 from jentic_one.shared.schemas import APIReference
 
 
@@ -134,7 +135,13 @@ async def discover_via_pins(
     changed on a credential-bound API) that serves the URL is refused with 403
     ``host_change_requires_operator``: routing through it would send the API's
     bound credentials to hosts no operator approved.
+
+    A pinned revision that serves the URL only for other methods does not stop
+    the search either: a later pin may serve the requested method. Only when no
+    pin resolves the call does :class:`MethodNotAllowedError` (405) surface,
+    naming every method any pinned revision serves the URL for.
     """
+    allowed_methods: list[str] = []
     for vendor, name, version in sorted(pins):
         revision = pins[(vendor, name, version)]
         result = await resolver.resolve_revision_pin(
@@ -149,10 +156,18 @@ async def discover_via_pins(
             RevisionPinOutcome.HOST_CHANGE_HELD,
         ):
             continue
-        resolved = await discover(resolver, method=method, url=url, revision_id=result.revision_id)
+        try:
+            resolved = await discover(
+                resolver, method=method, url=url, revision_id=result.revision_id
+            )
+        except MethodNotAllowedError as exc:
+            allowed_methods.extend(m for m in exc.allowed_methods if m not in allowed_methods)
+            continue
         if resolved is None:
             continue
         if result.outcome is RevisionPinOutcome.HOST_CHANGE_HELD:
             raise _host_change_held(_pin_key(vendor, name, version, revision))
         return resolved, result.revision_id
+    if allowed_methods:
+        raise MethodNotAllowedError(sorted(allowed_methods))
     return None

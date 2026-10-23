@@ -20,7 +20,8 @@ ASGI with the real registry resolver and binding deriver. They assert:
   id, an archived revision, another user's draft) is refused with the problem
   type its ``rev_`` equivalent gets, and the detail echoes the id as sent;
 - a pinned call whose URL the revision serves only for other methods is a broker
-  405 ``method_not_allowed`` naming the allowed methods (#1962).
+  405 ``method_not_allowed`` naming the allowed methods, unless another pin
+  serves the requested method (#1962).
 """
 
 from __future__ import annotations
@@ -85,7 +86,7 @@ def _agent() -> Identity:
 
 
 def _spec_source(
-    paths: list[str], *, name: str = NAME, submitted_by: str = WRITER
+    paths: list[str], *, name: str = NAME, submitted_by: str = WRITER, method: str = "get"
 ) -> dict[str, Any]:
     spec = {
         "openapi": "3.1.0",
@@ -93,8 +94,8 @@ def _spec_source(
         "servers": [{"url": f"https://{HOST}"}],
         "paths": {
             path: {
-                "get": {
-                    "operationId": f"get{path.rsplit('/', 1)[-1].title()}",
+                method: {
+                    "operationId": f"{method}{path.rsplit('/', 1)[-1].title()}",
                     "responses": {"200": {"description": "OK"}},
                 }
             }
@@ -113,13 +114,19 @@ def _spec_source(
 
 
 async def _import(
-    ctx: Context, paths: list[str], *, name: str = NAME, submitted_by: str = WRITER
+    ctx: Context,
+    paths: list[str],
+    *,
+    name: str = NAME,
+    submitted_by: str = WRITER,
+    method: str = "get",
 ) -> dict[str, Any]:
     """Import a spec as a draft and return its import-job result entry."""
+    source = _spec_source(paths, name=name, submitted_by=submitted_by, method=method)
     result = await ImportHandler(ctx).execute(
         job_id=f"job_{uuid.uuid4().hex[:20]}",
         db=None,
-        payload={"sources": [_spec_source(paths, name=name, submitted_by=submitted_by)]},
+        payload={"sources": [source]},
         created_by=submitted_by,
     )
     revision: dict[str, Any] = result.body["revisions"][0]
@@ -374,3 +381,35 @@ async def test_pinned_url_served_for_another_method_is_405(env: Context) -> None
     assert body["status"] == 405
     assert body["error_origin"] == "broker"
     assert body["allowed_methods"] == ["GET"]
+
+
+def _pins(*pins: tuple[str, str]) -> dict[str, str]:
+    """A ``Jentic-Revision`` header pinning each ``(api name, revision_id)``."""
+    value = ",".join(f"{VENDOR}:{name}:{VERSION}={rid}" for name, rid in pins)
+    return {"Jentic-Revision": value}
+
+
+async def test_pin_serving_the_method_wins_over_an_earlier_405_pin(env: Context) -> None:
+    # ``sprockets`` sorts before ``widgets``: its draft serves the URL only for
+    # GET, so the search must go on to the ``widgets`` draft that serves POST.
+    sprockets = await _import(env, ["/v1/widgets"], name=OTHER_NAME, method="get")
+    widgets = await _import(env, ["/v1/widgets"], method="post")
+    headers = _pins((OTHER_NAME, sprockets["revision_id"]), (NAME, widgets["revision_id"]))
+
+    async with _broker(env) as broker:
+        resp = await broker.post(WIDGETS_PATH, headers=headers)
+
+    _assert_matched(resp)
+
+
+async def test_405_after_every_pin_names_the_methods_of_all_pins(env: Context) -> None:
+    sprockets = await _import(env, ["/v1/widgets"], name=OTHER_NAME, method="put")
+    widgets = await _import(env, ["/v1/widgets"], method="get")
+    headers = _pins((OTHER_NAME, sprockets["revision_id"]), (NAME, widgets["revision_id"]))
+
+    async with _broker(env) as broker:
+        resp = await broker.post(WIDGETS_PATH, headers=headers)
+
+    assert resp.status_code == 405, resp.text
+    assert resp.headers["Allow"] == "GET, PUT"
+    assert resp.json()["allowed_methods"] == ["GET", "PUT"]
