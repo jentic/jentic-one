@@ -15,6 +15,7 @@ from sqlalchemy import delete, select
 
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.users import User
+from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.notes import Note
 from jentic_one.registry.services.errors import NoteNotFoundError
@@ -294,3 +295,77 @@ async def test_agent_sees_only_its_own_notes(
     assert await _listed(integration_context, agent) == {own.id}
     with pytest.raises(NoteNotFoundError):
         await NoteService(integration_context).get(owner_note.id, identity=agent)
+
+
+# --- non-registry note targets ------------------------------------------------
+#
+# Credential and execution targets live outside the registry, so create stores
+# their ids as given. The note stays author-scoped: the target's owner does not
+# see a note someone else attached to it, and nothing about the target is read
+# into the note.
+
+_FOREIGN_CREDENTIAL_ID = "cred_note_foreign_target"
+
+
+@pytest.fixture()
+async def foreign_credential(control_db: DatabaseSession) -> AsyncGenerator[str, None]:
+    """A real control credential created by ``_OWNER``."""
+
+    async def _wipe() -> None:
+        async with control_db.session() as session:
+            await session.execute(delete(Credential).where(Credential.id == _FOREIGN_CREDENTIAL_ID))
+            await session.commit()
+
+    await _wipe()
+    async with control_db.transaction() as session:
+        session.add(
+            Credential(
+                id=_FOREIGN_CREDENTIAL_ID,
+                type="customer_api_key",
+                name="owner-private-cred",
+                api_vendor="note-test.com",
+                created_by=_OWNER.sub,
+            )
+        )
+    yield _FOREIGN_CREDENTIAL_ID
+    await _wipe()
+
+
+@pytest.mark.parametrize("target", ["credential", "execution"])
+async def test_note_on_foreign_target_stays_author_scoped(
+    integration_context: Context, foreign_credential: str, target: str
+) -> None:
+    svc = NoteService(integration_context)
+    is_credential = target == "credential"
+
+    view = await svc.create(
+        resource_credential_id=foreign_credential if is_credential else None,
+        resource_execution_id=None if is_credential else "exec_note_foreign_target",
+        body="Other's note",
+        identity=_OTHER,
+    )
+
+    # The view echoes only the caller's input; no target field is resolved.
+    assert view.created_by == _OTHER.sub
+    assert view.resource_api_id is None
+    assert view.resource_api_vendor is None
+    assert view.resource_operation_id is None
+    if is_credential:
+        assert view.resource_credential_id == foreign_credential
+        assert view.resource_execution_id is None
+    else:
+        assert view.resource_execution_id == "exec_note_foreign_target"
+        assert view.resource_credential_id is None
+
+    # The target's owner neither lists nor reads it, even filtering by target.
+    credential_filter = foreign_credential if is_credential else None
+    assert view.id not in await _listed(integration_context, _OWNER)
+    assert view.id not in await _listed(
+        integration_context, _OWNER, credential_id=credential_filter
+    )
+    with pytest.raises(NoteNotFoundError):
+        await svc.get(view.id, identity=_OWNER)
+
+    # The author and org:admin read it.
+    assert (await svc.get(view.id, identity=_OTHER)).id == view.id
+    assert (await svc.get(view.id, identity=_ADMIN)).id == view.id
