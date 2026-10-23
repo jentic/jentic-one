@@ -2,16 +2,15 @@
 
 Pure module — **no** FastAPI/httpx/DB imports. Core/services/adapters raise these
 typed domain exceptions; the single FastAPI handler in ``broker/web/errors.py``
-maps the taxonomy to ``application/problem+json`` (the B-004 handler). This keeps
-the transport coupling out of the domain/service layers (00-overview "Errors —
-domain in, problem+json out").
+maps the taxonomy to ``application/problem+json``. This keeps the transport
+coupling out of the domain/service layers: domain errors in, problem+json out.
 
 Every error also carries the **agent-recovery contract**: an ``error_origin``
 (``broker`` | ``upstream``: who generated the response — a ``BrokerError`` is
 always the broker's own response, so it keeps the ``broker`` default) and,
 where a deterministic recovery exists, a structured ``AgentDirective``
 (``broker/core/directives.py``) so the autonomous-agent caller can recover
-without reading docs (02-core-proxy "Agent-centric error recovery").
+without reading docs.
 
 Operation-discovery failures (operation not found, method not allowed, ambiguous
 match, too many candidates) are not ``BrokerError`` subclasses: the registry

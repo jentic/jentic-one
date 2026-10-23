@@ -83,6 +83,11 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     ArchivedRevisionPinError: (422, "archived_revision_pin"),
     InvalidNoteResourceError: (422, "invalid_note_resource"),
     InvalidOverlayDocumentError: (422, "invalid_overlay_document"),
+    # The registry answers its own URL lookup, so an index that returns more
+    # candidates than it can rank is a registry fault (500). The broker renders
+    # the same error as 503 ``too_many_candidates`` (``broker/core/problem.py``):
+    # to a proxied caller the registry is a dependency that was unavailable
+    # before dispatch. Both wire statuses are part of each surface's contract.
     TooManyCandidatesError: (500, "url_index_overloaded"),
     RevisionStateConflictError: (409, "revision_state_conflict"),
     # Promoting a revision whose servers declare a host another vendor's live API

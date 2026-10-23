@@ -8,7 +8,7 @@ from typing import Any, cast
 
 import pytest
 import structlog
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import DBAPIError
 
@@ -586,7 +586,10 @@ async def test_discovery_errors_render_as_broker_problems(
     """#1962: the shared discovery errors (raised by the broker for an unregistered
     URL, and by the in-process registry resolver) render as broker problems:
     their own status and ``type``, ``broker`` origin, and ``Allow`` on a 405."""
-    resp = await handle_discovery_error(cast(Any, None), exc)
+    request = Request(
+        {"type": "http", "method": "GET", "path": "/api.example.com/x", "headers": []}
+    )
+    resp = await handle_discovery_error(request, exc)
     assert resp.status_code == status
     assert resp.media_type == "application/problem+json"
     assert resp.headers[JenticHeader.ERROR_ORIGIN.value] == "broker"
@@ -596,6 +599,7 @@ async def test_discovery_errors_render_as_broker_problems(
         "status": status,
         "detail": exc.detail,
         "error_origin": "broker",
+        "instance": "/api.example.com/x",
     }
     if isinstance(exc, MethodNotAllowedError):
         expected["allowed_methods"] = ["GET", "PUT"]

@@ -1,4 +1,4 @@
-"""Central problem+json exception handlers for the broker (the B-004 handler).
+"""Central problem+json exception handlers for the broker.
 
 Maps the domain-exception taxonomy (``broker/core/errors.py``) and the
 shared operation-discovery errors (``shared/discovery/errors.py``) to
@@ -85,9 +85,14 @@ async def handle_broker_error(_request: Request, exc: BrokerError) -> JSONRespon
     )
 
 
-async def handle_discovery_error(_request: Request, exc: DiscoveryError) -> JSONResponse:
-    """Map a shared operation-discovery error (e.g. from the registry resolver) to problem+json."""
-    body = discovery_error_problem(exc)
+async def handle_discovery_error(request: Request, exc: DiscoveryError) -> JSONResponse:
+    """Map a shared operation-discovery error (e.g. from the registry resolver) to problem+json.
+
+    ``instance`` is the request path only — the query string of an upstream URL
+    can carry secrets — which is the same value a queued execution's denial
+    records (``queued_execution_instance``).
+    """
+    body = discovery_error_problem(exc, instance=request.url.path)
     hdrs = {
         **discovery_error_headers(exc),
         JenticHeader.ERROR_ORIGIN.value: ErrorOrigin.BROKER.value,

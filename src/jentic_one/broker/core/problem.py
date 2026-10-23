@@ -94,7 +94,10 @@ STATUS_BY_ERROR: dict[type[BrokerError], int] = {
 
 # Shared operation-discovery error → (HTTP status, problem ``type``). Every one
 # is raised before dispatch, so the upstream never saw the call; a
-# ``too_many_candidates`` 503 is retryable for that reason.
+# ``too_many_candidates`` 503 is retryable for that reason. The registry
+# renders the same error as its own 500 ``url_index_overloaded``
+# (``registry/web/errors.py``): there the overloaded index is the answering
+# surface's fault, here it is a dependency that failed before dispatch.
 DISCOVERY_PROBLEM_BY_ERROR: dict[type[DiscoveryError], tuple[int, str]] = {
     OperationNotFoundError: (404, "operation_not_found"),
     MethodNotAllowedError: (405, "method_not_allowed"),
