@@ -8,6 +8,8 @@ from typing import Any, cast
 from urllib.parse import urlparse
 
 from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
@@ -125,8 +127,15 @@ class ApiRepository:
         to lock the nullable side of the joined-eager ``current_revision`` outer
         join, and keeping that eager load means the identity map holds the real
         relationship rather than a placeholder ``None``. SQLite ignores
-        ``FOR UPDATE`` (writers are serialized by ``BEGIN IMMEDIATE``); the no-row
-        race is backstopped by ``uq_apis_vendor_name_version``.
+        ``FOR UPDATE`` (writers are serialized by ``BEGIN IMMEDIATE``).
+
+        A missing row locks nothing, so two concurrent imports of a new identity
+        can both miss it. The insert is therefore ``ON CONFLICT (vendor, name,
+        version) DO NOTHING``: on Postgres it waits for a concurrent uncommitted
+        insert of the same identity and, once that commits, inserts nothing. The
+        locking read then runs again and resolves whichever row won, so the
+        catalog-identity guard and the field updates below apply to it as they
+        would to any existing row.
 
         Raises :class:`CatalogApiIdConflictError` — leaving the row untouched — when a
         catalog import (non-null ``catalog_api_id``) resolves to an Api already
@@ -135,36 +144,40 @@ class ApiRepository:
         stored id (a manual import of the same identity) is backfilled, and a
         manual re-import (``catalog_api_id=None``) never clears a recorded one.
         """
-        result = await session.execute(
+        locking_read = (
             select(Api)
             .where(Api.vendor == vendor, Api.name == name, Api.version == version)
             .with_for_update(of=Api)
         )
-        api = result.scalar_one_or_none()
-        if api is not None:
-            if (
-                catalog_api_id is not None
-                and api.catalog_api_id
-                and api.catalog_api_id != catalog_api_id
-            ):
-                raise CatalogApiIdConflictError(stored_id=api.catalog_api_id)
-            if display_name is not None:
-                api.display_name = display_name
-            if description is not None:
-                api.description = description
-            if catalog_api_id is not None:
-                api.catalog_api_id = catalog_api_id
-        else:
-            api = Api(
-                vendor=vendor,
-                name=name,
-                version=version,
-                display_name=display_name,
-                description=description,
-                created_by=created_by,
-                catalog_api_id=catalog_api_id,
+        api = (await session.execute(locking_read)).scalar_one_or_none()
+        if api is None:
+            insert = sqlite_insert if session.get_bind().dialect.name == "sqlite" else pg_insert
+            await session.execute(
+                insert(Api)
+                .values(
+                    vendor=vendor,
+                    name=name,
+                    version=version,
+                    display_name=display_name,
+                    description=description,
+                    created_by=created_by,
+                    catalog_api_id=catalog_api_id,
+                )
+                .on_conflict_do_nothing(index_elements=["vendor", "name", "version"])
             )
-            session.add(api)
+            api = (await session.execute(locking_read)).scalar_one()
+        if (
+            catalog_api_id is not None
+            and api.catalog_api_id
+            and api.catalog_api_id != catalog_api_id
+        ):
+            raise CatalogApiIdConflictError(stored_id=api.catalog_api_id)
+        if display_name is not None:
+            api.display_name = display_name
+        if description is not None:
+            api.description = description
+        if catalog_api_id is not None:
+            api.catalog_api_id = catalog_api_id
         await session.flush()
         return api
 

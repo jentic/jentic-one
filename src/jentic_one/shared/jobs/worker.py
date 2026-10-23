@@ -29,7 +29,11 @@ from jentic_one.shared.db.connectivity import (
 )
 from jentic_one.shared.db.errors import DatabaseCommitOutcomeUnknownError
 from jentic_one.shared.events import emit_event, valid_trace_id_or_none
-from jentic_one.shared.jobs.handlers import JobHandlerRegistry, JobResultPayload
+from jentic_one.shared.jobs.handlers import (
+    JobHandlerRegistry,
+    JobResultPayload,
+    NonRetryableJobError,
+)
 from jentic_one.shared.jobs.hold import (
     PROBLEM_CONTENT_TYPE,
     approval_resume_failed_problem,
@@ -429,6 +433,20 @@ class WorkerLoop:
                 error = _DB_CONNECTION_LOST_ERROR
             else:
                 error = redact_sql(str(exc)) or type(exc).__name__
+                if isinstance(exc, NonRetryableJobError):
+                    # The handler judged the failure deterministic: retrying
+                    # cannot change it, so the job fails on this attempt. The
+                    # handler logs its own detail; this is not a system fault.
+                    logger.warning(
+                        "job_failed_non_retryable",
+                        job_id=job.id,
+                        kind=str(kind),
+                        attempts=job.attempts,
+                        error_type=type(exc).__name__,
+                        error=error[:_ERROR_MAX_LEN],
+                    )
+                    await self._fail_claimed_job(job, kind, error)
+                    return
                 if _carries_sql(exc):
                     # A traceback would render the chained statement and
                     # its bound parameters, so only type names and the
@@ -761,6 +779,10 @@ class WorkerLoop:
                 return
             job.status = JobStatus.COMPLETED
             job.visible_at = None
+            # ``error`` holds the last failed attempt's message (written on
+            # requeue); a job that finished reports none. An approved execution
+            # that ends ``failed`` below carries its outcome in the result.
+            job.error = None
             available_until = None
             if kind == JobKind.EXECUTION and await self._is_approved_execution(session, job_id):
                 # An approved execution runs once: a failed run (re-auth deny,
@@ -864,6 +886,25 @@ class WorkerLoop:
             return
         logger.info("job_requeued", job_id=job.id, attempts=attempts, delay_s=round(delay_s, 2))
 
+    async def _fail_claimed_job(self, job: Any, kind: JobKind, error: str) -> None:
+        """Mark a job this claim holds terminally ``FAILED`` without a retry.
+
+        Used for a :class:`NonRetryableJobError`. Like :meth:`_handle_failure`
+        the transition applies only while the claim still holds. A failed
+        import emits ``import.failed``; any other kind emits
+        ``job.failed_permanently``, the event a dead-lettered job carries.
+        """
+        is_import = kind == JobKind.IMPORT
+        if await self._terminal_job(
+            job.id,
+            JobStatus.FAILED,
+            error,
+            event_summary_prefix="Import failed" if is_import else "Job failed",
+            claim_attempts=job.attempts,
+            event_type=EventType.IMPORT_FAILED if is_import else EventType.JOB_FAILED_PERMANENTLY,
+        ):
+            logger.info("job_failed_no_retry", job_id=job.id, attempts=job.attempts)
+
     async def _fail_job(self, job_id: str, error: str) -> None:
         """Mark a job terminally ``FAILED`` (non-retryable, e.g. no handler)."""
         await self._terminal_job(
@@ -878,12 +919,16 @@ class WorkerLoop:
         *,
         event_summary_prefix: str,
         claim_attempts: int | None = None,
+        event_type: str | None = None,
     ) -> bool:
         """Move a job to a terminal status, clear its claim, and emit an event.
 
         With ``claim_attempts`` the transition applies only while the row is
         still ``RUNNING`` under that claim (see :meth:`_handle_failure`); the
         row is locked for the check so a concurrent reclaim cannot interleave.
+
+        ``event_type`` overrides the emitted event; by default ``DEAD_LETTER``
+        emits ``job.failed_permanently`` and any other status ``import.failed``.
 
         Returns True when the transition was applied, False when the job is
         gone or the claim check skipped it.
@@ -907,10 +952,12 @@ class WorkerLoop:
             job.visible_at = None
             try:
                 sanitized = error[:_ERROR_MAX_LEN] if error else "unknown"
-                if status == JobStatus.DEAD_LETTER:
-                    event_type = EventType.JOB_FAILED_PERMANENTLY
-                else:
-                    event_type = EventType.IMPORT_FAILED
+                if event_type is None:
+                    event_type = (
+                        EventType.JOB_FAILED_PERMANENTLY
+                        if status == JobStatus.DEAD_LETTER
+                        else EventType.IMPORT_FAILED
+                    )
                 await emit_event(
                     session,
                     type=event_type,
