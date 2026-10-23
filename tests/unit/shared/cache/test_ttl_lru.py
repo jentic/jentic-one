@@ -124,6 +124,27 @@ async def test_lru_bound_evicts_and_counts() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_hit_promotes_an_entry_out_of_the_eviction_seat() -> None:
+    """Reading a key through ``get_or_load`` makes it most recently used, so the
+    key not re-read is the one evicted and reloaded."""
+    cache: AsyncTTLCache[str, str] = AsyncTTLCache(ttl_seconds=60, max_entries=2)
+    calls: list[str] = []
+
+    async def load(key: str) -> str:
+        calls.append(key)
+        return key.upper()
+
+    assert await cache.get_or_load("a", lambda: load("a")) == "A"
+    assert await cache.get_or_load("b", lambda: load("b")) == "B"
+    assert await cache.get_or_load("a", lambda: load("a")) == "A"  # "b" is now LRU
+    assert await cache.get_or_load("c", lambda: load("c")) == "C"  # evicts "b"
+
+    assert cache.keys() == ["a", "c"]
+    assert await cache.get_or_load("b", lambda: load("b")) == "B"
+    assert calls == ["a", "b", "c", "b"]
+
+
+@pytest.mark.asyncio
 async def test_zero_ttl_never_stores_but_still_coalesces() -> None:
     cache: AsyncTTLCache[str, str] = AsyncTTLCache(ttl_seconds=0, max_entries=8)
     loader = _GatedLoader("v")

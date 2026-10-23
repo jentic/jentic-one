@@ -99,8 +99,43 @@ async def test_failure_ttl_remembers_the_error_until_it_expires() -> None:
 
 
 @pytest.mark.asyncio
-async def test_remembered_failure_counts_as_a_hit() -> None:
-    """A call answered from the negative cache ran no loader, so it is a hit."""
+async def test_failure_is_stamped_when_the_loader_raises_not_when_it_began() -> None:
+    """A slow failure is remembered for the full TTL measured from the failure.
+
+    The failure TTL is a backoff window after the failure, unlike a value's
+    lifetime, which counts from when its load began. Stamping a failure from the
+    start of the load would store a timeout-shaped failure already expired —
+    exactly the case negative caching exists for, since the registry's fetch
+    timeout (``registry.fetch_timeout_s``) and the preview failure TTL are both
+    30 s by default.
+    """
+    clock = _Clock()
+    cache: AsyncTTLCache[str, str] = AsyncTTLCache(
+        max_entries=4, ttl_seconds=60, failure_ttl_seconds=30, clock=clock
+    )
+    calls = 0
+
+    async def slow_failure() -> str:
+        nonlocal calls
+        calls += 1
+        clock.now += 30  # the upstream fetch hangs until it times out
+        raise RuntimeError("upstream timed out")
+
+    for _ in range(3):
+        with pytest.raises(RuntimeError, match="upstream timed out"):
+            await cache.get_or_load("a", slow_failure)
+    assert calls == 1
+
+    clock.now += 30  # the window, measured from the failure, has now passed
+    with pytest.raises(RuntimeError):
+        await cache.get_or_load("a", slow_failure)
+    assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_remembered_failure_counts_as_a_failure_hit() -> None:
+    """A call answered from the negative cache ran no loader, but it is counted
+    apart from value hits so an outage does not inflate the hit ratio."""
     cache = _cache(failure_ttl_seconds=30)
 
     async def failing() -> str:
@@ -110,7 +145,25 @@ async def test_remembered_failure_counts_as_a_hit() -> None:
         with pytest.raises(RuntimeError):
             await cache.get_or_load("a", failing)
 
-    assert cache.stats == CacheStats(hits=2, misses=1, evictions=0)
+    assert cache.stats == CacheStats(hits=0, misses=1, evictions=0, failure_hits=2)
+
+
+@pytest.mark.asyncio
+async def test_failure_store_evictions_are_counted() -> None:
+    """The negative cache shares the value store's bound, so its LRU pressure is
+    the same signal and reaches the same counter."""
+    cache: AsyncTTLCache[str, str] = AsyncTTLCache(
+        max_entries=2, ttl_seconds=60, failure_ttl_seconds=30, clock=_Clock()
+    )
+
+    async def failing() -> str:
+        raise RuntimeError("upstream down")
+
+    for key in ("a", "b", "c", "d"):
+        with pytest.raises(RuntimeError):
+            await cache.get_or_load(key, failing)
+
+    assert cache.stats.evictions == 2
 
 
 @pytest.mark.asyncio

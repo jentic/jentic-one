@@ -6,10 +6,15 @@ tests/integration/test_db_connectivity.py and tests/integration/test_context_lif
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
 
+from jentic_one.registry.services.catalog.manifest_builder import (
+    PreviewInfo,
+    PreviewProjection,
+)
 from jentic_one.shared.config import AppConfig, ConfigError
 from jentic_one.shared.context import Context
 from jentic_one.shared.db import DatabaseSession
@@ -118,3 +123,70 @@ async def test_startup_without_keyset_boots(app_config: AppConfig) -> None:
             _ = ctx.encryption
     finally:
         await ctx.shutdown()
+
+
+# ── catalog preview cache ────────────────────────────────────────────────────
+
+
+def _projection(title: str) -> PreviewProjection:
+    return PreviewProjection(
+        operations=(), info=PreviewInfo(title=title, version=None, description=None)
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("preview_cache_max_entries", 0), ("preview_cache_ttl_seconds", 0)],
+)
+async def test_preview_cache_zero_bound_disables_caching(
+    app_config: AppConfig, field: str, value: int
+) -> None:
+    """A zero entry bound or TTL disables the preview cache without failing.
+
+    ``catalog.preview_cache_max_entries`` is documented as ``ge=0`` with "Zero
+    disables the cache", but the store requires a positive bound, so the
+    disabled shape is expressed as a zero TTL over a bound of one. Without this
+    the symptom of a regression is a ``ValueError`` on the first
+    ``GET /catalog/{id}/operations`` of the process, not a cache miss.
+    """
+    setattr(app_config.catalog, field, value)
+    cache = Context(app_config, allowed_dbs=set()).catalog_preview_cache
+    calls = 0
+
+    async def load() -> PreviewProjection:
+        nonlocal calls
+        calls += 1
+        return _projection("stripe")
+
+    assert (await cache.get_or_load("https://example.test/spec.json", load)).info.title == "stripe"
+    assert await cache.get_or_load("https://example.test/spec.json", load) is not None
+    assert calls == 2
+    assert len(cache) == 0
+
+
+async def test_disabled_preview_cache_still_coalesces_concurrent_previews(
+    app_config: AppConfig,
+) -> None:
+    """Disabling the cache stops it storing, not single-flighting: concurrent
+    previews of one spec URL share a fetch rather than hammering the upstream."""
+    app_config.catalog.preview_cache_ttl_seconds = 0
+    cache = Context(app_config, allowed_dbs=set()).catalog_preview_cache
+    release = asyncio.Event()
+    calls = 0
+
+    async def load() -> PreviewProjection:
+        nonlocal calls
+        calls += 1
+        await release.wait()
+        return _projection("stripe")
+
+    tasks = [
+        asyncio.create_task(cache.get_or_load("https://example.test/spec.json", load))
+        for _ in range(5)
+    ]
+    await asyncio.sleep(0)
+    release.set()
+
+    assert len(await asyncio.gather(*tasks)) == 5
+    assert calls == 1
+    assert len(cache) == 0

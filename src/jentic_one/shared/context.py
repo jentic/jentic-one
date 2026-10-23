@@ -303,8 +303,10 @@ class Context:
         if self._catalog_preview_cache is None:
             cfg = self._config.catalog
             # A zero TTL or entry bound disables caching, failures included; the
-            # cache expresses that as a zero TTL (nothing is stored, every call
-            # loads) because its store requires a positive entry bound.
+            # cache expresses that as a zero TTL because its store requires a
+            # positive entry bound. Nothing is stored, so every call loads —
+            # though concurrent previews of one spec URL still share a single
+            # fetch, which is the single-flight coalescing, not the cache.
             disabled = cfg.preview_cache_max_entries <= 0 or cfg.preview_cache_ttl_seconds <= 0
             self._catalog_preview_cache = AsyncTTLCache(
                 max_entries=max(1, cfg.preview_cache_max_entries),

@@ -29,23 +29,29 @@ Invariants :class:`AsyncTTLCache` holds for every caller:
   and leaves nothing stored; the next caller retries. With
   ``failure_ttl_seconds > 0`` the failure is also remembered for that long, so a
   persistently failing key is not reloaded on every call (see
-  :class:`AsyncTTLCache`).
+  :class:`AsyncTTLCache`). A remembered failure is stamped from the moment the
+  loader raised, not from when it began: its TTL is a backoff window after the
+  failure, so a failure that takes longer to produce than the TTL (a timeout,
+  the common case) is still remembered for the full window.
 - **Cancellation is per caller.** A caller that goes away does not cancel the
   load the other callers are awaiting; the load is cancelled only once its last
   waiter has gone (:class:`~jentic_one.shared.cache.singleflight.SingleFlight`).
 - A ``ttl_seconds`` of ``0`` (or a ``ttl_for`` that returns ``<= 0``) disables
   storage for that value while keeping the single-flight coalescing.
 
-Metrics: a cache reports to ``{prefix}.hits`` / ``.misses`` / ``.evictions`` on
-the meter its owner names (``metrics_scope``), which is the instrumentation
-scope the exporter labels the series with, so each counter stays with the area
-that owns it. ``misses`` counts **every caller that does not find a fresh
-entry**, including the waiters a single-flight load coalesces and the callers a
-failed load raises to, so ``hits + misses`` is the number of ``get_or_load``
-calls. A call answered by a remembered failure counts as a **hit**: these
-counters measure how many calls the cache answered without running the loader,
-which is what the cache exists to do, and the failure itself is reported by the
-caller's own error path.
+Metrics: a cache reports to ``{prefix}.hits`` / ``.misses`` / ``.evictions`` /
+``.failure_hits`` on the meter its owner names (``metrics_scope``), which is the
+instrumentation scope the exporter labels the series with, so each counter stays
+with the area that owns it. ``misses`` counts **every caller that does not find
+a fresh entry**, including the waiters a single-flight load coalesces and the
+callers a failed load raises to. A call answered by a remembered failure counts
+as a ``failure_hit`` rather than a ``hit``, so the value hit ratio stays
+readable during an upstream outage instead of climbing while the cache serves
+nothing but errors; ``hits + failure_hits + misses`` is the number of
+``get_or_load`` calls. ``evictions`` counts LRU evictions from both the value
+store and the negative cache, which share one ``max_entries`` bound: the signal
+is cache pressure, and a failing key space larger than the bound is exactly the
+pressure an operator needs to see during that outage.
 """
 
 from __future__ import annotations
@@ -55,6 +61,7 @@ import time
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Hashable, Iterator
 from dataclasses import dataclass
+from typing import NamedTuple
 
 from opentelemetry.metrics import Counter
 
@@ -63,22 +70,36 @@ from jentic_one.shared.metrics import get_meter
 
 __all__ = ["TTLLRU", "AsyncTTLCache", "CacheStats"]
 
-# One counter triple per (meter name, metric prefix), shared by every cache
+
+class _Counters(NamedTuple):
+    hits: Counter
+    misses: Counter
+    evictions: Counter
+    failure_hits: Counter
+
+
+# One counter set per (meter name, metric prefix), shared by every cache
 # instance that reports under it (OpenTelemetry instruments are process-wide by
 # name). The meter name is the owner's area ("admin", "broker", …), which is the
 # instrumentation scope the exporter labels the series with, so it stays with
 # the area that created the counters rather than with this module.
-_counters: dict[tuple[str, str], tuple[Counter, Counter, Counter]] = {}
+_counters: dict[tuple[str, str], _Counters] = {}
 
 
-def _counters_for(scope: str, prefix: str) -> tuple[Counter, Counter, Counter]:
+def _counters_for(scope: str, prefix: str) -> _Counters:
     counters = _counters.get((scope, prefix))
     if counters is None:
         meter = get_meter(scope)
-        counters = (
-            meter.create_counter(f"{prefix}.hits", description=f"{prefix} hits"),
-            meter.create_counter(f"{prefix}.misses", description=f"{prefix} misses"),
-            meter.create_counter(f"{prefix}.evictions", description=f"{prefix} LRU evictions"),
+        counters = _Counters(
+            hits=meter.create_counter(f"{prefix}.hits", description=f"{prefix} hits"),
+            misses=meter.create_counter(f"{prefix}.misses", description=f"{prefix} misses"),
+            evictions=meter.create_counter(
+                f"{prefix}.evictions", description=f"{prefix} LRU evictions"
+            ),
+            failure_hits=meter.create_counter(
+                f"{prefix}.failure_hits",
+                description=f"{prefix} calls answered by a remembered failure",
+            ),
         )
         _counters[(scope, prefix)] = counters
     return counters
@@ -209,11 +230,17 @@ class TTLLRU[K: Hashable, V]:
 
 @dataclass(frozen=True, slots=True)
 class CacheStats:
-    """Per-instance counters (the same events the OpenTelemetry counters record)."""
+    """Per-instance counters (the same events the OpenTelemetry counters record).
+
+    ``evictions`` covers both the value store and the negative cache, which
+    share one ``max_entries`` bound; ``failure_hits`` counts the calls answered
+    by a remembered failure, which are deliberately kept out of ``hits``.
+    """
 
     hits: int
     misses: int
     evictions: int
+    failure_hits: int = 0
 
 
 class AsyncTTLCache[K: Hashable, V]:
@@ -228,7 +255,11 @@ class AsyncTTLCache[K: Hashable, V]:
     ``failure_ttl_seconds`` turns on negative caching: with a positive value a
     loader failure is remembered for that long, so a persistently failing key is
     not reloaded on every call; with the default ``0`` the next caller after a
-    failure runs the loader again. Only the failure's type and scalar args are
+    failure runs the loader again. The window is measured from the moment the
+    loader raised, unlike a value's lifetime, which is measured from when its
+    load began: the failure TTL is a backoff after the failure, so a slow
+    failure (an upstream timeout) is remembered for the whole window rather than
+    being stored already expired. Only the failure's type and scalar args are
     remembered (never the exception object, whose traceback and cause chain
     would keep the loader's locals alive), and each hit raises a fresh instance
     with no ``__cause__``. Remembered failures obey the same generation fence as
@@ -236,10 +267,10 @@ class AsyncTTLCache[K: Hashable, V]:
     stored — and any invalidation drops all of them, since a remembered failure
     is a verdict about a key the caller has just asked to be re-derived.
 
-    ``metrics_prefix`` names the ``{prefix}.hits`` / ``.misses`` / ``.evictions``
-    counters this instance reports to and ``metrics_scope`` the meter (the
-    owner's area) they are created on; instances sharing both share the
-    counters. Both or neither.
+    ``metrics_prefix`` names the ``{prefix}.hits`` / ``.misses`` /
+    ``.evictions`` / ``.failure_hits`` counters this instance reports to and
+    ``metrics_scope`` the meter (the owner's area) they are created on;
+    instances sharing both share the counters. Both or neither.
 
     Not thread-safe: one instance belongs to one event loop.
 
@@ -248,7 +279,8 @@ class AsyncTTLCache[K: Hashable, V]:
     production paths use :meth:`get_or_load` and the ``invalidate_*`` family.
     :func:`len`, :meth:`keys`, :meth:`__contains__` and the ``invalidate_*``
     return counts describe the cached **values**; remembered failures are held
-    separately, under the same ``max_entries`` bound.
+    separately, under the same ``max_entries`` bound. :attr:`stats` and the
+    counters cover both stores.
     """
 
     def __init__(
@@ -284,6 +316,7 @@ class AsyncTTLCache[K: Hashable, V]:
         self._generation = 0
         self._hits = 0
         self._misses = 0
+        self._failure_hits = 0
         self._otel = (
             _counters_for(metrics_scope, metrics_prefix)
             if metrics_scope is not None and metrics_prefix is not None
@@ -297,7 +330,15 @@ class AsyncTTLCache[K: Hashable, V]:
 
     @property
     def stats(self) -> CacheStats:
-        return CacheStats(hits=self._hits, misses=self._misses, evictions=self._store.evictions)
+        evictions = self._store.evictions + (
+            0 if self._failures is None else self._failures.evictions
+        )
+        return CacheStats(
+            hits=self._hits,
+            misses=self._misses,
+            evictions=evictions,
+            failure_hits=self._failure_hits,
+        )
 
     def get(self, key: K) -> V | None:
         """Return the fresh cached value for ``key`` without loading (``None`` on a miss)."""
@@ -319,7 +360,7 @@ class AsyncTTLCache[K: Hashable, V]:
         if self._failures is not None:
             failure = self._failures.get(key)
             if failure is not None:
-                self._record_hit()
+                self._record_failure_hit()
                 raise failure.value.rebuild()
         self._record_miss()
 
@@ -333,11 +374,16 @@ class AsyncTTLCache[K: Hashable, V]:
                 # Fenced like a value: a failure derived before an invalidation
                 # must not outlive it.
                 if self._failures is not None and generation == self._generation:
-                    self._failures.put(
+                    # Stamped from now, not from ``started``: the failure TTL is
+                    # a backoff window after the failure, so a load that takes
+                    # longer to fail than the window (an upstream timeout) is
+                    # still remembered rather than stored already expired.
+                    evicted = self._failures.put(
                         key,
                         _Failure.detach(exc),
-                        expires_at=started + self._failure_ttl_seconds,
+                        expires_at=self._clock() + self._failure_ttl_seconds,
                     )
+                    self._record_evictions(evicted)
                 raise
             if generation == self._generation:
                 self._put(key, value, started)
@@ -361,9 +407,7 @@ class AsyncTTLCache[K: Hashable, V]:
         if ttl <= 0:
             return
         expires_at = math.inf if math.isinf(ttl) else started + ttl
-        evicted = self._store.put(key, value, expires_at=expires_at)
-        if evicted and self._otel is not None:
-            self._otel[2].add(evicted)
+        self._record_evictions(self._store.put(key, value, expires_at=expires_at))
 
     def invalidate(self, key: K) -> bool:
         """Evict ``key`` and fence off loads already in flight; return whether it was cached."""
@@ -411,9 +455,19 @@ class AsyncTTLCache[K: Hashable, V]:
     def _record_hit(self) -> None:
         self._hits += 1
         if self._otel is not None:
-            self._otel[0].add(1)
+            self._otel.hits.add(1)
 
     def _record_miss(self) -> None:
         self._misses += 1
         if self._otel is not None:
-            self._otel[1].add(1)
+            self._otel.misses.add(1)
+
+    def _record_failure_hit(self) -> None:
+        self._failure_hits += 1
+        if self._otel is not None:
+            self._otel.failure_hits.add(1)
+
+    def _record_evictions(self, evicted: int) -> None:
+        """Report LRU evictions from either store: the signal is cache pressure."""
+        if evicted and self._otel is not None:
+            self._otel.evictions.add(evicted)
