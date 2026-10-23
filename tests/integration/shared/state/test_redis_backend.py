@@ -7,6 +7,7 @@ unset or the server is unreachable, so the suite stays green without Redis.
 
 from __future__ import annotations
 
+import inspect
 import os
 import uuid
 from collections.abc import AsyncIterator
@@ -20,7 +21,9 @@ from jentic_one.shared.events.repeated_failure import (  # noqa: E402
     AxisKey,
     RepeatedFailureCounter,
 )
+from jentic_one.shared.state import SharedStateBackend  # noqa: E402
 from jentic_one.shared.state.redis import RedisStateBackend  # noqa: E402
+from jentic_one.testing import BaseStateBackendContract  # noqa: E402
 
 pytestmark = pytest.mark.integration
 
@@ -126,6 +129,30 @@ async def test_distinct_prefixes_are_isolated(redis_url: str) -> None:
         await b.aclose()
 
 
+class _RedisContract(BaseStateBackendContract):
+    """The shipped contract on a real Redis, one fresh key prefix per backend."""
+
+    def __init__(self, url: str) -> None:
+        self.url = url
+
+    def backend_factory(self) -> SharedStateBackend:
+        return RedisStateBackend(self.url, key_prefix=f"jentic:test:{uuid.uuid4().hex}:")
+
+
+CONTRACT_TESTS = sorted(
+    name
+    for name, _ in inspect.getmembers(BaseStateBackendContract, inspect.isfunction)
+    if name.startswith("test_")
+)
+
+
+@pytest.mark.parametrize("name", CONTRACT_TESTS)
+async def test_redis_backend_meets_the_contract(redis_url: str, name: str) -> None:
+    result = getattr(_RedisContract(redis_url), name)()
+    if inspect.isawaitable(result):
+        await result
+
+
 async def test_repeated_failure_counter_is_shared_across_instances(
     redis_url: str, prefix: str
 ) -> None:
@@ -134,7 +161,7 @@ async def test_repeated_failure_counter_is_shared_across_instances(
     a = RedisStateBackend(redis_url, key_prefix=prefix)
     b = RedisStateBackend(redis_url, key_prefix=prefix)
     config = SecurityConfig(execution_repeated_failure_threshold=4)
-    key = AxisKey("agt_redis", "toolkit", "tk_redis", "op_redis")
+    key = AxisKey("agt_redis", "credential", "cred_redis", "op_redis")
     try:
         gates = [RepeatedFailureCounter(a), RepeatedFailureCounter(b)]
         decisions = [await gates[i % 2].should_scan(key, (), config) for i in range(4)]

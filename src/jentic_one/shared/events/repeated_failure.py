@@ -3,8 +3,8 @@
 Both the async-worker path (``shared/jobs/execution_handler.py``) and the
 sync/streaming broker path (``broker/services/execution/service.py``) emit
 ``execution.failed`` on a failed call. When an actor's failures for a single
-toolkit+operation cross a threshold within a rolling window this helper emits a
-single ``execution.repeated_failure`` event (escalating to ``critical`` past a
+credential+operation cross a threshold within a rolling window this helper emits
+a single ``execution.repeated_failure`` event (escalating to ``critical`` past a
 second, higher threshold).
 
 ``ExecutionRecord`` rows live in the **admin** DB alongside ``events``, so both
@@ -40,7 +40,7 @@ from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.schemas import OperationInfo
 from jentic_one.shared.state import (
-    BackendKind,
+    MEMORY_BACKEND,
     KeyValueStore,
     MemoryStateBackend,
     StateBackendConfig,
@@ -116,10 +116,9 @@ class RepeatedFailureCounter:
     the estimate alone reaches the critical threshold. That costs scans, never
     an emission.
 
-    **Keys.** The scan's toolkit axis counts every record with that toolkit and
-    its credential axis every record with that credential (toolkit-path records
-    included), so a failure increments the toolkit key *and* the credential key
-    when it carries both; the gate reads the key the scan will use.
+    **Keys.** The scan counts every failed record carrying the same actor,
+    credential and operation, so one failure increments exactly one key; the
+    gate reads the key the scan will use.
 
     **Multi-instance.** On Redis the counter is cluster-wide, so the rule holds
     across replicas (up to clock skew between instances at bucket edges, which
@@ -291,8 +290,8 @@ def build_repeated_failure_counter(
 ) -> RepeatedFailureCounter | None:
     """Build the counter over the process's shared-state backend.
 
-    Redis is shared as-is (bounded by its own TTLs and memory policy). On the
-    ``memory`` backend the counter gets a dedicated store capped at
+    A shared backend is used as-is (bounded by its own TTLs and eviction
+    policy). On the ``memory`` backend the counter gets a dedicated store capped at
     ``execution_repeated_failure_counter_max_entries`` so a high-cardinality failure
     storm can neither grow without bound nor crowd out other shared state.
 
@@ -301,7 +300,9 @@ def build_repeated_failure_counter(
     hide an emission, so with more than one process on ``memory`` this returns
     ``None``: no gate, and every failure runs the scan.
     """
-    if backend_config.backend is BackendKind.REDIS:
+    if backend_config.backend != MEMORY_BACKEND:
+        # Any backend but ``memory`` is shared across this surface's processes
+        # and replicas, so the process's own instance already counts globally.
         return RepeatedFailureCounter(shared_backend)
     if processes > 1:
         return None
@@ -323,29 +324,25 @@ async def maybe_emit_repeated_failure(
     *,
     actor_id: str,
     actor_type: str | None,
-    toolkit_id: str | None,
+    credential_id: str | None,
     operation: OperationInfo | None,
     trace_id: str | None,
     config: SecurityConfig,
-    credential_id: str | None = None,
     failure_counter: RepeatedFailureCounter | None = None,
     clock: Callable[[], float] = time.time,
 ) -> None:
     """Emit ``execution.repeated_failure`` when failures cross the threshold.
 
-    Counts failed ``ExecutionRecord`` rows for the ``actor_id`` + consumer axis
-    + operation-id key within ``execution_repeated_failure_window_s``. The
-    aggregation key stays the opaque ``operation.id`` (the stable machine key
-    on every record); the human-facing summary renders the operation's
-    ``display`` label (method + path template) instead — the opaque hash only
-    appears there for legacy in-flight jobs that carry no path. The
-    consumer axis is ``toolkit_id`` when present (the legacy toolkit path), else
-    ``credential_id`` (the direct-binding path, theme-5 Phase 2 — whose
-    executions carry no toolkit, so without this fallback the early return
-    below would silently stop escalation for every direct-path caller). If the
-    count reaches ``execution_repeated_failure_threshold`` it emits one event —
-    ``CRITICAL`` once the count reaches
-    ``execution_repeated_failure_critical_threshold``, else ``ERROR``.
+    Counts failed ``ExecutionRecord`` rows for the ``actor_id`` +
+    ``credential_id`` + ``operation.id`` key within
+    ``execution_repeated_failure_window_s``. The aggregation key stays the
+    opaque ``operation.id`` (the stable machine key on every record); the
+    human-facing summary renders the operation's ``display`` label (method +
+    path template) instead — the opaque hash only appears there for legacy
+    in-flight jobs that carry no path. If the count reaches
+    ``execution_repeated_failure_threshold`` it emits one event — ``CRITICAL``
+    once the count reaches ``execution_repeated_failure_critical_threshold``,
+    else ``ERROR``.
 
     Dedup is **severity-aware**: at most one ERROR and one CRITICAL per key per
     window. As failures accumulate incrementally the count crosses the ERROR
@@ -364,36 +361,15 @@ async def maybe_emit_repeated_failure(
     ``clock`` (epoch seconds) is "now" for the scan's window; pass the counter's
     clock when driving both on a virtual time base.
     """
-    # An aggregate key needs an operation plus a consumer axis to be meaningful;
-    # with neither toolkit nor credential there is nothing to count.
-    if operation is None or not operation.id or not (toolkit_id or credential_id):
+    # An aggregate key needs both an operation and a credential to be
+    # meaningful; without either there is nothing to count.
+    if operation is None or not operation.id or not credential_id:
         return
     operation_id = operation.id
 
-    # The consumer axis: toolkit takes precedence (legacy path attribution);
-    # the direct-binding path keys on the credential instead.
-    if toolkit_id:
-        record_axis = ExecutionRecord.toolkit_id == toolkit_id
-        event_axis = Event.data["toolkit_id"].as_string() == toolkit_id
-        axis_label = f"toolkit {toolkit_id}"
-        axis_data: dict[str, str] = {"toolkit_id": toolkit_id}
-        gate_key = AxisKey(actor_id, "toolkit", toolkit_id, operation_id)
-    else:
-        record_axis = ExecutionRecord.credential_id == credential_id
-        event_axis = Event.data["credential_id"].as_string() == credential_id
-        axis_label = f"credential {credential_id}"
-        axis_data = {"credential_id": credential_id or ""}
-        gate_key = AxisKey(actor_id, "credential", credential_id or "", operation_id)
-
     if failure_counter is not None:
-        # A toolkit-path failure that also carries a credential is counted by the
-        # credential-axis scan too, so it must feed that key as well.
-        extra_keys = (
-            (AxisKey(actor_id, "credential", credential_id, operation_id),)
-            if toolkit_id and credential_id
-            else ()
-        )
-        if not await failure_counter.should_scan(gate_key, extra_keys, config):
+        gate_key = AxisKey(actor_id, "credential", credential_id, operation_id)
+        if not await failure_counter.should_scan(gate_key, (), config):
             return
 
     try:
@@ -417,7 +393,7 @@ async def maybe_emit_repeated_failure(
                     ExecutionRecord.status
                     == literal(ExecutionStatus.FAILED.value, String, literal_execute=True),
                     ExecutionRecord.actor_id == actor_id,
-                    record_axis,
+                    ExecutionRecord.credential_id == credential_id,
                     ExecutionRecord.operation_id == operation_id,
                     ExecutionRecord.started_at >= window_start,
                 )
@@ -443,7 +419,7 @@ async def maybe_emit_repeated_failure(
                     Event.severity.in_(_DEDUPED_BY[severity]),
                     Event.created_at >= window_start,
                     Event.data["actor_id"].as_string() == actor_id,
-                    event_axis,
+                    Event.data["credential_id"].as_string() == credential_id,
                     Event.data["operation_id"].as_string() == operation_id,
                 )
                 .limit(1)
@@ -466,7 +442,8 @@ async def maybe_emit_repeated_failure(
                 summary=(
                     f"{failure_count} failures for operation "
                     f"{summary_text(operation.display)} "
-                    f"on {axis_label} in {config.execution_repeated_failure_window_s}s"
+                    f"on credential {credential_id} in "
+                    f"{config.execution_repeated_failure_window_s}s"
                 ),
                 requires_action=True,
                 trace_id=trace_id,
@@ -475,7 +452,7 @@ async def maybe_emit_repeated_failure(
                 actor_type=actor_type,
                 data={
                     "actor_id": actor_id,
-                    **axis_data,
+                    "credential_id": credential_id,
                     "operation_id": operation_id,
                     # Structured human identity (nullable for legacy id-only
                     # jobs) so UI surfaces can render/filter the operation the
@@ -491,7 +468,6 @@ async def maybe_emit_repeated_failure(
             "emit_event_failed",
             event_type=EventType.EXECUTION_REPEATED_FAILURE,
             actor_id=actor_id,
-            toolkit_id=toolkit_id,
             credential_id=credential_id,
             operation_id=operation_id,
         )

@@ -48,7 +48,10 @@ from jentic_one.shared.config import AppConfig
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType, StoredCredentialType
 from tests.harness.postgres import TEST_ENCRYPTION_KEY, alembic_config_for
-from tests.integration.service_account_schema import restore_pre_sa_drop_admin
+from tests.integration.service_account_schema import (
+    PreDropApiKeyResolver,
+    restore_pre_sa_drop_admin,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -336,8 +339,8 @@ async def test_full_upgrade_migrates_verifies_and_drops_and_refuses_the_sak_key(
     )
     await _seed_sa(admin_db, sa_id="sva_p4test_pending", status="pending")
     await _seed_rule_credential(control_db, _SA)
+    assert await PreDropApiKeyResolver(admin_db).resolve(plaintext) is None
     resolver = ApiKeyResolver(admin_db)
-    assert await resolver.resolve(plaintext) is None  # no SA fallback since Phase 4
 
     assert await _run_full_upgrade() == 0
 

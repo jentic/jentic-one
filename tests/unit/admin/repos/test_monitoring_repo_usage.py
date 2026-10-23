@@ -6,12 +6,15 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy import Integer
+from sqlalchemy.dialects import sqlite
 
 from jentic_one.admin.repos.monitoring_repo import (
     GroupedTopRow,
     MonitoringRepository,
     OverallStatsRow,
     TimeBucketRow,
+    _epoch_seconds,
 )
 
 
@@ -213,3 +216,17 @@ async def test_grouped_trend_returns_empty_dict_for_no_keys() -> None:
 
     result = await MonitoringRepository.grouped_trend(session, cutoff, until, "api", [])
     assert result == {}
+
+
+def test_epoch_seconds_casts_to_integer_on_sqlite() -> None:
+    session = AsyncMock()
+    session.bind.dialect.name = "sqlite"
+
+    expr = _epoch_seconds(session)
+    assert isinstance(expr.type, Integer)
+    compiled = str(expr.compile(dialect=sqlite.dialect()))
+    assert "CAST(strftime(" in compiled
+    assert "AS INTEGER)" in compiled
+    sub_compiled = str((expr - 10).compile(dialect=sqlite.dialect()))
+    assert "CAST(strftime(" in sub_compiled
+    assert "AS INTEGER) -" in sub_compiled

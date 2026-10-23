@@ -97,7 +97,7 @@ class _Failures:
         *,
         operation: OperationInfo = _OPERATION,
         toolkit_id: str | None = _TOOLKIT,
-        credential_id: str | None = None,
+        credential_id: str | None = _CREDENTIAL,
     ) -> list[str]:
         """Persist a failure and return the statements the detector issued for it."""
         async with self._db.transaction() as session:
@@ -119,7 +119,6 @@ class _Failures:
                     session,
                     actor_id=_ACTOR,
                     actor_type="agent",
-                    toolkit_id=toolkit_id,
                     credential_id=credential_id,
                     operation=operation,
                     trace_id="a" * 32,
@@ -294,6 +293,7 @@ async def test_sustained_critical_outage_keeps_the_gate_closed(
                 session,
                 execution_id=f"{_PREFIX}outage-{i}",
                 toolkit_id=_TOOLKIT,
+                credential_id=_CREDENTIAL,
                 trace_id="a" * 32,
                 started_at=virtual_now,
                 status=ExecutionStatus.FAILED,
@@ -306,7 +306,7 @@ async def test_sustained_critical_outage_keeps_the_gate_closed(
                     session,
                     actor_id=_ACTOR,
                     actor_type="agent",
-                    toolkit_id=_TOOLKIT,
+                    credential_id=_CREDENTIAL,
                     operation=_OPERATION,
                     trace_id="a" * 32,
                     config=config,
@@ -438,7 +438,6 @@ async def test_gate_matches_ungated_detector(admin_db: DatabaseSession, seed: in
                         session,
                         actor_id=actor,
                         actor_type="agent",
-                        toolkit_id=toolkit_id,
                         credential_id=_CREDENTIAL,
                         operation=_OPERATION,
                         trace_id="a" * 32,
@@ -464,15 +463,14 @@ async def test_gate_matches_ungated_detector(admin_db: DatabaseSession, seed: in
                 .order_by(Event.created_at, Event.severity)
             )
         ).all()
-    emitted: dict[str, list[tuple[str, str, float]]] = {_GATED_ACTOR: [], _UNGATED_ACTOR: []}
-    for actor, severity, created_at, data in rows:
-        axis = "toolkit" if "toolkit_id" in data else "credential"
+    emitted: dict[str, list[tuple[str, float]]] = {_GATED_ACTOR: [], _UNGATED_ACTOR: []}
+    for actor, severity, created_at, _data in rows:
         stamp = created_at if created_at.tzinfo else created_at.replace(tzinfo=UTC)
-        emitted[actor].append((severity, axis, round(stamp.timestamp() - start, 3)))
+        emitted[actor].append((severity, round(stamp.timestamp() - start, 3)))
 
     assert emitted[_GATED_ACTOR] == emitted[_UNGATED_ACTOR]
-    # Non-vacuous: the sequence exercises both severities on both axes, and the
-    # gate actually skipped scans.
-    kinds = {(sev, axis) for sev, axis, _ in emitted[_UNGATED_ACTOR]}
-    assert {("error", "toolkit"), ("error", "credential"), ("critical", "credential")} <= kinds
+    # Non-vacuous: the sequence escalates through both severities, and the gate
+    # actually skipped scans.
+    severities = {sev for sev, _ in emitted[_UNGATED_ACTOR]}
+    assert {"error", "critical"} <= severities
     assert scans[_GATED_ACTOR] < scans[_UNGATED_ACTOR], scans

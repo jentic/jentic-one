@@ -33,7 +33,7 @@ ALLOWED_LAZY_IMPORTS: set[tuple[str, str]] = {
         "jentic_one.shared.state.redis",
     ),
     (
-        "shared/config.py",
+        "shared/config/auth.py",
         "jentic_one.shared.crypto.signing",
     ),
 }

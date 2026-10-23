@@ -23,6 +23,15 @@ class AgentOwnerRow(NamedTuple):
     name: str | None = None
 
 
+class DeletedBindingRow(NamedTuple):
+    """One agent↔credential binding removed when its credential is deleted."""
+
+    id: str
+    agent_id: str
+    credential_id: str
+    agent_name: str | None = None
+
+
 class EffectsRepository:
     """Cross-DB reads/writes for the connect-session flow, using raw SQL for admin-DB tables."""
 
@@ -100,6 +109,23 @@ class EffectsRepository:
         return existing.scalar_one(), True
 
     @staticmethod
+    async def list_suspended_credential_ids(session: AsyncSession, agent_id: str) -> list[str]:
+        """The credentials the agent holds a suspended binding to, via raw SQL (admin DB).
+
+        A suspended binding is the operator's reversible cut-off for that
+        agent and credential; the connect flow refuses a new connect that the
+        suspended credential's API identity covers.
+        """
+        result = await session.execute(
+            text(
+                "SELECT credential_id FROM agent_credential_bindings "
+                "WHERE agent_id = :agent_id AND suspended = true"
+            ),
+            {"agent_id": agent_id},
+        )
+        return [str(row[0]) for row in result.all()]
+
+    @staticmethod
     async def unbind_agent_from_credential(
         session: AsyncSession,
         *,
@@ -124,3 +150,42 @@ class EffectsRepository:
         )
         await session.flush()
         return bool(getattr(result, "rowcount", 0))
+
+    @staticmethod
+    async def delete_bindings_for_credential(
+        session: AsyncSession,
+        *,
+        credential_id: str,
+    ) -> list[DeletedBindingRow]:
+        """Delete every agent↔credential binding for a deleted credential (admin DB).
+
+        The ``agent_credential_bindings`` table lives in the admin DB with no
+        cross-DB foreign key to ``control.credentials``, so deleting a
+        credential control-side must sweep its bindings explicitly (#1426) or
+        orphan bindings stay active and keep any attached ``rule_set_id``
+        undeletable. Returns the deleted rows (ordered by ``agent_id``) so the
+        caller can record per-binding audit and telemetry entries.
+        """
+        rows = (
+            await session.execute(
+                text(
+                    "DELETE FROM agent_credential_bindings "
+                    "WHERE credential_id = :credential_id "
+                    "RETURNING id, agent_id, credential_id, "
+                    "(SELECT a.name FROM agents a "
+                    "WHERE a.id = agent_credential_bindings.agent_id) AS agent_name"
+                ),
+                {"credential_id": credential_id},
+            )
+        ).all()
+        await session.flush()
+        deleted = [
+            DeletedBindingRow(
+                id=str(row[0]),
+                agent_id=str(row[1]),
+                credential_id=str(row[2]),
+                agent_name=str(row[3]) if row[3] is not None else None,
+            )
+            for row in rows
+        ]
+        return sorted(deleted, key=lambda b: b.agent_id)

@@ -19,7 +19,7 @@ permissions a just-created IdP user receives (e.g. read-only). It defaults to
 granting nothing (today's behaviour) and applies only to brand-new users.
 
 Same process-global registry posture as ``register_config`` in
-``shared/config.py``: a module-level default, replaceable at import time.
+``shared/config/loader.py``: a module-level default, replaceable at import time.
 """
 
 from __future__ import annotations

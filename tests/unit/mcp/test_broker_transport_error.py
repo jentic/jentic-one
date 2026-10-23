@@ -20,22 +20,22 @@ import pytest
 from jentic_one.broker.adapters.runners.base import RunnerRequest
 from jentic_one.broker.adapters.runners.deadline import DeadlineRunner
 from jentic_one.broker.adapters.runners.http import HttpRunner
-from jentic_one.broker.core.exceptions import (
+from jentic_one.broker.core.errors import (
     BrokerError,
     CircuitOpenError,
     CredentialRefreshTransientError,
     DeadlineExceededError,
     RunnerSchemeUnsupportedError,
     RunnerUnavailableError,
-    TooManyCandidatesError,
     UpstreamResponseTooLargeError,
     UpstreamTimeoutError,
     UpstreamTransportError,
 )
-from jentic_one.broker.core.problem import status_for_broker_error
+from jentic_one.broker.core.problem import discovery_error_problem, status_for_broker_error
 from jentic_one.broker.web.errors import handle_broker_error
 from jentic_one.mcp import execute as ex
 from jentic_one.mcp.envelopes import CODE_TRANSPORT_ERROR, ToolError
+from jentic_one.shared.discovery.errors import TooManyCandidatesError
 
 
 def _headers(origin: str | None, retry_after: str | None = None) -> httpx.Headers:
@@ -56,7 +56,6 @@ def _body(problem: dict[str, Any]) -> bytes:
     [
         (CircuitOpenError("open", type="circuit_open"), False, True, ex.RECOVER_WAIT),
         (RunnerUnavailableError("down", type="runner_unavailable"), False, True, ex.RECOVER_WAIT),
-        (TooManyCandidatesError("too many"), False, True, ex.RECOVER_WAIT),
         (CredentialRefreshTransientError("cred_1: Timeout"), False, True, ex.RECOVER_WAIT),
         (
             UpstreamTimeoutError("no connect", type="upstream_connect_failed", pre_send=True),
@@ -112,6 +111,19 @@ def test_broker_problem_types_map_to_their_retryable_hint(
     assert got.details["http_status"] == status
     assert got.details["origin"] == "broker"
     assert exc.detail in got.message
+
+
+def test_too_many_candidates_is_a_retryable_wait() -> None:
+    """The broker's ``too_many_candidates`` 503 (operation resolution overloaded,
+    before dispatch) is retryable even for a non-retry-safe call."""
+    problem = discovery_error_problem(TooManyCandidatesError())
+    got = ex.classify_broker_transport_error(
+        problem["status"], _headers(problem["error_origin"]), _body(problem), retry_safe=False
+    )
+    assert got is not None
+    assert got.code == CODE_TRANSPORT_ERROR
+    assert got.extra == {"retryable": True}
+    assert ex.broker_transport_recovery(problem["status"], problem["type"]) == ex.RECOVER_WAIT
 
 
 @pytest.mark.parametrize("problem_type", ["streaming_unsupported", "about:blank", ""])
@@ -323,12 +335,20 @@ def _connect_timeout(_req: httpx.Request) -> httpx.Response:
     raise httpx.ConnectTimeout("slow")
 
 
+def _pool_timeout(_req: httpx.Request) -> httpx.Response:
+    raise httpx.PoolTimeout("pool exhausted")
+
+
 def _read_timeout(_req: httpx.Request) -> httpx.Response:
     raise httpx.ReadTimeout("slow")
 
 
 def _connect_refused(_req: httpx.Request) -> httpx.Response:
     raise httpx.ConnectError("refused")
+
+
+def _proxy_refused(_req: httpx.Request) -> httpx.Response:
+    raise httpx.ProxyError("tunnel refused")
 
 
 def _protocol_error(_req: httpx.Request) -> httpx.Response:
@@ -357,7 +377,9 @@ async def _stalls(_req: httpx.Request) -> httpx.Response:
     ("handler", "kwargs", "status", "problem_type", "retry_safe", "want_retryable"),
     [
         (_connect_timeout, {}, 504, "upstream_connect_failed", False, True),
+        (_pool_timeout, {}, 504, "upstream_connect_failed", False, True),
         (_connect_refused, {}, 502, "upstream_connect_failed", False, True),
+        (_proxy_refused, {}, 502, "upstream_connect_failed", False, True),
         (_read_timeout, {}, 504, "upstream_timeout", False, False),
         (_read_timeout, {}, 504, "upstream_timeout", True, True),
         (_protocol_error, {}, 502, "upstream_transport_error", True, False),
@@ -367,7 +389,9 @@ async def _stalls(_req: httpx.Request) -> httpx.Response:
     ],
     ids=[
         "connect",
+        "pool-timeout",
         "connect-refused",
+        "proxy-refused",
         "read-unsafe",
         "read-safe",
         "transport",

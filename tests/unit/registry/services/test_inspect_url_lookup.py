@@ -9,14 +9,14 @@ import pytest
 
 from jentic_one.registry.core.url_index import URL_INDEX_FORMAT_MARKER
 from jentic_one.registry.repos.url_index_repo import UrlIndexCandidate
-from jentic_one.registry.services.errors import (
-    AmbiguousMatchError,
-    MethodNotAllowedError,
-    TooManyCandidatesError,
-)
 from jentic_one.registry.services.inspect.url_lookup import (
     MAX_CANDIDATES,
     URLLookupService,
+)
+from jentic_one.shared.discovery.errors import (
+    AmbiguousMatchError,
+    MethodNotAllowedError,
+    TooManyCandidatesError,
 )
 
 

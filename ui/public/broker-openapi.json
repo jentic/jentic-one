@@ -212,6 +212,17 @@
                   "type": "ambiguous_credential_binding"
                 }
               },
+              "ambiguous_match": {
+                "summary": "The upstream URL matches several registered operations equally.",
+                "value": {
+                  "detail": "Ambiguous URL match: 2 candidates with equal specificity",
+                  "error_origin": "broker",
+                  "instance": "/api.example.com/v1/widgets",
+                  "status": 409,
+                  "title": "Ambiguous URL match: 2 candidates with equal specificity",
+                  "type": "ambiguous_match"
+                }
+              },
               "idempotency_conflict": {
                 "summary": "Idempotency-Key reused with a different request.",
                 "value": {
@@ -229,7 +240,7 @@
             }
           }
         },
-        "description": "Conflict (RFC 9457 `application/problem+json`), distinguished by\nthe problem `type`:\n\n- `ambiguous_credential_binding` — several credentials the caller\n  is bound to cover the target API at the same specificity. The\n  body lists the candidates (`id`, `name`, `last4`, `created_at`);\n  resend with the `Jentic-Credential-Name` or `Jentic-Credential-Id`\n  request header to pick one.\n- `idempotency_conflict` — the same `Idempotency-Key` was already\n  used with a different request (method, upstream URL, resolved\n  credential, or body). Reusing a key for a different request is\n  rejected; pick a new key.\n- `idempotency_in_progress` — a request with this `Idempotency-Key`\n  is still being processed. The response carries a `Retry-After`\n  header; retry after that delay to obtain the replayed result.\n"
+        "description": "Conflict (RFC 9457 `application/problem+json`), distinguished by\nthe problem `type`:\n\n- `ambiguous_credential_binding` — several credentials the caller\n  is bound to cover the target API at the same specificity. The\n  body lists the candidates (`id`, `name`, `last4`, `created_at`);\n  resend with the `Jentic-Credential-Name` or `Jentic-Credential-Id`\n  request header to pick one.\n- `idempotency_conflict` — the same `Idempotency-Key` was already\n  used with a different request (method, upstream URL, resolved\n  credential, or body). Reusing a key for a different request is\n  rejected; pick a new key.\n- `idempotency_in_progress` — a request with this `Idempotency-Key`\n  is still being processed. The response carries a `Retry-After`\n  header; retry after that delay to obtain the replayed result.\n- `ambiguous_match` — the upstream URL matches more than one\n  registered operation with equal specificity, so the broker cannot\n  tell which API the call is for. Raised before dispatch; the\n  registered specs overlap and need an operator fix (or a\n  `Jentic-Revision` pin that disambiguates).\n"
       },
       "CredentialNotProvisioned": {
         "content": {
@@ -524,6 +535,28 @@
         "content": {
           "application/problem+json": {
             "examples": {
+              "credential_binding_suspended": {
+                "summary": "The caller's binding for this API is suspended by its operator.",
+                "value": {
+                  "agent_directive": {
+                    "human_readable_instruction": "Your operator has suspended your access to 'api.example.com/main'. Ask your operator whether they will resume it — only they can. Do not request a new connection for this API. Once they resume it, retry this call.",
+                    "parameters": {
+                      "api": {
+                        "name": "main",
+                        "vendor": "api.example.com",
+                        "version": "1.0.0"
+                      }
+                    },
+                    "strategy": "prompt_human"
+                  },
+                  "detail": "The credential binding for this API is suspended",
+                  "error_origin": "broker",
+                  "instance": "/api.example.com/v1/users",
+                  "status": 403,
+                  "title": "The credential binding for this API is suspended",
+                  "type": "credential_binding_suspended"
+                }
+              },
               "insufficient_scope": {
                 "summary": "Token lacks the `capabilities:execute` permission.",
                 "value": {
@@ -563,7 +596,45 @@
             }
           }
         },
-        "description": "Caller authenticated but not entitled to execute — most often a\ntoken lacking the required `capabilities:execute` permission\n(`type: insufficient_scope`, the RFC 6750 code), attempting to pin a `draft`\nrevision they don't own, using a credential they aren't bound to\n(`no_credential_binding`), or being denied by a binding's\npermission rules. Body is RFC 9457 `application/problem+json`.\n"
+        "description": "Caller authenticated but not entitled to execute — most often a\ntoken lacking the required `capabilities:execute` permission\n(`type: insufficient_scope`, the RFC 6750 code), attempting to pin a `draft`\nrevision they don't own, using a credential they aren't bound to\n(`no_credential_binding`), holding only a suspended binding for the\nAPI (`credential_binding_suspended`), or being denied by a binding's\npermission rules. Body is RFC 9457 `application/problem+json`.\n"
+      },
+      "MethodNotAllowed": {
+        "content": {
+          "application/problem+json": {
+            "examples": {
+              "method_not_allowed": {
+                "summary": "The URL is registered only for other HTTP methods.",
+                "value": {
+                  "allowed_methods": [
+                    "GET",
+                    "PUT"
+                  ],
+                  "detail": "Method not allowed; allowed: GET, PUT",
+                  "error_origin": "broker",
+                  "instance": "/api.example.com/v1/widgets",
+                  "status": 405,
+                  "title": "Method not allowed; allowed: GET, PUT",
+                  "type": "method_not_allowed"
+                }
+              }
+            },
+            "schema": {
+              "$ref": "#/components/schemas/BrokerProblem"
+            }
+          }
+        },
+        "description": "The upstream URL matches a registered API operation, but not for\nthe request's HTTP method (`method_not_allowed`). The broker answers\nbefore dispatch, so the upstream never saw the call. The `Allow`\nheader and the `allowed_methods` member name the methods the URL\nis registered for; resend with one of them. Body is RFC 9457\n`application/problem+json`. A 405 the upstream itself returns is\nmirrored with `error_origin: upstream` instead.\n",
+        "headers": {
+          "Allow": {
+            "description": "Comma-separated HTTP methods the upstream URL is registered for.",
+            "schema": {
+              "examples": [
+                "GET, PUT"
+              ],
+              "type": "string"
+            }
+          }
+        }
       },
       "NotFound": {
         "content": {
@@ -676,6 +747,17 @@
                   "status": 503,
                   "title": "Server at capacity; retry shortly.",
                   "type": "server_at_capacity"
+                }
+              },
+              "too_many_candidates": {
+                "summary": "The URL index returned more candidates than the broker can rank; nothing was dispatched.",
+                "value": {
+                  "detail": "URL index returned too many candidates",
+                  "error_origin": "broker",
+                  "instance": "/api.example.com/v1/widgets",
+                  "status": 503,
+                  "title": "URL index returned too many candidates",
+                  "type": "too_many_candidates"
                 }
               }
             },
@@ -941,6 +1023,19 @@
             "properties": {
               "agent_directive": {
                 "$ref": "#/components/schemas/AgentDirective"
+              },
+              "allowed_methods": {
+                "description": "The HTTP methods the upstream URL is registered for, on a\n`method_not_allowed` 405. Mirrored in the `Allow` response\nheader.\n",
+                "examples": [
+                  [
+                    "GET",
+                    "PUT"
+                  ]
+                ],
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
               },
               "candidates": {
                 "description": "The caller's own credentials that matched ambiguously\n(`ambiguous_credential_binding`, `ambiguous_credential`) or\nthat a credential-selection header failed to match\n(`credential_id_not_found`, `credential_name_not_found`).\nPick one and resend with `Jentic-Credential-Id`.\n",
@@ -1412,6 +1507,9 @@
           "404": {
             "$ref": "#/components/responses/NotFound"
           },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
           "409": {
             "$ref": "#/components/responses/Conflict"
           },
@@ -1465,6 +1563,9 @@
           "404": {
             "$ref": "#/components/responses/NotFound"
           },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
           "409": {
             "$ref": "#/components/responses/Conflict"
           },
@@ -1517,6 +1618,9 @@
           "404": {
             "$ref": "#/components/responses/NotFound"
           },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
           "409": {
             "$ref": "#/components/responses/Conflict"
           },
@@ -1568,6 +1672,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
           },
           "409": {
             "$ref": "#/components/responses/Conflict"
@@ -1659,6 +1766,9 @@
           "404": {
             "$ref": "#/components/responses/NotFound"
           },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
           "409": {
             "$ref": "#/components/responses/Conflict"
           },
@@ -1731,6 +1841,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
           },
           "409": {
             "$ref": "#/components/responses/Conflict"
@@ -1805,6 +1918,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
           },
           "409": {
             "$ref": "#/components/responses/Conflict"

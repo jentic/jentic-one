@@ -86,11 +86,14 @@ class UserRepository:
     async def lock_active_holders_of(session: AsyncSession, permission: str) -> set[str]:
         """Return the ids of active users directly granted ``permission``, row-locked.
 
-        Takes ``FOR UPDATE`` on the matching user and grant rows (ordered by user
-        id so concurrent callers lock in the same order), so two transactions
-        each removing a different holder serialise: the second waits for the
-        first to commit and then no longer sees the holder it disabled or
-        stripped. SQLite has no row locks and ignores the clause; its
+        Takes ``FOR NO KEY UPDATE`` on the matching user and grant rows
+        (ordered by user id so concurrent callers lock in the same order), so
+        two transactions each removing a different holder serialise: the second
+        waits for the first to commit and then no longer sees the holder it
+        disabled or stripped. Like :meth:`get_by_id_for_update`, the lighter
+        lock conflicts with another removal or user write but not with the
+        key-share lock a foreign-key insert (such as reissuing an invite token)
+        takes on ``users``. SQLite has no row locks and ignores the clause; its
         single-writer model already serialises the writes.
         """
         stmt = (
@@ -98,7 +101,7 @@ class UserRepository:
             .join(UserPermissionGrant, UserPermissionGrant.user_id == User.id)
             .where(UserPermissionGrant.permission == permission, User.active.is_(True))
             .order_by(User.id)
-            .with_for_update()
+            .with_for_update(key_share=True)
         )
         result = await session.execute(stmt)
         return set(result.scalars().all())

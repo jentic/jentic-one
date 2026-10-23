@@ -34,16 +34,36 @@ class IdpClaims:
     # Google's `hd` (hosted-domain) claim, present only for Google Workspace
     # accounts. None for generic OIDC providers and consumer Google accounts.
     hosted_domain: str | None = None
+    issuer: str = ""
 
 
 class IdpAdapter(Protocol):
     """Protocol for pluggable external identity providers."""
 
-    def authorize_url(self, *, state: str, nonce: str, redirect_uri: str) -> str:
+    @property
+    def issuer(self) -> str:
+        """Canonical issuer identifier for this identity provider."""
+        ...
+
+    def authorize_url(
+        self,
+        *,
+        state: str,
+        nonce: str,
+        redirect_uri: str,
+        code_challenge: str | None = None,
+    ) -> str:
         """Build the upstream authorization URL for redirecting the user."""
         ...
 
-    async def exchange_code(self, code: str, *, redirect_uri: str) -> dict[str, object]:
+    async def exchange_code(
+        self,
+        code: str,
+        *,
+        redirect_uri: str,
+        code_verifier: str | None = None,
+        nonce: str | None = None,
+    ) -> dict[str, object]:
         """Exchange an upstream authorization code for tokens/userinfo."""
         ...
 

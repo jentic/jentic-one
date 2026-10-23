@@ -24,8 +24,8 @@ import json
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from jentic_one.broker.core.exceptions import ErrorOrigin
 from jentic_one.broker.core.headers import JenticHeader
+from jentic_one.shared.broker.execution import ErrorOrigin
 
 _PROBLEM_JSON = b"application/problem+json"
 

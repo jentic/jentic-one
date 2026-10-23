@@ -18,7 +18,7 @@ from jentic_one.registry.core.schema.overlays import Overlay
 from jentic_one.registry.core.schema.security_schemes import SecurityScheme, SecuritySchemeFlow
 from jentic_one.registry.core.schema.servers import Server, ServerVariable
 from jentic_one.registry.core.schema.spec_files import SpecFile
-from jentic_one.registry.ingest.exc import IngestJobError
+from jentic_one.registry.ingest.errors import IngestJobError
 from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.registry.services.catalog.service import CatalogEntryView, CatalogService
 from jentic_one.registry.services.errors import (

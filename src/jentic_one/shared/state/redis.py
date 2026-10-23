@@ -1,7 +1,7 @@
-"""Redis-backed shared-state backend (cross-instance coordination).
+"""Redis-backed shared-state backend (deprecated; cross-instance coordination).
 
 This module is imported **lazily** by the factory only when
-``BackendKind.REDIS`` is selected, so the default memory path pulls in no
+``state.backend: redis`` is selected, so the default memory path pulls in no
 ``redis`` dependency. The ``import redis.asyncio`` therefore lives at module
 top level here (this module is the redis path).
 

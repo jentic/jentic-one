@@ -165,8 +165,9 @@ export class AgentsService {
      *
      * Returns the agent's name, description, owner, `status`, approval or
      * denial details, and whether it currently has an API key (`has_api_key`).
-     * Readable by the agent itself, its owner, and `org:admin`; an agent outside
-     * the caller's visibility answers 404.
+     * Readable by the agent itself, its owner, `org:admin`, and a caller holding
+     * `agents:read` (implied by `agents:write`); an agent outside the caller's
+     * visibility answers 404.
      * @returns AgentResponse Successful Response
      * @throws ApiError
      */
@@ -201,9 +202,10 @@ export class AgentsService {
      * Only the fields present in the body change; an empty body returns the
      * agent unchanged. Allowed for the agent's owner or an `org:admin` (anyone
      * else gets 404). Changing `owner_id` transfers ownership, is
-     * `org:admin`-only, and revokes every active OAuth client grant bound to
-     * the agent, so the new owner must re-consent any connected client. The
-     * agent's API key, permissions and credential bindings are unaffected. An
+     * `org:admin`-only, revokes every active OAuth client grant bound to the
+     * agent (so the new owner must re-consent any connected client), and
+     * suspends active credential bindings to credentials outside the new
+     * owner's ownership. The agent's API key and permissions are unaffected. An
      * archived agent cannot be updated (409). Returns the updated agent.
      * @returns AgentResponse Successful Response
      * @throws ApiError
@@ -317,9 +319,10 @@ export class AgentsService {
      *
      * Each binding names the credential, the API it serves, when it was bound,
      * whether it is `suspended` (and why), and any attached permission
-     * `rule_set_id`. Credential secrets are never returned. Readable by the
-     * agent itself, its owner, and `org:admin` (404 otherwise). The list is not
-     * paginated.
+     * `rule_set_id`. Credential secrets are never returned. Readable like
+     * `GET /agents/{agent_id}`: by the agent itself, its owner, `org:admin`, and a
+     * caller holding `agents:read` (implied by `agents:write`); 404 otherwise.
+     * The list is not paginated.
      * @returns CredentialBindingListResponse Successful Response
      * @throws ApiError
      */

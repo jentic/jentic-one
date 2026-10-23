@@ -15,12 +15,12 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 import jentic_one.broker.adapters.runners.http as http_runner_mod
 from jentic_one.broker.adapters.runners.base import RunnerRequest
 from jentic_one.broker.adapters.runners.http import HttpRunner, _HostBulkhead
-from jentic_one.broker.core.exceptions import (
+from jentic_one.broker.core.errors import (
     BrokerError,
-    ErrorOrigin,
     UpstreamTimeoutError,
     UpstreamTransportError,
 )
+from jentic_one.shared.broker.execution import ErrorOrigin
 
 
 def _asgi_client(app: FastAPI) -> httpx.AsyncClient:
@@ -320,3 +320,61 @@ async def test_stream_caller_accept_encoding_forwarded_verbatim() -> None:
             assert b"".join(chunks) == b"streamed"
 
     assert seen_headers["accept-encoding"] == "br"
+
+
+@pytest.mark.asyncio
+async def test_pool_timeout_maps_to_pre_send_local_only_timeout() -> None:
+    def handle(_req: httpx.Request) -> httpx.Response:
+        raise httpx.PoolTimeout("no free connection")
+
+    async with _mock_client(httpx.MockTransport(handle)) as client:
+        runner = HttpRunner(client)
+        with (
+            structlog.testing.capture_logs() as logs,
+            pytest.raises(UpstreamTimeoutError) as excinfo,
+        ):
+            await runner.run(RunnerRequest(method="POST", url="https://api.example.com/x"))
+    assert excinfo.value.type == "upstream_connect_failed"
+    assert (
+        excinfo.value.detail
+        == "The broker's upstream connection pool had no free connection in time."
+    )
+    assert excinfo.value.pre_send is True
+    assert excinfo.value.local_only is True
+    assert excinfo.value.origin is ErrorOrigin.BROKER
+    assert [e["error_type"] for e in logs] == ["PoolTimeout"]
+
+
+@pytest.mark.asyncio
+async def test_stream_pool_timeout_maps_to_pre_send_local_only_timeout() -> None:
+    def handle(_req: httpx.Request) -> httpx.Response:
+        raise httpx.PoolTimeout("no free connection")
+
+    async with _mock_client(httpx.MockTransport(handle)) as client:
+        runner = HttpRunner(client)
+        with (
+            structlog.testing.capture_logs() as logs,
+            pytest.raises(UpstreamTimeoutError) as excinfo,
+        ):
+            async with runner.stream(RunnerRequest(method="POST", url="https://api.example.com/x")):
+                pass  # pragma: no cover - the stream never opens
+    assert excinfo.value.type == "upstream_connect_failed"
+    assert excinfo.value.pre_send is True
+    assert excinfo.value.local_only is True
+    assert excinfo.value.origin is ErrorOrigin.BROKER
+    assert [e["error_type"] for e in logs] == ["PoolTimeout"]
+
+
+@pytest.mark.asyncio
+async def test_proxy_error_maps_to_pre_send_connect_failed_502() -> None:
+    def handle(_req: httpx.Request) -> httpx.Response:
+        raise httpx.ProxyError("407 Proxy Authentication Required")
+
+    async with _mock_client(httpx.MockTransport(handle)) as client:
+        runner = HttpRunner(client)
+        with pytest.raises(UpstreamTransportError) as excinfo:
+            await runner.run(RunnerRequest(method="POST", url="https://api.example.com/x"))
+    assert excinfo.value.type == "upstream_connect_failed"
+    assert excinfo.value.pre_send is True
+    assert excinfo.value.local_only is False
+    assert excinfo.value.origin is ErrorOrigin.BROKER

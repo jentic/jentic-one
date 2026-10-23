@@ -33,7 +33,7 @@ from urllib.parse import urlsplit
 import structlog
 
 from jentic_one.broker.adapters.runners.base import UpstreamRunner
-from jentic_one.broker.core.exceptions import (
+from jentic_one.broker.core.errors import (
     RunnerSchemeUnsupportedError,
     RunnerUnavailableError,
 )

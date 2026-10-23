@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any, ClassVar, Literal, Protocol
 
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
+from jentic_one.control.services.credentials.state import BrowserBindingClaim
 from jentic_one.control.services.integrations.flow_handlers.session_app import SessionApp
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.credentials import StoredCredentialType
@@ -74,6 +75,11 @@ class SuccessTokens:
     what the OAuth server actually granted. The service writes it verbatim
     onto ``oauth_token.scope`` so terminal readback works through one
     flow-agnostic column.
+
+    ``token_url`` is the endpoint the code was exchanged at (auth-code); the
+    finalise write re-checks it against the credential's current endpoint
+    and discards the grant when the origin moved meanwhile. Device flow
+    leaves it unset (its token_url cannot change origin).
     """
 
     access_token: str
@@ -81,6 +87,7 @@ class SuccessTokens:
     expires_in: int | None
     scope: str | None
     granted_scopes: list[str] | None = None
+    token_url: str | None = None
 
 
 StatusKind = Literal["pending", "failed", "expired", "success"]
@@ -170,8 +177,13 @@ class AuthFlowHandler(Protocol):
         *,
         app: SessionApp,
         confirmed_scopes: list[str],
+        browser_binding: BrowserBindingClaim | None = None,
     ) -> BeginResult:
-        """Start the vendor conversation. Returns the challenge for the user."""
+        """Start the vendor conversation. Returns the challenge for the user.
+
+        ``browser_binding`` names the approver's browser for flows that come
+        back through the OAuth callback; flows without a callback ignore it.
+        """
 
     async def on_finalise(
         self,

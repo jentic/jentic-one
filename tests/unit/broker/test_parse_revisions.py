@@ -12,7 +12,7 @@ import uuid
 
 import pytest
 
-from jentic_one.broker.core.exceptions import InvalidRevisionPinError
+from jentic_one.broker.core.errors import InvalidRevisionPinError
 from jentic_one.broker.core.revisions import parse_revisions, rev_label
 from jentic_one.shared.broker.revision_label import decode_rev_label, encode_rev_label
 

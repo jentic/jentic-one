@@ -22,7 +22,7 @@ import tracemalloc
 import pytest
 import structlog
 
-from jentic_one.broker.core.exceptions import IdempotencyUnavailableError
+from jentic_one.broker.core.errors import IdempotencyUnavailableError
 from jentic_one.broker.core.problem import status_for_broker_error
 from jentic_one.broker.services.idempotency import (
     MAX_RECORD_HEADER_BYTES,
@@ -30,7 +30,7 @@ from jentic_one.broker.services.idempotency import (
     SharedStateIdempotencyStore,
 )
 from jentic_one.shared.config import IdempotencyConfig
-from jentic_one.shared.state import BackendKind, MemoryBackendConfig
+from jentic_one.shared.state import MEMORY_BACKEND, MemoryBackendConfig
 from jentic_one.shared.state.backend import MemoryStateBackend, NamespaceBudget
 
 
@@ -488,7 +488,7 @@ async def test_default_budgets_hold_the_documented_sustained_rate() -> None:
 
     memory = MemoryBackendConfig()
     budgets = memory.budgets()
-    ttl_s = IdempotencyConfig().replay_ttl_s(BackendKind.MEMORY)
+    ttl_s = IdempotencyConfig().replay_ttl_s(MEMORY_BACKEND)
     assert ttl_s == 3_600
     idem, body = budgets["idem"], budgets["idem-body"]
     records_per_s = min(idem.max_entries, idem.max_bytes // record_bytes) / ttl_s

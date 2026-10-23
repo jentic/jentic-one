@@ -22,7 +22,7 @@ from jentic_one.shared.events.repeated_failure import (
     build_repeated_failure_counter,
 )
 from jentic_one.shared.models.events import EventSeverity
-from jentic_one.shared.state import BackendKind, MemoryStateBackend, StateBackendConfig
+from jentic_one.shared.state import REDIS_BACKEND, MemoryStateBackend, StateBackendConfig
 
 _WINDOW = 300
 _CONFIG = SecurityConfig(
@@ -288,7 +288,7 @@ def test_memory_backend_gets_a_dedicated_bounded_store() -> None:
 def test_redis_backend_is_shared_as_is() -> None:
     shared = MemoryStateBackend()  # stands in for the process's Redis backend
     counter = build_repeated_failure_counter(
-        StateBackendConfig(backend=BackendKind.REDIS), shared, SecurityConfig()
+        StateBackendConfig(backend=REDIS_BACKEND), shared, SecurityConfig()
     )
     assert counter is not None
     assert counter._store is shared
@@ -306,7 +306,7 @@ def test_memory_backend_across_several_processes_builds_no_gate() -> None:
         is not None
     )
     redis_counter = build_repeated_failure_counter(
-        StateBackendConfig(backend=BackendKind.REDIS), shared, config, processes=4
+        StateBackendConfig(backend=REDIS_BACKEND), shared, config, processes=4
     )
     assert redis_counter is not None
     assert redis_counter._store is shared

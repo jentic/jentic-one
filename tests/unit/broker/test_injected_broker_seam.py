@@ -39,7 +39,7 @@ from jentic_one.broker.adapters.runners.base import (
     UpstreamRunner,
 )
 from jentic_one.broker.adapters.runners.registry import RunnerRegistry
-from jentic_one.broker.core.exceptions import CircuitOpenError
+from jentic_one.broker.core.errors import CircuitOpenError
 from jentic_one.broker.services.execution.executor import PipelineExecutor, _ctx_from_metadata
 from jentic_one.broker.services.execution.service import _circuit_event_last_emitted
 from jentic_one.broker.web.routers.execute import _resolve_broker

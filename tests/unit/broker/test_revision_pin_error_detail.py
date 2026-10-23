@@ -13,7 +13,7 @@ import uuid
 
 import pytest
 
-from jentic_one.broker.core.exceptions import (
+from jentic_one.broker.core.errors import (
     InvalidRevisionPinError,
     UnauthorizedRevisionPinError,
 )

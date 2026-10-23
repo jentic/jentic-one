@@ -10,10 +10,12 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import structlog
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import delete, exists, or_, select, update
 from sqlalchemy.exc import StatementError
 from sqlalchemy.sql import func
 
+from jentic_one.admin.core.schema.events import Event
+from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.admin.core.schema.job_results import JobResult
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.repos.access_token_repo import AccessTokenRepository
@@ -26,7 +28,7 @@ from jentic_one.shared.db.connectivity import (
     redact_sql,
 )
 from jentic_one.shared.db.errors import DatabaseCommitOutcomeUnknownError
-from jentic_one.shared.events import emit_event
+from jentic_one.shared.events import emit_event, valid_trace_id_or_none
 from jentic_one.shared.jobs.handlers import JobHandlerRegistry, JobResultPayload
 from jentic_one.shared.jobs.hold import (
     PROBLEM_CONTENT_TYPE,
@@ -56,6 +58,14 @@ _ERROR_MAX_LEN = 128
 _DB_CONNECTION_LOST_ERROR = "interrupted: database connection lost"
 # Bounds the exception-chain walk in _carries_sql.
 _MAX_CHAIN_DEPTH = 8
+# Bounded retries for _complete_job after a handler has already returned.
+_COMPLETION_MAX_RETRIES = 3
+_COMPLETION_RETRY_BASE_S = 0.05
+# Payload marker stamped on a still-running execution job when its handler has
+# returned and _complete_job could not persist the result.
+_DISPATCHED_PAYLOAD_KEY = "_dispatched"
+# Bounds the in-memory fallback set of dispatched job IDs awaiting completion.
+_MAX_TRACKED_DISPATCHED_JOBS = 1024
 
 
 def _carries_sql(exc: BaseException) -> bool:
@@ -149,6 +159,7 @@ class WorkerLoop:
         # before the poll interval is up.
         self._wake = asyncio.Event()
         self._in_flight: set[asyncio.Task[None]] = set()
+        self._dispatched_jobs: dict[str, None] = {}
         # Set while no claim is in flight and no claimed job is being
         # processed — so drain() waits both for running jobs and for a claim
         # that may yet hand it one.
@@ -400,26 +411,9 @@ class WorkerLoop:
 
         try:
             result = await self._execute_handler(handler, job)
-            await self._complete_job(job.id, job.kind, result)
         except DatabaseCommitOutcomeUnknownError as exc:
-            # The connection dropped while committing, so the write may
-            # have landed (for _complete_job: the job is already
-            # COMPLETED). Requeueing would run the job again, so the row is
-            # left as is: if the commit did not land it stays RUNNING and
-            # the visibility-timeout reclaim picks it up.
-            leaf = connection_loss_cause(exc)
-            logged_cause = leaf or exc.__cause__ or exc
-            logger.warning(
-                "job_commit_outcome_unknown",
-                job_id=job.id,
-                attempts=job.attempts,
-                error_type=type(logged_cause).__name__,
-                error=(
-                    describe_connection_loss(leaf)
-                    if leaf is not None
-                    else redact_sql(exc.detail)[:_ERROR_MAX_LEN]
-                ),
-            )
+            self._log_commit_outcome_unknown(job, exc)
+            return
         except Exception as exc:
             cause = connection_loss_cause(exc)
             if cause is not None:
@@ -455,6 +449,149 @@ class WorkerLoop:
             # caller (the run loop owns the outage warning and backoff); the
             # job stays RUNNING and is reclaimed after its visibility timeout.
             await self._handle_failure(job, error)
+            return
+
+        if kind == JobKind.EXECUTION:
+            self._track_dispatched(job.id)
+        await self._complete_with_retry(job, result)
+
+    def _track_dispatched(self, job_id: str) -> None:
+        self._dispatched_jobs.pop(job_id, None)
+        if len(self._dispatched_jobs) >= _MAX_TRACKED_DISPATCHED_JOBS:
+            self._dispatched_jobs.pop(next(iter(self._dispatched_jobs)))
+        self._dispatched_jobs[job_id] = None
+
+    @staticmethod
+    def _log_commit_outcome_unknown(job: Any, exc: DatabaseCommitOutcomeUnknownError) -> None:
+        """Log a commit whose connection dropped before the server's reply arrived.
+
+        The write may have landed (for :meth:`_complete_job`: the job is already
+        ``COMPLETED``). Requeueing would run the job again, so the row is left
+        as is: if the commit did not land it stays ``RUNNING`` and the
+        visibility-timeout reclaim picks it up.
+        """
+        leaf = connection_loss_cause(exc)
+        logged_cause = leaf or exc.__cause__ or exc
+        logger.warning(
+            "job_commit_outcome_unknown",
+            job_id=job.id,
+            attempts=job.attempts,
+            error_type=type(logged_cause).__name__,
+            error=(
+                describe_connection_loss(leaf)
+                if leaf is not None
+                else redact_sql(exc.detail)[:_ERROR_MAX_LEN]
+            ),
+        )
+
+    async def _complete_with_retry(self, job: Any, result: JobResultPayload) -> None:
+        """Persist a finished handler's result, retrying transient completion failures.
+
+        Once the handler returns, the job has already run (for an execution job,
+        credentials were injected and the upstream call was sent), so
+        :meth:`_handle_failure` is never called here: requeuing would run the
+        handler a second time. Transient failures in :meth:`_complete_job` are
+        retried with bounded exponential backoff. An unknown commit outcome is
+        logged once without retry, and a completion that still cannot be written
+        after retries leaves the job ``RUNNING`` for visibility-timeout reclaim
+        (which refuses to re-run a dispatched execution).
+        """
+        attempt = 0
+        while True:
+            try:
+                await self._complete_job(job.id, job.kind, result)
+                self._dispatched_jobs.pop(job.id, None)
+                return
+            except DatabaseCommitOutcomeUnknownError as exc:
+                await self._mark_dispatched_best_effort(job)
+                self._log_commit_outcome_unknown(job, exc)
+                return
+            except Exception as exc:
+                await self._mark_dispatched_best_effort(job)
+                if attempt >= _COMPLETION_MAX_RETRIES:
+                    self._log_completion_write_failed(job, exc)
+                    return
+                attempt += 1
+                delay_s = _COMPLETION_RETRY_BASE_S * float(2 ** (attempt - 1))
+                cause = connection_loss_cause(exc)
+                logged_error = (
+                    describe_connection_loss(cause)
+                    if cause is not None
+                    else (redact_sql(str(exc)) or type(exc).__name__)[:_ERROR_MAX_LEN]
+                )
+                logger.warning(
+                    "job_completion_write_retry",
+                    job_id=job.id,
+                    attempts=job.attempts,
+                    retry=attempt,
+                    max_retries=_COMPLETION_MAX_RETRIES,
+                    retry_in_s=round(delay_s, 3),
+                    error_type=type(cause or exc).__name__,
+                    error=logged_error,
+                )
+                await self._sleep(delay_s)
+
+    @staticmethod
+    def _log_completion_write_failed(job: Any, exc: BaseException) -> None:
+        """Log a completion write that exhausted its retries without leaking SQL."""
+        cause = connection_loss_cause(exc)
+        if cause is not None:
+            logger.warning(
+                "job_completion_write_failed",
+                job_id=job.id,
+                attempts=job.attempts,
+                error_type=type(cause).__name__,
+                error=describe_connection_loss(cause),
+            )
+            return
+        error = (redact_sql(str(exc)) or type(exc).__name__)[:_ERROR_MAX_LEN]
+        if _carries_sql(exc):
+            logger.error(
+                "job_completion_write_failed",
+                job_id=job.id,
+                attempts=job.attempts,
+                error_type=type(exc).__name__,
+                cause=type(exc.__cause__).__name__ if exc.__cause__ else None,
+                error=error,
+            )
+            return
+        logger.exception(
+            "job_completion_write_failed",
+            job_id=job.id,
+            attempts=job.attempts,
+            error_type=type(exc).__name__,
+            error=error,
+        )
+
+    async def _mark_dispatched_best_effort(self, job: Any) -> None:
+        """Record on a still-running execution job that its handler already ran.
+
+        Best-effort: when the completion write fails for reasons other than a
+        dead database (or the database recovers between the completion failure
+        and this write), stamping the payload lets a visibility-timeout reclaim
+        on another worker process refuse to re-run the job even when the
+        handler wrote no execution or event row.
+        """
+        if getattr(job, "kind", None) != JobKind.EXECUTION:
+            return
+        raw_payload = getattr(job, "payload", None)
+        payload = dict(raw_payload) if isinstance(raw_payload, dict) else {}
+        if payload.get(_DISPATCHED_PAYLOAD_KEY) is True:
+            return
+        payload[_DISPATCHED_PAYLOAD_KEY] = True
+        with contextlib.suppress(Exception):
+            async with self._db.transaction() as session:
+                res = await session.execute(
+                    update(Job)
+                    .where(
+                        Job.id == job.id,
+                        Job.status == JobStatus.RUNNING,
+                        Job.attempts == job.attempts,
+                    )
+                    .values(payload=payload)
+                )
+                if res.rowcount:  # type: ignore[attr-defined]
+                    job.payload = payload
 
     async def _claim_next(self) -> Any:
         """Claim the oldest claimable job whose kind this worker can handle.
@@ -528,38 +665,88 @@ class WorkerLoop:
         return await get_approved_by_job_id(session, job_id) is not None
 
     async def _refuse_approved_reclaim(self, job: Any) -> bool:
-        """Fail an approved execution re-claimed after its worker died mid-run.
+        """Fail an execution job re-claimed after an earlier attempt already started it.
 
         ``attempts`` counts claims including this one, so above 1 means an
-        earlier claim already started the run — the upstream call may have
-        happened, and an approved call runs at most once. Returns True when
-        the job was failed here instead of dispatched.
+        earlier claim already ran. An approved execution runs at most once even
+        if the earlier claim died before dispatch, and its result carries the
+        ``approval_resume_failed`` problem body. Any other execution job is
+        refused once an earlier attempt already dispatched (or its handler
+        returned), so a failed completion write or a mid-call worker crash never
+        sends the upstream request or ``credential.accessed`` a second time.
+        Returns True when the job was failed here instead of dispatched.
         """
         if job.kind != JobKind.EXECUTION or int(job.attempts or 0) <= 1:
             return False
         async with self._db.transaction() as session:
-            approval = await get_approved_by_job_id(session, job.id)
-            if approval is None:
-                return False
-            db_job = await session.get(Job, job.id)
-            if db_job is None or db_job.status != JobStatus.RUNNING:
+            db_job = await session.get(Job, job.id, with_for_update=True)
+            if (
+                db_job is None
+                or db_job.status != JobStatus.RUNNING
+                or db_job.attempts != job.attempts
+            ):
+                self._dispatched_jobs.pop(job.id, None)
                 return True
-            db_job.status = JobStatus.FAILED
-            db_job.error = "approved execution interrupted; not re-run"
-            db_job.visible_at = None
-            session.add(
-                JobResult(
-                    job_id=job.id,
-                    kind=job.kind,
-                    content_type=PROBLEM_CONTENT_TYPE,
-                    body=approval_resume_failed_problem(approval.id),
-                    available_until=datetime.now(UTC)
-                    + timedelta(seconds=self._approved_result_retention_seconds),
-                    created_by=db_job.created_by,
+            approval = await get_approved_by_job_id(session, job.id)
+            if approval is not None:
+                db_job.status = JobStatus.FAILED
+                db_job.error = "approved execution interrupted; not re-run"
+                db_job.visible_at = None
+                session.add(
+                    JobResult(
+                        job_id=job.id,
+                        kind=job.kind,
+                        content_type=PROBLEM_CONTENT_TYPE,
+                        body=approval_resume_failed_problem(approval.id),
+                        available_until=datetime.now(UTC)
+                        + timedelta(seconds=self._approved_result_retention_seconds),
+                        created_by=db_job.created_by,
+                    )
                 )
-            )
-        logger.warning("approved_job_reclaim_refused", job_id=job.id, attempts=job.attempts)
+                self._dispatched_jobs.pop(job.id, None)
+                logger.warning("approved_job_reclaim_refused", job_id=job.id, attempts=job.attempts)
+                return True
+
+            if not await self._has_execution_dispatched(session, db_job):
+                return False
+            db_job.status = JobStatus.FAILED
+            db_job.error = "execution interrupted after dispatch; not re-run"
+            db_job.visible_at = None
+            self._dispatched_jobs.pop(job.id, None)
+        logger.warning("execution_job_reclaim_refused", job_id=job.id, attempts=job.attempts)
         return True
+
+    async def _has_execution_dispatched(self, session: Any, job: Any) -> bool:
+        """True when an earlier claim of ``job`` already injected credentials or dispatched."""
+        raw_payload = getattr(job, "payload", None)
+        payload = raw_payload if isinstance(raw_payload, dict) else {}
+        if payload.get(_DISPATCHED_PAYLOAD_KEY) is True or job.id in self._dispatched_jobs:
+            return True
+
+        execution_id = (
+            getattr(job, "execution_id", None) or payload.get("execution_id") or f"exec_{job.id}"
+        )
+        trace_id = valid_trace_id_or_none(str(payload.get("trace_id") or ""))
+
+        event_clauses = [Event.job_id == job.id]
+        if isinstance(execution_id, str) and execution_id:
+            event_clauses.append(Event.execution_id == execution_id)
+        if trace_id is not None:
+            cred_clause = (Event.trace_id == trace_id) & (
+                Event.type == EventType.CREDENTIAL_ACCESSED
+            )
+            created_by = getattr(job, "created_by", None)
+            if isinstance(created_by, str) and created_by:
+                cred_clause = cred_clause & (Event.actor_id == created_by)
+            created_at = getattr(job, "created_at", None)
+            if created_at is not None:
+                cred_clause = cred_clause & (Event.created_at >= created_at)
+            event_clauses.append(cred_clause)
+
+        predicates = [exists().where(or_(*event_clauses))]
+        if isinstance(execution_id, str) and execution_id:
+            predicates.insert(0, exists().where(ExecutionRecord.id == execution_id))
+        return bool((await session.execute(select(or_(*predicates)))).scalar_one())
 
     async def _complete_job(self, job_id: str, kind: str, result: JobResultPayload) -> None:
         """Mark job completed and write result.
@@ -569,10 +756,8 @@ class WorkerLoop:
         other job kind does.
         """
         async with self._db.transaction() as session:
-            job = await session.get(Job, job_id)
-            if job is None:
-                return
-            if job.status == JobStatus.CANCELLED:
+            job = await session.get(Job, job_id, with_for_update=True)
+            if job is None or job.status != JobStatus.RUNNING:
                 return
             job.status = JobStatus.COMPLETED
             job.visible_at = None

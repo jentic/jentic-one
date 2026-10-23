@@ -12,7 +12,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from jentic_one.broker.core.exceptions import ActionDeniedError, AgentDirective
+from jentic_one.broker.core.directives import AgentDirective
+from jentic_one.broker.core.errors import ActionDeniedError
 from jentic_one.broker.core.problem import broker_error_problem, problem_body
 from jentic_one.broker.repos.actor_status import ActorStatusResolver
 from jentic_one.broker.services.execution.queued_authorization import QueuedExecutionAuthorizer

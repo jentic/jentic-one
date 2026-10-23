@@ -8,7 +8,8 @@ not the ``500`` that reads as a broker bug. A connect or read *timeout* is
 broker's own problem+json handler, on the buffered (``run``) and streaming
 (``stream``) paths alike. The retry gate retries a post-send failure only for an
 idempotent call and a connect-phase failure for any method; the circuit breaker
-counts every transport failure.
+counts every upstream transport failure while excluding broker-local pool
+exhaustion (``PoolTimeout``).
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from jentic_one.broker.adapters.runners.base import RunnerRequest
 from jentic_one.broker.adapters.runners.circuit import CircuitBreakerRunner
 from jentic_one.broker.adapters.runners.http import HttpRunner
 from jentic_one.broker.adapters.runners.retry import RetryRunner
-from jentic_one.broker.core.exceptions import BrokerError, CircuitOpenError
+from jentic_one.broker.core.errors import BrokerError, CircuitOpenError
 from jentic_one.broker.core.problem import status_for_broker_error
 from jentic_one.broker.web.errors import handle_broker_error
 from jentic_one.shared.dns_cache import clear_resolution_cache
@@ -82,7 +83,7 @@ async def _rendered(exc: BrokerError) -> tuple[int, dict[str, Any], httpx.Header
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "exc_type",
-    [httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError, httpx.ProxyError],
+    [httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError],
     ids=lambda t: t.__name__,
 )
 async def test_buffered_transport_error_is_502(exc_type: type[httpx.HTTPError]) -> None:
@@ -116,8 +117,15 @@ async def test_buffered_mid_body_disconnect_is_502() -> None:
 
 
 @pytest.mark.asyncio
-async def test_buffered_connect_refused_is_502_and_pre_send() -> None:
-    exc = await _buffered_error(_raises(httpx.ConnectError))
+@pytest.mark.parametrize(
+    "exc_type",
+    [httpx.ConnectError, httpx.ProxyError],
+    ids=lambda t: t.__name__,
+)
+async def test_buffered_connect_refused_is_502_and_pre_send(
+    exc_type: type[httpx.HTTPError],
+) -> None:
+    exc = await _buffered_error(_raises(exc_type))
 
     status, body, _ = await _rendered(exc)
     assert status == 502
@@ -135,6 +143,22 @@ async def test_buffered_connect_timeout_is_504() -> None:
     assert status_for_broker_error(exc) == 504
     assert exc.type == "upstream_connect_failed"
     assert exc.pre_send is True
+    assert exc.local_only is False
+
+
+@pytest.mark.asyncio
+async def test_buffered_pool_timeout_is_504_pre_send_and_local_only() -> None:
+    exc = await _buffered_error(_raises(httpx.PoolTimeout))
+
+    status, body, headers = await _rendered(exc)
+    assert status == 504
+    assert body["type"] == "upstream_connect_failed"
+    assert body["detail"] == "The broker's upstream connection pool had no free connection in time."
+    assert body["error_origin"] == "broker"
+    assert headers["jentic-error-origin"] == "broker"
+    assert _MARKER not in json.dumps(body)
+    assert exc.pre_send is True
+    assert exc.local_only is True
 
 
 @pytest.mark.asyncio
@@ -171,7 +195,7 @@ async def test_buffered_local_protocol_error_is_500(exc_type: type[httpx.HTTPErr
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "exc_type",
-    [httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError, httpx.ProxyError],
+    [httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError],
     ids=lambda t: t.__name__,
 )
 async def test_streaming_transport_error_is_502(exc_type: type[httpx.HTTPError]) -> None:
@@ -187,8 +211,15 @@ async def test_streaming_transport_error_is_502(exc_type: type[httpx.HTTPError])
 
 
 @pytest.mark.asyncio
-async def test_streaming_connect_refused_is_502_and_pre_send() -> None:
-    exc = await _streaming_error(_raises(httpx.ConnectError))
+@pytest.mark.parametrize(
+    "exc_type",
+    [httpx.ConnectError, httpx.ProxyError],
+    ids=lambda t: t.__name__,
+)
+async def test_streaming_connect_refused_is_502_and_pre_send(
+    exc_type: type[httpx.HTTPError],
+) -> None:
+    exc = await _streaming_error(_raises(exc_type))
 
     assert status_for_broker_error(exc) == 502
     assert exc.type == "upstream_connect_failed"
@@ -202,6 +233,22 @@ async def test_streaming_connect_timeout_matches_buffered() -> None:
     assert status_for_broker_error(exc) == 504
     assert exc.type == "upstream_connect_failed"
     assert exc.pre_send is True
+    assert exc.local_only is False
+
+
+@pytest.mark.asyncio
+async def test_streaming_pool_timeout_matches_buffered() -> None:
+    exc = await _streaming_error(_raises(httpx.PoolTimeout))
+
+    status, body, headers = await _rendered(exc)
+    assert status == 504
+    assert body["type"] == "upstream_connect_failed"
+    assert body["detail"] == "The broker's upstream connection pool had no free connection in time."
+    assert body["error_origin"] == "broker"
+    assert headers["jentic-error-origin"] == "broker"
+    assert _MARKER not in json.dumps(body)
+    assert exc.pre_send is True
+    assert exc.local_only is True
 
 
 @pytest.mark.asyncio
@@ -325,20 +372,24 @@ def _no_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("_no_sleep")
 @pytest.mark.parametrize(
-    ("exc_type", "method", "want_calls"),
+    ("exc_type", "method", "want_calls", "want_status"),
     [
         # Post-send failure: retried only for an idempotent method.
-        (httpx.RemoteProtocolError, "GET", 3),
-        (httpx.RemoteProtocolError, "POST", 1),
-        (httpx.ReadError, "GET", 3),
-        (httpx.ReadError, "POST", 1),
+        (httpx.RemoteProtocolError, "GET", 3, 502),
+        (httpx.RemoteProtocolError, "POST", 1, 502),
+        (httpx.ReadError, "GET", 3, 502),
+        (httpx.ReadError, "POST", 1, 502),
         # Connect phase (pre_send): retried for any method.
-        (httpx.ConnectError, "GET", 3),
-        (httpx.ConnectError, "POST", 3),
+        (httpx.ConnectError, "GET", 3, 502),
+        (httpx.ConnectError, "POST", 3, 502),
+        (httpx.ProxyError, "GET", 3, 502),
+        (httpx.ProxyError, "POST", 3, 502),
+        (httpx.PoolTimeout, "GET", 3, 504),
+        (httpx.PoolTimeout, "POST", 3, 504),
     ],
 )
 async def test_retry_gate_by_send_phase(
-    exc_type: type[httpx.HTTPError], method: str, want_calls: int
+    exc_type: type[httpx.HTTPError], method: str, want_calls: int, want_status: int
 ) -> None:
     transport = _CountingTransport(exc_type)
     async with httpx.AsyncClient(transport=transport) as client:
@@ -346,7 +397,7 @@ async def test_retry_gate_by_send_phase(
         with pytest.raises(BrokerError) as excinfo:
             await runner.run(RunnerRequest(method=method, url=_URL))
     assert transport.calls == want_calls
-    assert status_for_broker_error(excinfo.value) == 502
+    assert status_for_broker_error(excinfo.value) == want_status
 
 
 @pytest.mark.asyncio
@@ -380,7 +431,7 @@ def _breaker() -> CircuitBreaker:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "exc_type",
-    [httpx.RemoteProtocolError, httpx.ReadError, httpx.ConnectError],
+    [httpx.RemoteProtocolError, httpx.ReadError, httpx.ConnectError, httpx.ProxyError],
     ids=lambda t: t.__name__,
 )
 async def test_circuit_counts_transport_error_as_failure(
@@ -399,7 +450,7 @@ async def test_circuit_counts_transport_error_as_failure(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "exc_type",
-    [httpx.RemoteProtocolError, httpx.ReadError, httpx.ConnectError],
+    [httpx.RemoteProtocolError, httpx.ReadError, httpx.ConnectError, httpx.ProxyError],
     ids=lambda t: t.__name__,
 )
 async def test_circuit_counts_streaming_open_failure(exc_type: type[httpx.HTTPError]) -> None:
@@ -413,6 +464,34 @@ async def test_circuit_counts_streaming_open_failure(exc_type: type[httpx.HTTPEr
         with pytest.raises(CircuitOpenError):
             async with runner.stream(RunnerRequest(method="GET", url=_URL)):
                 pass  # pragma: no cover - the circuit is open
+
+
+@pytest.mark.asyncio
+async def test_circuit_excludes_pool_timeout_on_buffered_and_streaming() -> None:
+    """Pins #1795: pool exhaustion is broker-local and never trips a host's breaker."""
+    pool_exhausted = True
+
+    def handle(_req: httpx.Request) -> httpx.Response:
+        if pool_exhausted:
+            raise httpx.PoolTimeout("pool exhausted by another host")
+        return httpx.Response(200, stream=httpx.ByteStream(b"ok"))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        runner = CircuitBreakerRunner(HttpRunner(client), _breaker())
+        for _ in range(3):
+            with pytest.raises(BrokerError) as excinfo:
+                await runner.run(RunnerRequest(method="POST", url=_URL))
+            assert status_for_broker_error(excinfo.value) == 504
+        for _ in range(3):
+            with pytest.raises(BrokerError) as excinfo:
+                async with runner.stream(RunnerRequest(method="POST", url=_URL)):
+                    pass  # pragma: no cover - the stream never opens
+            assert status_for_broker_error(excinfo.value) == 504
+
+        # Once a pool slot frees up, the waiting host's circuit is still closed.
+        pool_exhausted = False
+        result = await runner.run(RunnerRequest(method="POST", url=_URL))
+        assert result.status_code == 200
 
 
 @pytest.mark.asyncio

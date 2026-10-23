@@ -26,6 +26,7 @@ from jentic_one.shared.config import (
     AdminInviteConfig,
     AppConfig,
     AuthConfig,
+    BrokerResilienceConfig,
     CatalogConfig,
     ConfigError,
     ConnectConfig,
@@ -59,8 +60,12 @@ from jentic_one.shared.config import (
     resolved_auth_base_url,
     resolved_control_egress,
 )
+from jentic_one.shared.config import _state_compat as state_compat_module
+from jentic_one.shared.config import auth as auth_config_module
+from jentic_one.shared.config import broker as broker_config_module
+from jentic_one.shared.config import loader as loader_module
+from jentic_one.shared.config import runtime as runtime_config_module
 from jentic_one.shared.state import (
-    BackendKind,
     MemoryBackendConfig,
     MemoryStateBackend,
     NamespaceBudget,
@@ -135,6 +140,22 @@ def test_env_coerces_int(config_file: Path):
     with patch.dict(os.environ, env, clear=False):
         config = load_config(config_file)
     assert config.databases.registry.port == 9999
+
+
+@pytest.mark.parametrize("seconds", ["0", "-1"])
+def test_events_stream_recheck_seconds_default_env_and_bounds(config_file: Path, seconds: str):
+    assert load_config(config_file).admin.events.stream_recheck_seconds == 5.0
+
+    env = {"JENTIC__ADMIN__EVENTS__STREAM_RECHECK_SECONDS": "2.5"}
+    with patch.dict(os.environ, env, clear=False):
+        assert load_config(config_file).admin.events.stream_recheck_seconds == 2.5
+
+    env = {"JENTIC__ADMIN__EVENTS__STREAM_RECHECK_SECONDS": seconds}
+    with (
+        patch.dict(os.environ, env, clear=False),
+        pytest.raises(ConfigError, match="stream_recheck_seconds"),
+    ):
+        load_config(config_file)
 
 
 def test_http_wire_trace_defaults_off_and_env_enables(config_file: Path):
@@ -870,7 +891,7 @@ def test_oauth_trusted_proxies_invalid_entry_fails_load(tmp_path: Path, entry: s
 def test_oauth_trusted_proxies_warns_on_public_network(
     entry: str, warned: bool, monkeypatch: pytest.MonkeyPatch
 ):
-    monkeypatch.setattr(config_module, "_warned_public_trusted_proxies", set())
+    monkeypatch.setattr(auth_config_module, "_warned_public_trusted_proxies", set())
     with structlog.testing.capture_logs() as logs:
         OAuthRateLimitConfig(trusted_proxies=[entry])
         OAuthRateLimitConfig(trusted_proxies=[entry])
@@ -1369,7 +1390,7 @@ def test_oneshot_cache_survives_writes_after_open(
         def __exit__(self, *exc_info: object) -> None:
             self.release()
 
-    monkeypatch.setattr(config_module, "_ONESHOT_CACHE_LOCK", _ParkingLock())
+    monkeypatch.setattr(loader_module, "_ONESHOT_CACHE_LOCK", _ParkingLock())
     monkeypatch.setattr(io, "open", hooked_open)
     monkeypatch.setattr(builtins, "open", hooked_open)
 
@@ -1569,7 +1590,9 @@ def test_broker_retired_direct_bindings_flag_true_is_ignored(
     sample_config_dict["broker"] = {"direct_bindings_enabled": True}
     path = tmp_path / "cfg.yaml"
     path.write_text(yaml.dump(sample_config_dict))
-    monkeypatch.setattr(config_module, "_retired_direct_bindings_flag_warned", threading.Event())
+    monkeypatch.setattr(
+        broker_config_module, "_retired_direct_bindings_flag_warned", threading.Event()
+    )
     with structlog.testing.capture_logs() as logs:
         config = load_config(path)
         load_config(path)
@@ -1590,7 +1613,7 @@ def test_broker_retired_account_linking_base_url_is_ignored(
     }
     path = tmp_path / "cfg.yaml"
     path.write_text(yaml.dump(sample_config_dict))
-    monkeypatch.setattr(config_module, "_retired_account_linking_warned", threading.Event())
+    monkeypatch.setattr(broker_config_module, "_retired_account_linking_warned", threading.Event())
     with structlog.testing.capture_logs() as logs:
         config = load_config(path)
         load_config(path)
@@ -1605,7 +1628,7 @@ def test_broker_retired_account_linking_base_url_is_ignored(
 def test_broker_retired_account_linking_base_url_env_is_ignored(
     config_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(config_module, "_retired_account_linking_warned", threading.Event())
+    monkeypatch.setattr(broker_config_module, "_retired_account_linking_warned", threading.Event())
     env = {"JENTIC__BROKER__ACCOUNT_LINKING_BASE_URL": "https://console.example.com"}
     with patch.dict(os.environ, env, clear=False), structlog.testing.capture_logs() as logs:
         load_config(config_file)
@@ -1635,7 +1658,7 @@ def test_services_retired_sa_sweep_age_is_ignored(
     }
     path = tmp_path / "cfg.yaml"
     path.write_text(yaml.dump(sample_config_dict))
-    monkeypatch.setattr(config_module, "_retired_sa_sweep_age_warned", threading.Event())
+    monkeypatch.setattr(runtime_config_module, "_retired_sa_sweep_age_warned", threading.Event())
     with structlog.testing.capture_logs() as logs:
         config = load_config(path)
         load_config(path)
@@ -1650,7 +1673,7 @@ def test_services_retired_sa_sweep_age_is_ignored(
 def test_services_retired_sa_sweep_age_env_is_ignored(
     config_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(config_module, "_retired_sa_sweep_age_warned", threading.Event())
+    monkeypatch.setattr(runtime_config_module, "_retired_sa_sweep_age_warned", threading.Event())
     env = {"JENTIC__SERVICES__SERVICE_ACCOUNT_SWEEP_MIN_STAMP_AGE_HOURS": "48"}
     with patch.dict(os.environ, env, clear=False), structlog.testing.capture_logs() as logs:
         load_config(config_file)
@@ -2364,6 +2387,7 @@ def test_db_connection_tunables_default_and_env_override(
     """Pre-ping, pool recycle and TCP keepalive are per-database ``databases.*`` settings."""
     default = load_config(config_file).databases.registry
     assert default.pool_pre_ping is True
+    assert default.pool_pre_ping_idle_s == config_module.POOL_PRE_PING_IDLE_S == 1.0
     assert default.pool_recycle_s == config_module.POOL_RECYCLE_S == 1800
     assert default.tcp_keepalive is True
     assert default.tcp_keepalive_idle_s == config_module.TCP_KEEPALIVE_IDLE_S == 60
@@ -2371,8 +2395,10 @@ def test_db_connection_tunables_default_and_env_override(
     assert default.tcp_keepalive_count == config_module.TCP_KEEPALIVE_COUNT == 5
     env = {
         "JENTIC__DATABASES__REGISTRY__POOL_PRE_PING": "false",
+        "JENTIC__DATABASES__REGISTRY__POOL_PRE_PING_IDLE_S": "0",
         "JENTIC__DATABASES__REGISTRY__POOL_RECYCLE_S": "0",
         "JENTIC__DATABASES__REGISTRY__TCP_KEEPALIVE": "false",
+        "JENTIC__DATABASES__CONTROL__POOL_PRE_PING_IDLE_S": "2.5",
         "JENTIC__DATABASES__CONTROL__TCP_KEEPALIVE_IDLE_S": "30",
         "JENTIC__DATABASES__CONTROL__TCP_KEEPALIVE_INTERVAL_S": "3",
         "JENTIC__DATABASES__CONTROL__TCP_KEEPALIVE_COUNT": "9",
@@ -2380,26 +2406,36 @@ def test_db_connection_tunables_default_and_env_override(
     with patch.dict(os.environ, env, clear=False):
         config = load_config(config_file)
     assert config.databases.registry.pool_pre_ping is False
+    assert config.databases.registry.pool_pre_ping_idle_s == 0.0
     assert config.databases.registry.pool_recycle_s == 0
     assert config.databases.registry.tcp_keepalive is False
     control = config.databases.control
     assert control.pool_pre_ping is True
+    assert control.pool_pre_ping_idle_s == 2.5
     assert (control.tcp_keepalive_idle_s, control.tcp_keepalive_interval_s) == (30, 3)
     assert control.tcp_keepalive_count == 9
+    assert config.databases.admin.pool_pre_ping_idle_s == 1.0
     assert config.databases.admin.tcp_keepalive_idle_s == 60
 
     doc = copy.deepcopy(sample_config_dict)
     doc["databases"]["admin"]["pool_pre_ping"] = False
+    doc["databases"]["admin"]["pool_pre_ping_idle_s"] = 4.0
     from_yaml = tmp_path / "no-pre-ping.yaml"
     from_yaml.write_text(yaml.dump(doc))
     databases = load_config(from_yaml).databases
     assert databases.admin.pool_pre_ping is False
+    assert databases.admin.pool_pre_ping_idle_s == 4.0
     assert databases.registry.pool_pre_ping is True
+    assert databases.registry.pool_pre_ping_idle_s == 1.0
 
 
 @pytest.mark.parametrize(
     ("key", "value"),
     [
+        ("POOL_PRE_PING_IDLE_S", "-0.1"),
+        ("POOL_PRE_PING_IDLE_S", "inf"),
+        ("POOL_PRE_PING_IDLE_S", "-inf"),
+        ("POOL_PRE_PING_IDLE_S", "nan"),
         ("POOL_RECYCLE_S", "-1"),
         ("TCP_KEEPALIVE_IDLE_S", "0"),
         ("TCP_KEEPALIVE_IDLE_S", "32768"),
@@ -2543,6 +2579,44 @@ def test_http_jwks_url_env_override_rejected_in_production(config_file: Path):
         load_config(config_file)
 
 
+def test_streaming_persist_and_drain_budgets_default(tmp_path: Path):
+    config = _load(tmp_path, {})
+    assert config.broker.streaming_persist_timeout_s == 10.0
+    assert config.services.background_task_drain_timeout_s == 10.0
+
+
+def test_streaming_persist_and_drain_budgets_from_yaml_and_env(tmp_path: Path):
+    config = _load(
+        tmp_path,
+        {
+            "broker": {"streaming_persist_timeout_s": 2.5},
+            "services": {"background_task_drain_timeout_s": 0},
+        },
+    )
+    assert config.broker.streaming_persist_timeout_s == 2.5
+    assert config.services.background_task_drain_timeout_s == 0
+    env = {
+        "JENTIC__BROKER__STREAMING_PERSIST_TIMEOUT_S": "4",
+        "JENTIC__SERVICES__BACKGROUND_TASK_DRAIN_TIMEOUT_S": "7.5",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        config = _load(tmp_path, {})
+    assert config.broker.streaming_persist_timeout_s == 4.0
+    assert config.services.background_task_drain_timeout_s == 7.5
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"broker": {"streaming_persist_timeout_s": 0}},
+        {"services": {"background_task_drain_timeout_s": -1}},
+    ],
+)
+def test_streaming_persist_and_drain_budgets_reject_invalid(tmp_path: Path, extra: dict[str, Any]):
+    with pytest.raises(ConfigError):
+        _load(tmp_path, extra)
+
+
 def test_worker_poll_and_concurrency_defaults_keep_serial_2s_poll():
     cfg = WorkerConfig()
     assert cfg.poll_interval_s == 2.0
@@ -2658,31 +2732,190 @@ def test_worker_sweep_interval_rejects_out_of_bounds(value: float):
 
 def test_memory_backend_namespace_budgets_are_configurable(config_file: Path):
     env = {
-        "JENTIC__BROKER__RESILIENCE__BACKEND__MEMORY__MAX_ENTRIES_PER_NAMESPACE": "500",
-        "JENTIC__BROKER__RESILIENCE__BACKEND__MEMORY__MAX_BYTES_PER_NAMESPACE": "1000000",
+        "JENTIC__STATE__MEMORY__MAX_ENTRIES_PER_NAMESPACE": "500",
+        "JENTIC__STATE__MEMORY__MAX_BYTES_PER_NAMESPACE": "1000000",
     }
     with patch.dict(os.environ, env, clear=False):
-        memory = load_config(config_file).broker.resilience.backend.memory
+        memory = load_config(config_file).state.memory
     assert memory.max_entries_per_namespace == 500
     assert memory.max_bytes_per_namespace == 1_000_000
     assert memory.budgets()["idem"].max_entries == 250_000
 
 
 def test_memory_backend_total_cap_defaults_and_is_configurable(config_file: Path):
-    default = load_config(config_file).broker.resilience.backend.memory
+    default = load_config(config_file).state.memory
     assert default.max_total_bytes == 192 * 1024 * 1024
     assert default.max_bytes_per_namespace == 16 * 1024 * 1024
     assert default.budgets()["idem"].max_bytes == 128 * 1024 * 1024
     assert default.budgets()["idem-body"].max_bytes == 32 * 1024 * 1024
-    env = {"JENTIC__BROKER__RESILIENCE__BACKEND__MEMORY__MAX_TOTAL_BYTES": "5000"}
+    env = {"JENTIC__STATE__MEMORY__MAX_TOTAL_BYTES": "5000"}
     with patch.dict(os.environ, env, clear=False):
-        memory = load_config(config_file).broker.resilience.backend.memory
+        memory = load_config(config_file).state.memory
     assert memory.max_total_bytes == 5_000
     backend = build_state_backend(StateBackendConfig(memory=memory))
     assert isinstance(backend, MemoryStateBackend)
     assert backend._max_total_bytes == 5_000
     with pytest.raises(ValidationError):
         MemoryBackendConfig(max_total_bytes=0)
+
+
+# --- top-level ``state`` and the deprecated broker.resilience.backend alias ----
+
+
+@pytest.fixture()
+def _fresh_state_deprecation_latch(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(state_compat_module, "_deprecated_state_section_warned", threading.Event())
+
+
+def _write(tmp_path: Path, data: dict[str, Any]) -> Path:
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.dump(data))
+    return path
+
+
+def test_state_defaults_to_memory(config_file: Path):
+    config = load_config(config_file)
+    assert config.state == StateBackendConfig()
+    assert config.state.backend == "memory"
+    assert "backend" not in BrokerResilienceConfig.model_fields
+
+
+def test_state_section_from_yaml_and_env(tmp_path: Path, sample_config_dict: dict[str, Any]):
+    sample_config_dict["state"] = {"backend": "custom", "options": {"url": "x://y"}}
+    path = _write(tmp_path, sample_config_dict)
+    assert load_config(path).state.options == {"url": "x://y"}
+    with patch.dict(os.environ, {"JENTIC__STATE__BACKEND": "other"}, clear=False):
+        assert load_config(path).state.backend == "other"
+
+
+@pytest.mark.usefixtures("_fresh_state_deprecation_latch")
+def test_the_deprecated_yaml_section_is_read_into_state(
+    tmp_path: Path, sample_config_dict: dict[str, Any]
+):
+    sample_config_dict["broker"] = {
+        "resilience": {
+            "max_in_flight": 7,
+            "backend": {"backend": "memory", "memory": {"max_total_bytes": 4096}},
+        }
+    }
+    path = _write(tmp_path, sample_config_dict)
+    with structlog.testing.capture_logs() as logs:
+        config = load_config(path)
+        load_config(path)
+    assert config.state.memory.max_total_bytes == 4096
+    assert config.broker.resilience.max_in_flight == 7
+    warnings = [e for e in logs if e["event"] == "config_deprecated_setting"]
+    assert len(warnings) == 1, "the deprecation warning is logged once per process"
+    assert warnings[0]["log_level"] == "warning"
+    assert warnings[0]["setting"] == "broker.resilience.backend"
+    assert warnings[0]["replacement"] == "state"
+
+
+@pytest.mark.usefixtures("_fresh_state_deprecation_latch")
+def test_the_deprecated_env_vars_are_read_into_state(config_file: Path):
+    env = {
+        "JENTIC__BROKER__RESILIENCE__BACKEND__BACKEND": "redis",
+        "JENTIC__BROKER__RESILIENCE__BACKEND__REDIS_URL": "redis://r:6379/0",
+        "JENTIC__BROKER__RESILIENCE__BACKEND__MEMORY__MAX_TOTAL_BYTES": "5000",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        state = load_config(config_file).state
+    assert state.backend == "redis"
+    assert state.redis_url is not None
+    assert state.redis_url.get_secret_value() == "redis://r:6379/0"
+    assert state.memory.max_total_bytes == 5000
+
+
+@pytest.mark.usefixtures("_fresh_state_deprecation_latch")
+def test_old_and_new_sections_merge_when_they_set_different_keys(
+    tmp_path: Path, sample_config_dict: dict[str, Any]
+):
+    sample_config_dict["state"] = {"memory": {"max_total_bytes": 4096}}
+    path = _write(tmp_path, sample_config_dict)
+    env = {"JENTIC__BROKER__RESILIENCE__BACKEND__MEMORY__MAX_ENTRIES_PER_NAMESPACE": "9"}
+    with patch.dict(os.environ, env, clear=False):
+        state = load_config(path).state
+    assert state.memory.max_total_bytes == 4096
+    assert state.memory.max_entries_per_namespace == 9
+
+
+@pytest.mark.usefixtures("_fresh_state_deprecation_latch")
+def test_old_and_new_sections_may_set_the_same_value(
+    tmp_path: Path, sample_config_dict: dict[str, Any]
+):
+    """An env-var string and a YAML int for the same value are not a conflict."""
+    sample_config_dict["state"] = {"memory": {"max_total_bytes": 4096}}
+    path = _write(tmp_path, sample_config_dict)
+    env = {"JENTIC__BROKER__RESILIENCE__BACKEND__MEMORY__MAX_TOTAL_BYTES": "4096"}
+    with patch.dict(os.environ, env, clear=False):
+        assert load_config(path).state.memory.max_total_bytes == 4096
+
+
+@pytest.mark.usefixtures("_fresh_state_deprecation_latch")
+@pytest.mark.parametrize(
+    ("new", "old_env", "field"),
+    [
+        (
+            {"backend": "memory"},
+            {"JENTIC__BROKER__RESILIENCE__BACKEND__BACKEND": "redis"},
+            "backend",
+        ),
+        (
+            {"memory": {"max_total_bytes": 4096}},
+            {"JENTIC__BROKER__RESILIENCE__BACKEND__MEMORY__MAX_TOTAL_BYTES": "5000"},
+            "memory",
+        ),
+    ],
+)
+def test_conflicting_old_and_new_sections_fail_to_load(
+    tmp_path: Path,
+    sample_config_dict: dict[str, Any],
+    new: dict[str, Any],
+    old_env: dict[str, str],
+    field: str,
+):
+    sample_config_dict["state"] = new
+    path = _write(tmp_path, sample_config_dict)
+    with (
+        patch.dict(os.environ, old_env, clear=False),
+        pytest.raises(ConfigError, match=r"broker\.resilience\.backend both set") as exc,
+    ):
+        load_config(path)
+    assert field in str(exc.value)
+
+
+@pytest.mark.usefixtures("_fresh_state_deprecation_latch")
+def test_an_invalid_deprecated_value_under_a_valid_state_value_is_a_conflict(
+    tmp_path: Path, sample_config_dict: dict[str, Any]
+):
+    """A key set under both, valid only under ``state``, must not be silently dropped."""
+    sample_config_dict["state"] = {"memory": {"max_total_bytes": 4096}}
+    path = _write(tmp_path, sample_config_dict)
+    env = {"JENTIC__BROKER__RESILIENCE__BACKEND__MEMORY__MAX_TOTAL_BYTES": "0"}
+    with (
+        patch.dict(os.environ, env, clear=False),
+        pytest.raises(ConfigError, match=r"broker\.resilience\.backend both set memory"),
+    ):
+        load_config(path)
+
+
+@pytest.mark.usefixtures("_fresh_state_deprecation_latch")
+def test_the_deprecated_section_may_be_a_model_instance(sample_config_dict: dict[str, Any]):
+    """A programmatic caller passing a StateBackendConfig keeps working."""
+    sample_config_dict["broker"] = {
+        **sample_config_dict.get("broker", {}),
+        "resilience": {
+            "backend": StateBackendConfig.model_validate({"memory": {"max_total_bytes": 4096}})
+        },
+    }
+    config = AppConfig.model_validate(sample_config_dict)
+    assert config.state.memory.max_total_bytes == 4096
+
+
+def test_a_backend_name_must_be_well_formed(tmp_path: Path, sample_config_dict: dict[str, Any]):
+    sample_config_dict["state"] = {"backend": "Not A Name"}
+    with pytest.raises(ConfigError, match=r"state\.backend"):
+        load_config(_write(tmp_path, sample_config_dict))
 
 
 def test_an_idem_override_keeps_the_per_caller_share_unless_set():
@@ -2721,13 +2954,14 @@ def test_login_csrf_has_a_per_client_share_sized_like_other_namespaces():
 @pytest.mark.parametrize(
     ("backend", "configured", "expected"),
     [
-        (BackendKind.MEMORY, None, 3_600.0),
-        (BackendKind.REDIS, None, 86_400.0),
-        (BackendKind.MEMORY, 120.0, 120.0),
-        (BackendKind.REDIS, 120.0, 120.0),
+        ("memory", None, 3_600.0),
+        ("redis", None, 86_400.0),
+        ("redis-cluster", None, 86_400.0),
+        ("memory", 120.0, 120.0),
+        ("redis", 120.0, 120.0),
     ],
 )
 def test_idempotency_replay_ttl_defaults_by_backend(
-    backend: BackendKind, configured: float | None, expected: float
+    backend: str, configured: float | None, expected: float
 ):
     assert IdempotencyConfig(ttl_s=configured).replay_ttl_s(backend) == expected

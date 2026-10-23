@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
+
 from fastapi import Depends, Request
 
 from jentic_one.admin.services.actor_service import ActorService
@@ -92,6 +95,19 @@ def get_event_service(ctx: Context = Depends(get_ctx)) -> EventService:
 
 def get_event_stream_service(ctx: Context = Depends(get_ctx)) -> EventStreamService:
     return EventStreamService(ctx)
+
+
+def get_stream_clock() -> Callable[[], float]:
+    """The monotonic clock an open event stream times its re-verification by.
+
+    A dependency so tests can drive the interval with a fake clock.
+    """
+    return time.monotonic
+
+
+def get_stream_recheck_seconds(ctx: Context = Depends(get_ctx)) -> float:
+    """How often an open event stream re-verifies its caller (``admin.events``)."""
+    return ctx.config.admin.events.stream_recheck_seconds
 
 
 def get_oauth_client_service(ctx: Context = Depends(get_ctx)) -> OAuthClientService:

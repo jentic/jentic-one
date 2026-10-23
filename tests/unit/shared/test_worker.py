@@ -15,8 +15,15 @@ from jentic_one.shared.config import WorkerConfig
 from jentic_one.shared.db.errors import DatabaseCommitOutcomeUnknownError, DatabaseUnavailableError
 from jentic_one.shared.jobs.handlers import JobHandlerRegistry, JobResultPayload
 from jentic_one.shared.jobs.wakeup import JobWakeup
-from jentic_one.shared.jobs.worker import WorkerLoop, _backoff_s, _reconnect_backoff_s
+from jentic_one.shared.jobs.worker import (
+    _COMPLETION_MAX_RETRIES,
+    _MAX_TRACKED_DISPATCHED_JOBS,
+    WorkerLoop,
+    _backoff_s,
+    _reconnect_backoff_s,
+)
 from jentic_one.shared.models.jobs import JobKind
+from tests.unit.fake_tx import post_upstream_write_failures
 
 
 class _FakeHandler:
@@ -561,3 +568,101 @@ async def test_commit_outcome_unknown_without_a_loss_leaf_logs_the_detail() -> N
     [entry] = _events(logs, "job_commit_outcome_unknown")
     assert entry["error_type"] == "DatabaseCommitOutcomeUnknownError"
     assert entry["error"] == "connection is closed"
+
+
+class _FlakyCompletionWorker(_MidJobWorker):
+    """The handler succeeds; ``_complete_job`` fails ``failures`` times before succeeding."""
+
+    def __init__(self, exc: BaseException, *, failures: int) -> None:
+        super().__init__(exc)
+        self._failures = failures
+        self.handler_calls = 0
+        self.complete_calls = 0
+        self.sleeps: list[float] = []
+
+    async def _execute_handler(self, handler: Any, job: Any) -> JobResultPayload:
+        self.handler_calls += 1
+        return JobResultPayload(body={"ok": True})
+
+    async def _complete_job(self, job_id: str, kind: str, result: JobResultPayload) -> None:
+        self.complete_calls += 1
+        if self.complete_calls <= self._failures:
+            raise self._exc
+
+    async def _sleep(self, delay_s: float) -> None:
+        self.sleeps.append(delay_s)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        *post_upstream_write_failures(),
+        pytest.param(_connection_dropped(), id="connection-dropped"),
+    ],
+)
+async def test_completion_write_transient_failure_retries_with_backoff_and_never_requeues(
+    error: Exception,
+) -> None:
+    """Pins #1800: when ``_complete_job`` fails transiently after the handler has
+    returned, the worker retries ``_complete_job`` with backoff and never calls
+    ``_handle_failure`` or re-runs the handler."""
+    worker = _FlakyCompletionWorker(error, failures=2)
+    with structlog.testing.capture_logs() as logs:
+        assert await worker._tick() is True
+
+    assert worker.handler_calls == 1
+    assert worker.complete_calls == 3
+    assert worker.persisted == []
+    assert worker.sleeps == [0.05, 0.1]
+    assert _Job.id not in worker._dispatched_jobs
+    retries = _events(logs, "job_completion_write_retry")
+    assert [r["retry"] for r in retries] == [1, 2]
+    assert all("SELECT 1" not in repr(r) and "UPDATE jobs" not in repr(r) for r in retries)
+    assert not _events(logs, "job_completion_write_failed")
+    assert not _events(logs, "job_failed")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error", "level", "has_traceback"),
+    [
+        pytest.param(_connection_dropped(), "warning", False, id="connection-loss"),
+        pytest.param(_locked_after_retries(), "error", False, id="sql-error"),
+        pytest.param(RuntimeError("result write bug"), "error", True, id="plain-error"),
+    ],
+)
+async def test_completion_write_exhausting_retries_logs_once_and_never_requeues(
+    error: BaseException,
+    level: str,
+    has_traceback: bool,
+) -> None:
+    """Pins #1800: when ``_complete_job`` fails across all retries, the worker
+    logs ``job_completion_write_failed`` without leaking SQL and never calls
+    ``_handle_failure``."""
+    worker = _FlakyCompletionWorker(error, failures=_COMPLETION_MAX_RETRIES + 1)
+    with structlog.testing.capture_logs() as logs:
+        assert await worker._tick() is True
+
+    assert worker.handler_calls == 1
+    assert worker.complete_calls == _COMPLETION_MAX_RETRIES + 1
+    assert worker.persisted == []
+    assert worker.sleeps == [0.05, 0.1, 0.2]
+    assert _Job.id in worker._dispatched_jobs
+    assert len(_events(logs, "job_completion_write_retry")) == _COMPLETION_MAX_RETRIES
+    [failed] = _events(logs, "job_completion_write_failed")
+    assert failed["log_level"] == level
+    if has_traceback:
+        assert failed["exc_info"] is True
+    else:
+        assert "exc_info" not in failed
+    assert "UPDATE jobs" not in repr(failed) and "s3cr3t" not in repr(failed)
+
+
+def test_track_dispatched_evicts_oldest_at_cap() -> None:
+    worker = WorkerLoop(db=object(), handler_registry=JobHandlerRegistry())  # type: ignore[arg-type]
+    for i in range(_MAX_TRACKED_DISPATCHED_JOBS + 5):
+        worker._track_dispatched(f"job-{i}")
+    assert len(worker._dispatched_jobs) == _MAX_TRACKED_DISPATCHED_JOBS
+    assert "job-0" not in worker._dispatched_jobs
+    assert f"job-{_MAX_TRACKED_DISPATCHED_JOBS + 4}" in worker._dispatched_jobs

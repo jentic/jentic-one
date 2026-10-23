@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
-from datetime import datetime
+from collections.abc import Collection, Mapping, Sequence
+from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import lazyload, raiseload
 from sqlalchemy.orm.attributes import set_committed_value
@@ -15,6 +15,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.oauth_app_registrations import OAuthAppRegistration
+from jentic_one.control.core.schema.oauth_tokens import OAuthToken
 from jentic_one.shared.models.api_identity import slugify_api_field
 from jentic_one.shared.models.credentials import StoredCredentialType
 
@@ -43,6 +44,12 @@ _MATERIAL_RELATIONSHIP: Mapping[str, str] = {
     StoredCredentialType.OAUTH2_IMPLICIT: "oauth_token",
     StoredCredentialType.AWS_SIGV4: "sigv4_credential",
 }
+
+# OAuth grants a human connects interactively; they need a live token.
+_INTERACTIVE_OAUTH_TYPES: tuple[str, ...] = (
+    StoredCredentialType.OAUTH2_AUTHORIZATION_CODE.value,
+    StoredCredentialType.OAUTH2_DEVICE_CODE.value,
+)
 
 
 # Upper bound on IDs bound into one IN (...) clause, well under SQLite's and
@@ -357,6 +364,7 @@ class CredentialRepository:
         vendor: str,
         name: str | None,
         version: str | None,
+        account_ref_providers: Collection[str],
         exclude_ids: Sequence[str] = (),
         filters: Sequence[ColumnElement[bool]] | None = None,
         limit: int = 50,
@@ -366,11 +374,42 @@ class CredentialRepository:
         A NULL ``api_name`` / ``api_version`` on the credential is a wildcard;
         a ``None`` reference axis matches any value. ``filters`` carries the
         caller's access scoping.
+
+        An interactive OAuth grant (authorization_code / device_code) counts
+        as connected only while it can mint a token, matching the redacted
+        view's ``connected`` flag: an account reference on one of
+        ``account_ref_providers`` (``ProviderRegistry.account_ref_provider_names``),
+        or a live token row that is unrevoked and either refreshable or
+        unexpired. One whose grant was dropped or revoked needs a reconnect,
+        so it is not offered for reuse, even when ``provider_account_ref``
+        holds an identity-echo display name.
         """
+        now = datetime.now(UTC)
+        live_grant = (
+            select(OAuthToken.id)
+            .where(
+                OAuthToken.credential_id == Credential.id,
+                OAuthToken.revoked_at.is_(None),
+                or_(
+                    OAuthToken.encrypted_refresh_token.is_not(None),
+                    OAuthToken.expires_at.is_(None),
+                    OAuthToken.expires_at > now,
+                ),
+            )
+            .exists()
+        )
         stmt = select(Credential).where(
             Credential.api_vendor == vendor,
             Credential.state == "connected",
             Credential.active.is_(True),
+            or_(
+                Credential.type.not_in(_INTERACTIVE_OAUTH_TYPES),
+                and_(
+                    Credential.provider.in_(sorted(account_ref_providers)),
+                    Credential.provider_account_ref.is_not(None),
+                ),
+                live_grant,
+            ),
         )
         if name is not None:
             stmt = stmt.where(or_(Credential.api_name.is_(None), Credential.api_name == name))
@@ -386,6 +425,35 @@ class CredentialRepository:
         stmt = stmt.order_by(Credential.created_at.desc(), Credential.id.desc()).limit(limit)
         result = await session.execute(stmt)
         return list(result.scalars().all())
+
+    @staticmethod
+    async def any_covering(
+        session: AsyncSession,
+        *,
+        credential_ids: Sequence[str],
+        vendor: str,
+        name: str | None,
+        version: str | None,
+    ) -> bool:
+        """Whether any of ``credential_ids`` has an API scope covering the identity.
+
+        Same coverage as :meth:`list_connected_covering` (a NULL credential
+        axis is a wildcard; a ``None`` reference axis matches any value), but
+        whatever the credential's state.
+        """
+        if not credential_ids:
+            return False
+        stmt = select(Credential.id).where(
+            Credential.id.in_(list(credential_ids)), Credential.api_vendor == vendor
+        )
+        if name is not None:
+            stmt = stmt.where(or_(Credential.api_name.is_(None), Credential.api_name == name))
+        if version is not None:
+            stmt = stmt.where(
+                or_(Credential.api_version.is_(None), Credential.api_version == version)
+            )
+        result = await session.execute(stmt.limit(1))
+        return result.first() is not None
 
     @staticmethod
     async def delete(session: AsyncSession, credential_id: str) -> bool:

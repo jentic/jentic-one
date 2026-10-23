@@ -696,6 +696,21 @@ func (e NoAuthCreateRequestType) Valid() bool {
 	}
 }
 
+// Defines values for NoAuthUpdateRequestType.
+const (
+	NoAuthUpdateRequestTypeNoAuth NoAuthUpdateRequestType = "no_auth"
+)
+
+// Valid indicates whether the value is a known member of the NoAuthUpdateRequestType enum.
+func (e NoAuthUpdateRequestType) Valid() bool {
+	switch e {
+	case NoAuthUpdateRequestTypeNoAuth:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for NoteConfidence.
 const (
 	Observed  NoteConfidence = "observed"
@@ -4460,6 +4475,41 @@ type NoAuthCreateRequest struct {
 // Examples: no_auth
 type NoAuthCreateRequestType string
 
+// NoAuthUpdateRequest Update request for no_auth credentials (label, enablement, server variables).
+//
+// Examples: {"active":true,"name":"Open-Meteo","runtime_config":{"headers":{"Stripe-Version":"2024-04-10"},"query_params":{"locale":"en-GB"}},"server_variables":{"region":"eu"},"type":"no_auth"}
+type NoAuthUpdateRequest struct {
+	// Active Enable or disable the credential for injection; omit to leave unchanged.
+	//
+	// Examples: true
+	Active *bool `json:"active,omitempty"`
+
+	// Name New label for the credential; omit to leave unchanged.
+	//
+	// Examples: Open-Meteo
+	Name *string `json:"name,omitempty"`
+
+	// RuntimeConfig Per-upstream-call overrides; reserved and not currently applied.
+	//
+	// Examples: {"headers":{"Stripe-Version":"2024-04-10"},"query_params":{"locale":"en-GB"}}
+	RuntimeConfig *RuntimeConfig `json:"runtime_config,omitempty"`
+
+	// ServerVariables Replacement OpenAPI server-variable values; omit to leave unchanged.
+	//
+	// Examples: {"region":"eu"}
+	ServerVariables *map[string]string `json:"server_variables,omitempty"`
+
+	// Type Credential type; always `no_auth`.
+	//
+	// Examples: no_auth
+	Type NoAuthUpdateRequestType `json:"type"`
+}
+
+// NoAuthUpdateRequestType Credential type; always `no_auth`.
+//
+// Examples: no_auth
+type NoAuthUpdateRequestType string
+
 // NoteApiReference Loose “(vendor, name, version)“ identity tuple for a registered API.
 //
 // Examples: {"name":"stripe","vendor":"stripe.com","version":"2024-04-10"}
@@ -4661,7 +4711,7 @@ type OAuth2UpdateRequest struct {
 	// Examples: true
 	Active *bool `json:"active,omitempty"`
 
-	// ClientSecret Replacement client secret; omit to leave unchanged. token_url and scopes are applied only together with it.
+	// ClientSecret Replacement client secret; omit to leave unchanged. Required when `token_url` moves to a different origin. Rejected with 400 on `device_code` credentials (public client) and on credentials that use a shared app registration.
 	//
 	// Examples: example-secret
 	ClientSecret *string `json:"client_secret,omitempty"`
@@ -4676,7 +4726,7 @@ type OAuth2UpdateRequest struct {
 	// Examples: {"headers":{"Stripe-Version":"2024-04-10"},"query_params":{"locale":"en-GB"}}
 	RuntimeConfig *RuntimeConfig `json:"runtime_config,omitempty"`
 
-	// Scopes Replacement OAuth scopes; applied only when client_secret is sent.
+	// Scopes Replacement OAuth scopes; omit to leave unchanged, send `[]` to clear them. Each item is a single non-empty scope token without whitespace. Rejected with 400 on credentials that use a shared app registration, and on `device_code` credentials while a device flow is pending.
 	//
 	// Examples: ["read_write"]
 	Scopes *[]string `json:"scopes,omitempty"`
@@ -4686,7 +4736,7 @@ type OAuth2UpdateRequest struct {
 	// Examples: {"region":"eu"}
 	ServerVariables *map[string]string `json:"server_variables,omitempty"`
 
-	// TokenUrl Replacement token endpoint URL; applied only when client_secret is sent.
+	// TokenUrl Replacement token endpoint URL; omit to leave unchanged. A change of origin (scheme, host or port) requires `client_secret` in the same request and disconnects the credential until it is reconnected; on `device_code` credentials it is rejected with 400. Rejected with 400 on credentials that use a shared app registration, and on `device_code` credentials while a device flow is pending.
 	//
 	// Examples: https://connect.stripe.com/oauth/token
 	TokenUrl *string `json:"token_url,omitempty"`
@@ -9199,6 +9249,40 @@ func (t *UpdateCredentialJSONBody) MergeOAuth2UpdateRequest(v OAuth2UpdateReques
 	return err
 }
 
+// AsNoAuthUpdateRequest returns the union data inside the UpdateCredentialJSONBody as a NoAuthUpdateRequest
+func (t UpdateCredentialJSONBody) AsNoAuthUpdateRequest() (NoAuthUpdateRequest, error) {
+	var body NoAuthUpdateRequest
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromNoAuthUpdateRequest overwrites any union data inside the UpdateCredentialJSONBody as the provided NoAuthUpdateRequest
+func (t *UpdateCredentialJSONBody) FromNoAuthUpdateRequest(v NoAuthUpdateRequest) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"no_auth"}`))
+	t.union = b
+	return err
+}
+
+// MergeNoAuthUpdateRequest performs a merge with any union data inside the UpdateCredentialJSONBody, using the provided NoAuthUpdateRequest
+func (t *UpdateCredentialJSONBody) MergeNoAuthUpdateRequest(v NoAuthUpdateRequest) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"no_auth"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 // AsSigv4UpdateRequest returns the union data inside the UpdateCredentialJSONBody as a Sigv4UpdateRequest
 func (t UpdateCredentialJSONBody) AsSigv4UpdateRequest() (Sigv4UpdateRequest, error) {
 	var body Sigv4UpdateRequest
@@ -9253,6 +9337,8 @@ func (t UpdateCredentialJSONBody) ValueByDiscriminator() (interface{}, error) {
 		return t.AsBasicAuthUpdateRequest()
 	case "bearer_token":
 		return t.AsBearerTokenUpdateRequest()
+	case "no_auth":
+		return t.AsNoAuthUpdateRequest()
 	case "oauth2":
 		return t.AsOAuth2UpdateRequest()
 	case "sigv4":
@@ -9855,8 +9941,9 @@ type ClientInterface interface {
 	//
 	// Returns the agent's name, description, owner, `status`, approval or
 	// denial details, and whether it currently has an API key (`has_api_key`).
-	// Readable by the agent itself, its owner, and `org:admin`; an agent outside
-	// the caller's visibility answers 404.
+	// Readable by the agent itself, its owner, `org:admin`, and a caller holding
+	// `agents:read` (implied by `agents:write`); an agent outside the caller's
+	// visibility answers 404.
 	//
 	// Corresponds with GET /agents/{agent_id} (the `GetAgent` operationId).
 	GetAgent(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -9868,9 +9955,10 @@ type ClientInterface interface {
 	// Only the fields present in the body change; an empty body returns the
 	// agent unchanged. Allowed for the agent's owner or an `org:admin` (anyone
 	// else gets 404). Changing `owner_id` transfers ownership, is
-	// `org:admin`-only, and revokes every active OAuth client grant bound to
-	// the agent, so the new owner must re-consent any connected client. The
-	// agent's API key, permissions and credential bindings are unaffected. An
+	// `org:admin`-only, revokes every active OAuth client grant bound to the
+	// agent (so the new owner must re-consent any connected client), and
+	// suspends active credential bindings to credentials outside the new
+	// owner's ownership. The agent's API key and permissions are unaffected. An
 	// archived agent cannot be updated (409). Returns the updated agent.
 	//
 	// Takes any type of body and a specified content type.
@@ -9885,9 +9973,10 @@ type ClientInterface interface {
 	// Only the fields present in the body change; an empty body returns the
 	// agent unchanged. Allowed for the agent's owner or an `org:admin` (anyone
 	// else gets 404). Changing `owner_id` transfers ownership, is
-	// `org:admin`-only, and revokes every active OAuth client grant bound to
-	// the agent, so the new owner must re-consent any connected client. The
-	// agent's API key, permissions and credential bindings are unaffected. An
+	// `org:admin`-only, revokes every active OAuth client grant bound to the
+	// agent (so the new owner must re-consent any connected client), and
+	// suspends active credential bindings to credentials outside the new
+	// owner's ownership. The agent's API key and permissions are unaffected. An
 	// archived agent cannot be updated (409). Returns the updated agent.
 	//
 	// Takes a body of the `application/json` content type.
@@ -9927,9 +10016,10 @@ type ClientInterface interface {
 	//
 	// Each binding names the credential, the API it serves, when it was bound,
 	// whether it is `suspended` (and why), and any attached permission
-	// `rule_set_id`. Credential secrets are never returned. Readable by the
-	// agent itself, its owner, and `org:admin` (404 otherwise). The list is not
-	// paginated.
+	// `rule_set_id`. Credential secrets are never returned. Readable like
+	// `GET /agents/{agent_id}`: by the agent itself, its owner, `org:admin`, and a
+	// caller holding `agents:read` (implied by `agents:write`); 404 otherwise.
+	// The list is not paginated.
 	//
 	// Corresponds with GET /agents/{agent_id}/credentials (the `ListAgentCredentials` operationId).
 	ListAgentCredentials(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -10722,7 +10812,8 @@ type ClientInterface interface {
 	// Terminate a still-active session at the user's request.
 	//
 	// Gated like ``/status`` — the ``poll_token`` the SPA already holds, or
-	// the target agent's owner / ``org:admin`` without it.
+	// the target agent's owner / ``org:admin`` without it. The audit entry
+	// for the cancel names the caller, with the session's initiator alongside.
 	//
 	// A still-existing but already-terminal session is a 204 no-op — a
 	// "Cancel" click racing the poll scanner doesn't error. A session
@@ -10751,7 +10842,15 @@ type ClientInterface interface {
 	// that actually fires the vendor's device-authorization call, and a
 	// failed ``begin`` leaves the session retryable, so it must not be
 	// free to hammer during a vendor incident. Gated like the review read
-	// (``poll_token`` or owner / ``org:admin``; 403 otherwise).
+	// (``poll_token`` or owner / ``org:admin``; 403 otherwise). An agent
+	// whose binding to a credential covering the session's API is suspended
+	// (including one picked at confirm) is refused with 409
+	// ``connect_session_binding_suspended``.
+	//
+	// A response carrying an ``authorize_url`` also sets a short-lived
+	// ``HttpOnly`` cookie scoped to the OAuth callback path: the vendor
+	// sign-in completes only in the approver's browser that called this
+	// endpoint, whoever opened the session.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -10773,7 +10872,15 @@ type ClientInterface interface {
 	// that actually fires the vendor's device-authorization call, and a
 	// failed ``begin`` leaves the session retryable, so it must not be
 	// free to hammer during a vendor incident. Gated like the review read
-	// (``poll_token`` or owner / ``org:admin``; 403 otherwise).
+	// (``poll_token`` or owner / ``org:admin``; 403 otherwise). An agent
+	// whose binding to a credential covering the session's API is suspended
+	// (including one picked at confirm) is refused with 409
+	// ``connect_session_binding_suspended``.
+	//
+	// A response carrying an ``authorize_url`` also sets a short-lived
+	// ``HttpOnly`` cookie scoped to the OAuth callback path: the vendor
+	// sign-in completes only in the approver's browser that called this
+	// endpoint, whoever opened the session.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -10993,6 +11100,11 @@ type ClientInterface interface {
 	// redirect; device-flow providers return ``user_code`` /
 	// ``verification_uri`` for the RFC 8628 human step.
 	//
+	// An ``authorize_url`` response also sets a short-lived ``HttpOnly``
+	// cookie scoped to the OAuth callback path: the callback completes only
+	// in the browser that called this endpoint, so call it from the browser
+	// that opens the ``authorize_url``.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /credentials/{credential_id}/connect (the `ConnectCredential` operationId).
@@ -11006,6 +11118,11 @@ type ClientInterface interface {
 	// authorization-code providers return an ``authorize_url`` for popup
 	// redirect; device-flow providers return ``user_code`` /
 	// ``verification_uri`` for the RFC 8628 human step.
+	//
+	// An ``authorize_url`` response also sets a short-lived ``HttpOnly``
+	// cookie scoped to the OAuth callback path: the callback completes only
+	// in the browser that called this endpoint, so call it from the browser
+	// that opens the ``authorize_url``.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -11030,8 +11147,21 @@ type ClientInterface interface {
 	//
 	// Stream events as Server-Sent Events.
 	//
-	// The stream ends once the caller's credential stops verifying (expired,
-	// revoked, or its user disabled or deleted); reconnecting then returns 401.
+	// The open stream re-verifies the caller at the first poll or page after each
+	// `admin.events.stream_recheck_seconds` interval (default 5 s) elapses. Each
+	// page is scoped by the caller's current permissions, so a narrower
+	// permission set narrows the stream. Permissions are those the credential
+	// carries: API keys and user `at_` access tokens resolve them live, while a
+	// login session JWT and an agent `at_` access token carry the set they were
+	// issued with. The stream keeps re-verifying the token it was opened with,
+	// so for those a permission change applies once that token expires and the
+	// client reconnects. The stream ends
+	// with a `stream_closed` frame (`{"type": "stream_closed", "reason": ...}`)
+	// once the credential stops verifying (`refused`: expired, revoked, or its
+	// user or agent disabled or deleted), the caller no longer holds
+	// `events:read` or `org:admin` or must rotate their password (`forbidden`),
+	// or the check or the event store cannot be answered (`unavailable`).
+	// A reconnect is authenticated afresh.
 	//
 	// Corresponds with GET /events/stream (the `StreamEvents` operationId).
 	StreamEvents(ctx context.Context, params *StreamEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -11203,7 +11333,10 @@ type ClientInterface interface {
 	// `connect_session_agent_not_found`, the same as an unknown agent. Naming
 	// an owned agent also takes `agents:write`, which confirming for it needs
 	// (403 `connect_session_confirmation_forbidden` otherwise), and an active
-	// agent (409 `connect_session_agent_inactive` otherwise). When
+	// agent (409 `connect_session_agent_inactive` otherwise). An agent whose
+	// binding to a credential covering the requested API is suspended gets
+	// 409 `connect_session_binding_suspended`: only the operator can resume
+	// that binding, so a new connect for the same API is refused. When
 	// named, confirm creates the direct agent-credential binding + permission
 	// rules; when omitted, the credential connects unbound and an agent can
 	// be bound later through the credentials API.
@@ -11225,7 +11358,10 @@ type ClientInterface interface {
 	// `connect_session_agent_not_found`, the same as an unknown agent. Naming
 	// an owned agent also takes `agents:write`, which confirming for it needs
 	// (403 `connect_session_confirmation_forbidden` otherwise), and an active
-	// agent (409 `connect_session_agent_inactive` otherwise). When
+	// agent (409 `connect_session_agent_inactive` otherwise). An agent whose
+	// binding to a credential covering the requested API is suspended gets
+	// 409 `connect_session_binding_suspended`: only the operator can resume
+	// that binding, so a new connect for the same API is refused. When
 	// named, confirm creates the direct agent-credential binding + permission
 	// rules; when omitted, the credential connects unbound and an agent can
 	// be bound later through the credentials API.
@@ -12904,8 +13040,9 @@ func (c *Client) ArchiveAgent(ctx context.Context, agentId string, params *Archi
 //
 // Returns the agent's name, description, owner, `status`, approval or
 // denial details, and whether it currently has an API key (`has_api_key`).
-// Readable by the agent itself, its owner, and `org:admin`; an agent outside
-// the caller's visibility answers 404.
+// Readable by the agent itself, its owner, `org:admin`, and a caller holding
+// `agents:read` (implied by `agents:write`); an agent outside the caller's
+// visibility answers 404.
 //
 // Corresponds with GET /agents/{agent_id} (the `GetAgent` operationId).
 func (c *Client) GetAgent(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -12927,9 +13064,10 @@ func (c *Client) GetAgent(ctx context.Context, agentId string, reqEditors ...Req
 // Only the fields present in the body change; an empty body returns the
 // agent unchanged. Allowed for the agent's owner or an `org:admin` (anyone
 // else gets 404). Changing `owner_id` transfers ownership, is
-// `org:admin`-only, and revokes every active OAuth client grant bound to
-// the agent, so the new owner must re-consent any connected client. The
-// agent's API key, permissions and credential bindings are unaffected. An
+// `org:admin`-only, revokes every active OAuth client grant bound to the
+// agent (so the new owner must re-consent any connected client), and
+// suspends active credential bindings to credentials outside the new
+// owner's ownership. The agent's API key and permissions are unaffected. An
 // archived agent cannot be updated (409). Returns the updated agent.
 //
 // Takes any type of body and a specified content type.
@@ -12954,9 +13092,10 @@ func (c *Client) UpdateAgentWithBody(ctx context.Context, agentId string, conten
 // Only the fields present in the body change; an empty body returns the
 // agent unchanged. Allowed for the agent's owner or an `org:admin` (anyone
 // else gets 404). Changing `owner_id` transfers ownership, is
-// `org:admin`-only, and revokes every active OAuth client grant bound to
-// the agent, so the new owner must re-consent any connected client. The
-// agent's API key, permissions and credential bindings are unaffected. An
+// `org:admin`-only, revokes every active OAuth client grant bound to the
+// agent (so the new owner must re-consent any connected client), and
+// suspends active credential bindings to credentials outside the new
+// owner's ownership. The agent's API key and permissions are unaffected. An
 // archived agent cannot be updated (409). Returns the updated agent.
 //
 // Takes a body of the `application/json` content type.
@@ -13026,9 +13165,10 @@ func (c *Client) GetAgentApiKeyHistory(ctx context.Context, agentId string, reqE
 //
 // Each binding names the credential, the API it serves, when it was bound,
 // whether it is `suspended` (and why), and any attached permission
-// `rule_set_id`. Credential secrets are never returned. Readable by the
-// agent itself, its owner, and `org:admin` (404 otherwise). The list is not
-// paginated.
+// `rule_set_id`. Credential secrets are never returned. Readable like
+// `GET /agents/{agent_id}`: by the agent itself, its owner, `org:admin`, and a
+// caller holding `agents:read` (implied by `agents:write`); 404 otherwise.
+// The list is not paginated.
 //
 // Corresponds with GET /agents/{agent_id}/credentials (the `ListAgentCredentials` operationId).
 func (c *Client) ListAgentCredentials(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -14461,7 +14601,8 @@ func (c *Client) PollConnectSessionStatus(ctx context.Context, sessionId string,
 // Terminate a still-active session at the user's request.
 //
 // Gated like “/status“ — the “poll_token“ the SPA already holds, or
-// the target agent's owner / “org:admin“ without it.
+// the target agent's owner / “org:admin“ without it. The audit entry
+// for the cancel names the caller, with the session's initiator alongside.
 //
 // A still-existing but already-terminal session is a 204 no-op — a
 // "Cancel" click racing the poll scanner doesn't error. A session
@@ -14500,7 +14641,15 @@ func (c *Client) CancelConnectSession(ctx context.Context, sessionId string, par
 // that actually fires the vendor's device-authorization call, and a
 // failed “begin“ leaves the session retryable, so it must not be
 // free to hammer during a vendor incident. Gated like the review read
-// (“poll_token“ or owner / “org:admin“; 403 otherwise).
+// (“poll_token“ or owner / “org:admin“; 403 otherwise). An agent
+// whose binding to a credential covering the session's API is suspended
+// (including one picked at confirm) is refused with 409
+// “connect_session_binding_suspended“.
+//
+// A response carrying an “authorize_url“ also sets a short-lived
+// “HttpOnly“ cookie scoped to the OAuth callback path: the vendor
+// sign-in completes only in the approver's browser that called this
+// endpoint, whoever opened the session.
 //
 // Takes any type of body and a specified content type.
 //
@@ -14532,7 +14681,15 @@ func (c *Client) ConfirmConnectSessionWithBody(ctx context.Context, sessionId st
 // that actually fires the vendor's device-authorization call, and a
 // failed “begin“ leaves the session retryable, so it must not be
 // free to hammer during a vendor incident. Gated like the review read
-// (“poll_token“ or owner / “org:admin“; 403 otherwise).
+// (“poll_token“ or owner / “org:admin“; 403 otherwise). An agent
+// whose binding to a credential covering the session's API is suspended
+// (including one picked at confirm) is refused with 409
+// “connect_session_binding_suspended“.
+//
+// A response carrying an “authorize_url“ also sets a short-lived
+// “HttpOnly“ cookie scoped to the OAuth callback path: the vendor
+// sign-in completes only in the approver's browser that called this
+// endpoint, whoever opened the session.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -14962,6 +15119,11 @@ func (c *Client) AttachAgentCredentialRuleSet(ctx context.Context, credentialId 
 // redirect; device-flow providers return “user_code“ /
 // “verification_uri“ for the RFC 8628 human step.
 //
+// An “authorize_url“ response also sets a short-lived “HttpOnly“
+// cookie scoped to the OAuth callback path: the callback completes only
+// in the browser that called this endpoint, so call it from the browser
+// that opens the “authorize_url“.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /credentials/{credential_id}/connect (the `ConnectCredential` operationId).
@@ -14985,6 +15147,11 @@ func (c *Client) ConnectCredentialWithBody(ctx context.Context, credentialId str
 // authorization-code providers return an “authorize_url“ for popup
 // redirect; device-flow providers return “user_code“ /
 // “verification_uri“ for the RFC 8628 human step.
+//
+// An “authorize_url“ response also sets a short-lived “HttpOnly“
+// cookie scoped to the OAuth callback path: the callback completes only
+// in the browser that called this endpoint, so call it from the browser
+// that opens the “authorize_url“.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -15039,8 +15206,21 @@ func (c *Client) ListEvents(ctx context.Context, params *ListEventsParams, reqEd
 //
 // Stream events as Server-Sent Events.
 //
-// The stream ends once the caller's credential stops verifying (expired,
-// revoked, or its user disabled or deleted); reconnecting then returns 401.
+// The open stream re-verifies the caller at the first poll or page after each
+// `admin.events.stream_recheck_seconds` interval (default 5 s) elapses. Each
+// page is scoped by the caller's current permissions, so a narrower
+// permission set narrows the stream. Permissions are those the credential
+// carries: API keys and user `at_` access tokens resolve them live, while a
+// login session JWT and an agent `at_` access token carry the set they were
+// issued with. The stream keeps re-verifying the token it was opened with,
+// so for those a permission change applies once that token expires and the
+// client reconnects. The stream ends
+// with a `stream_closed` frame (`{"type": "stream_closed", "reason": ...}`)
+// once the credential stops verifying (`refused`: expired, revoked, or its
+// user or agent disabled or deleted), the caller no longer holds
+// `events:read` or `org:admin` or must rotate their password (`forbidden`),
+// or the check or the event store cannot be answered (`unavailable`).
+// A reconnect is authenticated afresh.
 //
 // Corresponds with GET /events/stream (the `StreamEvents` operationId).
 func (c *Client) StreamEvents(ctx context.Context, params *StreamEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -15352,7 +15532,10 @@ func (c *Client) GetInstance(ctx context.Context, reqEditors ...RequestEditorFn)
 // `connect_session_agent_not_found`, the same as an unknown agent. Naming
 // an owned agent also takes `agents:write`, which confirming for it needs
 // (403 `connect_session_confirmation_forbidden` otherwise), and an active
-// agent (409 `connect_session_agent_inactive` otherwise). When
+// agent (409 `connect_session_agent_inactive` otherwise). An agent whose
+// binding to a credential covering the requested API is suspended gets
+// 409 `connect_session_binding_suspended`: only the operator can resume
+// that binding, so a new connect for the same API is refused. When
 // named, confirm creates the direct agent-credential binding + permission
 // rules; when omitted, the credential connects unbound and an agent can
 // be bound later through the credentials API.
@@ -15384,7 +15567,10 @@ func (c *Client) IntegrationsConnectWithBody(ctx context.Context, contentType st
 // `connect_session_agent_not_found`, the same as an unknown agent. Naming
 // an owned agent also takes `agents:write`, which confirming for it needs
 // (403 `connect_session_confirmation_forbidden` otherwise), and an active
-// agent (409 `connect_session_agent_inactive` otherwise). When
+// agent (409 `connect_session_agent_inactive` otherwise). An agent whose
+// binding to a credential covering the requested API is suspended gets
+// 409 `connect_session_binding_suspended`: only the operator can resume
+// that binding, so a new connect for the same API is refused. When
 // named, confirm creates the direct agent-credential binding + permission
 // rules; when omitted, the credential connects unbound and an agent can
 // be bound later through the credentials API.
@@ -26281,8 +26467,9 @@ type ClientWithResponsesInterface interface {
 	//
 	// Returns the agent's name, description, owner, `status`, approval or
 	// denial details, and whether it currently has an API key (`has_api_key`).
-	// Readable by the agent itself, its owner, and `org:admin`; an agent outside
-	// the caller's visibility answers 404.
+	// Readable by the agent itself, its owner, `org:admin`, and a caller holding
+	// `agents:read` (implied by `agents:write`); an agent outside the caller's
+	// visibility answers 404.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -26296,9 +26483,10 @@ type ClientWithResponsesInterface interface {
 	// Only the fields present in the body change; an empty body returns the
 	// agent unchanged. Allowed for the agent's owner or an `org:admin` (anyone
 	// else gets 404). Changing `owner_id` transfers ownership, is
-	// `org:admin`-only, and revokes every active OAuth client grant bound to
-	// the agent, so the new owner must re-consent any connected client. The
-	// agent's API key, permissions and credential bindings are unaffected. An
+	// `org:admin`-only, revokes every active OAuth client grant bound to the
+	// agent (so the new owner must re-consent any connected client), and
+	// suspends active credential bindings to credentials outside the new
+	// owner's ownership. The agent's API key and permissions are unaffected. An
 	// archived agent cannot be updated (409). Returns the updated agent.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -26313,9 +26501,10 @@ type ClientWithResponsesInterface interface {
 	// Only the fields present in the body change; an empty body returns the
 	// agent unchanged. Allowed for the agent's owner or an `org:admin` (anyone
 	// else gets 404). Changing `owner_id` transfers ownership, is
-	// `org:admin`-only, and revokes every active OAuth client grant bound to
-	// the agent, so the new owner must re-consent any connected client. The
-	// agent's API key, permissions and credential bindings are unaffected. An
+	// `org:admin`-only, revokes every active OAuth client grant bound to the
+	// agent (so the new owner must re-consent any connected client), and
+	// suspends active credential bindings to credentials outside the new
+	// owner's ownership. The agent's API key and permissions are unaffected. An
 	// archived agent cannot be updated (409). Returns the updated agent.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
@@ -26359,9 +26548,10 @@ type ClientWithResponsesInterface interface {
 	//
 	// Each binding names the credential, the API it serves, when it was bound,
 	// whether it is `suspended` (and why), and any attached permission
-	// `rule_set_id`. Credential secrets are never returned. Readable by the
-	// agent itself, its owner, and `org:admin` (404 otherwise). The list is not
-	// paginated.
+	// `rule_set_id`. Credential secrets are never returned. Readable like
+	// `GET /agents/{agent_id}`: by the agent itself, its owner, `org:admin`, and a
+	// caller holding `agents:read` (implied by `agents:write`); 404 otherwise.
+	// The list is not paginated.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -27234,7 +27424,8 @@ type ClientWithResponsesInterface interface {
 	// Terminate a still-active session at the user's request.
 	//
 	// Gated like ``/status`` — the ``poll_token`` the SPA already holds, or
-	// the target agent's owner / ``org:admin`` without it.
+	// the target agent's owner / ``org:admin`` without it. The audit entry
+	// for the cancel names the caller, with the session's initiator alongside.
 	//
 	// A still-existing but already-terminal session is a 204 no-op — a
 	// "Cancel" click racing the poll scanner doesn't error. A session
@@ -27265,7 +27456,15 @@ type ClientWithResponsesInterface interface {
 	// that actually fires the vendor's device-authorization call, and a
 	// failed ``begin`` leaves the session retryable, so it must not be
 	// free to hammer during a vendor incident. Gated like the review read
-	// (``poll_token`` or owner / ``org:admin``; 403 otherwise).
+	// (``poll_token`` or owner / ``org:admin``; 403 otherwise). An agent
+	// whose binding to a credential covering the session's API is suspended
+	// (including one picked at confirm) is refused with 409
+	// ``connect_session_binding_suspended``.
+	//
+	// A response carrying an ``authorize_url`` also sets a short-lived
+	// ``HttpOnly`` cookie scoped to the OAuth callback path: the vendor
+	// sign-in completes only in the approver's browser that called this
+	// endpoint, whoever opened the session.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -27287,7 +27486,15 @@ type ClientWithResponsesInterface interface {
 	// that actually fires the vendor's device-authorization call, and a
 	// failed ``begin`` leaves the session retryable, so it must not be
 	// free to hammer during a vendor incident. Gated like the review read
-	// (``poll_token`` or owner / ``org:admin``; 403 otherwise).
+	// (``poll_token`` or owner / ``org:admin``; 403 otherwise). An agent
+	// whose binding to a credential covering the session's API is suspended
+	// (including one picked at confirm) is refused with 409
+	// ``connect_session_binding_suspended``.
+	//
+	// A response carrying an ``authorize_url`` also sets a short-lived
+	// ``HttpOnly`` cookie scoped to the OAuth callback path: the vendor
+	// sign-in completes only in the approver's browser that called this
+	// endpoint, whoever opened the session.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -27523,6 +27730,11 @@ type ClientWithResponsesInterface interface {
 	// redirect; device-flow providers return ``user_code`` /
 	// ``verification_uri`` for the RFC 8628 human step.
 	//
+	// An ``authorize_url`` response also sets a short-lived ``HttpOnly``
+	// cookie scoped to the OAuth callback path: the callback completes only
+	// in the browser that called this endpoint, so call it from the browser
+	// that opens the ``authorize_url``.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /credentials/{credential_id}/connect (the `ConnectCredential` operationId).
@@ -27536,6 +27748,11 @@ type ClientWithResponsesInterface interface {
 	// authorization-code providers return an ``authorize_url`` for popup
 	// redirect; device-flow providers return ``user_code`` /
 	// ``verification_uri`` for the RFC 8628 human step.
+	//
+	// An ``authorize_url`` response also sets a short-lived ``HttpOnly``
+	// cookie scoped to the OAuth callback path: the callback completes only
+	// in the browser that called this endpoint, so call it from the browser
+	// that opens the ``authorize_url``.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -27564,8 +27781,21 @@ type ClientWithResponsesInterface interface {
 	//
 	// Stream events as Server-Sent Events.
 	//
-	// The stream ends once the caller's credential stops verifying (expired,
-	// revoked, or its user disabled or deleted); reconnecting then returns 401.
+	// The open stream re-verifies the caller at the first poll or page after each
+	// `admin.events.stream_recheck_seconds` interval (default 5 s) elapses. Each
+	// page is scoped by the caller's current permissions, so a narrower
+	// permission set narrows the stream. Permissions are those the credential
+	// carries: API keys and user `at_` access tokens resolve them live, while a
+	// login session JWT and an agent `at_` access token carry the set they were
+	// issued with. The stream keeps re-verifying the token it was opened with,
+	// so for those a permission change applies once that token expires and the
+	// client reconnects. The stream ends
+	// with a `stream_closed` frame (`{"type": "stream_closed", "reason": ...}`)
+	// once the credential stops verifying (`refused`: expired, revoked, or its
+	// user or agent disabled or deleted), the caller no longer holds
+	// `events:read` or `org:admin` or must rotate their password (`forbidden`),
+	// or the check or the event store cannot be answered (`unavailable`).
+	// A reconnect is authenticated afresh.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -27761,7 +27991,10 @@ type ClientWithResponsesInterface interface {
 	// `connect_session_agent_not_found`, the same as an unknown agent. Naming
 	// an owned agent also takes `agents:write`, which confirming for it needs
 	// (403 `connect_session_confirmation_forbidden` otherwise), and an active
-	// agent (409 `connect_session_agent_inactive` otherwise). When
+	// agent (409 `connect_session_agent_inactive` otherwise). An agent whose
+	// binding to a credential covering the requested API is suspended gets
+	// 409 `connect_session_binding_suspended`: only the operator can resume
+	// that binding, so a new connect for the same API is refused. When
 	// named, confirm creates the direct agent-credential binding + permission
 	// rules; when omitted, the credential connects unbound and an agent can
 	// be bound later through the credentials API.
@@ -27783,7 +28016,10 @@ type ClientWithResponsesInterface interface {
 	// `connect_session_agent_not_found`, the same as an unknown agent. Naming
 	// an owned agent also takes `agents:write`, which confirming for it needs
 	// (403 `connect_session_confirmation_forbidden` otherwise), and an active
-	// agent (409 `connect_session_agent_inactive` otherwise). When
+	// agent (409 `connect_session_agent_inactive` otherwise). An agent whose
+	// binding to a credential covering the requested API is suspended gets
+	// 409 `connect_session_binding_suspended`: only the operator can resume
+	// that binding, so a new connect for the same API is refused. When
 	// named, confirm creates the direct agent-credential binding + permission
 	// rules; when omitted, the credential connects unbound and an agent can
 	// be bound later through the credentials API.
@@ -44234,8 +44470,9 @@ func (c *ClientWithResponses) ArchiveAgentWithResponse(ctx context.Context, agen
 //
 // Returns the agent's name, description, owner, `status`, approval or
 // denial details, and whether it currently has an API key (`has_api_key`).
-// Readable by the agent itself, its owner, and `org:admin`; an agent outside
-// the caller's visibility answers 404.
+// Readable by the agent itself, its owner, `org:admin`, and a caller holding
+// `agents:read` (implied by `agents:write`); an agent outside the caller's
+// visibility answers 404.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -44255,9 +44492,10 @@ func (c *ClientWithResponses) GetAgentWithResponse(ctx context.Context, agentId 
 // Only the fields present in the body change; an empty body returns the
 // agent unchanged. Allowed for the agent's owner or an `org:admin` (anyone
 // else gets 404). Changing `owner_id` transfers ownership, is
-// `org:admin`-only, and revokes every active OAuth client grant bound to
-// the agent, so the new owner must re-consent any connected client. The
-// agent's API key, permissions and credential bindings are unaffected. An
+// `org:admin`-only, revokes every active OAuth client grant bound to the
+// agent (so the new owner must re-consent any connected client), and
+// suspends active credential bindings to credentials outside the new
+// owner's ownership. The agent's API key and permissions are unaffected. An
 // archived agent cannot be updated (409). Returns the updated agent.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -44278,9 +44516,10 @@ func (c *ClientWithResponses) UpdateAgentWithBodyWithResponse(ctx context.Contex
 // Only the fields present in the body change; an empty body returns the
 // agent unchanged. Allowed for the agent's owner or an `org:admin` (anyone
 // else gets 404). Changing `owner_id` transfers ownership, is
-// `org:admin`-only, and revokes every active OAuth client grant bound to
-// the agent, so the new owner must re-consent any connected client. The
-// agent's API key, permissions and credential bindings are unaffected. An
+// `org:admin`-only, revokes every active OAuth client grant bound to the
+// agent (so the new owner must re-consent any connected client), and
+// suspends active credential bindings to credentials outside the new
+// owner's ownership. The agent's API key and permissions are unaffected. An
 // archived agent cannot be updated (409). Returns the updated agent.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
@@ -44342,9 +44581,10 @@ func (c *ClientWithResponses) GetAgentApiKeyHistoryWithResponse(ctx context.Cont
 //
 // Each binding names the credential, the API it serves, when it was bound,
 // whether it is `suspended` (and why), and any attached permission
-// `rule_set_id`. Credential secrets are never returned. Readable by the
-// agent itself, its owner, and `org:admin` (404 otherwise). The list is not
-// paginated.
+// `rule_set_id`. Credential secrets are never returned. Readable like
+// `GET /agents/{agent_id}`: by the agent itself, its owner, `org:admin`, and a
+// caller holding `agents:read` (implied by `agents:write`); 404 otherwise.
+// The list is not paginated.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -45601,7 +45841,8 @@ func (c *ClientWithResponses) PollConnectSessionStatusWithResponse(ctx context.C
 // Terminate a still-active session at the user's request.
 //
 // Gated like “/status“ — the “poll_token“ the SPA already holds, or
-// the target agent's owner / “org:admin“ without it.
+// the target agent's owner / “org:admin“ without it. The audit entry
+// for the cancel names the caller, with the session's initiator alongside.
 //
 // A still-existing but already-terminal session is a 204 no-op — a
 // "Cancel" click racing the poll scanner doesn't error. A session
@@ -45638,7 +45879,15 @@ func (c *ClientWithResponses) CancelConnectSessionWithResponse(ctx context.Conte
 // that actually fires the vendor's device-authorization call, and a
 // failed “begin“ leaves the session retryable, so it must not be
 // free to hammer during a vendor incident. Gated like the review read
-// (“poll_token“ or owner / “org:admin“; 403 otherwise).
+// (“poll_token“ or owner / “org:admin“; 403 otherwise). An agent
+// whose binding to a credential covering the session's API is suspended
+// (including one picked at confirm) is refused with 409
+// “connect_session_binding_suspended“.
+//
+// A response carrying an “authorize_url“ also sets a short-lived
+// “HttpOnly“ cookie scoped to the OAuth callback path: the vendor
+// sign-in completes only in the approver's browser that called this
+// endpoint, whoever opened the session.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -45666,7 +45915,15 @@ func (c *ClientWithResponses) ConfirmConnectSessionWithBodyWithResponse(ctx cont
 // that actually fires the vendor's device-authorization call, and a
 // failed “begin“ leaves the session retryable, so it must not be
 // free to hammer during a vendor incident. Gated like the review read
-// (“poll_token“ or owner / “org:admin“; 403 otherwise).
+// (“poll_token“ or owner / “org:admin“; 403 otherwise). An agent
+// whose binding to a credential covering the session's API is suspended
+// (including one picked at confirm) is refused with 409
+// “connect_session_binding_suspended“.
+//
+// A response carrying an “authorize_url“ also sets a short-lived
+// “HttpOnly“ cookie scoped to the OAuth callback path: the vendor
+// sign-in completes only in the approver's browser that called this
+// endpoint, whoever opened the session.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -46028,6 +46285,11 @@ func (c *ClientWithResponses) AttachAgentCredentialRuleSetWithResponse(ctx conte
 // redirect; device-flow providers return “user_code“ /
 // “verification_uri“ for the RFC 8628 human step.
 //
+// An “authorize_url“ response also sets a short-lived “HttpOnly“
+// cookie scoped to the OAuth callback path: the callback completes only
+// in the browser that called this endpoint, so call it from the browser
+// that opens the “authorize_url“.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /credentials/{credential_id}/connect (the `ConnectCredential` operationId).
@@ -46047,6 +46309,11 @@ func (c *ClientWithResponses) ConnectCredentialWithBodyWithResponse(ctx context.
 // authorization-code providers return an “authorize_url“ for popup
 // redirect; device-flow providers return “user_code“ /
 // “verification_uri“ for the RFC 8628 human step.
+//
+// An “authorize_url“ response also sets a short-lived “HttpOnly“
+// cookie scoped to the OAuth callback path: the callback completes only
+// in the browser that called this endpoint, so call it from the browser
+// that opens the “authorize_url“.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -46093,8 +46360,21 @@ func (c *ClientWithResponses) ListEventsWithResponse(ctx context.Context, params
 //
 // Stream events as Server-Sent Events.
 //
-// The stream ends once the caller's credential stops verifying (expired,
-// revoked, or its user disabled or deleted); reconnecting then returns 401.
+// The open stream re-verifies the caller at the first poll or page after each
+// `admin.events.stream_recheck_seconds` interval (default 5 s) elapses. Each
+// page is scoped by the caller's current permissions, so a narrower
+// permission set narrows the stream. Permissions are those the credential
+// carries: API keys and user `at_` access tokens resolve them live, while a
+// login session JWT and an agent `at_` access token carry the set they were
+// issued with. The stream keeps re-verifying the token it was opened with,
+// so for those a permission change applies once that token expires and the
+// client reconnects. The stream ends
+// with a `stream_closed` frame (`{"type": "stream_closed", "reason": ...}`)
+// once the credential stops verifying (`refused`: expired, revoked, or its
+// user or agent disabled or deleted), the caller no longer holds
+// `events:read` or `org:admin` or must rotate their password (`forbidden`),
+// or the check or the event store cannot be answered (`unavailable`).
+// A reconnect is authenticated afresh.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -46374,7 +46654,10 @@ func (c *ClientWithResponses) GetInstanceWithResponse(ctx context.Context, reqEd
 // `connect_session_agent_not_found`, the same as an unknown agent. Naming
 // an owned agent also takes `agents:write`, which confirming for it needs
 // (403 `connect_session_confirmation_forbidden` otherwise), and an active
-// agent (409 `connect_session_agent_inactive` otherwise). When
+// agent (409 `connect_session_agent_inactive` otherwise). An agent whose
+// binding to a credential covering the requested API is suspended gets
+// 409 `connect_session_binding_suspended`: only the operator can resume
+// that binding, so a new connect for the same API is refused. When
 // named, confirm creates the direct agent-credential binding + permission
 // rules; when omitted, the credential connects unbound and an agent can
 // be bound later through the credentials API.
@@ -46402,7 +46685,10 @@ func (c *ClientWithResponses) IntegrationsConnectWithBodyWithResponse(ctx contex
 // `connect_session_agent_not_found`, the same as an unknown agent. Naming
 // an owned agent also takes `agents:write`, which confirming for it needs
 // (403 `connect_session_confirmation_forbidden` otherwise), and an active
-// agent (409 `connect_session_agent_inactive` otherwise). When
+// agent (409 `connect_session_agent_inactive` otherwise). An agent whose
+// binding to a credential covering the requested API is suspended gets
+// 409 `connect_session_binding_suspended`: only the operator can resume
+// that binding, so a new connect for the same API is refused. When
 // named, confirm creates the direct agent-credential binding + permission
 // rules; when omitted, the credential connects unbound and an agent can
 // be bound later through the credentials API.

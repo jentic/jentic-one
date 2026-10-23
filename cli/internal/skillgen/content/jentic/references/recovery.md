@@ -146,6 +146,10 @@ the right ask, then retry once they confirm.
   encryption key rotated underneath it, e.g. a reinstall over existing
   data). This is not agent-recoverable and retrying will not fix it — ask
   your operator to remove and re-add the credential, then retry.
+- **`credential_binding_suspended` (403)** — your operator suspended your
+  binding to the credential that serves this API. Only they can resume it.
+  Do not start a new connect for the same API (it is refused while the
+  suspension stands); ask your operator, then retry once they resume it.
 - **`credential_identity_mismatch` (403)** — a binding exists and a
   credential *is* connected, but that credential's stored identity doesn't
   cover this API (e.g. it targets a different name/version, or was stored

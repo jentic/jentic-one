@@ -222,8 +222,8 @@ the `approval_url`;
 a denial carrying a `provisioning_url` means a connect request you opened
 is still waiting — relay that link to your operator rather than calling
 `request_connection` again. The denial taxonomy
-(`no_credential_binding`, `credential_undecryptable`,
-`credential_identity_mismatch`,
+(`no_credential_binding`, `credential_binding_suspended`,
+`credential_undecryptable`, `credential_identity_mismatch`,
 `ambiguous_credential_binding` — the per-code meanings are surface-independent
 and live in `references/recovery.md`) applies unchanged — the same codes,
 delivered in the envelope instead of stderr.
