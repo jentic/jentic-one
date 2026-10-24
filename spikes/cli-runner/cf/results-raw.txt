@@ -1,0 +1,55 @@
+### zones list --help (first lines)  (exit 0)
+  stdout: cf zones list  Lists, searches, sorts, and filters your zones. Listing zones across more than 500 accounts is currently not allowed.  Global flags   -q, --quiet       Suppress non-essential output     [boolean] [default: false]   -z, --zone        Zone ID or domain name (overrides CLOUDFLARE_ZONE_ID
+  stderr: 
+### cf schema zones list  (exit 0)
+  stdout: {   "operationId": "zones.list",   "httpMethod": "GET",   "path": "/zones",   "pathParams": [],   "queryParams": [     {       "name": "name",       "type": "string",       "required": false     },     {       "name": "status",       "type": "string",       "required": false     },     {       "name
+  stderr: 
+### zones list --dry-run  (exit 0)
+  stdout: {   "command": "cf zones list",   "method": "GET",   "url": "https://api.cloudflare.com/client/v4/zones",   "pathParams": {},   "query": {},   "bodyKind": "none" } 
+  stderr: 
+### zones list (real call to mock)  (exit 0)
+  stdout: [] 
+  stderr: 
+  call: GET /client/v4/zones | auth= Bearer dummy-not-a-s | body= 
+### zones list --json  (exit 1)
+  stdout:  
+  stderr: cf zones list  Lists, searches, sorts, and filters your zones. Listing zones across more than 500 accounts is currently not allowed.  Global flags   -q, --quiet       Suppress non-essential output    
+### dns records list --dry-run  (exit 1)
+  stdout:  
+  stderr: cf dns records list  List, search, sort, and filter a zones' DNS records.  Global flags   -q, --quiet       Suppress non-essential output     [boolean] [default: false]   -z, --zone        Zone ID or 
+### dns records create --dry-run  (exit 1)
+  stdout:  
+  stderr: cf dns records create  Create a new DNS record for a zone. Notes: - A/AAAA records cannot exist on the same name as CNAME records. - NS records cannot exist on the same name as any other record type. 
+### cf auth whoami (stored profile?)  (exit 0)
+  stdout: {   "authenticated": true,   "authSource": "CLOUDFLARE_API_TOKEN environment variable",   "tokenValid": true,   "accounts": [] } 
+  stderr: 
+  call: GET /client/v4/accounts?page=1 | auth= Bearer dummy-not-a-s | body= 
+  call: GET /client/v4/memberships?page=1 | auth= Bearer dummy-not-a-s | body= 
+### dns records list --dry-run  (exit 0)
+  stdout: {   "command": "cf dns records list",   "method": "GET",   "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records",   "pathParams": {     "zone-id": "023e105f4ecef8ad9ca31a8372d0c353"   },   "query": {},   "bodyKind": "none" } 
+  stderr: 
+### dns records create --dry-run  (exit 1)
+  stdout:  
+  stderr: cf dns records create  Create a new DNS record for a zone. Notes: - A/AAAA records cannot exist on the same name as CNAME records. - NS records cannot exist on the same name as any other record type. 
+### dns records create (to mock)  (exit 1)
+  stdout:  
+  stderr: cf dns records create  Create a new DNS record for a zone. Notes: - A/AAAA records cannot exist on the same name as CNAME records. - NS records cannot exist on the same name as any other record type. 
+### dns records delete no --force (CI=1)  (exit 1)
+  stdout:  
+  stderr: ? This permanently deletes the resource. Continue?   (non-interactive; pass --force to confirm) Aborted. 
+### accounts tokens list --dry-run  (exit 0)
+  stdout: {   "command": "cf accounts tokens list",   "method": "GET",   "url": "https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/tokens",   "pathParams": {},   "query": {},   "bodyKind": "none" } 
+  stderr: 
+### cli search (offline)  (exit 0)
+  stdout: [   {     "command": "cf dns records create",     "summary": "Create DNS Record"   },   {     "command": "cf dns records edit",     "summary": "Update DNS Record"   },   {     "command": "cf dns records update",     "summary": "Overwrite DNS Record"   },   {     "command": "cf dns records delete",  
+  stderr: 
+### dns records create --body --dry-run  (exit 0)
+  stdout: {   "command": "cf dns records create",   "method": "POST",   "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records",   "pathParams": {     "zone-id": "023e105f4ecef8ad9ca31a8372d0c353"   },   "query": {},   "bodyKind": "json",   "body": {     "type": "A",  
+  stderr: 
+### dns records create --body (to mock)  (exit 0)
+  stdout: [] 
+  stderr: 
+  call: POST /client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records | auth= Bearer dummy-not-a-s | body= {"type":"A","name":"x","content":"1.2.3.4","ttl":1}
+### accounts tokens create --dry-run  (exit 0)
+  stdout: {   "command": "cf accounts tokens create",   "method": "POST",   "url": "https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/tokens",   "pathParams": {},   "bodyKind": "json",   "body": {     "name": "t",     "policies": []   } } 
+  stderr: 
