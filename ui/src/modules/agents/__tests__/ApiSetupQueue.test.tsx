@@ -1,14 +1,12 @@
 /**
- * ApiSetupQueue — finishing the batch the Add-APIs tray handed over. The state
- * machine has its own unit specs (`setupQueue.test.ts`); these pin what needs the
- * bind endpoint and the credential wizard: nothing binds until the operator
- * confirms (even a lone matching credential), one failed POST not taking the
- * others, and a mid-way dismissal handing the remainder back.
+ * ApiSetupQueue — one pane per API (① Credential, ② Access, footer "Add <API>").
+ * Pins what needs the bind endpoint and the inline form: nothing binds until the
+ * footer adds, one failed POST doesn't take the others, a dismissal hands the rest back.
  */
 import { useState } from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
-import { page, userEvent as browserUser } from 'vitest/browser';
+import { page } from 'vitest/browser';
 import {
 	renderWithProviders,
 	screen,
@@ -126,15 +124,59 @@ function rowFor(label: string): HTMLElement {
 	return row;
 }
 
-/** On the access step: pick a preset (Read-only unless named) and add the API. */
+function credentialSection(): HTMLElement {
+	return screen.getByTestId('queue-credential-section');
+}
+
+function accessSection(): HTMLElement {
+	return screen.getByTestId('queue-access-step');
+}
+
+function addButton(): HTMLElement {
+	return screen.getByTestId('queue-add');
+}
+
+/** A blocked "Add" stays focusable: `aria-disabled` plus a described reason. */
+function expectAddBlocked(reason?: RegExp): void {
+	expect(addButton()).toHaveAttribute('aria-disabled', 'true');
+	if (reason) expect(addButton()).toHaveAccessibleDescription(reason);
+}
+
+function expectAddReady(): void {
+	expect(addButton()).not.toHaveAttribute('aria-disabled');
+}
+
+/** Warning ochre tints the glyph only: ochre text on an ochre fill fails axe contrast. */
+function expectCautionTone(row: HTMLElement): void {
+	expect(row.querySelector('.text-warning')).not.toBeNull();
+	expect(row.className).not.toContain('text-warning');
+}
+
+async function accessReady(): Promise<HTMLElement> {
+	await waitFor(() => expect(accessSection()).toHaveAttribute('data-ready', 'true'));
+	return accessSection();
+}
+
 async function addWithAccess(
 	user: ReturnType<typeof userEvent.setup>,
-	label: string,
-	preset: RegExp = /Read-only/,
+	preset: RegExp = /^Read only$/,
 ): Promise<void> {
-	const step = await screen.findByTestId('queue-access-step');
+	const step = await accessReady();
 	await user.click(within(step).getByRole('radio', { name: preset }));
-	await user.click(within(step).getByRole('button', { name: `Add ${label}` }));
+	await waitFor(() => expectAddReady());
+	await user.click(addButton());
+}
+
+async function writeRule(
+	user: ReturnType<typeof userEvent.setup>,
+	step: HTMLElement,
+	method: string,
+): Promise<void> {
+	const editor = within(step).getByTestId('queue-access-custom-editor');
+	// With no rules yet, the editor opens straight onto the new-rule form.
+	await waitFor(() => expect(within(editor).getByRole('button', { name: method })).toBeVisible());
+	await user.click(within(editor).getByRole('button', { name: method }));
+	await user.click(within(editor).getByRole('button', { name: 'Add' }));
 }
 
 /** Records every rules PUT while still letting the store handler answer. */
@@ -169,7 +211,25 @@ function watchBinds(): { calls: { agentId: string; body: unknown }[] } {
 	return { calls };
 }
 
-describe('ApiSetupQueue — finishing a batch one API at a time', () => {
+/** An API whose spec declares one bearer scheme, so the inline form seeds it. */
+const BEARER_API = makeMockApi({
+	vendor: 'acme.com',
+	name: 'main',
+	displayName: 'acme',
+	securitySchemes: ['bearer'],
+	spec: {
+		openapi: '3.0.0',
+		info: { title: 'Acme', version: '1.0.0' },
+		components: { securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer' } } },
+	},
+});
+
+async function tokenField(): Promise<HTMLInputElement> {
+	const form = await screen.findByTestId('queue-credential-form');
+	return (await within(form).findByLabelText(/^Token/)) as HTMLInputElement;
+}
+
+describe('ApiSetupQueue — one pane per API: ① Credential, then ② Access', () => {
 	beforeEach(async () => {
 		await page.viewport(1280, 900);
 		setToken('test-token');
@@ -177,58 +237,53 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 		resetCredentialsStore([makeCredential()]);
 		resetApisStore([
 			makeMockApi({ vendor: 'stripe.com', name: 'main', displayName: 'stripe' }),
+			BEARER_API,
 		]);
 	});
 
-	it('never binds a lone matching credential on its own — it is preselected, not chosen', async () => {
+	it('never binds a lone matching credential on its own — it is preselected, and the footer adds', async () => {
 		const { calls } = watchBinds();
+		const rules = watchRules();
 		const user = userEvent.setup();
 		renderWithProviders(<QueueHarness items={[coveredItem('stripe.com', 'cred_stripe')]} />);
 
 		// The pane stops on it: a match is API identity, not account, so the
 		// operator confirms it (or picks a new one) before anything binds.
-		const options = await screen.findByRole('group', {
-			name: 'You have 1 credential for stripe. Should Support bot use it, or a new one?',
-		});
+		const options = await within(
+			await screen.findByTestId('queue-credential-section'),
+		).findByRole('group', { name: 'Use your credential for stripe, or add a new one' });
 		expect(within(options).getAllByRole('radio')).toHaveLength(2);
 		expect(within(options).getByRole('radio', { name: /stripe\.com key/ })).toBeChecked();
 		expect(
 			within(options).getByRole('radio', { name: /Add a new credential/ }),
 		).not.toBeChecked();
-		expect(screen.queryByTestId('queue-done-pane')).not.toBeInTheDocument();
-		expect(rowFor('stripe')).toHaveAttribute('data-status', 'active');
+		expect(rowFor('stripe')).toHaveAttribute('data-selected', 'true');
+		expect(rowFor('stripe')).toHaveTextContent('In progress');
+
+		const step = await accessReady();
+		const group = within(step).getByRole('radiogroup', { name: 'What can Support bot call?' });
+		expect(within(group).getByRole('radio', { name: /^Read only$/ })).toBeChecked();
+		expect(addButton()).toHaveTextContent('Add stripe');
 		expect(calls).toHaveLength(0);
 
-		const rules = watchRules();
-		await user.click(screen.getByRole('button', { name: 'Use this credential' }));
-		// Choosing the credential binds nothing yet: its access comes first.
-		expect(await screen.findByTestId('queue-access-step')).toBeInTheDocument();
-		expect(calls).toHaveLength(0);
-		await addWithAccess(user, 'stripe');
-
+		await user.click(addButton());
 		await waitFor(() => expect(calls).toHaveLength(1));
 		expect(calls[0].agentId).toBe(AGENT_ID);
 		expect(calls[0].body).toEqual({ credential_id: 'cred_stripe' });
-		// The binding gets the chosen rules, and the footer says what an API set
-		// up later is left with.
 		await waitFor(() => expect(rules.calls).toHaveLength(1));
 		expect(rules.calls[0]).toMatchObject({
 			agentId: AGENT_ID,
 			credentialId: 'cred_stripe',
 			body: [{ effect: 'allow', methods: ['GET'] }],
 		});
-		expect(await screen.findByTestId('queue-done-pane')).toBeInTheDocument();
-		expect(screen.getByText('1 API added')).toBeInTheDocument();
+		expect(await screen.findByTestId('queue-done-pane')).toHaveTextContent('1 API added');
 		expect(screen.getByText('Each API was added with its access rules.')).toBeInTheDocument();
-		expect(
-			screen.getByText(/Each API gets its access rules as it is added/),
-		).toBeInTheDocument();
-		// The finished row keeps the record of which credential it went through.
-		expect(rowFor('stripe')).toHaveTextContent('via stripe.com key');
-		expect(rowFor('stripe')).toHaveTextContent('Read-only');
+		expect(rowFor('stripe')).toHaveAttribute('data-status', 'added');
+		expect(screen.getByText('1 of 1 added')).toBeInTheDocument();
 	});
 
-	it('offers a way past a matched credential that is the wrong account', async () => {
+	it('several covering credentials: nothing is guessed, ② waits, and the pick is what binds', async () => {
+		const { calls } = watchBinds();
 		const user = userEvent.setup();
 		const production = makeCredential({
 			credential_id: 'cred_prod',
@@ -241,51 +296,226 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 			/>,
 		);
 
-		// A credential matches on API identity, not on account, so "none of these"
-		// has to be answerable without dropping the API — there is no third way.
 		const options = await screen.findByRole('group', {
-			name: 'You have 2 credentials for stripe. Which should Support bot use?',
+			name: 'Pick one of your 2 credentials for stripe',
 		});
+		// "None of these" is answerable without dropping the API.
 		expect(within(options).getAllByRole('radio')).toHaveLength(3);
-		await user.click(within(options).getByRole('radio', { name: /Add a new credential/ }));
-		await user.click(screen.getByRole('button', { name: 'Add credential' }));
-
+		for (const radio of within(options).getAllByRole('radio')) expect(radio).not.toBeChecked();
+		// Two accounts of one vendor are not interchangeable: ② and the footer wait.
+		expect(accessSection()).not.toHaveAttribute('data-ready');
 		expect(
-			await screen.findByText('Fill in the credential details for stripe'),
+			within(accessSection()).getByText('Available once a credential is chosen.'),
 		).toBeInTheDocument();
+		expectAddBlocked(/Choose a credential first/);
+
+		await user.click(within(options).getByRole('radio', { name: /Stripe — Sandbox/ }));
+		expect(
+			await within(credentialSection()).findByTestId('queue-chosen-credential'),
+		).toHaveTextContent('Stripe — Sandbox');
+		await addWithAccess(user);
+		await waitFor(() => expect(calls).toHaveLength(1));
+		expect(calls[0].body).toEqual({ credential_id: 'cred_sandbox' });
+		await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
 	});
 
-	it('a lone matching credential can be swapped for a new one, and back', async () => {
+	it('"Add a new credential" folds the existing list to one line, the form right under it', async () => {
+		const user = userEvent.setup();
+		const production = makeCredential({
+			credential_id: 'cred_prod',
+			name: 'Stripe — Production',
+		});
+		const sandbox = makeCredential({ credential_id: 'cred_sandbox', name: 'Stripe — Sandbox' });
+		renderWithProviders(
+			<QueueHarness
+				items={[makeItem('stripe.com', 'choose', { covering: [production, sandbox] })]}
+			/>,
+		);
+		const options = await screen.findByRole('group', {
+			name: /Pick one of your 2 credentials/,
+		});
+		await user.click(within(options).getByRole('radio', { name: /Add a new credential/ }));
+
+		const folded = await within(options).findByTestId('queue-existing-collapsed');
+		expect(folded).toHaveTextContent('2 existing credentials·Show');
+		await waitFor(() =>
+			expect(within(options).queryByRole('radio', { name: /Stripe — Sandbox/ })).toBeNull(),
+		);
+		expect(await screen.findByTestId('queue-credential-form')).toBeVisible();
+		expect(accessSection()).not.toHaveAttribute('data-ready');
+		expectAddBlocked(/Save the credential first/);
+
+		await user.click(folded);
+		expect(
+			await within(options).findByRole('radio', { name: /Stripe — Sandbox/ }),
+		).toBeInTheDocument();
+		await waitFor(() => expect(screen.getByTestId('queue-credential-form')).not.toBeVisible());
+		expect(within(options).queryByTestId('queue-existing-collapsed')).toBeNull();
+	});
+
+	it('a lone credential folds too, and switching back and forth keeps what was typed', async () => {
+		resetCredentialsStore([
+			makeCredential({ api: { vendor: 'acme.com', name: 'main', version: '1.0.0' } }),
+		]);
 		const { calls } = watchBinds();
 		const user = userEvent.setup();
 		renderWithProviders(
 			<QueueHarness
-				items={[makeItem('stripe.com', 'choose', { covering: [makeCredential()] })]}
+				items={[
+					makeItem('acme.com', 'choose', {
+						covering: [
+							makeCredential({
+								credential_id: 'cred_acme',
+								name: 'Acme key',
+								api: { vendor: 'acme.com', name: 'main', version: '1.0.0' },
+							}),
+						],
+					}),
+				]}
 			/>,
 		);
-
-		const options = await screen.findByRole('group', {
-			name: 'You have 1 credential for stripe. Should Support bot use it, or a new one?',
-		});
+		const options = await screen.findByRole('group', { name: /Use your credential for acme/ });
 		await user.click(within(options).getByRole('radio', { name: /Add a new credential/ }));
-		expect(screen.getByRole('button', { name: 'Add credential' })).toBeEnabled();
+		expect(await within(options).findByTestId('queue-existing-collapsed')).toHaveTextContent(
+			'1 existing credential·Show',
+		);
+		await user.type(await tokenField(), 'tok_draft');
+
+		await user.click(within(options).getByTestId('queue-existing-collapsed'));
+		await user.click(await within(options).findByRole('radio', { name: /Acme key/ }));
 		expect(
-			screen.queryByRole('button', { name: 'Use this credential' }),
-		).not.toBeInTheDocument();
+			await within(credentialSection()).findByTestId('queue-chosen-credential'),
+		).toHaveTextContent('Acme key');
+		await accessReady();
 
-		// Changing your mind here must not cost a trip back to the tray.
-		await user.click(within(options).getByRole('radio', { name: /Stripe key/ }));
-		expect(screen.queryByRole('button', { name: 'Add credential' })).not.toBeInTheDocument();
-		await user.click(screen.getByRole('button', { name: 'Use this credential' }));
-		await addWithAccess(user, 'stripe');
-
-		await waitFor(() => expect(calls).toHaveLength(1));
-		expect(calls[0].body).toEqual({ credential_id: 'cred_stripe' });
-		await waitFor(() => expect(rowFor('stripe')).toHaveTextContent('via Stripe key'));
+		await user.click(within(credentialSection()).getByRole('button', { name: 'Change' }));
+		await user.click(
+			await within(credentialSection()).findByRole('radio', { name: /Add a new credential/ }),
+		);
+		expect(await tokenField()).toHaveValue('tok_draft');
+		expect(calls).toHaveLength(0);
 	});
 
-	it('a credential awaiting sign-in says so, and a new one stays one card away', async () => {
+	it('with no credential of yours there is nothing to fold: the form is open from the start', async () => {
+		renderWithProviders(<QueueHarness items={[makeItem('acme.com', 'form')]} />);
+
+		const form = await screen.findByTestId('queue-credential-form');
+		expect(form).toBeVisible();
+		expect(
+			within(credentialSection()).queryByRole('radio', { name: /Add a new credential/ }),
+		).toBeNull();
+		expect(screen.queryByTestId('queue-existing-collapsed')).toBeNull();
+		// The real create form, inline: the API is the queue's premise, not its question.
+		expect(within(form).getByTestId('credential-inline-form')).toBeInTheDocument();
+		expect(within(form).queryByRole('button', { name: 'Back' })).toBeNull();
+		expect(within(form).getByRole('button', { name: /Save and continue/ })).toBeVisible();
+	});
+
+	it('creates a credential inline: Save folds ① to its line and opens ②, then the footer adds', async () => {
+		const creates: unknown[] = [];
+		worker.use(
+			http.post('/credentials', async ({ request }) => {
+				creates.push(await request.clone().json());
+				return undefined;
+			}),
+		);
+		const { calls } = watchBinds();
+		const rules = watchRules();
 		const user = userEvent.setup();
+		renderWithProviders(<QueueHarness items={[makeItem('acme.com', 'form')]} />);
+
+		const form = await screen.findByTestId('queue-credential-form');
+		// Seeded from the spec: the name and the one auth method it declares.
+		const name = (await within(form).findByLabelText(/^Name/)) as HTMLInputElement;
+		await waitFor(() => expect(name.value).toBe('acme'));
+		await user.type(await tokenField(), 'tok_live_123');
+		expectAddBlocked(/Save the credential first/);
+		await user.click(within(form).getByRole('button', { name: /Save and continue/ }));
+
+		await waitFor(() => expect(creates).toHaveLength(1));
+		const chosen = await within(credentialSection()).findByTestId('queue-chosen-credential');
+		expect(chosen).toHaveTextContent('acme');
+		expect(chosen).toHaveTextContent('created just now');
+		await accessReady();
+		// Saved is not bound: the bind waits for its access.
+		expect(calls).toHaveLength(0);
+
+		await addWithAccess(user, /Full access/);
+		await waitFor(() => expect(rowFor('acme')).toHaveAttribute('data-status', 'added'));
+		expect(calls).toHaveLength(1);
+		expect(rules.calls.map((c) => c.body)).toEqual([[{ effect: 'allow', path: '.*' }]]);
+	});
+
+	it('Change reopens the chooser with the new credential in it; Keep folds back, access kept', async () => {
+		const { calls } = watchBinds();
+		const user = userEvent.setup();
+		renderWithProviders(
+			<QueueHarness
+				items={[
+					makeItem('acme.com', 'choose', {
+						covering: [
+							makeCredential({
+								credential_id: 'cred_acme_old',
+								name: 'Acme old key',
+								api: { vendor: 'acme.com', name: 'main', version: '1.0.0' },
+							}),
+						],
+					}),
+				]}
+			/>,
+		);
+		const options = await screen.findByRole('group', { name: /Use your credential for acme/ });
+		await user.click(within(options).getByRole('radio', { name: /Add a new credential/ }));
+		await user.clear(
+			await within(await screen.findByTestId('queue-credential-form')).findByLabelText(
+				/^Name/,
+			),
+		);
+		await user.type(
+			within(screen.getByTestId('queue-credential-form')).getByLabelText(/^Name/),
+			'Acme new',
+		);
+		await user.type(await tokenField(), 'tok_new');
+		await user.click(screen.getByRole('button', { name: /Save and continue/ }));
+
+		const step = await accessReady();
+		await user.click(within(step).getByRole('radio', { name: /Full access/ }));
+		await user.click(
+			within(
+				await within(credentialSection()).findByTestId('queue-chosen-credential'),
+			).getByRole('button', { name: 'Change' }),
+		);
+
+		const reopened = await within(credentialSection()).findByRole('group');
+		await waitFor(() =>
+			expect(within(reopened).getByRole('radio', { name: /Acme new/ })).toBeChecked(),
+		);
+		expect(within(reopened).getByRole('radio', { name: /Acme old key/ })).toBeInTheDocument();
+		expect(
+			within(reopened).getByRole('radio', { name: /Add a new credential/ }),
+		).toBeInTheDocument();
+		expectAddReady();
+
+		await user.click(within(credentialSection()).getByTestId('queue-keep-credential'));
+		expect(
+			await within(credentialSection()).findByTestId('queue-chosen-credential'),
+		).toHaveTextContent('Acme new');
+		expect(within(accessSection()).getByRole('radio', { name: /Full access/ })).toBeChecked();
+
+		await user.click(within(credentialSection()).getByRole('button', { name: 'Change' }));
+		await user.click(
+			await within(credentialSection()).findByRole('radio', { name: /Acme old key/ }),
+		);
+		expect(
+			await within(credentialSection()).findByTestId('queue-chosen-credential'),
+		).toHaveTextContent('Acme old key');
+		expect(within(accessSection()).getByRole('radio', { name: /Full access/ })).toBeChecked();
+		await user.click(addButton());
+		await waitFor(() => expect(calls).toHaveLength(1));
+		expect(calls[0].body).toEqual({ credential_id: 'cred_acme_old' });
+	});
+
+	it('a credential awaiting sign-in says so, and the footer adds and signs in', async () => {
 		const unconnected = makeCredential({
 			credential_id: 'cred_oauth',
 			name: 'Stripe OAuth',
@@ -298,149 +528,129 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 			/>,
 		);
 
-		const options = await screen.findByRole('group', { name: /You have 1 credential/ });
-		const existing = within(options).getByRole('radio', { name: /Stripe OAuth/ });
-		expect(existing).toBeChecked();
+		const options = await screen.findByRole('group', {
+			name: /Use your credential for stripe/,
+		});
+		expect(within(options).getByRole('radio', { name: /Stripe OAuth/ })).toBeChecked();
 		expect(within(options).getByText('Sign-in needed')).toBeVisible();
 		expect(
-			screen.getByText(/is ready to use — it just needs you to finish signing in/),
+			screen.getByText(/just needs you to finish signing in, once its access is set/),
 		).toBeVisible();
 		// The sign-in runs once the binding exists — after its access is set.
-		expect(screen.getByRole('button', { name: 'Use this credential' })).toBeEnabled();
-
-		await user.click(within(options).getByRole('radio', { name: /Add a new credential/ }));
-		expect(
-			screen.queryByRole('button', { name: 'Use this credential' }),
-		).not.toBeInTheDocument();
-		expect(screen.queryByText(/just needs you to finish signing in/)).not.toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'Add credential' })).toBeEnabled();
+		await accessReady();
+		expect(addButton()).toHaveTextContent('Add stripe and sign in');
 	});
 
-	it('an API with no credential of yours shows no options, only the form', async () => {
-		renderWithProviders(<QueueHarness items={[makeItem('slack.com', 'form')]} />);
-
-		expect(await screen.findByRole('button', { name: 'Add credential' })).toBeEnabled();
-		expect(screen.queryByRole('radio')).not.toBeInTheDocument();
-		expect(
-			screen.getByText(
-				'This API needs a new credential. Nothing is stored until you save it.',
-			),
-		).toBeVisible();
-	});
-
-	it('names a workspace pick by vendor/name', async () => {
-		renderWithProviders(<QueueHarness items={[makeItem('slack.com', 'form')]} />);
-		expect(await screen.findByTestId('queue-active-identity')).toHaveTextContent(
-			/^slack\.com\/main$/,
-		);
-	});
-
-	it('names a catalog pick by its api_id, not the vendor twice', async () => {
-		const catalogItem = (apiId: string, vendor: string) =>
-			makeItem(vendor, 'form', {
-				key: apiId,
-				api: {
-					source: 'catalog',
-					vendor,
-					name: apiId,
-					version: '1.0.0',
-					apiId,
-					label: 'GitHub',
-				},
-				importsApi: true,
-			});
-		const { unmount } = renderWithProviders(
-			<QueueHarness items={[catalogItem('github.com/api.github.com', 'github.com')]} />,
+	it('names a workspace pick by vendor and version', async () => {
+		renderWithProviders(
+			<QueueHarness
+				items={[makeItem('stripe.com', 'choose', { covering: [makeCredential()] })]}
+			/>,
 		);
 		expect(await screen.findByTestId('queue-active-identity')).toHaveTextContent(
-			/^github\.com\/api\.github\.com$/,
-		);
-		unmount();
-
-		// An api_id that is the vendor alone.
-		renderWithProviders(<QueueHarness items={[catalogItem('stripe.com', 'stripe.com')]} />);
-		expect(await screen.findByTestId('queue-active-identity')).toHaveTextContent(
-			/^stripe\.com$/,
+			/^stripe\.com · v1\.0\.0$/,
 		);
 	});
 
-	it('warns before a second credential is added to an API the agent already reaches', async () => {
+	it('names a catalog pick by its vendor, no version', async () => {
 		renderWithProviders(
 			<QueueHarness
 				items={[
-					makeItem('slack.com', 'form', {
+					makeItem('github.com', 'form', {
+						key: 'github.com/api.github.com',
+						api: {
+							source: 'catalog',
+							vendor: 'github.com',
+							name: 'github.com/api.github.com',
+							version: '1.0.0',
+							apiId: 'github.com/api.github.com',
+							label: 'GitHub',
+						},
+						importsApi: true,
+					}),
+				]}
+			/>,
+		);
+		expect(await screen.findByTestId('queue-active-identity')).toHaveTextContent(
+			/^github\.com$/,
+		);
+	});
+
+	it('warns, a Details away, before a second credential is added to an API the agent reaches', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(
+			<QueueHarness
+				items={[
+					makeItem('acme.com', 'form', {
 						existing: [
-							{ bindingId: 'bind_1', credentialId: 'cred_slack', name: 'Slack bot' },
+							{ bindingId: 'bind_1', credentialId: 'cred_slack', name: 'Acme bot' },
 						],
 					}),
 				]}
 			/>,
 		);
 
-		const pane = await screen.findByTestId('queue-active-pane');
-		expect(within(pane).getByTestId('queue-existing-accounts')).toHaveTextContent(
-			'Added via Slack bot. Pick another credential to add it to Support bot.',
+		const accounts = await screen.findByTestId('queue-existing-accounts');
+		expect(accounts).toHaveTextContent('Needs a new key · Added via Acme bot already');
+		await user.click(within(accounts).getByRole('button', { name: /Details/ }));
+		await waitFor(() =>
+			expect(screen.getByTestId('queue-ambiguity-warning')).toHaveTextContent(
+				'This adds a second credential; Support bot keeps its current one. Once added, calls to acme must name a credential with the Jentic-Credential-Id header, unless one is scoped more narrowly. Nothing is stored until you save it.',
+			),
 		);
-		expect(within(pane).getByTestId('queue-ambiguity-warning')).toHaveTextContent(
-			'Once added, calls to slack must name a credential with the Jentic-Credential-Id header, unless one is scoped more narrowly.',
-		);
-		expect(pane.textContent).not.toMatch(/access to both/);
 	});
-
-	it('walks the batch in pick order, stopping on every API', async () => {
+	it('the list rail: "N of M added", and any API opens in any order', async () => {
 		const { calls } = watchBinds();
+		const user = userEvent.setup();
 		renderWithProviders(
 			<QueueHarness
-				items={[makeItem('slack.com', 'form'), coveredItem('stripe.com', 'cred_stripe')]}
+				items={[makeItem('acme.com', 'form'), coveredItem('stripe.com', 'cred_stripe')]}
 			/>,
 		);
 
-		// No covered API is banked ahead of the rest: the first pick is on screen
-		// and nothing has been bound behind the operator's back.
-		expect(
-			await within(await screen.findByTestId('queue-active-pane')).findByText('slack'),
-		).toBeVisible();
-		expect(progressRows()[0].textContent).toMatch(/^slack/);
-		expect(rowFor('stripe')).toHaveAttribute('data-status', 'waiting');
-		expect(screen.getByText('0 of 2 done')).toBeInTheDocument();
-		expect(calls).toHaveLength(0);
+		// No API is banked ahead of the rest: the first pick is on screen.
+		expect(await screen.findByTestId('queue-active-identity')).toHaveTextContent(/^acme\.com/);
+		expect(screen.getByText('0 of 2 added')).toBeInTheDocument();
+		expect(rowFor('acme')).toHaveTextContent('In progress');
+		expect(rowFor('stripe')).toHaveTextContent('To do');
+
+		await user.click(within(rowFor('stripe')).getByRole('button'));
+		await waitFor(() =>
+			expect(screen.getByTestId('queue-active-identity')).toHaveTextContent(/^stripe\.com/),
+		);
+		expect(rowFor('stripe')).toHaveAttribute('data-selected', 'true');
+		expect(rowFor('stripe')).toHaveTextContent('In progress');
+		expect(rowFor('acme')).toHaveTextContent('To do');
+		await addWithAccess(user);
+		await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
+		expect(screen.getByText('1 of 2 added')).toBeInTheDocument();
+		expect(calls).toHaveLength(1);
+		await waitFor(() =>
+			expect(screen.getByTestId('queue-active-identity')).toHaveTextContent(/^acme\.com/),
+		);
 	});
 
-	it('dropping an item says the API is not added, with no promise of later', async () => {
+	it('Skip for now leaves an API out, and picking it again brings it back', async () => {
 		const { calls } = watchBinds();
 		const user = userEvent.setup();
-		renderWithProviders(<QueueHarness items={[makeItem('slack.com', 'form')]} />);
+		renderWithProviders(<QueueHarness items={[coveredItem('stripe.com', 'cred_stripe')]} />);
 
-		await user.click(await screen.findByRole('button', { name: 'Not this one' }));
-		const confirm = await screen.findByTestId('queue-drop-confirm');
-		// No deferred state exists, so the copy cannot imply one.
-		expect(confirm).toHaveTextContent("slack won't be added.");
-		expect(confirm.textContent).not.toMatch(/skip|later/i);
-
-		await user.click(screen.getByRole('button', { name: 'Drop slack' }));
-		await waitFor(() => expect(rowFor('slack')).toHaveAttribute('data-status', 'dropped'));
-		expect(rowFor('slack')).toHaveTextContent('Not added');
+		await user.click(await screen.findByTestId('queue-skip'));
+		await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'dropped'));
+		expect(rowFor('stripe')).toHaveTextContent('Skipped');
+		expect(screen.getByTestId('queue-done-pane')).toHaveTextContent('Nothing was added.');
 		expect(calls).toHaveLength(0);
-		expect(screen.getByText('Nothing was added.')).toBeInTheDocument();
-	});
 
-	it('keeps the item when the drop is declined', async () => {
-		const user = userEvent.setup();
-		renderWithProviders(<QueueHarness items={[makeItem('slack.com', 'form')]} />);
-
-		await user.click(await screen.findByRole('button', { name: 'Not this one' }));
-		await user.click(screen.getByRole('button', { name: 'Keep it' }));
-		await waitFor(() =>
-			expect(screen.queryByTestId('queue-drop-confirm')).not.toBeInTheDocument(),
-		);
-		expect(screen.getByRole('button', { name: 'Add credential' })).toBeEnabled();
+		await user.click(within(rowFor('stripe')).getByRole('button'));
+		await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'waiting'));
+		expect(await accessReady()).toBeInTheDocument();
+		expectAddReady();
 	});
 
 	it('a failed bind is terminal for that item only, and retryable in place', async () => {
 		let failing = true;
 		worker.use(
 			http.post('/agents/:id/credentials', async ({ request }) => {
-				// Clone: falling through leaves the body for the store handler.
 				const body = (await request.clone().json()) as { credential_id: string };
 				if (failing && body.credential_id === 'cred_stripe') {
 					return HttpResponse.json(
@@ -461,29 +671,22 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 			/>,
 		);
 
-		// The failure must not stall the rest of the batch.
-		await user.click(await screen.findByRole('button', { name: 'Use this credential' }));
-		await addWithAccess(user, 'stripe');
+		await addWithAccess(user);
 		await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'failed'));
-		await waitFor(() => expect(rowFor('slack')).toHaveAttribute('data-status', 'active'));
-		await user.click(screen.getByRole('button', { name: 'Use this credential' }));
-		await addWithAccess(user, 'slack');
+		expect(rowFor('stripe')).toHaveTextContent('Failed');
+		await waitFor(() =>
+			expect(screen.getByTestId('queue-active-identity')).toHaveTextContent(/^slack\.com/),
+		);
+		await addWithAccess(user);
 		await waitFor(() => expect(rowFor('slack')).toHaveAttribute('data-status', 'added'));
-		expect(screen.getByText('1 API added · 1 failed')).toBeInTheDocument();
 
 		failing = false;
-		await user.click(within(rowFor('stripe')).getByRole('button', { name: 'Try again' }));
-		// Back in its pane, still on the credential it was going to use — the
-		// bind is only retried once the operator confirms it again.
-		await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'active'));
-		expect(screen.getByRole('radio', { name: /stripe\.com key/ })).toBeChecked();
-		await user.click(screen.getByRole('button', { name: 'Use this credential' }));
-		// Its access choice survived the failure too.
-		const step = await screen.findByTestId('queue-access-step');
-		expect(within(step).getByRole('radio', { name: /Read-only/ })).toBeChecked();
-		await user.click(within(step).getByRole('button', { name: 'Add stripe' }));
+		await user.click(within(rowFor('stripe')).getByRole('button'));
+		await waitFor(() => expect(rowFor('stripe')).toHaveTextContent('In progress'));
+		expect(await screen.findByRole('radio', { name: /stripe\.com key/ })).toBeChecked();
+		await addWithAccess(user);
 		await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
-		expect(screen.getByText('2 APIs added')).toBeInTheDocument();
+		expect(await screen.findByTestId('queue-done-pane')).toHaveTextContent('2 APIs added');
 	});
 
 	it('closing mid-way keeps what landed and hands the rest back for re-entry', async () => {
@@ -493,237 +696,33 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 			<QueueHarness
 				items={[
 					coveredItem('stripe.com', 'cred_stripe'),
-					makeItem('slack.com', 'form'),
+					makeItem('acme.com', 'form'),
 					makeItem('notion.so', 'form'),
 				]}
 				onClosed={onClosed}
 			/>,
 		);
 
-		await user.click(await screen.findByRole('button', { name: 'Use this credential' }));
-		await addWithAccess(user, 'stripe');
+		await addWithAccess(user);
 		await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
-		// The cost of closing is stated before it is paid.
-		expect(
-			screen.getByText(
-				/Closing keeps the APIs already added; the remaining 2 wait here for next time\./,
-			),
-		).toBeInTheDocument();
-
-		await user.click(screen.getByRole('button', { name: 'Close for now' }));
+		await user.click(screen.getByRole('button', { name: 'Close' }));
 		expect(onClosed).toHaveBeenCalledTimes(1);
 		expect(onClosed.mock.calls[0][0].map((i: PreflightItem) => i.key)).toEqual([
-			'slack.com/main',
+			'acme.com/main',
 			'notion.so/main',
 		]);
 
 		// Re-entry resumes the remainder rather than replaying the whole batch.
 		await user.click(screen.getByRole('button', { name: 'Reopen' }));
 		await waitFor(() => expect(progressRows()).toHaveLength(2));
-		expect(screen.getByText('Set up 2 APIs')).toBeInTheDocument();
-	});
-
-	it('asks which credential to use when several cover the API, and binds the choice', async () => {
-		const { calls } = watchBinds();
-		const user = userEvent.setup();
-		const production = makeCredential({
-			credential_id: 'cred_prod',
-			name: 'Stripe — Production',
-		});
-		const sandbox = makeCredential({ credential_id: 'cred_sandbox', name: 'Stripe — Sandbox' });
-		renderWithProviders(
-			<QueueHarness
-				items={[makeItem('stripe.com', 'choose', { covering: [production, sandbox] })]}
-			/>,
-		);
-
-		const use = await screen.findByRole('button', { name: 'Use this credential' });
-		// Nothing is guessed for the operator: two accounts of one vendor are not
-		// interchangeable, so the commit stays disabled until one is named.
-		expect(use).toBeDisabled();
-
-		await user.click(screen.getByRole('radio', { name: /Stripe — Sandbox/ }));
-		await waitFor(() => expect(use).toBeEnabled());
-		await user.click(use);
-		await addWithAccess(user, 'stripe');
-
-		await waitFor(() => expect(calls).toHaveLength(1));
-		expect(calls[0].body).toEqual({ credential_id: 'cred_sandbox' });
-		await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
-	});
-
-	it('creates a credential for a form item without re-asking which API it is for', async () => {
-		resetApisStore([
-			makeMockApi({
-				vendor: 'acme.com',
-				name: 'main',
-				displayName: 'acme',
-				securitySchemes: ['apiKey'],
-				spec: {
-					openapi: '3.0.0',
-					info: { title: 'Acme', version: '1.0.0' },
-					components: {
-						securitySchemes: {
-							ApiKeyAuth: { type: 'apiKey', in: 'header', name: 'X-Acme-Key' },
-						},
-					},
-				},
-			}),
-		]);
-		const { calls } = watchBinds();
-		const user = userEvent.setup();
-		renderWithProviders(<QueueHarness items={[makeItem('acme.com', 'form')]} />);
-
-		await user.click(await screen.findByRole('button', { name: 'Add credential' }));
-
-		// The API is the queue's premise, not the wizard's question — no pick
-		// step, and no way back to one.
 		expect(
-			await screen.findByText('Fill in the credential details for acme'),
+			screen.getByRole('heading', { name: /Set up 2 APIs for Support bot/ }),
 		).toBeInTheDocument();
-		expect(screen.queryByRole('button', { name: 'Back' })).not.toBeInTheDocument();
-		expect(screen.queryByRole('button', { name: 'Change' })).not.toBeInTheDocument();
-		const nameInput = (await screen.findByPlaceholderText(
-			'Production API key',
-		)) as HTMLInputElement;
-		await waitFor(() => expect(nameInput.value).toBe('acme'));
-
-		// The spec-seeded header name proves the schemes landed — the credential
-		// fields are held behind a skeleton until then.
-		const fieldName = (await screen.findByPlaceholderText('X-Api-Key')) as HTMLInputElement;
-		await waitFor(() => expect(fieldName.value).toBe('X-Acme-Key'));
-
-		const secret = screen
-			.getAllByDisplayValue('')
-			.find((el) => (el as HTMLInputElement).type === 'password') as HTMLInputElement;
-		await user.type(secret, 'sk_acme_123');
-		await user.click(screen.getByRole('button', { name: 'Create credential' }));
-
-		// Created, then its access, then bound — without naming the API twice.
-		await addWithAccess(user, 'acme');
-		await waitFor(() => expect(calls).toHaveLength(1));
-		await waitFor(() => expect(rowFor('acme')).toHaveAttribute('data-status', 'added'));
-		expect(screen.getByText('1 API added')).toBeInTheDocument();
 	});
-
-	it('adds a catalog pick signed in through a shared app without importing or binding it again', async () => {
-		// The server imports the app's catalog API at connect and binds the new
-		// credential to the agent, so the queue only marks the row added.
-		const posts: string[] = [];
-		worker.use(
-			http.get('/vendors', () =>
-				HttpResponse.json({
-					data: [
-						{
-							entry_id: 'oar_gmail',
-							registration_id: 'oar_gmail',
-							key: 'googleapis.com',
-							vendor: 'googleapis.com',
-							display_name: 'Acme Gmail',
-							name: 'Acme Gmail',
-							source: 'db',
-							flow_kinds: ['device_authorization'],
-							catalog_api_id: 'googleapis.com/gmail',
-						},
-					],
-				}),
-			),
-			http.get('/vendors/:key/auth-capabilities', () =>
-				HttpResponse.json({
-					vendor: 'googleapis.com',
-					display_name: 'Acme Gmail',
-					flows: [{ kind: 'device_authorization' }],
-					scopes: [],
-				}),
-			),
-			http.post('/integrations:connect', () =>
-				HttpResponse.json(
-					{
-						session_id: 'sess_q',
-						approval_url:
-							'https://example.com/app/agents?approve=sess_q&poll_token=tok',
-						poll_token: 'tok',
-						resolved_flow: 'device_authorization',
-					},
-					{ status: 201 },
-				),
-			),
-			http.get('/connect-sessions/sess_q', () =>
-				HttpResponse.json({
-					session_id: 'sess_q',
-					state: 'created',
-					vendor_key: 'googleapis.com',
-					vendor_display_name: 'Acme Gmail',
-					resolved_flow: 'device_authorization',
-					reason: null,
-					requested_by_actor_id: 'usr_alice',
-					scopes: [],
-					requested_permission_rules: [],
-					api_reference: null,
-				}),
-			),
-			http.post('/connect-sessions/sess_q\\:confirm', () =>
-				HttpResponse.json({
-					kind: 'device_authorization',
-					user_code: 'ABCD-1234',
-					verification_uri: 'https://google.com/device',
-					verification_uri_complete: null,
-					poll_interval_seconds: 5,
-				}),
-			),
-			http.get('/connect-sessions/:id/status', () =>
-				HttpResponse.json({
-					status: 'connected',
-					connected_as: 'me@acme.com',
-					credential_id: 'cred_gmail',
-					bound_scopes: null,
-					error_code: null,
-				}),
-			),
-			http.post(/\/catalog\/.*import/, ({ request }) => {
-				posts.push(request.url);
-				return undefined;
-			}),
-			http.post('/agents/:id/credentials', ({ request }) => {
-				posts.push(request.url);
-				return undefined;
-			}),
-		);
-		const gmail = makeItem('googleapis.com', 'form', {
-			key: 'googleapis.com/gmail',
-			importsApi: true,
-			api: {
-				source: 'catalog',
-				vendor: 'googleapis.com',
-				name: 'gmail',
-				version: '',
-				apiId: 'googleapis.com/gmail',
-				label: 'Gmail',
-			},
-		});
-		const user = userEvent.setup();
-		renderWithProviders(<QueueHarness items={[gmail]} />);
-
-		await user.click(await screen.findByRole('button', { name: 'Add credential' }));
-		await user.click(await screen.findByRole('button', { name: /Acme Gmail/ }));
-		// Re-query on every check: each step renders its own Continue, and the
-		// configure step's stays busy while ``:connect`` is in flight.
-		const continueOn = async (name: RegExp): Promise<void> => {
-			await waitFor(() => expect(screen.getByRole('button', { name })).not.toBeDisabled());
-			await user.click(screen.getByRole('button', { name }));
-		};
-		await continueOn(/^continue$/i);
-		expect(await screen.findByText(/permission rules/i)).toBeInTheDocument();
-		await continueOn(/(skip.*continue|^continue$)/i);
-
-		await waitFor(() => expect(rowFor('Gmail')).toHaveAttribute('data-status', 'added'));
-		expect(posts).toEqual([]);
-	});
-
 	it('saves a credential for an umbrella catalog pick while its import is still running', async () => {
 		// The live GitHub pick: name is the whole `api_id`, which the backend
-		// rejects in `api.name` (`/` reads as a spec path). The import answers 202
-		// and the API only lands later, so the credential must not depend on it.
+		// rejects in `api.name`. The import answers 202 and lands later, so the
+		// credential must not depend on it.
 		const SPEC_URL =
 			'https://raw.githubusercontent.com/jentic/jentic-public-apis/refs/heads/main/apis/openapi/github.com/api.github.com/1.1.4/openapi.json';
 		const imports: string[] = [];
@@ -777,16 +776,16 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 			/>,
 		);
 
-		await user.click(await screen.findByRole('button', { name: 'Add credential' }));
-		expect(await screen.findByText(/imports on save/)).toBeInTheDocument();
-		const token = (await screen.findByPlaceholderText('sk_live_…')) as HTMLInputElement;
-		await user.type(token, 'ghp_live_token');
-		await user.click(screen.getByRole('button', { name: 'Create credential' }));
-
+		const form = await screen.findByTestId('queue-credential-form');
+		await user.click(within(form).getAllByRole('button', { name: /Details/ })[0]);
+		expect(
+			await within(form).findByText('The API is imported into your workspace on save.'),
+		).toBeInTheDocument();
+		await user.type(await tokenField(), 'ghp_live_token');
+		await user.click(screen.getByRole('button', { name: /Save and continue/ }));
 		await waitFor(() => expect(creates).toHaveLength(1));
-		await addWithAccess(user, 'GitHub');
+		await addWithAccess(user);
 		expect(imports).toEqual(['/catalog/github.com/api.github.com:import']);
-		// The identity the import registers (slug), with the verbatim id as provenance.
 		expect(creates[0]!.api).toMatchObject({
 			vendor: 'github.com',
 			name: 'api-github-com',
@@ -797,42 +796,16 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 		expect(screen.queryByRole('alert')).toBeNull();
 	});
 
-	it('dismissing the stacked credential drawer keeps the queue and its batch', async () => {
-		const closed = vi.fn();
-		const user = userEvent.setup();
-		renderWithProviders(
-			<QueueHarness items={[makeItem('slack.com', 'form')]} onClosed={closed} />,
-		);
-
-		await user.click(await screen.findByRole('button', { name: 'Add credential' }));
-		// The wizard is a drawer stacked over the queue, so both sheets see the
-		// same Escape.
-		await waitFor(() => expect(screen.getAllByTestId('sheet-primitive')).toHaveLength(2));
-
-		await browserUser.keyboard('{Escape}');
-
-		// Only the wizard goes. Closing the queue would hand the batch back to
-		// the host and drop the operator out of a flow they are mid-way through.
-		await waitFor(() => expect(screen.getAllByTestId('sheet-primitive')).toHaveLength(1));
-		expect(closed).not.toHaveBeenCalled();
-		expect(screen.getByRole('button', { name: 'Add credential' })).toBeVisible();
-	});
-
-	it('passes an accessibility audit with a pane, a progress list and a drop confirm', async () => {
+	it('passes an accessibility audit with the list, the chooser folded and the form open', async () => {
 		const user = userEvent.setup();
 		renderWithProviders(
 			<QueueHarness
-				items={[coveredItem('stripe.com', 'cred_stripe'), makeItem('slack.com', 'form')]}
+				items={[coveredItem('acme.com', 'cred_acme'), makeItem('stripe.com', 'form')]}
 			/>,
 		);
-
-		await user.click(await screen.findByRole('button', { name: 'Use this credential' }));
-		await addWithAccess(user, 'stripe');
-		await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
-		await user.click(screen.getByRole('button', { name: 'Not this one' }));
-		await screen.findByTestId('queue-drop-confirm');
-
-		await checkA11y(document.body, { modal: true });
+		await user.click(await screen.findByRole('radio', { name: /Add a new credential/ }));
+		await screen.findByTestId('queue-existing-collapsed');
+		await waitFor(() => checkA11y(document.body, { modal: true }), { timeout: 3000 });
 	});
 
 	it('passes an accessibility audit with credential options in the pane', async () => {
@@ -846,24 +819,21 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 				items={[makeItem('stripe.com', 'choose', { covering: [production, sandbox] })]}
 			/>,
 		);
-		await screen.findByRole('group', { name: /You have 2 credentials/ });
-
-		await checkA11y(document.body, { modal: true });
+		await screen.findByRole('group', { name: /Pick one of your 2 credentials/ });
+		await waitFor(() => checkA11y(document.body, { modal: true }), { timeout: 3000 });
 	});
 
-	it('390px: the pane action and the progress list stay reachable', async () => {
+	it('390px: the footer action and the list stay reachable', async () => {
 		await page.viewport(390, 844);
-		renderWithProviders(<QueueHarness items={[makeItem('slack.com', 'form')]} />);
-
-		expect(await screen.findByRole('button', { name: 'Add credential' })).toBeVisible();
-		expect(rowFor('slack')).toBeVisible();
+		renderWithProviders(<QueueHarness items={[coveredItem('stripe.com', 'cred_stripe')]} />);
+		await accessReady();
+		expect(addButton()).toBeVisible();
+		expect(addButton()).toHaveTextContent('Add');
+		expect(rowFor('stripe')).toBeVisible();
 	});
-
-	describe('the access step', () => {
-		/** Up to the access step of the item at the front. */
-		async function toAccess(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
-			await user.click(await screen.findByRole('button', { name: 'Use this credential' }));
-			return screen.findByTestId('queue-access-step');
+	describe('② Access', () => {
+		async function toAccess(): Promise<HTMLElement> {
+			return accessReady();
 		}
 
 		/** Ask the inline tester about one request; returns its verdict line. */
@@ -873,7 +843,12 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 			method: string,
 			path: string,
 		): Promise<HTMLElement> {
+			const toggle = within(step).getByRole('button', { name: /Try a request/ });
+			if (toggle.getAttribute('aria-expanded') !== 'true') await user.click(toggle);
 			const tester = within(step).getByTestId('queue-access-tester');
+			await waitFor(() =>
+				expect(within(tester).getByLabelText('Request path')).toBeVisible(),
+			);
 			await user.selectOptions(within(tester).getByLabelText('HTTP method'), method);
 			const input = within(tester).getByLabelText('Request path');
 			await user.clear(input);
@@ -882,71 +857,106 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 			return within(tester).findByTestId('rule-verdict');
 		}
 
-		it('follows the credential step, with Custom rules preselected and nothing bound yet', async () => {
+		it('four presets, Read only preselected; an empty Custom list holds the footer', async () => {
 			const { calls } = watchBinds();
 			const user = userEvent.setup();
 			renderWithProviders(
 				<QueueHarness items={[coveredItem('stripe.com', 'cred_stripe')]} />,
 			);
-			const steps = await screen.findByTestId('queue-steps');
-			expect(within(steps).getByText('Credential').closest('li')).toHaveAttribute(
-				'aria-current',
-				'step',
-			);
-
-			const step = await toAccess(user);
-			expect(within(steps).getByText('Access').closest('li')).toHaveAttribute(
-				'aria-current',
-				'step',
-			);
-			// The presets are one labelled radio group, Custom chosen, editor open.
+			const step = await toAccess();
 			const group = within(step).getByRole('radiogroup', {
 				name: 'What can Support bot call?',
 			});
-			expect(within(group).getByRole('radio', { name: /Custom rules/ })).toBeChecked();
 			expect(
-				within(group).getByRole('radio', { name: /Allow all operations/ }),
-			).not.toBeChecked();
-			expect(within(step).getByRole('button', { name: 'Add rule' })).toBeVisible();
-			// An empty custom list is not an answer yet.
-			expect(within(step).getByRole('button', { name: 'Add stripe' })).toBeDisabled();
-			// Focus moved with the step.
-			await waitFor(() => expect(screen.getByTestId('queue-active-pane')).toHaveFocus());
+				within(group)
+					.getAllByRole('radio')
+					.map((r) => r.textContent),
+			).toEqual([
+				expect.stringContaining('Read only'),
+				expect.stringContaining('Read only, ask before anything else'),
+				expect.stringContaining('Full access'),
+				expect.stringContaining('Custom rules'),
+			]);
+			// Read only is preselected: the least access that still lets it work.
+			expect(within(group).getByRole('radio', { name: /^Read only$/ })).toBeChecked();
+
+			await user.click(within(group).getByRole('radio', { name: /Custom rules/ }));
+			const editor = within(step).getByTestId('queue-access-custom-editor');
+			await waitFor(() =>
+				expect(within(editor).getByLabelText('Path pattern')).toBeVisible(),
+			);
+			expect(within(step).getByTestId('queue-access-hint')).toHaveTextContent(
+				'Add at least one rule, or pick a preset.',
+			);
+			expectAddBlocked(/Add at least one rule/);
 			expect(calls).toHaveLength(0);
 		});
 
 		it.each([
-			[/Allow all operations/, [{ effect: 'allow', path: '.*' }], 'Allow all'],
-			[/Read-only/, [{ effect: 'allow', methods: ['GET'] }], 'Read-only'],
+			[/Full access/, [{ effect: 'allow', path: '.*' }], 'Full access'],
+			[/^Read only$/, [{ effect: 'allow', methods: ['GET'] }], 'Read only'],
+			[
+				/ask before anything else/,
+				[
+					{ effect: 'allow', methods: ['GET'] },
+					// `.*` with no mode: the backend's default `regex`, a catch-all.
+					{ effect: 'require-approval', path: '.*' },
+				],
+				'Read only, ask before anything else',
+			],
 		])('a preset writes its rules (%s)', async (preset, body, label) => {
 			const rules = watchRules();
 			const user = userEvent.setup();
 			renderWithProviders(
 				<QueueHarness items={[coveredItem('stripe.com', 'cred_stripe')]} />,
 			);
-			await toAccess(user);
-			await addWithAccess(user, 'stripe', preset);
+			await addWithAccess(user, preset);
 			await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
 			expect(rules.calls.map((c) => c.body)).toEqual([body]);
-			expect(rowFor('stripe')).toHaveTextContent(label);
+			await user.click(within(rowFor('stripe')).getByRole('button'));
+			expect(await screen.findByTestId('queue-added-summary')).toHaveTextContent(label);
 		});
 
-		it('custom rules are saved as written, and the row counts them', async () => {
+		it('custom rules written By path are saved as written', async () => {
 			const rules = watchRules();
 			const user = userEvent.setup();
 			renderWithProviders(
 				<QueueHarness items={[coveredItem('stripe.com', 'cred_stripe')]} />,
 			);
-			const step = await toAccess(user);
-			await user.click(within(step).getByRole('button', { name: 'Add rule' }));
-			await user.click(within(step).getByRole('button', { name: 'DELETE' }));
-			await user.click(within(step).getByRole('button', { name: 'Add' }));
-			await user.click(within(step).getByRole('button', { name: 'Add stripe' }));
+			const step = await toAccess();
+			await user.click(within(step).getByRole('radio', { name: /Custom rules/ }));
+			await writeRule(user, step, 'DELETE');
+			await waitFor(() => expectAddReady());
+			await user.click(addButton());
 			await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
 			expect(rules.calls.map((c) => c.body)).toEqual([
 				[{ effect: 'allow', methods: ['DELETE'] }],
 			]);
-			expect(rowFor('stripe')).toHaveTextContent('1 custom rule');
+			await user.click(within(rowFor('stripe')).getByRole('button'));
+			expect(await screen.findByTestId('queue-added-summary')).toHaveTextContent(
+				'1 custom rule',
+			);
+		});
+
+		it('custom rules that are exactly a preset are recorded as that preset', async () => {
+			const rules = watchRules();
+			const user = userEvent.setup();
+			renderWithProviders(
+				<QueueHarness items={[coveredItem('stripe.com', 'cred_stripe')]} />,
+			);
+			const step = await toAccess();
+			await user.click(within(step).getByRole('radio', { name: /Custom rules/ }));
+			await writeRule(user, step, 'GET');
+			await waitFor(() => expectAddReady());
+			await user.click(addButton());
+			await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
+			expect(rules.calls.map((c) => c.body)).toEqual([
+				[{ effect: 'allow', methods: ['GET'] }],
+			]);
+			await user.click(within(rowFor('stripe')).getByRole('button'));
+			const summary = await screen.findByTestId('queue-added-summary');
+			expect(summary).toHaveTextContent('Read only');
+			expect(summary).not.toHaveTextContent('custom rule');
 		});
 
 		it('"Try a request" answers from the rules being edited, unsaved, and follows each edit', async () => {
@@ -961,108 +971,120 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 			renderWithProviders(
 				<QueueHarness items={[coveredItem('stripe.com', 'cred_stripe')]} />,
 			);
-			const step = await toAccess(user);
+			const step = await toAccess();
 
-			// Custom with no rules yet: default deny.
 			expect(await tryRequest(user, step, 'GET', '/v1/charges')).toHaveTextContent(
-				'Denied GET /v1/charges — no rule matched (default deny)',
-			);
-
-			// Read-only: GET allowed, POST denied — the verdict follows the preset.
-			await user.click(within(step).getByRole('radio', { name: /Read-only/ }));
-			await waitFor(() =>
-				expect(within(step).getByTestId('rule-verdict')).toHaveTextContent(
-					'Allowed GET /v1/charges — allowed by “Read-only (GET only)”',
-				),
+				'Allowed GET /v1/charges — allowed by “Read only”',
 			);
 			expect(await tryRequest(user, step, 'POST', '/v1/charges')).toHaveTextContent(
 				'Denied POST /v1/charges — no rule matched (default deny)',
 			);
 
-			// Custom: a rule written here answers before it is saved, by its row number.
+			// Custom: a rule written here answers before it is saved, by its path-rule number.
 			await user.click(within(step).getByRole('radio', { name: /Custom rules/ }));
-			await user.click(within(step).getByRole('button', { name: 'Add rule' }));
-			await user.click(within(step).getByRole('button', { name: 'POST' }));
-			await user.click(within(step).getByRole('button', { name: 'Add' }));
+			await writeRule(user, step, 'POST');
 			await waitFor(() =>
 				expect(within(step).getByTestId('rule-verdict')).toHaveTextContent(
-					/^Allowed POST \/v1\/charges — matched rule #1/,
+					/^Allowed POST \/v1\/charges — matched path rule #1/,
 				),
-			);
-			expect(within(step).getByTestId('draft-tester-note')).toHaveTextContent(
-				"before they're saved. Nothing is sent upstream.",
 			);
 			// Nothing was bound, and the broker's dry run was never asked.
 			expect(tests).toHaveLength(0);
-			expect(rowFor('stripe')).toHaveAttribute('data-status', 'active');
+			expect(rowFor('stripe')).not.toHaveAttribute('data-status', 'added');
+			expect(rowFor('stripe')).toHaveTextContent('In progress');
 		});
 
-		it('Set up later warns that every call is denied, then adds it blocked, with no rules', async () => {
+		/** Scoped by name: the drawer is a `dialog` too. */
+		function laterConfirm(): HTMLElement {
+			return screen.getByRole('dialog', { name: /without rules\?$/ });
+		}
+
+		it('the rows under the presets read Effective access, Try a request, Add without rules', async () => {
+			renderWithProviders(
+				<QueueHarness items={[coveredItem('stripe.com', 'cred_stripe')]} />,
+			);
+			const step = await toAccess();
+			const rows = within(within(step).getByTestId('queue-access-tools')).getAllByRole(
+				'listitem',
+			);
+			expect(rows).toHaveLength(3);
+			expect(
+				rows.map((r) => within(r).getByRole('button').textContent?.replace(/\s+/g, ' ')),
+			).toEqual([
+				expect.stringContaining('Effective access'),
+				expect.stringContaining('Try a request'),
+				expect.stringContaining('Add without rules…'),
+			]);
+			expect(within(rows[0]).getByRole('button')).toHaveAttribute('aria-expanded');
+			expect(within(rows[1]).getByRole('button')).toHaveAttribute('aria-expanded');
+			expect(within(rows[2]).getByTestId('queue-add-without-rules')).not.toHaveAttribute(
+				'aria-expanded',
+			);
+		});
+
+		it('"Add without rules…" is the caution row: confirmed, it adds the API blocked, with no rules', async () => {
 			const { calls } = watchBinds();
 			const rules = watchRules();
 			const user = userEvent.setup();
 			renderWithProviders(
 				<QueueHarness items={[coveredItem('stripe.com', 'cred_stripe')]} />,
 			);
-			const step = await toAccess(user);
+			const step = await toAccess();
 
-			await user.click(within(step).getByRole('button', { name: 'Set up later' }));
-			const confirm = within(step).getByTestId('queue-later-confirm');
+			const rows = within(within(step).getByTestId('queue-access-tools')).getAllByRole(
+				'listitem',
+			);
+			const later = within(rows[rows.length - 1]).getByTestId('queue-add-without-rules');
+			expect(later).toHaveTextContent('Add without rules…');
+			expectCautionTone(later);
+
+			expect(addButton()).toHaveTextContent('Add stripe');
+			expect(addButton()).not.toHaveAttribute('data-identity');
+
+			await user.click(later);
+			const confirm = await waitFor(laterConfirm);
 			expect(confirm).toHaveTextContent(
 				"Support bot won't be able to call stripe until you add rules — every call is denied, and it shows as Blocked until then.",
 			);
-			// Focus moves into the confirm (on the safe answer) and back out.
-			const keep = within(confirm).getByRole('button', { name: 'Keep setting up' });
-			await waitFor(() => expect(keep).toHaveFocus());
-			// Declining keeps the step as it was.
-			await user.click(keep);
-			expect(within(step).queryByTestId('queue-later-confirm')).not.toBeInTheDocument();
+			await user.click(within(confirm).getByRole('button', { name: 'Keep setting up' }));
 			await waitFor(() =>
-				expect(within(step).getByRole('button', { name: 'Set up later' })).toHaveFocus(),
+				expect(within(step).getByTestId('queue-add-without-rules')).toHaveFocus(),
 			);
 			expect(calls).toHaveLength(0);
 
-			await user.click(within(step).getByRole('button', { name: 'Set up later' }));
+			await user.click(within(step).getByTestId('queue-add-without-rules'));
 			await user.click(
-				within(within(step).getByTestId('queue-later-confirm')).getByRole('button', {
+				within(await waitFor(laterConfirm)).getByRole('button', {
 					name: 'Add without rules',
 				}),
 			);
 			await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
 			expect(calls).toHaveLength(1);
 			expect(rules.calls).toHaveLength(0);
-			expect(rowFor('stripe')).toHaveTextContent('Blocked · no rules');
+			expect(rowFor('stripe')).toHaveTextContent('Added · no rules');
 			expect(screen.getByTestId('queue-done-pane')).toHaveTextContent(
 				'1 API was set up later — every call to it is denied until you add rules on the API.',
 			);
 		});
 
-		it('walks to the next API ("2 of 2"); Back keeps the credential and the access draft', async () => {
+		it('a blocked primary commits nothing, and the escape row is inert with it', async () => {
+			const { calls } = watchBinds();
 			const user = userEvent.setup();
-			renderWithProviders(
-				<QueueHarness
-					items={[
-						coveredItem('stripe.com', 'cred_stripe'),
-						coveredItem('slack.com', 'cred_slack'),
-					]}
-				/>,
-			);
-			expect(await screen.findByTestId('queue-position')).toHaveTextContent('1 of 2');
-			let step = await toAccess(user);
-			await user.click(within(step).getByRole('radio', { name: /Read-only/ }));
+			// `reachUnknown` feeds this same `blocked` gate the commit is checked against.
+			renderWithProviders(<QueueHarness items={[makeItem('acme.com', 'form')]} />);
+			await screen.findByTestId('queue-credential-form');
 
-			// Back to the credential step and forward again: the choice is still made.
-			await user.click(within(step).getByRole('button', { name: 'Credential' }));
-			expect(await screen.findByRole('radio', { name: /stripe\.com key/ })).toBeChecked();
-			step = await toAccess(user);
-			expect(within(step).getByRole('radio', { name: /Read-only/ })).toBeChecked();
+			expectAddBlocked(/Save the credential first/);
+			await user.click(addButton());
+			expect(screen.queryByRole('dialog', { name: /without rules\?$/ })).toBeNull();
+			expect(calls).toHaveLength(0);
 
-			await user.click(within(step).getByRole('button', { name: 'Add stripe' }));
-			await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
-			expect(screen.getByTestId('queue-position')).toHaveTextContent('2 of 2');
-			// The next API starts on its own credential step, with the default access.
-			step = await toAccess(user);
-			expect(within(step).getByRole('radio', { name: /Custom rules/ })).toBeChecked();
+			await user.type(await tokenField(), 'tok_live_123');
+			await user.click(screen.getByRole('button', { name: /Save and continue/ }));
+			const step = await accessReady();
+			await waitFor(() => expectAddReady());
+			expect(within(step).getByTestId('queue-add-without-rules')).toBeEnabled();
+			expect(calls).toHaveLength(0);
 		});
 
 		it('advances only once the bind AND its rules have landed', async () => {
@@ -1086,20 +1108,18 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 			renderWithProviders(
 				<QueueHarness items={[coveredItem('stripe.com', 'cred_stripe')]} />,
 			);
-			await toAccess(user);
-			await addWithAccess(user, 'stripe');
+			await addWithAccess(user);
 
 			await waitFor(() => expect(order).toEqual(['bind', 'rules']));
 			// Bound, rules in flight: not added, and nothing can close over it.
 			expect(rowFor('stripe')).toHaveAttribute('data-status', 'working');
-			expect(screen.getByRole('button', { name: 'Close for now' })).toBeDisabled();
+			expect(screen.getByRole('button', { name: 'Close' })).toBeDisabled();
 
 			releaseRules();
 			await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
-			expect(rowFor('stripe')).toHaveTextContent('Read-only');
 		});
 
-		it('a rules save that fails keeps the binding and the rules, and Retry saves only the rules', async () => {
+		it('a rules save that fails keeps the binding and the rules, and Save rules retries only them', async () => {
 			const { calls } = watchBinds();
 			let failRules = true;
 			const puts: unknown[] = [];
@@ -1114,28 +1134,31 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 			renderWithProviders(
 				<QueueHarness items={[coveredItem('stripe.com', 'cred_stripe')]} />,
 			);
-			const step = await toAccess(user);
-			await user.click(within(step).getByRole('button', { name: 'Add rule' }));
-			await user.click(within(step).getByRole('button', { name: 'GET' }));
-			await user.click(within(step).getByRole('button', { name: 'Add' }));
-			await user.click(within(step).getByRole('button', { name: 'Add stripe' }));
+			const step = await toAccess();
+			await user.click(within(step).getByRole('radio', { name: /Custom rules/ }));
+			await writeRule(user, step, 'GET');
+			await waitFor(() => expectAddReady());
+			await user.click(addButton());
 
 			const failed = await within(step).findByTestId('queue-rules-failed');
 			expect(failed).toHaveTextContent("The access rules weren't saved.");
 			expect(failed).toHaveTextContent(
-				'stripe is added but blocked — every call is denied until its rules are saved. Your rules are kept.',
+				'stripe is added but blocked — every call is denied until its rules are saved. Your rules are kept; Save rules retries.',
 			);
-			// Still on the step, rule intact; the bound credential can't go back.
 			expect(rowFor('stripe')).toHaveAttribute('data-status', 'active');
 			expect(
 				within(step).getByRole('list', { name: 'Rules, in evaluation order' }),
 			).toHaveTextContent('GET');
 			expect(
-				within(step).queryByRole('button', { name: 'Credential' }),
-			).not.toBeInTheDocument();
+				within(credentialSection()).getByTestId('queue-chosen-credential'),
+			).toHaveTextContent('bound · rules not saved yet');
+			expect(
+				within(credentialSection()).queryByRole('button', { name: 'Change' }),
+			).toBeNull();
 
 			failRules = false;
-			await user.click(within(failed).getByRole('button', { name: /try again/i }));
+			expect(addButton()).toHaveTextContent('Save rules');
+			await user.click(addButton());
 			await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
 			// One bind — the retry re-sent only the rules.
 			expect(calls).toHaveLength(1);
@@ -1143,7 +1166,6 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 				[{ effect: 'allow', methods: ['GET'] }],
 				[{ effect: 'allow', methods: ['GET'] }],
 			]);
-			expect(rowFor('stripe')).toHaveTextContent('1 custom rule');
 		});
 
 		it('a second credential for an API the agent reaches gets its own rules', async () => {
@@ -1167,8 +1189,7 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 					]}
 				/>,
 			);
-			await toAccess(user);
-			await addWithAccess(user, 'stripe');
+			await addWithAccess(user);
 			await waitFor(() => expect(rules.calls).toHaveLength(1));
 			// Rules are per binding: the new credential's, not the existing one's.
 			expect(rules.calls[0]).toMatchObject({
@@ -1177,63 +1198,166 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 			});
 		});
 
-		it('Add without rules on a bound item runs through the guard: one finish, a spinner, Close held', async () => {
-			// The rules PUT fails, so the item is bound with its rules owed.
+		it('a just-created credential labels Full access with the scope it was saved with', async () => {
+			// "Any version" reach must show on first paint: `revealAccess` focuses these radios ~260ms in.
+			const rules = watchRules();
+			const reads: string[] = [];
 			worker.use(
-				http.put('/credentials/:cid/agents/:aid/permissions', () =>
-					HttpResponse.json({ detail: 'nope' }, { status: 500 }),
-				),
-			);
-			const user = userEvent.setup();
-			renderWithProviders(
-				<QueueHarness items={[coveredItem('stripe.com', 'cred_stripe')]} />,
-			);
-			const step = await toAccess(user);
-			await user.click(within(step).getByRole('button', { name: 'Add rule' }));
-			await user.click(within(step).getByRole('button', { name: 'GET' }));
-			await user.click(within(step).getByRole('button', { name: 'Add' }));
-			await user.click(within(step).getByRole('button', { name: 'Add stripe' }));
-			await within(step).findByTestId('queue-rules-failed');
-
-			// Hold the finish (its rules re-read) open.
-			let reads = 0;
-			let release: () => void = () => {};
-			const gate = new Promise<void>((resolve) => {
-				release = resolve;
-			});
-			worker.use(
-				http.get('/credentials/:cid/agents/:aid/permissions', async () => {
-					reads += 1;
-					await gate;
+				http.get('/credentials/:id', ({ params }) => {
+					reads.push(params.id as string);
 					return undefined;
 				}),
 			);
-			await user.click(within(step).getByRole('button', { name: 'Set up later' }));
-			const addWithout = within(within(step).getByTestId('queue-later-confirm')).getByRole(
-				'button',
-				{ name: 'Add without rules' },
+			const user = userEvent.setup();
+			renderWithProviders(<QueueHarness items={[makeItem('acme.com', 'form')]} />);
+			await screen.findByTestId('queue-credential-form');
+			await user.type(await tokenField(), 'tok_live_123');
+			await user.click(screen.getByRole('button', { name: /Save and continue/ }));
+
+			const step = await accessReady();
+			expect(within(step).queryByTestId('queue-access-reach-pending')).toBeNull();
+			expect(
+				within(step).getByRole('radio', { name: /Full access/ }),
+			).toHaveAccessibleDescription('Any method, every version — incl. later ones');
+			expect(within(step).getByTestId('queue-access-coverage-note')).toHaveTextContent(
+				'Covers every version of this API',
 			);
-			await user.dblClick(addWithout);
+			expectAddReady();
 
-			await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'working'));
-			expect(addWithout).toHaveAttribute('aria-busy', 'true');
-			expect(screen.getByRole('button', { name: 'Close for now' })).toBeDisabled();
-			expect(screen.getByRole('button', { name: 'Close' })).toBeDisabled();
-
-			release();
-			await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
-			expect(reads).toBe(1);
+			await user.click(within(step).getByRole('radio', { name: /Full access/ }));
+			await user.click(addButton());
+			await waitFor(() => expect(rowFor('acme')).toHaveAttribute('data-status', 'added'));
+			expect(rules.calls.map((c) => c.body)).toEqual([[{ effect: 'allow', path: '.*' }]]);
 		});
 
-		it('passes an accessibility audit on the access step, tester and later-confirm open', async () => {
+		it('a covering credential labels Full access from the scope it already carries', async () => {
+			// The preflight hands over the stored scope, so ② never re-reads it.
+			const reads: string[] = [];
+			worker.use(
+				http.get('/credentials/:id', ({ params }) => {
+					reads.push(params.id as string);
+					return undefined;
+				}),
+			);
+			renderWithProviders(
+				<QueueHarness
+					items={[
+						makeItem('stripe.com', 'choose', {
+							covering: [
+								makeCredential({
+									credential_id: 'cred_wide',
+									name: 'Vendor-wide key',
+									// No API name: the scope covers every API of the vendor.
+									api: { vendor: 'stripe.com', name: '', version: '' },
+								}),
+							],
+						}),
+					]}
+				/>,
+			);
+			const step = await accessReady();
+			expect(within(step).queryByTestId('queue-access-reach-pending')).toBeNull();
+			expect(
+				within(step).getByRole('radio', { name: /Full access/ }),
+			).toHaveAccessibleDescription('Every API this credential covers, incl. later ones');
+			expect(within(step).getByTestId('queue-access-coverage-note')).toHaveTextContent(
+				'Covers every API of this vendor',
+			);
+			expectAddReady();
+			expect(reads).not.toContain('cred_wide');
+		});
+
+		it('a double click on Add starts one commit, not two', async () => {
+			const { calls } = watchBinds();
 			const user = userEvent.setup();
 			renderWithProviders(
 				<QueueHarness items={[coveredItem('stripe.com', 'cred_stripe')]} />,
 			);
-			const step = await toAccess(user);
+			const step = await accessReady();
+			await user.click(within(step).getByRole('radio', { name: /^Read only$/ }));
+			// Both clicks land before the first bind resolves; `inFlight` drops the second (no 409).
+			const add = addButton();
+			await user.dblClick(add);
+			await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
+			expect(calls).toHaveLength(1);
+		});
+
+		it('a rules retry that throws stays bound-and-blocked, never "Try again"', async () => {
+			// The binding exists either way, so the item must not fall to `failed` and re-POST it (409).
+			const { calls } = watchBinds();
+			let put = 0;
+			worker.use(
+				http.put('/credentials/:cid/agents/:aid/permissions', () => {
+					put += 1;
+					if (put === 1) return HttpResponse.json({ detail: 'nope' }, { status: 500 });
+					return HttpResponse.error();
+				}),
+			);
+			const user = userEvent.setup();
+			renderWithProviders(
+				<QueueHarness items={[coveredItem('stripe.com', 'cred_stripe')]} />,
+			);
+			const step = await accessReady();
+			await user.click(within(step).getByRole('radio', { name: /^Read only$/ }));
+			await user.click(addButton());
+			await within(step).findByTestId('queue-rules-failed');
+			expect(addButton()).toHaveTextContent('Save rules');
+
+			await user.click(addButton());
+			await waitFor(() => expect(put).toBe(2));
+			await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'active'));
+			expect(await within(step).findByTestId('queue-rules-failed')).toBeVisible();
+			expect(addButton()).toHaveTextContent('Save rules');
+			expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+			expect(calls).toHaveLength(1);
+			expect(
+				within(credentialSection()).getByTestId('queue-chosen-credential'),
+			).toHaveTextContent('bound · rules not saved yet');
+		});
+
+		it('a bound item is finished by saving its rules, never by binding again', async () => {
+			// Only the rules are owed: the retry re-sends just them, never a second (409) bind.
+			const { calls } = watchBinds();
+			let failRules = true;
+			const puts: unknown[] = [];
+			worker.use(
+				http.put('/credentials/:cid/agents/:aid/permissions', async ({ request }) => {
+					puts.push(await request.clone().json());
+					if (failRules) return HttpResponse.json({ detail: 'nope' }, { status: 500 });
+					return undefined;
+				}),
+			);
+			const user = userEvent.setup();
+			renderWithProviders(
+				<QueueHarness items={[coveredItem('stripe.com', 'cred_stripe')]} />,
+			);
+			const step = await accessReady();
+			await user.click(within(step).getByRole('radio', { name: /^Read only$/ }));
+			await user.click(addButton());
+			await within(step).findByTestId('queue-rules-failed');
+			expect(calls).toHaveLength(1);
+			expect(within(step).queryByTestId('queue-add-without-rules')).toBeNull();
+			expect(screen.queryByTestId('queue-skip')).toBeNull();
+
+			failRules = false;
+			await user.click(addButton());
+			await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
+			expect(calls).toHaveLength(1);
+			expect(puts).toHaveLength(2);
+		});
+
+		it('passes an accessibility audit on ②, the tester and the later-confirm open', async () => {
+			const user = userEvent.setup();
+			renderWithProviders(
+				<QueueHarness items={[coveredItem('stripe.com', 'cred_stripe')]} />,
+			);
+			const step = await toAccess();
 			await tryRequest(user, step, 'GET', '/v1/charges');
-			await user.click(within(step).getByRole('button', { name: 'Set up later' }));
-			await checkA11y(document.body, { modal: true });
+			await waitFor(() => checkA11y(document.body, { modal: true }), { timeout: 3000 });
+			// The escape row's confirm is a modal over a modal: audit it too.
+			await user.click(within(step).getByTestId('queue-add-without-rules'));
+			await screen.findByRole('dialog', { name: /without rules\?$/ });
+			await waitFor(() => checkA11y(document.body, { modal: true }), { timeout: 3000 });
 		});
 	});
 
@@ -1243,33 +1367,27 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 			const user = userEvent.setup();
 			renderWithProviders(
 				<QueueHarness
-					items={[
-						coveredItem('stripe.com', 'cred_stripe'),
-						makeItem('slack.com', 'form'),
-					]}
+					items={[coveredItem('stripe.com', 'cred_stripe'), makeItem('acme.com', 'form')]}
 					onBack={onBack}
 				/>,
 			);
-
-			await user.click(await screen.findByRole('button', { name: 'Use this credential' }));
-			await addWithAccess(user, 'stripe');
+			await addWithAccess(user);
 			await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
 
-			const back = screen.getByRole('button', { name: 'Back to APIs' });
-			await user.click(back);
+			await user.click(screen.getByRole('button', { name: 'Back to APIs' }));
 			expect(onBack).toHaveBeenCalledTimes(1);
 			const [seed, remaining] = onBack.mock.calls[0] as [
 				{ picks: SelectedApi[]; added: SelectedApi[] },
 				PreflightItem[],
 			];
-			expect(seed.picks.map((a) => a.vendor)).toEqual(['slack.com']);
+			expect(seed.picks.map((a) => a.vendor)).toEqual(['acme.com']);
 			expect(seed.added.map((a) => a.vendor)).toEqual(['stripe.com']);
-			expect(remaining.map((i) => i.key)).toEqual(['slack.com/main']);
+			expect(remaining.map((i) => i.key)).toEqual(['acme.com/main']);
 		});
 
 		it('no Back without a host that can take the operator there', async () => {
-			renderWithProviders(<QueueHarness items={[makeItem('slack.com', 'form')]} />);
-			await screen.findByRole('button', { name: 'Add credential' });
+			renderWithProviders(<QueueHarness items={[makeItem('acme.com', 'form')]} />);
+			await screen.findByTestId('queue-credential-form');
 			expect(screen.queryByRole('button', { name: 'Back to APIs' })).not.toBeInTheDocument();
 		});
 
@@ -1277,50 +1395,413 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 			const onBack = vi.fn();
 			const user = userEvent.setup();
 			renderWithProviders(
-				<QueueHarness items={[makeItem('slack.com', 'form')]} onBack={onBack} />,
+				<QueueHarness items={[makeItem('acme.com', 'form')]} onBack={onBack} />,
 			);
-
-			await user.click(await screen.findByRole('button', { name: 'Add credential' }));
-			const wizard = await screen.findByRole('dialog', { name: /Add credential/ });
-			await user.click(within(wizard).getByRole('button', { name: 'Back to APIs' }));
-
+			await screen.findByTestId('queue-credential-form');
+			await user.click(screen.getByRole('button', { name: 'Back to APIs' }));
 			expect(onBack).toHaveBeenCalledTimes(1);
 			expect(
 				screen.queryByRole('dialog', { name: 'Discard this credential?' }),
 			).not.toBeInTheDocument();
 		});
 
-		it('a typed-in credential asks before it is discarded', async () => {
+		it('a typed-in credential asks before it is discarded — even folded away', async () => {
 			const onBack = vi.fn();
 			const user = userEvent.setup();
 			renderWithProviders(
-				<QueueHarness items={[makeItem('slack.com', 'form')]} onBack={onBack} />,
+				<QueueHarness items={[coveredItem('acme.com', 'cred_acme')]} onBack={onBack} />,
 			);
-
-			await user.click(await screen.findByRole('button', { name: 'Add credential' }));
-			const wizard = await screen.findByRole('dialog', { name: /Add credential/ });
-			await user.type(within(wizard).getByLabelText(/^Name/), ' draft');
-			await user.click(within(wizard).getByRole('button', { name: 'Back to APIs' }));
+			await user.click(await screen.findByRole('radio', { name: /Add a new credential/ }));
+			await user.type(await tokenField(), 'tok_draft');
+			// Folding the form away keeps the draft — and keeps guarding it.
+			await user.click(screen.getByTestId('queue-existing-collapsed'));
+			await user.click(screen.getByRole('button', { name: 'Back to APIs' }));
 
 			const confirm = await screen.findByRole('dialog', { name: 'Discard this credential?' });
 			expect(onBack).not.toHaveBeenCalled();
-
-			// Keeping the draft leaves the operator in the form, input intact.
 			await user.click(within(confirm).getByRole('button', { name: 'Cancel' }));
 			await waitFor(() =>
 				expect(
 					screen.queryByRole('dialog', { name: 'Discard this credential?' }),
 				).not.toBeInTheDocument(),
 			);
-			expect(within(wizard).getByLabelText(/^Name/)).toHaveValue('slack draft');
+			await user.click(await screen.findByRole('radio', { name: /Add a new credential/ }));
+			expect(await tokenField()).toHaveValue('tok_draft');
 
-			await user.click(within(wizard).getByRole('button', { name: 'Back to APIs' }));
+			await user.click(screen.getByRole('button', { name: 'Back to APIs' }));
 			await user.click(
 				within(
 					await screen.findByRole('dialog', { name: 'Discard this credential?' }),
-				).getByRole('button', { name: 'Discard and go back' }),
+				).getByRole('button', { name: 'Discard' }),
 			);
 			expect(onBack).toHaveBeenCalledTimes(1);
+		});
+	});
+});
+
+describe('ApiSetupQueue — ② reads the API’s actions for a catalog pick too', () => {
+	const OPS = {
+		data: [
+			{ operation_id: 'listShifts', method: 'GET', path: '/v2/shifts', name: 'List shifts' },
+			{
+				operation_id: 'createShift',
+				method: 'POST',
+				path: '/v2/shifts',
+				name: 'Create shift',
+			},
+		],
+		has_more: false,
+		next_cursor: null,
+	};
+	const SPEC_URL = 'https://specs.test/7shifts.com/openapi.json';
+	const CATALOG_PICK: SelectedApi = {
+		source: 'catalog',
+		vendor: '7shifts.com',
+		name: '7shifts.com',
+		version: '1.0.0',
+		apiId: '7shifts.com',
+		specUrl: SPEC_URL,
+		label: '7shifts',
+	};
+
+	function serveOperations(answer: (path: string, n: number) => Response | undefined): string[] {
+		const reads: string[] = [];
+		worker.use(
+			http.get('/apis/:vendor/:name/:version/operations', ({ request }) => {
+				const path = new URL(request.url).pathname;
+				reads.push(path);
+				return answer(path, reads.length);
+			}),
+		);
+		return reads;
+	}
+
+	async function openCustomRules(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
+		const step = await accessReady();
+		await user.click(within(step).getByRole('radio', { name: /Custom rules/ }));
+		return step;
+	}
+
+	beforeEach(async () => {
+		await page.viewport(1280, 900);
+		setToken('test-token');
+		resetAgentsStore();
+		resetCredentialsStore([]);
+		worker.use(
+			http.get(SPEC_URL, () =>
+				HttpResponse.json({
+					openapi: '3.0.0',
+					info: { title: '7shifts', version: '2.1.0' },
+					components: {
+						securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer' } },
+					},
+				}),
+			),
+		);
+	});
+
+	it('a catalog pick already in the workspace reads its workspace API’s actions at once', async () => {
+		// Two imported versions: the live one with the highest version is read.
+		resetApisStore([
+			makeMockApi({
+				vendor: '7shifts-com',
+				name: '7shifts-com',
+				version: '1.9.0',
+				catalogApiId: '7shifts.com',
+			}),
+			makeMockApi({
+				vendor: '7shifts-com',
+				name: '7shifts-com',
+				version: '2.1.0',
+				catalogApiId: '7shifts.com',
+			}),
+		]);
+		const reads = serveOperations(() => HttpResponse.json(OPS));
+		const covering = [
+			makeCredential({
+				credential_id: 'cred_7s',
+				name: '7shifts key',
+				catalog_api_id: '7shifts.com',
+				api: { vendor: '7shifts-com', name: '7shifts-com', version: '' },
+			}),
+		];
+		const user = userEvent.setup();
+		renderWithProviders(
+			<QueueHarness
+				items={[makeItem('7shifts.com', 'choose', { api: CATALOG_PICK, covering })]}
+			/>,
+		);
+
+		const step = await openCustomRules(user);
+		const byAction = await within(step).findByRole('button', { name: 'By action' });
+		await waitFor(() => expect(byAction).toBeVisible());
+		expect(reads[0]).toBe('/apis/7shifts-com/7shifts-com/2.1.0/operations');
+		expect(within(step).queryByTestId('queue-access-actions-pending')).toBeNull();
+	});
+
+	it('By action: plain English on every row (generated when the spec has none), and Add settles staged choices', async () => {
+		resetApisStore([
+			makeMockApi({
+				vendor: '7shifts-com',
+				name: '7shifts-com',
+				version: '2.1.0',
+				catalogApiId: '7shifts.com',
+			}),
+		]);
+		// One operation the spec names, one it doesn't (adhook.io's common case).
+		serveOperations(() =>
+			HttpResponse.json({
+				data: [
+					OPS.data[0],
+					{
+						operation_id: 'newColumn',
+						method: 'POST',
+						path: '/v1/boardColumns',
+						name: null,
+					},
+				],
+				has_more: false,
+				next_cursor: null,
+			}),
+		);
+		const ruleCalls: unknown[] = [];
+		worker.use(
+			http.put('/credentials/:cid/agents/:aid/permissions', async ({ request }) => {
+				ruleCalls.push(await request.json());
+				return HttpResponse.json([]);
+			}),
+		);
+		const covering = [
+			makeCredential({
+				credential_id: 'cred_7s',
+				name: '7shifts key',
+				catalog_api_id: '7shifts.com',
+				api: { vendor: '7shifts-com', name: '7shifts-com', version: '' },
+			}),
+		];
+		const user = userEvent.setup();
+		renderWithProviders(
+			<QueueHarness
+				items={[makeItem('7shifts.com', 'choose', { api: CATALOG_PICK, covering })]}
+			/>,
+		);
+		const step = await openCustomRules(user);
+		await user.click(await within(step).findByRole('button', { name: 'By action' }));
+		const list = await within(step).findByRole('list', { name: 'Operations' });
+		expect(list).toHaveTextContent('List shifts');
+		const generated = within(list).getByText('Create a board column');
+		expect(generated).toHaveAttribute('data-generated', 'true');
+		expect(generated).toHaveClass('italic');
+		// The filter searches the plain-English text too, generated included.
+		await user.type(within(step).getByLabelText('Filter operations'), 'board column');
+		expect(within(list).getAllByRole('group', { name: /^Access for/ })).toHaveLength(1);
+		await user.clear(within(step).getByLabelText('Filter operations'));
+
+		// Stage one choice, then Add: asked to apply it first, never dropped.
+		await user.click(
+			within(
+				within(list).getByRole('group', { name: 'Access for POST /v1/boardColumns' }),
+			).getByRole('button', { name: 'Allow' }),
+		);
+		await user.click(addButton());
+		const guard = await screen.findByRole('dialog', { name: 'Apply 1 change by action?' });
+		expect(guard).toHaveTextContent('apply them before adding 7shifts');
+		await checkA11y(document.body, { modal: true });
+		expect(ruleCalls).toHaveLength(0);
+		await user.click(within(guard).getByRole('button', { name: 'Apply' }));
+		await waitFor(() => expect(ruleCalls).toHaveLength(1));
+		expect(ruleCalls[0]).toEqual([{ effect: 'allow', operations: ['newColumn'] }]);
+	});
+
+	it('a catalog pick imported on save reads the actions of the API its import registered', async () => {
+		resetApisStore([]);
+		let jobPolls = 0;
+		worker.use(
+			http.post('/catalog/*', () =>
+				HttpResponse.json(
+					{ job_id: 'job_7s', status: 'queued', _links: { self: '/jobs/job_7s' } },
+					{ status: 202 },
+				),
+			),
+			http.get('/jobs/job_7s', () => {
+				jobPolls += 1;
+				return HttpResponse.json({
+					job_id: 'job_7s',
+					kind: 'api_import',
+					status: jobPolls > 1 ? 'completed' : 'running',
+					error: null,
+					created_at: '2026-01-01T00:00:00Z',
+					updated_at: '2026-01-01T00:00:01Z',
+					_links: { self: '/jobs/job_7s' },
+				});
+			}),
+			http.get('/jobs/job_7s/result', () =>
+				HttpResponse.json({
+					revisions: [
+						{ api: { vendor: '7shifts-com', name: '7shifts-com', version: '2.1.0' } },
+					],
+				}),
+			),
+		);
+		// The first read lands before the revision is served: "not imported yet".
+		const reads = serveOperations((_path, n) =>
+			n === 1 ? new HttpResponse(null, { status: 404 }) : HttpResponse.json(OPS),
+		);
+		const user = userEvent.setup();
+		renderWithProviders(
+			<QueueHarness
+				items={[makeItem('7shifts.com', 'form', { api: CATALOG_PICK, importsApi: true })]}
+			/>,
+		);
+		await user.type(await tokenField(), 'tok_7s');
+		await user.click(screen.getByRole('button', { name: /Save and continue/ }));
+
+		// Until the list arrives its row is held at height, so the toggle lands in place.
+		const step = await openCustomRules(user);
+		const editor = within(step).getByTestId('queue-access-custom-editor');
+		const held = await within(editor).findByTestId('queue-access-actions-pending');
+		const get = await within(editor).findByRole('button', { name: 'GET' });
+		// Relative to the editor: the pane itself may scroll meanwhile.
+		const offset = (el: HTMLElement): number =>
+			el.getBoundingClientRect().top - editor.getBoundingClientRect().top;
+		const editorTopWhileHeld = offset(get);
+		const heldHeight = held.getBoundingClientRect().height;
+
+		expect(
+			await within(step).findByRole('button', { name: 'By action' }, { timeout: 10_000 }),
+		).toBeVisible();
+		expect(
+			within(editor).getByRole('group', { name: 'Build rules' }).getBoundingClientRect()
+				.height,
+		).toBeCloseTo(heldHeight, 0);
+		expect(offset(within(editor).getByRole('button', { name: 'GET' }))).toBeCloseTo(
+			editorTopWhileHeld,
+			0,
+		);
+		expect(new Set(reads)).toEqual(new Set(['/apis/7shifts-com/7shifts-com/2.1.0/operations']));
+		expect(reads.length).toBeGreaterThanOrEqual(2);
+		expect(within(step).queryByTestId('queue-access-actions-pending')).toBeNull();
+	}, 20_000);
+
+	it('a workspace pick reads its own API, as before', async () => {
+		resetApisStore([
+			makeMockApi({ vendor: 'stripe.com', name: 'main', displayName: 'stripe' }),
+		]);
+		const reads = serveOperations(() => HttpResponse.json(OPS));
+		const user = userEvent.setup();
+		renderWithProviders(<QueueHarness items={[coveredItem('stripe.com', 'cred_stripe')]} />);
+
+		const step = await openCustomRules(user);
+		const byAction = await within(step).findByRole('button', { name: 'By action' });
+		await waitFor(() => expect(byAction).toBeVisible());
+		expect(reads[0]).toBe('/apis/stripe.com/main/1.0.0/operations');
+	});
+});
+
+describe('ApiSetupQueue — an added catalog pick is not handed back as waiting', () => {
+	beforeEach(async () => {
+		await page.viewport(1280, 900);
+		setToken('test-token');
+		resetAgentsStore();
+		resetCredentialsStore([]);
+		resetApisStore([]);
+	});
+
+	it('picks it from the catalog, adds it, closes: nothing is left waiting', async () => {
+		const SPEC_URL = 'https://specs.test/airbrake.io/openapi.json';
+		worker.use(
+			http.get(SPEC_URL, () =>
+				HttpResponse.json({
+					openapi: '3.0.0',
+					info: { title: 'Airbrake API', version: '4.0.0' },
+					components: {
+						securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer' } },
+					},
+				}),
+			),
+			http.post('/catalog/*', () =>
+				HttpResponse.json(
+					{ job_id: 'job_ab', status: 'queued', _links: { self: '/jobs/job_ab' } },
+					{ status: 202 },
+				),
+			),
+		);
+		const onClosed = vi.fn();
+		const user = userEvent.setup();
+		const api: SelectedApi = {
+			source: 'catalog',
+			vendor: 'airbrake.io',
+			name: 'airbrake.io',
+			version: '1.0.0',
+			apiId: 'airbrake.io',
+			specUrl: SPEC_URL,
+			registered: false,
+			label: 'airbrake.io',
+		};
+		renderWithProviders(
+			<QueueHarness
+				items={[makeItem('airbrake.io', 'form', { api, importsApi: true })]}
+				onClosed={onClosed}
+			/>,
+		);
+		await user.type(await tokenField(), 'tok_ab');
+		await user.click(screen.getByRole('button', { name: /Save and continue/ }));
+		await addWithAccess(user);
+		await user.click(await screen.findByTestId('queue-done'));
+
+		await waitFor(() => expect(onClosed).toHaveBeenCalledTimes(1));
+		expect(onClosed).toHaveBeenCalledWith([]);
+		await user.click(screen.getByRole('button', { name: 'Reopen' }));
+		expect(screen.queryByTestId('queue-progress-row')).toBeNull();
+	});
+});
+
+describe('ApiSetupQueue — the rail scrolls on its own', () => {
+	beforeEach(async () => {
+		setToken('test-token');
+		resetAgentsStore();
+		resetCredentialsStore([]);
+		resetApisStore([]);
+	});
+
+	it('a long batch scrolls inside the rail, the footer staying at the sheet’s foot', async () => {
+		await page.viewport(1440, 780);
+		const items = Array.from({ length: 18 }, (_, i) => makeItem(`api${i}.test`, 'form'));
+		renderWithProviders(<QueueHarness items={items} />);
+		const list = await screen.findByTestId('queue-rail-list');
+		await waitFor(() => expect(progressRows()).toHaveLength(18));
+		expect(list.scrollHeight).toBeGreaterThan(list.clientHeight);
+		expect(getComputedStyle(list).overflowY).toBe('auto');
+
+		const footer = addButton().closest('footer') ?? addButton().parentElement!;
+		const sheetBottom = window.innerHeight;
+		expect(Math.round(footer.getBoundingClientRect().bottom)).toBeLessThanOrEqual(sheetBottom);
+		const pane = screen.getByTestId('queue-pane-scroll');
+		const paneTop = pane.scrollTop;
+		list.scrollTop = list.scrollHeight;
+		expect(pane.scrollTop).toBe(paneTop);
+		expect(list.getBoundingClientRect().bottom).toBeLessThanOrEqual(
+			footer.getBoundingClientRect().top + 1,
+		);
+	});
+
+	it('brings the API on screen into the rail’s view when it changes', async () => {
+		await page.viewport(1440, 780);
+		const items = Array.from({ length: 18 }, (_, i) => makeItem(`api${i}.test`, 'form'));
+		const user = userEvent.setup();
+		renderWithProviders(<QueueHarness items={items} />);
+		const list = await screen.findByTestId('queue-rail-list');
+		await waitFor(() => expect(progressRows()).toHaveLength(18));
+		for (let i = 0; i < 17; i += 1) {
+			await user.click(screen.getByRole('button', { name: /Skip for now/ }));
+		}
+		const last = rowFor('api17');
+		await waitFor(() => expect(last).toHaveAttribute('data-selected', 'true'));
+		await waitFor(() => {
+			const l = list.getBoundingClientRect();
+			const r = last.getBoundingClientRect();
+			expect(r.bottom).toBeLessThanOrEqual(l.bottom + 1);
+			expect(r.top).toBeGreaterThanOrEqual(l.top - 1);
 		});
 	});
 });

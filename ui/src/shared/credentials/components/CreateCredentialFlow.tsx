@@ -1,10 +1,12 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowLeft, Download, Info, Loader2, LockOpen, Upload, Users, X } from 'lucide-react';
+import { ArrowLeft, ChevronDown, Download, Info, Loader2, Upload, Users, X } from 'lucide-react';
 import {
 	Button,
 	Dialog,
 	ErrorAlert,
+	DetailsLine,
+	ExpandReveal,
 	Input,
 	Label,
 	Select,
@@ -14,6 +16,7 @@ import {
 	SheetPrimitive,
 	Skeleton,
 	toast,
+	Tooltip,
 } from '@/shared/ui';
 import {
 	OAuthAppRegistrationFlowKind,
@@ -47,15 +50,19 @@ import {
 	validateCreate,
 	validateServerVars,
 } from '@/shared/credentials/lib/formBody';
+import { cn } from '@/shared/lib/utils';
 import { credentialNameClash } from '@/shared/credentials/lib/credentialIdentity';
+import { apiScopeReach } from '@/shared/credentials/lib/apiIdentity';
+import type { ScopeReach } from '@/shared/credentials/lib/accessPresets';
 import { CredentialNameClashNote } from '@/shared/credentials/components/CredentialNameClashNote';
 import { managedProviderUnavailableMessage, providerOptions } from '@/shared/credentials/config';
 import { ApiPicker, VendorTile } from '@/shared/credentials/components/ApiPicker';
 import { ImportSpecDialog } from '@/shared/credentials/components/ImportSpecDialog';
-import { AuthTypeCards } from '@/shared/credentials/components/AuthTypeCards';
+import { AuthMethodChooser, AuthTypeCards } from '@/shared/credentials/components/AuthTypeCards';
 import { ServerVariablesSection } from '@/shared/credentials/components/ServerVariablesSection';
 import {
 	CredentialVersionScope,
+	catalogImportVersion,
 	pinnableVersionOf,
 } from '@/shared/credentials/components/CredentialVersionScope';
 import {
@@ -71,6 +78,7 @@ import {
 	type OAuth2FlowDef,
 	type SchemeOption,
 } from '@/shared/credentials/lib/schemes';
+import { CREDENTIAL_TYPE_ICONS } from '@/shared/credentials/lib/authTypeIcons';
 import {
 	enhancedScopesFromSchemes,
 	getRecommendedScopes,
@@ -84,6 +92,8 @@ export interface CreatedCredentialInfo {
 	name: string;
 	type: CredentialType;
 	provider: string;
+	/** The stored scope's reach, read from the create response (no re-fetch needed). */
+	reach: ScopeReach;
 	/**
 	 * Whether the credential needs a browser-based connect flow before it can
 	 * be used. True for authorization_code grants (browser redirect) and for
@@ -92,6 +102,8 @@ export interface CreatedCredentialInfo {
 	 * auto-connect.
 	 */
 	needsConnect: boolean;
+	/** The catalog import job queued on save, if any. */
+	importJobId?: string;
 }
 
 interface CreateCredentialFlowProps {
@@ -103,9 +115,12 @@ interface CreateCredentialFlowProps {
 	 * Which container the flow renders in. `'sheet'` (the default) is a side drawer,
 	 * keeping the surface it was opened from on screen. `'dialog'` is for a host that
 	 * is itself a native modal `<dialog>`: those render in the top layer above every
-	 * sheet, so a drawer opened from inside one would be invisible.
+	 * sheet, so a drawer opened from inside one would be invisible. `'inline'`
+	 * renders in the host's own pane, without a shell.
 	 */
-	surface?: 'sheet' | 'dialog';
+	surface?: 'sheet' | 'dialog' | 'inline';
+	/** `inline`: the first edit of the form, so the host can guard a discard. */
+	onTouched?: () => void;
 	/**
 	 * Pre-select this auth type when the dialog opens (the user can still change
 	 * it), e.g. OAuth 2.0 for registering a shared app. A spec-driven selection
@@ -232,6 +247,7 @@ export function CreateCredentialFlow({
 	initialApi,
 	initialVendor,
 	surface = 'sheet',
+	onTouched,
 	approvalSession,
 	preselectedAgentId,
 	onVendorConnected,
@@ -261,12 +277,15 @@ export function CreateCredentialFlow({
 	/** Spec upload from the pick step — "the API isn't listed" is otherwise a dead end. */
 	const [uploadOpen, setUploadOpen] = useState(false);
 	const [type, setType] = useState<CredentialType>(initialType ?? CredentialType.BEARER_TOKEN);
+	/** Inline only: until a method is picked, `type` is a placeholder default. */
+	const [methodPicked, setMethodPicked] = useState(false);
 	// Register mode submits to POST /oauth-app-registrations instead of
 	// creating a personal credential, so anyone on the instance can sign in
 	// through the resulting shared OAuth app.
 	const registrationMutation = useCreateOAuthAppRegistration();
 	/** When non-null, the spec drove the type (UI hides the manual toggle). */
 	const [activeScheme, setActiveScheme] = useState<SchemeOption | null>(null);
+	const [seededApi, setSeededApi] = useState<SelectedApi | null>(null);
 	// The empty form's provider must fit the initial type — ``static`` is no
 	// OAuth2 provider, and a spec with no OAuth scheme never re-derives it.
 	const baseForm: CredentialFormState = {
@@ -359,6 +378,7 @@ export function CreateCredentialFlow({
 		if (manualMode) return;
 		const first = schemesResult.options[0] ?? null;
 		setActiveScheme(first);
+		setSeededApi(selectedApi);
 		setState((s) => ({
 			...s,
 			serverVars: seedServerVars(s.serverVars, schemesResult.serverVars),
@@ -461,6 +481,7 @@ export function CreateCredentialFlow({
 		formTouched.current = false;
 		setAuthOverride(false);
 		setType(initialType ?? CredentialType.BEARER_TOKEN);
+		setMethodPicked(false);
 		createMutation.reset();
 		importMutation.reset();
 		registrationMutation.reset();
@@ -492,6 +513,7 @@ export function CreateCredentialFlow({
 		setSelectedVendor(null);
 		setManualMode(false);
 		setAuthOverride(false);
+		setMethodPicked(false);
 		setPinnableVersion(pinnableVersionOf(api));
 		setState((s) => seedFormFromSelectedApi(s, api, nameDirty.current));
 		setStep('form');
@@ -532,6 +554,7 @@ export function CreateCredentialFlow({
 	 */
 	const handleTypeChange = (next: CredentialType): void => {
 		setType(next);
+		setMethodPicked(true);
 		setErrors({});
 		patch({ provider: providerOptions(next)[0].id });
 		const matchingScheme =
@@ -735,6 +758,7 @@ export function CreateCredentialFlow({
 
 	const handleSubmit = async (e: React.FormEvent): Promise<void> => {
 		e.preventDefault();
+		if (!methodSettled) return;
 		const validation = validateCreate(type, state);
 		setErrors(validation);
 		const svErrors = validateServerVars(schemesResult.serverVars, state.serverVars);
@@ -753,9 +777,10 @@ export function CreateCredentialFlow({
 		// surface a failure, not for the job to land.
 		const importQueued =
 			selectedApi?.source === 'catalog' && !selectedApi.registered && !!selectedApi.apiId;
+		let importJobId: string | undefined;
 		if (importQueued && selectedApi?.apiId) {
 			try {
-				await importMutation.mutateAsync(selectedApi.apiId);
+				importJobId = (await importMutation.mutateAsync(selectedApi.apiId)).job_id;
 			} catch {
 				return;
 			}
@@ -791,6 +816,8 @@ export function CreateCredentialFlow({
 					name: data.credential.name,
 					type,
 					provider: state.provider,
+					// From the response, not the draft: the backend normalises empty fields to the wildcard.
+					reach: apiScopeReach(data.credential.api),
 					// User-interactive grants (authorization_code, device_code) need a
 					// connect flow before they're usable. client_credentials and other
 					// non-interactive grants must not auto-connect.
@@ -798,6 +825,7 @@ export function CreateCredentialFlow({
 						state.authorizeUrl.trim().length > 0 ||
 						state.grantType.trim() === 'authorization_code' ||
 						state.grantType.trim() === 'device_code',
+					importJobId,
 				});
 				// Closing the dialog triggers the open-watching effect which
 				// resets state — no need to call reset() here directly.
@@ -849,13 +877,40 @@ export function CreateCredentialFlow({
 
 	const detectedSingle = !showManualType && typeOptions.length === 1;
 
+	const inline = surface === 'inline';
+	// Inline, the spec's schemes alone decide the picker, so it can't shift under a pick.
+	const specTypes = useMemo<CredentialType[]>(() => {
+		const first = schemesResult.options[0];
+		if (manualMode || !first || first.type === 'unknown') return [];
+		const declared = schemesResult.options
+			.map((o) => schemeTypeToCredentialType(o.type))
+			.filter((t): t is CredentialType => t != null);
+		return CREDENTIAL_TYPE_ORDER.filter((t) => declared.includes(t));
+	}, [manualMode, schemesResult.options]);
+	const inlineOptions = noAuthDetected
+		? [CredentialType.NO_AUTH]
+		: specTypes.length > 0
+			? specTypes
+			: [...CREDENTIAL_TYPE_ORDER];
+	const inlineDetected = !noAuthDetected && specTypes.length === 1;
+	const methodSettled = !inline || noAuthDetected || inlineDetected || methodPicked;
+
 	const serverVars = manualMode ? [] : schemesResult.serverVars;
+
+	// A catalog pick offers the version its import will register.
+	const offeredVersion =
+		pinnableVersion ||
+		(!manualMode && selectedApi?.source === 'catalog'
+			? catalogImportVersion(schemesResult.spec)
+			: '');
 
 	// While a picked API's spec is still being fetched we don't yet know the
 	// auth type — so we hold back the type selector + credential fields and
 	// show a skeleton in their place (mirrors jentic-webapp, which gates the
 	// auth UI behind `!isLoadingSchemes`). Manual mode has no spec to wait on.
-	const specPending = !manualMode && !!selectedApi && schemesResult.loading;
+	// Held until seeding runs, so the default method never paints for a frame.
+	const specPending =
+		!manualMode && !!selectedApi && (schemesResult.loading || seededApi !== selectedApi);
 
 	// In register mode the picked API either can be shared, or we say why it
 	// can't — the flow never quietly falls back to creating a personal credential.
@@ -946,6 +1001,63 @@ export function CreateCredentialFlow({
 		if (apis[0]) handlePickApi(apis[0]);
 	};
 
+	const saveBlockedReason = ((): string | null => {
+		if (!inline || specPending) return null;
+		if (!methodSettled) return 'Choose an authentication method first';
+		const missing =
+			Object.values(validateCreate(type, state))[0] ??
+			Object.values(validateServerVars(schemesResult.serverVars, state.serverVars))[0];
+		return missing ?? null;
+	})();
+	const saveReasonId = `${fieldId}-save-reason`;
+	// Per instance: the submit button may sit outside the form it submits.
+	const formId = `${fieldId}-form`;
+	const submitButton = (
+		<Button
+			type="submit"
+			form={formId}
+			variant={inline ? 'secondary' : 'primary'}
+			size={inline ? 'sm' : undefined}
+			loading={
+				createMutation.isPending ||
+				importMutation.isPending ||
+				registrationMutation.isPending
+			}
+			disabled={specPending || sharingNeedsShareableGrant || shareBlockedReason != null}
+			// `aria-disabled` keeps it focusable and described; Enter still submits to run validation.
+			aria-disabled={saveBlockedReason ? true : undefined}
+			aria-describedby={saveBlockedReason ? saveReasonId : undefined}
+			className={cn(
+				saveBlockedReason &&
+					'bg-surface-quiet-cta text-foreground-sub hover:bg-surface-quiet-cta cursor-not-allowed active:scale-100',
+			)}
+			onClick={(e): void => {
+				if (saveBlockedReason) e.preventDefault();
+			}}
+		>
+			{registerSharedApp
+				? 'Register shared app'
+				: noAuthDetected
+					? 'Add without a secret'
+					: inline
+						? 'Save and continue'
+						: 'Create credential'}
+			{inline && <ChevronDown aria-hidden className="h-4 w-4" />}
+		</Button>
+	);
+	const submit = saveBlockedReason ? (
+		<>
+			<span id={saveReasonId} className="sr-only">
+				{saveBlockedReason}
+			</span>
+			<Tooltip content={saveBlockedReason} interactiveChild>
+				{submitButton}
+			</Tooltip>
+		</>
+	) : (
+		submitButton
+	);
+
 	// Approve mode and the vendor step render VendorConnectFlow's own inline
 	// action bar, so the flow's footer stands down for both.
 	const footer =
@@ -996,27 +1108,51 @@ export function CreateCredentialFlow({
 				>
 					Cancel
 				</Button>
-				<Button
-					type="submit"
-					form="create-credential-form"
-					variant="primary"
-					loading={
-						createMutation.isPending ||
-						importMutation.isPending ||
-						registrationMutation.isPending
-					}
-					disabled={
-						specPending || sharingNeedsShareableGrant || shareBlockedReason != null
-					}
-				>
-					{registerSharedApp
-						? 'Register shared app'
-						: noAuthDetected
-							? 'Add without a secret'
-							: 'Create credential'}
-				</Button>
+				{submit}
 			</>
 		) : undefined;
+
+	const nameBlock = (
+		<div className="space-y-2">
+			{!inline && (
+				<FormSectionLabel>
+					{sharing ? 'Registration details' : 'Credential details'}
+				</FormSectionLabel>
+			)}
+			<div className="space-y-1.5">
+				<Label htmlFor={`${fieldId}-name`} required>
+					{sharing ? 'Registration name' : 'Name'}
+				</Label>
+				<Input
+					id={`${fieldId}-name`}
+					value={state.name}
+					onChange={(e): void => {
+						nameDirty.current = true;
+						patch({ name: e.target.value });
+					}}
+					placeholder={sharing ? 'MyOrg Google' : 'Production API key'}
+					error={errors.name}
+					aria-describedby={nameClash ? `${fieldId}-name-clash` : undefined}
+				/>
+				{nameClash ? (
+					<CredentialNameClashNote
+						id={`${fieldId}-name-clash`}
+						{...nameClash}
+						onUseSuggestion={(name): void => {
+							nameDirty.current = true;
+							patch({ name });
+						}}
+					/>
+				) : (
+					<p className="text-muted-foreground text-xs">
+						{sharing
+							? "Admin-facing label for this shared OAuth app (e.g. 'MyOrg Google')."
+							: 'A label to recognise this credential later.'}
+					</p>
+				)}
+			</div>
+		</div>
+	);
 
 	const body = approvalSession ? (
 		<VendorConnectFlow
@@ -1067,9 +1203,10 @@ export function CreateCredentialFlow({
 
 			{step === 'form' && (
 				<form
-					id="create-credential-form"
+					id={formId}
 					onSubmit={handleSubmit}
 					onInput={(): void => {
+						if (!formTouched.current) onTouched?.();
 						formTouched.current = true;
 					}}
 					className="space-y-5"
@@ -1146,7 +1283,7 @@ export function CreateCredentialFlow({
 						</section>
 					)}
 
-					{apiSummary && (
+					{apiSummary && !inline && (
 						<div
 							className="bg-surface-inset flex items-center gap-3 rounded-lg px-3 py-2.5"
 							data-testid="selected-api-summary"
@@ -1173,15 +1310,15 @@ export function CreateCredentialFlow({
 										</span>
 									)}
 								</p>
-								{pinnableVersion && (
+								{offeredVersion && (
 									<div className="mt-2">
 										<CredentialVersionScope
-											version={pinnableVersion}
+											version={offeredVersion}
 											value={pinnedVersion ? 'pinned' : 'any'}
 											onChange={(scope): void =>
 												patch({
 													apiVersion:
-														scope === 'pinned' ? pinnableVersion : '',
+														scope === 'pinned' ? offeredVersion : '',
 												})
 											}
 										/>
@@ -1244,43 +1381,50 @@ export function CreateCredentialFlow({
 						</fieldset>
 					)}
 
-					<div className="space-y-2">
-						<FormSectionLabel>
-							{sharing ? 'Registration details' : 'Credential details'}
-						</FormSectionLabel>
-						<div className="space-y-1.5">
-							<Label htmlFor={`${fieldId}-name`} required>
-								{sharing ? 'Registration name' : 'Name'}
-							</Label>
-							<Input
-								id={`${fieldId}-name`}
-								value={state.name}
-								onChange={(e): void => {
-									nameDirty.current = true;
-									patch({ name: e.target.value });
-								}}
-								placeholder={sharing ? 'MyOrg Google' : 'Production API key'}
-								error={errors.name}
-								aria-describedby={nameClash ? `${fieldId}-name-clash` : undefined}
-							/>
-							{nameClash ? (
-								<CredentialNameClashNote
-									id={`${fieldId}-name-clash`}
-									{...nameClash}
-									onUseSuggestion={(name): void => {
-										nameDirty.current = true;
-										patch({ name });
-									}}
+					{!inline && nameBlock}
+
+					{inline && apiSummary && (
+						<div className="space-y-1" data-testid="selected-api-summary">
+							{offeredVersion ? (
+								<CredentialVersionScope
+									version={offeredVersion}
+									value={pinnedVersion ? 'pinned' : 'any'}
+									onChange={(scope): void =>
+										patch({
+											apiVersion: scope === 'pinned' ? offeredVersion : '',
+										})
+									}
+									hideNote
 								/>
-							) : (
-								<p className="text-muted-foreground text-xs">
-									{sharing
-										? "Admin-facing label for this shared OAuth app (e.g. 'MyOrg Google')."
-										: 'A label to recognise this credential later.'}
-								</p>
-							)}
+							) : null}
+							<DetailsLine
+								summary={
+									<>
+										{pinnedVersion
+											? `Version ${pinnedVersion} only`
+											: 'Every version of this API'}
+										{specPending && (
+											<span className="ml-1.5 inline-flex items-center gap-1">
+												<Loader2 className="h-3 w-3 animate-spin" />
+												reading spec…
+											</span>
+										)}
+									</>
+								}
+							>
+								<p className="font-mono">{apiSummary.triple}</p>
+								{!pinnedVersion && (
+									<p>
+										Covers every version of this API — any access rules you add
+										apply to future versions too.
+									</p>
+								)}
+								{apiSummary.willImport && (
+									<p>The API is imported into your workspace on save.</p>
+								)}
+							</DetailsLine>
 						</div>
-					</div>
+					)}
 
 					{/*
 					 * Auth section. Three mutually-exclusive states, cross-faded
@@ -1297,7 +1441,7 @@ export function CreateCredentialFlow({
 								animate={{ opacity: 1 }}
 								exit={{ opacity: 0 }}
 								transition={{ duration: 0.15 }}
-								className="border-hairline border-t pt-5"
+								className={inline ? undefined : 'border-hairline border-t pt-5'}
 							>
 								<AuthSectionSkeleton />
 							</motion.div>
@@ -1308,11 +1452,16 @@ export function CreateCredentialFlow({
 								animate={{ opacity: 1, y: 0 }}
 								exit={{ opacity: 0 }}
 								transition={{ duration: 0.2, ease: 'easeOut' }}
-								className="border-hairline space-y-5 border-t pt-5"
+								className={
+									inline ? undefined : 'border-hairline space-y-5 border-t pt-5'
+								}
 							>
 								{!manualMode && schemesResult.error && (
 									<p
-										className="bg-surface-inset text-foreground-sub rounded-lg p-3 text-xs leading-snug"
+										className={cn(
+											'bg-surface-inset text-foreground-sub rounded-lg p-3 text-xs leading-snug',
+											inline && 'mb-4',
+										)}
 										role="note"
 									>
 										We couldn&apos;t read the API spec — pick the type manually
@@ -1324,10 +1473,20 @@ export function CreateCredentialFlow({
 									<NoAuthNote
 										onSetUpAnyway={(): void => {
 											setAuthOverride(true);
-											handleTypeChange(
-												initialType ?? CredentialType.BEARER_TOKEN,
-											);
+											if (inline) setMethodPicked(false);
+											else
+												handleTypeChange(
+													initialType ?? CredentialType.BEARER_TOKEN,
+												);
 										}}
+									/>
+								) : inline ? (
+									<AuthMethodChooser
+										options={inlineOptions}
+										value={methodSettled ? type : null}
+										onChange={handleTypeChange}
+										detected={inlineDetected}
+										fromSpec={specTypes.length > 1}
 									/>
 								) : (
 									<AuthTypeCards
@@ -1338,66 +1497,70 @@ export function CreateCredentialFlow({
 									/>
 								)}
 
-								{serverVars.length > 0 && (
-									<ServerVariablesSection
-										variables={serverVars}
-										values={state.serverVars}
-										errors={serverVarErrors}
-										onChange={(name, value): void => {
-											setState((s) => ({
-												...s,
-												serverVars: { ...s.serverVars, [name]: value },
-											}));
-											setServerVarErrors((e) => {
-												if (!e[name]) return e;
-												const next = { ...e };
-												delete next[name];
-												return next;
-											});
-										}}
-									/>
-								)}
+								<MethodFields inline={inline} open={methodSettled}>
+									{inline && nameBlock}
 
-								<div className="space-y-4">
-									<CredentialTypeFields
-										type={type}
-										state={state}
-										onChange={patch}
-										errors={errors}
-										mode="create"
-										scope={
-											isOAuth2 && availableScopes.length > 0
-												? {
-														available: availableScopes,
-														selected: selectedScopeList,
-														onToggle: handleScopeToggle,
-														onSelectAll: handleScopeSelectAll,
-														onDeselectAll: handleScopeDeselectAll,
-													}
-												: undefined
-										}
-										flows={isOAuth2 ? oauth2Flows : undefined}
-										activeFlowId={isOAuth2 ? activeFlowId : undefined}
-										onFlowChange={isOAuth2 ? handleFlowChange : undefined}
-										callbackUrl={isOAuth2 ? callbackUrl : undefined}
-										providers={providersQuery.data?.providers}
-										fieldNameWarning={fieldNameWarning}
-									/>
-								</div>
+									{serverVars.length > 0 && (
+										<ServerVariablesSection
+											variables={serverVars}
+											values={state.serverVars}
+											errors={serverVarErrors}
+											onChange={(name, value): void => {
+												setState((s) => ({
+													...s,
+													serverVars: { ...s.serverVars, [name]: value },
+												}));
+												setServerVarErrors((e) => {
+													if (!e[name]) return e;
+													const next = { ...e };
+													delete next[name];
+													return next;
+												});
+											}}
+										/>
+									)}
 
-								{usingPipedream && (
-									<div
-										className="bg-primary/5 text-primary/90 flex items-start gap-2 rounded-lg p-3 text-xs leading-snug"
-										role="note"
-									>
-										<Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-										<span>
-											Pipedream handles the OAuth handshake. After creating,
-											use <strong>Connect</strong> from the credentials list
-											to sign in.
-										</span>
+									<div className="space-y-4">
+										<CredentialTypeFields
+											type={type}
+											state={state}
+											onChange={patch}
+											errors={errors}
+											mode="create"
+											scope={
+												isOAuth2 && availableScopes.length > 0
+													? {
+															available: availableScopes,
+															selected: selectedScopeList,
+															onToggle: handleScopeToggle,
+															onSelectAll: handleScopeSelectAll,
+															onDeselectAll: handleScopeDeselectAll,
+														}
+													: undefined
+											}
+											flows={isOAuth2 ? oauth2Flows : undefined}
+											activeFlowId={isOAuth2 ? activeFlowId : undefined}
+											onFlowChange={isOAuth2 ? handleFlowChange : undefined}
+											callbackUrl={isOAuth2 ? callbackUrl : undefined}
+											providers={providersQuery.data?.providers}
+											fieldNameWarning={fieldNameWarning}
+										/>
 									</div>
-								)}
+
+									{usingPipedream && (
+										<div
+											className="bg-primary/5 text-primary/90 flex items-start gap-2 rounded-lg p-3 text-xs leading-snug"
+											role="note"
+										>
+											<Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+											<span>
+												Pipedream handles the OAuth handshake. After
+												creating, use <strong>Connect</strong> from the
+												credentials list to sign in.
+											</span>
+										</div>
+									)}
+								</MethodFields>
 							</motion.div>
 						)}
 					</AnimatePresence>
@@ -1427,6 +1590,28 @@ export function CreateCredentialFlow({
 
 	/** A connect session is open (created on `VendorConnectFlow` mount). */
 	const connectInPlay = !!approvalSession || step === 'vendor';
+
+	if (surface === 'inline') {
+		return (
+			<div data-testid="credential-inline-form" className="space-y-4">
+				{body}
+				{step === 'form' && (
+					<div className="flex items-center justify-end gap-2">
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={onClose}
+							disabled={createMutation.isPending || importMutation.isPending}
+							type="button"
+						>
+							Cancel
+						</Button>
+						{submit}
+					</div>
+				)}
+			</div>
+		);
+	}
 
 	if (surface === 'dialog') {
 		return (
@@ -1494,6 +1679,24 @@ export function CreateCredentialFlow({
 	);
 }
 
+/** The auth fields past the method picker; inline they unfold (kept mounted) once a method is known. */
+function MethodFields({
+	inline,
+	open,
+	children,
+}: {
+	inline: boolean;
+	open: boolean;
+	children: ReactNode;
+}) {
+	if (!inline) return <>{children}</>;
+	return (
+		<ExpandReveal open={open} keepMounted data-testid="credential-method-fields">
+			<div className="space-y-4 pt-4">{children}</div>
+		</ExpandReveal>
+	);
+}
+
 /**
  * Small uppercase section heading used to give the form a clear visual
  * ordering ("Credential details" → "Authentication"). Mirrors the section
@@ -1515,6 +1718,7 @@ function FormSectionLabel({ children }: { children: React.ReactNode }) {
  * that leaves its auth out.
  */
 function NoAuthNote({ onSetUpAnyway }: { onSetUpAnyway: () => void }) {
+	const NoAuthIcon = CREDENTIAL_TYPE_ICONS[CredentialType.NO_AUTH];
 	return (
 		<div
 			className="bg-surface-tonal flex items-start gap-3 rounded-lg p-3.5"
@@ -1524,7 +1728,7 @@ function NoAuthNote({ onSetUpAnyway }: { onSetUpAnyway: () => void }) {
 				aria-hidden="true"
 				className="bg-surface-field text-foreground-sub grid h-8 w-8 shrink-0 place-items-center rounded-full"
 			>
-				<LockOpen className="h-4 w-4" />
+				<NoAuthIcon className="h-4 w-4" />
 			</span>
 			<div className="min-w-0 flex-1">
 				<p className="text-foreground text-sm font-medium">No authentication declared</p>

@@ -62,6 +62,7 @@ import {
 	type EnteredSecret,
 } from '@/shared/credentials/components/ConnectReviewParts';
 import { OperationImpactPreview } from '@/shared/credentials/components/OperationImpactPreview';
+import { useActionCatalog } from '@/shared/credentials/components/useActionCatalog';
 import {
 	DefaultRulePreviewRow,
 	RuleListEditor,
@@ -1605,6 +1606,8 @@ function RulesStep({
 		if (!rows) return EMPTY_PATHS;
 		return Array.from(new Set(rows.map((op) => op.path))).sort();
 	}, [opsQuery.data]);
+	// Names an agent-requested rule's operation ids as the actions they are.
+	const actionCatalog = useActionCatalog(apiReference, { enabled: !!apiReference });
 
 	const handleContinue = (): void => {
 		if (isEmpty && requireRule) return;
@@ -1634,6 +1637,7 @@ function RulesStep({
 					pathSuggestions={pathSuggestions}
 					opTemplates={pathSuggestions}
 					opsLoaded={pathSuggestions.length > 0}
+					actionCatalog={actionCatalog}
 					requestedRules={requestedRules}
 					emptyStateContent={
 						requireRule ? undefined : (

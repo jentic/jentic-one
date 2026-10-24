@@ -32,9 +32,17 @@ export interface RegisterPanelOptions {
 	active: boolean;
 	approve: Pick<ReturnType<typeof useApproveAgent>, 'variables' | 'isPending' | 'isSuccess'>;
 	deny: Pick<ReturnType<typeof useDenyAgent>, 'variables' | 'isSuccess'>;
+	/** An agent this opening made by hand ("Create it here"): never an arrival. */
+	excludeId?: string | null;
 }
 
-export function useRegisterPanel({ open, active, approve, deny }: RegisterPanelOptions) {
+export function useRegisterPanel({
+	open,
+	active,
+	approve,
+	deny,
+	excludeId = null,
+}: RegisterPanelOptions) {
 	const [openedAt, setOpenedAt] = useState(() => Date.now());
 	const [knownAtOpen, setKnownAtOpen] = useState<ReadonlySet<string>>(() => new Set());
 	const [trackedId, setTrackedId] = useState<string | null>(null);
@@ -77,7 +85,7 @@ export function useRegisterPanel({ open, active, approve, deny }: RegisterPanelO
 	const { commandName } = nameDraft;
 	const deniedId = deny.isSuccess ? (deny.variables?.id ?? null) : null;
 	const view = derivePanelArrival({
-		agents,
+		agents: excludeId == null ? agents : agents.filter((a) => a.id !== excludeId),
 		openedAt,
 		knownAtOpen,
 		trackedId: open ? trackedId : null,
@@ -121,7 +129,12 @@ export function useRegisterPanel({ open, active, approve, deny }: RegisterPanelO
 		registerNameDuplicateOf: nameDraft.duplicateOf,
 		/** Every agent name in the org, for the create form's duplicate hint. */
 		names,
+		/** The roster as read while the panel is open (the created agent's live copy). */
+		agents,
 		/** Whether the roster poll is running (the stream's fallback). */
 		polling,
+		/** Open on a register route with no agent yet: arrivals are being watched. */
+		listening: open && active && phase === 'listening',
+		checkNow: () => query.refetch(),
 	};
 }

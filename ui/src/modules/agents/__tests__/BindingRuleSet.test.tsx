@@ -70,7 +70,7 @@ function seedStores({
 			credential_id: 'cred_github_1',
 			name: 'GitHub PAT',
 			type: CredentialType.BEARER_TOKEN,
-			api: { vendor: 'github.com', name: 'default', version: '1.0.0' },
+			api: { vendor: 'github', name: 'default', version: '1.0.0' },
 		}),
 		makeMockCredential({
 			credential_id: 'cred_stripe_1',
@@ -178,6 +178,11 @@ describe('a credential binding governed by a shared rule set', () => {
 		await screen.findByText('Rule set Support read-only · 1 access rule');
 
 		const inDialog = within(await openSidebar('Stripe'));
+		// The read view names the set and why its rules can't be edited here.
+		expect(await inDialog.findByTestId('access-summary')).toHaveTextContent(
+			'Shared rule set “Support read-only”.',
+		);
+		expect(inDialog.queryByRole('button', { name: /Edit access/ })).not.toBeInTheDocument();
 		const panel = await inDialog.findByTestId('binding-rule-set-panel');
 
 		expect(within(panel).getByTestId('rule-set-name')).toHaveTextContent('Support read-only');
@@ -237,8 +242,12 @@ describe('a credential binding governed by a shared rule set', () => {
 		await user.click(within(confirm).getByRole('button', { name: 'Detach rule set' }));
 
 		expect(await screen.findByText('Rule set detached')).toBeInTheDocument();
-		// The inline editor takes over, and the empty inline list is now the truth.
-		expect(await inDialog.findByText('No rules yet')).toBeInTheDocument();
+		// The inline rules take over — the empty list is now the truth — and
+		// Access can edit them.
+		expect(await inDialog.findByTestId('access-summary')).toHaveTextContent(
+			'No rules — every call is denied.',
+		);
+		expect(inDialog.getByRole('button', { name: /Edit access/ })).toBeInTheDocument();
 		expect(inDialog.queryByTestId('binding-rule-set-panel')).not.toBeInTheDocument();
 		// The tile's status chip now says it: every call is blocked.
 		await waitFor(async () => {
@@ -303,11 +312,12 @@ describe('a credential binding governed by a shared rule set', () => {
 		seedStores();
 		renderPage();
 		const inDialog = within(await openSidebar('Stripe'));
+		// Access says so in place of rules — never "no rules".
 		expect(
 			await inDialog.findByText('Failed to load the attached rule set.'),
 		).toBeInTheDocument();
-		expect(inDialog.queryByText(/No rules yet/)).not.toBeInTheDocument();
-		expect(inDialog.queryByRole('button', { name: /Save rules/ })).not.toBeInTheDocument();
+		expect(inDialog.queryByText(/No rules/)).not.toBeInTheDocument();
+		expect(inDialog.queryByRole('button', { name: /Edit access/ })).not.toBeInTheDocument();
 	});
 
 	it('an inline-governed binding keeps the editor and never reads a rule set', async () => {
@@ -331,11 +341,8 @@ describe('a credential binding governed by a shared rule set', () => {
 		await screen.findByText('1 access rule');
 
 		const inDialog = within(await openSidebar('Slack'));
-		expect(
-			await inDialog.findByText('Permission rules for Slack bot token'),
-		).toBeInTheDocument();
+		expect(await inDialog.findByRole('button', { name: /Edit access/ })).toBeInTheDocument();
 		expect(inDialog.queryByTestId('binding-rule-set-panel')).not.toBeInTheDocument();
-		expect(inDialog.getByRole('button', { name: /Save rules/ })).toBeInTheDocument();
 		expect(ruleSetReads).toBe(0);
 	});
 
@@ -390,6 +397,11 @@ describe('a governed binding on a credential shared with the viewer', () => {
 		await screen.findByText('Rule set Support read-only · 1 access rule');
 
 		const inDialog = within(await openSidebar('Stripe'));
+		// The read view names the set and why its rules can't be edited here.
+		expect(await inDialog.findByTestId('access-summary')).toHaveTextContent(
+			'Shared rule set “Support read-only”.',
+		);
+		expect(inDialog.queryByRole('button', { name: /Edit access/ })).not.toBeInTheDocument();
 		const panel = await inDialog.findByTestId('binding-rule-set-panel');
 		expect(within(panel).getByTestId('rule-set-name')).toHaveTextContent('Support read-only');
 		expect(within(panel).getByTestId('rule-set-detach-locked')).toHaveTextContent(

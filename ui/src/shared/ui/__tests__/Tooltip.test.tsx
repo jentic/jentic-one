@@ -1,6 +1,6 @@
-import { renderWithProviders, screen } from '@/__tests__/test-utils';
+import { act, fireEvent, renderWithProviders, screen } from '@/__tests__/test-utils';
 import userEvent from '@testing-library/user-event';
-import { Tooltip } from '@/shared/ui/Tooltip';
+import { Tooltip, TOOLTIP_DELAY_MS } from '@/shared/ui/Tooltip';
 
 describe('Tooltip', () => {
 	it('renders its trigger children', () => {
@@ -141,5 +141,43 @@ describe('Tooltip', () => {
 		expect(ids).toHaveLength(2);
 		const tipNode = document.getElementById(ids.find((id) => id !== 'prior-desc') ?? '');
 		expect(tipNode).toHaveTextContent('tip');
+	});
+
+	it('opens on a pointer that moves over it, not on one it appears under', () => {
+		renderWithProviders(
+			<Tooltip interactiveChild content="Save the credential first">
+				<button type="button">Add</button>
+			</Tooltip>,
+		);
+		const wrapper = screen.getByRole('button', { name: 'Add' }).parentElement as HTMLElement;
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+		try {
+			// A trigger rendered under a resting pointer gets an enter, never a move.
+			fireEvent.mouseEnter(wrapper);
+			act(() => void vi.advanceTimersByTime(TOOLTIP_DELAY_MS + 100));
+			expect(screen.queryByRole('tooltip')).toBeNull();
+
+			// The pointer moving over it is a hover: it opens after the delay.
+			fireEvent.pointerMove(wrapper);
+			act(() => void vi.advanceTimersByTime(TOOLTIP_DELAY_MS - 1));
+			fireEvent.pointerMove(wrapper);
+			act(() => void vi.advanceTimersByTime(1));
+			expect(screen.getByRole('tooltip')).toHaveTextContent('Save the credential first');
+
+			// Escape dismisses it, and moving on over the same trigger keeps it shut…
+			fireEvent.keyDown(document, { key: 'Escape' });
+			expect(screen.queryByRole('tooltip')).toBeNull();
+			fireEvent.pointerMove(wrapper);
+			act(() => void vi.advanceTimersByTime(TOOLTIP_DELAY_MS + 100));
+			expect(screen.queryByRole('tooltip')).toBeNull();
+
+			// …until the pointer leaves and comes back.
+			fireEvent.mouseLeave(wrapper);
+			fireEvent.pointerMove(wrapper);
+			act(() => void vi.advanceTimersByTime(TOOLTIP_DELAY_MS));
+			expect(screen.getByRole('tooltip')).toBeInTheDocument();
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });

@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { PauseCircle } from 'lucide-react';
 import { ruleSummary } from '@/shared/lib';
 import {
 	useTestAgentBindingPermissions,
@@ -37,10 +36,9 @@ export interface AgentBindingRuleTesterProps {
 	credentialId: string;
 	/** The binding's SAVED rules (system rows included), for naming the match. */
 	savedRules: BindingPermissionRule[];
-	/** Disable the tester while the host's editor holds an unsaved draft — the
-	 * dry-run evaluates SAVED rules, so a verdict against a stale set would
-	 * mislead. The caption names the reason. */
-	disabled?: boolean;
+	/** The host's editor holds unsaved changes: the tester still runs (on the
+	 * SAVED rules) and its caption says the draft isn't what it checks. */
+	draftPending?: boolean;
 	/** The API the binding covers — its real paths seed the path placeholder. */
 	apiReference?: OpsApiReference | null;
 }
@@ -81,7 +79,7 @@ function Verdict({
 	const outcome = verdictOutcome(result.effect);
 	const { anchor, summary } = resolveMatch(result, savedRules);
 	const effectWord =
-		outcome === 'allowed' ? 'allow' : outcome === 'approval' ? 'require-approval' : 'deny';
+		outcome === 'allowed' ? 'an allow' : outcome === 'approval' ? 'an ask' : 'a deny';
 	return (
 		<VerdictChip outcome={outcome}>
 			{result.is_system ? (
@@ -90,7 +88,7 @@ function Verdict({
 				<MatchedRuleText
 					anchor={anchor}
 					summary={summary}
-					fallback={<>— matched a {effectWord} rule on this binding</>}
+					fallback={<>— matched {effectWord} rule on this binding</>}
 				/>
 			)}
 		</VerdictChip>
@@ -101,7 +99,7 @@ export function AgentBindingRuleTester({
 	agentId,
 	credentialId,
 	savedRules,
-	disabled = false,
+	draftPending = false,
 	apiReference,
 }: AgentBindingRuleTesterProps) {
 	// Same query key as the rule editor's suggestions, so this reads the cache.
@@ -112,16 +110,14 @@ export function AgentBindingRuleTester({
 
 	// A verdict speaks only for the rules it was run against, and an always-mounted
 	// host keeps this tester alive across saves. So drop it when the saved rules
-	// change CONTENT (compared by value) or when an edit session ends.
+	// change CONTENT (compared by value).
 	const savedRulesFingerprint = JSON.stringify(savedRules);
-	const verdictContext = useRef({ savedRulesFingerprint, disabled });
+	const verdictContext = useRef(savedRulesFingerprint);
 	useEffect(() => {
 		const prev = verdictContext.current;
-		verdictContext.current = { savedRulesFingerprint, disabled };
-		if (savedRulesFingerprint !== prev.savedRulesFingerprint || (prev.disabled && !disabled)) {
-			resetVerdict();
-		}
-	}, [savedRulesFingerprint, disabled, resetVerdict]);
+		verdictContext.current = savedRulesFingerprint;
+		if (savedRulesFingerprint !== prev) resetVerdict();
+	}, [savedRulesFingerprint, resetVerdict]);
 
 	return (
 		<RuleRequestTester
@@ -135,28 +131,12 @@ export function AgentBindingRuleTester({
 					: null
 			}
 			verdict={test.data ? <Verdict result={test.data} savedRules={savedRules} /> : null}
-			disabled={disabled}
 			paths={paths}
 			note={
-				disabled ? (
-					<p
-						className="text-foreground-sub text-xs"
-						data-testid="rule-tester-disabled-note"
-					>
-						<PauseCircle
-							className="text-caution -mt-px mr-1 inline h-3.5 w-3.5 align-middle"
-							aria-hidden="true"
-						/>
-						Paused while the editor holds unsaved changes — the dry-run evaluates the{' '}
-						<strong>saved</strong> rules only.
-					</p>
-				) : (
-					<p className="text-foreground-sub text-xs">
-						Dry-runs the broker's decision against the <strong>saved</strong> rules.
-						Nothing is sent upstream. Paths are relative to the API's server URL (the
-						spec's paths), without the server's base path.
-					</p>
-				)
+				<p className="text-foreground-sub text-xs" data-testid="rule-tester-note">
+					Checks the <strong>saved</strong> rules. Nothing is sent upstream
+					{draftPending ? ' — save to test your changes.' : '.'}
+				</p>
 			}
 		/>
 	);

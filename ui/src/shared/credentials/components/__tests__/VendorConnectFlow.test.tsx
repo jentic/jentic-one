@@ -761,7 +761,7 @@ describe('VendorConnectFlow — approve mode', () => {
 		// Click Save with no methods + no path — client-side validator refuses.
 		await user.click(screen.getByRole('button', { name: /^add$/i }));
 		expect(
-			await screen.findByText(/must constrain at least one of methods or path/i),
+			await screen.findByText(/An Allow rule needs at least one method, a path, or actions/),
 		).toBeInTheDocument();
 		// Constrain the rule with a path — Save succeeds and the row appears.
 		const pathInput = screen.getByLabelText('Path pattern');
@@ -1374,8 +1374,15 @@ describe('VendorConnectFlow — connect-wizard regressions', () => {
 		expect(await screen.findByText('Permission rules')).toBeInTheDocument();
 
 		// The operations constraint + comment are visible on the row — the
-		// approver can see exactly what the agent asked for.
-		expect(await screen.findByText('repos/get')).toBeInTheDocument();
+		// approver can see exactly what the agent asked for. With no operation
+		// list to name it from (no version yet), the action is counted and its
+		// id sits behind "Details".
+		const rulesList = await screen.findByRole('list', { name: 'Rules, in evaluation order' });
+		expect(rulesList).toHaveTextContent(
+			"1 action — this API's list of actions isn't available",
+		);
+		await user.click(within(rulesList).getByRole('button', { name: 'Details' }));
+		expect(await within(rulesList).findByText('repos/get')).toBeInTheDocument();
 		expect(screen.getByText('Read-only repo metadata')).toBeInTheDocument();
 
 		// Edit the rule's path — the un-editable operations/comment must
@@ -1387,7 +1394,9 @@ describe('VendorConnectFlow — connect-wizard regressions', () => {
 		await user.type(pathInput, '/issues');
 		await user.click(screen.getByRole('button', { name: /^save$/i }));
 		expect(await screen.findByText(/\/issues\s*\(prefix\)/i)).toBeInTheDocument();
-		expect(screen.getByText('repos/get')).toBeInTheDocument();
+		expect(screen.getByRole('list', { name: 'Rules, in evaluation order' })).toHaveTextContent(
+			'1 action',
+		);
 		expect(screen.getByText('Read-only repo metadata')).toBeInTheDocument();
 
 		// Confirm — the wire body still carries the constraint, and the
