@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
-import time
+from collections.abc import Hashable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -13,15 +12,16 @@ import structlog
 from jentic_one.admin.repos import MonitoringRepository
 from jentic_one.admin.repos.monitoring_repo import UsageQueryFilters
 from jentic_one.admin.web.schemas.monitoring import GroupBy
+from jentic_one.shared.cache import AsyncTTLCache
 from jentic_one.shared.context import Context
-from jentic_one.shared.metrics import get_meter
 
 logger = structlog.get_logger(__name__)
-_meter = get_meter("admin")
-_cache_hits = _meter.create_counter("monitoring.cache.hits", description="Monitoring cache hits")
-_cache_misses = _meter.create_counter(
-    "monitoring.cache.misses", description="Monitoring cache misses"
-)
+
+# The three caches report to the shared ``monitoring.cache.{hits,misses,evictions}``
+# counters on the ``admin`` meter, the instrumentation scope they are published
+# under.
+_CACHE_METRICS_SCOPE = "admin"
+_CACHE_METRICS_PREFIX = "monitoring.cache"
 
 # Short enough that a repeated cache key (the fallback window is stable for a
 # whole minute — see get_usage_stats) can't pin the first response of the
@@ -86,24 +86,6 @@ class UsageTopKey:
     avg_ms: float
 
 
-@dataclass(slots=True)
-class _CacheEntry:
-    result: ExecutionStats
-    cached_at: float
-
-
-@dataclass(slots=True)
-class _UsageCacheEntry:
-    result: UsageStats
-    cached_at: float
-
-
-@dataclass(slots=True)
-class _GroupedTotalsCacheEntry:
-    result: tuple[UsageTopKey, ...]
-    cached_at: float
-
-
 # Leading discriminator on grouped-totals cache keys. They also live in their
 # own dict, but the tag keeps the key self-describing (logs, debugging) and
 # guarantees it can never equal a `get_usage_stats` key even if the two caches
@@ -111,15 +93,13 @@ class _GroupedTotalsCacheEntry:
 _GROUPED_TOTALS_KEY_TAG = "grouped_totals"
 
 
-def _evict_stale(cache: dict[Any, Any], now: float) -> None:
-    """Drop expired entries, then the oldest ones until there is room for one more."""
-    expired = [k for k, v in cache.items() if (now - v.cached_at) >= _CACHE_TTL_SECONDS]
-    for k in expired:
-        del cache[k]
-    if len(cache) >= _USAGE_CACHE_MAX_ENTRIES:
-        oldest_keys = sorted(cache, key=lambda k: cache[k].cached_at)
-        for k in oldest_keys[: len(oldest_keys) - _USAGE_CACHE_MAX_ENTRIES + 1]:
-            del cache[k]
+def _new_cache[K: Hashable, V]() -> AsyncTTLCache[K, V]:
+    return AsyncTTLCache(
+        ttl_seconds=_CACHE_TTL_SECONDS,
+        max_entries=_USAGE_CACHE_MAX_ENTRIES,
+        metrics_scope=_CACHE_METRICS_SCOPE,
+        metrics_prefix=_CACHE_METRICS_PREFIX,
+    )
 
 
 @dataclass(slots=True, frozen=True)
@@ -136,36 +116,21 @@ class MonitoringService:
         self._ctx = ctx
         # `_cache`, `_usage_cache`, and `_grouped_totals_cache` store org-wide
         # totals (unscoped by caller identity) and must remain gated behind
-        # `org:admin`.
-        self._cache: dict[int, _CacheEntry] = {}
-        self._locks: dict[int, asyncio.Lock] = {}
-        self._usage_cache: dict[tuple[Any, ...], _UsageCacheEntry] = {}
-        self._usage_lock = asyncio.Lock()
-        self._grouped_totals_cache: dict[tuple[Any, ...], _GroupedTotalsCacheEntry] = {}
-        self._grouped_totals_lock = asyncio.Lock()
+        # `org:admin`. Each coalesces concurrent misses per key, so a dashboard
+        # fan-out runs one query per distinct key and distinct keys never wait
+        # on each other.
+        self._cache: AsyncTTLCache[int, ExecutionStats] = _new_cache()
+        self._usage_cache: AsyncTTLCache[tuple[Any, ...], UsageStats] = _new_cache()
+        self._grouped_totals_cache: AsyncTTLCache[tuple[Any, ...], tuple[UsageTopKey, ...]] = (
+            _new_cache()
+        )
 
     async def get_execution_stats(self, days: int) -> ExecutionStats:
-        now = time.monotonic()
-        entry = self._cache.get(days)
-        if entry is not None and (now - entry.cached_at) < _CACHE_TTL_SECONDS:
-            _cache_hits.add(1)
-            return entry.result
-
-        lock = self._locks.setdefault(days, asyncio.Lock())
-        async with lock:
-            # Re-sampled for the same reason as in get_usage_stats.
-            now = time.monotonic()
-            entry = self._cache.get(days)
-            if entry is not None and (now - entry.cached_at) < _CACHE_TTL_SECONDS:
-                _cache_hits.add(1)
-                return entry.result
-            result = await self._query(days)
-            stored_at = time.monotonic()
-            _evict_stale(self._cache, stored_at)
-            self._cache[days] = _CacheEntry(result=result, cached_at=stored_at)
-            _cache_misses.add(1)
+        async def _load() -> ExecutionStats:
             logger.debug("monitoring_cache_miss", days=days)
-            return result
+            return await self._query(days)
+
+        return await self._cache.get_or_load(days, _load)
 
     async def _query(self, days: int) -> ExecutionStats:
         # Both routes resolve "now" the same way, so the overview and the usage
@@ -218,29 +183,13 @@ class MonitoringService:
         f = filters or UsageFilters()
         cache_key = (resolved_since, resolved_until, group_by, top_limit, f)
 
-        now = time.monotonic()
-        entry = self._usage_cache.get(cache_key)
-        if entry is not None and (now - entry.cached_at) < _CACHE_TTL_SECONDS:
-            _cache_hits.add(1)
-            return entry.result
-
-        async with self._usage_lock:
-            # Re-sample: the lock may have been held by a slow query, and the
-            # TTL check, eviction and timestamp must use the time they run at.
-            now = time.monotonic()
-            entry = self._usage_cache.get(cache_key)
-            if entry is not None and (now - entry.cached_at) < _CACHE_TTL_SECONDS:
-                _cache_hits.add(1)
-                return entry.result
-            result = await self._query_usage(resolved_since, resolved_until, group_by, top_limit, f)
-            stored_at = time.monotonic()
-            self._evict_stale_usage_entries(stored_at)
-            self._usage_cache[cache_key] = _UsageCacheEntry(result=result, cached_at=stored_at)
-            _cache_misses.add(1)
+        async def _load() -> UsageStats:
             logger.debug(
                 "usage_cache_miss", group_by=group_by, since=resolved_since, until=resolved_until
             )
-            return result
+            return await self._query_usage(resolved_since, resolved_until, group_by, top_limit, f)
+
+        return await self._usage_cache.get_or_load(cache_key, _load)
 
     async def get_grouped_totals(
         self,
@@ -274,28 +223,7 @@ class MonitoringService:
         f = filters or UsageFilters()
         cache_key = (_GROUPED_TOTALS_KEY_TAG, resolved_since, resolved_until, group_by, limit, f)
 
-        now = time.monotonic()
-        entry = self._grouped_totals_cache.get(cache_key)
-        if entry is not None and (now - entry.cached_at) < _CACHE_TTL_SECONDS:
-            _cache_hits.add(1)
-            return list(entry.result)
-
-        async with self._grouped_totals_lock:
-            # Re-sampled for the same reason as in get_usage_stats.
-            now = time.monotonic()
-            entry = self._grouped_totals_cache.get(cache_key)
-            if entry is not None and (now - entry.cached_at) < _CACHE_TTL_SECONDS:
-                _cache_hits.add(1)
-                return list(entry.result)
-            result = await self._query_grouped_totals(
-                resolved_since, resolved_until, group_by, limit, f
-            )
-            stored_at = time.monotonic()
-            _evict_stale(self._grouped_totals_cache, stored_at)
-            self._grouped_totals_cache[cache_key] = _GroupedTotalsCacheEntry(
-                result=tuple(result), cached_at=stored_at
-            )
-            _cache_misses.add(1)
+        async def _load() -> tuple[UsageTopKey, ...]:
             logger.debug(
                 "grouped_totals_cache_miss",
                 group_by=group_by,
@@ -303,7 +231,12 @@ class MonitoringService:
                 until=resolved_until,
                 limit=limit,
             )
-            return result
+            return tuple(
+                await self._query_grouped_totals(resolved_since, resolved_until, group_by, limit, f)
+            )
+
+        # A fresh list per call, so a caller mutating it cannot corrupt the cache.
+        return list(await self._grouped_totals_cache.get_or_load(cache_key, _load))
 
     @staticmethod
     def _resolve_window(since: int | None, until: int | None) -> tuple[int, int]:
@@ -348,9 +281,6 @@ class MonitoringService:
             )
             for r in rows
         ]
-
-    def _evict_stale_usage_entries(self, now: float) -> None:
-        _evict_stale(self._usage_cache, now)
 
     @staticmethod
     def _compute_bucket_seconds(window_seconds: int) -> int:

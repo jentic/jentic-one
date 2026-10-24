@@ -26,8 +26,9 @@ import socket
 import threading
 import time
 import weakref
-from collections import OrderedDict
 from collections.abc import Callable
+
+from jentic_one.shared.cache import TTLLRU
 
 _IpAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 
@@ -66,43 +67,43 @@ class ResolutionCache:
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._ttl_s = ttl_s
-        self._max_entries = max_entries
         self._clock = clock
         self._lock = threading.Lock()
-        self._entries: OrderedDict[str, tuple[float, tuple[_IpAddress, ...]]] = OrderedDict()
+        # ``None`` is the caching-off arm: a non-positive bound means every
+        # lookup goes to the resolver.
+        self._entries: TTLLRU[str, tuple[_IpAddress, ...]] | None = (
+            TTLLRU(max_entries=max_entries, clock=clock) if max_entries > 0 else None
+        )
 
     def get(self, host: str) -> tuple[_IpAddress, ...] | None:
         """Return the unexpired addresses cached for *host*, or ``None``."""
+        if self._entries is None:
+            return None
         key = _cache_key(host)
         now = self._clock()
         with self._lock:
-            entry = self._entries.get(key)
-            if entry is None:
-                return None
-            expires_at, addrs = entry
-            if now >= expires_at:
-                del self._entries[key]
-                return None
-            return addrs
+            entry = self._entries.get(key, now=now)
+            return entry.value if entry is not None else None
 
     def put(self, host: str, addrs: tuple[_IpAddress, ...]) -> None:
         """Cache a non-empty answer for *host* (empty answers are ignored)."""
-        if not addrs or self._ttl_s <= 0 or self._max_entries <= 0:
+        if not addrs or self._ttl_s <= 0 or self._entries is None:
             return
         key = _cache_key(host)
         expires_at = self._clock() + self._ttl_s
         with self._lock:
-            self._entries[key] = (expires_at, addrs)
-            self._entries.move_to_end(key)
-            while len(self._entries) > self._max_entries:
-                self._entries.popitem(last=False)
+            self._entries.put(key, addrs, expires_at=expires_at)
 
     def clear(self) -> None:
         """Drop every cached entry."""
+        if self._entries is None:
+            return
         with self._lock:
             self._entries.clear()
 
     def __len__(self) -> int:
+        if self._entries is None:
+            return 0
         with self._lock:
             return len(self._entries)
 

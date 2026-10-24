@@ -6,51 +6,32 @@ the toolkit path): the cross-DB
 covering credentials) runs on every direct-path request — two DB hits per
 request. Bindings change infrequently, so this wraps the authoritative resolver
 in a short-TTL LRU keyed on ``(agent_id, vendor, name, version) →
-CredentialDerivation``, invalidated on TTL only, and single-flighted so
-concurrent misses for one key collapse to a single Admin+Control lookup.
+CredentialDerivation``, expired on TTL and evicted in-process on binding and
+credential mutations (#1837), and single-flighted so concurrent misses for one
+key collapse to a single Admin+Control lookup.
 
 This is a pure latency optimization layered *over* the authoritative DB lookup —
 authorization correctness never depends on the cache, only its staleness is
 bounded by the TTL. In a cluster the LRU is **per instance**, so a binding
-granted/revoked/suspended via the binding API only becomes consistent after the
-TTL lapses on each node (acceptable for the read-mostly default; keep the TTL
+granted/revoked/suspended via the binding API on another node only becomes
+consistent here after the TTL lapses (acceptable for the read-mostly default; keep the TTL
 short).
 """
 
 from __future__ import annotations
 
-import time
-from collections import OrderedDict
-from dataclasses import dataclass
-
 import structlog
 
-from jentic_one.broker.core.singleflight import SingleFlight
 from jentic_one.shared.broker.protocols import CredentialDerivation, CredentialDeriverProtocol
-from jentic_one.shared.metrics import get_meter
+from jentic_one.shared.cache import AsyncTTLCache
 
 logger = structlog.get_logger(__name__)
-_meter = get_meter("broker")
-_cache_hits = _meter.create_counter(
-    "broker.credential_binding_cache.hits", description="Credential-binding cache hits"
-)
-_cache_misses = _meter.create_counter(
-    "broker.credential_binding_cache.misses", description="Credential-binding cache misses"
-)
 
 DEFAULT_CREDENTIAL_CACHE_TTL_SECONDS = 30.0
 # Bound the LRU so a high-cardinality spray of distinct (agent, api) tuples
 # can't grow the cache without limit. Derivation keys are low-cardinality in
 # practice (bounded by active agents times APIs), so this is generous headroom.
 DEFAULT_MAX_CACHE_ENTRIES = 10_000
-
-
-@dataclass(slots=True)
-class _CacheEntry:
-    """A cached derivation result with its insertion time (monotonic)."""
-
-    value: CredentialDerivation
-    cached_at: float
 
 
 class CachingCredentialDeriver:
@@ -76,43 +57,29 @@ class CachingCredentialDeriver:
         cache_ttl_seconds: float = DEFAULT_CREDENTIAL_CACHE_TTL_SECONDS,
         max_entries: int = DEFAULT_MAX_CACHE_ENTRIES,
     ) -> None:
-        if max_entries < 1:
-            raise ValueError("max_entries must be >= 1")
         self._inner = inner
-        self._cache_ttl_seconds = cache_ttl_seconds
-        self._max_entries = max_entries
-        self._cache: OrderedDict[str, _CacheEntry] = OrderedDict()
-        self._single_flight: SingleFlight[CredentialDerivation] = SingleFlight()
+        # The ``broker.credential_binding_cache.{hits,misses,evictions}`` counters,
+        # on the ``broker`` meter they are published under.
+        self._cache: AsyncTTLCache[str, CredentialDerivation] = AsyncTTLCache(
+            ttl_seconds=cache_ttl_seconds,
+            max_entries=max_entries,
+            metrics_scope="broker",
+            metrics_prefix="broker.credential_binding_cache",
+        )
 
     async def derive_credentials(
         self, *, agent_id: str, vendor: str, name: str, version: str
     ) -> CredentialDerivation:
         """Return the agent's derivation for the API, served from cache when fresh."""
         key = self._make_key(agent_id=agent_id, vendor=vendor, name=name, version=version)
-        now = time.monotonic()
-
-        cached = self._cache.get(key)
-        if cached is not None and (now - cached.cached_at) < self._cache_ttl_seconds:
-            self._cache.move_to_end(key)
-            _cache_hits.add(1)
-            return cached.value
 
         async def _load() -> CredentialDerivation:
-            result = await self._inner.derive_credentials(
+            logger.debug("credential_binding_cache_miss", agent_id=agent_id, vendor=vendor)
+            return await self._inner.derive_credentials(
                 agent_id=agent_id, vendor=vendor, name=name, version=version
             )
-            self._store(key, _CacheEntry(value=result, cached_at=time.monotonic()))
-            _cache_misses.add(1)
-            logger.debug("credential_binding_cache_miss", agent_id=agent_id, vendor=vendor)
-            return result
 
-        return await self._single_flight.do(key, _load)
-
-    def _store(self, key: str, entry: _CacheEntry) -> None:
-        self._cache[key] = entry
-        self._cache.move_to_end(key)
-        while len(self._cache) > self._max_entries:
-            self._cache.popitem(last=False)
+        return await self._cache.get_or_load(key, _load)
 
     @staticmethod
     def _make_key(*, agent_id: str, vendor: str, name: str, version: str) -> str:
@@ -121,10 +88,7 @@ class CachingCredentialDeriver:
 
     def invalidate_agent(self, agent_id: str) -> None:
         """Evict all cached derivations for ``agent_id`` (#1837)."""
-        prefix = f"{agent_id}\x00"
-        stale = [k for k in self._cache if k.startswith(prefix)]
-        for k in stale:
-            self._cache.pop(k, None)
+        self._cache.invalidate_prefix(f"{agent_id}\x00")
 
     def invalidate_credential(self, credential_id: str) -> None:
         """Evict cached derivations when a credential is deleted or changed (#1837).

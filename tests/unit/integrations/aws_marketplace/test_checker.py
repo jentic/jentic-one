@@ -2,8 +2,9 @@
 
 Covers the TTL cache + single-flight (the ``ReleaseChecker`` mechanics), and
 the grace-window policy that turns raw three-way verdicts into effective
-two-way ones. Time is advanced by aging the checker's monotonic bookkeeping
-directly — patching ``time.monotonic`` would also skew the event loop's clock.
+two-way ones. The verdict cache is expired by invalidating it and the grace
+window by aging the checker's monotonic bookkeeping directly — patching
+``time.monotonic`` would also skew the event loop's clock.
 """
 
 from __future__ import annotations
@@ -55,11 +56,9 @@ def _checker(
     return EntitlementChecker(AppConfig.model_validate(cfg), client=client)
 
 
-def _age_cache(checker: EntitlementChecker, seconds: float) -> None:
-    """Age the raw-verdict cache so the next read refreshes."""
-    entry = checker._entry
-    assert entry is not None
-    entry.checked_at -= seconds
+def _expire_cache(checker: EntitlementChecker) -> None:
+    """Expire the raw-verdict cache so the next read refreshes."""
+    assert checker._cache.invalidate(None)
 
 
 def _age_grace(checker: EntitlementChecker, seconds: float) -> None:
@@ -102,7 +101,7 @@ async def test_expired_cache_refreshes(sample_config_dict: dict[str, Any]) -> No
     checker = _checker(sample_config_dict, client, refresh_interval_seconds=3600)
 
     assert await checker.current_verdict() is LicenseVerdict.ENTITLED
-    _age_cache(checker, 3601.0)
+    _expire_cache(checker)
     assert await checker.current_verdict() is LicenseVerdict.NOT_ENTITLED
     assert client.calls == 2
 
@@ -157,7 +156,7 @@ async def test_unknown_inside_grace_holds_prior_lockout(
     checker = _checker(sample_config_dict, client, grace_period_seconds=86400)
 
     assert await checker.current_verdict() is LicenseVerdict.NOT_ENTITLED
-    _age_cache(checker, checker._config.refresh_interval_seconds + 1.0)
+    _expire_cache(checker)
     assert await checker.current_verdict() is LicenseVerdict.NOT_ENTITLED
     assert client.calls == 2  # the second read really did refresh (to UNKNOWN)
 
@@ -168,5 +167,5 @@ async def test_recovery_after_lockout(sample_config_dict: dict[str, Any]) -> Non
     checker = _checker(sample_config_dict, client)
 
     assert await checker.current_verdict() is LicenseVerdict.NOT_ENTITLED
-    _age_cache(checker, checker._config.refresh_interval_seconds + 1.0)
+    _expire_cache(checker)
     assert await checker.current_verdict() is LicenseVerdict.ENTITLED

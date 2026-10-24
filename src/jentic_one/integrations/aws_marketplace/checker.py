@@ -1,7 +1,7 @@
 """Entitlement checker: cached verdicts + the grace window.
 
 Same in-process mechanics as ``shared/release_check.py``'s ``ReleaseChecker``
-(monotonic-clock TTL cache, ``asyncio.Lock`` single-flight), plus the policy
+(a size-1 :class:`~jentic_one.shared.cache.AsyncTTLCache`), plus the policy
 that turns raw three-way :class:`LicenseVerdict` answers into an *effective*
 two-way one:
 
@@ -18,31 +18,22 @@ license probe can never crash the app.
 
 from __future__ import annotations
 
-import asyncio
 import time
-from dataclasses import dataclass
 
 import structlog
 
 from jentic_one.integrations.aws_marketplace.client import LicenseClient, LicenseVerdict
+from jentic_one.shared.cache import AsyncTTLCache
 from jentic_one.shared.config import AppConfig
 
 _log = structlog.get_logger(__name__)
-
-
-@dataclass(slots=True)
-class _CacheEntry:
-    """A raw verdict and when it was fetched (monotonic clock)."""
-
-    verdict: LicenseVerdict
-    checked_at: float
 
 
 class EntitlementChecker:
     """Resolves the effective entitlement verdict, cached in-process.
 
     One instance is held per process (wired by the entitlement lifespan) so
-    the cache, the grace clock, and the single-flight lock are shared across
+    the cache, the grace clock, and the in-flight check are shared across
     the startup check and the periodic refresher. The ``client`` is injected
     so tests never touch the network.
     """
@@ -50,13 +41,18 @@ class EntitlementChecker:
     def __init__(self, config: AppConfig, client: LicenseClient) -> None:
         self._config = config.entitlement
         self._client = client
-        self._entry: _CacheEntry | None = None
+        # The refresh interval is read from live config on every store, so a
+        # reloaded config takes effect at the next check.
+        self._cache: AsyncTTLCache[None, LicenseVerdict] = AsyncTTLCache(
+            ttl_for=lambda _verdict: self._config.refresh_interval_seconds, max_entries=1
+        )
+        # The raw verdict of the latest check, for change logging.
+        self._last_raw: LicenseVerdict | None = None
         # Monotonic timestamp of the last *definitive* verdict; seeded at
         # construction so a deployment that never reaches AWS still gets the
         # full grace window from boot before failing closed.
         self._last_definitive_at = time.monotonic()
         self._last_definitive = LicenseVerdict.ENTITLED
-        self._lock = asyncio.Lock()
 
     async def current_verdict(self) -> LicenseVerdict:
         """Return the effective verdict (only ever ENTITLED/NOT_ENTITLED).
@@ -69,30 +65,22 @@ class EntitlementChecker:
         return self._effective(raw)
 
     async def _raw_verdict(self) -> LicenseVerdict:
-        ttl = self._config.refresh_interval_seconds
-        now = time.monotonic()
-        entry = self._entry
-        if entry is not None and (now - entry.checked_at) < ttl:
-            return entry.verdict
+        return await self._cache.get_or_load(None, self._check)
 
-        async with self._lock:
-            entry = self._entry
-            now = time.monotonic()
-            if entry is not None and (now - entry.checked_at) < ttl:
-                return entry.verdict
-            verdict = await self._client.check()
-            previous = self._entry.verdict if self._entry is not None else None
-            self._entry = _CacheEntry(verdict=verdict, checked_at=time.monotonic())
-            if verdict is not LicenseVerdict.UNKNOWN:
-                self._last_definitive = verdict
-                self._last_definitive_at = time.monotonic()
-            if previous is not verdict:
-                _log.info(
-                    "entitlement.verdict_changed",
-                    previous=previous.value if previous else None,
-                    verdict=verdict.value,
-                )
-            return verdict
+    async def _check(self) -> LicenseVerdict:
+        verdict = await self._client.check()
+        previous = self._last_raw
+        self._last_raw = verdict
+        if verdict is not LicenseVerdict.UNKNOWN:
+            self._last_definitive = verdict
+            self._last_definitive_at = time.monotonic()
+        if previous is not verdict:
+            _log.info(
+                "entitlement.verdict_changed",
+                previous=previous.value if previous else None,
+                verdict=verdict.value,
+            )
+        return verdict
 
     def _effective(self, raw: LicenseVerdict) -> LicenseVerdict:
         if raw is not LicenseVerdict.UNKNOWN:

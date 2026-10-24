@@ -39,9 +39,13 @@ _ALLOWED_ID_TOKEN_ALGS: frozenset[str] = frozenset(
     }
 )
 
-#: Cache TTL for upstream JWKS documents (seconds). On unknown ``kid`` or key
-#: verification failure against a cached JWKS, ``exchange_code`` forces one
-#: immediate refresh to handle upstream key rotation cleanly.
+#: Cache TTL for the upstream JWKS document *and* the discovery document that
+#: names its ``jwks_uri`` (seconds). One adapter lives for the life of the
+#: process (see ``factory.get_idp_adapter``), so this deadline is what bounds
+#: both documents' staleness: an IdP that moves its ``jwks_uri`` is picked up
+#: within the TTL. On unknown ``kid`` or key verification failure against a
+#: cached JWKS, ``exchange_code`` forces one immediate refresh to handle
+#: upstream key rotation cleanly.
 _JWKS_CACHE_TTL_SECONDS: float = 300.0
 
 
@@ -57,6 +61,7 @@ class OidcAdapter:
     def __init__(self, config: IdpConfig) -> None:
         self._config = config
         self._discovery: dict[str, object] | None = None
+        self._discovery_fetched_at: float = 0.0
         self._jwks_cache: dict[str, Any] | None = None
         self._jwks_fetched_at: float = 0.0
 
@@ -130,7 +135,8 @@ class OidcAdapter:
             return self._jwks_cache
 
         jwks_uri: str | None = None
-        if not force_refresh and self._discovery is not None:
+        discovery_is_fresh = (now - self._discovery_fetched_at) < _JWKS_CACHE_TTL_SECONDS
+        if not force_refresh and self._discovery is not None and discovery_is_fresh:
             cached_uri = self._discovery.get("jwks_uri")
             if isinstance(cached_uri, str) and cached_uri:
                 jwks_uri = cached_uri
@@ -143,6 +149,7 @@ class OidcAdapter:
                     disc_data = disc_resp.json()
                     if isinstance(disc_data, dict):
                         self._discovery = disc_data
+                        self._discovery_fetched_at = time.monotonic()
                         discovered_uri = disc_data.get("jwks_uri")
                         if isinstance(discovered_uri, str) and discovered_uri:
                             jwks_uri = discovered_uri
@@ -165,7 +172,13 @@ class OidcAdapter:
         return jwks_data
 
     def _expected_issuer(self) -> str:
-        """Resolve the expected upstream issuer from config or OIDC discovery."""
+        """Resolve the expected upstream issuer from config or OIDC discovery.
+
+        The discovery document is used here however old it is: an issuer that
+        was once published for this IdP stays the one to verify against, and
+        failing an exchange because the document is past its refresh deadline
+        would be worse than verifying against the last one fetched.
+        """
         if self.issuer:
             return self.issuer
         if self._discovery is not None:
