@@ -72,6 +72,15 @@ STILL_HELD_AGENT_DIRECTIVE = (
     "held_execution_id. Do not re-send the call."
 )
 
+#: A poll's ``result_error`` for a decided hold whose call reports no status
+#: (its job row is gone, or outside the caller's visibility): there is nothing
+#: left to wait for and no result to return.
+HELD_NO_STATUS_RESULT_ERROR = (
+    "The approval is decided but the status of the held call is not available, so "
+    "there is no result to return. Show the user the review_url to check the outcome "
+    "and end your turn. Do not re-send the call."
+)
+
 
 def review_page_path(held_execution_id: str) -> str:
     """The web UI's review page for one held execution, relative to the UI origin."""

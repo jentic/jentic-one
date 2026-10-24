@@ -49,6 +49,28 @@ SHORT_WAIT_POLL_SECONDS = 2.0
 #: Job statuses the short wait stops on.
 TERMINAL_JOB_STATUSES = frozenset({"completed", "failed", "cancelled", "dead_letter"})
 
+#: The held execution state whose call still waits on a decision.
+_PENDING_STATE = "pending"
+
+
+def held_call_finished(state: str, execution_status: str | None) -> bool:
+    """Whether a held call has nothing left to wait for (Go: ``agentops.HeldExecutionFinished``).
+
+    It ran, failed or was withdrawn — or it reports no execution status and its
+    decision is no longer pending.
+    """
+    if execution_status is None:
+        return state != _PENDING_STATE
+    return execution_status in TERMINAL_JOB_STATUSES
+
+
+def poll_payload_finished(payload: dict[str, Any]) -> bool:
+    """Whether a job or held-execution poll payload has nothing left to wait for."""
+    if "held_execution_id" in payload:
+        return held_call_finished(payload.get("state", _PENDING_STATE), payload.get("status"))
+    return payload.get("status") in TERMINAL_JOB_STATUSES
+
+
 #: The ``inputRequests`` key of the review-page URL elicitation.
 REVIEW_INPUT_KEY = "review_approval"
 
@@ -170,7 +192,7 @@ async def short_wait(
     deadline = time.monotonic() + window
     while True:
         payload: dict[str, Any] = await poll(job_id)
-        if payload.get("status") in TERMINAL_JOB_STATUSES:
+        if poll_payload_finished(payload):
             return payload
         remaining = deadline - time.monotonic()
         if remaining <= 0:

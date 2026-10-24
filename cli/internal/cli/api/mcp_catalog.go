@@ -18,6 +18,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/jentic/jentic-one/cli/client/generated/control"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
 
@@ -202,7 +203,7 @@ func (s *mcpServer) handleImportAPI(ctx context.Context, req *mcp.CallToolReques
 	if job.Status != catJobCompleted {
 		return s.softErrorExtra(cctx, &ux.CodedError{
 			Code: ux.CodeInternalError,
-			Msg:  fmt.Sprintf("import of %s %s: %s", apiID, job.Status, valueOr(job.Error, "no detail")),
+			Msg:  fmt.Sprintf("import of %s %s: %s", apiID, job.Status, valueOr(deref(job.Error), "no detail")),
 			Actionable: "Re-check the api_id against a search_catalog hit and retry import_api; " +
 				"if the import keeps failing, relay this error to your operator.",
 		}, "search_catalog", map[string]any{"job_id": jobID, "job_status": job.Status}), nil
@@ -234,7 +235,7 @@ func (s *mcpServer) handleImportAPI(ctx context.Context, req *mcp.CallToolReques
 // non-nil error means the job's state is UNKNOWN — the caller must surface
 // that as a failure, never as a clean "still running" result. Poll cadence is
 // the App's shared schedule so tests shrink it without mutating globals.
-func (s *mcpServer) trackImportJob(ctx context.Context, client *catalogClient, jobID string) (*catalogJob, bool, error) {
+func (s *mcpServer) trackImportJob(ctx context.Context, client *catalogClient, jobID string) (*control.JobResponse, bool, error) {
 	budget := s.importWaitBudget
 	if budget <= 0 {
 		budget = defaultImportWaitBudget
@@ -242,7 +243,7 @@ func (s *mcpServer) trackImportJob(ctx context.Context, client *catalogClient, j
 	deadline := time.Now().Add(budget)
 	_, pollMax, pollStep := s.app.PollCadence()
 	delay := pollStep // the first poll is immediate; back off from the step
-	var last *catalogJob
+	var last *control.JobResponse
 	for {
 		job, err := client.Job(ctx, jobID)
 		if err != nil {

@@ -49,6 +49,7 @@ from jentic_one.admin.services.errors import (
 from jentic_one.admin.services.held_execution_service import HeldExecutionService
 from jentic_one.admin.services.job_result_service import JobResultService
 from jentic_one.admin.services.job_service import JobService
+from jentic_one.admin.services.schemas.held_executions import HeldExecutionDetailView
 from jentic_one.admin.services.schemas.jobs import JobResultView, JobView
 from jentic_one.admin.services.user_service import UserService
 from jentic_one.auth.services.agent_service import AgentService
@@ -122,6 +123,7 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.discovery.errors import OperationNotFoundError
 from jentic_one.shared.jobs.hold import (
     HELD_AGENT_DIRECTIVE,
+    HELD_NO_STATUS_RESULT_ERROR,
     STILL_HELD_AGENT_DIRECTIVE,
     review_page_path,
 )
@@ -1273,7 +1275,7 @@ async def _poll_until_finished(
     deadline = time.monotonic() + wait
     while True:
         payload = await poll(target)
-        if payload.get("status") in approvals.TERMINAL_JOB_STATUSES:
+        if approvals.poll_payload_finished(payload):
             return payload
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -1285,7 +1287,8 @@ async def held_execution_poll_payload(env: CallEnv, held_execution_id: str) -> d
     """The poll payload for one held execution.
 
     ``{held_execution_id, state, status, review_url, expires_at,
-    execution_id?, result?, agent_directive?}`` — ``state`` is the decision,
+    execution_id?, result? | result_error? | truncated+total_bytes,
+    agent_directive?}`` — ``state`` is the decision,
     ``status`` where the call stands, and the result rides once the call has
     finished: the upstream response, or the problem explaining why it never
     ran. Every poll names the held execution and its review page; until the
@@ -1305,30 +1308,66 @@ async def held_execution_poll_payload(env: CallEnv, held_execution_id: str) -> d
             "execute response — and call get_execution_result again with the exact value.",
             next_tool="get_execution_result",
         ) from None
+    fetched: JobResultView | Exception | None = None
+    if held_result_wanted(view):
+        try:
+            fetched = await svc.get_result(held_execution_id, identity=env.identity)
+        except HeldExecutionResultNotReadyError:
+            fetched = None
+        except Exception as exc:
+            fetched = exc
+    return held_poll_payload(view, env.base_url, fetched)
+
+
+def held_result_wanted(view: HeldExecutionDetailView) -> bool:
+    """Whether a poll of this held execution collects its ``/result``.
+
+    Only a finished call that completed, or failed with a recorded problem,
+    has one (Go: ``agentops.HasHeldResult``).
+    """
+    return approvals.held_call_finished(view.state, view.execution_status) and (
+        view.execution_status in (_JOB_COMPLETED, _JOB_FAILED)
+    )
+
+
+def held_poll_payload(
+    view: HeldExecutionDetailView,
+    base_url: str,
+    fetched: JobResultView | Exception | None = None,
+) -> dict[str, Any]:
+    """One held execution's poll payload, given the outcome of its ``/result`` read.
+
+    ``fetched`` is what the read :func:`held_result_wanted` asks for answered:
+    the result, the error that read raised, or None when there was no read or
+    no result yet. Until the call has finished
+    (:func:`approvals.held_call_finished`) the payload carries the directive to
+    show the review page again and nothing else; a decided hold whose call
+    reports no status carries :data:`HELD_NO_STATUS_RESULT_ERROR`. The CLI's
+    ``heldPollPayload`` answers the same shape from the control plane's read of
+    the same held execution; the shared goldens under
+    ``cli/tests/golden/testdata/held_poll`` pin both.
+    """
     payload: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "held_execution_id": view.id,
         "state": view.state,
         "status": view.execution_status,
-        "review_url": env.base_url.rstrip("/") + review_page_path(view.id),
+        "review_url": base_url.rstrip("/") + review_page_path(view.id),
         "expires_at": _rfc3339(view.expires_at),
     }
     if view.execution_id:
         payload["execution_id"] = view.execution_id
-    if view.execution_status not in approvals.TERMINAL_JOB_STATUSES:
+    if not approvals.held_call_finished(view.state, view.execution_status):
         payload["agent_directive"] = STILL_HELD_AGENT_DIRECTIVE
         return payload
-    if view.execution_status in (_JOB_COMPLETED, _JOB_FAILED):
-        try:
-            result = await svc.get_result(held_execution_id, identity=env.identity)
-        except HeldExecutionResultNotReadyError:
-            return payload
-        except Exception as exc:
-            payload["result_error"] = (
-                f"the call finished but its result could not be fetched: {exc}"
-            )
-            return payload
-        _attach_result_view(result, payload)
+    if view.execution_status is None:
+        payload["result_error"] = HELD_NO_STATUS_RESULT_ERROR
+    elif isinstance(fetched, Exception):
+        payload["result_error"] = (
+            f"the call finished but its result could not be fetched: {fetched}"
+        )
+    elif fetched is not None:
+        _attach_result_view(fetched, payload)
     return payload
 
 

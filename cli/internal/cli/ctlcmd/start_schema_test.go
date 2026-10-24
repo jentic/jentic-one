@@ -2,6 +2,8 @@ package ctlcmd
 
 import (
 	"bytes"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -77,5 +79,33 @@ func TestEnsureDockerSchemaContinuesOnUnknown(t *testing.T) {
 	a := &app{App: &cmdcore.App{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}}
 	if err := a.ensureDockerSchema("/tmp/compose.yaml"); err != nil {
 		t.Fatalf("ensureDockerSchema = %v, want nil", err)
+	}
+}
+
+// TestEnsureDockerSchemaCreatesAMissingSchema: `OVERALL uninitialized` (no
+// schema, so no data to lose) runs the compose migrations through the shared
+// runComposeMigrations seam before the start, and a failure aborts it.
+func TestEnsureDockerSchemaCreatesAMissingSchema(t *testing.T) {
+	stubCheck(t, "STATUS admin uninitialized current=- head=abc\nOVERALL uninitialized", "3")
+	orig := runComposeMigrations
+	t.Cleanup(func() { runComposeMigrations = orig })
+
+	var gotPath string
+	runComposeMigrations = func(_ io.Writer, composePath string) error {
+		gotPath = composePath
+		return nil
+	}
+	a := &app{App: &cmdcore.App{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}}
+	if err := a.ensureDockerSchema("/tmp/compose.yaml"); err != nil {
+		t.Fatalf("ensureDockerSchema = %v, want nil", err)
+	}
+	if gotPath != "/tmp/compose.yaml" {
+		t.Errorf("migrations ran on %q, want /tmp/compose.yaml", gotPath)
+	}
+
+	runComposeMigrations = func(io.Writer, string) error { return errors.New("exit status 1") }
+	err := a.ensureDockerSchema("/tmp/compose.yaml")
+	if err == nil || !strings.Contains(err.Error(), "could not initialize the database schema") {
+		t.Errorf("ensureDockerSchema = %v, want the schema initialization failure", err)
 	}
 }

@@ -169,16 +169,16 @@ func (a *app) followHeld(cmd *cobra.Command, opts *executeOptions, ref *heldRef,
 		finished.heldExecutionID = ref.ID
 		return a.executeOutput(cmd, &finished, final)
 	}
-	var timedOut *heldWaitTimeoutError
+	var timedOut *agentops.HeldWaitTimeoutError
 	if errors.As(err, &timedOut) {
 		if pendingOutput != nil {
 			if outErr := pendingOutput(); outErr != nil {
 				return outErr
 			}
 		}
-		approved := timedOut.held.State != control.HeldExecutionStatePending
-		ux.RenderHeldUnfinished(ctx, a.Err, ref.notice(), heldUnfinishedHeadline(timedOut.held, opts.timeout))
-		return heldStillPendingErr(ref, timedOut.held, opts.timeout, approved)
+		approved := timedOut.Held.State != control.HeldExecutionStatePending
+		ux.RenderHeldUnfinished(ctx, a.Err, ref.notice(), heldUnfinishedHeadline(timedOut.Held, opts.timeout))
+		return heldStillPendingErr(ref, timedOut.Held, opts.timeout, approved)
 	}
 	var pollErr *heldPollError
 	if errors.As(err, &pollErr) {
@@ -193,13 +193,13 @@ func heldUnfinishedHeadline(h *control.HeldExecutionDetailResponse, waited time.
 	if h.State == control.HeldExecutionStatePending {
 		return fmt.Sprintf("Still held after %s — this call is waiting for a human decision:", waited)
 	}
-	return fmt.Sprintf("Approved, not finished after %s — the call is %s:", waited, valueOr(heldExecutionStatus(h), "queued"))
+	return fmt.Sprintf("Approved, not finished after %s — the call is %s:", waited, valueOr(agentops.HeldExecutionStatus(h), "queued"))
 }
 
 // heldStillPendingErr is the exit-3 outcome of a followed held call that has
 // not finished when the timeout lapses.
 func heldStillPendingErr(ref *heldRef, h *control.HeldExecutionDetailResponse, waited time.Duration, approved bool) *ux.CodedError {
-	status := heldExecutionStatus(h)
+	status := agentops.HeldExecutionStatus(h)
 	details := ref.details()
 	details["state"] = string(h.State)
 	details["execution_status"] = status
@@ -247,16 +247,6 @@ func heldPollFailedErr(ref *heldRef, err error) *ux.CodedError {
 	}
 }
 
-// heldWaitTimeoutError is the wait budget lapsing with the held call not yet
-// finished.
-type heldWaitTimeoutError struct {
-	held *control.HeldExecutionDetailResponse
-}
-
-func (e *heldWaitTimeoutError) Error() string {
-	return fmt.Sprintf("held execution %s is still %s", e.held.Id, heldExecutionStatus(e.held))
-}
-
 // heldPollError is a failure to read a followed held call: the call's own
 // state is unknown, unlike an outcome the control plane reported.
 type heldPollError struct {
@@ -267,28 +257,8 @@ func (e *heldPollError) Error() string { return e.err.Error() }
 
 func (e *heldPollError) Unwrap() error { return e.err }
 
-// heldExecutionStatus is where a held call stands (its execution_status), or
-// "" when the control plane reports none.
-func heldExecutionStatus(h *control.HeldExecutionDetailResponse) string {
-	if h.ExecutionStatus == nil {
-		return ""
-	}
-	return string(*h.ExecutionStatus)
-}
-
-// heldExecutionFinished reports whether a held call has nothing left to wait
-// for: it ran, failed or was withdrawn — or it carries no execution status
-// and its decision is no longer pending.
-func heldExecutionFinished(h *control.HeldExecutionDetailResponse) bool {
-	status := heldExecutionStatus(h)
-	if status == "" {
-		return h.State != control.HeldExecutionStatePending
-	}
-	return agentops.IsFinishedHeldStatus(status)
-}
-
 // waitForHeldExecution polls a held execution until it finishes or timeout
-// lapses (a *heldWaitTimeoutError), then returns its outcome as the
+// lapses (an *agentops.HeldWaitTimeoutError), then returns its outcome as the
 // ExecuteResult the call would have produced synchronously. A failed read is
 // a *heldPollError. Each read updates ref with the review link and expiry.
 // Heartbeats ride stderr so they never corrupt the JSON stdout an agent
@@ -305,80 +275,79 @@ func (a *app) waitForHeldExecution(ctx context.Context, ref *heldRef, timeout ti
 	return heldExecuteResult(ctx, client, held)
 }
 
-// pollHeldExecution polls GET /executions/holds/{id} on the App's shared
-// approval cadence until the held call finishes or timeout lapses; a zero
+// pollHeldExecution follows a held call (agentops.PollHeldExecution) on the
+// App's shared approval cadence until it finishes or timeout lapses; a zero
 // timeout reads it once.
 func (a *app) pollHeldExecution(
-	ctx context.Context, client *control.ClientWithResponses, ref *heldRef, timeout time.Duration,
+	ctx context.Context, client agentops.HeldExecutionGetter, ref *heldRef, timeout time.Duration,
 ) (*control.HeldExecutionDetailResponse, error) {
-	start := time.Now()
-	deadline := start.Add(timeout)
 	delay, maxDelay, step := a.PollCadence()
 	const heartbeatAfter = 2 * time.Second
-	nextHeartbeat := start.Add(heartbeatAfter)
-	for {
-		held, err := getHeldExecution(ctx, client, ref.ID)
-		if err != nil {
-			return nil, err
-		}
-		ref.learn(held)
-		if heldExecutionFinished(held) {
-			return held, nil
-		}
-		if !time.Now().Before(deadline) {
-			return nil, &heldWaitTimeoutError{held: held}
-		}
-		if now := time.Now(); now.After(nextHeartbeat) {
-			fmt.Fprintln(a.Err, theme.StylesFromContext(ctx).Dimf(
-				"  waiting for held execution %s (%s, %ds elapsed) …",
-				ref.ID, heldExecutionStatus(held), int(now.Sub(start).Seconds())))
-			nextHeartbeat = now.Add(5 * time.Second)
-		}
-		select {
-		case <-ctx.Done():
-			return nil, &heldPollError{err: fmt.Errorf("wait for held execution %s: %w", ref.ID, ctx.Err())}
-		case <-time.After(min(delay, max(time.Until(deadline), 0))):
-		}
-		if delay < maxDelay {
-			delay += step
-		}
+	nextHeartbeat := heartbeatAfter
+	held, err := agentops.PollHeldExecution(ctx,
+		func(ctx context.Context) (*control.HeldExecutionDetailResponse, error) {
+			return getHeldExecution(ctx, client, ref.ID)
+		},
+		agentops.HeldPoll{
+			Timeout: timeout, Delay: delay, MaxDelay: maxDelay, Step: step,
+			Observe: func(held *control.HeldExecutionDetailResponse, elapsed time.Duration) {
+				ref.learn(held)
+				if elapsed > nextHeartbeat && !agentops.HeldExecutionFinished(held) && elapsed < timeout {
+					fmt.Fprintln(a.Err, theme.StylesFromContext(ctx).Dimf(
+						"  waiting for held execution %s (%s, %ds elapsed) …",
+						ref.ID, agentops.HeldExecutionStatus(held), int(elapsed.Seconds())))
+					nextHeartbeat = elapsed + 5*time.Second
+				}
+			},
+		})
+	var canceled *agentops.HeldWaitCanceledError
+	if errors.As(err, &canceled) {
+		return nil, &heldPollError{err: fmt.Errorf("wait for held execution %s: %w", ref.ID, canceled.Err)}
 	}
+	return held, err
 }
 
-// getHeldExecution reads one held execution; an unknown id (or one outside
-// the caller's visibility) is RESOLVE_FAILED, any other failure a
-// *heldPollError.
-func getHeldExecution(ctx context.Context, client *control.ClientWithResponses, heldExecutionID string) (*control.HeldExecutionDetailResponse, error) {
+// getHeldExecution reads one held execution (agentops.GetHeldExecution); an
+// unknown id (or one outside the caller's visibility) is RESOLVE_FAILED, any
+// other failure a *heldPollError.
+func getHeldExecution(ctx context.Context, client agentops.HeldExecutionGetter, heldExecutionID string) (*control.HeldExecutionDetailResponse, error) {
 	cctx, cancel := context.WithTimeout(ctx, heldPollTimeout)
 	defer cancel()
-	resp, callErr := client.GetHeldExecutionWithResponse(cctx, heldExecutionID)
-	if err := apiErrorFor(resp, callErr); err != nil {
-		var he *HTTPError
-		if errors.As(err, &he) && he.StatusCode == http.StatusNotFound {
-			return nil, &ux.CodedError{
-				Code: ux.CodeResolveFailed,
-				Msg:  fmt.Sprintf("held execution %q not found", heldExecutionID),
-				Actionable: "Re-check the id — a held execute prints it as held_execution_id — and run " +
-					"`jentic executions poll <held_execution_id>` with the exact value.",
-				Details: map[string]any{"held_execution_id": heldExecutionID},
-			}
+	held, err := agentops.GetHeldExecution(cctx, client, heldExecutionID)
+	var (
+		notFound   *agentops.HeldNotFoundError
+		readErr    *agentops.HeldReadError
+		unexpected *agentops.HeldUnexpectedResponseError
+	)
+	switch {
+	case err == nil:
+		return held, nil
+	case errors.As(err, &notFound):
+		return nil, &ux.CodedError{
+			Code: ux.CodeResolveFailed,
+			Msg:  notFound.Error(),
+			Actionable: "Re-check the id — a held execute prints it as held_execution_id — and run " +
+				"`jentic executions poll <held_execution_id>` with the exact value.",
+			Details: map[string]any{"held_execution_id": heldExecutionID},
 		}
-		return nil, &heldPollError{err: fmt.Errorf("failed to read held execution %s: %w", heldExecutionID, classifyTransportErr(err))}
-	}
-	if resp.JSON200 == nil {
+	case errors.As(err, &readErr):
+		return nil, &heldPollError{err: fmt.Errorf("failed to read held execution %s: %w", heldExecutionID, classifyTransportErr(readErr.Err))}
+	case errors.As(err, &unexpected):
+		return nil, &heldPollError{err: &ux.CodedError{Code: ux.CodeInternalError, Msg: unexpected.Error()}}
+	default:
+		// GetHeldExecution returns only the three typed errors above.
 		return nil, &heldPollError{err: &ux.CodedError{
 			Code: ux.CodeInternalError,
-			Msg:  fmt.Sprintf("unexpected backend response reading held execution %s (status %d)", heldExecutionID, resp.StatusCode()),
+			Msg:  fmt.Sprintf("unexpected error reading held execution %s: %v", heldExecutionID, err),
 		}}
 	}
-	return resp.JSON200, nil
 }
 
 // heldExecuteResult maps a finished held execution onto the ExecuteResult its
 // call would have produced synchronously (agentops.ExecutionResultFromHeld),
 // or the coded error for one that finished without a result.
 func heldExecuteResult(ctx context.Context, client *control.ClientWithResponses, held *control.HeldExecutionDetailResponse) (*agentops.ExecuteResult, error) {
-	status := heldExecutionStatus(held)
+	status := agentops.HeldExecutionStatus(held)
 	details := map[string]any{
 		"held_execution_id": held.Id,
 		"state":             string(held.State),

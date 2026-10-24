@@ -172,14 +172,14 @@ func TestParseAPIRef(t *testing.T) {
 
 func TestApisBrowserOpenRevisionsSwitchesView(t *testing.T) {
 	m := &apisBrowser{
-		apis:   []registeredAPI{{API: apiRef{Vendor: "v", Name: "n", Version: "1"}}},
-		ops:    map[string]*operationListResult{},
-		opsErr: map[string]string{},
+		listBrowser: listBrowser[registeredAPI]{items: []registeredAPI{{API: apiRef{Vendor: "v", Name: "n", Version: "1"}}}},
+		ops:         map[string]*operationListResult{},
+		opsErr:      map[string]string{},
 	}
 	if _, cmd := m.openRevisions(); cmd == nil {
 		t.Error("expected a load command")
 	}
-	if m.view != viewRevisions {
+	if m.page != viewRevisions {
 		t.Error("view should switch to revisions")
 	}
 	if m.revAPI.Name != "n" {
@@ -190,10 +190,9 @@ func TestApisBrowserOpenRevisionsSwitchesView(t *testing.T) {
 func TestApisBrowserBackPeelsLevels(t *testing.T) {
 	ref := apiRef{Vendor: "v", Name: "n", Version: "1"}
 	m := &apisBrowser{
-		apis:   []registeredAPI{{API: ref}},
-		ops:    map[string]*operationListResult{apiRefLabel(ref): {}},
-		opsErr: map[string]string{},
-		vendor: "v",
+		listBrowser: listBrowser[registeredAPI]{items: []registeredAPI{{API: ref}}, query: "v"},
+		ops:         map[string]*operationListResult{apiRefLabel(ref): {}},
+		opsErr:      map[string]string{},
 	}
 	// 1st back: collapse the ops preview.
 	if _, cmd := m.back(); cmd != nil {
@@ -207,8 +206,8 @@ func TestApisBrowserBackPeelsLevels(t *testing.T) {
 	}
 	// 2nd back: clear vendor filter.
 	m.back()
-	if m.vendor != "" {
-		t.Errorf("vendor should be cleared, got %q", m.vendor)
+	if m.query != "" {
+		t.Errorf("vendor should be cleared, got %q", m.query)
 	}
 	// 3rd back: now at base → quit.
 	if _, cmd := m.back(); cmd == nil {
@@ -221,7 +220,7 @@ func TestApisBrowserBackPeelsLevels(t *testing.T) {
 
 func TestApisBrowserActOnRevisionGuardsState(t *testing.T) {
 	m := &apisBrowser{
-		view:   viewRevisions,
+		page:   viewRevisions,
 		revAPI: apiRef{Vendor: "v", Name: "n", Version: "1"},
 		revs:   []apiRevision{{RevisionID: "r1", State: "published", IsCurrent: true}},
 	}
@@ -241,7 +240,7 @@ func TestApisBrowserActOnRevisionGuardsState(t *testing.T) {
 
 func TestApisBrowserDeleteRevisionConfirmFlow(t *testing.T) {
 	m := &apisBrowser{
-		view:   viewRevisions,
+		page:   viewRevisions,
 		revAPI: apiRef{Vendor: "v", Name: "n", Version: "1"},
 		revs:   []apiRevision{{RevisionID: "r9", State: "archived"}},
 	}

@@ -1,0 +1,78 @@
+{
+  "detail": {
+    "_links": {
+      "execution": null,
+      "result": "https://jentic.example/executions/holds/held_1/result",
+      "self": "https://jentic.example/executions/holds/held_1",
+      "withdraw": null
+    },
+    "agent_id": "agnt_1",
+    "agent_name": "billing-assistant",
+    "agent_owner_id": "usr_1",
+    "api_name": "stripe",
+    "api_vendor": "stripe.com",
+    "api_version": "2024-04-10",
+    "created_at": "2026-10-06T12:00:00Z",
+    "credential_id": "cred_1",
+    "decided_at": "2026-10-06T12:05:00Z",
+    "decided_by": "usr_1",
+    "decision_reason": "not this month",
+    "execution_id": null,
+    "execution_status": "failed",
+    "expires_at": "2026-10-07T00:00:00Z",
+    "id": "held_1",
+    "matched_rule_id": null,
+    "method": "POST",
+    "operation_id": "createCharge",
+    "path": "/v1/charges",
+    "request": null,
+    "review_url": "https://jentic.example/app/agents/approvals/held_1",
+    "state": "denied",
+    "trace_id": null,
+    "updated_at": null
+  },
+  "payload": {
+    "expires_at": "2026-10-07T00:00:00Z",
+    "held_execution_id": "held_1",
+    "result": {
+      "detail": "not this month",
+      "status": 403,
+      "title": "Approval denied",
+      "type": "https://jentic.example/problems/approval-denied"
+    },
+    "review_url": "https://jentic.example/app/agents/approvals/held_1",
+    "schema_version": "1",
+    "state": "denied",
+    "status": "failed"
+  },
+  "result": {
+    "body": {
+      "detail": "not this month",
+      "status": 403,
+      "title": "Approval denied",
+      "type": "https://jentic.example/problems/approval-denied"
+    },
+    "content_type": "application/problem+json"
+  },
+  "view": {
+    "agent_id": "agnt_1",
+    "agent_name": "billing-assistant",
+    "agent_owner_id": "usr_1",
+    "api_name": "stripe",
+    "api_vendor": "stripe.com",
+    "api_version": "2024-04-10",
+    "created_at": "2026-10-06T12:00:00Z",
+    "credential_id": "cred_1",
+    "decided_at": "2026-10-06T12:05:00Z",
+    "decided_by": "usr_1",
+    "decision_reason": "not this month",
+    "execution_status": "failed",
+    "expires_at": "2026-10-07T00:00:00Z",
+    "id": "held_1",
+    "job_id": "job_1",
+    "method": "POST",
+    "operation_id": "createCharge",
+    "path": "/v1/charges",
+    "state": "denied"
+  }
+}

@@ -73,6 +73,15 @@ const stillHeldAgentDirective = "This call is still waiting on human approval. S
 	"and end your turn. When they reply, call get_execution_result once with this " +
 	"held_execution_id. Do not re-send the call."
 
+// heldNoStatusResultError is a held poll payload's result_error for a decided
+// hold whose call reports no execution status (its job is gone, or outside
+// the caller's visibility): there is nothing left to wait for and no result
+// to return. Kept byte-identical with HELD_NO_STATUS_RESULT_ERROR in
+// src/jentic_one/shared/jobs/hold.py.
+const heldNoStatusResultError = "The approval is decided but the status of the held call is not available, so " +
+	"there is no result to return. Show the user the review_url to check the outcome " +
+	"and end your turn. Do not re-send the call."
+
 // heldState is the sealed requestState of a URL-elicitation round trip.
 type heldState struct {
 	HeldExecutionID string         `json:"held_execution_id"`
@@ -245,7 +254,7 @@ func linksOrEmpty(links map[string]any) map[string]any {
 	return links
 }
 
-// heldShortWait polls the held execution for up to heldWaitBudget; the
+// heldShortWait follows the held execution for up to heldWaitBudget; the
 // finished poll payload, or nil when the window lapses (or a poll fails —
 // the held result still tells the model how to poll).
 func (s *mcpServer) heldShortWait(ctx context.Context, heldExecutionID string) map[string]any {
@@ -253,30 +262,11 @@ func (s *mcpServer) heldShortWait(ctx context.Context, heldExecutionID string) m
 	if budget <= 0 {
 		budget = defaultHeldWaitBudget
 	}
-	poll := s.heldWaitPoll
-	if poll <= 0 {
-		poll = heldWaitPoll
+	payload, finished, soft := s.followHeldExecution(ctx, heldExecutionID, budget)
+	if soft != nil || !finished {
+		return nil
 	}
-	deadline := time.Now().Add(budget)
-	var reviewURL string
-	for {
-		payload, soft := s.heldPollPayload(ctx, heldExecutionID, &reviewURL)
-		if soft != nil {
-			return nil
-		}
-		if isTerminalJobStatus(payload["status"]) {
-			return payload
-		}
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-time.After(min(poll, remaining)):
-		}
-	}
+	return payload
 }
 
 func (s *mcpServer) logHeldFrontDoor(req *mcp.CallToolRequest, door, heldExecutionID string) {
