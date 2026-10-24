@@ -14,6 +14,7 @@ from sqlalchemy import Boolean, bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import BindParameter
 
+from jentic_one.shared.db.locks import lock_credential_bindings
 from jentic_one.shared.db.types import UTCDateTime
 
 
@@ -138,6 +139,16 @@ class PrerequisiteRepository:
             {"owner_id": owner_id},
         )
         return [str(row[0]) for row in result.fetchall()]
+
+    @staticmethod
+    async def lock_bindings_for_credential(session: AsyncSession, *, credential_id: str) -> None:
+        """Hold the credential's binding lock until the admin transaction ends.
+
+        No binding to the credential can be created meanwhile, so a
+        :meth:`list_agents_for_credential` read in the same transaction stays
+        accurate until it commits or rolls back.
+        """
+        await lock_credential_bindings(session, credential_id)
 
     @staticmethod
     async def list_agents_for_credential(
