@@ -7779,7 +7779,7 @@ type ListAgentOauthGrantsParamsStatus string
 
 // ListApisParams defines parameters for ListApis.
 type ListApisParams struct {
-	// Vendor Only return APIs from this vendor.
+	// Vendor Only return APIs from this vendor. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
 	Vendor *string `form:"vendor,omitempty" json:"vendor,omitempty"`
 
 	// Cursor Opaque cursor from a previous page's `next_cursor`; omit for the first page.
