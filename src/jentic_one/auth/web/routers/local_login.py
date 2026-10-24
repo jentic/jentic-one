@@ -77,6 +77,7 @@ from jentic_one.admin.services.errors import (
 from jentic_one.admin.services.user_service import UserService
 from jentic_one.auth.services.authorize_service import AuthorizeService
 from jentic_one.auth.services.errors import InvalidGrantError, RateLimitExceededError
+from jentic_one.auth.web.deps import get_authorize_service
 from jentic_one.auth.web.flow import (
     CONSENT_SECURITY_HEADERS,
     CONSENT_STATE_MAX_AGE_SECONDS,
@@ -96,7 +97,6 @@ from jentic_one.auth.web.flow import (
     write_local_consent_handle,
 )
 from jentic_one.auth.web.ratelimit import client_rate_limit_key, get_auth_backend
-from jentic_one.auth.web.routers.authorize import get_authorize_service
 from jentic_one.auth.web.schemas.local_login import (
     OAuthSessionContinueRequest,
     OAuthSessionContinueResponse,

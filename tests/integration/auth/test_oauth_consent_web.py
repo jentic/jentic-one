@@ -30,7 +30,7 @@ from jentic_one.admin.core.schema.external_identities import ExternalIdentity
 from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
 from jentic_one.admin.repos import ExternalIdentityRepository
 from jentic_one.auth.services.agent_service import AgentService
-from jentic_one.auth.web.routers import authorize
+from jentic_one.auth.web.routers import approval, authorize, consent, consent_agent
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import DEFAULT_AGENT_PERMISSIONS
 from jentic_one.shared.context import Context
@@ -53,7 +53,10 @@ pytestmark = pytest.mark.integration
 def _make_app(ctx: Context) -> FastAPI:
     """The authorize router wired to the REAL context — no mocked services."""
     app = FastAPI()
+    app.include_router(approval.router)
     app.include_router(authorize.router)
+    app.include_router(consent.router)
+    app.include_router(consent_agent.router)
     app.state.ctx = ctx
     app.state.auth_state_backend = MemoryStateBackend()
     return app

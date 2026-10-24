@@ -67,7 +67,7 @@ def scopes_to_permissions(scopes: Sequence[object]) -> list[str]:
     Two other places depend on the same identity without converting through here:
     :data:`jentic_one.shared.auth.permission_catalog.MCP_TOOL_SCOPES` (an OAuth2
     ceiling defined as a permission baseline) and
-    :func:`jentic_one.auth.web.routers.authorize._scope_to_permission_description`
+    :func:`jentic_one.auth.web.scope_descriptions.scope_to_permission_description`
     (consent copy looked up in the permission catalogue). Changing the translation
     here means revisiting both.
 
