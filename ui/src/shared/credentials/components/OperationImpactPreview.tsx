@@ -24,7 +24,7 @@ import { Badge, Label, MethodBadge } from '@/shared/ui';
 import { EffectBadge, effectBadgeProps } from '@/shared/credentials/components/EffectBadge';
 import { useVendorOperations } from '@/shared/credentials/api/vendors-hooks';
 import type { VendorOperation } from '@/shared/credentials/api/vendors-client';
-import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
+import type { PermissionRule } from '@/shared/credentials/api/connect-types';
 import { classifyOpCoverage, type OpCoverage } from '@/shared/credentials/lib/template-matcher';
 
 export interface OpsApiReference {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { evaluateRuleEffect, evaluateRules } from '@/shared/credentials/lib/rule-matcher';
-import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
+import type { PermissionRule } from '@/shared/credentials/api/connect-types';
 import fixture from './rule-matcher-parity.json';
 
 /**

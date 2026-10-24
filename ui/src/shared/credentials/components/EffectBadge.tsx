@@ -1,7 +1,7 @@
 import type { ComponentProps } from 'react';
 import { Badge } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
-import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
+import type { PermissionRule } from '@/shared/credentials/api/connect-types';
 
 type BadgeProps = ComponentProps<typeof Badge>;
 

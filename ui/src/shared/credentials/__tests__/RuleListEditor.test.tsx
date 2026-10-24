@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { describe, expect, it } from 'vitest';
 import { render, screen, userEvent, waitFor } from '@/__tests__/test-utils';
 import { RuleListEditor } from '@/shared/credentials/components/RuleListEditor';
-import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
+import type { PermissionRule } from '@/shared/credentials/api/connect-types';
 import { examplePath, examplePathPrefix } from '@/shared/credentials/lib/path-completion';
 
 /** Real local state, so commits mutate the list as the hosts do. */

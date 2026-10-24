@@ -15,7 +15,7 @@ import {
 	checkA11y,
 } from '@/__tests__/test-utils';
 import { setToken } from '@/shared/api';
-import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
+import type { PermissionRule } from '@/shared/credentials/api/connect-types';
 import { AccessRulesStep } from '@/shared/credentials/components/AccessRulesStep';
 import type { RulesPreset, ScopeReach } from '@/shared/credentials/lib/accessPresets';
 

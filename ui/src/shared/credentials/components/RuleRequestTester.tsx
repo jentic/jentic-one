@@ -17,7 +17,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { Plus, X } from 'lucide-react';
 import { Button, Input, Select } from '@/shared/ui';
 import { ruleSummary } from '@/shared/lib';
-import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
+import type { PermissionRule } from '@/shared/credentials/api/connect-types';
 import { explainRules, type RuleVerdict } from '@/shared/credentials/lib/rule-matcher';
 import { examplePath } from '@/shared/credentials/lib/path-completion';
 

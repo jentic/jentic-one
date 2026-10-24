@@ -25,21 +25,38 @@ from jentic_one.shared.web.sensitive import SENSITIVE
 
 
 class VendorScopeResponse(BaseModel):
-    name: str
-    classification: Literal["read", "write", "admin"]
-    default: bool
-    description: str
+    """One OAuth scope in a vendor's catalogue."""
+
+    name: str = Field(description="The vendor's scope string.", examples=["repo"])
+    classification: Literal["read", "write", "admin"] = Field(
+        description="How much access the scope grants.", examples=["write"]
+    )
+    default: bool = Field(
+        description="Whether the scope is requested unless the user deselects it.",
+        examples=[True],
+    )
+    description: str = Field(
+        description="What the scope lets the credential do.",
+        examples=["Full control of private repositories."],
+    )
 
 
 class VendorFlowResponse(BaseModel):
-    kind: str
+    """One OAuth flow the vendor supports."""
+
+    kind: str = Field(
+        description="The flow: `authorization_code` or `device_authorization`.",
+        examples=["authorization_code"],
+    )
 
 
 class VendorAuthCapabilitiesResponse(BaseModel):
-    vendor: str
-    display_name: str
-    flows: list[VendorFlowResponse]
-    scopes: list[VendorScopeResponse]
+    """How to connect a vendor: its OAuth flows and scope catalogue."""
+
+    vendor: str = Field(description="Vendor registry key.", examples=[ex.VENDOR_KEY])
+    display_name: str = Field(description="Display name of the vendor.", examples=["GitHub"])
+    flows: list[VendorFlowResponse] = Field(description="OAuth flows the vendor supports.")
+    scopes: list[VendorScopeResponse] = Field(description="Every scope the vendor offers.")
 
 
 class VendorSummaryResponse(BaseModel):
@@ -262,10 +279,24 @@ class IntegrationsConnectRequest(BaseModel):
 
 
 class IntegrationsConnectResponse(BaseModel):
-    session_id: str
-    approval_url: str
-    poll_token: str
-    resolved_flow: str
+    """A started connect session: where a human approves it and how to poll it."""
+
+    session_id: str = Field(
+        description="Unique ID of the connect session.", examples=[ex.CONNECT_SESSION_ID]
+    )
+    approval_url: str = Field(
+        description="URL a human opens to review and approve the session.",
+        examples=[f"{ex.BASE_URL}/connect?approve={ex.CONNECT_SESSION_ID}"],
+    )
+    poll_token: str = Field(
+        json_schema_extra=SENSITIVE,
+        description="Opaque capability for the session's status, review and cancel routes.",
+        examples=[ex.OPAQUE_TOKEN],
+    )
+    resolved_flow: str = Field(
+        description="The flow the session runs, e.g. `authorization_code` or `manual_api_key`.",
+        examples=["authorization_code"],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -350,14 +381,25 @@ class ConnectSessionListResponse(BaseModel):
 
 
 class ReviewScopeResponse(BaseModel):
-    name: str
-    classification: Literal["read", "write", "admin"]
-    default: bool
-    requested: bool
-    description: str
+    """One scope in the review's catalogue, flagged default and requested."""
+
+    name: str = Field(description="The vendor's scope string.", examples=["repo"])
+    classification: Literal["read", "write", "admin"] = Field(
+        description="How much access the scope grants.", examples=["write"]
+    )
+    default: bool = Field(
+        description="Whether the vendor requests the scope by default.", examples=[True]
+    )
+    requested: bool = Field(
+        description="Whether the session's initiator asked for the scope.", examples=[True]
+    )
+    description: str = Field(
+        description="What the scope lets the credential do.",
+        examples=["Full control of private repositories."],
+    )
 
 
-class ApiReferenceResponse(BaseModel):
+class ConnectSessionApiReferenceResponse(BaseModel):
     """Where the vendor's OpenAPI lives in the registry.
 
     ``version`` is nullable because the catalog auto-importer runs
@@ -379,32 +421,72 @@ class ApiReferenceResponse(BaseModel):
 class ReviewProvenanceResponse(BaseModel):
     """Where an API target's live revision came from (registry data)."""
 
-    origin: str | None = None
-    catalog_api_id: str | None = None
-    submitted_by: str | None = None
-    source_url: str | None = None
-    revision_id: str
+    origin: str | None = Field(
+        default=None,
+        description="`catalog` for a public-catalog import; anything else is a submitted spec.",
+        examples=["catalog"],
+    )
+    catalog_api_id: str | None = Field(
+        default=None,
+        description="Catalog identity of the API, when it came from the catalog.",
+        examples=[ex.CATALOG_API_ID],
+    )
+    submitted_by: str | None = Field(
+        default=None,
+        description="ID of the actor who submitted the spec, when known.",
+        examples=[ex.USER_ID],
+    )
+    source_url: str | None = Field(
+        default=None,
+        description="Where the spec was fetched from, when known.",
+        examples=["https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json"],
+    )
+    revision_id: str = Field(
+        description="ID of the API's live registry revision.", examples=[ex.REVISION_ID]
+    )
 
 
 class ReviewAgentResponse(BaseModel):
     """The agent the session binds and its owner."""
 
-    agent_id: str
-    name: str | None = None
-    owner_id: str | None = None
-    status: str
+    agent_id: str = Field(description="ID of the agent.", examples=[ex.AGENT_ID])
+    name: str | None = Field(
+        default=None, description="Name of the agent.", examples=["invoice-reconciler"]
+    )
+    owner_id: str | None = Field(
+        default=None, description="ID of the agent's owner.", examples=[ex.USER_ID]
+    )
+    status: str = Field(description="The agent's lifecycle status.", examples=["active"])
 
 
 class ReviewSchemeResponse(BaseModel):
     """The declared scheme an API target collects (snapshot from its spec)."""
 
-    type: Literal["api_key", "bearer", "basic", "oauth2"]
-    location: str | None = None
-    field_name: str | None = None
+    type: Literal["api_key", "bearer", "basic", "oauth2"] = Field(
+        description="The kind of secret the scheme collects.", examples=["api_key"]
+    )
+    location: str | None = Field(
+        default=None,
+        description="Where an API key goes: `header`, `query` or `cookie`.",
+        examples=["header"],
+    )
+    field_name: str | None = Field(
+        default=None,
+        description="Header, query or cookie name an API key is sent in.",
+        examples=["X-Api-Key"],
+    )
     # An OAuth scheme's authorize and token URLs, set only when the API's spec is
     # from the public catalog — offered to an approver bringing their own app.
-    authorization_url: str | None = None
-    token_url: str | None = None
+    authorization_url: str | None = Field(
+        default=None,
+        description="An OAuth scheme's authorize URL; set only for a public-catalog spec.",
+        examples=["https://github.com/login/oauth/authorize"],
+    )
+    token_url: str | None = Field(
+        default=None,
+        description="An OAuth scheme's token URL; set only for a public-catalog spec.",
+        examples=["https://github.com/login/oauth/access_token"],
+    )
 
 
 class ExistingCredentialResponse(BaseModel):
@@ -416,43 +498,103 @@ class ExistingCredentialResponse(BaseModel):
     (``other_bound_agent_ids``) — widening it would widen theirs too.
     """
 
-    credential_id: str
-    name: str
-    type: str
-    granted_scopes: list[str] | None = None
-    missing_scopes: list[str] | None = None
-    other_bound_agent_ids: list[str] = Field(default_factory=list)
-    can_bind: bool
-    can_reauthorize: bool
+    credential_id: str = Field(description="ID of the credential.", examples=[ex.CREDENTIAL_ID])
+    name: str = Field(description="Name of the credential.", examples=["GitHub (octocat)"])
+    type: str = Field(description="The credential's type.", examples=["oauth2"])
+    granted_scopes: list[str] | None = Field(
+        default=None,
+        description="Scopes the credential holds; null for a non-OAuth credential.",
+        examples=[["repo", "read:org"]],
+    )
+    missing_scopes: list[str] | None = Field(
+        default=None,
+        description="Requested scopes the credential lacks; null for a non-OAuth credential.",
+        examples=[["admin:org"]],
+    )
+    other_bound_agent_ids: list[str] = Field(
+        default_factory=list,
+        description="Other agents bound to the credential.",
+        examples=[[ex.AGENT_ID]],
+    )
+    can_bind: bool = Field(
+        description="Whether the viewer may bind the credential to the agent.", examples=[True]
+    )
+    can_reauthorize: bool = Field(
+        description="Whether the viewer may widen the credential's scopes.", examples=[False]
+    )
 
 
 class ReviewSessionResponse(BaseModel):
-    session_id: str
-    state: str
-    vendor_key: str
-    vendor_display_name: str
-    resolved_flow: str
-    reason: str | None
-    requested_by_actor_id: str
-    scopes: list[ReviewScopeResponse]
+    """What the review page shows the approver of a connect session."""
+
+    session_id: str = Field(
+        description="Unique ID of the connect session.", examples=[ex.CONNECT_SESSION_ID]
+    )
+    state: str = Field(description="Current lifecycle state of the session.", examples=["created"])
+    vendor_key: str = Field(
+        description="Vendor registry key the session connects.", examples=[ex.VENDOR_KEY]
+    )
+    vendor_display_name: str = Field(description="Display name of the vendor.", examples=["GitHub"])
+    resolved_flow: str = Field(
+        description="The flow the session runs.", examples=["authorization_code"]
+    )
+    reason: str | None = Field(
+        description="Free-text reason given when the session was started.",
+        examples=["Needs read access to triage issues in the platform repo."],
+    )
+    requested_by_actor_id: str = Field(
+        description="ID of the actor that started the session.", examples=[ex.AGENT_ID]
+    )
+    scopes: list[ReviewScopeResponse] = Field(
+        description="The vendor's scope catalogue, flagged default and requested."
+    )
     # Captured verbatim from ``IntegrationsConnectRequest.requested_permission_rules``
     # so the approve page can render them as pre-filled rows.
-    requested_permission_rules: list[PermissionRuleSchema] = Field(default_factory=list)
+    requested_permission_rules: list[PermissionRuleSchema] = Field(
+        default_factory=list, description="Permission rules the initiator asked for."
+    )
     # Where the vendor's OpenAPI lives once imported — SPA needs this
     # to hit ``/apis/{vendor}/{name}/{version}/operations`` on the
     # rules-page preview.
-    api_reference: ApiReferenceResponse
-    target_kind: Literal["vendor", "api"] = "vendor"
-    requested_scopes: list[str] = Field(default_factory=list)
-    provenance: ReviewProvenanceResponse | None = None
-    agent: ReviewAgentResponse | None = None
-    scheme: ReviewSchemeResponse | None = None
-    pinned_hosts: list[str] | None = None
+    api_reference: ConnectSessionApiReferenceResponse = Field(
+        description="Where the target's OpenAPI lives in the registry."
+    )
+    target_kind: Literal["vendor", "api"] = Field(
+        default="vendor",
+        description="`vendor` for a vendor-registry key, `api` for a registry API.",
+        examples=["api"],
+    )
+    requested_scopes: list[str] = Field(
+        default_factory=list,
+        description="OAuth scopes the session asks for.",
+        examples=[["repo", "read:org"]],
+    )
+    provenance: ReviewProvenanceResponse | None = Field(
+        default=None, description="Where an API target's live revision came from."
+    )
+    agent: ReviewAgentResponse | None = Field(
+        default=None, description="The agent the session binds, and its owner."
+    )
+    scheme: ReviewSchemeResponse | None = Field(
+        default=None, description="The declared scheme an API target collects."
+    )
+    pinned_hosts: list[str] | None = Field(
+        default=None,
+        description="Hosts the credential may be sent to, pinned at `:connect`.",
+        examples=[["api.github.com"]],
+    )
     # Echo on ``:confirm`` with ``expected_agent_id``; a mismatch is 409
     # ``review_stale``.
-    digest: str
-    can_confirm: bool
-    existing_credentials: list[ExistingCredentialResponse] = Field(default_factory=list)
+    digest: str = Field(
+        description="Fingerprint of the review; echo it on `:confirm`.",
+        examples=[ex.REVIEW_DIGEST],
+    )
+    can_confirm: bool = Field(
+        description="Whether this viewer may confirm the session as it stands.", examples=[True]
+    )
+    existing_credentials: list[ExistingCredentialResponse] = Field(
+        default_factory=list, description="Credentials the viewer already holds for the target."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -704,10 +846,21 @@ class DeviceAuthorizationConfirmSessionResponse(BaseModel):
     """
 
     kind: Literal["device_authorization"] = "device_authorization"
-    user_code: str
-    verification_uri: str
-    verification_uri_complete: str | None = None
-    poll_interval_seconds: int | None = None
+    user_code: str = Field(
+        description="The code the user enters at `verification_uri`.", examples=["WDJB-MJHT"]
+    )
+    verification_uri: str = Field(
+        description="Where the user enters `user_code`.",
+        examples=["https://github.com/login/device"],
+    )
+    verification_uri_complete: str | None = Field(
+        default=None,
+        description="`verification_uri` with the code filled in, when the vendor offers one.",
+        examples=["https://github.com/login/device?user_code=WDJB-MJHT"],
+    )
+    poll_interval_seconds: int | None = Field(
+        default=None, description="Seconds to wait between status polls.", examples=[5]
+    )
 
 
 class AuthCodeConfirmSessionResponse(BaseModel):
@@ -716,22 +869,32 @@ class AuthCodeConfirmSessionResponse(BaseModel):
     observes it via ``/status``."""
 
     kind: Literal["authorization_code"] = "authorization_code"
-    authorize_url: str
+    authorize_url: str = Field(
+        description="Vendor sign-in URL to open in the approver's browser.",
+        examples=["https://github.com/login/oauth/authorize?client_id=Iv1.8a61f9b3a7aba766"],
+    )
 
 
 class ConnectedConfirmSessionResponse(BaseModel):
     """The confirm finished the session; ``credential_id`` is bound to the agent."""
 
     kind: Literal["connected"] = "connected"
-    credential_id: str
+    credential_id: str = Field(
+        description="ID of the credential bound to the agent.", examples=[ex.CREDENTIAL_ID]
+    )
 
 
 class ReauthorizeConfirmSessionResponse(BaseModel):
     """The agent is bound to ``credential_id``; open ``authorize_url`` to grant more scopes."""
 
     kind: Literal["reauthorize"] = "reauthorize"
-    credential_id: str
-    authorize_url: str
+    credential_id: str = Field(
+        description="ID of the credential the agent is bound to.", examples=[ex.CREDENTIAL_ID]
+    )
+    authorize_url: str = Field(
+        description="Vendor sign-in URL that grants the wider scopes.",
+        examples=["https://github.com/login/oauth/authorize?client_id=Iv1.8a61f9b3a7aba766"],
+    )
 
 
 ConfirmSessionResponse = Annotated[
@@ -748,9 +911,29 @@ ConfirmSessionResponse = Annotated[
 # ---------------------------------------------------------------------------
 
 
-class StatusResponse(BaseModel):
-    status: Literal["pending", "polling", "connected", "failed", "expired"]
-    connected_as: str | None = None
-    credential_id: str | None = None
-    bound_scopes: list[str] | None = None
-    error_code: str | None = None
+class ConnectSessionStatusResponse(BaseModel):
+    """A connect session's lifecycle status."""
+
+    status: Literal["pending", "polling", "connected", "failed", "expired"] = Field(
+        description="The session's lifecycle status.", examples=["connected"]
+    )
+    connected_as: str | None = Field(
+        default=None,
+        description="Upstream account the credential connected as; null until known.",
+        examples=["octocat"],
+    )
+    credential_id: str | None = Field(
+        default=None,
+        description="ID of the connected credential; null until connected.",
+        examples=[ex.CREDENTIAL_ID],
+    )
+    bound_scopes: list[str] | None = Field(
+        default=None,
+        description="Scopes the connected credential holds.",
+        examples=[["repo", "read:org"]],
+    )
+    error_code: str | None = Field(
+        default=None,
+        description="Why a failed session failed, e.g. `rejected` or `access_denied`.",
+        examples=["access_denied"],
+    )

@@ -55,3 +55,15 @@ def test_list_vendors_carries_a_shared_apps_catalog_api_id() -> None:
     (row,) = resp.json()["data"]
     assert row["source"] == "db"
     assert row["catalog_api_id"] == "googleapis.com/gmail"
+
+
+def test_auth_capabilities_declares_its_success_schema_in_openapi() -> None:
+    """The UI client is generated from this schema, so the 200 body must be typed."""
+    app = _client([]).app
+    assert isinstance(app, FastAPI)
+    responses = app.openapi()["paths"]["/vendors/{vendor_key}/auth-capabilities"]["get"][
+        "responses"
+    ]
+    assert responses["200"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/VendorAuthCapabilitiesResponse"
+    }

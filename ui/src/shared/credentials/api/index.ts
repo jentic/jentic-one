@@ -563,7 +563,7 @@ export type {
 	VendorListResponse,
 	VendorScopeCatalog,
 	VendorSummary,
-} from './vendors-types';
+} from './connect-types';
 // Spec-import wire shapes — the import dialog builds one and reads the other.
 export type { ImportJob, ImportSource, JobStatus } from './apis';
 

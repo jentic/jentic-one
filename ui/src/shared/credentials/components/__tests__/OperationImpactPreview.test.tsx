@@ -3,7 +3,7 @@ import { http, HttpResponse } from 'msw';
 import { checkA11y, renderWithProviders, screen, userEvent, within } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
 import { OperationImpactPreview } from '@/shared/credentials/components/OperationImpactPreview';
-import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
+import type { PermissionRule } from '@/shared/credentials/api/connect-types';
 
 const API = { vendor: 'api.example.com', name: 'example', version: '1' };
 

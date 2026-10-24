@@ -37,7 +37,7 @@ import {
 	type RuleValidityIssue,
 } from '@/shared/credentials/lib/rule-matcher';
 import { ruleAppliesToTemplate } from '@/shared/credentials/lib/template-matcher';
-import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
+import type { PermissionRule } from '@/shared/credentials/api/connect-types';
 
 // Stable empty reference so ``useMemo`` deps don't invalidate on every
 // render when a caller omits ``pathSuggestions``.
