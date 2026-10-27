@@ -299,7 +299,7 @@ async def test_confirm_must_name_the_current_revision(
             resume=False,
         )
     assert stale.value.current_revision_number == 1
-    assert "review revision 1" in str(stale.value)
+    assert "revision 1 is now the current one" in str(stale.value)
     assert await _rules(ctx, binding) == [("allow", "/v1/")]
 
 

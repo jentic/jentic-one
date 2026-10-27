@@ -1663,7 +1663,7 @@ async def test_a_stale_confirm_names_the_revision_to_approve(env: Context) -> No
     assert (stale.status_code, problem["type"]) == (409, "revision_changed")
     assert problem["current_revision_id"] == amended.json()["revision_id"]
     assert problem["current_revision_number"] == 2
-    assert "review revision 2" in problem["detail"]
+    assert "revision 2 is now the current one" in problem["detail"]
     assert _SECRET not in stale.text
 
 

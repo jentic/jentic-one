@@ -394,11 +394,14 @@ class RevisionChangedError(ConnectSessionServiceError):
         current_revision_id: str | None,
         current_revision_number: int | None = None,
     ) -> None:
+        # Both a stale confirm (a human) and an amend that lost the race (the
+        # agent's own) land here, so it names the revision without saying what
+        # to do with it: an approver confirms it, the agent amends it again.
         super().__init__(
-            f"The request was amended after it was reviewed: review revision "
-            f"{current_revision_number} and approve that one instead."
+            f"The request changed after it was read: revision {current_revision_number} "
+            "is now the current one. Read it again, then retry."
             if current_revision_number is not None
-            else "The request was amended after it was reviewed: review it again."
+            else "The request changed after it was read: read it again, then retry."
         )
         self.session_id = session_id
         self.current_revision_id = current_revision_id
