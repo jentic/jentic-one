@@ -32,6 +32,7 @@ from jentic_one.broker.web.errors import install_broker_error_handlers
 from jentic_one.broker.web.middleware import AdmissionControlMiddleware, _AdmissionGate
 from jentic_one.broker.web.readiness import make_readiness_router
 from jentic_one.broker.web.routers import execute
+from jentic_one.broker.web.server_timing import ServerTimingMiddleware
 from jentic_one.shared.broker.execution import UpstreamRunner
 from jentic_one.shared.context import Context
 from jentic_one.shared.metrics import get_meter
@@ -222,6 +223,11 @@ def create_app(ctx: Context, container: AppContainer | None = None) -> FastAPI:
         container=container,
         include_instance_router=False,
     )
+    # Opt-in Server-Timing (#1717): absent unless enabled, so the default path
+    # pays nothing beyond the stage hooks' context-variable reads. Added before
+    # admission control so it sits inside it: a shed 503 carries no timing.
+    if ctx.config.broker.server_timing:
+        app.add_middleware(ServerTimingMiddleware)
     # One admission gate shared by the shedding middleware and the readiness
     # probe, so both observe the same in-flight counter.
     gate = _AdmissionGate(max_in_flight=resilience.max_in_flight)

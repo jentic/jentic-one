@@ -28,6 +28,15 @@
           "type": "string"
         }
       },
+      "ServerTiming": {
+        "description": "W3C Server-Timing. When the upstream sends its own\n`Server-Timing`, it is forwarded. When the deployment\nenables `broker.server_timing` (off by default), the Broker\nappends a second field with per-stage durations in milliseconds\nfor authenticated callers: `jentic-auth`, `jentic-egress`,\n`jentic-discover`, `jentic-rules`, `jentic-body`,\n`jentic-idempotency`, `jentic-cred`, `jentic-upstream`,\n`jentic-persist`, `jentic-total` — fixed names in the reserved\n`jentic-` namespace (an upstream entry claiming that prefix is\ndropped), no identifiers. Only the stages that ran are listed. On\na streamed response the headers precede the body, so\n`jentic-upstream` is the wait for the upstream headers and\n`jentic-persist` is absent. The field also appears on\npost-authentication error responses: with durations once the\nupstream was called (e.g. a `504`), and as stage names only for an\nerror the Broker raises before the upstream call (e.g. `404`,\n`403`, `409`, `424`). `jentic-upstream` includes the circuit-breaker\ncheck, so a circuit-open `503` carries durations even though no\nupstream request was sent. It never appears on `401`, a missing-permission\n`403`, a rate-limit `429` or a load-shed `503`.\n",
+        "schema": {
+          "examples": [
+            "jentic-auth;dur=1.4, jentic-egress;dur=0.3, jentic-discover;dur=0.9, jentic-rules;dur=2.1, jentic-body;dur=0.1, jentic-cred;dur=3.0, jentic-upstream;dur=84.2, jentic-persist;dur=4.7, jentic-total;dur=97.6"
+          ],
+          "type": "string"
+        }
+      },
       "Traceparent": {
         "description": "W3C Trace Context — `00-{trace-id}-{parent-id}-01`. The\n`parent-id` is the broker span; downstream services use this to\nlink their own spans into the same distributed trace. Version\n`00` is current; flags `01` = sampled.\n",
         "schema": {
@@ -435,6 +444,9 @@
               "type": "string"
             }
           },
+          "Server-Timing": {
+            "$ref": "#/components/headers/ServerTiming"
+          },
           "traceparent": {
             "$ref": "#/components/headers/Traceparent"
           },
@@ -522,6 +534,9 @@
               ],
               "type": "string"
             }
+          },
+          "Server-Timing": {
+            "$ref": "#/components/headers/ServerTiming"
           },
           "traceparent": {
             "$ref": "#/components/headers/Traceparent"
