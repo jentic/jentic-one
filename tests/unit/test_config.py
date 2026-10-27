@@ -2803,6 +2803,12 @@ def test_memory_backend_total_cap_defaults_and_is_configurable(config_file: Path
     assert default.max_bytes_per_namespace == 16 * 1024 * 1024
     assert default.budgets()["idem"].max_bytes == 128 * 1024 * 1024
     assert default.budgets()["idem-body"].max_bytes == 32 * 1024 * 1024
+    # The broker's repeated-failure counter is budgeted by entry count: every
+    # key is a short fixed-shape bucket or marker.
+    repeated_failure = default.budgets()["repeated_failure"]
+    assert repeated_failure.max_entries == 10_000
+    assert repeated_failure.max_bytes == 10_000 * (750 + 128)
+    assert repeated_failure.max_owner_share is None
     env = {"JENTIC__STATE__MEMORY__MAX_TOTAL_BYTES": "5000"}
     with patch.dict(os.environ, env, clear=False):
         memory = load_config(config_file).state.memory

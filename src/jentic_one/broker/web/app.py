@@ -110,7 +110,7 @@ def create_app(ctx: Context, container: AppContainer | None = None) -> FastAPI:
         # Cheap shared-state pre-filter in front of the repeated-failure DB scan
         # (sync + streaming router paths and the async worker alike).
         app.state.broker_repeated_failure_counter = build_repeated_failure_counter(
-            ctx.config.state, state, ctx.config.security
+            ctx.config.state, state
         )
 
         rl = resilience.rate_limit

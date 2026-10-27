@@ -136,7 +136,12 @@ admin database (`assertion_jtis`), so a replayed assertion is refused by
 every auth process sharing it, whatever the state backend.
 
 The same backend carries the repeated-failure counters that gate the
-`execution.repeated_failure` database scan. On a shared backend the count is
+`execution.repeated_failure` database scan, in the `repeated_failure` key
+namespace. On the `memory` backend that namespace has its own built-in budget
+(10,000 entries, about 8.4 MiB; override it under
+`state.memory.namespaces.repeated_failure`), so a failure storm cannot crowd
+out idempotency or other shared state; when it is full the counter fails open
+and every failure runs the scan. On a shared backend the count is
 cluster-wide, so failures spread across replicas still reach the threshold.
 Several worker processes serving one broker count as several instances on the
 `memory` backend: each process keeps its own counters, so the event fires late
