@@ -7,7 +7,7 @@
  */
 import type { ReactNode } from 'react';
 import { Check, Lock, ShieldCheck, SlidersHorizontal } from 'lucide-react';
-import { Button } from '@/shared/ui';
+import { Button, TruncateWithTooltip } from '@/shared/ui';
 import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
 import {
 	OperationImpactPreview,
@@ -105,18 +105,31 @@ export function AccessSummary({
 	);
 }
 
-/** "What can <agent> call?", with an optional action at its end. */
-export function AccessHeading({ agentName, after }: { agentName: string; after?: ReactNode }) {
+/** "Permission rules for <credential>" — the rules belong to the agent's
+ * binding of this credential, not to the agent or the API — with an optional
+ * action at its end. */
+export function AccessHeading({
+	credentialName,
+	after,
+}: {
+	credentialName: string;
+	after?: ReactNode;
+}) {
 	return (
 		<div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
-			<h3 className="text-foreground text-sm font-semibold">What can {agentName} call?</h3>
+			<h3 className="text-foreground min-w-0 text-sm font-semibold">
+				Permission rules for{' '}
+				<TruncateWithTooltip inline dir="auto" className="max-w-[32ch]">
+					{credentialName}
+				</TruncateWithTooltip>
+			</h3>
 			{after && <span className="ml-auto">{after}</span>}
 		</div>
 	);
 }
 
 export interface AccessReadViewProps {
-	agentName: string;
+	credentialName: string;
 	/** The rules the broker applies (an attached rule set's, else the inline ones). */
 	rules: readonly PermissionRule[];
 	catalog: ActionCatalog;
@@ -137,7 +150,7 @@ export interface AccessReadViewProps {
 }
 
 export function AccessReadView({
-	agentName,
+	credentialName,
 	rules,
 	catalog,
 	apiReference,
@@ -162,7 +175,7 @@ export function AccessReadView({
 				</p>
 			)}
 			<AccessHeading
-				agentName={agentName}
+				credentialName={credentialName}
 				after={
 					// Always mounted, so the announcement is heard; the host clears
 					// `justSaved` after a few seconds. (The rise is stilled for reduced motion

@@ -40,7 +40,7 @@ import type { AccessDraft } from '@/modules/agents/components/flat/access/useAcc
 const ACCESS_WORD = { allow: 'Allow', ask: 'Ask', deny: 'Deny', unset: 'Not set' } as const;
 
 export interface AccessEditorProps {
-	agentName: string;
+	credentialName: string;
 	reach: ScopeReach;
 	apiReference: { vendor: string; name: string; version: string } | null;
 	siblings: readonly SiblingApiReference[];
@@ -56,7 +56,7 @@ export interface AccessEditorProps {
 }
 
 export function AccessEditor({
-	agentName,
+	credentialName,
 	reach,
 	apiReference,
 	siblings,
@@ -74,7 +74,7 @@ export function AccessEditor({
 	const stagedReasonId = useId();
 	return (
 		<div className="space-y-3" data-testid="access-editor">
-			<AccessHeading agentName={agentName} />
+			<AccessHeading credentialName={credentialName} />
 			<AccessSummary
 				rules={draftRules}
 				catalog={catalog}
@@ -105,7 +105,7 @@ export function AccessEditor({
 					onCustomRulesChange={draft.setCustomRules}
 					apiReference={apiReference}
 					// The section heading above names it; the radio group keeps it as its label.
-					heading={<span className="sr-only">What can {agentName} call?</span>}
+					heading={<span className="sr-only">Permission rules for {credentialName}</span>}
 					siblings={siblings}
 					onOpenSibling={onOpenSibling}
 					// By action unless path rules are already in play.

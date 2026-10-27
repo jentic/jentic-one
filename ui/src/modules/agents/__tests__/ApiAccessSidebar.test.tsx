@@ -292,9 +292,9 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		expect(section.getByRole('button', { name: 'Copy the credential ID' })).toBeInTheDocument();
 		expect(inDialog.queryByText(/^Jentic-Credential-Id:/)).not.toBeInTheDocument();
 
-		// 2 — the Access read view: the question, the saved rules' summary, Edit access.
+		// 2 — the Access read view: whose rules, the saved rules' summary, Edit access.
 		const read = await inDialog.findByTestId('access-read-view');
-		expect(read).toHaveTextContent('What can support-agent call?');
+		expect(read).toHaveTextContent('Permission rules for Slack bot token');
 		expect(within(read).getByTestId('access-summary')).toHaveTextContent(
 			'Custom rules — 1 path rule.',
 		);
@@ -440,7 +440,7 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 
 		// The presets, as visible radio rows, on the saved choice.
 		const presets = within(editor).getByRole('radiogroup', {
-			name: 'What can support-agent call?',
+			name: 'Permission rules for Slack bot token',
 		});
 		expect(
 			within(presets)
@@ -2010,9 +2010,12 @@ describe('ApiAccessSidebar — a credential shared with the viewer', () => {
 		renderAuthed();
 		await screen.findByText('1 access rule');
 		const inDialog = within(await openSidebar('Slack'));
-		const label = await inDialog.findByText('Slack bot token');
-		// The name's own element resolves it as a self-contained run, so an
-		// override inside it cannot reach the "Bearer token · bound …" line below.
-		expect(getComputedStyle(label).unicodeBidi).toBe('isolate');
+		// The credential card and the rules heading both name it. Each name's own
+		// element resolves it as a self-contained run, so an override inside it
+		// cannot reach the copy beside it ("Bearer token · bound …", "Permission
+		// rules for").
+		const labels = await inDialog.findAllByText('Slack bot token');
+		expect(labels).toHaveLength(2);
+		for (const label of labels) expect(getComputedStyle(label).unicodeBidi).toBe('isolate');
 	});
 });

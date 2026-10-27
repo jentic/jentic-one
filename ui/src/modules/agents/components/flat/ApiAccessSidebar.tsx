@@ -451,7 +451,7 @@ export function ApiAccessSidebar({
 		<AccessEditor
 			// One editor per binding, so a half-made draft never lands on another.
 			key={`${agent.id}:${shown.credentialId}`}
-			agentName={agent.name}
+			credentialName={shown.credentialName}
 			reach={apiScopeReach(shown.scope)}
 			apiReference={apiReference}
 			siblings={siblingRefs}
@@ -465,7 +465,7 @@ export function ApiAccessSidebar({
 		/>
 	) : (
 		<AccessReadView
-			agentName={agent.name}
+			credentialName={shown.credentialName}
 			rules={effectiveRules}
 			catalog={catalog}
 			apiReference={apiReference}
