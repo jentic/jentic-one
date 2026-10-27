@@ -6,7 +6,7 @@
  * with the operator.
  */
 import type { Credential, SelectedApi } from '@/shared/credentials/api';
-import { apiRefKey, apiScopeCovers } from '@/shared/credentials/lib/apiIdentity';
+import { apiRefKey, apiScopeCovers, catalogImportRef } from '@/shared/credentials/lib/apiIdentity';
 import type { CredentialChoice } from '@/shared/credentials/lib/credentialIdentity';
 import type { CredentialBindingEntity, ServedApiEntity } from '@/modules/agents/api/types';
 import { credentialsBindableBy, type BindViewer } from '@/shared/credentials/lib/bindAuthority';
@@ -78,7 +78,16 @@ export interface PreflightInputs {
 /** Does a binding serve this pick? Delegates to {@link apiScopeCovers}, so a
  * vendor-wide binding covers every API of its vendor. */
 function bindingServesApi(binding: CredentialBindingEntity, api: SelectedApi): boolean {
-	return binding.serves.some((served: ServedApiEntity) => apiScopeCovers(served, api));
+	return binding.serves.some((served: ServedApiEntity) => servedCovers(served, api));
+}
+
+/** Does a binding's served API reach this pick? A catalog pick matches the vendor +
+ * name its import registers (`catalogImportRef`), any version. */
+function servedCovers(served: ServedApiEntity, api: SelectedApi): boolean {
+	if (apiScopeCovers(served, api)) return true;
+	if (api.source !== 'catalog' || !api.apiId) return false;
+	const ref = catalogImportRef({ apiId: api.apiId, vendor: api.vendor });
+	return ref != null && apiScopeCovers({ ...served, version: null }, ref);
 }
 
 /** The bindings through which the agent already reaches this API, in list order. */
@@ -179,53 +188,6 @@ export function preflightApis(apis: SelectedApi[], inputs: PreflightInputs): Pre
 	return apis.map((api) => preflightApi(api, inputs));
 }
 
-export interface PreflightTally {
-	oauth: number;
-	choose: number;
-	'no-auth': number;
-	form: number;
-	/** Picks the agent already reaches — each adds another credential. */
-	another: number;
-	/** Catalog picks that will be imported into the workspace. */
-	imports: number;
-	/** Every pick; each one stops in the setup queue. */
-	total: number;
-}
-
-export function preflightTally(items: PreflightItem[]): PreflightTally {
-	const tally: PreflightTally = {
-		oauth: 0,
-		choose: 0,
-		'no-auth': 0,
-		form: 0,
-		another: 0,
-		imports: 0,
-		total: items.length,
-	};
-	for (const item of items) {
-		tally[item.outcome] += 1;
-		if (item.existing.length > 0) tally.another += 1;
-		if (item.importsApi) tally.imports += 1;
-	}
-	return tally;
-}
-
-/** One-line summary of what the next step will ask for, shown on the pick's row
- * in the tray. Informational only — nothing is chosen in the tray. */
-export const PREFLIGHT_LABELS: Record<PreflightOutcome, string> = {
-	oauth: 'One sign-in click',
-	choose: 'Choose a credential in the next step',
-	'no-auth': 'No credential needed',
-	form: 'Needs a new credential',
-};
-
-/** The sub-line under a `choose` row: how many credentials the next step offers. */
-export function coveringCountLabel(count: number): string {
-	return count === 1
-		? '1 of your credentials covers this API — use it or add a new one'
-		: `${count} of your credentials cover this API — use one or add a new one`;
-}
-
 /** Which accounts the agent already reaches an API through, e.g. `Added via
  * GitHub — personal`. Empty for a pick the agent does not reach yet. */
 export function addedViaLabel(existing: ExistingAccount[]): string {
@@ -233,45 +195,8 @@ export function addedViaLabel(existing: ExistingAccount[]): string {
 	return `Added via ${existing.map((a) => a.name).join(', ')}`;
 }
 
-/** The tally lines, in the order the rows' outcomes are worked. Only non-zero
- * lines are rendered. */
-export const PREFLIGHT_TALLY_ORDER: readonly PreflightOutcome[] = [
-	'choose',
-	'oauth',
-	'form',
-	'no-auth',
-];
-
-/** Plural-aware tally copy — what the next step will ask for, before committing. */
-export function preflightTallyLabel(outcome: PreflightOutcome, count: number): string {
-	const one = count === 1;
-	const subject = `${count} ${one ? 'API' : 'APIs'}`;
-	switch (outcome) {
-		case 'choose':
-			return `${subject}: choose from your existing credentials in the next step`;
-		case 'oauth':
-			return `${subject} ${one ? 'needs' : 'need'} one sign-in click`;
-		case 'form':
-			return `${subject} ${one ? 'needs' : 'need'} a new credential`;
-		case 'no-auth':
-			return `${subject} ${one ? 'declares' : 'declare'} no authentication — no secret to enter`;
-	}
-}
-
-/**
- * The tally line for picks the agent already reaches. A second credential that
- * ties on scope makes the broker refuse every call that does not name one (409
- * `ambiguous_credential_binding`), so the tally says so before anything is
- * committed.
- */
-export function anotherAccountTallyLabel(count: number): string {
-	return count === 1
-		? '1 API is already added — once another credential is added, calls to it must name one with the Jentic-Credential-Id header, unless one is scoped more narrowly'
-		: `${count} APIs are already added — once another credential is added, calls to each must name one with the Jentic-Credential-Id header, unless one is scoped more narrowly`;
-}
-
 /** The setup-queue warning for a pick that adds another credential to an API
- * the agent already reaches — see {@link anotherAccountTallyLabel}. */
+ * the agent already reaches (a scope tie makes the broker 409 unnamed calls). */
 export function anotherCredentialWarning(apiLabel: string): string {
 	return `Once added, calls to ${apiLabel} must name a credential with the Jentic-Credential-Id header, unless one is scoped more narrowly.`;
 }

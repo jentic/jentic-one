@@ -45,6 +45,9 @@
 	--color-surface-sheet: hsl(var(--surface-sheet));
 	--color-surface-sheet-foot: hsl(var(--surface-sheet-foot));
 	--color-surface-ghost: hsl(var(--surface-ghost));
+	/* GhostFleet's recessed preview region and its dashed edge; recess direction is per-theme. */
+	--color-surface-annotation: hsl(var(--surface-annotation));
+	--color-annotation-edge: hsl(var(--annotation-edge));
 	/* Context-aware field fill: one step lighter than whatever it sits on.
 	   Page → surface-1; a card, sheet or dialog sets --field-bg one step up. */
 	--color-field: hsl(var(--field-bg));
@@ -231,6 +234,10 @@
 	--surface-drop: 192 28% 13.5%;
 	--surface-drop-over: 176 30% 14%;
 	--surface-ghost: 189 37% 18%; /* #1D3A3F — drag ghost */
+	/* Darker than `--background`: lightening here would flatten the card's lift
+	   toward `--surface-1`. */
+	--surface-annotation: 192 35% 4% / 0.5;
+	--annotation-edge: 185 14% 52% / 0.3;
 	--field-bg: var(--surface-1);
 	/* Shared control edge — fields, selects, textareas, field toggles and the
 	   rules editor's `.edged-controls` fields. Buttons never carry it (fill only).
@@ -407,6 +414,9 @@
 	--surface-drop: 186 30% 96%;
 	--surface-drop-over: 176 40% 92%;
 	--surface-ghost: 186 34% 92%;
+	/* See :root; a neutral tint already recesses on a near-white page. */
+	--surface-annotation: 188 12% 37% / 0.04;
+	--annotation-edge: 188 12% 37% / 0.3;
 	--control-edge: 188 14% 56%; /* ≈ 3:1 on a card / sheet */
 	--control-edge-hover: 186 42% 30% / 0.55;
 

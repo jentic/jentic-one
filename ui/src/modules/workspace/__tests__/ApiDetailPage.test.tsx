@@ -806,9 +806,7 @@ describe('ApiDetailPage', () => {
 				);
 				// Nothing preselected: Bind waits for a rules choice.
 				expect(within(dialog).getByTestId('bind-agent-confirm')).toBeDisabled();
-				await user.click(
-					within(dialog).getByRole('radio', { name: /Allow all operations/ }),
-				);
+				await user.click(within(dialog).getByRole('radio', { name: /Full access/ }));
 				await user.click(within(dialog).getByTestId('bind-agent-confirm'));
 
 				await waitFor(() => expect(bodies).toHaveLength(1));
@@ -855,9 +853,7 @@ describe('ApiDetailPage', () => {
 				await user.click(
 					await within(dialog).findByRole('checkbox', { name: 'support-agent' }),
 				);
-				await user.click(
-					within(dialog).getByRole('radio', { name: /Allow all operations/ }),
-				);
+				await user.click(within(dialog).getByRole('radio', { name: /Full access/ }));
 				await user.click(within(dialog).getByTestId('bind-agent-confirm'));
 
 				await waitFor(() => expect(dialog).not.toBeVisible());
@@ -952,7 +948,7 @@ describe('ApiDetailPage', () => {
 				await user.click(
 					await within(dialog).findByRole('checkbox', { name: 'support-agent' }),
 				);
-				await user.click(within(dialog).getByRole('radio', { name: /Read-only/ }));
+				await user.click(within(dialog).getByRole('radio', { name: /^Read only$/ }));
 				await user.click(within(dialog).getByTestId('bind-agent-confirm'));
 				expect(await within(dialog).findByRole('alert')).toHaveTextContent(
 					"Couldn't create the no-auth credential",
@@ -1056,7 +1052,7 @@ describe('ApiDetailPage', () => {
 			await user.click(option);
 			// Still disabled: nothing is preselected for the rules.
 			expect(within(dialog).getByTestId('bind-agent-confirm')).toBeDisabled();
-			await user.click(within(dialog).getByRole('radio', { name: /Read-only/ }));
+			await user.click(within(dialog).getByRole('radio', { name: /^Read only$/ }));
 			await user.click(within(dialog).getByRole('button', { name: 'Bind to agent' }));
 
 			// Same pattern as credential create/edit: close + a success toast.

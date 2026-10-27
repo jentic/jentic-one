@@ -288,8 +288,14 @@ for (const theme of THEMES) {
 				.first()
 				.click();
 			await expect(page.getByTestId('sheet-primitive')).toBeVisible();
-			await page.getByRole('button', { name: 'Add rule' }).first().click();
+			// The seeded binding has no rules (Blocked), so Manage access opens on the editor.
+			await expect(page.getByTestId('access-editor')).toBeVisible();
+			await page.getByRole('radio', { name: /^Custom rules/ }).click();
+			await page.getByRole('button', { name: 'By path' }).click();
+			// With no rules yet, By path opens straight on the add form.
+			await expect(page.getByLabel('Path pattern')).toBeVisible();
 			await capture(page, theme, 'agents-rule-editor');
+			await page.getByRole('button', { name: 'Cancel' }).click();
 			await page.getByRole('button', { name: 'Edit credential' }).click();
 			await expect(
 				page.getByRole('heading', { name: /Edit credential/i }).first(),
@@ -311,12 +317,14 @@ for (const theme of THEMES) {
 				.getByRole('checkbox', { name: new RegExp(`/${seed.apiName}@1\\.0\\.0`) })
 				.click();
 			await tray.getByRole('button', { name: 'Continue' }).click();
-			await expect(page.getByRole('heading', { name: /^Set up 1 API$/ })).toBeVisible();
+			await expect(page.getByRole('heading', { name: /^Set up 1 API for / })).toBeVisible();
 			await capture(page, theme, 'agents-setup-queue');
 			const pick = page.getByRole('radio', { name: /e2e-theme-key-/ });
 			if (await pick.count()) await pick.first().check();
-			await page.getByRole('button', { name: 'Use this credential' }).click();
-			await expect(page.getByTestId('queue-access-step')).toBeVisible();
+			await expect(page.getByTestId('queue-access-step')).toHaveAttribute(
+				'data-ready',
+				'true',
+			);
 			await capture(page, theme, 'agents-setup-queue-access');
 		});
 

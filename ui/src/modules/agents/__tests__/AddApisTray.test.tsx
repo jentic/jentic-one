@@ -1,10 +1,6 @@
 /**
- * AddApisTray — the multi-select Add-APIs step and its preflight tally. The
- * classification rules have their own unit specs (`apiPreflight.test.ts`); these
- * pin what needs a rendered picker: rows that toggle instead of committing, a
- * tally that stays honest while the credential list drains, rows that only
- * describe the next step (no credential is chosen here), and an already-reached
- * API that stays pickable to add another account.
+ * AddApisTray — the multi-select Add-APIs step: rows toggle, Continue waits for an
+ * honest preflight, and an already-reached API stays pickable for another account.
  */
 import { useState } from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -117,12 +113,18 @@ function row(name: RegExp) {
 	return screen.findByRole('checkbox', { name });
 }
 
-function selectionRows(): HTMLElement[] {
-	return screen.queryAllByTestId('tray-selection');
+function tickedRows(): HTMLElement[] {
+	return screen
+		.queryAllByRole('checkbox')
+		.filter((el) => el.getAttribute('aria-checked') === 'true');
 }
 
-function tallyLines(): string[] {
-	return screen.queryAllByTestId('tray-tally-line').map((el) => el.textContent ?? '');
+function footerCount(): string {
+	return screen.getByTestId('sheet-primitive').querySelector('footer p')?.textContent ?? '';
+}
+
+function continueButton(): HTMLElement {
+	return screen.getByRole('button', { name: 'Continue' });
 }
 
 /** An import that completes on submit and registers `api` — no job polling. */
@@ -149,7 +151,7 @@ async function closeTray(user: ReturnType<typeof userEvent.setup>): Promise<void
 	});
 }
 
-describe('AddApisTray — multi-select picks and the preflight tally', () => {
+describe('AddApisTray — multi-select picks, handed to the queue', () => {
 	beforeEach(async () => {
 		await page.viewport(1280, 900);
 		setToken('test-token');
@@ -157,15 +159,19 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		resetApisStore(WORKSPACE_APIS);
 	});
 
-	it('states the no-skip contract up front', async () => {
+	it('asks one short question, with no selection panel — the list is the selection', async () => {
 		renderWithProviders(<TrayHarness />);
 		await row(/Stripe/);
-		// The flow is longer than a skip-based one; saying so before the first
-		// pick is what keeps it honest.
-		expect(screen.getByText(/the credential can't be set up later/)).toBeInTheDocument();
+		expect(screen.getByText(/Pick what/)).toHaveTextContent(
+			'Pick what Support bot should be able to call.',
+		);
+		expect(screen.queryByRole('region', { name: 'Selected APIs' })).not.toBeInTheDocument();
+		expect(screen.queryByTestId('tray-selection')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('tray-tally-line')).not.toBeInTheDocument();
+		expect(footerCount()).toBe('Nothing selected yet.');
 	});
 
-	it('rows toggle instead of committing, and each pick shows what it costs', async () => {
+	it('rows toggle instead of committing; the footer counts the picks', async () => {
 		const user = userEvent.setup();
 		renderWithProviders(<TrayHarness />);
 
@@ -175,64 +181,47 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 
 		await user.click(stripe);
 		await user.click(slack);
-
-		await waitFor(() => expect(selectionRows()).toHaveLength(2));
-		expect(stripe).toHaveAttribute('aria-checked', 'true');
-		expect(
-			within(selectionRows()[0]).getByText('Choose a credential in the next step'),
-		).toBeVisible();
-		expect(within(selectionRows()[1]).getByText('Needs a new credential')).toBeVisible();
-
-		await waitFor(() =>
-			expect(tallyLines()).toEqual([
-				'1 API: choose from your existing credentials in the next step',
-				'1 API needs a new credential',
-			]),
-		);
+		expect(tickedRows()).toEqual([stripe, slack]);
+		expect(footerCount()).toBe('2 selected');
+		// Picking binds nothing and promises no cost here — the queue asks.
 		expect(screen.queryByText(/reuses? a credential/)).not.toBeInTheDocument();
+		expect(screen.queryByText('Needs a new credential')).not.toBeInTheDocument();
 
 		// Clicking a picked row takes it back out.
 		await user.click(stripe);
-		await waitFor(() => expect(selectionRows()).toHaveLength(1));
 		expect(stripe).toHaveAttribute('aria-checked', 'false');
+		expect(tickedRows()).toEqual([slack]);
+		expect(footerCount()).toBe('1 selected');
 	});
 
-	it('removing a pick from the selection list drops it', async () => {
+	it('Continue leads on with a trailing arrow, and never binds — even a lone covered pick', async () => {
 		const user = userEvent.setup();
 		renderWithProviders(<TrayHarness />);
 
-		await user.click(await row(/Slack/));
-		await waitFor(() => expect(selectionRows()).toHaveLength(1));
-
-		await user.click(screen.getByRole('button', { name: 'Remove Slack' }));
-		await waitFor(() => expect(selectionRows()).toHaveLength(0));
-		expect(screen.getByText('Nothing selected yet.')).toBeInTheDocument();
-	});
-
-	it('a lone covered pick still goes to the next step — the button never binds', async () => {
-		const user = userEvent.setup();
-		renderWithProviders(<TrayHarness />);
-
-		const commit = screen.getByRole('button', { name: 'Continue' });
-		expect(commit).toBeDisabled();
+		expect(continueButton()).toBeDisabled();
+		expect(continueButton().lastElementChild).toHaveClass('lucide-arrow-right');
+		expect(continueButton().querySelector('.lucide-plus')).toBeNull();
 
 		// One matching credential is not a decision made for the operator: the
 		// commit still leads to the queue, where it is confirmed or replaced.
 		await user.click(await row(/Stripe/));
-		await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled());
+		await waitFor(() => expect(continueButton()).toBeEnabled());
 		expect(screen.queryByRole('button', { name: /^Add \d+ API/ })).not.toBeInTheDocument();
 	});
 
-	it('claims one sign-in click only for an oauth2-only API', async () => {
+	it('preflights an oauth2-only API as one sign-in click for the queue', async () => {
+		const onContinue = vi.fn();
 		const user = userEvent.setup();
-		renderWithProviders(<TrayHarness />);
+		renderWithProviders(<TrayHarness onContinue={onContinue} />);
 
 		await user.click(await row(/Notion/));
-		await waitFor(() => expect(selectionRows()).toHaveLength(1));
+		await waitFor(() => expect(continueButton()).toBeEnabled());
+		await user.click(continueButton());
 		// The mock server has a managed OAuth provider configured, so a new
 		// oauth2 credential costs a consent round-trip and nothing typed.
-		expect(within(selectionRows()[0]).getByText('One sign-in click')).toBeVisible();
-		await waitFor(() => expect(tallyLines()).toEqual(['1 API needs one sign-in click']));
+		expect(onContinue.mock.calls[0][0]).toEqual([
+			expect.objectContaining({ key: 'notion-so/main', outcome: 'oauth' }),
+		]);
 	});
 
 	it('holds on a failed bindings read: the error and its retry show, Continue stays off', async () => {
@@ -246,16 +235,15 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 			await screen.findByText(/Could not read which APIs Support bot already has/),
 		).toBeInTheDocument();
 		await user.click(await row(/Stripe/));
-		await waitFor(() => expect(selectionRows()).toHaveLength(1));
-		// No tally on a guessed binding set: every bound credential would look new.
-		expect(tallyLines()).toEqual([]);
-		expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
+		expect(footerCount()).toBe('1 selected');
+		// Nothing goes on with a guessed binding set: every bound credential would look new.
+		expect(continueButton()).toBeDisabled();
 
 		await user.click(screen.getByRole('button', { name: 'Try again' }));
 		expect(onRetryBindings).toHaveBeenCalledTimes(1);
 	});
 
-	it('withholds the tally until the whole credential list is read', async () => {
+	it('holds Continue until the whole credential list is read', async () => {
 		// A first-page-only list would classify an existing credential as
 		// "needs a new credential" and hide it from the queue's choice.
 		worker.use(http.get('/credentials', () => HttpResponse.error()));
@@ -263,13 +251,14 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		renderWithProviders(<TrayHarness />);
 
 		await user.click(await row(/Stripe/));
-		await waitFor(() => expect(selectionRows()).toHaveLength(1));
-
-		expect(await screen.findByText(/the cost of these picks is unknown/)).toBeInTheDocument();
-		expect(tallyLines()).toEqual([]);
+		expect(
+			await screen.findByText(
+				"Could not read your credentials, so these picks can't continue yet.",
+			),
+		).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Try again' })).toBeEnabled();
 		// Nothing may be committed on a guess.
-		expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
+		expect(continueButton()).toBeDisabled();
 	});
 
 	it('an API the agent already reaches stays pickable and names its account', async () => {
@@ -285,18 +274,8 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		).toBeInTheDocument();
 
 		await user.click(slack);
-		await waitFor(() => expect(selectionRows()).toHaveLength(1));
-		expect(within(selectionRows()[0]).getByTestId('tray-added-via')).toHaveTextContent(
-			'Added via Slack bot token — this adds another credential',
-		);
-		await waitFor(() =>
-			expect(tallyLines()).toEqual([
-				'1 API needs a new credential',
-				'1 API is already added — once another credential is added, calls to it must name one with the Jentic-Credential-Id header, unless one is scoped more narrowly',
-			]),
-		);
-
-		await user.click(screen.getByRole('button', { name: 'Continue' }));
+		await waitFor(() => expect(continueButton()).toBeEnabled());
+		await user.click(continueButton());
 		expect(onContinue.mock.calls[0][0]).toEqual([
 			expect.objectContaining({
 				key: 'slack-com/main',
@@ -304,6 +283,57 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 				existing: [expect.objectContaining({ credentialId: 'cred_slack' })],
 			}),
 		]);
+	});
+
+	it('a pick made while the credential read is in flight says so, rather than a silent disable', async () => {
+		const user = userEvent.setup();
+		// Continue waits on the whole credential list, so hold that read open.
+		let release = (): void => {};
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		worker.use(
+			http.get('*/credentials', async () => {
+				await held;
+				return HttpResponse.json({ data: [], _links: {} });
+			}),
+		);
+		renderWithProviders(<TrayHarness />);
+
+		const stripe = await row(/Stripe/);
+		expect(footerCount()).toBe('Nothing selected yet.');
+
+		await user.click(stripe);
+		await waitFor(() =>
+			expect(footerCount()).toBe('Checking which credentials you already have…'),
+		);
+		expect(continueButton()).toBeDisabled();
+		expect(continueButton()).toHaveAttribute('aria-busy', 'true');
+
+		release();
+		await waitFor(() => expect(footerCount()).toBe('1 selected'), { timeout: 3000 });
+		await waitFor(() => expect(continueButton()).toBeEnabled());
+		expect(continueButton()).not.toHaveAttribute('aria-busy', 'true');
+	});
+
+	it('a picked API the agent already reaches says the pick adds another credential', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(<TrayHarness bindings={[makeBinding()]} />);
+
+		const slack = await row(/Slack/);
+		expect(screen.queryByTestId('tray-record')).toBeNull();
+
+		await user.click(slack);
+		// The record flags a SECOND credential for an API the agent already calls — the checkbox can't.
+		const record = await screen.findByTestId('tray-record');
+		await waitFor(() => expect(record).toHaveTextContent('1 pick adds another credential'));
+		await user.click(within(record).getByRole('button', { name: /Details/ }));
+		const note = await screen.findByTestId('tray-added-via');
+		await waitFor(() => expect(note).toBeVisible());
+		expect(note).toHaveTextContent('Added via Slack bot token — this adds another credential');
+
+		await user.click(slack);
+		await waitFor(() => expect(screen.queryByTestId('tray-record')).toBeNull());
 	});
 
 	it('a covered API the agent already reaches offers only the credentials it lacks', async () => {
@@ -324,13 +354,10 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		renderWithProviders(<TrayHarness bindings={[bound]} onContinue={onContinue} />);
 
 		await user.click(await row(/Stripe/));
-		await waitFor(() =>
-			expect(within(selectionRows()[0]).getByTestId('tray-covering-count')).toHaveTextContent(
-				'1 of your credentials covers this API',
-			),
-		);
-		await user.click(screen.getByRole('button', { name: 'Continue' }));
+		await waitFor(() => expect(continueButton()).toBeEnabled());
+		await user.click(continueButton());
 		const [item] = onContinue.mock.calls[0][0] as PreflightItem[];
+		expect(item.outcome).toBe('choose');
 		expect(item.covering.map((c) => c.credential_id)).toEqual(['cred_stripe_sandbox']);
 	});
 
@@ -344,24 +371,24 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		});
 		renderWithProviders(<TrayHarness bindings={[wildcard]} onContinue={onContinue} />);
 
-		await user.click(await row(/Slack/));
-		await waitFor(() => expect(selectionRows()).toHaveLength(1));
-		expect(within(selectionRows()[0]).getByTestId('tray-added-via')).toHaveTextContent(
-			'Added via Slack bot token',
-		);
-
+		const slack = await row(/Slack/);
+		expect(within(slack).queryByText(/Added via/)).not.toBeInTheDocument();
+		await user.click(slack);
 		await user.click(await row(/Stripe/));
-		await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled());
-		expect(screen.getByText('2 selected')).toBeInTheDocument();
+		await waitFor(() => expect(continueButton()).toBeEnabled());
+		expect(footerCount()).toBe('2 selected');
 
-		await user.click(screen.getByRole('button', { name: 'Continue' }));
+		await user.click(continueButton());
 		expect(onContinue).toHaveBeenCalledTimes(1);
 		expect(onContinue.mock.calls[0][0]).toEqual([
-			expect.objectContaining({ key: 'slack-com/main' }),
+			expect.objectContaining({
+				key: 'slack-com/main',
+				existing: [expect.objectContaining({ credentialId: 'cred_slack' })],
+			}),
 			expect.objectContaining({ key: 'stripe-com/main', outcome: 'choose' }),
 		]);
 		// Committing hands the picks to the queue, so the draft is spent.
-		await waitFor(() => expect(selectionRows()).toHaveLength(0));
+		await waitFor(() => expect(tickedRows()).toHaveLength(0));
 	});
 
 	it('hands the batch on in pick order and keeps the covering credentials', async () => {
@@ -371,10 +398,9 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 
 		await user.click(await row(/Slack/));
 		await user.click(await row(/Stripe/));
-		await waitFor(() => expect(selectionRows()).toHaveLength(2));
-		await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled());
+		await waitFor(() => expect(continueButton()).toBeEnabled());
 
-		await user.click(screen.getByRole('button', { name: 'Continue' }));
+		await user.click(continueButton());
 		const items = onContinue.mock.calls[0][0] as PreflightItem[];
 		expect(items.map((i) => [i.key, i.outcome])).toEqual([
 			['slack-com/main', 'form'],
@@ -389,37 +415,40 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		renderWithProviders(<TrayHarness />);
 
 		await user.click(await row(/Stripe/));
-		await waitFor(() => expect(selectionRows()).toHaveLength(1));
+		expect(footerCount()).toBe('1 selected');
 
 		// The queue is the only way an API arrives, so a mid-flow dismissal must
 		// not silently discard the work.
 		await closeTray(user);
 		await user.click(screen.getByRole('button', { name: 'Open tray' }));
-		await waitFor(() => expect(selectionRows()).toHaveLength(1));
+		expect(await row(/Stripe/)).toHaveAttribute('aria-checked', 'true');
+		expect(footerCount()).toBe('1 selected');
 
 		// The draft belongs to one agent, though.
 		await closeTray(user);
 		await user.click(screen.getByRole('button', { name: 'Switch agent' }));
 		await user.click(screen.getByRole('button', { name: 'Open tray' }));
-		await row(/Stripe/);
-		expect(selectionRows()).toHaveLength(0);
+		expect(await row(/Stripe/)).toHaveAttribute('aria-checked', 'false');
+		expect(footerCount()).toBe('Nothing selected yet.');
 	});
 
-	it('flags a catalog pick as an import into the workspace', async () => {
+	it('hands a catalog pick on as an import into the workspace', async () => {
 		resetApisStore([WORKSPACE_APIS[0]], [makeMockCatalogEntry({ apiId: 'notion.so' })]);
+		const onContinue = vi.fn();
 		const user = userEvent.setup();
-		renderWithProviders(<TrayHarness />);
+		renderWithProviders(<TrayHarness onContinue={onContinue} />);
 
 		await user.type(screen.getByRole('textbox', { name: 'Search APIs' }), 'notion');
 		await user.click(await row(/notion\.so/));
-
-		await waitFor(() => expect(selectionRows()).toHaveLength(1));
-		// No spec has been read yet, so the cost is stated as a form rather than
-		// guessed as a sign-in click.
-		expect(within(selectionRows()[0]).getByText('Needs a new credential')).toBeVisible();
-		expect(
-			await screen.findByText('1 API will be imported into your Workspace.'),
-		).toBeInTheDocument();
+		await waitFor(() => expect(continueButton()).toBeEnabled());
+		await user.click(continueButton());
+		// No spec read yet, so the cost is a form, not a guessed sign-in; the queue imports it.
+		expect(onContinue.mock.calls[0][0]).toEqual([
+			expect.objectContaining({
+				outcome: 'form',
+				api: expect.objectContaining({ source: 'catalog' }),
+			}),
+		]);
 	});
 
 	it('an empty search lists only workspace APIs; "github" finds GitHub in the live catalog', async () => {
@@ -454,8 +483,8 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		const user = userEvent.setup();
 		renderWithProviders(<TrayHarness />);
 
-		await user.click(await row(/Stripe/));
-		await waitFor(() => expect(selectionRows()).toHaveLength(1));
+		const stripe = await row(/Stripe/);
+		await user.click(stripe);
 
 		// Without this, "the API I need isn't listed" means abandoning the batch,
 		// importing on the Workspace page, and starting the flow over.
@@ -468,16 +497,17 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		const dialog = screen.getByRole('dialog', { name: 'Import an API' });
 		await user.click(within(dialog).getByRole('button', { name: 'Close' }));
 		await waitFor(() => expect(screen.getByTestId('import-spec-dialog')).not.toBeVisible());
-		expect(selectionRows()).toHaveLength(1);
+		expect(stripe).toHaveAttribute('aria-checked', 'true');
+		expect(footerCount()).toBe('1 selected');
 	});
 
 	it('selects an uploaded API alongside the existing picks', async () => {
 		stubCompletedImport(makeMockApi({ vendor: 'acme.io', name: 'main', displayName: 'Acme' }));
+		const onContinue = vi.fn();
 		const user = userEvent.setup();
-		renderWithProviders(<TrayHarness />);
+		renderWithProviders(<TrayHarness onContinue={onContinue} />);
 
 		await user.click(await row(/Stripe/));
-		await waitFor(() => expect(selectionRows()).toHaveLength(1));
 
 		await user.click(screen.getByRole('button', { name: 'Upload an API' }));
 		await waitFor(() => expect(screen.getByTestId('import-spec-dialog')).toBeVisible());
@@ -485,36 +515,28 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		await user.click(screen.getByTestId('import-spec-submit'));
 
 		// The operator never has to find what they just uploaded: it is picked.
-		await waitFor(() => expect(selectionRows()).toHaveLength(2));
-		expect(selectionRows()[1]).toHaveTextContent('Acme');
-		expect(selectionRows()[0]).toHaveTextContent('Stripe');
+		await waitFor(() => expect(footerCount()).toBe('2 selected'));
 		await waitFor(() => expect(screen.getByTestId('import-spec-dialog')).not.toBeVisible());
+		await waitFor(() => expect(continueButton()).toBeEnabled());
+		await user.click(continueButton());
+		expect((onContinue.mock.calls[0][0] as PreflightItem[]).map((i) => i.api.label)).toEqual([
+			'Stripe',
+			'Acme',
+		]);
 	});
 
-	it('a covered pick is labelled, never chosen in the tray', async () => {
+	it('a covered pick is never chosen in the tray — no radios, no "Uses …" promise', async () => {
 		const user = userEvent.setup();
 		renderWithProviders(<TrayHarness />);
 
 		await user.click(await row(/Stripe/));
-		await waitFor(() => expect(selectionRows()).toHaveLength(1));
-		const selection = selectionRows()[0];
-		expect(within(selection).getByText('Choose a credential in the next step')).toBeVisible();
-		expect(within(selection).getByTestId('tray-covering-count')).toHaveTextContent(
-			'1 of your credentials covers this API — use it or add a new one',
-		);
-
-		// No inline selector: no Choose/Change toggle, no radio cards, and no
-		// "Uses <credential>" line promising a binding nobody confirmed.
-		expect(within(selection).queryByRole('button', { name: /credential for/ })).toBeNull();
-		expect(within(selection).queryByRole('radio')).not.toBeInTheDocument();
-		expect(within(selection).queryByRole('group')).not.toBeInTheDocument();
-		expect(selection).not.toHaveTextContent(/Uses Stripe key/);
-		// The only button on the row removes the pick.
-		expect(within(selection).getAllByRole('button')).toHaveLength(1);
-		expect(within(selection).getByRole('button', { name: 'Remove Stripe' })).toBeVisible();
+		const sheet = screen.getByTestId('sheet-primitive');
+		expect(within(sheet).queryByRole('radio')).not.toBeInTheDocument();
+		expect(within(sheet).queryByRole('button', { name: /credential for/ })).toBeNull();
+		expect(sheet).not.toHaveTextContent(/Uses Stripe key/);
 	});
 
-	it('several covering credentials are counted, and the choice waits for the queue', async () => {
+	it('several covering credentials go on together, and the choice waits for the queue', async () => {
 		resetCredentialsStore([
 			STRIPE_CREDENTIAL,
 			makeMockCredential({
@@ -529,21 +551,8 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		renderWithProviders(<TrayHarness onContinue={onContinue} />);
 
 		await user.click(await row(/Stripe/));
-		await waitFor(() => expect(selectionRows()).toHaveLength(1));
-		const selection = selectionRows()[0];
-		expect(
-			await within(selection).findByText(
-				'2 of your credentials cover this API — use one or add a new one',
-			),
-		).toBeVisible();
-		expect(within(selection).queryByRole('radio')).not.toBeInTheDocument();
-		await waitFor(() =>
-			expect(tallyLines()).toEqual([
-				'1 API: choose from your existing credentials in the next step',
-			]),
-		);
-
-		await user.click(screen.getByRole('button', { name: 'Continue' }));
+		await waitFor(() => expect(continueButton()).toBeEnabled());
+		await user.click(continueButton());
 		const [item] = onContinue.mock.calls[0][0] as PreflightItem[];
 		expect(item.outcome).toBe('choose');
 		expect(item.covering.map((c) => c.credential_id)).toEqual([
@@ -552,13 +561,13 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		]);
 	});
 
-	it('passes an accessibility audit with picks and a tally on screen', async () => {
+	it('passes an accessibility audit with picks on screen', async () => {
 		const user = userEvent.setup();
 		renderWithProviders(<TrayHarness />);
 
 		await user.click(await row(/Stripe/));
 		await user.click(await row(/Slack/));
-		await waitFor(() => expect(tallyLines()).toHaveLength(2));
+		await waitFor(() => expect(continueButton()).toBeEnabled());
 
 		// The backdrop fades in once the sheet opens and the picker rows stagger in
 		// from opacity 0; audit the settled frame, not a half-faded row.
@@ -579,8 +588,8 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		renderWithProviders(<TrayHarness />);
 
 		await user.click(await row(/Stripe/));
-		await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled());
-		expect(screen.getByRole('button', { name: 'Continue' })).toBeVisible();
+		await waitFor(() => expect(continueButton()).toBeEnabled());
+		expect(continueButton()).toBeVisible();
 	});
 
 	describe('editing a batch after Back', () => {
@@ -609,11 +618,7 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 			expect(stripe).toHaveAttribute('aria-checked', 'true');
 			expect(stripe).toBeDisabled();
 			expect(within(stripe).getByText('Added')).toBeInTheDocument();
-
-			const added = screen.getByTestId('tray-selection-added');
-			expect(added).toHaveTextContent('Stripe');
-			expect(within(added).queryByRole('button')).not.toBeInTheDocument();
-			expect(screen.getByText('1 selected, 1 added so far')).toBeInTheDocument();
+			expect(footerCount()).toBe('1 selected, 1 added so far');
 		});
 
 		it('hands on only what is still owed — the locked rows are not re-sent', async () => {
@@ -626,10 +631,8 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 			renderWithProviders(<TrayHarness seed={seed} onContinue={onContinue} />);
 
 			await user.click(await row(/Notion/));
-			await waitFor(() =>
-				expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled(),
-			);
-			await user.click(screen.getByRole('button', { name: 'Continue' }));
+			await waitFor(() => expect(continueButton()).toBeEnabled());
+			await user.click(continueButton());
 			const items = onContinue.mock.calls[0][0] as PreflightItem[];
 			expect(items.map((i) => i.api.vendor)).toEqual(['slack.com', 'notion.so']);
 		});
@@ -643,11 +646,36 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 			};
 			renderWithProviders(<TrayHarness seed={seed} onContinue={onContinue} />);
 
-			await user.click(screen.getByRole('button', { name: 'Remove Slack' }));
+			const slack = await row(/Slack/);
+			await waitFor(() => expect(slack).toHaveAttribute('aria-checked', 'true'));
+			await user.click(slack);
 			const done = await screen.findByRole('button', { name: 'Done' });
 			await waitFor(() => expect(done).toBeEnabled());
 			await user.click(done);
 			expect(onContinue).toHaveBeenCalledWith([]);
+		});
+
+		it('records what the batch already added, behind one folded line', async () => {
+			const user = userEvent.setup();
+			const seed: QueueBackSeed = {
+				picks: [pick('slack.com', 'Slack')],
+				added: [pick('stripe.com', 'Stripe')],
+			};
+			renderWithProviders(<TrayHarness seed={seed} />);
+			await row(/Slack/);
+
+			// A checkbox can't say what an earlier pass committed, so a muted line does.
+			const record = await screen.findByTestId('tray-record');
+			expect(record).toHaveTextContent('1 already added');
+			expect(screen.queryByTestId('tray-selection-added')).toBeNull();
+
+			await user.click(within(record).getByRole('button', { name: /Details/ }));
+			const added = await screen.findByTestId('tray-selection-added');
+			await waitFor(() => expect(added).toBeVisible());
+			expect(added).toHaveTextContent('Stripe');
+			expect(added).toHaveTextContent('Added');
+			// No remove: a saved binding is not undone by going back.
+			expect(within(record).queryByRole('button', { name: /^Remove/ })).toBeNull();
 		});
 	});
 });
@@ -696,7 +724,7 @@ describe('AddApisTray — offers only credentials the viewer may bind', () => {
 	});
 
 	/** Pick Stripe (both credentials cover it) and return what Continue hands on. */
-	async function coveringIdsOnContinue(expectedLabel: string): Promise<string[]> {
+	async function coveringIdsOnContinue(): Promise<string[]> {
 		const onContinue = vi.fn();
 		const user = userEvent.setup();
 		renderWithProviders(
@@ -705,31 +733,20 @@ describe('AddApisTray — offers only credentials the viewer may bind', () => {
 			</AuthProvider>,
 		);
 		await user.click(await row(/Stripe/));
-		await waitFor(() => expect(selectionRows()).toHaveLength(1));
-		await waitFor(() =>
-			expect(screen.getByTestId('tray-covering-count')).toHaveTextContent(expectedLabel),
-		);
-		await user.click(screen.getByRole('button', { name: 'Continue' }));
+		await waitFor(() => expect(continueButton()).toBeEnabled());
+		await user.click(continueButton());
 		const [item] = onContinue.mock.calls[0][0] as PreflightItem[];
 		return item.covering.map((c) => c.credential_id);
 	}
 
 	it('offers a non-admin only the credentials they own', async () => {
 		seedMe(['agents:read', 'agents:write', 'credentials:read']);
-		expect(
-			await coveringIdsOnContinue(
-				'1 of your credentials covers this API — use it or add a new one',
-			),
-		).toEqual(['cred_mine']);
+		expect(await coveringIdsOnContinue()).toEqual(['cred_mine']);
 	});
 
 	it('offers an org:admin every credential', async () => {
 		seedMe(['org:admin']);
-		expect(
-			await coveringIdsOnContinue(
-				'2 of your credentials cover this API — use one or add a new one',
-			),
-		).toEqual(['cred_mine', 'cred_theirs']);
+		expect(await coveringIdsOnContinue()).toEqual(['cred_mine', 'cred_theirs']);
 	});
 });
 

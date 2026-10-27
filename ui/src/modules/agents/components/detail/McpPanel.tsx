@@ -42,7 +42,12 @@ import {
 	type McpSessionEntity,
 } from '@/modules/agents/api';
 import { MetaItem } from '@/modules/agents/components/detail/shared';
-import { registerCommand, shellArg } from '@/modules/agents/lib/registerCommand';
+import {
+	cliContextName,
+	configName,
+	registerCommand,
+	shellArg,
+} from '@/modules/agents/lib/registerCommand';
 import { useRegisterTarget } from '@/modules/agents/lib/useRegisterTarget';
 import { AgentNameText } from '@/modules/agents/components/AgentNameText';
 
@@ -96,14 +101,14 @@ function McpConfigCard({ agentName }: { agentName: string }) {
 	// Shown whenever the backend reports one — never a guess.
 	const reportedBrokerUrl = identity.data?.brokerUrl || null;
 
-	// §3.10 one-agent-per-runtime: the context name is whatever binding the
-	// operator created on the agent machine — the agent's name is the
-	// suggested (and `jentic setup`-default) convention, so pre-fill it.
-	const context = shellArg(agentName);
-	const command = `jentic mcp --context ${context}`;
-	const registerSnippet = registerCommand(target);
+	// One agent per runtime: the context `register --name <agent>` creates, in the
+	// CLI's name shape (so "Billing Bot" is passed as `billing-bot`).
+	const cliName = configName(agentName) || undefined;
+	const contextName = cliContextName(instanceUrl, cliName ?? '');
+	const command = `jentic mcp --context ${shellArg(contextName)}`;
+	const registerSnippet = registerCommand({ ...target, name: cliName });
 	const jsonConfig = JSON.stringify(
-		{ mcpServers: { jentic: { command: 'jentic', args: ['mcp', '--context', agentName] } } },
+		{ mcpServers: { jentic: { command: 'jentic', args: ['mcp', '--context', contextName] } } },
 		null,
 		2,
 	);
@@ -177,8 +182,10 @@ function McpConfigCard({ agentName }: { agentName: string }) {
 				<code className="font-mono">--context</code> is pinned on purpose: a bare{' '}
 				<code className="font-mono">jentic mcp</code> follows the machine's <em>active</em>{' '}
 				context, so a later context switch would silently re-point the runtime at a
-				different agent or instance. Use the context bound to this agent on the agent
-				machine (its name is the suggested convention).
+				different agent or instance. Registering creates it as{' '}
+				<code className="font-mono">&lt;instance&gt;-&lt;agent&gt;</code>; if you passed{' '}
+				<code className="font-mono">--env</code>, check{' '}
+				<code className="font-mono">jentic context list</code> on the agent machine.
 			</p>
 
 			<dl className="border-hairline grid grid-cols-2 gap-x-4 gap-y-3 border-t pt-3 sm:grid-cols-3">

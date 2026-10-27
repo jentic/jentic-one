@@ -1,11 +1,7 @@
 /**
  * RegisterFlow — the self-registration flow both the zero-agents landing's
- * primary card and the New agent panel's "Register from the CLI" tab render:
- * the register command (listening), then the arrived agent's details with
- * Approve / Deny (arrived), then its first API (approved). While listening,
- * the four-step stepper, the live status line and the collapsed CLI install
- * hint sit under the command; once an agent is on the card, it shows its own
- * one-line progress and the status line is only announced.
+ * primary card and the New agent panel's CLI and MCP tabs render: the command
+ * (listening), then Approve / Deny (arrived), then its first API (approved).
  *
  * The host decides which agent is `agent` and what its exits do. An in-session
  * view change — a new phase, or the next pending agent replacing a denied one —
@@ -27,6 +23,8 @@ import {
 	type RegisterSurface,
 } from '@/modules/agents/components/flat/firstAgentParts';
 import type { FirstAgentExit, FirstAgentPhase } from '@/modules/agents/lib/firstRun';
+import { cliContextName, shellArg } from '@/modules/agents/lib/registerCommand';
+import { useRegisterTarget } from '@/modules/agents/lib/useRegisterTarget';
 
 /**
  * The id of the flow's current heading, so the host's region can be labelled
@@ -64,6 +62,8 @@ export interface RegisterFlowProps {
 	onShowFleet: () => void;
 	/** Where the flow is shown — it words the stepper and header for it. */
 	surface: RegisterSurface;
+	/** `mcp`: the command is `jentic setup`, which also wires the MCP clients. */
+	route?: 'cli' | 'mcp';
 	reducedMotion: boolean;
 	/** The crossfade between views. */
 	fade: Transition;
@@ -88,6 +88,7 @@ export function RegisterFlow({
 	morePending,
 	onShowFleet,
 	surface,
+	route = 'cli',
 	reducedMotion,
 	fade,
 	morph,
@@ -148,18 +149,13 @@ export function RegisterFlow({
 							commandName={commandName}
 							duplicateOf={registerNameDuplicateOf}
 							surface={surface}
+							route={route}
 							inputRef={nameInputRef}
 						/>
 					)}
 				</motion.div>
 			</AnimatePresence>
 			<motion.div layout="position" transition={{ layout: morph }}>
-				{/* The full stepper only before an agent arrives; the agent card
-				    carries its own one-line progress. */}
-				{phase === 'listening' && (
-					<Stepper phase={phase} reducedMotion={reducedMotion} surface={surface} />
-				)}
-				<StatusLine phase={phase} name={agent?.name ?? null} />
 				<AnimatePresence initial={false}>
 					{phase === 'listening' && (
 						<motion.div
@@ -173,7 +169,40 @@ export function RegisterFlow({
 						</motion.div>
 					)}
 				</AnimatePresence>
+				{route === 'mcp' && phase !== 'arrived' && (
+					<McpWiring name={agent?.name ?? commandName} approved={phase === 'approved'} />
+				)}
+				{/* The agent card carries its own one-line progress. */}
+				{phase === 'listening' && (
+					<Stepper phase={phase} reducedMotion={reducedMotion} surface={surface} />
+				)}
+				<StatusLine phase={phase} name={agent?.name ?? null} />
 			</motion.div>
 		</>
+	);
+}
+
+/** What `jentic setup` wires into the MCP clients once the agent is approved. */
+function McpWiring({ name, approved }: { name: string; approved: boolean }) {
+	const { url } = useRegisterTarget();
+	return (
+		<div
+			data-testid="mcp-wiring"
+			className="bg-surface-tonal/60 mt-4 rounded-lg px-3.5 py-3 text-xs leading-relaxed"
+		>
+			<p className="text-foreground-sub text-sm font-semibold">
+				{approved
+					? 'Setup now wires your MCP clients'
+					: 'Once approved, setup wires your MCP clients'}
+			</p>
+			<p className="text-muted-foreground mt-1">
+				It adds{' '}
+				<code className="text-foreground/90 font-mono">
+					jentic mcp --context {shellArg(cliContextName(url, name))}
+				</code>{' '}
+				to Cursor, Claude Code, Claude Desktop and Codex — whichever it finds on that
+				machine. Any other client: copy the config from the agent&apos;s MCP sheet.
+			</p>
+		</div>
 	);
 }

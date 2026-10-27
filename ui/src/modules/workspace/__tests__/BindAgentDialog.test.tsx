@@ -79,6 +79,18 @@ function serve(opts: { page2?: 'ok' | 'error' | 'hang' } = {}) {
 	);
 }
 
+/** Resolves once `el` has stopped moving (the reveal / dialog animations done). */
+async function settled(el: HTMLElement): Promise<void> {
+	const frame = (): Promise<number> =>
+		new Promise((r) => requestAnimationFrame(() => r(el.getBoundingClientRect().top)));
+	let last = await frame();
+	for (let stable = 0; stable < 5;) {
+		const now = await frame();
+		stable = now === last ? stable + 1 : 0;
+		last = now;
+	}
+}
+
 function renderDialog() {
 	return renderWithProviders(
 		<BindAgentDialog open onClose={() => {}} credentials={[CRED]} apiLabel="Stripe" />,
@@ -111,7 +123,7 @@ describe('BindAgentDialog — already-bound agents across pages', () => {
 
 		const user = userEvent.setup();
 		await user.click(within(optionFor('agent_3')).getByRole('checkbox'));
-		await user.click(screen.getByRole('radio', { name: /Allow all/ }));
+		await user.click(screen.getByRole('radio', { name: /Full access/ }));
 		await user.click(screen.getByTestId('bind-agent-confirm'));
 		await waitFor(() => expect(posted).toEqual(['agent_3']));
 	});
@@ -197,7 +209,7 @@ describe('BindAgentDialog — what the agent may call', () => {
 		}
 		expect(screen.getByTestId('bind-agent-confirm')).toBeDisabled();
 
-		await user.click(screen.getByRole('radio', { name: /Read-only/ }));
+		await user.click(screen.getByRole('radio', { name: /^Read only$/ }));
 		await user.click(screen.getByTestId('bind-agent-confirm'));
 		await waitFor(() => expect(ruleCalls).toHaveLength(2));
 		expect(posted).toEqual(['agent_1', 'agent_2']);
@@ -205,7 +217,21 @@ describe('BindAgentDialog — what the agent may call', () => {
 			expect(call.body).toEqual([{ effect: 'allow', methods: ['GET'] }]);
 	});
 
-	it('the shared access step: same question, same presets, Allow all writes `.*`, no inline tester', async () => {
+	it('"Read only, ask before anything else" writes the GET allow, then a catch-all Ask', async () => {
+		serveRules();
+		const user = userEvent.setup();
+		renderDialog();
+		await user.click(await screen.findByRole('checkbox', { name: 'agent_1' }));
+		await user.click(screen.getByRole('radio', { name: /ask before anything else/ }));
+		await user.click(screen.getByTestId('bind-agent-confirm'));
+		await waitFor(() => expect(ruleCalls).toHaveLength(1));
+		expect(ruleCalls[0].body).toEqual([
+			{ effect: 'allow', methods: ['GET'] },
+			{ effect: 'require-approval', path: '.*' },
+		]);
+	});
+
+	it('the shared access step: same question, same presets, Full access writes `.*`, no inline tester', async () => {
 		serveRules();
 		const user = userEvent.setup();
 		renderDialog();
@@ -216,8 +242,9 @@ describe('BindAgentDialog — what the agent may call', () => {
 				.getAllByRole('radio')
 				.map((r) => r.textContent),
 		).toEqual([
-			expect.stringMatching(/^Allow all operations/),
-			expect.stringMatching(/^Read-only \(GET only\)/),
+			expect.stringMatching(/^Read onlyGET/),
+			expect.stringMatching(/^Read only, ask before anything else/),
+			expect.stringMatching(/^Full access/),
 			expect.stringMatching(/^Custom rules/),
 		]);
 		expect(screen.getByTestId('bind-agent-rules')).toContainElement(group);
@@ -226,10 +253,116 @@ describe('BindAgentDialog — what the agent may call', () => {
 		await user.click(within(group).getByRole('radio', { name: /Custom rules/ }));
 		expect(screen.queryByLabelText('Request path')).not.toBeInTheDocument();
 
-		await user.click(within(group).getByRole('radio', { name: /Allow all/ }));
+		await user.click(within(group).getByRole('radio', { name: /Full access/ }));
 		await user.click(screen.getByTestId('bind-agent-confirm'));
 		await waitFor(() => expect(ruleCalls).toHaveLength(1));
 		expect(ruleCalls[0].body).toEqual([{ effect: 'allow', path: '.*' }]);
+	});
+
+	it('while the operations load, the path editor is already in use; the toggle lands in place', async () => {
+		serveRules();
+		let release!: () => void;
+		const gate = new Promise<void>((r) => (release = r));
+		worker.use(
+			http.get('/apis/stripe/stripe-api/1.0.0/operations', async () => {
+				await gate;
+				return HttpResponse.json({
+					data: [
+						{
+							operation_id: 'listCharges',
+							method: 'GET',
+							path: '/v1/charges',
+							name: 'List charges',
+						},
+					],
+					has_more: false,
+					next_cursor: null,
+				});
+			}),
+		);
+		const user = userEvent.setup();
+		renderWithProviders(
+			<BindAgentDialog
+				open
+				onClose={() => {}}
+				credentials={[CRED]}
+				apiLabel="Stripe"
+				apiReference={{ vendor: 'stripe', name: 'stripe-api', version: '1.0.0' }}
+			/>,
+		);
+		await user.click(await screen.findByRole('checkbox', { name: 'agent_1' }));
+		await user.click(screen.getByRole('radio', { name: /Custom rules/ }));
+		const editor = screen.getByTestId('bind-agent-custom-editor');
+		const pending = within(editor).getByTestId('bind-agent-actions-pending');
+		const path = await within(editor).findByLabelText('Path pattern');
+		await user.type(path, '/v1/');
+		await settled(path);
+		const held = pending.getBoundingClientRect().top;
+		const pathTop = path.getBoundingClientRect().top;
+
+		release();
+		const build = await within(editor).findByRole('group', { name: 'Build rules' });
+		expect(build.getBoundingClientRect().top).toBe(held);
+		expect(within(editor).getByLabelText('Path pattern')).toBe(path);
+		expect(path.getBoundingClientRect().top).toBe(pathTop);
+		expect(path).toHaveValue('/v1/');
+	});
+
+	it('Custom rules offers By action only for an API whose operations it can read', async () => {
+		serveRules();
+		worker.use(
+			http.get('/apis/stripe/stripe-api/1.0.0/operations', () =>
+				HttpResponse.json({
+					data: [
+						{
+							operation_id: 'listCharges',
+							method: 'GET',
+							path: '/v1/charges',
+							name: 'List charges',
+						},
+					],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+		);
+		const user = userEvent.setup();
+		const { unmount } = renderWithProviders(
+			<BindAgentDialog
+				open
+				onClose={() => {}}
+				credentials={[CRED]}
+				apiLabel="Stripe"
+				apiReference={{ vendor: 'stripe', name: 'stripe-api', version: '1.0.0' }}
+			/>,
+		);
+		await user.click(await screen.findByRole('checkbox', { name: 'agent_1' }));
+		await user.click(screen.getByRole('radio', { name: /Custom rules/ }));
+		const editor = screen.getByTestId('bind-agent-custom-editor');
+		await user.click(await within(editor).findByRole('button', { name: 'By action' }));
+		const ops = await within(editor).findByRole('list', { name: 'Operations' });
+		await user.click(
+			within(
+				within(ops).getByRole('group', { name: 'Access for GET /v1/charges' }),
+			).getByRole('button', { name: 'Allow' }),
+		);
+		// The choice is staged: binding asks to apply it first.
+		await user.click(screen.getByTestId('bind-agent-confirm'));
+		const guard = await screen.findByRole('dialog', { name: 'Apply 1 change by action?' });
+		expect(guard).toHaveTextContent('apply them before binding');
+		expect(ruleCalls).toHaveLength(0);
+		await user.click(within(guard).getByRole('button', { name: 'Apply' }));
+		await waitFor(() => expect(ruleCalls).toHaveLength(1));
+		expect(ruleCalls[0].body).toEqual([{ effect: 'allow', operations: ['listCharges'] }]);
+		unmount();
+
+		renderDialog();
+		await user.click(await screen.findByRole('checkbox', { name: 'agent_1' }));
+		await user.click(screen.getByRole('radio', { name: /Custom rules/ }));
+		const plain = screen.getByTestId('bind-agent-custom-editor');
+		expect(within(plain).queryByRole('group', { name: 'Build rules' })).toBeNull();
+		expect(plain).not.toHaveTextContent(/not available/);
+		await waitFor(() => expect(within(plain).getByLabelText('Path pattern')).toBeVisible());
 	});
 
 	it('Custom rules needs at least one rule before Bind is enabled', async () => {
@@ -240,7 +373,8 @@ describe('BindAgentDialog — what the agent may call', () => {
 		await user.click(screen.getByRole('radio', { name: /Custom rules/ }));
 		expect(screen.getByTestId('bind-agent-confirm')).toBeDisabled();
 
-		await user.click(screen.getByRole('button', { name: 'Add rule' }));
+		// With no rules yet, the editor opens straight onto the new-rule form.
+		await waitFor(() => expect(screen.getByRole('button', { name: 'DELETE' })).toBeVisible());
 		await user.click(screen.getByRole('button', { name: 'DELETE' }));
 		await user.click(screen.getByRole('button', { name: 'Add' }));
 		expect(screen.getByTestId('bind-agent-confirm')).toBeEnabled();
@@ -265,7 +399,7 @@ describe('BindAgentDialog — what the agent may call', () => {
 		);
 		await user.click(await screen.findByRole('checkbox', { name: 'agent_1' }));
 		await user.click(screen.getByRole('checkbox', { name: 'agent_2' }));
-		await user.click(screen.getByRole('radio', { name: /Allow all/ }));
+		await user.click(screen.getByRole('radio', { name: /Full access/ }));
 		await user.click(screen.getByTestId('bind-agent-confirm'));
 
 		const failed = await screen.findByTestId('bind-agent-rules-failed');
@@ -323,7 +457,7 @@ describe('BindAgentDialog — what the agent may call', () => {
 		);
 		const { rerender } = renderWithProviders(ui(true));
 		await user.click(await screen.findByRole('checkbox', { name: 'agent_1' }));
-		await user.click(screen.getByRole('radio', { name: /Allow all/ }));
+		await user.click(screen.getByRole('radio', { name: /Full access/ }));
 		await user.click(screen.getByTestId('bind-agent-confirm'));
 		expect(await screen.findByTestId('bind-agent-rules-failed')).toBeInTheDocument();
 		rerender(ui(false));
@@ -359,9 +493,9 @@ describe('BindAgentDialog — what Allow all reaches, and naming the credential'
 		);
 	});
 
-	const allowAll = () => screen.findByRole('radio', { name: /Allow all/ });
+	const allowAll = () => screen.findByRole('radio', { name: /Full access/ });
 
-	it('a pinned credential: every operation of this API, no coverage note', async () => {
+	it('a pinned credential: any method, any path, no coverage note', async () => {
 		const pinned = makeMockCredential({
 			credential_id: 'cred_pin',
 			name: 'Pinned',
@@ -370,9 +504,7 @@ describe('BindAgentDialog — what Allow all reaches, and naming the credential'
 		renderWithProviders(
 			<BindAgentDialog open onClose={() => {}} credentials={[pinned]} apiLabel="Stripe" />,
 		);
-		expect(await allowAll()).toHaveAccessibleDescription(
-			expect.stringContaining('Every operation of this API'),
-		);
+		expect(await allowAll()).toHaveAccessibleDescription('Any method, any path');
 		expect(screen.queryByTestId('bind-agent-coverage-note')).not.toBeInTheDocument();
 	});
 
@@ -381,11 +513,9 @@ describe('BindAgentDialog — what Allow all reaches, and naming the credential'
 			<BindAgentDialog open onClose={() => {}} credentials={[CRED]} apiLabel="Stripe" />,
 		);
 		const radio = await allowAll();
-		expect(radio).toHaveAccessibleDescription(
-			expect.stringContaining('including versions added later'),
-		);
+		expect(radio).toHaveAccessibleDescription('Any method, every version — incl. later ones');
 		expect(screen.getByTestId('bind-agent-coverage-note')).toHaveTextContent(
-			'covers every version of this API',
+			'Covers every version of this API',
 		);
 	});
 
@@ -399,10 +529,10 @@ describe('BindAgentDialog — what Allow all reaches, and naming the credential'
 			<BindAgentDialog open onClose={() => {}} credentials={[wide]} apiLabel="Stripe" />,
 		);
 		expect(await allowAll()).toHaveAccessibleDescription(
-			expect.stringContaining('every API and version this credential covers'),
+			'Every API this credential covers, incl. later ones',
 		);
 		expect(screen.getByTestId('bind-agent-coverage-note')).toHaveTextContent(
-			'every API of its vendor',
+			'Covers every API of this vendor',
 		);
 	});
 
@@ -434,7 +564,7 @@ describe('BindAgentDialog — what Allow all reaches, and naming the credential'
 		const picked = within(select).getByRole('option', { selected: true }).textContent!;
 		expect(picked).toMatch(/^Shared key · /);
 		await user.click(await screen.findByRole('checkbox', { name: 'agent_1' }));
-		await user.click(screen.getByRole('radio', { name: /Read-only/ }));
+		await user.click(screen.getByRole('radio', { name: /^Read only$/ }));
 		await user.click(screen.getByTestId('bind-agent-confirm'));
 		expect(
 			await screen.findByText(`Bound “${picked}” to agent_1, with access rules.`),

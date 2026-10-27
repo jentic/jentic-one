@@ -85,9 +85,12 @@ describe('AgentMcpSheet — the dock MCP surface', () => {
 		expect(sheet.getAllByText('support-agent').length).toBeGreaterThan(0);
 
 		// The rehosted McpConfigCard, not a re-implementation: the pinned
-		// `--context` snippet carries THIS agent's name.
+		// `--context` snippet is the context the CLI creates for THIS agent,
+		// `<env>-<agent>` (env: the instance host's first label).
 		expect(await sheet.findByText('Connect via MCP')).toBeInTheDocument();
-		expect(sheet.getByText('jentic mcp --context support-agent')).toBeInTheDocument();
+		expect(
+			await sheet.findByText('jentic mcp --context jentic-support-agent'),
+		).toBeInTheDocument();
 
 		// The rehosted McpSessionsCard reads THIS agent's session history —
 		// agnt_active_1 carries the seeded `mcp.session_started` events.
@@ -101,7 +104,9 @@ describe('AgentMcpSheet — the dock MCP surface', () => {
 		const sheet = await openSheet(user);
 
 		// The config card pins the OTHER agent's context…
-		expect(await sheet.findByText('jentic mcp --context legacy-scraper')).toBeInTheDocument();
+		expect(
+			await sheet.findByText('jentic mcp --context jentic-legacy-scraper'),
+		).toBeInTheDocument();
 		// …and the sessions read is per-actor: only agnt_active_1 has fixture
 		// sessions, so this agent renders the honest empty state.
 		expect(await sheet.findByText(/No MCP sessions recorded/)).toBeInTheDocument();
@@ -142,11 +147,12 @@ describe('AgentMcpSheet — the dock MCP surface', () => {
 		const sheet = await openSheet(user);
 
 		expect(
-			await sheet.findByText(`jentic mcp --context 'bot'\\''; $(touch /tmp/x) \`id\` \\'`),
+			// Derived like the CLI's config names: nothing in the name survives to run.
+			await sheet.findByText('jentic mcp --context jentic-bot-touch-tmp-x-id'),
 		).toBeInTheDocument();
 		expect(
 			await sheet.findByText(
-				"jentic register --url 'https://jentic.example.test/$(id)' --broker-url 'https://broker.example.test/`id`'",
+				"jentic register --url 'https://jentic.example.test/$(id)' --broker-url 'https://broker.example.test/`id`' --name bot-touch-tmp-x-id",
 			),
 		).toBeInTheDocument();
 	});
@@ -160,12 +166,16 @@ describe('AgentMcpSheet — the dock MCP surface', () => {
 		await sheet.findByText('Connect via MCP');
 
 		// JSON client-config variant carries the same pinned args as the CLI one.
-		expect(sheet.getByText(/"mcp", "--context", "support-agent"/)).toBeInTheDocument();
+		expect(
+			await sheet.findByText(/"mcp", "--context", "jentic-support-agent"/),
+		).toBeInTheDocument();
 		// Prerequisites: CLI + register against THIS instance on the AGENT machine
 		// (the stdio config encodes no base URL), or `jentic setup`. The instance
 		// URL resolves async from GET /instance, so wait for it.
 		expect(
-			await sheet.findByText('jentic register --url https://jentic.example.test'),
+			await sheet.findByText(
+				'jentic register --url https://jentic.example.test --name support-agent',
+			),
 		).toBeInTheDocument();
 		expect(sheet.getByText('agent machine')).toBeInTheDocument();
 		expect(sheet.getByText('jentic setup')).toBeInTheDocument();
@@ -200,7 +210,9 @@ describe('AgentMcpSheet — the dock MCP surface', () => {
 		// The operator is looking at a working address of this instance, so the
 		// register command targets the browser's origin.
 		expect(
-			await sheet.findByText(`jentic register --url ${window.location.origin}`),
+			await sheet.findByText(
+				`jentic register --url ${window.location.origin} --name support-agent`,
+			),
 		).toBeInTheDocument();
 	});
 
@@ -222,7 +234,7 @@ describe('AgentMcpSheet — the dock MCP surface', () => {
 		const sheet = await openSheet(user);
 
 		expect(
-			await sheet.findByText('jentic register --url jentic.example.com'),
+			await sheet.findByText('jentic register --url jentic.example.com --name support-agent'),
 		).toBeInTheDocument();
 		expect(sheet.getAllByText('jentic.example.com').length).toBeGreaterThan(0);
 	});
@@ -294,7 +306,7 @@ describe('AgentMcpSheet — the dock MCP surface', () => {
 			// human rather than guessing.
 			expect(
 				await sheet.findByText(
-					"jentic register --url https://jentic.example.test --broker-url '<broker-url>'",
+					"jentic register --url https://jentic.example.test --broker-url '<broker-url>' --name support-agent",
 				),
 			).toBeInTheDocument();
 			expect(sheet.getByText(/fail-closes/)).toBeInTheDocument();
@@ -320,7 +332,7 @@ describe('AgentMcpSheet — the dock MCP surface', () => {
 
 		expect(
 			await sheet.findByText(
-				'jentic register --url https://jentic.example.test --broker-url https://broker.jentic.example.test',
+				'jentic register --url https://jentic.example.test --broker-url https://broker.jentic.example.test --name support-agent',
 			),
 		).toBeInTheDocument();
 		expect(sheet.queryByText(/Ask your operator/)).not.toBeInTheDocument();

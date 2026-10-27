@@ -1,31 +1,50 @@
 /**
- * GhostFleet — the zero-agents preview of the fleet view: the agent strip, the
- * APIs band, a row of API tiles and the dock, drawn as faint tonal shapes in
- * the theme's own surfaces — no edges, no glow (and not loading skeletons:
- * they don't shimmer, because nothing is loading).
- *
- * Its first tab is the slot a self-registering agent lands in: it reads
- * "Waiting for your agent…", fills in with the agent's pending glyph and
- * name once one registers, and flips to its active glyph once approved.
- * Purely decorative: the live status line in the landing card is what
- * assistive tech hears.
+ * GhostFleet — the zero-agents preview of the fleet view, drawn as an annotated
+ * illustration rather than a skeleton, so it reads as "nothing here yet", not
+ * "still loading". Purely decorative: the root is `aria-hidden`.
  */
-import { useEffect, useState, type RefObject } from 'react';
+import type { ReactNode, RefObject } from 'react';
 import { motion } from 'framer-motion';
-import { Activity, Bot, KeyRound, Plus, Settings2, ShieldCheck } from 'lucide-react';
-import { McpIcon, STATUS_ICON, STATUS_TINT, VendorMark } from '@/shared/ui';
+import {
+	Activity,
+	Bot,
+	Clock,
+	KeyRound,
+	LibraryBig,
+	Lock,
+	Plug,
+	Plus,
+	ShieldCheck,
+	Unplug,
+} from 'lucide-react';
+import { STATUS_ICON, STATUS_TINT } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 
 /** The shared soft ease (`--ease-out-soft`), for framer-motion. */
 export const EASE_OUT_SOFT = [0.22, 1, 0.36, 1] as const;
 
-/** When the preview's one real-looking tile warms up after mount. */
-const FILL_DELAY_MS = 450;
+export const GHOST_CAPTION_TITLE = 'Nothing here yet';
+export const GHOST_CAPTION_SUB = 'you have no agents — this is where they will appear';
 
-/** A text-line placeholder: a faint tonal bar. */
-function GhostLine({ className }: { className?: string }) {
-	return <span className={cn('bg-surface-tonal/70 block h-2 rounded-full', className)} />;
+const SLOT = 'border-hairline-field shrink-0 border-[1.5px] border-dashed';
+
+function GhostChip({ icon: Icon, children }: { icon: Icon; children: ReactNode }) {
+	return (
+		<span className="bg-surface-tonal/60 text-foreground-faint inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-semibold">
+			<Icon className="size-3" />
+			{children}
+		</span>
+	);
 }
+
+type Icon = (p: { className?: string }) => ReactNode;
+
+const ROWS: [Icon, string, Icon, string][] = [
+	[LibraryBig, 'APIs it can call', Plug, 'Not connected'],
+	[KeyRound, 'Credentials', Lock, 'None bound'],
+	[ShieldCheck, 'Permissions', Lock, 'Set on approval'],
+	[Activity, 'Activity', Clock, 'No calls yet'],
+];
 
 /** The agent in the preview's first slot. */
 interface GhostArrival {
@@ -44,125 +63,137 @@ interface GhostFleetProps {
 }
 
 export function GhostFleet({ arrived, slotRef, reducedMotion, settled = false }: GhostFleetProps) {
-	const [filled, setFilled] = useState(reducedMotion);
-	useEffect(() => {
-		if (filled) return;
-		const id = window.setTimeout(() => setFilled(true), FILL_DELAY_MS);
-		return () => window.clearTimeout(id);
-	}, [filled]);
-
 	const StatusIcon = arrived ? STATUS_ICON[arrived.status] : null;
 
 	return (
 		<div
 			aria-hidden="true"
+			// Skipped by `checkA11y`'s contrast audit (see `test-utils.tsx`): its half-opacity
+			// labels are deliberately backdrop to the card in front.
+			data-a11y-decorative=""
 			data-testid="ghost-fleet"
-			className="pointer-events-none [mask-image:linear-gradient(180deg,#000_40%,transparent_100%)] select-none"
+			className="pointer-events-none pt-0.5 select-none"
 		>
-			<div className="bg-surface-1/70 flex min-h-10 items-center gap-1 rounded-lg px-1.5 py-1">
-				<motion.span
-					ref={slotRef}
-					data-testid="ghost-tab"
-					data-arrived={arrived != null}
-					data-status={arrived?.status}
-					// Keyed on the status, so the approval pops the tab as the arrival did.
-					key={arrived?.status ?? 'empty'}
-					animate={
-						arrived != null && !reducedMotion && !settled
-							? { scale: [0.96, 1.04, 1] }
-							: { scale: 1 }
-					}
-					transition={{ duration: 0.52, ease: EASE_OUT_SOFT }}
-					className={cn(
-						'inline-flex h-[30px] items-center gap-2 rounded-md px-3 text-[13px] font-semibold transition-[background-color,color] duration-[400ms] ease-(--ease-out-soft)',
-						arrived == null
-							? 'text-muted-foreground'
-							: 'bg-surface-tonal text-foreground',
-					)}
-				>
-					{arrived != null && StatusIcon ? (
-						<>
-							<StatusIcon className={cn('size-3.5', STATUS_TINT[arrived.status])} />
-							<span>{arrived.name}</span>
-						</>
-					) : (
-						<>
-							<span className="bg-primary/60 animate-soft-pulse h-1.5 w-1.5 rounded-full motion-reduce:animate-none" />
-							Waiting for your agent…
-						</>
-					)}
-				</motion.span>
-				<span className="inline-flex h-[30px] items-center rounded-md px-2.5">
-					<Bot className="text-foreground-faint h-3.5 w-3.5 opacity-60" />
-				</span>
-			</div>
-
-			<div className="mt-4 flex min-h-8 items-center justify-between gap-2">
-				<span className="flex items-center gap-2">
-					<GhostLine className="w-10" />
-					<GhostLine className="w-3.5" />
-				</span>
-				<span className="bg-surface-1/70 block h-[30px] w-[92px] rounded-lg" />
-			</div>
-
-			<div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+			<div
+				data-testid="ghost-frame"
+				className="border-annotation-edge bg-surface-annotation rounded-[18px] [border-width:1.5px] border-dashed [mask-image:linear-gradient(180deg,#000_0%,#000_72%,transparent_100%)]"
+			>
+				{/* Outside the faded layer, so the caption keeps full token contrast. */}
 				<div
-					className={cn(
-						'flex h-[150px] flex-col gap-3 rounded-lg p-4 transition-[background-color] duration-[800ms] ease-(--ease-out-soft)',
-						filled ? 'bg-surface-1' : 'bg-surface-1/60',
-					)}
+					data-testid="ghost-caption"
+					className="border-hairline-field flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5 border-b-[1.5px] border-dashed px-5 pt-[11px] pb-2.5"
 				>
-					<div className="flex items-center gap-3">
-						<span className="grid h-7 w-7 shrink-0 place-items-center">
-							<VendorMark
-								slug="github"
-								size="sm"
-								className={cn(
-									'transition-opacity duration-[800ms]',
-									filled ? 'opacity-80' : 'opacity-35',
-								)}
-							/>
-						</span>
-						<span
-							className={cn(
-								'text-[13px] font-semibold transition-colors duration-[800ms]',
-								filled ? 'text-foreground/70' : 'text-foreground-sub',
-							)}
-						>
-							GitHub
-						</span>
-					</div>
-					<div className="mt-auto grid gap-2 pt-3">
-						<GhostLine className="w-3/5" />
-						<GhostLine className="w-2/5" />
-					</div>
-				</div>
-				<div className="bg-surface-1/60 hidden h-[150px] flex-col gap-3 rounded-lg p-4 sm:flex">
-					<div className="flex items-center gap-3">
-						<span className="bg-surface-tonal/70 h-7 w-7 shrink-0 rounded-md" />
-						<GhostLine className="w-20" />
-					</div>
-					<div className="mt-auto grid gap-2 pt-3">
-						<GhostLine className="w-[55%]" />
-						<GhostLine className="w-[35%]" />
-					</div>
-				</div>
-				<div className="bg-surface-1/60 text-foreground-faint hidden h-[150px] flex-col items-center justify-center gap-2 rounded-lg p-4 text-[13px] font-semibold lg:flex">
-					<span className="bg-surface-tonal/70 grid h-7 w-7 place-items-center rounded-md">
-						<Plus className="h-3.5 w-3.5" />
+					<span className="font-heading text-foreground-sub text-[22px] leading-7 font-semibold tracking-[-0.01em]">
+						{GHOST_CAPTION_TITLE}
 					</span>
-					Add API
+					<span className="text-foreground-faint text-[14px] leading-6">
+						{GHOST_CAPTION_SUB}
+					</span>
 				</div>
-			</div>
-
-			<div className="bg-surface-1/60 text-foreground-faint/60 mx-auto mt-6 flex w-fit items-center gap-3.5 rounded-full px-4 py-2.5">
-				<span className="bg-surface-tonal/70 block h-6 w-[84px] rounded-full" />
-				<span className="bg-hairline-field h-[18px] w-px" />
-				<KeyRound className="h-[18px] w-[18px]" />
-				<ShieldCheck className="h-[18px] w-[18px]" />
-				<Activity className="h-[18px] w-[18px]" />
-				<McpIcon className="h-[18px] w-[18px]" />
-				<Settings2 className="h-[18px] w-[18px]" />
+				{/* The clear band the landing card's top edge lands in. */}
+				<div className="px-3.5 pt-11">
+					{/* Plain dimming, no blur: a blur reads as content loading behind a modal. */}
+					<div
+						data-testid="ghost-drawing"
+						className="[mask-image:linear-gradient(180deg,#000_0%,#000_66%,transparent_100%)] opacity-50 [filter:saturate(0.25)]"
+					>
+						<div className="bg-surface-1 flex min-h-11 items-center gap-0.5 overflow-hidden rounded-xl p-1">
+							<motion.span
+								ref={slotRef}
+								data-testid="ghost-tab"
+								data-arrived={arrived != null}
+								data-status={arrived?.status}
+								// Keyed on the status, so the approval pops the tab too.
+								key={arrived?.status ?? 'empty'}
+								animate={
+									arrived != null && !reducedMotion && !settled
+										? { scale: [0.96, 1.04, 1] }
+										: { scale: 1 }
+								}
+								transition={{ duration: 0.52, ease: EASE_OUT_SOFT }}
+								className="bg-surface-tonal/80 text-foreground-sub flex h-9 shrink-0 items-center gap-2 rounded-[9px] pr-3 pl-1.5 text-[13px] font-semibold"
+							>
+								{arrived != null && StatusIcon ? (
+									<>
+										<StatusIcon
+											className={cn('size-3.5', STATUS_TINT[arrived.status])}
+										/>
+										<span>{arrived.name}</span>
+									</>
+								) : (
+									<>
+										<span
+											className={cn(
+												SLOT,
+												'grid size-5 place-items-center rounded-full',
+											)}
+										>
+											<Plus className="text-foreground-faint size-3" />
+										</span>
+										Your first agent
+									</>
+								)}
+							</motion.span>
+							{[0.6, 0.4, 0.22].map((o) => (
+								<span
+									key={o}
+									style={{ opacity: o }}
+									className="flex h-9 shrink-0 items-center px-2"
+								>
+									<span className={cn(SLOT, 'size-5 rounded-full')} />
+								</span>
+							))}
+							<span className="text-foreground-faint mr-2 ml-auto hidden items-center gap-1.5 text-xs font-medium sm:inline-flex">
+								<Unplug className="size-3.5" />
+								Nothing connected yet
+							</span>
+						</div>
+						<div className="bg-surface-1 rounded-panel mt-3 flex items-center gap-4 px-5 py-4">
+							<span
+								className={cn(SLOT, 'grid size-10 place-items-center rounded-full')}
+							>
+								<Bot className="text-foreground-faint size-[18px]" />
+							</span>
+							<span className="grid min-w-0 gap-0.5">
+								<span className="font-heading text-foreground-sub text-[15px] font-semibold tracking-[-0.01em]">
+									Your first agent
+								</span>
+								<span className="text-foreground-faint truncate text-[12.5px]">
+									Not registered yet · signs in with its own key · waits here for
+									your approval
+								</span>
+							</span>
+							<span className="ml-auto hidden items-center gap-2 sm:flex">
+								<GhostChip icon={Lock}>No access yet</GhostChip>
+							</span>
+						</div>
+						<div className="relative mt-1">
+							<span className="bg-hairline-field absolute top-0 bottom-6 left-[31px] w-px" />
+							{ROWS.map(([RowIcon, title, ChipIcon, state]) => (
+								<div
+									key={title}
+									className="relative flex items-center gap-3 py-2.5 pl-[65px]"
+								>
+									<span className="bg-hairline-field absolute top-1/2 left-[31px] h-px w-6" />
+									<span
+										className={cn(
+											SLOT,
+											'text-foreground-faint grid size-8 place-items-center rounded-lg',
+										)}
+									>
+										<RowIcon className="size-4" />
+									</span>
+									<span className="text-foreground-sub truncate text-[13px] font-semibold">
+										{title}
+									</span>
+									<span className="mr-5 ml-auto hidden sm:inline-flex">
+										<GhostChip icon={ChipIcon}>{state}</GhostChip>
+									</span>
+								</div>
+							))}
+						</div>
+					</div>
+				</div>
 			</div>
 		</div>
 	);

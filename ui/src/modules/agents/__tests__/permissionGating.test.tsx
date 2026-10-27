@@ -129,7 +129,7 @@ function seedTiles() {
 			credential_id: 'cred_github_1',
 			name: 'GitHub PAT',
 			type: CredentialType.BEARER_TOKEN,
-			api: { vendor: 'github.com', name: 'default', version: '1.0.0' },
+			api: { vendor: 'github', name: 'default', version: '1.0.0' },
 			created_by: 'usr_viewer_1',
 		}),
 	]);
@@ -342,13 +342,12 @@ describe('"Create here" follows agents:write', () => {
 		await user.click(screen.getByRole('button', { name: 'New agent' }));
 		const sheet = await screen.findByRole('dialog', { name: 'New agent' });
 		const register = within(sheet).getByRole('tab', { name: 'Register from the CLI' });
+		// "Create it here" is offered only with agents:write.
+		expect(register).toHaveAttribute('aria-selected', 'true');
 		if (canCreate) {
-			expect(within(sheet).getByRole('tab', { name: 'Create here' })).toHaveAttribute(
-				'aria-selected',
-				'true',
-			);
+			expect(within(sheet).getByRole('tab', { name: 'Create it here' })).toBeInTheDocument();
 		} else {
-			expect(within(sheet).queryByRole('tab', { name: 'Create here' })).toBeNull();
+			expect(within(sheet).queryByRole('tab', { name: 'Create it here' })).toBeNull();
 			expect(register).toHaveAttribute('aria-selected', 'true');
 			expect(within(sheet).getByTestId('new-agent-panel-register')).toHaveAttribute(
 				'data-state',
@@ -484,10 +483,11 @@ describe("the access sidebar's verbs follow agents:write and credentials:write",
 		await renderReady('/?agent=agnt_active_1');
 		await user.click(await screen.findByRole('button', { name: MANAGE_SLACK }));
 		const sidebar = within(await screen.findByRole('dialog', { name: 'Slack' }));
-		// The rule tester and the credential id are reads, open to everyone.
+		// The rule tester and the credential are reads, open to everyone.
 		expect(await sidebar.findByRole('region', { name: 'Test a request' })).toBeInTheDocument();
-		// The rules (an editor or the read-only list) have loaded.
-		await sidebar.findByText('Permission rules for Slack bot token');
+		expect(sidebar.getByRole('region', { name: 'Credential' })).toBeInTheDocument();
+		// The saved rules have loaded into the read view.
+		await sidebar.findByTestId('access-summary');
 
 		const suspend = sidebar.queryByRole('button', {
 			name: 'Suspend binding for Slack bot token',
@@ -510,14 +510,13 @@ describe("the access sidebar's verbs follow agents:write and credentials:write",
 		if (canWriteCredentials(permissions)) {
 			expect(edit).toBeInTheDocument();
 			expect(remove).toBeInTheDocument();
-			expect(sidebar.getByRole('button', { name: /Save rules/ })).toBeInTheDocument();
-			expect(sidebar.queryByTestId('binding-rules-read-only')).toBeNull();
+			expect(sidebar.getByRole('button', { name: /Edit access/ })).toBeInTheDocument();
+			expect(sidebar.queryByTestId('access-view-only')).toBeNull();
 		} else {
 			expect(edit).toBeNull();
 			expect(remove).toBeNull();
-			expect(sidebar.queryByRole('button', { name: /Save rules/ })).toBeNull();
-			const rules = sidebar.getByTestId('binding-rules-read-only');
-			expect(rules).toHaveTextContent(
+			expect(sidebar.queryByRole('button', { name: /Edit access/ })).toBeNull();
+			expect(sidebar.getByTestId('access-view-only')).toHaveTextContent(
 				'Changing these rules needs permission to manage credentials.',
 			);
 		}
@@ -547,9 +546,9 @@ describe("a shared credential's binding rules are read-only for a non-owner", ()
 		await renderReady('/?agent=agnt_active_1');
 		await user.click(await screen.findByRole('button', { name: MANAGE_SLACK }));
 		const sidebar = within(await screen.findByRole('dialog', { name: 'Slack' }));
-		await sidebar.findByText('Permission rules for Slack bot token');
-		expect(sidebar.queryByRole('button', { name: /Save rules/ })).toBeNull();
-		expect(sidebar.getByTestId('binding-rules-read-only')).toHaveTextContent(
+		await sidebar.findByTestId('access-summary');
+		expect(sidebar.queryByRole('button', { name: /Edit access/ })).toBeNull();
+		expect(sidebar.getByTestId('access-view-only')).toHaveTextContent(
 			"Only the credential's owner or an org admin can change these rules.",
 		);
 		expect(writes).toEqual([]);
@@ -572,7 +571,7 @@ describe('"Finish connecting" follows credentials:write', () => {
 				credential_id: 'cred_github_1',
 				name: 'GitHub PAT',
 				type: CredentialType.BEARER_TOKEN,
-				api: { vendor: 'github.com', name: 'default', version: '1.0.0' },
+				api: { vendor: 'github', name: 'default', version: '1.0.0' },
 				created_by: 'usr_viewer_1',
 			}),
 		]);
@@ -610,23 +609,17 @@ describe('the first-agent landing offers manual creation only with agents:write'
 		seedViewer(permissions);
 		await renderReady('/');
 		const landing = within(await screen.findByTestId('agents-empty-landing'));
-		const stepper = within(landing.getByTestId('register-stepper'));
+		const create = landing.queryByRole('radio', { name: /Create it here/ });
 
 		if (canManageAgents(permissions)) {
-			expect(
-				landing.getByRole('button', { name: 'Create an agent manually' }),
-			).toBeInTheDocument();
-			expect(stepper.getByText('You approve it')).toBeInTheDocument();
-			expect(landing.getByText(/shows up here for you to approve/)).toBeInTheDocument();
+			expect(create).toBeInTheDocument();
 		} else {
-			expect(landing.queryByRole('button', { name: 'Create an agent manually' })).toBeNull();
-			expect(landing.queryByTestId('manual-card')).toBeNull();
-			expect(stepper.queryByText('You approve it')).toBeNull();
-			expect(stepper.getByText('It gets approved')).toBeInTheDocument();
-			expect(stepper.getByText('By someone who can manage agents')).toBeInTheDocument();
+			// Only the routes that register: the agent lands pending.
+			expect(create).toBeNull();
 			expect(
-				landing.getByText(/pending until someone who can manage agents approves it/),
+				landing.getByRole('radio', { name: /Register from the CLI/ }),
 			).toBeInTheDocument();
+			expect(landing.getByRole('radio', { name: /Connect over MCP/ })).toBeInTheDocument();
 		}
 	});
 });

@@ -26,6 +26,14 @@ import {
 import { Badge, Button, Input, Label, Select, Tooltip } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import { EffectBadge } from '@/shared/credentials/components/EffectBadge';
+import { ActionList } from '@/shared/credentials/components/ActionList';
+import {
+	actionCount,
+	catalogComplete,
+	catalogOperations,
+	describeActions,
+	type ActionCatalog,
+} from '@/shared/credentials/lib/actionRules';
 import {
 	examplePath,
 	examplePathPrefix,
@@ -36,12 +44,18 @@ import {
 	ruleValidityIssue,
 	type RuleValidityIssue,
 } from '@/shared/credentials/lib/rule-matcher';
-import { ruleAppliesToTemplate } from '@/shared/credentials/lib/template-matcher';
+import {
+	evaluateTemplateOp,
+	ruleAppliesToTemplate,
+} from '@/shared/credentials/lib/template-matcher';
 import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
 
 // Stable empty reference so ``useMemo`` deps don't invalidate on every
 // render when a caller omits ``pathSuggestions``.
 const EMPTY_PATHS: readonly string[] = [];
+
+/** No operation list to name actions from (the host passed none). */
+const NO_ACTION_CATALOG: ActionCatalog = { status: 'unavailable', operations: [] };
 
 // Max suggestions rendered under the path input at once. Deliberately
 // small — a longer list dominates the dialog and forces the user to
@@ -86,6 +100,14 @@ export function RuleListEditor({
 	requestedRules,
 	emptyStateContent,
 	addActions,
+	openWhenEmpty = false,
+	hideAdd = false,
+	actionCatalog,
+	indexOffset = 0,
+	addLabel = 'Add rule',
+	addFirst = false,
+	decided,
+	readOnly = false,
 	className,
 }: {
 	rules: readonly PermissionRule[];
@@ -110,10 +132,36 @@ export function RuleListEditor({
 	 * same row as "Add rule" — inside the empty panel while there are no rules.
 	 */
 	addActions?: ReactNode;
+	/** With no rules yet, open straight onto the new-rule form. */
+	openWhenEmpty?: boolean;
+	/** Hide "Add rule" (another control authors new rules); rows stay editable. */
+	hideAdd?: boolean;
+	/**
+	 * The API's operation list, to name a rule's operation ids as the actions
+	 * they are (method, path, summary). Omitted → the ids read as "not
+	 * available" and sit behind "Details".
+	 */
+	actionCatalog?: ActionCatalog;
+	/**
+	 * Rules saved ahead of this list (e.g. a Deny action rule), so each row's
+	 * number is its position in the whole saved list, as the dry run cites it.
+	 */
+	indexOffset?: number;
+	/** The add verb's label (e.g. "Add path rule"). */
+	addLabel?: string;
+	/** Put the add verb (and its form, when open) above the rows, not below. */
+	addFirst?: boolean;
+	/** Operation ids already decided before these rules (By action's choices):
+	 * a row whose every match is one of them decides nothing, and says so. */
+	decided?: ReadonlySet<string>;
+	/** The rules as they are — no add verb, no row verbs, nothing when empty
+	 * (another editor owns them; this is context). */
+	readOnly?: boolean;
 	className?: string;
 }) {
 	const [editingIndex, setEditingIndex] = useState<number | null>(null);
-	const [adding, setAdding] = useState(false);
+	const [adding, setAdding] = useState(() => !!openWhenEmpty && rules.length === 0);
+	if ((hideAdd || readOnly) && adding) setAdding(false);
 	// While a form is open, every other row's verbs are disabled: the open edit
 	// is addressed by position, so a delete/move underneath it would land its
 	// Save on a different rule.
@@ -149,27 +197,44 @@ export function RuleListEditor({
 	// The list verbs: "Add rule" plus whatever the host contributes. While the
 	// list is empty (and the host has no custom empty state) they sit INSIDE
 	// the empty panel, so the next step is where the eye already is.
-	const actionRow = (
-		<div className="flex flex-wrap items-center gap-2">
-			<Button
-				type="button"
-				variant="secondary"
-				size="sm"
-				onClick={(): void => setAdding(true)}
-				disabled={editingIndex !== null}
-				data-rule-add=""
-			>
-				<Plus className="h-4 w-4" aria-hidden="true" />
-				Add rule
-			</Button>
-			{addActions}
-		</div>
-	);
+	const actionRow =
+		hideAdd || readOnly ? null : (
+			<div className="flex flex-wrap items-center gap-2">
+				<Button
+					type="button"
+					variant="secondary"
+					size="sm"
+					onClick={(): void => setAdding(true)}
+					disabled={editingIndex !== null}
+					data-rule-add=""
+				>
+					<Plus className="h-4 w-4" aria-hidden="true" />
+					{addLabel}
+				</Button>
+				{addActions}
+			</div>
+		);
 	const isEmpty = rules.length === 0;
 	const defaultEmpty = isEmpty && emptyStateContent == null;
+	if (readOnly && isEmpty) return null;
+	const addArea = adding ? (
+		<RuleForm
+			commitLabel="Add"
+			onCommit={(rule): void => {
+				onChange([...rules, rule]);
+				closeAdd();
+			}}
+			onCancel={closeAdd}
+			pathSuggestions={pathSuggestions}
+			actionCatalog={actionCatalog}
+		/>
+	) : (
+		!defaultEmpty && actionRow
+	);
 
 	return (
 		<div ref={rootRef} className={cn('edged-controls space-y-2', className)}>
+			{addFirst && addArea}
 			{isEmpty ? (
 				defaultEmpty ? (
 					!adding && <EmptyRulesPanel actions={actionRow} />
@@ -190,46 +255,43 @@ export function RuleListEditor({
 									}}
 									onCancel={(): void => closeEdit(i)}
 									pathSuggestions={pathSuggestions}
+									actionCatalog={actionCatalog}
 								/>
 							) : (
 								<RulePreviewRow
 									index={i}
+									position={i + indexOffset}
 									rule={rule}
 									isRequested={requestedKeys.has(JSON.stringify(rule))}
 									opTemplates={opTemplates}
 									opsLoaded={opsLoaded}
+									actionCatalog={actionCatalog}
+									decided={decided}
 									locked={formOpen}
-									onEdit={(): void => setEditingIndex(i)}
-									onDelete={(): void => onChange(rules.filter((_, j) => j !== i))}
-									onMoveUp={
-										i === 0
-											? undefined
-											: (): void => onChange(swap(rules, i, i - 1))
-									}
-									onMoveDown={
-										i === rules.length - 1
-											? undefined
-											: (): void => onChange(swap(rules, i, i + 1))
-									}
+									{...(readOnly
+										? {}
+										: {
+												onEdit: (): void => setEditingIndex(i),
+												onDelete: (): void =>
+													onChange(rules.filter((_, j) => j !== i)),
+												onMoveUp:
+													i === 0
+														? undefined
+														: (): void =>
+																onChange(swap(rules, i, i - 1)),
+												onMoveDown:
+													i === rules.length - 1
+														? undefined
+														: (): void =>
+																onChange(swap(rules, i, i + 1)),
+											})}
 								/>
 							)}
 						</li>
 					))}
 				</ol>
 			)}
-			{adding ? (
-				<RuleForm
-					commitLabel="Add"
-					onCommit={(rule): void => {
-						onChange([...rules, rule]);
-						closeAdd();
-					}}
-					onCancel={closeAdd}
-					pathSuggestions={pathSuggestions}
-				/>
-			) : (
-				!defaultEmpty && actionRow
-			)}
+			{!addFirst && addArea}
 		</div>
 	);
 }
@@ -309,27 +371,34 @@ function modeSuffix(rule: PermissionRule, issue: RuleValidityIssue | null): stri
  */
 function RulePreviewRow({
 	index,
+	position = index,
 	rule,
 	isRequested,
 	opTemplates,
 	opsLoaded,
+	actionCatalog,
 	locked = false,
 	onEdit,
 	onDelete,
 	onMoveUp,
 	onMoveDown,
+	decided,
 }: {
 	index: number;
+	/** The row's place in the whole saved list (its displayed number). */
+	position?: number;
 	rule: PermissionRule;
 	isRequested: boolean;
 	opTemplates?: readonly string[];
 	opsLoaded?: boolean;
+	actionCatalog?: ActionCatalog;
 	/** Another rule's form is open — this row's verbs are disabled until it closes. */
 	locked?: boolean;
 	onEdit?: () => void;
 	onDelete?: () => void;
 	onMoveUp?: () => void;
 	onMoveDown?: () => void;
+	decided?: ReadonlySet<string>;
 }) {
 	const methodsLabel =
 		rule.methods && rule.methods.length > 0 ? rule.methods.join(', ') : 'any method';
@@ -338,14 +407,46 @@ function RulePreviewRow({
 	// Only report once ops have finished loading — otherwise we'd flash
 	// "no operations affected" while the import is still pending.
 	// Suppressed when a stronger validity warning is already active.
+	// With the whole operation list at hand the rule is judged on ALL its
+	// conditions — method, path and operation ids together, as the broker ANDs
+	// them — so `GET /v1/boardColumns` on a path that only has POST and PUT, or
+	// a method + path added to an action rule that excludes its own actions, is
+	// caught. Without it, only the path can be judged. A rule list shared by
+	// several APIs is judged against all of them: a rule that reaches an
+	// action on another API is not "touching nothing".
+	const catalogOps = useMemo(
+		() =>
+			actionCatalog && catalogComplete(actionCatalog)
+				? catalogOperations(actionCatalog)
+				: null,
+		[actionCatalog],
+	);
+	const hits = useMemo(
+		() =>
+			catalogOps?.filter((op) => evaluateTemplateOp([rule], op).matchingRule !== null) ?? [],
+		[catalogOps, rule],
+	);
 	const affectsNothing = Boolean(
-		opsLoaded &&
 		!warningLabel &&
-		opTemplates &&
-		opTemplates.length > 0 &&
-		!opTemplates.some((tpl) => ruleAppliesToTemplate(rule, tpl)),
+		(catalogOps && catalogOps.length > 0
+			? hits.length === 0
+			: opsLoaded &&
+				!actionCatalog?.elsewhere?.length &&
+				opTemplates &&
+				opTemplates.length > 0 &&
+				!opTemplates.some((tpl) => ruleAppliesToTemplate(rule, tpl))),
 	);
 	const operations = rule.operations ?? [];
+	// An action rule names its operations and nothing else: its scope is the
+	// actions, not "any method /".
+	const actionsOnly = operations.length > 0 && !rule.methods?.length && !rule.path;
+	const actions = useMemo(
+		() =>
+			rule.operations?.length
+				? describeActions(rule.operations, actionCatalog ?? NO_ACTION_CATALOG)
+				: null,
+		[rule.operations, actionCatalog],
+	);
 	return (
 		<div
 			// Borderless: one fill step above the card. "Touches nothing" is a
@@ -359,9 +460,9 @@ function RulePreviewRow({
 					    verdict cites the same number. */}
 					<span
 						className="bg-surface-sheet text-foreground-sub inline-flex h-5 min-w-6 shrink-0 items-center justify-center rounded-[5px] px-1 font-mono text-[11px] font-semibold"
-						title={`Evaluated ${index === 0 ? 'first' : `#${index + 1}`}`}
+						title={`Evaluated ${position === 0 ? 'first' : `#${position + 1}`}`}
 					>
-						#{index + 1}
+						#{position + 1}
 					</span>
 					<EffectBadge
 						effect={rule.effect}
@@ -369,13 +470,22 @@ function RulePreviewRow({
 					>
 						{EFFECT_LABEL[rule.effect]}
 					</EffectBadge>
-					<span className="text-foreground shrink-0 font-mono text-[11px]">
-						{methodsLabel}
-					</span>
-					<span className="text-foreground-sub min-w-0 truncate font-mono text-[11px]">
-						{rule.path ?? '/'}
-						{modeSuffix(rule, validityIssue)}
-					</span>
+					{actionsOnly ? (
+						<span className="text-foreground inline-flex shrink-0 items-center gap-1.5">
+							<ListChecks className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+							{actionCount(new Set(operations).size)}
+						</span>
+					) : (
+						<>
+							<span className="text-foreground shrink-0 font-mono text-[11px]">
+								{methodsLabel}
+							</span>
+							<span className="text-foreground-sub min-w-0 truncate font-mono text-[11px]">
+								{rule.path ?? '/'}
+								{modeSuffix(rule, validityIssue)}
+							</span>
+						</>
+					)}
 				</div>
 				{warningLabel && (
 					<Tooltip content={warningLabel}>
@@ -390,7 +500,13 @@ function RulePreviewRow({
 					</Tooltip>
 				)}
 				{affectsNothing && (
-					<Tooltip content="This rule doesn't match any imported operation. Adjust the path or method to grant the access you intend.">
+					<Tooltip
+						content={
+							actionCatalog?.elsewhere?.length
+								? "This rule doesn't match any operation of the APIs these rules govern — check its method, path and actions together: a call must match all of them."
+								: "This rule doesn't match any of this API's operations — check its method, path and actions together: a call must match all of them."
+						}
+					>
 						<span
 							className="text-foreground-sub inline-flex items-center gap-1 font-mono text-[10px] uppercase"
 							role="status"
@@ -401,6 +517,22 @@ function RulePreviewRow({
 						</span>
 					</Tooltip>
 				)}
+				{/* Every call it matches is already decided by an action choice. */}
+				{!warningLabel &&
+					decided &&
+					hits.length > 0 &&
+					hits.every((op) => decided.has(op.operation_id)) && (
+						<Tooltip content="Every call this rule matches is already set by action, and action choices are checked first — so this rule decides nothing.">
+							<span
+								className="text-foreground-sub inline-flex items-center gap-1 font-mono text-[10px] uppercase"
+								role="status"
+								aria-label="Covered by action choices"
+							>
+								<AlertTriangle className="text-caution h-3 w-3 shrink-0" />
+								set by action
+							</span>
+						</Tooltip>
+					)}
 				{isRequested && (
 					<Badge variant="default" className="shrink-0">
 						requested by agent
@@ -468,22 +600,8 @@ function RulePreviewRow({
 			</div>
 			{/* Operation-id constraints narrow the rule to specific operations —
 			    the approver MUST see them (and know they survive edits), so they
-			    render as chips under the main row. */}
-			{operations.length > 0 && (
-				<div className="flex flex-wrap items-center gap-1">
-					<span className="text-foreground-sub text-[10px] tracking-wide uppercase">
-						operations
-					</span>
-					{operations.map((op) => (
-						<code
-							key={op}
-							className="bg-surface-sheet text-foreground rounded-sm px-1 py-0.5 font-mono text-[10px]"
-						>
-							{op}
-						</code>
-					))}
-				</div>
-			)}
+			    render under the main row, named as the actions they are. */}
+			{actions && <ActionList description={actions} className="-mx-1" />}
 			{rule.comment && (
 				<p className="text-foreground-sub text-[11px] italic">{rule.comment}</p>
 			)}
@@ -596,7 +714,8 @@ function validateDraft(draft: RuleDraft): string | null {
 	const hasPath = draft.path.trim().length > 0;
 	const hasOperations = (draft.operations?.length ?? 0) > 0;
 	if (draft.effect !== 'deny' && !hasMethods && !hasPath && !hasOperations) {
-		return `A "${EFFECT_LABEL[draft.effect]}" rule must constrain at least one of methods or path.`;
+		const name = draft.effect === 'require-approval' ? 'An Ask' : 'An Allow';
+		return `${name} rule needs at least one method, a path, or actions to match — on its own it would match every request.`;
 	}
 	return null;
 }
@@ -611,11 +730,13 @@ function RuleFormBody({
 	onChange,
 	error,
 	pathSuggestions,
+	actionCatalog,
 }: {
 	draft: RuleDraft;
 	onChange: (next: RuleDraft) => void;
 	error: string | null;
 	pathSuggestions?: readonly string[];
+	actionCatalog?: ActionCatalog;
 }) {
 	const ids = useId();
 	const toggleMethod = (method: string): void => {
@@ -656,6 +777,10 @@ function RuleFormBody({
 	}, [paths, draft.path]);
 
 	const [suggestOpen, setSuggestOpen] = useState(false);
+	// Open only on focus/keystroke, so suggestions arriving late never pop it open unasked.
+	const askForSuggestions = (): void => {
+		if (paths.length > 0) setSuggestOpen(true);
+	};
 	const [highlightedIndex, setHighlightedIndex] = useState(0);
 	useEffect(() => {
 		setHighlightedIndex(0);
@@ -795,10 +920,10 @@ function RuleFormBody({
 						value={draft.path}
 						onChange={(e): void => {
 							onChange({ ...draft, path: e.target.value });
-							setSuggestOpen(true);
+							askForSuggestions();
 						}}
 						onKeyDown={handlePathKeyDown}
-						onFocus={(): void => setSuggestOpen(true)}
+						onFocus={askForSuggestions}
 						onBlur={(): void => {
 							setTimeout(() => setSuggestOpen(false), 100);
 						}}
@@ -905,19 +1030,18 @@ function RuleFormBody({
 			    approver knows the constraint survives their changes. */}
 			{draft.operations && draft.operations.length > 0 && (
 				<>
-					<Label className="text-foreground-sub text-xs">Operations</Label>
-					<div className="flex flex-wrap items-center gap-1.5">
-						{draft.operations.map((op) => (
-							<code
-								key={op}
-								className="bg-surface-chip text-foreground rounded-sm px-1 py-0.5 font-mono text-[10px]"
-							>
-								{op}
-							</code>
-						))}
-						<span className="text-foreground-sub text-[10px]">
+					<Label className="text-foreground-sub self-start pt-1 text-xs">Actions</Label>
+					<div className="min-w-0 space-y-1">
+						<ActionList
+							description={describeActions(
+								draft.operations,
+								actionCatalog ?? NO_ACTION_CATALOG,
+							)}
+							className="-mx-1.5"
+						/>
+						<p className="text-foreground-sub text-[10px]">
 							kept as requested — not editable here
-						</span>
+						</p>
 					</div>
 				</>
 			)}
@@ -979,12 +1103,14 @@ function RuleForm({
 	onCommit,
 	onCancel,
 	pathSuggestions,
+	actionCatalog,
 }: {
 	initial?: PermissionRule;
 	commitLabel: string;
 	onCommit: (rule: PermissionRule) => void;
 	onCancel: () => void;
 	pathSuggestions?: readonly string[];
+	actionCatalog?: ActionCatalog;
 }) {
 	const [draft, setDraft] = useState<RuleDraft>(() =>
 		initial ? ruleDraftFromRule(initial) : EMPTY_RULE_DRAFT,
@@ -1007,6 +1133,7 @@ function RuleForm({
 				onChange={setDraft}
 				error={error}
 				pathSuggestions={pathSuggestions}
+				actionCatalog={actionCatalog}
 			/>
 		</RuleFormShell>
 	);

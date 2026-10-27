@@ -1,6 +1,6 @@
 /**
- * Unit specs for the Add-APIs preflight — the classification rules the tray's
- * tally rests on. The negative rules carry the most weight: identity matching must
+ * Unit specs for the Add-APIs preflight — the classification rules the setup
+ * queue walks. The negative rules carry the most weight: identity matching must
  * not collapse two accounts of one vendor into one another, must never settle a
  * credential on the operator's behalf, must not exclude a
  * credential for looking unhealthy, and must not promise "one click" unprovably.
@@ -8,15 +8,10 @@
 import { describe, it, expect } from 'vitest';
 import {
 	credentialCoversApi,
-	anotherAccountTallyLabel,
 	anotherCredentialWarning,
-	coveringCountLabel,
 	defaultChoice,
-	PREFLIGHT_LABELS,
 	preflightApi,
 	preflightApis,
-	preflightTally,
-	preflightTallyLabel,
 	stillOwedItems,
 	type PreflightInputs,
 } from '@/modules/agents/lib/apiPreflight';
@@ -348,7 +343,6 @@ describe('preflightApi — a pick whose spec declares no authentication', () => 
 	it('needs no credential to be typed in when nothing covers it', () => {
 		const item = preflightApi(makePick(), inputs({ noAuthKeys }));
 		expect(item.outcome).toBe('no-auth');
-		expect(PREFLIGHT_LABELS['no-auth']).toBe('No credential needed');
 	});
 
 	it('still offers a covering credential first', () => {
@@ -363,85 +357,19 @@ describe('preflightApi — a pick whose spec declares no authentication', () => 
 		expect(preflightApi(makePick(), inputs()).outcome).toBe('form');
 	});
 
-	it('tallies apart from picks that need a secret', () => {
+	it('classifies each pick of a batch on its own, in pick order', () => {
 		const items = preflightApis(
 			[makePick(), makePick({ vendor: 'acme.io', label: 'Acme' })],
 			inputs({ noAuthKeys }),
 		);
-		expect(preflightTally(items)).toMatchObject({ 'no-auth': 1, form: 1, total: 2 });
-		expect(preflightTallyLabel('no-auth', 1)).toBe(
-			'1 API declares no authentication — no secret to enter',
-		);
+		expect(items.map((i) => i.outcome)).toEqual(['no-auth', 'form']);
 	});
 });
 
-describe('preflightTally', () => {
-	it('counts each class and derives what the queue has to do', () => {
-		const coveringCred = makeCredential();
-		const items = preflightApis(
-			[
-				makePick({ vendor: 'stripe.com', name: 'main' }),
-				makePick({ vendor: 'slack.com', name: 'main' }),
-				makePick({
-					source: 'catalog',
-					vendor: 'notion.so',
-					name: 'main',
-					apiId: 'notion.so',
-					registered: false,
-				}),
-			],
-			inputs({ credentials: [coveringCred] }),
-		);
-		const tally = preflightTally(items);
-
-		expect(tally).toMatchObject({
-			choose: 1,
-			form: 2,
-			oauth: 0,
-			another: 0,
-			total: 3,
-			imports: 1,
-		});
-	});
-
-	it('an already-added pick still counts, and as another account', () => {
-		const items = preflightApis(
-			[makePick()],
-			inputs({ credentials: [makeCredential()], bindings: [makeBinding()] }),
-		);
-		expect(preflightTally(items)).toMatchObject({ form: 1, another: 1, total: 1 });
-	});
-});
-
-describe('preflightTallyLabel', () => {
-	it('reads correctly for one and for many', () => {
-		expect(preflightTallyLabel('choose', 1)).toBe(
-			'1 API: choose from your existing credentials in the next step',
-		);
-		expect(preflightTallyLabel('choose', 3)).toBe(
-			'3 APIs: choose from your existing credentials in the next step',
-		);
-		expect(preflightTallyLabel('form', 1)).toBe('1 API needs a new credential');
-		expect(preflightTallyLabel('form', 2)).toBe('2 APIs need a new credential');
-		expect(anotherAccountTallyLabel(1)).toBe(
-			'1 API is already added — once another credential is added, calls to it must name one with the Jentic-Credential-Id header, unless one is scoped more narrowly',
-		);
-		expect(anotherAccountTallyLabel(2)).toBe(
-			'2 APIs are already added — once another credential is added, calls to each must name one with the Jentic-Credential-Id header, unless one is scoped more narrowly',
-		);
+describe('anotherCredentialWarning', () => {
+	it('says a second credential must be named on each call', () => {
 		expect(anotherCredentialWarning('GitHub')).toBe(
 			'Once added, calls to GitHub must name a credential with the Jentic-Credential-Id header, unless one is scoped more narrowly.',
-		);
-	});
-});
-
-describe('coveringCountLabel', () => {
-	it('says how many existing credentials the next step offers', () => {
-		expect(coveringCountLabel(1)).toBe(
-			'1 of your credentials covers this API — use it or add a new one',
-		);
-		expect(coveringCountLabel(2)).toBe(
-			'2 of your credentials cover this API — use one or add a new one',
 		);
 	});
 });
@@ -461,6 +389,43 @@ describe('stillOwedItems', () => {
 		expect(stillOwedItems([another], [first])).toEqual([another]);
 		const second = makeBinding({ id: 'acb_2', credentialId: 'cred_2', name: 'Sandbox' });
 		expect(stillOwedItems([another], [first, second])).toEqual([]);
+	});
+
+	it('a catalog pick is done once a binding serves the API its import registered', () => {
+		// The pick's name is the whole catalog id and its version a placeholder; the
+		// credential saved from it is scoped to the imported identity, maybe pinned.
+		const umbrella = preflightApi(
+			makePick({
+				source: 'catalog',
+				vendor: 'airbrake.io',
+				name: 'airbrake.io/airbrake-api',
+				version: '1.0.0',
+				apiId: 'airbrake.io/airbrake-api',
+				label: 'Airbrake',
+			}),
+			inputs(),
+		);
+		const bare = preflightApi(
+			makePick({
+				source: 'catalog',
+				vendor: 'airbrake.io',
+				name: 'airbrake.io',
+				version: '1.0.0',
+				apiId: 'airbrake.io',
+				label: 'airbrake.io',
+			}),
+			inputs(),
+		);
+		const servesUmbrella = makeBinding({
+			serves: [{ vendor: 'airbrake-io', name: 'airbrake-api', version: null }],
+		});
+		const servesBarePinned = makeBinding({
+			id: 'acb_2',
+			serves: [{ vendor: 'airbrake-io', name: 'airbrake-io', version: '4.0.0' }],
+		});
+		expect(stillOwedItems([umbrella, bare], [servesUmbrella])).toEqual([bare]);
+		expect(stillOwedItems([umbrella, bare], [servesBarePinned])).toEqual([umbrella]);
+		expect(stillOwedItems([umbrella, bare], [servesUmbrella, servesBarePinned])).toEqual([]);
 	});
 
 	it('hands back the same array when nothing is served, so a caller can compare by reference', () => {

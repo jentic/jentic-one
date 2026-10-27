@@ -42,7 +42,32 @@ describe('useAllowedOperationCount', () => {
 			{ wrapper },
 		);
 		expect(result.current).toBeUndefined();
-		await waitFor(() => expect(result.current).toEqual({ allowed: 2, total: 3 }));
+		await waitFor(() =>
+			expect(result.current).toEqual({ allowed: 2, ask: 0, denied: 1, notSet: 1, total: 3 }),
+		);
+	});
+
+	it('never counts an Ask operation as allowed — allowed, ask and denied apart', async () => {
+		worker.use(
+			http.get(OPS_PATH, () =>
+				HttpResponse.json({
+					data: [op('GET', '/a'), op('POST', '/a'), op('DELETE', '/b')],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+		);
+		const { result } = renderHook(
+			() =>
+				useAllowedOperationCount(API, [
+					{ effect: 'allow', methods: ['GET'] },
+					{ effect: 'require-approval', methods: ['POST'] },
+				]),
+			{ wrapper },
+		);
+		await waitFor(() =>
+			expect(result.current).toEqual({ allowed: 1, ask: 1, denied: 1, notSet: 1, total: 3 }),
+		);
 	});
 
 	it('is null once a read finishes with no operation list (the import is not there)', async () => {

@@ -4,9 +4,9 @@
  * after a successful create; a dismissal preserves the draft, so the host keeps
  * the hook above whatever unmounts on close.
  *
- * Creating flows straight into the Add-APIs step: an agent with nothing bound can
+ * `Create` leaves the host surface open: an agent with nothing bound can
  * authenticate but every call it makes fails, so "created" is not a finished
- * state. `Create empty` stays available, de-emphasised, for reserving an identity.
+ * state, and the host offers the agent's first API next.
  */
 import { useEffect, useId, useRef, useState } from 'react';
 import { Button, Input, Label, Textarea } from '@/shared/ui';
@@ -22,31 +22,16 @@ import {
 export interface AgentCreateFormOptions {
 	/** Whether the hosting surface is open — transient errors clear on each open. */
 	open: boolean;
-	onClose: () => void;
-	/**
-	 * The agent that was just created, and whether the operator asked to carry
-	 * on into the Add-APIs flow for it.
-	 */
-	onCreated?: (agent: AgentEntity, opts: { addApis: boolean }) => void;
-	/** A name to start the draft from — the one typed in the landing's register
-	 * card, so either path in creates the agent the operator named. */
-	initialName?: string;
+	/** The agent that was just created; the surface is still open. */
+	onCreated?: (agent: AgentEntity) => void;
 }
 
-/** Which button is in flight, so only that one spins. */
-type Intent = 'add-apis' | 'empty';
-
-export function useAgentCreateForm({
-	open,
-	onClose,
-	onCreated,
-	initialName = '',
-}: AgentCreateFormOptions) {
-	const [name, setName] = useState(initialName);
+/** The draft starts empty: the register routes' command name names a different agent. */
+export function useAgentCreateForm({ open, onCreated }: AgentCreateFormOptions) {
+	const [name, setName] = useState('');
 	const [description, setDescription] = useState('');
 	const [permissions, setPermissions] = useState<string[]>([]);
 	const [error, setError] = useState<string | null>(null);
-	const [intent, setIntent] = useState<Intent | null>(null);
 	const nameRef = useRef<HTMLInputElement>(null);
 	const create = useCreateAgent();
 
@@ -54,24 +39,13 @@ export function useAgentCreateForm({
 		if (open) setError(null);
 	}, [open]);
 
-	// The seed syncs only when it changes, and only over a draft that still
-	// reads as the previous seed: a name edited here is the operator's and stays.
-	const lastSeedRef = useRef(initialName);
-	useEffect(() => {
-		const previous = lastSeedRef.current;
-		if (previous === initialName) return;
-		lastSeedRef.current = initialName;
-		setName((current) => (current === previous ? initialName : current));
-	}, [initialName]);
-
-	async function submit(next: Intent) {
+	async function submit() {
 		const trimmed = name.trim();
 		const invalid = agentNameError(name);
 		if (invalid) {
 			setError(invalid);
 			return;
 		}
-		setIntent(next);
 		try {
 			const agent = await create.mutateAsync({
 				name: trimmed,
@@ -82,14 +56,9 @@ export function useAgentCreateForm({
 			setDescription('');
 			setPermissions([]);
 			setError(null);
-			onClose();
-			// After the close, so the host's tray opens onto a dismissed surface
-			// rather than stacking a second layer over this one.
-			onCreated?.(agent, { addApis: next === 'add-apis' });
+			onCreated?.(agent);
 		} catch {
 			// hook surfaces a toast; keep the draft so the user can retry.
-		} finally {
-			setIntent(null);
 		}
 	}
 
@@ -101,7 +70,6 @@ export function useAgentCreateForm({
 		permissions,
 		setPermissions,
 		error,
-		intent,
 		pending: create.isPending,
 		nameRef,
 		submit,
@@ -123,10 +91,6 @@ export function AgentCreateFields({
 	const duplicateOf = form.error ? null : duplicateAgentName(existingNames, form.name);
 	return (
 		<div className="space-y-4">
-			<p className="text-muted-foreground text-sm">
-				Agents represent autonomous actors on the platform. New agents are created as active
-				and can authenticate immediately — you pick the APIs they can reach next.
-			</p>
 			<div className="space-y-1.5">
 				<Label htmlFor="agent-name">Name</Label>
 				<Input
@@ -162,7 +126,7 @@ export function AgentCreateFields({
 	);
 }
 
-/** Cancel, then the two creates — primary right-most. */
+/** Cancel, then Create — primary right-most. */
 export function AgentCreateActions({
 	form,
 	onCancel,
@@ -170,30 +134,19 @@ export function AgentCreateActions({
 	form: AgentCreateFormState;
 	onCancel: () => void;
 }) {
-	const { pending, intent } = form;
 	return (
 		<>
-			<Button variant="ghost" onClick={onCancel} disabled={pending}>
+			{/* Phones: the header's close does it, so Create keeps the row. */}
+			<Button
+				variant="ghost"
+				onClick={onCancel}
+				disabled={form.pending}
+				className="hidden sm:inline-flex"
+			>
 				Cancel
 			</Button>
-			{/* De-emphasised, not hidden: reserving an identity ahead of the
-			    credentials it will need is a real case, and the operator who
-			    takes this exit lands on the agent's own screen, where the
-			    same Add-APIs step is one click away. */}
-			<Button
-				variant="secondary"
-				onClick={() => void form.submit('empty')}
-				loading={pending && intent === 'empty'}
-				disabled={pending && intent !== 'empty'}
-			>
-				Create empty
-			</Button>
-			<Button
-				onClick={() => void form.submit('add-apis')}
-				loading={pending && intent === 'add-apis'}
-				disabled={pending && intent !== 'add-apis'}
-			>
-				Create and add APIs
+			<Button onClick={() => void form.submit()} loading={form.pending}>
+				Create
 			</Button>
 		</>
 	);

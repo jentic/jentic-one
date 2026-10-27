@@ -42,17 +42,20 @@ export interface RegisterCommandOptions {
 	/** `--broker-url`: a string is the flag's value, `null` the placeholder the
 	 * operator must fill in, and absent omits the flag. */
 	brokerUrl?: string | null;
+	/** `setup` registers the same way, then wires the agent's MCP clients. */
+	verb?: 'register' | 'setup';
 }
 
-/** `jentic register` as words, for a display that colours what it copies. */
+/** `jentic register` (or `setup`) as words, for a display that colours what it copies. */
 export function registerCommandTokens({
 	url,
 	name,
 	brokerUrl,
+	verb = 'register',
 }: RegisterCommandOptions): CommandToken[] {
 	const tokens: CommandToken[] = [
 		{ text: 'jentic', tone: 'program' },
-		{ text: 'register', tone: 'plain' },
+		{ text: verb, tone: 'plain' },
 		{ text: '--url', tone: 'flag' },
 		{ text: shellArg(url), tone: 'url' },
 	];
@@ -78,4 +81,30 @@ export function commandText(tokens: CommandToken[]): string {
 /** `jentic register` for an instance, as one command line. */
 export function registerCommand(options: RegisterCommandOptions): string {
 	return commandText(registerCommandTokens(options));
+}
+
+/** The CLI's config-name rule (`config.SanitizeName`): lowercase, `[a-z0-9-]`, ≤ 64.
+ * Its output also passes `register --name`'s check (`^[a-z0-9][a-z0-9-]{0,63}$`). */
+export function configName(s: string): string {
+	return s
+		.trim()
+		.toLowerCase()
+		.replace(/[^a-z0-9-]+/g, '-')
+		.replace(/^-+|-+$/g, '')
+		.slice(0, 64)
+		.replace(/-+$/, '');
+}
+
+/** The context `jentic register`/`setup` creates: `<env>-<name>`, env being the URL
+ * host's first label, with `localhost` read as `127.0.0.1` (`cmdcore/register_derive.go`). */
+export function cliContextName(url: string, name: string): string {
+	let host = '';
+	try {
+		host = new URL(url).hostname.replace(/^\[|\]$/g, '');
+	} catch {
+		// A scheme-less URL has no host to the CLI either.
+	}
+	if (host === 'localhost') host = '127.0.0.1';
+	const env = configName(host.split('.')[0]) || 'default';
+	return configName(`${env}-${name}`);
 }
