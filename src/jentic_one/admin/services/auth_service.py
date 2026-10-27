@@ -27,6 +27,7 @@ from jentic_one.admin.services.errors import (
     InvalidInputError,
     SessionExpiredError,
     SetupAlreadyCompleteError,
+    UserDeletedError,
     UserEmailNotFoundError,
 )
 from jentic_one.admin.services.metrics import login_counter
@@ -38,6 +39,7 @@ from jentic_one.admin.services.schemas.auth import (
     TokenBundle,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
+from jentic_one.shared.auth.actor_status import SESSION_GENERATION_CLAIM
 from jentic_one.shared.auth.verify import verify_token
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseIntegrityError
@@ -60,12 +62,15 @@ class AuthService:
         email: str,
         must_change_password: bool,
         auth_time: int,
+        session_generation: int,
     ) -> TokenBundle:
         """Mint a login-JWT bundle with freshly-resolved effective permissions.
 
         ``auth_time`` (epoch seconds of the original credential authentication)
         rides in the claims so :meth:`refresh` can enforce the absolute session
         window (``admin.auth.session_ttl_seconds``) across re-mints.
+        ``session_generation`` (the user row's current value) rides as
+        ``sgen``: bumping the row's generation revokes the token.
         """
         config = self._ctx.config.admin.auth
         perm_service = PermissionService(self._ctx)
@@ -79,6 +84,7 @@ class AuthService:
             "permissions": perms_view.effective,
             "must_change_password": must_change_password,
             "auth_time": auth_time,
+            SESSION_GENERATION_CLAIM: session_generation,
         }
         token = issue_jwt(claims, config.jwt_secret.get_secret_value(), config.jwt_ttl_seconds)
         return TokenBundle(
@@ -119,7 +125,9 @@ class AuthService:
                 dummy_verify_password()
                 raise InvalidCredentialsError()
 
-            if not user.active:
+            # A deleted row is refused even if it reads active: delete is
+            # terminal, and its retained password hash must never sign in.
+            if not user.active or user.deleted_at is not None:
                 dummy_verify_password()
                 raise InvalidCredentialsError()
 
@@ -139,7 +147,6 @@ class AuthService:
                 account_locked_user_id = user.id
             else:
                 password_valid = verify_password(payload.password, secret.password_hash)
-                failed_count = secret.failed_login_count
 
         if account_locked_user_id is not None:
             login_counter.add(1, {"outcome": "lockout"})
@@ -158,8 +165,8 @@ class AuthService:
 
         if not password_valid:
             async with self._ctx.admin_db.transaction() as session:
-                await UserSecretRepository.record_failed_login(session, user.id)
-                if failed_count + 1 >= config.failed_login_lockout_threshold:
+                failed_count = await UserSecretRepository.record_failed_login(session, user.id)
+                if (failed_count or 0) >= config.failed_login_lockout_threshold:
                     locked_until = datetime.now(UTC) + timedelta(
                         seconds=config.failed_login_lockout_seconds
                     )
@@ -221,9 +228,9 @@ class AuthService:
         # from token minting.
         async with self._ctx.admin_db.session() as session:
             user = await UserRepository.get_by_id(session, user_id)
-        if user is None:
-            # The account vanished between credential verification and minting
-            # (concurrent deletion) — treat it like any other bad credential.
+        if user is None or not user.active or user.deleted_at is not None:
+            # The account was disabled or deleted between credential
+            # verification and minting — treat it like any other bad credential.
             raise InvalidCredentialsError()
 
         return await self._mint_session_bundle(
@@ -231,6 +238,7 @@ class AuthService:
             email=user.email,
             must_change_password=user.must_change_password,
             auth_time=int(datetime.now(UTC).timestamp()),
+            session_generation=user.session_generation,
         )
 
     async def refresh(self, raw_token: str) -> TokenBundle:
@@ -277,7 +285,11 @@ class AuthService:
 
         async with self._ctx.admin_db.transaction() as session:
             user = await UserRepository.get_by_id(session, claims["sub"])
-            if user is None or not user.active:
+            if user is None or not user.active or user.deleted_at is not None:
+                raise InvalidCredentialsError("Token is not refreshable")
+            # Defence in depth behind the auth gate: a revoked session (the
+            # generation moved on) never re-mints into a live one.
+            if claims.get(SESSION_GENERATION_CLAIM, 0) != user.session_generation:
                 raise InvalidCredentialsError("Token is not refreshable")
             await record_audit(
                 session,
@@ -295,6 +307,7 @@ class AuthService:
             email=user.email,
             must_change_password=user.must_change_password,
             auth_time=auth_time,
+            session_generation=user.session_generation,
         )
 
     async def bootstrap_admin(
@@ -384,6 +397,7 @@ class AuthService:
             email=user.email,
             must_change_password=False,
             auth_time=int(datetime.now(UTC).timestamp()),
+            session_generation=user.session_generation,
         )
 
     async def change_own_password(
@@ -395,23 +409,90 @@ class AuthService:
         ``must_change_password`` gate: the old token still carries the stale
         claim, so without a re-mint the client would loop. The new token reflects
         the cleared gate and current permissions.
+
+        The ``current_password`` check shares the login lockout state: a wrong
+        guess increments the failed-login count (locking the account at
+        ``admin.auth.failed_login_lockout_threshold``), and while
+        ``locked_until`` holds the change is refused without checking the
+        password. A session token therefore buys no more guesses than the
+        login form allows. Wrong and locked attempts are audited as
+        ``LOGIN_FAILED``; a successful change resets the count.
         """
         if len(payload.new_password) < MIN_PASSWORD_LENGTH:
             raise InvalidInputError(PASSWORD_TOO_SHORT_MESSAGE)
 
+        config = self._ctx.config.admin.auth
         user_id = identity.sub
-        async with self._ctx.admin_db.transaction() as session:
+
+        # Verify on a read session and record the outcome in a separate write
+        # transaction: a failure must commit its count increment, and holding
+        # the read connection open across that write self-deadlocks under
+        # SQLite.
+        async with self._ctx.admin_db.session() as session:
             secret = await UserSecretRepository.get_by_user_id(session, user_id)
             if secret is None or secret.password_hash is None:
                 raise InvalidCredentialsError()
+            locked = secret.locked_until is not None and secret.locked_until > datetime.now(UTC)
+            if locked:
+                # Same verify cost as a real check, so the refusal is not
+                # timing-distinguishable from a wrong password.
+                dummy_verify_password()
+                password_valid = False
+            else:
+                password_valid = verify_password(payload.current_password, secret.password_hash)
 
-            if not verify_password(payload.current_password, secret.password_hash):
-                raise InvalidCredentialsError()
+        if locked:
+            logger.warning("password_change_refused_account_locked", user_id=user_id)
+            async with self._ctx.admin_db.transaction() as session:
+                await record_audit(
+                    session,
+                    action=AuditAction.LOGIN_FAILED,
+                    target_type=AuditTargetType.SESSION,
+                    target_id=user_id,
+                    actor_type=ActorType.USER,
+                    actor_id=user_id,
+                    reason="password_change_account_locked",
+                    origin=identity.origin.value,
+                )
+            raise AccountLockedError(user_id)
 
+        if not password_valid:
+            async with self._ctx.admin_db.transaction() as session:
+                # The count comes back from the atomic increment, so concurrent
+                # wrong guesses each see a distinct value and the lock trips.
+                failed_count = await UserSecretRepository.record_failed_login(session, user_id)
+                if (failed_count or 0) >= config.failed_login_lockout_threshold:
+                    locked_until = datetime.now(UTC) + timedelta(
+                        seconds=config.failed_login_lockout_seconds
+                    )
+                    await UserSecretRepository.lock_until(
+                        session, user_id, locked_until=locked_until
+                    )
+                    logger.warning("account_locked", user_id=user_id, locked_until=locked_until)
+                else:
+                    logger.warning("password_change_failed", user_id=user_id)
+                await record_audit(
+                    session,
+                    action=AuditAction.LOGIN_FAILED,
+                    target_type=AuditTargetType.SESSION,
+                    target_id=user_id,
+                    actor_type=ActorType.USER,
+                    actor_id=user_id,
+                    reason="password_change_failed",
+                    origin=identity.origin.value,
+                )
+            raise InvalidCredentialsError()
+
+        async with self._ctx.admin_db.transaction() as session:
+            await UserSecretRepository.reset_failed_logins(session, user_id)
             hashed = hash_password(payload.new_password)
             await UserSecretRepository.set_password_hash(
                 session, user_id, password_hash=hashed, created_by=user_id
             )
+            # A new password ends every other session; the bundle minted below
+            # is issued after the cutoff, so the caller's own session survives.
+            revoked = await UserRepository.revoke_login_sessions(session, user_id)
+            session_generation = revoked.session_generation
 
             user = await UserRepository.get_by_id(session, user_id)
             if user is not None and user.must_change_password:
@@ -437,6 +518,7 @@ class AuthService:
             email=user.email if user is not None else identity.email,
             must_change_password=False,
             auth_time=int(datetime.now(UTC).timestamp()),
+            session_generation=session_generation,
         )
 
     async def reset_password(self, *, email: str, temporary_password: str) -> str:
@@ -458,9 +540,18 @@ class AuthService:
             raise InvalidInputError(PASSWORD_TOO_SHORT_MESSAGE)
 
         async with self._ctx.admin_db.transaction() as session:
-            user = await UserRepository.get_by_email(session, email)
+            found = await UserRepository.get_by_email(session, email)
+            if found is None:
+                raise UserEmailNotFoundError(email)
+            # Locked so a concurrent delete either commits first (and is
+            # refused below) or waits until the reset commits.
+            user = await UserRepository.get_by_id_for_update(session, found.id)
             if user is None:
                 raise UserEmailNotFoundError(email)
+            if user.deleted_at is not None:
+                # Delete is terminal: a reset would hand the retained row a
+                # fresh credential.
+                raise UserDeletedError("reset the password of")
 
             await UserSecretRepository.set_password_hash(
                 session,
@@ -469,6 +560,9 @@ class AuthService:
                 created_by=user.id,
             )
             await UserSecretRepository.unlock(session, user.id)
+            # A reset is the response to a lost or leaked credential: end every
+            # session issued under the old one.
+            await UserRepository.revoke_login_sessions(session, user.id)
             if not user.must_change_password:
                 await UserRepository.update(session, user.id, must_change_password=True)
 

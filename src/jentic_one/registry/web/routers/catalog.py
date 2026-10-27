@@ -235,8 +235,8 @@ async def preview_catalog_operations(
                     )
                     for p in op.parameters
                 ],
-                security=op.security,
-                tags=op.tags,
+                security=list(op.security),
+                tags=list(op.tags),
             )
             for op in preview.operations
         ],

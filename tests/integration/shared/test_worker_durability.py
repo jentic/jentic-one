@@ -9,21 +9,29 @@ Per the repo's no-DB-mocking rule these run against the real admin DB.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 import structlog.testing
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 
+from jentic_one.admin.core.schema.events import Event
+from jentic_one.admin.core.schema.execution_records import ExecutionRecord
+from jentic_one.admin.core.schema.job_results import JobResult
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.shared.config import WorkerConfig
 from jentic_one.shared.db.errors import DatabaseCommitOutcomeUnknownError
 from jentic_one.shared.db.session import DatabaseSession
+from jentic_one.shared.events import emit_event
+from jentic_one.shared.executions import record_execution
 from jentic_one.shared.jobs.handlers import JobHandlerRegistry, JobResultPayload
-from jentic_one.shared.jobs.worker import WorkerLoop
-from jentic_one.shared.models import JobKind, JobStatus
+from jentic_one.shared.jobs.worker import _COMPLETION_MAX_RETRIES, WorkerLoop
+from jentic_one.shared.models import ExecutionStatus, JobKind, JobStatus
+from jentic_one.shared.models.events import EventSeverity, EventType
 
 pytestmark = pytest.mark.integration
 
@@ -64,13 +72,17 @@ def _registry(handler: Any) -> JobHandlerRegistry:
 
 @pytest.fixture()
 async def clean_jobs(admin_db: DatabaseSession) -> AsyncGenerator[None, None]:
-    async with admin_db.session() as session:
-        await session.execute(delete(Job))
-        await session.commit()
+    async def _clean() -> None:
+        async with admin_db.session() as session:
+            await session.execute(delete(JobResult))
+            await session.execute(delete(Event))
+            await session.execute(delete(ExecutionRecord))
+            await session.execute(delete(Job))
+            await session.commit()
+
+    await _clean()
     yield
-    async with admin_db.session() as session:
-        await session.execute(delete(Job))
-        await session.commit()
+    await _clean()
 
 
 async def _insert_job(admin_db: DatabaseSession, **kwargs: Any) -> str:
@@ -339,3 +351,326 @@ def _assert_only_skip_logged(logs: list[Any]) -> None:
     assert len(skips) == 1
     assert skips[0]["log_level"] == "info"
     assert all(e["log_level"] != "error" for e in logs)
+
+
+class _FlakyCompleteWorker(WorkerLoop):
+    """Fails ``_complete_job`` ``failures`` times with a pool timeout, then delegates."""
+
+    def __init__(self, admin_db: DatabaseSession, handler: Any, *, failures: int) -> None:
+        super().__init__(admin_db, _registry(handler), worker_config=WorkerConfig())
+        self._failures = failures
+        self.complete_calls = 0
+        self.sleeps: list[float] = []
+
+    async def _complete_job(self, job_id: str, kind: str, result: JobResultPayload) -> None:
+        self.complete_calls += 1
+        if self.complete_calls <= self._failures:
+            raise PoolTimeoutError("QueuePool limit reached")
+        await super()._complete_job(job_id, kind, result)
+
+    async def _sleep(self, delay_s: float) -> None:
+        self.sleeps.append(delay_s)
+
+
+async def test_completion_write_failure_retries_and_completes_without_rerunning_handler(
+    admin_db: DatabaseSession, clean_jobs: None
+) -> None:
+    """Pins #1800: a transient ``_complete_job`` failure after the handler returns
+    is retried in place, writes the ``JobResult``, and never requeues or re-runs
+    the handler."""
+    job_id = await _insert_job(admin_db)
+    handler = _CountingOkHandler()
+    worker = _FlakyCompleteWorker(admin_db, handler, failures=2)
+
+    assert await worker._tick() is True
+    assert await worker._tick() is False
+
+    job = await _get(admin_db, job_id)
+    assert job.status == JobStatus.COMPLETED
+    assert job.visible_at is None
+    assert handler.calls == 1
+    assert worker.complete_calls == 3
+    assert worker.sleeps == [0.05, 0.1]
+    async with admin_db.session() as session:
+        result = (
+            await session.execute(select(JobResult).where(JobResult.job_id == job_id))
+        ).scalar_one()
+    assert result.body == {"ok": True}
+
+
+async def test_completion_write_failure_past_retries_never_requeues_and_reclaim_refuses_rerun(
+    admin_db: DatabaseSession, clean_jobs: None
+) -> None:
+    """Pins #1800: when ``_complete_job`` fails across all retries, the job is
+    not requeued, and a visibility-timeout reclaim on a fresh worker refuses to
+    re-dispatch the execution."""
+    job_id = await _insert_job(admin_db)
+    handler = _CountingOkHandler()
+    worker = _FlakyCompleteWorker(admin_db, handler, failures=_COMPLETION_MAX_RETRIES + 1)
+
+    assert await worker._tick() is True
+    assert await worker._tick() is False
+
+    job = await _get(admin_db, job_id)
+    assert job.status == JobStatus.RUNNING
+    assert job.attempts == 1
+    assert handler.calls == 1
+    assert worker.complete_calls == _COMPLETION_MAX_RETRIES + 1
+
+    past = datetime.now(UTC) - timedelta(seconds=1)
+    async with admin_db.transaction() as session:
+        await session.execute(update(Job).where(Job.id == job_id).values(visible_at=past))
+
+    fresh_worker = WorkerLoop(admin_db, _registry(handler), worker_config=WorkerConfig())
+    with structlog.testing.capture_logs() as logs:
+        assert await fresh_worker._tick() is True
+
+    job = await _get(admin_db, job_id)
+    assert job.status == JobStatus.FAILED
+    assert job.visible_at is None
+    assert job.error == "execution interrupted after dispatch; not re-run"
+    assert handler.calls == 1
+    assert [e for e in logs if e["event"] == "execution_job_reclaim_refused"]
+
+
+async def test_completion_outcome_unknown_not_landed_is_refused_on_reclaim(
+    admin_db: DatabaseSession, clean_jobs: None
+) -> None:
+    """Pins #1800: a job left RUNNING after an unknown completion commit is
+    failed on visibility-timeout reclaim rather than re-dispatched."""
+    job_id = await _insert_job(admin_db)
+    handler = _CountingOkHandler()
+    worker = _CompletionOutcomeUnknownWorker(admin_db, handler, landed=False)
+
+    assert await worker._tick() is True
+    assert handler.calls == 1
+
+    past = datetime.now(UTC) - timedelta(seconds=1)
+    async with admin_db.transaction() as session:
+        await session.execute(update(Job).where(Job.id == job_id).values(visible_at=past))
+
+    fresh_worker = WorkerLoop(admin_db, _registry(handler), worker_config=WorkerConfig())
+    assert await fresh_worker._tick() is True
+
+    job = await _get(admin_db, job_id)
+    assert job.status == JobStatus.FAILED
+    assert job.visible_at is None
+    assert handler.calls == 1
+
+
+@pytest.mark.parametrize("signal", ["execution_record", "credential_accessed", "job_event"])
+async def test_reclaim_refuses_execution_with_persisted_dispatch_evidence(
+    admin_db: DatabaseSession, clean_jobs: None, signal: str
+) -> None:
+    """Pins #1800: a RUNNING execution job reclaimed after a worker died mid-run
+    is refused when the earlier attempt already wrote ``credential.accessed``,
+    the ``ExecutionRecord``, or the lifecycle ``Event``."""
+    trace_id = "a" * 32
+    execution_id = f"exec_{signal[:12]}"
+    past = datetime.now(UTC) - timedelta(seconds=1)
+    job_id = await _insert_job(
+        admin_db,
+        status=JobStatus.RUNNING,
+        visible_at=past,
+        attempts=1,
+        execution_id=execution_id,
+        payload={"execution_id": execution_id, "trace_id": trace_id},
+        created_by="agnt_test",
+        actor_type="agent",
+    )
+    async with admin_db.transaction() as session:
+        if signal == "execution_record":
+            await record_execution(
+                session,
+                execution_id=execution_id,
+                toolkit_id=None,
+                trace_id=trace_id,
+                started_at=datetime.now(UTC),
+                status=ExecutionStatus.COMPLETED,
+                actor_id="agnt_test",
+                actor_type="agent",
+            )
+        elif signal == "credential_accessed":
+            await emit_event(
+                session,
+                type=EventType.CREDENTIAL_ACCESSED,
+                severity=EventSeverity.INFO,
+                summary="Credential accessed",
+                created_by="agnt_test",
+                trace_id=trace_id,
+                actor_id="agnt_test",
+                actor_type="agent",
+            )
+        else:
+            await emit_event(
+                session,
+                type=EventType.EXECUTION_COMPLETED,
+                severity=EventSeverity.INFO,
+                summary="Execution completed",
+                created_by="agnt_test",
+                job_id=job_id,
+                execution_id=execution_id,
+                actor_id="agnt_test",
+                actor_type="agent",
+            )
+
+    handler = _CountingOkHandler()
+    worker = WorkerLoop(admin_db, _registry(handler), worker_config=WorkerConfig())
+    with structlog.testing.capture_logs() as logs:
+        assert await worker._tick() is True
+
+    job = await _get(admin_db, job_id)
+    assert job.status == JobStatus.FAILED
+    assert job.visible_at is None
+    assert job.error == "execution interrupted after dispatch; not re-run"
+    assert handler.calls == 0
+    assert [e for e in logs if e["event"] == "execution_job_reclaim_refused"]
+
+
+async def test_completion_retry_after_commit_landed_is_idempotent(
+    admin_db: DatabaseSession, clean_jobs: None
+) -> None:
+    """Pins #1800: if ``_complete_job`` committed ``COMPLETED`` and ``JobResult``
+    on attempt 1 before raising a post-commit error, retry 2 sees
+    ``job.status != JobStatus.RUNNING`` and exits cleanly without inserting a
+    duplicate ``JobResult`` row."""
+
+    class _LandedThenRaisedWorker(WorkerLoop):
+        def __init__(self, db: DatabaseSession, handler: Any) -> None:
+            super().__init__(db, _registry(handler), worker_config=WorkerConfig())
+            self.complete_calls = 0
+
+        async def _complete_job(self, job_id: str, kind: str, result: JobResultPayload) -> None:
+            self.complete_calls += 1
+            await super()._complete_job(job_id, kind, result)
+            if self.complete_calls == 1:
+                raise PoolTimeoutError("post-commit pool error")
+
+        async def _sleep(self, delay_s: float) -> None:
+            return None
+
+    job_id = await _insert_job(admin_db)
+    handler = _CountingOkHandler()
+    worker = _LandedThenRaisedWorker(admin_db, handler)
+
+    assert await worker._tick() is True
+
+    job = await _get(admin_db, job_id)
+    assert job.status == JobStatus.COMPLETED
+    assert job.visible_at is None
+    assert handler.calls == 1
+    assert worker.complete_calls == 2
+
+
+async def test_pre_dispatch_retry_not_poisoned_by_earlier_or_other_actor_credential_accessed(
+    admin_db: DatabaseSession, clean_jobs: None
+) -> None:
+    """Pins #1800: an earlier request in the same W3C trace (before ``job.created_at``)
+    or a ``credential.accessed`` event from another actor must not cause a
+    pre-dispatch retry (``attempts == 2``) to be refused as already dispatched."""
+    trace_id = "b" * 32
+    execution_id = "exec_predispatch"
+    async with admin_db.transaction() as session:
+        await emit_event(
+            session,
+            type=EventType.CREDENTIAL_ACCESSED,
+            severity=EventSeverity.INFO,
+            summary="Earlier call in same trace",
+            created_by="agnt_test",
+            trace_id=trace_id,
+            actor_id="agnt_test",
+            actor_type="agent",
+        )
+    future_job_time = datetime.now(UTC) + timedelta(seconds=5)
+    job_id = await _insert_job(
+        admin_db,
+        status=JobStatus.QUEUED,
+        attempts=1,
+        execution_id=execution_id,
+        payload={"execution_id": execution_id, "trace_id": trace_id},
+        created_by="agnt_test",
+        actor_type="agent",
+        created_at=future_job_time,
+    )
+    async with admin_db.transaction() as session:
+        await emit_event(
+            session,
+            type=EventType.CREDENTIAL_ACCESSED,
+            severity=EventSeverity.INFO,
+            summary="Other actor with same trace_id",
+            created_by="agnt_other",
+            trace_id=trace_id,
+            actor_id="agnt_other",
+            actor_type="agent",
+        )
+
+    handler = _CountingOkHandler()
+    worker = WorkerLoop(admin_db, _registry(handler), worker_config=WorkerConfig())
+    assert await worker._tick() is True
+
+    job = await _get(admin_db, job_id)
+    assert job.status == JobStatus.COMPLETED
+    assert job.attempts == 2
+    assert handler.calls == 1
+
+
+async def test_reclaim_refusal_skips_stale_claim_attempts_mismatch(
+    admin_db: DatabaseSession, clean_jobs: None
+) -> None:
+    """Pins #1800: a stale worker holding ``attempts=2`` in ``_refuse_approved_reclaim``
+    must not fail a job that has already been reclaimed under ``attempts=3``."""
+    execution_id = "exec_stale_reclaim"
+    job_id = await _insert_job(
+        admin_db,
+        status=JobStatus.RUNNING,
+        attempts=3,
+        execution_id=execution_id,
+        payload={"execution_id": execution_id, "_dispatched": True},
+    )
+    stale = await _get(admin_db, job_id)
+    stale.attempts = 2
+
+    worker = WorkerLoop(admin_db, _registry(_CountingOkHandler()), worker_config=WorkerConfig())
+    with structlog.testing.capture_logs() as logs:
+        assert await worker._refuse_approved_reclaim(stale) is True
+
+    job = await _get(admin_db, job_id)
+    assert job.status == JobStatus.RUNNING
+    assert job.attempts == 3
+    assert job.error is None
+    assert not [e for e in logs if e["event"] == "execution_job_reclaim_refused"]
+
+
+async def test_completion_failure_stamps_dispatched_before_backoff_sleep(
+    admin_db: DatabaseSession, clean_jobs: None
+) -> None:
+    """Pins #1800: ``_mark_dispatched_best_effort`` runs on the first completion
+    failure before ``_sleep``, so cancelling the worker during backoff still
+    leaves ``_dispatched`` on the DB row for a fresh worker's reclaim."""
+
+    class _CancelOnCompletionSleepWorker(_FlakyCompleteWorker):
+        async def _sleep(self, delay_s: float) -> None:
+            raise asyncio.CancelledError
+
+    job_id = await _insert_job(admin_db)
+    handler = _CountingOkHandler()
+    worker = _CancelOnCompletionSleepWorker(admin_db, handler, failures=1)
+
+    with pytest.raises(asyncio.CancelledError):
+        await worker._tick()
+
+    job = await _get(admin_db, job_id)
+    assert job.status == JobStatus.RUNNING
+    assert job.payload == {"_dispatched": True}
+    assert handler.calls == 1
+
+    past = datetime.now(UTC) - timedelta(seconds=1)
+    async with admin_db.transaction() as session:
+        await session.execute(update(Job).where(Job.id == job_id).values(visible_at=past))
+
+    fresh_worker = WorkerLoop(admin_db, _registry(handler), worker_config=WorkerConfig())
+    assert await fresh_worker._tick() is True
+
+    job = await _get(admin_db, job_id)
+    assert job.status == JobStatus.FAILED
+    assert handler.calls == 1

@@ -172,6 +172,15 @@ def _resolve_static_dir() -> Path | None:
     return _resolve_dev_static_dir()
 
 
+def is_spa_path(path: str) -> bool:
+    """Whether ``path`` is the SPA mount itself or lives under it.
+
+    Guards against a sibling prefix (``/apple-touch-icon.png``,
+    ``/application/...``) matching on a bare ``startswith``.
+    """
+    return path == SPA_MOUNT_PATH or path.startswith(f"{SPA_MOUNT_PATH}/")
+
+
 def _cache_control_for(path: str, status: int) -> str:
     """Return the ``Cache-Control`` value for an SPA response.
 
@@ -232,19 +241,10 @@ class SPAResponseHeadersMiddleware:
         self._app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or not self._owns(scope.get("path", "")):
+        if scope["type"] != "http" or not is_spa_path(scope.get("path", "")):
             await self._app(scope, receive, send)
             return
         await self._app(scope, receive, self._with_headers(send, scope["path"]))
-
-    @staticmethod
-    def _owns(path: str) -> bool:
-        """Whether path is the SPA mount itself or lives under it.
-
-        Guards against a sibling prefix (``/apple-touch-icon.png``,
-        ``/application/...``) matching on a bare ``startswith``.
-        """
-        return path == SPA_MOUNT_PATH or path.startswith(f"{SPA_MOUNT_PATH}/")
 
     @staticmethod
     def _with_headers(send: Send, path: str) -> Send:

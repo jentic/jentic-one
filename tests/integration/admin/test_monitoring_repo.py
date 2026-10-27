@@ -100,7 +100,7 @@ async def test_daily_buckets_groups_by_day(
 ) -> None:
     # Anchored at a fixed mid-day timestamp, not the wall clock: seeding relative
     # to ``now`` puts ``now - 30min`` on the previous day between 00:00 and
-    # 00:30 UTC (#1806). ``daily_buckets`` only takes a lower-bound cutoff, so
+    # 00:30 UTC (#1806). The window is anchored on the same timestamp, so
     # nothing here depends on the current time.
     now = datetime(2026, 1, 15, 12, 0, tzinfo=UTC)
     # Two executions on the anchor day, one the day before — two day buckets.
@@ -110,7 +110,9 @@ async def test_daily_buckets_groups_by_day(
 
     cutoff = now - timedelta(days=7)
     async with admin_db.session() as session:
-        buckets = await MonitoringRepository.daily_buckets(session, cutoff)
+        buckets = await MonitoringRepository.daily_buckets(
+            session, cutoff, now + timedelta(minutes=1)
+        )
 
     assert len(buckets) == 2
     # Each bucket date is a YYYY-MM-DD string on both backends.
@@ -133,7 +135,9 @@ async def test_daily_buckets_respects_cutoff(
     await _seed(admin_db, now - timedelta(days=10), "completed")  # before cutoff
 
     async with admin_db.session() as session:
-        buckets = await MonitoringRepository.daily_buckets(session, now - timedelta(days=7))
+        buckets = await MonitoringRepository.daily_buckets(
+            session, now - timedelta(days=7), now + timedelta(minutes=1)
+        )
 
     assert len(buckets) == 1
     assert buckets[0].total == 1
@@ -143,8 +147,9 @@ async def test_daily_buckets_empty(
     admin_db: DatabaseSession, clean_execution_records: None
 ) -> None:
     async with admin_db.session() as session:
+        now = datetime.now(UTC)
         buckets = await MonitoringRepository.daily_buckets(
-            session, datetime.now(UTC) - timedelta(days=7)
+            session, now - timedelta(days=7), now + timedelta(minutes=1)
         )
     assert buckets == []
 
@@ -172,7 +177,9 @@ async def test_top_operations_ranks_by_total(
     )
 
     async with admin_db.session() as session:
-        ops = await MonitoringRepository.top_operations(session, now - timedelta(days=7))
+        ops = await MonitoringRepository.top_operations(
+            session, now - timedelta(days=7), now + timedelta(minutes=1)
+        )
 
     assert ops[0].operation_id == "listUsers"
     assert ops[0].total == 3
@@ -309,13 +316,15 @@ async def test_overall_stats_counts_unfinished_execution_jobs(
 
     async with admin_db.session() as session:
         stats = await MonitoringRepository.overall_stats(session, cutoff, until)
+        active = await MonitoringRepository.active_now(session)
 
     assert stats.total == 1
     assert stats.success == 1
-    # Only the two running execution jobs (one in the window, one before it) are
-    # active; queued jobs never are, wherever they sit.
     assert stats.pending == 2
-    assert stats.active_now == 2
+    # Only the two running execution jobs (one in the window, one before it) are
+    # active; queued jobs never are, wherever they sit. `active_now` carries no
+    # time bound, which is why the job three hours back still counts.
+    assert active == 2
 
 
 async def test_overall_stats_unfinished_counts_follow_filters(
@@ -335,7 +344,8 @@ async def test_overall_stats_unfinished_counts_follow_filters(
             stats = await MonitoringRepository.overall_stats(
                 session, cutoff, until, filters=filters
             )
-        return stats.pending, stats.active_now
+            active = await MonitoringRepository.active_now(session, filters=filters)
+        return stats.pending, active
 
     assert await _stats(UsageQueryFilters()) == (3, 2)
     assert await _stats(UsageQueryFilters(actor_id="usr_test")) == (2, 1)

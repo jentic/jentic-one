@@ -45,7 +45,7 @@ from typing import Any, ClassVar
 
 from locust import FastHttpUser, LoadTestShape, constant_throughput, events, task
 
-from tests.perf.common import ECHO_PATH, VENDORS, PerfEnv, upstream_base
+from tests.perf.common import ECHO_PATH, GET_PATH, VENDORS, PerfEnv, upstream_base
 
 ENV = PerfEnv.load()
 USER_RPS = float(os.environ.get("PERF_USER_RPS", "1"))
@@ -118,6 +118,53 @@ class BrokerEchoUser(_BrokerUser):
         )
 
 
+class AdminMonitoringUser(FastHttpUser):
+    """A dashboard viewer: the full monitoring view fan-out, as the subject under test.
+
+    Most classes here drive the broker's data plane, but two others also read the
+    app surface: :class:`ImportUser` and :class:`ControlReadUser`, the latter
+    already polling ``/monitoring/executions?days=1`` once per four requests. The
+    difference is role, not endpoint.
+
+    :class:`ControlReadUser` is *background contention* — a light, mostly-``/executions``
+    mix at 1 RPS by default, there so broker measurements face realistic competing
+    admin reads. This class is the *measurement target*: one task is one whole
+    view, the overview strip plus a tab per group-by, because that fan-out is what
+    the 30 s TTL cache exists to absorb and what decides whether a dashboard feels
+    fast. Run this one when monitoring is the subject; leave ``ControlReadUser`` in
+    the mix when the broker is.
+
+    Both read with ``admin_token``, so a run including both attributes their load
+    to one caller. Each request here is named so the Locust table breaks latency
+    down per endpoint.
+
+    ``tests.perf.bench_monitoring`` is the scripted counterpart (latency ramp,
+    aggregate consistency under concurrent writes, cache pressure); use this class
+    for the interactive UI and shaped runs.
+    """
+
+    host = ENV.app_url
+    wait_time = constant_throughput(USER_RPS)
+    network_timeout = 60.0
+    connection_timeout = 10.0
+
+    #: Matches ``VIEW_PATHS`` in ``tests.perf.bench_monitoring``.
+    paths: ClassVar[tuple[str, ...]] = (
+        "/monitoring/executions?days=7",
+        "/monitoring/usage?group_by=api&top_limit=10",
+        "/monitoring/usage?group_by=agent&top_limit=10",
+        "/monitoring/usage?group_by=credential&top_limit=10",
+    )
+
+    def headers(self) -> dict[str, str]:
+        return _auth(ENV.admin_token)
+
+    @task
+    def dashboard_view(self) -> None:
+        for path in self.paths:
+            self.client.get(path, headers=self.headers(), name=path.split("?")[0])
+
+
 class MultiHostUser(_BrokerUser):
     """Spread load over the 5 extra upstream hosts (global pool vs per-host cap)."""
 
@@ -160,10 +207,10 @@ class PoolAgentUser(_BrokerUser):
 class RetryUser(_BrokerUser):
     """Upstream fails then succeeds (needs PERF_RETRY=true, PERF_BREAKER=false).
 
-    Carries an ``Idempotency-Key``: the broker only retries a *status* failure
-    (429/5xx after the request was sent) for idempotent methods or keyed
-    requests (see ``broker/adapters/runners/retry.py``), so a key-less POST
-    would correctly surface the first 503.
+    Uses ``GET`` with an ``Idempotency-Key``: the key routes the sync call onto
+    the buffered path (where ``RetryRunner.run`` executes), and ``GET`` satisfies
+    the post-send status-retry gate (429/5xx after the request was sent retries
+    only for idempotent HTTP methods; see ``broker/adapters/runners/retry.py``).
     """
 
     @task
@@ -172,7 +219,7 @@ class RetryUser(_BrokerUser):
         h["X-Mock-Status-Sequence"] = STATUS_SEQUENCE
         h["X-Mock-Test-Id"] = uuid.uuid4().hex
         h["Idempotency-Key"] = uuid.uuid4().hex
-        self.client.post(_proxy_path("perf-noauth"), data=BODY, headers=h, name="echo retry-seq")
+        self.client.get(_proxy_path("perf-noauth", GET_PATH), headers=h, name="echo retry-seq")
 
 
 class FailingUpstreamUser(_BrokerUser):

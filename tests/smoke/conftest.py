@@ -528,6 +528,17 @@ def upstream_incluster_url() -> str:
     return os.environ.get("UPSTREAM_INCLUSTER_URL", "http://jentic-smoke-upstream:8084")
 
 
+@pytest.fixture()
+def upstream_incluster_tls_url() -> str:
+    """The harness TLS URL as the control plane and broker see it (in-cluster DNS).
+
+    OAuth2 ``token_url`` / ``authorize_url`` endpoints require ``https://``
+    (#1779), so the OAuth2 smoke test points its credential at the harness's
+    TLS listener rather than the plain-HTTP ``upstream_incluster_url``.
+    """
+    return os.environ.get("UPSTREAM_INCLUSTER_TLS_URL", "https://jentic-smoke-upstream:8443")
+
+
 @pytest.fixture(scope="session")
 def upstream_direct_url() -> str:
     """The harness URL as the test runner sees it (kind host port)."""

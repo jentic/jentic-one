@@ -11,6 +11,8 @@ export class NotesService {
     /**
      * List Notes
      * List notes with optional filters and cursor pagination.
+     *
+     * Returns the caller's own notes; a user also sees the notes of agents they own.
      * @returns any Successful Response
      * @throws ApiError
      */
@@ -150,6 +152,9 @@ export class NotesService {
     /**
      * Get Note
      * Retrieve a single note by ID.
+     *
+     * A user can read the notes of agents they own, but only a note's author (or
+     * an org admin) can update or delete it.
      * @returns any Successful Response
      * @throws ApiError
      */

@@ -55,8 +55,9 @@ export class UsersService {
      * ``must_change_password`` gate are re-read from the database at re-mint.
      * Refusal modes: 401 ``session_expired`` once the original authentication is
      * older than the absolute window (``admin.auth.session_ttl_seconds``), 401
-     * ``invalid_credentials`` for deactivated users, non-user tokens, or opaque
-     * (non-JWT) credentials. Clients should then send the user back to login.
+     * ``unauthorized`` from the auth gate for a disabled, deleted or unknown user,
+     * and 401 ``invalid_credentials`` for non-user tokens or opaque (non-JWT)
+     * credentials. Clients should then send the user back to login.
      * @returns LoginResponse Successful Response
      * @throws ApiError
      */
@@ -207,7 +208,11 @@ export class UsersService {
      * The row is retained — the account is anonymized (tombstone email) and
      * deactivated so history and audit references stay resolvable — but the
      * action is terminal: there is no re-enable arm. For the reversible kill
-     * switch use ``:disable`` / ``:enable`` instead.
+     * switch use ``:disable`` / ``:enable`` instead. Deleting a user also cancels
+     * their outstanding invites: redeeming one answers 409
+     * ``invite_already_redeemed``, the same as an invite replaced by a reissue.
+     * Idempotent: deleting an already-deleted user answers 204 and changes
+     * nothing.
      * @returns void
      * @throws ApiError
      */
@@ -276,7 +281,8 @@ export class UsersService {
      * Update a user's profile fields.
      *
      * Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
-     * else only themselves. Any other user answers 404.
+     * else only themselves. Any other user answers 404. A deleted user cannot be
+     * edited (409).
      * @returns UserResponse Successful Response
      * @throws ApiError
      */
@@ -306,7 +312,7 @@ export class UsersService {
                 401: `Unauthorized`,
                 403: `Forbidden`,
                 404: `Not Found`,
-                409: `The email is already in use`,
+                409: `The email is already in use, or the user has been deleted`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -316,6 +322,12 @@ export class UsersService {
     /**
      * Set User Permissions
      * Set the assigned permissions for a user.
+     *
+     * A deleted user's permissions cannot be changed (409). When the new set
+     * removes any of the user's effective permissions, their login sessions
+     * end: every login JWT issued before the change is refused (401), and the
+     * user signs in again for a token with the narrower set. This includes a
+     * caller narrowing their own permissions.
      * @returns UserResponse Successful Response
      * @throws ApiError
      */
@@ -345,7 +357,7 @@ export class UsersService {
                 401: `Unauthorized`,
                 403: `Forbidden`,
                 404: `Not Found`,
-                409: `Would remove org:admin from the last active org:admin`,
+                409: `Would remove org:admin from the last active org:admin, or the user has been deleted`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -355,6 +367,8 @@ export class UsersService {
     /**
      * Disable User
      * Disable a user account.
+     *
+     * A deleted user is already permanently inactive and cannot be disabled (409).
      * @returns void
      * @throws ApiError
      */
@@ -377,7 +391,7 @@ export class UsersService {
                 401: `Unauthorized`,
                 403: `Forbidden`,
                 404: `Not Found`,
-                409: `The user is the last active org:admin`,
+                409: `The user is the last active org:admin, or the user has been deleted`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -386,7 +400,10 @@ export class UsersService {
     }
     /**
      * Enable User
-     * Enable a user account.
+     * Enable a disabled user account.
+     *
+     * A deleted user cannot be re-enabled (409). Login sessions issued before the
+     * account was disabled stay revoked; the user signs in again.
      * @returns void
      * @throws ApiError
      */
@@ -408,6 +425,8 @@ export class UsersService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                404: `Not Found`,
+                409: `The user has been deleted`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -438,6 +457,8 @@ export class UsersService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                404: `Not Found`,
+                409: `The user has already redeemed an invite, or has been deleted`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

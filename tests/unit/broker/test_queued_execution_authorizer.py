@@ -12,29 +12,25 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from jentic_one.broker.core.exceptions import ActionDeniedError, AgentDirective
+from jentic_one.broker.core.directives import AgentDirective
+from jentic_one.broker.core.errors import ActionDeniedError
 from jentic_one.broker.core.problem import broker_error_problem, problem_body
 from jentic_one.broker.repos.actor_status import ActorStatusResolver
 from jentic_one.broker.services.execution.queued_authorization import QueuedExecutionAuthorizer
 from jentic_one.shared.broker.protocols import CredentialDerivation
 from jentic_one.shared.config import VendorRegistryConfig
-from jentic_one.shared.jobs.protocols import QueuedExecutionRequest
+from jentic_one.shared.jobs.protocols import ActorAuthority, QueuedExecutionRequest
 
 
 class _FakeActorStatus:
     def __init__(self, active: bool, *, scoped: bool = True) -> None:
         self._active = active
         self._scoped = scoped
-        self.calls: list[tuple[str, str]] = []
-        self.scope_calls: list[tuple[str, str, str]] = []
+        self.calls: list[tuple[str, str, str]] = []
 
-    async def is_active(self, *, actor_id: str, actor_type: str) -> bool:
-        self.calls.append((actor_id, actor_type))
-        return self._active
-
-    async def holds_permission(self, *, actor_id: str, actor_type: str, permission: str) -> bool:
-        self.scope_calls.append((actor_id, actor_type, permission))
-        return self._scoped
+    async def authority(self, *, actor_id: str, actor_type: str, permission: str) -> ActorAuthority:
+        self.calls.append((actor_id, actor_type, permission))
+        return ActorAuthority(active=self._active, holds_permission=self._scoped)
 
 
 class _DenyingCredentialDeriver:
@@ -100,7 +96,8 @@ async def test_inactive_actor_is_denied_before_any_binding_lookup() -> None:
 
     verdict = await authorizer.authorize(_request())
 
-    assert status.calls == [("agt_1", "agent")]
+    # One read answers both gates.
+    assert status.calls == [("agt_1", "agent", "capabilities:execute")]
     assert deriver.calls == 0
     assert verdict.allowed is False
     assert verdict.allowed_credential_ids == ()
@@ -121,7 +118,7 @@ async def test_revoked_execute_scope_is_denied_before_any_binding_lookup() -> No
 
     verdict = await authorizer.authorize(_request())
 
-    assert status.scope_calls == [("agt_1", "agent", "capabilities:execute")]
+    assert status.calls == [("agt_1", "agent", "capabilities:execute")]
     assert deriver.calls == 0
     assert verdict.allowed is False
     assert verdict.allowed_credential_ids == ()

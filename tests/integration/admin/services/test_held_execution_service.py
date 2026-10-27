@@ -367,7 +367,8 @@ async def test_approve_releases_the_job_once_with_audit_and_event(
         )
     assert audit.action == "approve"
     assert audit.actor_id == actors.owner.sub
-    assert {e.type for e in events} >= {EventType.EXECUTION_APPROVAL_DECIDED}
+    (decided,) = [e for e in events if e.type == EventType.EXECUTION_APPROVAL_DECIDED]
+    assert decided.summary == "Call POST /v1/charges by agent 'held-agent' approved"
 
 
 async def test_deny_fails_the_job_with_a_readable_permission_denied_result(
@@ -387,6 +388,14 @@ async def test_deny_fails_the_job_with_a_readable_permission_denied_result(
     assert body["status"] == 403
     assert body["held_execution"] == {"id": hold.approval_id, "state": "denied"}
     assert "wrong account" in body["detail"]
+    async with ctx.admin_db.session() as session:
+        events = (
+            (await session.execute(select(Event).where(Event.job_id == hold.job_id)))
+            .scalars()
+            .all()
+        )
+    (decided,) = [e for e in events if e.type == EventType.EXECUTION_APPROVAL_DECIDED]
+    assert decided.summary == "Call POST /v1/charges by agent 'held-agent' denied"
 
 
 async def test_first_decision_wins_and_later_decides_conflict(
@@ -567,6 +576,7 @@ async def test_withdraw_cancels_the_held_job_without_a_result_with_audit_and_eve
     assert audit.action == "withdraw"
     assert audit.actor_id == actors.agent.sub
     (event,) = [e for e in events if e.type == EventType.EXECUTION_APPROVAL_WITHDRAWN]
+    assert event.summary == "Call POST /v1/charges by agent 'held-agent' withdrawn"
     assert event.data["held_execution_id"] == hold.approval_id
     assert "body" not in json.dumps(event.data)
     with pytest.raises(HeldExecutionAlreadyDecidedError):
@@ -693,9 +703,43 @@ async def test_expiry_sweep_expires_and_fails_with_a_permission_denied_result(
     assert audit.origin == "system"
     assert audit.job_id == lapsed.job_id
     (event,) = events
+    assert event.summary == "Call POST /v1/lapsed by agent 'held-agent' expired"
     assert event.job_id == lapsed.job_id
     assert event.data["held_execution_id"] == lapsed.approval_id
     assert event.data["path"] == "/v1/lapsed"
+
+
+async def test_an_expiry_sweep_names_each_approval_s_own_agent(
+    integration_context: Context, actors: _Actors
+) -> None:
+    ctx = integration_context
+    first = await _hold(ctx, actors.agent, path="/v1/first")
+    second = await _hold(ctx, actors.ownerless_agent, path="/v1/second")
+    async with ctx.admin_db.transaction() as session:
+        await session.execute(
+            update(HeldExecution)
+            .where(HeldExecution.id.in_([first.approval_id, second.approval_id]))
+            .values(expires_at=datetime.now(UTC) - timedelta(seconds=1))
+        )
+
+    worker = WorkerLoop(ctx.admin_db, JobHandlerRegistry(), worker_config=WorkerConfig())
+    await worker._sweep_expired()
+
+    async with ctx.admin_db.session() as session:
+        events = (
+            (
+                await session.execute(
+                    select(Event).where(Event.type == EventType.EXECUTION_APPROVAL_EXPIRED)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    summaries = {e.data["held_execution_id"]: e.summary for e in events}
+    assert summaries == {
+        first.approval_id: "Call POST /v1/first by agent 'held-agent' expired",
+        second.approval_id: "Call POST /v1/second by agent 'held-orphan' expired",
+    }
 
 
 async def test_jobs_cancel_route_answers_409_for_a_held_job(

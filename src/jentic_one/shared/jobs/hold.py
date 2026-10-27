@@ -20,12 +20,13 @@ from urllib.parse import parse_qsl, urlencode
 from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import IntegrityError
 
+from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.admin.core.schema.job_results import JobResult
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.repos.audit_repo import AuditRepository
 from jentic_one.shared.db.utils import db_now
-from jentic_one.shared.events import emit_event_best_effort
+from jentic_one.shared.events import emit_event_best_effort, summary_label, summary_text
 from jentic_one.shared.models.actors import ActorType, Origin, actor_type_label_from_id
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
 from jentic_one.shared.models.events import EventSeverity, EventType
@@ -75,6 +76,33 @@ STILL_HELD_AGENT_DIRECTIVE = (
 def review_page_path(held_execution_id: str) -> str:
     """The web UI's review page for one held execution, relative to the UI origin."""
     return f"/app/agents/approvals/{held_execution_id}"
+
+
+def held_call_summary(
+    *, agent_name: str | None, agent_id: str, method: str, path: str, outcome: str
+) -> str:
+    """The ``summary`` of a held call's lifecycle event: which call, whose, and its outcome.
+
+    Names the filing agent through :func:`summary_label` (its id when it has no
+    name) rather than naming the held execution: the activity feed shows the
+    summary as is, and a ``held_…`` id tells a reader nothing. The ids ride in
+    the event's ``data``.
+    """
+    agent = summary_label(agent_name, agent_id)
+    return f"Call {method} {summary_text(path)} by agent {agent} {outcome}"
+
+
+async def _agent_names(session: AsyncSession, agent_ids: set[str]) -> dict[str, str]:
+    """``{agent_id: name}`` for the agents that still exist, in one query."""
+    if not agent_ids:
+        return {}
+    result = await session.execute(select(Agent.id, Agent.name).where(Agent.id.in_(agent_ids)))
+    return {row[0]: row[1] for row in result.all()}
+
+
+async def agent_name(session: AsyncSession, agent_id: str) -> str | None:
+    """The agent's name, or ``None`` when the agent no longer exists."""
+    return (await _agent_names(session, {agent_id})).get(agent_id)
 
 
 class PendingApprovalLimitError(Exception):
@@ -446,6 +474,7 @@ async def expire_lapsed_approvals(session: AsyncSession, *, now: datetime | None
         .execution_options(synchronize_session=False)
     )
     expired = list(result.all())
+    names = await _agent_names(session, {row.agent_id for row in expired})
     for approval_id, job_id, agent_id, method, path, trace_id in expired:
         await fail_held_job(
             session,
@@ -472,7 +501,13 @@ async def expire_lapsed_approvals(session: AsyncSession, *, now: datetime | None
             session,
             type=EventType.EXECUTION_APPROVAL_EXPIRED,
             severity=EventSeverity.INFO,
-            summary=f"Execution approval {approval_id} expired",
+            summary=held_call_summary(
+                agent_name=names.get(agent_id),
+                agent_id=agent_id,
+                method=method,
+                path=path,
+                outcome="expired",
+            ),
             trace_id=trace_id,
             job_id=job_id,
             created_by=agent_id,
@@ -521,6 +556,7 @@ async def withdraw_pending_for_agent(
         .execution_options(synchronize_session=False)
     )
     withdrawn = list(result.all())
+    filing_agent_name = await agent_name(session, agent_id) if withdrawn else None
     for approval_id, job_id, method, path, trace_id in withdrawn:
         await session.execute(
             update(Job)
@@ -545,7 +581,13 @@ async def withdraw_pending_for_agent(
             session,
             type=EventType.EXECUTION_APPROVAL_WITHDRAWN,
             severity=EventSeverity.INFO,
-            summary=f"Execution approval {approval_id} withdrawn",
+            summary=held_call_summary(
+                agent_name=filing_agent_name,
+                agent_id=agent_id,
+                method=method,
+                path=path,
+                outcome="withdrawn",
+            ),
             trace_id=trace_id,
             job_id=job_id,
             created_by=agent_id,

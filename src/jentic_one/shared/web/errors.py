@@ -24,6 +24,7 @@ from jentic.problem_details import ProblemDetailException
 from jentic_one.shared.db.connectivity import redact_sql
 from jentic_one.shared.db.errors import DatabaseCommitOutcomeUnknownError, DatabaseUnavailableError
 from jentic_one.shared.state.backend import StateBackendCapacityError
+from jentic_one.shared.web.cache_control import PRIVATE_NO_STORE, request_carries_credential
 
 # The cap keeps the log line short.
 _MAX_LOGGED_DB_DETAIL = 200
@@ -222,6 +223,11 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     ``500``/``default`` response documents. The body is static (``str(exc)`` may
     carry internals, CWE-209); the exception is logged here, and Starlette still
     re-raises it afterwards so the server's own traceback logging is unchanged.
+
+    The handler runs in ``ServerErrorMiddleware``, outside the user middleware
+    stack, so :class:`~jentic_one.shared.web.cache_control.AuthenticatedResponseCacheMiddleware`
+    never sees this response; a credentialed request's 500 is marked
+    ``private, no-store`` here instead (#1835).
     """
     structlog.get_logger("jentic_one.shared.web.errors").error(
         "unhandled_exception", path=request.url.path, exc_info=exc
@@ -233,8 +239,16 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
         title="Internal Server Error",
         instance=request.url.path,
     )
+    headers = (
+        {"Cache-Control": PRIVATE_NO_STORE}
+        if request_carries_credential(request.scope.get("headers", []))
+        else None
+    )
     return JSONResponse(
-        status_code=500, content=problem.detail, media_type="application/problem+json"
+        status_code=500,
+        content=problem.detail,
+        media_type="application/problem+json",
+        headers=headers,
     )
 
 

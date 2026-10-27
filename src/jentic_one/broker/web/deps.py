@@ -18,7 +18,7 @@ from jentic.problem_details import Forbidden, Unauthorized
 
 from jentic_one.broker.adapters.runners.base import UpstreamRunner
 from jentic_one.broker.adapters.runners.registry import RunnerRegistry
-from jentic_one.broker.core.exceptions import RateLimitExceededError
+from jentic_one.broker.core.errors import RateLimitExceededError
 from jentic_one.broker.core.proxy_headers import reconstruct_upstream_url
 from jentic_one.broker.core.server_timing import ServerTimingStage, stage_end, stage_start
 from jentic_one.broker.services.auth import CompositeTokenValidator

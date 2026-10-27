@@ -59,7 +59,9 @@ async def list_permissions(
     "/users/{user_id}/permissions",
     responses=with_responses(
         not_found(),
-        conflict("Would remove org:admin from the last active org:admin"),
+        conflict(
+            "Would remove org:admin from the last active org:admin, or the user has been deleted"
+        ),
     ),
 )
 async def set_user_permissions(
@@ -71,7 +73,14 @@ async def set_user_permissions(
     perm_svc: PermissionService = Depends(get_permission_service),
     user_svc: UserService = Depends(get_user_service),
 ) -> UserResponse:
-    """Set the assigned permissions for a user."""
+    """Set the assigned permissions for a user.
+
+    A deleted user's permissions cannot be changed (409). When the new set
+    removes any of the user's effective permissions, their login sessions
+    end: every login JWT issued before the change is refused (401), and the
+    user signs in again for a token with the narrower set. This includes a
+    caller narrowing their own permissions.
+    """
     await perm_svc.set_assigned(user_id, body.permissions, identity=identity)
     view = await user_svc.get(user_id, identity=identity)
     return UserResponse(

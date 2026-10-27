@@ -6,12 +6,15 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy import Integer
+from sqlalchemy.dialects import sqlite
 
 from jentic_one.admin.repos.monitoring_repo import (
     GroupedTopRow,
     MonitoringRepository,
     OverallStatsRow,
     TimeBucketRow,
+    _epoch_seconds,
 )
 
 
@@ -36,7 +39,6 @@ async def test_overall_stats_returns_correct_aggregates() -> None:
     row.p50_ms = 200.0
     row.p95_ms = 500.0
     row.pending = 4
-    row.active_now = 6
 
     session = _mock_session_with_result(row)
     cutoff = datetime(2026, 6, 1, tzinfo=UTC)
@@ -51,7 +53,6 @@ async def test_overall_stats_returns_correct_aggregates() -> None:
     assert result.p50_ms == 200.0
     assert result.p95_ms == 500.0
     assert result.pending == 4
-    assert result.active_now == 6
 
 
 @pytest.mark.asyncio
@@ -64,7 +65,6 @@ async def test_overall_stats_handles_null_percentiles() -> None:
     row.p50_ms = None
     row.p95_ms = None
     row.pending = 0
-    row.active_now = 0
 
     session = _mock_session_with_result(row)
     cutoff = datetime(2026, 6, 1, tzinfo=UTC)
@@ -213,3 +213,17 @@ async def test_grouped_trend_returns_empty_dict_for_no_keys() -> None:
 
     result = await MonitoringRepository.grouped_trend(session, cutoff, until, "api", [])
     assert result == {}
+
+
+def test_epoch_seconds_casts_to_integer_on_sqlite() -> None:
+    session = AsyncMock()
+    session.bind.dialect.name = "sqlite"
+
+    expr = _epoch_seconds(session)
+    assert isinstance(expr.type, Integer)
+    compiled = str(expr.compile(dialect=sqlite.dialect()))
+    assert "CAST(strftime(" in compiled
+    assert "AS INTEGER)" in compiled
+    sub_compiled = str((expr - 10).compile(dialect=sqlite.dialect()))
+    assert "CAST(strftime(" in sub_compiled
+    assert "AS INTEGER) -" in sub_compiled

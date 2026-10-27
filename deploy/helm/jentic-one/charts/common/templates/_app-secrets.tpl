@@ -65,7 +65,7 @@ from the app surfaces the pod runs, which is the image's baked JENTIC__APPS
 for its subchart (deploy/docker/*.Dockerfile) unless the operator overrides
 it with extraEnv.JENTIC__APPS (the AWS Marketplace broker runs the app image
 that way). Per surface, verified against src/jentic_one and mirrored by
-shared/config.py GUARDED_FIELD_SURFACES, which relaxes the production guard
+shared/config/_secrets.py GUARDED_FIELD_SURFACES, which relaxes the production guard
 for secrets a process never reads:
 
   registry   JWT secret (verifies)

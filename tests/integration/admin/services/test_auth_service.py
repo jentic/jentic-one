@@ -11,9 +11,10 @@ import argon2
 import jwt
 import pytest
 from argon2 import profiles as argon2_profiles
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 from jentic_one.admin.core.permissions import ORG_ADMIN
+from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.core.schema.invite_tokens import InviteToken
 from jentic_one.admin.core.schema.setup_sentinel import SETUP_SENTINEL_ID, SetupSentinel
 from jentic_one.admin.core.schema.user_permission_grants import UserPermissionGrant
@@ -38,6 +39,7 @@ from jentic_one.admin.services.errors import (
     UserEmailNotFoundError,
 )
 from jentic_one.admin.services.schemas.auth import ChangePasswordPayload, LoginPayload
+from jentic_one.shared.audit import AuditAction
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import InviteState
@@ -429,6 +431,213 @@ async def test_change_password_too_short(
             ChangePasswordPayload(current_password="x", new_password="short"),
             identity=Identity(sub=user_id, email="test@local"),
         )
+
+
+async def _failed_count_and_lock(ctx: Context, user_id: str) -> tuple[int, datetime | None]:
+    async with ctx.admin_db.session() as session:
+        secret = await UserSecretRepository.get_by_user_id(session, user_id)
+        assert secret is not None
+        return secret.failed_login_count, secret.locked_until
+
+
+async def test_change_password_wrong_current_counts_toward_login_lockout(
+    integration_context: Context, auth_user: tuple[str, str]
+) -> None:
+    """Wrong ``current_password`` attempts feed the login failed-attempt count.
+
+    At the lockout threshold the account locks: the right current password is
+    then refused, the stored password is unchanged, and login is refused too.
+    """
+    user_id, email = auth_user
+    ctx = integration_context
+    service = AuthService(ctx)
+    identity = Identity(sub=user_id, email=email)
+    threshold = ctx.config.admin.auth.failed_login_lockout_threshold
+
+    for n in range(threshold):
+        with pytest.raises(InvalidCredentialsError):
+            await service.change_own_password(
+                ChangePasswordPayload(current_password=f"wrong-{n}", new_password="new-secure-pw"),
+                identity=identity,
+            )
+        count, _ = await _failed_count_and_lock(ctx, user_id)
+        assert count == n + 1
+
+    _, locked_until = await _failed_count_and_lock(ctx, user_id)
+    assert locked_until is not None and locked_until > datetime.now(UTC)
+
+    with pytest.raises(AccountLockedError):
+        await service.change_own_password(
+            ChangePasswordPayload(
+                current_password="correct-password", new_password="new-secure-pw"
+            ),
+            identity=identity,
+        )
+    with pytest.raises(AccountLockedError):
+        await service.authenticate(LoginPayload(email=email, password="correct-password"))
+    # The locked refusal does not count as a further failure.
+    count, _ = await _failed_count_and_lock(ctx, user_id)
+    assert count == threshold
+
+    async with ctx.admin_db.transaction() as session:
+        await UserSecretRepository.unlock(session, user_id)
+    # The password was never changed: the original still signs in.
+    assert (
+        await service.authenticate(LoginPayload(email=email, password="correct-password"))
+        == user_id
+    )
+
+
+async def test_change_password_refused_while_login_locked(
+    integration_context: Context, auth_user: tuple[str, str]
+) -> None:
+    """A lock set by failed logins also refuses a change with the right password."""
+    user_id, email = auth_user
+    ctx = integration_context
+    service = AuthService(ctx)
+    threshold = ctx.config.admin.auth.failed_login_lockout_threshold
+    for _ in range(threshold):
+        with pytest.raises(InvalidCredentialsError):
+            await service.authenticate(LoginPayload(email=email, password="wrong-password"))
+
+    with pytest.raises(AccountLockedError):
+        await service.change_own_password(
+            ChangePasswordPayload(
+                current_password="correct-password", new_password="new-secure-pw"
+            ),
+            identity=Identity(sub=user_id, email=email),
+        )
+
+    async with ctx.admin_db.transaction() as session:
+        await UserSecretRepository.unlock(session, user_id)
+    assert (
+        await service.authenticate(LoginPayload(email=email, password="correct-password"))
+        == user_id
+    )
+
+
+async def test_change_password_success_resets_failed_count(
+    integration_context: Context, auth_user: tuple[str, str]
+) -> None:
+    user_id, email = auth_user
+    ctx = integration_context
+    service = AuthService(ctx)
+    identity = Identity(sub=user_id, email=email)
+    with pytest.raises(InvalidCredentialsError):
+        await service.change_own_password(
+            ChangePasswordPayload(current_password="wrong", new_password="new-secure-pw"),
+            identity=identity,
+        )
+    assert await _failed_count_and_lock(ctx, user_id) == (1, None)
+
+    await service.change_own_password(
+        ChangePasswordPayload(current_password="correct-password", new_password="new-secure-pw"),
+        identity=identity,
+    )
+    assert await _failed_count_and_lock(ctx, user_id) == (0, None)
+
+
+async def test_change_password_concurrent_wrong_guesses_lock_at_threshold(
+    integration_context: Context, auth_user: tuple[str, str]
+) -> None:
+    """A concurrent burst of ``threshold`` wrong guesses counts every one and locks.
+
+    Every guess reads the row before any of them writes, so the lockout must be
+    decided from the database's post-increment count, not that earlier read.
+    """
+    user_id, email = auth_user
+    ctx = integration_context
+    service = AuthService(ctx)
+    identity = Identity(sub=user_id, email=email)
+    threshold = ctx.config.admin.auth.failed_login_lockout_threshold
+
+    results = await asyncio.gather(
+        *(
+            service.change_own_password(
+                ChangePasswordPayload(current_password=f"wrong-{n}", new_password="new-secure-pw"),
+                identity=identity,
+            )
+            for n in range(threshold)
+        ),
+        return_exceptions=True,
+    )
+
+    assert all(isinstance(r, InvalidCredentialsError) for r in results)
+    count, locked_until = await _failed_count_and_lock(ctx, user_id)
+    assert count == threshold
+    assert locked_until is not None and locked_until > datetime.now(UTC)
+    with pytest.raises(AccountLockedError):
+        await service.change_own_password(
+            ChangePasswordPayload(
+                current_password="correct-password", new_password="new-secure-pw"
+            ),
+            identity=identity,
+        )
+
+
+async def test_change_password_allowed_once_lock_expires(
+    integration_context: Context, auth_user: tuple[str, str]
+) -> None:
+    """An expired ``locked_until`` no longer refuses; the change clears the count."""
+    user_id, email = auth_user
+    ctx = integration_context
+    service = AuthService(ctx)
+    threshold = ctx.config.admin.auth.failed_login_lockout_threshold
+    async with ctx.admin_db.transaction() as session:
+        for _ in range(threshold):
+            await UserSecretRepository.record_failed_login(session, user_id)
+        await UserSecretRepository.lock_until(
+            session, user_id, locked_until=datetime.now(UTC) - timedelta(seconds=1)
+        )
+
+    await service.change_own_password(
+        ChangePasswordPayload(current_password="correct-password", new_password="new-secure-pw"),
+        identity=Identity(sub=user_id, email=email),
+    )
+
+    count, _ = await _failed_count_and_lock(ctx, user_id)
+    assert count == 0
+    assert (
+        await service.authenticate(LoginPayload(email=email, password="new-secure-pw")) == user_id
+    )
+
+
+async def test_change_password_failures_are_audited(
+    integration_context: Context, auth_user: tuple[str, str]
+) -> None:
+    """Wrong and locked attempts each leave a ``login_failed`` audit entry."""
+    user_id, email = auth_user
+    ctx = integration_context
+    service = AuthService(ctx)
+    identity = Identity(sub=user_id, email=email)
+
+    with pytest.raises(InvalidCredentialsError):
+        await service.change_own_password(
+            ChangePasswordPayload(current_password="wrong", new_password="new-secure-pw"),
+            identity=identity,
+        )
+    async with ctx.admin_db.transaction() as session:
+        await UserSecretRepository.lock_until(
+            session, user_id, locked_until=datetime.now(UTC) + timedelta(minutes=15)
+        )
+    with pytest.raises(AccountLockedError):
+        await service.change_own_password(
+            ChangePasswordPayload(
+                current_password="correct-password", new_password="new-secure-pw"
+            ),
+            identity=identity,
+        )
+
+    async with ctx.admin_db.session() as session:
+        rows = (
+            await session.execute(
+                select(AuditEntry.action, AuditEntry.reason).where(AuditEntry.actor_id == user_id)
+            )
+        ).all()
+    assert sorted(tuple(r) for r in rows) == [
+        (AuditAction.LOGIN_FAILED, "password_change_account_locked"),
+        (AuditAction.LOGIN_FAILED, "password_change_failed"),
+    ]
 
 
 # ── Operator password reset (temp password + forced change) ────────────────

@@ -116,6 +116,7 @@ export { McpConfigRuntime } from './models/McpConfigRuntime';
 export type { MeAgent } from './models/MeAgent';
 export type { MeUser } from './models/MeUser';
 export type { NoAuthCreateRequest } from './models/NoAuthCreateRequest';
+export type { NoAuthUpdateRequest } from './models/NoAuthUpdateRequest';
 export type { NoteApiReference } from './models/NoteApiReference';
 export { NoteConfidence } from './models/NoteConfidence';
 export type { NoteCreateRequest } from './models/NoteCreateRequest';

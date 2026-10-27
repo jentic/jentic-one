@@ -1,6 +1,6 @@
 [project]
 name = "jentic-one"
-version = "0.43.0"
+version = "0.44.0"
 description = "Jentic One"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -24,7 +24,7 @@ dependencies = [
     "pydantic>=2.13.4",
     "pyjwt[crypto]>=2.13.0",
     "pyyaml>=6.0.3",
-    "sqlalchemy[asyncio]>=2.0.51",
+    "sqlalchemy[asyncio]>=2.1.5",
     "structlog>=24.1",
     "uvicorn[standard]>=0.49.0",
     "starlette>=1.3.1",
@@ -39,6 +39,7 @@ dependencies = [
     # per outbound request). anyio>=4 no longer pulls sniffio in, and a failed
     # import is not cached, so without it each call stats every sys.path entry.
     "sniffio>=1.3.1",
+    "certifi>=2026.10.19",
 ]
 
 [project.optional-dependencies]

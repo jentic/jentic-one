@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 
 from jentic_one.shared.config import DatabaseConfig
 from jentic_one.shared.db.backends import (
+    configure_idle_gated_pre_ping,
     configure_sqlite_pragmas,
     enable_sqlite_manual_begin,
     get_backend,
@@ -176,6 +177,11 @@ class DatabaseSession:
                 busy_timeout_ms=self._config.busy_timeout_ms,
             )
             enable_sqlite_manual_begin(self._engine)
+        else:
+            configure_idle_gated_pre_ping(
+                self._engine,
+                idle_s=self._config.pool_pre_ping_idle_s,
+            )
         self._session_factory = async_sessionmaker(
             bind=self._engine,
             expire_on_commit=False,
@@ -499,3 +505,44 @@ class DatabaseSession:
             if not self._is_sqlite:
                 await sess.connection(execution_options={"isolation_level": "AUTOCOMMIT"})
             yield sess
+
+    @asynccontextmanager
+    async def read_snapshot(self) -> AsyncGenerator[AsyncSession, None]:
+        """Yield a read-only session whose statements all see one snapshot.
+
+        The counterpart to :meth:`read_session` for a read that fans a single
+        answer out over several statements. At ``READ COMMITTED`` every
+        statement takes its own snapshot, so a commit landing between two of
+        them leaves the parts of one response describing different instants —
+        a total that disagrees with the sum of its own buckets. On Postgres
+        this opens the transaction at ``REPEATABLE READ``, which pins the
+        snapshot taken by the first statement for every later one.
+
+        :meth:`transaction` also gives one snapshot under a stricter level, but
+        it is shaped for writes: it commits on clean exit and on SQLite takes
+        the write lock up front with ``BEGIN IMMEDIATE``. Here nothing is
+        written, so the transaction is rolled back at the end, and SQLite uses
+        ``BEGIN DEFERRED`` to take a read snapshot while WAL readers and the
+        writer stay concurrent.
+
+        Writes raise :class:`~sqlalchemy.exc.InvalidRequestError` through the
+        same guard :meth:`read_session` installs. Never commit or roll back
+        inside the body: either ends the snapshot, and the next statement
+        autobegins a new one at the connection's default level.
+        """
+        async with self.session() as sess:
+            install_read_only_guard(sess)
+            if self._is_sqlite:
+                # isolation_level=None disabled the DBAPI's implicit BEGIN, so
+                # the read transaction starts explicitly. DEFERRED takes no lock
+                # until the first read, unlike transaction()'s IMMEDIATE.
+                conn = await sess.connection()
+                await conn.exec_driver_sql("BEGIN DEFERRED")
+            else:
+                await sess.connection(execution_options={"isolation_level": "REPEATABLE READ"})
+            try:
+                yield sess
+            finally:
+                # Ends the snapshot. Nothing was written, so there is nothing to
+                # commit, and a rollback is correct on the error path too.
+                await sess.rollback()

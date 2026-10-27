@@ -29,12 +29,13 @@ from jentic_one.shared.models.api_identity import (
     slugify_api_field,
 )
 
-# admin DB — the credentials the agent is directly and actively bound to.
-# Suspended bindings are excluded: suspension is the reversible per-consumer
-# cut-off, so a suspended binding must not authorize an execution.
+# admin DB — every direct binding the agent holds, with its suspension flag.
+# Suspended bindings never authorize an execution (suspension is the
+# reversible per-consumer cut-off); they are read in the same round-trip only
+# so a denial can tell a suspended binding from a missing one.
 _AGENT_CREDENTIALS = text(
-    "SELECT credential_id, rule_set_id FROM agent_credential_bindings "
-    "WHERE agent_id = :agent_id AND suspended = false"
+    "SELECT credential_id, rule_set_id, suspended FROM agent_credential_bindings "
+    "WHERE agent_id = :agent_id"
 )
 
 # control DB — active credentials whose stored identity covers the API. The
@@ -68,6 +69,14 @@ _CREDENTIAL_IDENTITIES = text(
     "FROM credentials c "
     "WHERE c.id IN :credential_ids AND c.active "
     "ORDER BY c.api_vendor, c.api_name, c.api_version"
+).bindparams(bindparam("credential_ids", expanding=True))
+
+# control DB — whether any of the agent's suspended-binding credentials covers
+# the API, whatever its state (the connect flow refuses on the same rule).
+# Denial path only.
+_SUSPENDED_COVERING = text(
+    f"SELECT c.id FROM credentials c "
+    f"WHERE c.id IN :credential_ids AND {credential_coverage_where()} LIMIT 1"
 ).bindparams(bindparam("credential_ids", expanding=True))
 
 
@@ -105,12 +114,15 @@ class CredentialBindingResolver:
         Returns the intersection (active direct bindings ∩ active credentials
         covering the API) plus enough context to pick the right denial
         directive: whether the agent is bound to anything, whether any
-        credential serves the API at all, and — when bound but unresolved — a
-        nearest-miss credential identity.
+        credential serves the API at all, whether a suspended binding covers
+        it, and — when bound but unresolved — a nearest-miss credential
+        identity. The suspension check costs a query only on the empty-set
+        path, and only when the agent holds a suspended binding.
         """
         async with self._admin_db.session() as session:
             binding_rows = (await session.execute(_AGENT_CREDENTIALS, {"agent_id": agent_id})).all()
-        rule_sets: dict[str, str | None] = {row[0]: row[1] for row in binding_rows}
+        rule_sets: dict[str, str | None] = {row[0]: row[1] for row in binding_rows if not row[2]}
+        suspended_ids = {row[0] for row in binding_rows if row[2]}
 
         async with self._control_db.session() as session:
             covering_rows = (
@@ -138,12 +150,39 @@ class CredentialBindingResolver:
                 set(rule_sets.keys()), vendor=vendor, name=name, version=version
             )
 
+        # Denial path only: a suspended binding covering the API is the
+        # operator's cut-off, so the denial must not read as "connect one".
+        binding_suspended = False
+        if not candidates and suspended_ids:
+            binding_suspended = await self._suspended_covers(
+                suspended_ids, vendor=vendor, name=name, version=version
+            )
+
         return CredentialDerivation(
             credentials=candidates,
             agent_bound_any=bool(rule_sets),
             api_served=bool(covering_ids),
             identity_mismatch=mismatch,
+            binding_suspended=binding_suspended,
         )
+
+    async def _suspended_covers(
+        self, suspended_ids: set[str], *, vendor: str, name: str, version: str
+    ) -> bool:
+        """Whether any suspended-binding credential's stored identity covers the API."""
+        async with self._control_db.session() as session:
+            row = (
+                await session.execute(
+                    _SUSPENDED_COVERING,
+                    {
+                        "credential_ids": sorted(suspended_ids),
+                        "vendor": vendor,
+                        "name": name,
+                        "version": version,
+                    },
+                )
+            ).first()
+        return row is not None
 
     async def _nearest_miss(
         self, bound_credential_ids: set[str], *, vendor: str, name: str, version: str

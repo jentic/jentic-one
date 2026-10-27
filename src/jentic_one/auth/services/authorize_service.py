@@ -18,6 +18,7 @@ from jentic_one.admin.core.permissions import (
     compute_effective,
 )
 from jentic_one.admin.core.schema.agents import Agent
+from jentic_one.admin.core.schema.external_identities import ExternalIdentity
 from jentic_one.admin.repos import (
     ActorPermissionGrantRepository,
     AgentRepository,
@@ -125,18 +126,37 @@ class AuthorizeService:
     def _get_idp_adapter(self) -> IdpAdapter | None:
         return build_idp_adapter(self._auth_config.idp)
 
+    def _effective_idp_issuer(self, claims: IdpClaims) -> str:
+        """Resolve the canonical IdP issuer for external-identity keying."""
+        if claims.issuer:
+            return claims.issuer.rstrip("/")
+        adapter = self._get_idp_adapter()
+        if adapter is not None and adapter.issuer:
+            return adapter.issuer
+        if self._auth_config.idp.issuer:
+            return self._auth_config.idp.issuer.rstrip("/")
+        if self._auth_config.idp.provider == "google":
+            return "https://accounts.google.com"
+        return self._auth_config.idp.provider
+
     def get_authorize_redirect_url(
         self,
         *,
         state: str,
         nonce: str,
         redirect_uri: str,
+        code_challenge: str | None = None,
     ) -> str | None:
         """Get the upstream IdP authorization URL, or None if local-only."""
         adapter = self._get_idp_adapter()
         if adapter is None:
             return None
-        return adapter.authorize_url(state=state, nonce=nonce, redirect_uri=redirect_uri)
+        return adapter.authorize_url(
+            state=state,
+            nonce=nonce,
+            redirect_uri=redirect_uri,
+            code_challenge=code_challenge,
+        )
 
     async def handle_idp_callback(
         self,
@@ -148,6 +168,8 @@ class AuthorizeService:
         code_challenge: str,
         scopes: str,
         nonce: str | None,
+        idp_code_verifier: str | None = None,
+        idp_nonce: str | None = None,
     ) -> str:
         """Handle IdP callback: exchange upstream code, map identity, issue auth code.
 
@@ -161,6 +183,8 @@ class AuthorizeService:
             code_challenge=code_challenge,
             scopes=scopes,
             nonce=nonce,
+            idp_code_verifier=idp_code_verifier,
+            idp_nonce=idp_nonce,
         )
         return platform_code
 
@@ -174,6 +198,8 @@ class AuthorizeService:
         code_challenge: str,
         scopes: str,
         nonce: str | None,
+        idp_code_verifier: str | None = None,
+        idp_nonce: str | None = None,
     ) -> tuple[str, str]:
         """Handle IdP callback and return both platform code and user email.
 
@@ -184,7 +210,12 @@ class AuthorizeService:
         if adapter is None:
             raise InvalidGrantError("No external IdP configured")
 
-        userinfo = await adapter.exchange_code(code, redirect_uri=redirect_uri)
+        userinfo = await adapter.exchange_code(
+            code,
+            redirect_uri=redirect_uri,
+            code_verifier=idp_code_verifier,
+            nonce=idp_nonce,
+        )
         claims = adapter.map_claims(userinfo)
         user_id = await self._resolve_or_create_user(claims)
 
@@ -203,6 +234,8 @@ class AuthorizeService:
         *,
         code: str,
         redirect_uri: str,
+        idp_code_verifier: str | None = None,
+        idp_nonce: str | None = None,
     ) -> tuple[str, str]:
         """Exchange an upstream IdP code and resolve the local user.
 
@@ -213,7 +246,12 @@ class AuthorizeService:
         if adapter is None:
             raise InvalidGrantError("No external IdP configured")
 
-        userinfo = await adapter.exchange_code(code, redirect_uri=redirect_uri)
+        userinfo = await adapter.exchange_code(
+            code,
+            redirect_uri=redirect_uri,
+            code_verifier=idp_code_verifier,
+            nonce=idp_nonce,
+        )
         claims = adapter.map_claims(userinfo)
         user_id = await self._resolve_or_create_user(claims)
         return user_id, claims.email
@@ -223,6 +261,8 @@ class AuthorizeService:
         *,
         code: str,
         redirect_uri: str,
+        idp_code_verifier: str | None = None,
+        idp_nonce: str | None = None,
     ) -> IdpClaims:
         """Exchange an upstream IdP code and return the claims *without* provisioning.
 
@@ -237,7 +277,12 @@ class AuthorizeService:
         if adapter is None:
             raise InvalidGrantError("No external IdP configured")
 
-        userinfo = await adapter.exchange_code(code, redirect_uri=redirect_uri)
+        userinfo = await adapter.exchange_code(
+            code,
+            redirect_uri=redirect_uri,
+            code_verifier=idp_code_verifier,
+            nonce=idp_nonce,
+        )
         return adapter.map_claims(userinfo)
 
     async def provision_from_claims(self, claims: IdpClaims) -> str:
@@ -254,11 +299,15 @@ class AuthorizeService:
         email match only when the IdP asserts ``email_verified`` (an
         unverified email must not expose another account's agent list).
         """
-        provider = self._auth_config.idp.provider
+        issuer = self._effective_idp_issuer(claims)
         async with self._ctx.admin_db.session() as session:
-            ext_id = await ExternalIdentityRepository.get_by_provider_subject(
-                session, provider, claims.external_subject
+            ext_id = await ExternalIdentityRepository.get_by_issuer_subject(
+                session, issuer, claims.external_subject
             )
+            if ext_id is None:
+                ext_id = await self._adoptable_unscoped_link(
+                    session, self._auth_config.idp.provider, issuer, claims.external_subject
+                )
             if ext_id is not None:
                 return ext_id.user_id
             if claims.email_verified:
@@ -683,17 +732,46 @@ class AuthorizeService:
 
         Handles the race condition where concurrent callbacks for the same
         external_subject both pass the initial lookup — the UniqueConstraint
-        on (provider, external_subject) rejects the second insert, which is
+        on (issuer, external_subject) rejects the second insert, which is
         caught and retried as a lookup.
         """
         provider = self._auth_config.idp.provider
+        issuer = self._effective_idp_issuer(claims)
 
         async with self._ctx.admin_db.transaction() as session:
-            ext_id = await ExternalIdentityRepository.get_by_provider_subject(
-                session, provider, claims.external_subject
+            ext_id = await ExternalIdentityRepository.get_by_issuer_subject(
+                session, issuer, claims.external_subject
             )
             if ext_id is not None:
                 return ext_id.user_id
+            # A link with no real issuer is pinned to the issuer that adopts it,
+            # so no other issuer can resolve it afterwards.
+            unscoped = await self._adoptable_unscoped_link(
+                session, provider, issuer, claims.external_subject
+            )
+            if unscoped is not None:
+                before_issuer = unscoped.issuer
+                if await ExternalIdentityRepository.pin_issuer(session, unscoped, issuer):
+                    await record_audit(
+                        session,
+                        action=AuditAction.UPDATE,
+                        target_type=AuditTargetType.USER,
+                        target_id=unscoped.user_id,
+                        actor_type=ActorType.USER,
+                        actor_id=unscoped.user_id,
+                        before={"external_identity_issuer": before_issuer},
+                        after={"external_identity_issuer": issuer},
+                        reason=f"keyed external identity ({provider}) to its issuer",
+                        origin=None,
+                    )
+                    return unscoped.user_id
+                # A concurrent first login pinned it first: it resolves only if
+                # that login pinned it to this issuer.
+                ext_id = await ExternalIdentityRepository.get_by_issuer_subject(
+                    session, issuer, claims.external_subject
+                )
+                if ext_id is not None:
+                    return ext_id.user_id
 
         try:
             async with self._ctx.admin_db.transaction() as session:
@@ -707,6 +785,7 @@ class AuthorizeService:
                     await ExternalIdentityRepository.create(
                         session,
                         provider=provider,
+                        issuer=issuer,
                         external_subject=claims.external_subject,
                         user_id=existing_user.id,
                         email=claims.email,
@@ -751,6 +830,7 @@ class AuthorizeService:
                 await ExternalIdentityRepository.create(
                     session,
                     provider=provider,
+                    issuer=issuer,
                     external_subject=claims.external_subject,
                     user_id=new_user.id,
                     email=claims.email,
@@ -790,12 +870,40 @@ class AuthorizeService:
             pass
 
         async with self._ctx.admin_db.transaction() as session:
-            ext_id = await ExternalIdentityRepository.get_by_provider_subject(
-                session, provider, claims.external_subject
+            ext_id = await ExternalIdentityRepository.get_by_issuer_subject(
+                session, issuer, claims.external_subject
             )
             if ext_id is not None:
                 return ext_id.user_id
             raise InvalidGrantError("concurrent identity creation failed")
+
+    @staticmethod
+    async def _adoptable_unscoped_link(
+        session: AsyncSession, provider: str, issuer: str, external_subject: str
+    ) -> ExternalIdentity | None:
+        """The link with no real issuer that ``issuer`` may resolve for ``external_subject``.
+
+        Such a link (``issuer`` empty or equal to ``provider``) was written
+        before links were keyed by issuer, under whichever issuer the provider
+        was configured with then; the configured issuer adopts it on first
+        sign-in. A link of the provider keyed to a different real issuer shows
+        the provider has signed in through another issuer since links were
+        keyed, so the unscoped link may belong to that issuer, and the same
+        subject at another issuer can be a different person: it is not
+        adopted, and its user can still sign in through a verified-email match.
+        """
+        link = await ExternalIdentityRepository.get_unscoped(session, provider, external_subject)
+        if link is None:
+            return None
+        if await ExternalIdentityRepository.has_link_under_other_issuer(session, provider, issuer):
+            _logger.warning(
+                "external_identity_unscoped_link_not_adopted",
+                provider=provider,
+                issuer=issuer,
+                external_identity_id=link.id,
+            )
+            return None
+        return link
 
     async def _audit_admission_rejected(self, claims: IdpClaims, provider: str) -> None:
         """Record a rejected external-IdP login in its own committed transaction.

@@ -41,7 +41,8 @@ class InProcessTokenResolver:
         # whose owner is disabled or deleted) must stop resolving as
         # active, bounded only by the broker's short verdict-cache TTL. NULL
         # (actor row missing) fails closed; the users table models "disabled"
-        # as active=false, normalised here to the same status string.
+        # as active=false and "deleted" as deleted_at set (refused even on a
+        # row that reads active), normalised here to the same status string.
         # oauth_client_active mirrors that guarantee for third-party clients
         # (kill-switch on deactivate must reach broker traffic, not just auth
         # surface). NULL indicates no issuing client, treated as active.
@@ -60,14 +61,13 @@ class InProcessTokenResolver:
             "  WHEN 'agent' THEN"
             # An owned agent follows its owner's account status: while the
             # owner is disabled or deleted the agent reads 'owner_inactive'.
-            # A soft-deleted user has users.active false, so the o.active
-            # probe covers delete too. Ownerless agents depend on their own
-            # status alone. One PK probe on agents, one on users.
+            # Ownerless agents depend on their own status alone. One PK probe
+            # on agents, one on users.
             "   (SELECT CASE"
             "     WHEN a.status <> 'active' THEN a.status"
             "     WHEN a.owner_id IS NULL THEN 'active'"
             "     WHEN EXISTS (SELECT 1 FROM users o"
-            "      WHERE o.id = a.owner_id AND o.active) THEN 'active'"
+            "      WHERE o.id = a.owner_id AND o.active AND o.deleted_at IS NULL) THEN 'active'"
             "     ELSE 'owner_inactive' END"
             "    FROM agents a WHERE a.id = t.actor_id)"
             # Service-account sessions are retired (theme 8; the tables were
@@ -75,7 +75,8 @@ class InProcessTokenResolver:
             # bare deletion would drop a residual row into ELSE 'active'.
             "  WHEN 'service_account' THEN 'retired'"
             "  WHEN 'user' THEN"
-            "   (SELECT CASE WHEN u.active THEN 'active' ELSE 'disabled' END"
+            "   (SELECT CASE WHEN u.active AND u.deleted_at IS NULL"
+            "     THEN 'active' ELSE 'disabled' END"
             "    FROM users u WHERE u.id = t.actor_id)"
             "  ELSE 'active'"
             " END AS actor_status,"
@@ -106,7 +107,10 @@ class InProcessTokenResolver:
             oauth_client_approved=Boolean,
             oauth_grant_active=Boolean,
         )
-        async with self._admin_db.session() as session:
+        # Read-only: the token lookup and optional grant lookup need no shared
+        # snapshot at READ COMMITTED, so autocommit drops the BEGIN/ROLLBACK
+        # round trips (#1942).
+        async with self._admin_db.read_session() as session:
             result = await session.execute(stmt, {"token_hash": token_hash})
             row = result.one_or_none()
 

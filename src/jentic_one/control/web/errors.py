@@ -27,6 +27,7 @@ from jentic_one.control.services.integrations.errors import (
     AgentNotFoundError,
     AuthTypeNotDeclaredError,
     AuthTypeRequiredError,
+    BindingSuspendedError,
     ConfirmationForbiddenError,
     ConfirmKindMismatchError,
     ConnectSessionServiceError,
@@ -87,7 +88,19 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     RuleSetAttachDeniedError: (403, "rule_set_attach_denied"),
 }
 
-credential_service_error_handler = make_service_error_handler(_ERROR_MAP)
+_CREDENTIAL_SAFE_DETAILS: dict[type[Exception], str] = {
+    # ``RuleSetInUseError`` guards deletion against the full org-wide binding
+    # count (#1858), so its raw ``str(exc)`` stays in server logs while the
+    # client detail does not disclose how many invisible bindings reference the
+    # rule set.
+    RuleSetInUseError: (
+        "Permission rule set is still referenced by one or more bindings; detach them first"
+    ),
+}
+
+credential_service_error_handler = make_service_error_handler(
+    _ERROR_MAP, safe_details=_CREDENTIAL_SAFE_DETAILS
+)
 
 
 # Connect-session flow errors. The MRO walk maps subclasses first, so the
@@ -107,6 +120,7 @@ _CONNECT_SESSION_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     ConfirmationForbiddenError: (403, "connect_session_confirmation_forbidden"),
     AgentNotFoundError: (400, "connect_session_agent_not_found"),
     AgentInactiveError: (409, "connect_session_agent_inactive"),
+    BindingSuspendedError: (409, "connect_session_binding_suspended"),
     ScopeValidationError: (400, "connect_session_unknown_scopes"),
     NoOpForFlowError: (400, "connect_session_unsupported_flow"),
     InvalidOAuthAppRegistrationError: (400, "invalid_oauth_app_registration"),

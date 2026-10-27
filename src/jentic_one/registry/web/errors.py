@@ -6,7 +6,6 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from jentic_one.registry.services.errors import (
-    AmbiguousMatchError,
     ApiDeleteBlockedError,
     ApiNotFoundError,
     ArchivedRevisionPinError,
@@ -18,12 +17,10 @@ from jentic_one.registry.services.errors import (
     InvalidApiFilterError,
     InvalidNoteResourceError,
     InvalidOverlayDocumentError,
-    MethodNotAllowedError,
     NoCurrentRevisionError,
     NoteNotFoundError,
     NotePreconditionFailedError,
     NothingToSnoozeError,
-    OperationNotFoundError,
     OverlayApplyConflictError,
     OverlayNotFoundError,
     OverlayRematerializeForbiddenError,
@@ -35,9 +32,14 @@ from jentic_one.registry.services.errors import (
     SearchUnavailableError,
     SnoozeForbiddenError,
     SpecFileMissingError,
-    TooManyCandidatesError,
 )
 from jentic_one.shared.db.errors import DatabaseConsistencyError, DatabaseUnavailableError
+from jentic_one.shared.discovery.errors import (
+    AmbiguousMatchError,
+    MethodNotAllowedError,
+    OperationNotFoundError,
+    TooManyCandidatesError,
+)
 from jentic_one.shared.web.errors import DB_UNAVAILABLE_SAFE_DETAILS, make_service_error_handler
 
 _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
@@ -81,6 +83,11 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     ArchivedRevisionPinError: (422, "archived_revision_pin"),
     InvalidNoteResourceError: (422, "invalid_note_resource"),
     InvalidOverlayDocumentError: (422, "invalid_overlay_document"),
+    # The registry answers its own URL lookup, so an index that returns more
+    # candidates than it can rank is a registry fault (500). The broker renders
+    # the same error as 503 ``too_many_candidates`` (``broker/core/problem.py``):
+    # to a proxied caller the registry is a dependency that was unavailable
+    # before dispatch. Both wire statuses are part of each surface's contract.
     TooManyCandidatesError: (500, "url_index_overloaded"),
     RevisionStateConflictError: (409, "revision_state_conflict"),
     # Promoting a revision whose servers declare a host another vendor's live API
@@ -99,10 +106,9 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     # generic client detail so it is logged as a recognised class instead of
     # escaping as an opaque traceback. See #642.
     DatabaseConsistencyError: (500, "internal_error"),
-    # A transient DB failure (e.g. a pooled connection lost with pre-ping off)
-    # is a 503, matching the control/admin/auth surfaces. Its subclass for a
-    # connection lost at commit is a 503 too, but its detail asks the client to
-    # check whether the write landed before retrying.
+    # The admin/registry DB cannot answer (e.g. the per-request users-row read
+    # behind a login JWT, #1139): infra, not a client fault — a retryable 503,
+    # matching the admin, auth and control surfaces.
     DatabaseUnavailableError: (503, "database_unavailable"),
 }
 

@@ -38,6 +38,7 @@ vendored fallback under [`vendored/`](vendored/) guarded by
 - [`test_search_encapsulation.py`](test_search_encapsulation.py) — services and web never import search strategy modules directly
 - [`test_no_ml_in_core_surfaces.py`](test_no_ml_in_core_surfaces.py) — core surfaces never import ML embedding modules
 - [`test_error_handler_consistency.py`](test_error_handler_consistency.py) — MRO-walk error handling lives only in the shared module
+- [`test_error_modules.py`](test_error_modules.py) — error modules are named `errors.py`, the broker's error module holds only exception classes, and each operation-discovery error is defined once
 - [`test_admin_base_usage.py`](test_admin_base_usage.py), [`test_admin_secrets_isolation.py`](test_admin_secrets_isolation.py), [`test_admin_services_no_sqlalchemy.py`](test_admin_services_no_sqlalchemy.py), [`test_admin_services_style_a.py`](test_admin_services_style_a.py) — the admin surface's model base, secrets isolation, and service style
 
 ## Single-import-point facades

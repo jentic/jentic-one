@@ -38,7 +38,7 @@ from jentic.problem_details import ProblemDetailException, problem_detail_except
 
 from jentic_one.__main__ import _expand_allowed_dbs
 from jentic_one.broker.adapters.runners.base import RunnerRequest, RunnerResult, UpstreamRunner
-from jentic_one.broker.core.exceptions import OperationNotFoundError, UpstreamTimeoutError
+from jentic_one.broker.core.errors import UpstreamTimeoutError
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.core.server_timing import (
     ServerTimingRecorder,
@@ -62,6 +62,7 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
+from jentic_one.shared.discovery.errors import OperationNotFoundError
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.resilience.rate_limit import RateLimiter
 from jentic_one.shared.schemas import OperationInfo
@@ -241,10 +242,7 @@ def _app(
     @app.get("/discover-miss")
     async def discover_miss(_identity: RequireExecuteAccess) -> Response:
         with stage(ServerTimingStage.DISCOVER):
-            raise OperationNotFoundError(
-                detail="Operation not found — unregistered upstream URL.",
-                type="operation_not_found",
-            )
+            raise OperationNotFoundError(detail="Operation not found — unregistered upstream URL.")
 
     @app.get("/upstream-timeout")
     async def upstream_timeout(_identity: RequireExecuteAccess) -> Response:

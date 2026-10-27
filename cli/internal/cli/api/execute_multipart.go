@@ -18,7 +18,7 @@ import (
 // multipartBodyLimit is the broker's default request-body cap for
 // multipart/form-data: the "multipart/form-data" entry of
 // UpstreamClientConfig.max_request_bytes_by_type in
-// src/jentic_one/shared/config.py, enforced mid-stream (413) by
+// src/jentic_one/shared/config/egress.py, enforced mid-stream (413) by
 // _read_capped_body in src/jentic_one/broker/web/routers/execute.py. The cap is
 // on the whole request body, multipart framing included. execute checks the
 // assembled body against it before sending so an oversize upload fails fast and

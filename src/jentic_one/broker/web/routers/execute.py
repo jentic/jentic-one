@@ -13,8 +13,11 @@ pipeline stages / runner decorators (``services/execution/pipeline.py``,
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
+import weakref
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlencode, urlparse, urlunparse
@@ -29,17 +32,18 @@ from jentic_one.broker.adapters.runners.base import (
     StreamingUpstreamRunner,
     UpstreamRunner,
 )
-from jentic_one.broker.core.exceptions import (
+from jentic_one.broker.core.directives import (
+    approval_pending_limit_directive,
+    switch_toolkit_directive,
+)
+from jentic_one.broker.core.errors import (
     ApprovalHoldUnavailableError,
     ApprovalPendingLimitError,
     IdempotencyConflictError,
     IdempotencyInProgressError,
-    OperationNotFoundError,
     PayloadTooLargeError,
     UpgradeNotSupportedError,
     UpstreamUrlNotAllowedError,
-    approval_pending_limit_directive,
-    switch_toolkit_directive,
 )
 from jentic_one.broker.core.execution import mint_execution_id
 from jentic_one.broker.core.headers import (
@@ -51,6 +55,7 @@ from jentic_one.broker.core.headers import (
 )
 from jentic_one.broker.core.idempotency import fingerprint
 from jentic_one.broker.core.proxy_headers import (
+    PASSTHROUGH_CACHE_CONTROL,
     forward_headers,
     passthrough_response_headers,
     reconstruct_upstream_url,
@@ -104,12 +109,14 @@ from jentic_one.shared.broker.protocols import (
     ResolveResult,
     RuleVerdict,
 )
-from jentic_one.shared.config import UpstreamClientConfig
+from jentic_one.shared.config import AppConfig, UpstreamClientConfig
 from jentic_one.shared.context import Context
+from jentic_one.shared.discovery.errors import OperationNotFoundError
 from jentic_one.shared.events import (
-    MAX_EVENT_SUMMARY_FIELD_LEN,
     emit_event_best_effort,
     mint_trace_id,
+    summary_label,
+    summary_text,
     valid_trace_id_or_none,
 )
 from jentic_one.shared.jobs.enqueue import enqueue_job
@@ -120,6 +127,7 @@ from jentic_one.shared.jobs.hold import (
     file_hold,
     review_page_path,
 )
+from jentic_one.shared.jobs.hold import agent_name as held_agent_name
 from jentic_one.shared.jobs.protocols import InjectedAuth
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ExecutionStatus
@@ -133,6 +141,7 @@ from jentic_one.shared.tracing import (
 )
 from jentic_one.shared.url import apply_server_variables, has_host_server_variable
 from jentic_one.shared.url_validation import validate_upstream_url_async
+from jentic_one.shared.web.background_tasks import get_background_tasks
 from jentic_one.shared.web.deps import get_ctx
 from jentic_one.shared.web.links import build_link
 from jentic_one.shared.web.protocols import UnregisteredUrlHandler
@@ -142,8 +151,29 @@ logger = structlog.get_logger(__name__)
 _meter = get_meter("broker")
 _streaming_persist_failures = _meter.create_counter(
     "broker.streaming_execution.persist_failures",
-    description="Failed attempts to persist a streaming execution record",
+    unit="{persist}",
+    description=(
+        "Streaming execution records not persisted, by reason: write_error (the "
+        "write raised), backlog_timeout (no slot within "
+        "broker.streaming_persist_acquire_timeout_s) or cancelled (abandoned "
+        "while waiting or writing; a record cancelled while writing may still "
+        "have landed)"
+    ),
 )
+_streaming_persist_pending = _meter.create_up_down_counter(
+    "broker.streaming_execution.persist_pending",
+    unit="{persist}",
+    description=(
+        "Streaming execution persists in this process that have not finished, by "
+        "state: waiting (queued for a broker.streaming_persist_max_concurrency "
+        "slot) or in_flight (holding a slot and writing)"
+    ),
+)
+_PENDING_WAITING = {"state": "waiting"}
+_PENDING_IN_FLIGHT = {"state": "in_flight"}
+_REASON_WRITE_ERROR = {"reason": "write_error"}
+_REASON_BACKLOG_TIMEOUT = {"reason": "backlog_timeout"}
+_REASON_CANCELLED = {"reason": "cancelled"}
 _unregistered_url_handled = _meter.create_counter(
     "broker.unregistered_url.handled",
     description=(
@@ -155,6 +185,124 @@ _unregistered_url_handled = _meter.create_counter(
 router = APIRouter()
 
 _BODY_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+@dataclass(frozen=True, slots=True)
+class _StreamingPersistGate:
+    """The semaphore bounding one Context's concurrent streaming persists."""
+
+    loop: asyncio.AbstractEventLoop
+    limit: int
+    semaphore: asyncio.Semaphore
+
+
+# One gate per Context (its admin pool), so two Contexts in one process never
+# share or thrash a semaphore. A gate is rebuilt only when the running event
+# loop changes: one Semaphore must not straddle loops.
+_persist_gates: weakref.WeakKeyDictionary[Context, _StreamingPersistGate] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _effective_persist_limit(config: AppConfig) -> int:
+    """``streaming_persist_max_concurrency`` clamped to ``admin.pool_max - 1`` (floor 1)."""
+    return min(
+        config.broker.streaming_persist_max_concurrency,
+        max(1, config.databases.admin.pool_max - 1),
+    )
+
+
+def _streaming_persist_gate(ctx: Context) -> _StreamingPersistGate:
+    """The gate bounding ``ctx``'s concurrent streaming persists on this loop.
+
+    Logs ``streaming_persist_limit_clamped`` when the gate is built with a
+    limit below the configured one, so the effective cap is never silent.
+    """
+    loop = asyncio.get_running_loop()
+    gate = _persist_gates.get(ctx)
+    if gate is None or gate.loop is not loop:
+        limit = _effective_persist_limit(ctx.config)
+        configured = ctx.config.broker.streaming_persist_max_concurrency
+        if limit < configured:
+            logger.warning(
+                "streaming_persist_limit_clamped",
+                configured=configured,
+                effective=limit,
+                admin_pool_max=ctx.config.databases.admin.pool_max,
+            )
+        gate = _StreamingPersistGate(loop=loop, limit=limit, semaphore=asyncio.Semaphore(limit))
+        _persist_gates[ctx] = gate
+    return gate
+
+
+def _record_persist_failed(outcome: StreamingOutcome, ctx_req: ExecuteRequestContext) -> None:
+    """Count and log a persist whose write raised (call from an ``except``)."""
+    _streaming_persist_failures.add(1, _REASON_WRITE_ERROR)
+    logger.error(
+        "streaming_execution_persist_failed",
+        execution_id=outcome.execution_id,
+        trace_id=ctx_req.trace_id,
+        reason=_REASON_WRITE_ERROR["reason"],
+        exc_info=True,
+    )
+
+
+def _record_persist_abandoned(
+    outcome: StreamingOutcome,
+    ctx_req: ExecuteRequestContext,
+    *,
+    reason: dict[str, str],
+    stage: str,
+    **fields: object,
+) -> None:
+    """Count and log a persist given up before it finished.
+
+    ``stage`` is ``waiting`` (no slot yet, so nothing was written) or
+    ``writing`` (cancelled inside the transaction, so the record may or may not
+    have landed). An expected condition, so no traceback.
+    """
+    _streaming_persist_failures.add(1, reason)
+    logger.error(
+        "streaming_execution_persist_abandoned",
+        execution_id=outcome.execution_id,
+        trace_id=ctx_req.trace_id,
+        reason=reason["reason"],
+        stage=stage,
+        **fields,
+    )
+
+
+async def _acquire_persist_slot(
+    semaphore: asyncio.Semaphore,
+    timeout_s: float,
+    outcome: StreamingOutcome,
+    ctx_req: ExecuteRequestContext,
+) -> bool:
+    """Wait up to ``timeout_s`` for a persist slot; ``False`` when it timed out.
+
+    A timeout or a cancellation while waiting is counted and logged as
+    abandoned; the cancellation is re-raised. No permit is held on any path
+    that does not return ``True``.
+    """
+    _streaming_persist_pending.add(1, _PENDING_WAITING)
+    try:
+        async with asyncio.timeout(timeout_s):
+            await semaphore.acquire()
+    except TimeoutError:
+        _record_persist_abandoned(
+            outcome,
+            ctx_req,
+            reason=_REASON_BACKLOG_TIMEOUT,
+            stage="waiting",
+            acquire_timeout_s=timeout_s,
+        )
+        return False
+    except asyncio.CancelledError:
+        _record_persist_abandoned(outcome, ctx_req, reason=_REASON_CANCELLED, stage="waiting")
+        raise
+    finally:
+        _streaming_persist_pending.add(-1, _PENDING_WAITING)
+    return True
 
 
 async def _persist_streaming_outcome(
@@ -169,7 +317,18 @@ async def _persist_streaming_outcome(
     """Best-effort persistence of a streaming execution record.
 
     Extracted so unit tests can exercise the real logic without invoking the full
-    handler. It runs after the streamed body has been sent, so its write is never
+    handler. Runs off the request on the app's background-task registry, under
+    ``broker.streaming_persist_timeout_s``. Concurrent calls for one Context are
+    bounded by its ``_streaming_persist_gate``: an excess call waits for a slot
+    before opening the admin transaction, for at most
+    ``broker.streaming_persist_acquire_timeout_s``. Callers run it once the
+    response is complete or the client has disconnected, when the request no
+    longer holds its admission slot, so the wait delays neither the client nor
+    ``/ready``. Never raises except ``CancelledError``: a write error, a slot
+    timeout and a cancellation (its timeout or the shutdown drain) are each
+    logged and counted on ``broker.streaming_execution.persist_failures`` by
+    ``reason``.
+    It runs after the streamed body has been sent, so its write is never
     part of the response's ``Server-Timing`` field.
     """
     status = (
@@ -180,6 +339,15 @@ async def _persist_streaming_outcome(
     error_msg = outcome.error or (
         f"Upstream returned {outcome.http_status}" if status is ExecutionStatus.FAILED else None
     )
+    try:
+        semaphore = _streaming_persist_gate(ctx).semaphore
+        acquire_timeout_s = ctx.config.broker.streaming_persist_acquire_timeout_s
+    except Exception:
+        _record_persist_failed(outcome, ctx_req)
+        return
+    if not await _acquire_persist_slot(semaphore, acquire_timeout_s, outcome, ctx_req):
+        return
+    _streaming_persist_pending.add(1, _PENDING_IN_FLIGHT)
     try:
         async with ctx.admin_db.transaction() as session:
             await persist_streaming_execution(
@@ -196,13 +364,14 @@ async def _persist_streaming_outcome(
                 origin=origin,
                 security_config=ctx.config.security,
             )
+    except asyncio.CancelledError:
+        _record_persist_abandoned(outcome, ctx_req, reason=_REASON_CANCELLED, stage="writing")
+        raise
     except Exception:
-        _streaming_persist_failures.add(1)
-        logger.error(
-            "streaming_execution_persist_failed",
-            execution_id=outcome.execution_id,
-            exc_info=True,
-        )
+        _record_persist_failed(outcome, ctx_req)
+    finally:
+        semaphore.release()
+        _streaming_persist_pending.add(-1, _PENDING_IN_FLIGHT)
 
 
 def _resolve_body_cap(content_type: str | None, cfg: UpstreamClientConfig) -> int:
@@ -557,10 +726,7 @@ async def _handle(
             )
             if handled is not None:
                 return handled
-            raise OperationNotFoundError(
-                detail="Operation not found — unregistered upstream URL.",
-                type="operation_not_found",
-            )
+            raise OperationNotFoundError(detail="Operation not found — unregistered upstream URL.")
 
         # If a pin applies to the discovered API, translate it to a revision_id
         # in-process (no control-plane HTTP) and re-resolve against the pinned spec.
@@ -574,8 +740,7 @@ async def _handle(
                 )
                 if pinned is None:
                     raise OperationNotFoundError(
-                        detail="Operation not found in the pinned revision.",
-                        type="operation_not_found",
+                        detail="Operation not found in the pinned revision."
                     )
                 resolved = pinned
                 pinned_revisions = {
@@ -706,7 +871,6 @@ async def _handle(
         body,
         selected_credential=selected_credential,
         allowed_credential_ids=allowed_credential_ids,
-        has_idempotency_key=bool(idem_key),
     )
 
     response = _assemble_response(outcome, ctx_req)
@@ -733,7 +897,6 @@ async def _execute_buffered(
     *,
     selected_credential: ResolvedCredential | None = None,
     allowed_credential_ids: list[str] | None = None,
-    has_idempotency_key: bool = False,
 ) -> ExecutionOutcome:
     """Inject credentials, run the buffered upstream call, and persist its record.
 
@@ -776,7 +939,6 @@ async def _execute_buffered(
         origin=identity.origin.value,
         security_config=ctx.config.security,
         signing=injection.signing,
-        has_idempotency_key=has_idempotency_key,
     )
 
 
@@ -798,9 +960,13 @@ async def _handle_streaming(
     response-size cap + transfer deadline + client-disconnect teardown owned by
     ``open_streaming_response``.
 
-    Persistence is best-effort via a Starlette BackgroundTask that fires after the
-    streaming body completes (or errors). A DB failure is logged + counted but does
-    not affect the already-sent response.
+    Persistence is best-effort and never holds the response: once the
+    streaming body ends — completed, failed mid-body, or cut off by a client
+    disconnect — the completion callback schedules ``_persist_streaming_outcome``
+    exactly once on the app's background-task registry and returns, once the
+    request has released its admission slot, so an aborted response's connection
+    closes without waiting on the database. A DB failure, timeout or shutdown
+    cancellation is logged + counted and never affects the already-sent response.
     """
     with stage(ServerTimingStage.BODY):
         body = await _read_request_body(request, ctx_req.method, ctx)
@@ -833,11 +999,13 @@ async def _handle_streaming(
         body=body,
         timeout_s=ctx.config.broker.upstream_timeout_s,
         signing=injection.signing,
-        has_idempotency_key=bool(request.headers.get("idempotency-key")),
     )
 
+    background_tasks = get_background_tasks(request.app)
+    persist_timeout_s = ctx.config.broker.streaming_persist_timeout_s
+
     async def _persist_callback(outcome: StreamingOutcome) -> None:
-        await _persist_streaming_outcome(
+        persist = _persist_streaming_outcome(
             outcome,
             ctx,
             ctx_req,
@@ -845,6 +1013,18 @@ async def _handle_streaming(
             identity.sub,
             identity.actor_type.value,
             origin=identity.origin.value,
+        )
+        if background_tasks is None:
+            # An app built without a registry (a bare test app) writes inline,
+            # still bounded; every app from ``create_surface_app`` has one.
+            async with asyncio.timeout(persist_timeout_s):
+                await persist
+            return
+        background_tasks.spawn(
+            persist,
+            kind="streaming_execution_persist",
+            timeout_s=persist_timeout_s,
+            log_fields={"execution_id": outcome.execution_id, "trace_id": ctx_req.trace_id},
         )
 
     broker = _resolve_broker(request, runner)
@@ -902,8 +1082,11 @@ def _replay_response(stored: StoredResponse) -> Response:
     status/headers with an empty body and a marker header so the caller knows the
     body wasn't cached (the no-duplicate-side-effect guarantee still held).
     """
-    headers = dict(stored.headers)
+    # A replay re-emits a passthrough body, so it carries the passthrough
+    # Cache-Control whatever the stored record holds (#1835).
+    headers = {k: v for k, v in stored.headers.items() if k.lower() != "cache-control"}
     headers[JenticHeader.IDEMPOTENT_REPLAYED.value] = "true"
+    headers["cache-control"] = PASSTHROUGH_CACHE_CONTROL
     if stored.body_omitted:
         headers[JenticHeader.IDEMPOTENCY_BODY_OMITTED.value] = "true"
         # The stored content-length described the original (uncached) body; drop
@@ -1057,12 +1240,15 @@ async def _handle_hold(
             ) from exc
         review_url = _review_url(ctx, request, hold.approval_id)
         if not hold.joined:
-            summary_path = path[:MAX_EVENT_SUMMARY_FIELD_LEN]
+            # An identity resolved from a JWT carries no name; read it from the
+            # agent row then, so every approval event names the agent alike.
+            name = identity.actor_name or await held_agent_name(session, identity.sub)
+            agent = summary_label(name, identity.sub)
             await emit_event_best_effort(
                 session,
                 type=EventType.EXECUTION_APPROVAL_REQUESTED,
                 severity=EventSeverity.WARNING,
-                summary=f"Agent {identity.sub} wants to {ctx_req.method} {summary_path}",
+                summary=f"Agent {agent} wants to {ctx_req.method} {summary_text(path)}",
                 requires_action=True,
                 trace_id=valid_trace_id_or_none(ctx_req.trace_id),
                 execution_id=execution_id,

@@ -239,6 +239,14 @@ type BrokerProblem struct {
 	// Examples: {"human_readable_instruction":"Multiple bound credentials cover this API. Resend the same request with the Jentic-Credential-Id header set to one of the ids in parameters.candidates (Jentic-Credential-Name also works when names are unique).","parameters":{"candidates":["cred_01HXAMPLE7Q2","cred_01HXAMPLE9K4"],"headers":{"Jentic-Credential-Id":"cred_01HXAMPLE7Q2"}},"strategy":"modify_headers"}
 	AgentDirective *AgentDirective `json:"agent_directive,omitempty"`
 
+	// AllowedMethods The HTTP methods the upstream URL is registered for, on a
+	// `method_not_allowed` 405. Mirrored in the `Allow` response
+	// header.
+	//
+	//
+	// Examples: ["GET","PUT"]
+	AllowedMethods *[]string `json:"allowed_methods,omitempty"`
+
 	// Candidates The caller's own credentials that matched ambiguously
 	// (`ambiguous_credential_binding`, `ambiguous_credential`) or
 	// that a credential-selection header failed to match
@@ -352,7 +360,7 @@ type CredentialCandidate struct {
 // serving requests. Intentionally minimal — clients treat `200` +
 // `status: ok` as the green signal; the body is informational.
 //
-// Examples: {"status":"ok","surface":"broker","version":"0.43.0"}
+// Examples: {"status":"ok","surface":"broker","version":"0.44.0"}
 type HealthResponse struct {
 	// Reason Why the deployment is not entitled. Present only on the `not_entitled` body.
 	//
@@ -377,7 +385,7 @@ type HealthResponse struct {
 	// in this spec). Absent on the `not_entitled` body.
 	//
 	//
-	// Examples: 0.43.0
+	// Examples: 0.44.0
 	Version *string `json:"version,omitempty"`
 }
 
@@ -493,7 +501,7 @@ type JenticCredentialId = string
 // JenticCredentialName Examples: Stripe prod key
 type JenticCredentialName = string
 
-// JenticRevision Examples: ["stripe:payments:2023-10-16=rev_01HMY1Q0AB"], ["stripe:payments:2023-10-16=rev_01HMY1Q0AB","shopify:admin:2024-01=rev_01HMY7B3QN"]
+// JenticRevision Examples: ["stripe:payments:2023-10-16=3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"], ["stripe:payments:2023-10-16=rev_3f2b8c1e7d4a4e9ba6c51d2e3f4a5b6c","shopify:admin:2024-01=8a1d4c2e-5b6f-4a7e-9c3d-2e1f0a9b8c7d"]
 type JenticRevision = []string
 
 // Prefer Examples: wait=30, respond-async
@@ -558,6 +566,16 @@ type ExecuteAsync struct {
 //
 // Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
 type Forbidden = BrokerProblem
+
+// MethodNotAllowed RFC 9457 Problem Details body for every Broker error. Extends the
+// shared Jentic `ProblemDetails` schema with the Broker's
+// agent-recovery members: `error_origin` says *who* failed, and
+// `agent_directive` (when present) is a machine-actionable recovery
+// instruction an agent can follow without parsing prose. `title`
+// repeats `detail` on Broker-originated errors.
+//
+// Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
+type MethodNotAllowed = BrokerProblem
 
 // NotFound RFC 9457 Problem Details body for every Broker error. Extends the
 // shared Jentic `ProblemDetails` schema with the Broker's
@@ -645,7 +663,14 @@ type ExecuteDeleteParams struct {
 	// JenticRevision Pin upstream-API resolution to a specific `ApiRevision`
 	// instead of the API's `current_revision_id`. Multi-valued —
 	// repeat the header (or comma-separate) once per API you
-	// want to pin. Each value is `vendor:name:version=rev_…`.
+	// want to pin. Each value is `vendor:name:version=<revision_id>`:
+	// `vendor`, `name` and `version` are the API's `api` reference,
+	// and `<revision_id>` is the revision's `revision_id` exactly as
+	// the control plane returns it (`GET
+	// /apis/{vendor}/{name}/{version}/revisions`, the revision get,
+	// an import job's result, or `jentic apis revisions`). The
+	// equivalent `rev_<revision_id without hyphens>` label is
+	// accepted too.
 	//
 	// Use cases:
 	//
@@ -663,7 +688,10 @@ type ExecuteDeleteParams struct {
 	//
 	// Pinning a `draft` revision the caller doesn't have
 	// access to returns `403`. Pinning an unknown or
-	// `archived` revision returns `422`. The chosen revisions
+	// `archived` revision returns `422`. Pinning the same API
+	// to two different revisions in one header returns
+	// `422 invalid_revision_pin`; repeating the same revision
+	// (in either form) is allowed. The chosen revisions
 	// are recorded on the resulting `ExecutionRecord`
 	// (`pinned_revisions` field on the control plane).
 	JenticRevision *JenticRevision `json:"Jentic-Revision,omitempty"`
@@ -707,7 +735,14 @@ type ExecuteGetParams struct {
 	// JenticRevision Pin upstream-API resolution to a specific `ApiRevision`
 	// instead of the API's `current_revision_id`. Multi-valued —
 	// repeat the header (or comma-separate) once per API you
-	// want to pin. Each value is `vendor:name:version=rev_…`.
+	// want to pin. Each value is `vendor:name:version=<revision_id>`:
+	// `vendor`, `name` and `version` are the API's `api` reference,
+	// and `<revision_id>` is the revision's `revision_id` exactly as
+	// the control plane returns it (`GET
+	// /apis/{vendor}/{name}/{version}/revisions`, the revision get,
+	// an import job's result, or `jentic apis revisions`). The
+	// equivalent `rev_<revision_id without hyphens>` label is
+	// accepted too.
 	//
 	// Use cases:
 	//
@@ -725,7 +760,10 @@ type ExecuteGetParams struct {
 	//
 	// Pinning a `draft` revision the caller doesn't have
 	// access to returns `403`. Pinning an unknown or
-	// `archived` revision returns `422`. The chosen revisions
+	// `archived` revision returns `422`. Pinning the same API
+	// to two different revisions in one header returns
+	// `422 invalid_revision_pin`; repeating the same revision
+	// (in either form) is allowed. The chosen revisions
 	// are recorded on the resulting `ExecutionRecord`
 	// (`pinned_revisions` field on the control plane).
 	JenticRevision *JenticRevision `json:"Jentic-Revision,omitempty"`
@@ -769,7 +807,14 @@ type ExecuteHeadParams struct {
 	// JenticRevision Pin upstream-API resolution to a specific `ApiRevision`
 	// instead of the API's `current_revision_id`. Multi-valued —
 	// repeat the header (or comma-separate) once per API you
-	// want to pin. Each value is `vendor:name:version=rev_…`.
+	// want to pin. Each value is `vendor:name:version=<revision_id>`:
+	// `vendor`, `name` and `version` are the API's `api` reference,
+	// and `<revision_id>` is the revision's `revision_id` exactly as
+	// the control plane returns it (`GET
+	// /apis/{vendor}/{name}/{version}/revisions`, the revision get,
+	// an import job's result, or `jentic apis revisions`). The
+	// equivalent `rev_<revision_id without hyphens>` label is
+	// accepted too.
 	//
 	// Use cases:
 	//
@@ -787,7 +832,10 @@ type ExecuteHeadParams struct {
 	//
 	// Pinning a `draft` revision the caller doesn't have
 	// access to returns `403`. Pinning an unknown or
-	// `archived` revision returns `422`. The chosen revisions
+	// `archived` revision returns `422`. Pinning the same API
+	// to two different revisions in one header returns
+	// `422 invalid_revision_pin`; repeating the same revision
+	// (in either form) is allowed. The chosen revisions
 	// are recorded on the resulting `ExecutionRecord`
 	// (`pinned_revisions` field on the control plane).
 	JenticRevision *JenticRevision `json:"Jentic-Revision,omitempty"`
@@ -831,7 +879,14 @@ type ExecuteOptionsParams struct {
 	// JenticRevision Pin upstream-API resolution to a specific `ApiRevision`
 	// instead of the API's `current_revision_id`. Multi-valued —
 	// repeat the header (or comma-separate) once per API you
-	// want to pin. Each value is `vendor:name:version=rev_…`.
+	// want to pin. Each value is `vendor:name:version=<revision_id>`:
+	// `vendor`, `name` and `version` are the API's `api` reference,
+	// and `<revision_id>` is the revision's `revision_id` exactly as
+	// the control plane returns it (`GET
+	// /apis/{vendor}/{name}/{version}/revisions`, the revision get,
+	// an import job's result, or `jentic apis revisions`). The
+	// equivalent `rev_<revision_id without hyphens>` label is
+	// accepted too.
 	//
 	// Use cases:
 	//
@@ -849,7 +904,10 @@ type ExecuteOptionsParams struct {
 	//
 	// Pinning a `draft` revision the caller doesn't have
 	// access to returns `403`. Pinning an unknown or
-	// `archived` revision returns `422`. The chosen revisions
+	// `archived` revision returns `422`. Pinning the same API
+	// to two different revisions in one header returns
+	// `422 invalid_revision_pin`; repeating the same revision
+	// (in either form) is allowed. The chosen revisions
 	// are recorded on the resulting `ExecutionRecord`
 	// (`pinned_revisions` field on the control plane).
 	JenticRevision *JenticRevision `json:"Jentic-Revision,omitempty"`
@@ -893,7 +951,14 @@ type ExecutePatchParams struct {
 	// JenticRevision Pin upstream-API resolution to a specific `ApiRevision`
 	// instead of the API's `current_revision_id`. Multi-valued —
 	// repeat the header (or comma-separate) once per API you
-	// want to pin. Each value is `vendor:name:version=rev_…`.
+	// want to pin. Each value is `vendor:name:version=<revision_id>`:
+	// `vendor`, `name` and `version` are the API's `api` reference,
+	// and `<revision_id>` is the revision's `revision_id` exactly as
+	// the control plane returns it (`GET
+	// /apis/{vendor}/{name}/{version}/revisions`, the revision get,
+	// an import job's result, or `jentic apis revisions`). The
+	// equivalent `rev_<revision_id without hyphens>` label is
+	// accepted too.
 	//
 	// Use cases:
 	//
@@ -911,7 +976,10 @@ type ExecutePatchParams struct {
 	//
 	// Pinning a `draft` revision the caller doesn't have
 	// access to returns `403`. Pinning an unknown or
-	// `archived` revision returns `422`. The chosen revisions
+	// `archived` revision returns `422`. Pinning the same API
+	// to two different revisions in one header returns
+	// `422 invalid_revision_pin`; repeating the same revision
+	// (in either form) is allowed. The chosen revisions
 	// are recorded on the resulting `ExecutionRecord`
 	// (`pinned_revisions` field on the control plane).
 	JenticRevision *JenticRevision `json:"Jentic-Revision,omitempty"`
@@ -955,7 +1023,14 @@ type ExecutePostParams struct {
 	// JenticRevision Pin upstream-API resolution to a specific `ApiRevision`
 	// instead of the API's `current_revision_id`. Multi-valued —
 	// repeat the header (or comma-separate) once per API you
-	// want to pin. Each value is `vendor:name:version=rev_…`.
+	// want to pin. Each value is `vendor:name:version=<revision_id>`:
+	// `vendor`, `name` and `version` are the API's `api` reference,
+	// and `<revision_id>` is the revision's `revision_id` exactly as
+	// the control plane returns it (`GET
+	// /apis/{vendor}/{name}/{version}/revisions`, the revision get,
+	// an import job's result, or `jentic apis revisions`). The
+	// equivalent `rev_<revision_id without hyphens>` label is
+	// accepted too.
 	//
 	// Use cases:
 	//
@@ -973,7 +1048,10 @@ type ExecutePostParams struct {
 	//
 	// Pinning a `draft` revision the caller doesn't have
 	// access to returns `403`. Pinning an unknown or
-	// `archived` revision returns `422`. The chosen revisions
+	// `archived` revision returns `422`. Pinning the same API
+	// to two different revisions in one header returns
+	// `422 invalid_revision_pin`; repeating the same revision
+	// (in either form) is allowed. The chosen revisions
 	// are recorded on the resulting `ExecutionRecord`
 	// (`pinned_revisions` field on the control plane).
 	JenticRevision *JenticRevision `json:"Jentic-Revision,omitempty"`
@@ -1017,7 +1095,14 @@ type ExecutePutParams struct {
 	// JenticRevision Pin upstream-API resolution to a specific `ApiRevision`
 	// instead of the API's `current_revision_id`. Multi-valued —
 	// repeat the header (or comma-separate) once per API you
-	// want to pin. Each value is `vendor:name:version=rev_…`.
+	// want to pin. Each value is `vendor:name:version=<revision_id>`:
+	// `vendor`, `name` and `version` are the API's `api` reference,
+	// and `<revision_id>` is the revision's `revision_id` exactly as
+	// the control plane returns it (`GET
+	// /apis/{vendor}/{name}/{version}/revisions`, the revision get,
+	// an import job's result, or `jentic apis revisions`). The
+	// equivalent `rev_<revision_id without hyphens>` label is
+	// accepted too.
 	//
 	// Use cases:
 	//
@@ -1035,7 +1120,10 @@ type ExecutePutParams struct {
 	//
 	// Pinning a `draft` revision the caller doesn't have
 	// access to returns `403`. Pinning an unknown or
-	// `archived` revision returns `422`. The chosen revisions
+	// `archived` revision returns `422`. Pinning the same API
+	// to two different revisions in one header returns
+	// `422 invalid_revision_pin`; repeating the same revision
+	// (in either form) is allowed. The chosen revisions
 	// are recorded on the resulting `ExecutionRecord`
 	// (`pinned_revisions` field on the control plane).
 	JenticRevision *JenticRevision `json:"Jentic-Revision,omitempty"`
@@ -2562,6 +2650,11 @@ type ExecuteDeleteHTTPResp202Headers struct {
 	Tracestate         *string
 }
 
+// ExecuteDeleteHTTPResp405Headers the declared response headers of an HTTP 405 response for ExecuteDelete
+type ExecuteDeleteHTTPResp405Headers struct {
+	Allow *string
+}
+
 // ExecuteDeleteHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecuteDelete
 type ExecuteDeleteHTTPResp429Headers struct {
 	RateLimitLimit     *int
@@ -2587,6 +2680,8 @@ type ExecuteDeleteHTTPResp struct {
 	ApplicationproblemJSON403 *Forbidden
 	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
 	ApplicationproblemJSON404 *NotFound
+	// ApplicationproblemJSON405 the response for an HTTP 405 `application/problem+json` response
+	ApplicationproblemJSON405 *MethodNotAllowed
 	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
 	ApplicationproblemJSON409 *Conflict
 	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
@@ -2607,6 +2702,8 @@ type ExecuteDeleteHTTPResp struct {
 	Headers200 *ExecuteDeleteHTTPResp200Headers
 	// Headers202 the parsed response headers for an HTTP 202 response
 	Headers202 *ExecuteDeleteHTTPResp202Headers
+	// Headers405 the parsed response headers for an HTTP 405 response
+	Headers405 *ExecuteDeleteHTTPResp405Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *ExecuteDeleteHTTPResp429Headers
 	// Headers503 the parsed response headers for an HTTP 503 response
@@ -2636,6 +2733,11 @@ func (r ExecuteDeleteHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 // GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
 func (r ExecuteDeleteHTTPResp) GetApplicationproblemJSON404() *NotFound {
 	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON405 returns the response for an HTTP 405 `application/problem+json` response
+func (r ExecuteDeleteHTTPResp) GetApplicationproblemJSON405() *MethodNotAllowed {
+	return r.ApplicationproblemJSON405
 }
 
 // GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
@@ -2734,6 +2836,11 @@ type ExecuteGetHTTPResp202Headers struct {
 	Tracestate         *string
 }
 
+// ExecuteGetHTTPResp405Headers the declared response headers of an HTTP 405 response for ExecuteGet
+type ExecuteGetHTTPResp405Headers struct {
+	Allow *string
+}
+
 // ExecuteGetHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecuteGet
 type ExecuteGetHTTPResp429Headers struct {
 	RateLimitLimit     *int
@@ -2759,6 +2866,8 @@ type ExecuteGetHTTPResp struct {
 	ApplicationproblemJSON403 *Forbidden
 	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
 	ApplicationproblemJSON404 *NotFound
+	// ApplicationproblemJSON405 the response for an HTTP 405 `application/problem+json` response
+	ApplicationproblemJSON405 *MethodNotAllowed
 	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
 	ApplicationproblemJSON409 *Conflict
 	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
@@ -2779,6 +2888,8 @@ type ExecuteGetHTTPResp struct {
 	Headers200 *ExecuteGetHTTPResp200Headers
 	// Headers202 the parsed response headers for an HTTP 202 response
 	Headers202 *ExecuteGetHTTPResp202Headers
+	// Headers405 the parsed response headers for an HTTP 405 response
+	Headers405 *ExecuteGetHTTPResp405Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *ExecuteGetHTTPResp429Headers
 	// Headers503 the parsed response headers for an HTTP 503 response
@@ -2808,6 +2919,11 @@ func (r ExecuteGetHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 // GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
 func (r ExecuteGetHTTPResp) GetApplicationproblemJSON404() *NotFound {
 	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON405 returns the response for an HTTP 405 `application/problem+json` response
+func (r ExecuteGetHTTPResp) GetApplicationproblemJSON405() *MethodNotAllowed {
+	return r.ApplicationproblemJSON405
 }
 
 // GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
@@ -2906,6 +3022,11 @@ type ExecuteHeadHTTPResp202Headers struct {
 	Tracestate         *string
 }
 
+// ExecuteHeadHTTPResp405Headers the declared response headers of an HTTP 405 response for ExecuteHead
+type ExecuteHeadHTTPResp405Headers struct {
+	Allow *string
+}
+
 // ExecuteHeadHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecuteHead
 type ExecuteHeadHTTPResp429Headers struct {
 	RateLimitLimit     *int
@@ -2931,6 +3052,8 @@ type ExecuteHeadHTTPResp struct {
 	ApplicationproblemJSON403 *Forbidden
 	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
 	ApplicationproblemJSON404 *NotFound
+	// ApplicationproblemJSON405 the response for an HTTP 405 `application/problem+json` response
+	ApplicationproblemJSON405 *MethodNotAllowed
 	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
 	ApplicationproblemJSON409 *Conflict
 	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
@@ -2951,6 +3074,8 @@ type ExecuteHeadHTTPResp struct {
 	Headers200 *ExecuteHeadHTTPResp200Headers
 	// Headers202 the parsed response headers for an HTTP 202 response
 	Headers202 *ExecuteHeadHTTPResp202Headers
+	// Headers405 the parsed response headers for an HTTP 405 response
+	Headers405 *ExecuteHeadHTTPResp405Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *ExecuteHeadHTTPResp429Headers
 	// Headers503 the parsed response headers for an HTTP 503 response
@@ -2980,6 +3105,11 @@ func (r ExecuteHeadHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 // GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
 func (r ExecuteHeadHTTPResp) GetApplicationproblemJSON404() *NotFound {
 	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON405 returns the response for an HTTP 405 `application/problem+json` response
+func (r ExecuteHeadHTTPResp) GetApplicationproblemJSON405() *MethodNotAllowed {
+	return r.ApplicationproblemJSON405
 }
 
 // GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
@@ -3078,6 +3208,11 @@ type ExecuteOptionsHTTPResp202Headers struct {
 	Tracestate         *string
 }
 
+// ExecuteOptionsHTTPResp405Headers the declared response headers of an HTTP 405 response for ExecuteOptions
+type ExecuteOptionsHTTPResp405Headers struct {
+	Allow *string
+}
+
 // ExecuteOptionsHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecuteOptions
 type ExecuteOptionsHTTPResp429Headers struct {
 	RateLimitLimit     *int
@@ -3103,6 +3238,8 @@ type ExecuteOptionsHTTPResp struct {
 	ApplicationproblemJSON403 *Forbidden
 	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
 	ApplicationproblemJSON404 *NotFound
+	// ApplicationproblemJSON405 the response for an HTTP 405 `application/problem+json` response
+	ApplicationproblemJSON405 *MethodNotAllowed
 	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
 	ApplicationproblemJSON409 *Conflict
 	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
@@ -3123,6 +3260,8 @@ type ExecuteOptionsHTTPResp struct {
 	Headers200 *ExecuteOptionsHTTPResp200Headers
 	// Headers202 the parsed response headers for an HTTP 202 response
 	Headers202 *ExecuteOptionsHTTPResp202Headers
+	// Headers405 the parsed response headers for an HTTP 405 response
+	Headers405 *ExecuteOptionsHTTPResp405Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *ExecuteOptionsHTTPResp429Headers
 	// Headers503 the parsed response headers for an HTTP 503 response
@@ -3152,6 +3291,11 @@ func (r ExecuteOptionsHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 // GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
 func (r ExecuteOptionsHTTPResp) GetApplicationproblemJSON404() *NotFound {
 	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON405 returns the response for an HTTP 405 `application/problem+json` response
+func (r ExecuteOptionsHTTPResp) GetApplicationproblemJSON405() *MethodNotAllowed {
+	return r.ApplicationproblemJSON405
 }
 
 // GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
@@ -3250,6 +3394,11 @@ type ExecutePatchHTTPResp202Headers struct {
 	Tracestate         *string
 }
 
+// ExecutePatchHTTPResp405Headers the declared response headers of an HTTP 405 response for ExecutePatch
+type ExecutePatchHTTPResp405Headers struct {
+	Allow *string
+}
+
 // ExecutePatchHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecutePatch
 type ExecutePatchHTTPResp429Headers struct {
 	RateLimitLimit     *int
@@ -3275,6 +3424,8 @@ type ExecutePatchHTTPResp struct {
 	ApplicationproblemJSON403 *Forbidden
 	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
 	ApplicationproblemJSON404 *NotFound
+	// ApplicationproblemJSON405 the response for an HTTP 405 `application/problem+json` response
+	ApplicationproblemJSON405 *MethodNotAllowed
 	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
 	ApplicationproblemJSON409 *Conflict
 	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
@@ -3295,6 +3446,8 @@ type ExecutePatchHTTPResp struct {
 	Headers200 *ExecutePatchHTTPResp200Headers
 	// Headers202 the parsed response headers for an HTTP 202 response
 	Headers202 *ExecutePatchHTTPResp202Headers
+	// Headers405 the parsed response headers for an HTTP 405 response
+	Headers405 *ExecutePatchHTTPResp405Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *ExecutePatchHTTPResp429Headers
 	// Headers503 the parsed response headers for an HTTP 503 response
@@ -3324,6 +3477,11 @@ func (r ExecutePatchHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 // GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
 func (r ExecutePatchHTTPResp) GetApplicationproblemJSON404() *NotFound {
 	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON405 returns the response for an HTTP 405 `application/problem+json` response
+func (r ExecutePatchHTTPResp) GetApplicationproblemJSON405() *MethodNotAllowed {
+	return r.ApplicationproblemJSON405
 }
 
 // GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
@@ -3422,6 +3580,11 @@ type ExecutePostHTTPResp202Headers struct {
 	Tracestate         *string
 }
 
+// ExecutePostHTTPResp405Headers the declared response headers of an HTTP 405 response for ExecutePost
+type ExecutePostHTTPResp405Headers struct {
+	Allow *string
+}
+
 // ExecutePostHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecutePost
 type ExecutePostHTTPResp429Headers struct {
 	RateLimitLimit     *int
@@ -3447,6 +3610,8 @@ type ExecutePostHTTPResp struct {
 	ApplicationproblemJSON403 *Forbidden
 	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
 	ApplicationproblemJSON404 *NotFound
+	// ApplicationproblemJSON405 the response for an HTTP 405 `application/problem+json` response
+	ApplicationproblemJSON405 *MethodNotAllowed
 	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
 	ApplicationproblemJSON409 *Conflict
 	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
@@ -3467,6 +3632,8 @@ type ExecutePostHTTPResp struct {
 	Headers200 *ExecutePostHTTPResp200Headers
 	// Headers202 the parsed response headers for an HTTP 202 response
 	Headers202 *ExecutePostHTTPResp202Headers
+	// Headers405 the parsed response headers for an HTTP 405 response
+	Headers405 *ExecutePostHTTPResp405Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *ExecutePostHTTPResp429Headers
 	// Headers503 the parsed response headers for an HTTP 503 response
@@ -3496,6 +3663,11 @@ func (r ExecutePostHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 // GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
 func (r ExecutePostHTTPResp) GetApplicationproblemJSON404() *NotFound {
 	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON405 returns the response for an HTTP 405 `application/problem+json` response
+func (r ExecutePostHTTPResp) GetApplicationproblemJSON405() *MethodNotAllowed {
+	return r.ApplicationproblemJSON405
 }
 
 // GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
@@ -3594,6 +3766,11 @@ type ExecutePutHTTPResp202Headers struct {
 	Tracestate         *string
 }
 
+// ExecutePutHTTPResp405Headers the declared response headers of an HTTP 405 response for ExecutePut
+type ExecutePutHTTPResp405Headers struct {
+	Allow *string
+}
+
 // ExecutePutHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecutePut
 type ExecutePutHTTPResp429Headers struct {
 	RateLimitLimit     *int
@@ -3619,6 +3796,8 @@ type ExecutePutHTTPResp struct {
 	ApplicationproblemJSON403 *Forbidden
 	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
 	ApplicationproblemJSON404 *NotFound
+	// ApplicationproblemJSON405 the response for an HTTP 405 `application/problem+json` response
+	ApplicationproblemJSON405 *MethodNotAllowed
 	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
 	ApplicationproblemJSON409 *Conflict
 	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
@@ -3639,6 +3818,8 @@ type ExecutePutHTTPResp struct {
 	Headers200 *ExecutePutHTTPResp200Headers
 	// Headers202 the parsed response headers for an HTTP 202 response
 	Headers202 *ExecutePutHTTPResp202Headers
+	// Headers405 the parsed response headers for an HTTP 405 response
+	Headers405 *ExecutePutHTTPResp405Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *ExecutePutHTTPResp429Headers
 	// Headers503 the parsed response headers for an HTTP 503 response
@@ -3668,6 +3849,11 @@ func (r ExecutePutHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 // GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
 func (r ExecutePutHTTPResp) GetApplicationproblemJSON404() *NotFound {
 	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON405 returns the response for an HTTP 405 `application/problem+json` response
+func (r ExecutePutHTTPResp) GetApplicationproblemJSON405() *MethodNotAllowed {
+	return r.ApplicationproblemJSON405
 }
 
 // GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
@@ -4087,6 +4273,13 @@ func ParseExecuteDeleteHTTPResp(rsp *http.Response) (*ExecuteDeleteHTTPResp, err
 		}
 		response.ApplicationproblemJSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 405:
+		var dest MethodNotAllowed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON405 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest Conflict
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -4285,6 +4478,16 @@ func ParseExecuteDeleteHTTPResp(rsp *http.Response) (*ExecuteDeleteHTTPResp, err
 			headers.Tracestate = &value
 		}
 		response.Headers202 = &headers
+	case rsp.StatusCode == 405:
+		var headers ExecuteDeleteHTTPResp405Headers
+		if values := rsp.Header.Values("Allow"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Allow", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.Allow = &value
+		}
+		response.Headers405 = &headers
 	case rsp.StatusCode == 429:
 		var headers ExecuteDeleteHTTPResp429Headers
 		if values := rsp.Header.Values("RateLimit-Limit"); len(values) > 0 {
@@ -4372,6 +4575,13 @@ func ParseExecuteGetHTTPResp(rsp *http.Response) (*ExecuteGetHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 405:
+		var dest MethodNotAllowed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON405 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest Conflict
@@ -4571,6 +4781,16 @@ func ParseExecuteGetHTTPResp(rsp *http.Response) (*ExecuteGetHTTPResp, error) {
 			headers.Tracestate = &value
 		}
 		response.Headers202 = &headers
+	case rsp.StatusCode == 405:
+		var headers ExecuteGetHTTPResp405Headers
+		if values := rsp.Header.Values("Allow"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Allow", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.Allow = &value
+		}
+		response.Headers405 = &headers
 	case rsp.StatusCode == 429:
 		var headers ExecuteGetHTTPResp429Headers
 		if values := rsp.Header.Values("RateLimit-Limit"); len(values) > 0 {
@@ -4658,6 +4878,13 @@ func ParseExecuteHeadHTTPResp(rsp *http.Response) (*ExecuteHeadHTTPResp, error) 
 			return nil, err
 		}
 		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 405:
+		var dest MethodNotAllowed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON405 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest Conflict
@@ -4857,6 +5084,16 @@ func ParseExecuteHeadHTTPResp(rsp *http.Response) (*ExecuteHeadHTTPResp, error) 
 			headers.Tracestate = &value
 		}
 		response.Headers202 = &headers
+	case rsp.StatusCode == 405:
+		var headers ExecuteHeadHTTPResp405Headers
+		if values := rsp.Header.Values("Allow"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Allow", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.Allow = &value
+		}
+		response.Headers405 = &headers
 	case rsp.StatusCode == 429:
 		var headers ExecuteHeadHTTPResp429Headers
 		if values := rsp.Header.Values("RateLimit-Limit"); len(values) > 0 {
@@ -4944,6 +5181,13 @@ func ParseExecuteOptionsHTTPResp(rsp *http.Response) (*ExecuteOptionsHTTPResp, e
 			return nil, err
 		}
 		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 405:
+		var dest MethodNotAllowed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON405 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest Conflict
@@ -5143,6 +5387,16 @@ func ParseExecuteOptionsHTTPResp(rsp *http.Response) (*ExecuteOptionsHTTPResp, e
 			headers.Tracestate = &value
 		}
 		response.Headers202 = &headers
+	case rsp.StatusCode == 405:
+		var headers ExecuteOptionsHTTPResp405Headers
+		if values := rsp.Header.Values("Allow"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Allow", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.Allow = &value
+		}
+		response.Headers405 = &headers
 	case rsp.StatusCode == 429:
 		var headers ExecuteOptionsHTTPResp429Headers
 		if values := rsp.Header.Values("RateLimit-Limit"); len(values) > 0 {
@@ -5230,6 +5484,13 @@ func ParseExecutePatchHTTPResp(rsp *http.Response) (*ExecutePatchHTTPResp, error
 			return nil, err
 		}
 		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 405:
+		var dest MethodNotAllowed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON405 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest Conflict
@@ -5429,6 +5690,16 @@ func ParseExecutePatchHTTPResp(rsp *http.Response) (*ExecutePatchHTTPResp, error
 			headers.Tracestate = &value
 		}
 		response.Headers202 = &headers
+	case rsp.StatusCode == 405:
+		var headers ExecutePatchHTTPResp405Headers
+		if values := rsp.Header.Values("Allow"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Allow", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.Allow = &value
+		}
+		response.Headers405 = &headers
 	case rsp.StatusCode == 429:
 		var headers ExecutePatchHTTPResp429Headers
 		if values := rsp.Header.Values("RateLimit-Limit"); len(values) > 0 {
@@ -5516,6 +5787,13 @@ func ParseExecutePostHTTPResp(rsp *http.Response) (*ExecutePostHTTPResp, error) 
 			return nil, err
 		}
 		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 405:
+		var dest MethodNotAllowed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON405 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest Conflict
@@ -5715,6 +5993,16 @@ func ParseExecutePostHTTPResp(rsp *http.Response) (*ExecutePostHTTPResp, error) 
 			headers.Tracestate = &value
 		}
 		response.Headers202 = &headers
+	case rsp.StatusCode == 405:
+		var headers ExecutePostHTTPResp405Headers
+		if values := rsp.Header.Values("Allow"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Allow", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.Allow = &value
+		}
+		response.Headers405 = &headers
 	case rsp.StatusCode == 429:
 		var headers ExecutePostHTTPResp429Headers
 		if values := rsp.Header.Values("RateLimit-Limit"); len(values) > 0 {
@@ -5802,6 +6090,13 @@ func ParseExecutePutHTTPResp(rsp *http.Response) (*ExecutePutHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 405:
+		var dest MethodNotAllowed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON405 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest Conflict
@@ -6001,6 +6296,16 @@ func ParseExecutePutHTTPResp(rsp *http.Response) (*ExecutePutHTTPResp, error) {
 			headers.Tracestate = &value
 		}
 		response.Headers202 = &headers
+	case rsp.StatusCode == 405:
+		var headers ExecutePutHTTPResp405Headers
+		if values := rsp.Header.Values("Allow"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Allow", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.Allow = &value
+		}
+		response.Headers405 = &headers
 	case rsp.StatusCode == 429:
 		var headers ExecutePutHTTPResp429Headers
 		if values := rsp.Header.Values("RateLimit-Limit"); len(values) > 0 {

@@ -30,7 +30,7 @@ from jentic_one.registry.core.schema.catalog_snapshots import CatalogSnapshot
 from jentic_one.registry.core.schema.operation_url_index import OperationURLIndex
 from jentic_one.registry.core.schema.servers import Server
 from jentic_one.registry.core.schema.spec_files import SpecFile
-from jentic_one.registry.ingest.exc import DuplicateRevisionError, IngestPipelineError
+from jentic_one.registry.ingest.errors import DuplicateRevisionError, IngestPipelineError
 from jentic_one.registry.ingest.ingestor import Ingestor
 from jentic_one.registry.ingest.models import ApiIdentifier, IngestSpecification, SpecType
 from jentic_one.registry.ingest.schemas import IngestResult

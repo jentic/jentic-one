@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncGenerator, Iterator
 
 import pytest
 from fastapi import FastAPI
@@ -13,9 +13,11 @@ from jentic_one.registry.web.app import create_app
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.web.deps import resolve_identity
-from tests.web.conftest import noop_lifespan
+from tests.web.conftest import noop_lifespan, seeded_jwt_user
 
 pytestmark = pytest.mark.integration
+
+_REGISTRY_JWT_SUB = "usr_test_registry"
 
 
 def _build_app(ctx: Context) -> FastAPI:
@@ -57,7 +59,7 @@ def _make_token(ctx: Context) -> str:
     """
     config = ctx.config.admin.auth
     claims = {
-        "sub": "usr_test_registry",
+        "sub": _REGISTRY_JWT_SUB,
         "email": "registry-test@test.local",
         "actor_type": "user",
         "permissions": ["apis:read", "apis:write", "capabilities:read"],
@@ -67,7 +69,20 @@ def _make_token(ctx: Context) -> str:
 
 
 @pytest.fixture()
-def authed_client(web_context: Context) -> Iterator[TestClient]:
+def registry_app(web_context: Context) -> FastAPI:
+    """The real registry app (token auth, lifespan disabled), for raw-ASGI tests."""
+    return _build_app(web_context)
+
+
+@pytest.fixture()
+async def registry_jwt_user(web_context: Context) -> AsyncGenerator[str, None]:
+    """The active user row behind ``_make_token``'s subject."""
+    async with seeded_jwt_user(web_context, _REGISTRY_JWT_SUB) as user_id:
+        yield user_id
+
+
+@pytest.fixture()
+def authed_client(web_context: Context, registry_jwt_user: str) -> Iterator[TestClient]:
     """TestClient with a valid Authorization header (live verifier, DB-resolved perms)."""
     app = _build_app(web_context)
     token = _make_token(web_context)

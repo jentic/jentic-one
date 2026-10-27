@@ -47,11 +47,28 @@
         "auth": {
           "$ref": "#/$defs/AdminAuthConfig"
         },
+        "events": {
+          "$ref": "#/$defs/AdminEventsConfig"
+        },
         "invite": {
           "$ref": "#/$defs/AdminInviteConfig"
         }
       },
       "title": "AdminConfig",
+      "type": "object"
+    },
+    "AdminEventsConfig": {
+      "description": "Admin event-stream settings.",
+      "properties": {
+        "stream_recheck_seconds": {
+          "default": 5.0,
+          "description": "Minimum seconds between re-verifications of an open ``GET /events/stream``: its credential, ``events:read`` / ``org:admin`` permission, and the scope of the events it delivers. Checks run only at a poll or page boundary, so a check happens at the first poll or page after the interval elapses; an idle stream polls every few seconds, so a value below its poll interval behaves as that interval. A disabled caller, a revoked or expired token, or a revoked permission ends the stream at that check; a narrower permission set narrows it. Permissions are those the credential carries: API keys and ``at_`` access tokens resolve them live (an ephemeral agent ``at_`` keeps the subset it was minted with). A login session JWT carries the set it was issued with, but removing any of a user's effective permissions revokes their login sessions, so a stream opened with one ends at that check. The stream re-verifies the token it was opened with, so a permission added to a user reaches a login-session stream once the client reconnects with a newer login JWT.",
+          "exclusiveMinimum": 0,
+          "title": "Stream Recheck Seconds",
+          "type": "number"
+        }
+      },
+      "title": "AdminEventsConfig",
       "type": "object"
     },
     "AdminInviteConfig": {
@@ -138,15 +155,6 @@
       "title": "AuthConfig",
       "type": "object"
     },
-    "BackendKind": {
-      "description": "Which shared-state implementation to build.\n\nDefined here as the single source of truth; consumers import it from this\npackage rather than defining a second enum.",
-      "enum": [
-        "memory",
-        "redis"
-      ],
-      "title": "BackendKind",
-      "type": "string"
-    },
     "BaseModel": {
       "properties": {},
       "title": "BaseModel",
@@ -214,6 +222,27 @@
           "title": "Server Timing",
           "type": "boolean"
         },
+        "streaming_persist_acquire_timeout_s": {
+          "default": 5.0,
+          "description": "How long (seconds) a streaming execution persist waits for one of the ``broker.streaming_persist_max_concurrency`` slots. Past it the record is abandoned: logged as ``streaming_execution_persist_abandoned`` and counted on ``broker.streaming_execution.persist_failures`` (``reason=backlog_timeout``). The wait runs after the response is complete or the client has disconnected, when the request no longer holds its admission slot, so the wait delays neither the client nor ``/ready``. The timeout bounds how long a stalled admin database can keep records queued in memory, including at shutdown; it does not bound the write itself once a slot is held.",
+          "exclusiveMinimum": 0,
+          "title": "Streaming Persist Acquire Timeout S",
+          "type": "number"
+        },
+        "streaming_persist_max_concurrency": {
+          "default": 5,
+          "description": "Per-process cap on concurrent post-response persists of streaming execution records (each holds one admin-DB connection). Excess persists wait for a slot, up to ``broker.streaming_persist_acquire_timeout_s``; the waiting and writing counts are exported as ``broker.streaming_execution.persist_pending``. The effective cap is clamped to ``databases.admin.pool_max - 1`` (minimum 1; a ``streaming_persist_limit_clamped`` warning is logged when it applies), so with ``pool_max >= 2`` persists never take every connection of the admin base pool. ``pool_max`` is the base pool size only; SQLAlchemy's default overflow can open up to 10 more connections on top of it.",
+          "exclusiveMinimum": 0,
+          "title": "Streaming Persist Max Concurrency",
+          "type": "integer"
+        },
+        "streaming_persist_timeout_s": {
+          "default": 10.0,
+          "description": "Budget (seconds) for writing one streaming execution's record and lifecycle event. The write runs after the response, off the request, so it never delays the client; past the budget it is abandoned, logged and counted on ``app.background_tasks`` (``kind=streaming_execution_persist``, ``outcome=timed_out``).",
+          "exclusiveMinimum": 0,
+          "title": "Streaming Persist Timeout S",
+          "type": "number"
+        },
         "toolkit_cache_ttl_s": {
           "default": 3.0,
           "title": "Toolkit Cache Ttl S",
@@ -230,11 +259,8 @@
       "type": "object"
     },
     "BrokerResilienceConfig": {
-      "description": "Resilience envelope: admission + rate limit / circuit.\n\nThe shared-state ``backend`` selection drives *both* the rate limiter and\nthe circuit breaker (memory default; Redis is cluster-wide). Queue\nbackpressure / async-credential / retention knobs are future work.",
+      "description": "Resilience envelope: admission + rate limit / circuit.\n\nThe rate limiter and circuit breaker run on the process's shared-state\nbackend (the top-level ``state:`` section). Queue backpressure /\nasync-credential / retention knobs are future work.",
       "properties": {
-        "backend": {
-          "$ref": "#/$defs/StateBackendConfig"
-        },
         "circuit_breaker": {
           "$ref": "#/$defs/CircuitBreakerConfig"
         },
@@ -290,6 +316,27 @@
           "description": "Manifest source for the public API catalog. Full default: https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json",
           "title": "Manifest Url",
           "type": "string"
+        },
+        "preview_cache_failure_ttl_seconds": {
+          "default": 30,
+          "description": "How long a failed catalog preview fetch (upstream unavailable, oversized or unparseable spec) is remembered per spec URL before it is retried, so repeated previews of a broken spec do not refetch it on every request. Zero retries on the next request. Ignored when the preview cache is disabled.",
+          "minimum": 0,
+          "title": "Preview Cache Failure Ttl Seconds",
+          "type": "integer"
+        },
+        "preview_cache_max_entries": {
+          "default": 16,
+          "description": "Maximum number of catalog spec projections held in memory per process (least recently used evicted first). Zero disables the cache.",
+          "minimum": 0,
+          "title": "Preview Cache Max Entries",
+          "type": "integer"
+        },
+        "preview_cache_ttl_seconds": {
+          "default": 300,
+          "description": "How long a catalog preview's upstream spec projection is reused before refetching. Zero disables the cache. The cache is per process: `POST /catalog:refresh` clears it only on the process that serves the refresh, so other workers or replicas can serve the previous projection until this TTL expires.",
+          "minimum": 0,
+          "title": "Preview Cache Ttl Seconds",
+          "type": "integer"
         },
         "update_check_interval_seconds": {
           "default": 86400,
@@ -573,9 +620,16 @@
         },
         "pool_pre_ping": {
           "default": true,
-          "description": "PostgreSQL: test each pooled connection on checkout and transparently replace a dead one. On asyncpg the ping costs three round trips (``BEGIN``, ``;``, ``ROLLBACK``) per checkout. With ``false``, ``pool_recycle_s`` and TCP keepalive do not cover a Postgres restart or failover, a pooler/proxy restart, or a terminated backend: after such an event the first request on each pool per process can fail with an HTTP 503 (work run through the retrying transaction helper is re-run on a fresh connection instead). Only disable it where those events are rare and that error is acceptable. Ignored for SQLite.",
+          "description": "PostgreSQL: test pooled connections on checkout and transparently replace a dead one. By default the wire ping (three round trips on asyncpg: ``BEGIN``, ``;``, ``ROLLBACK``) runs only when the connection has sat idle in the pool for at least ``pool_pre_ping_idle_s`` seconds; active checkouts within that window skip the wire ping unless the driver connection is already closed. With ``false``, ``pool_recycle_s`` and TCP keepalive do not cover a Postgres restart or failover, a pooler/proxy restart, or a terminated backend: after such an event the first request on each pool per process can fail with an HTTP 503 (work run through the retrying transaction helper is re-run on a fresh connection instead). Only disable it where those events are rare and that error is acceptable. Ignored for SQLite.",
           "title": "Pool Pre Ping",
           "type": "boolean"
+        },
+        "pool_pre_ping_idle_s": {
+          "default": 1.0,
+          "description": "PostgreSQL: seconds a connection must sit idle in the pool before checkout runs the ``pool_pre_ping`` wire check. Active checkouts returning within this window skip the wire ping unless the driver connection is already closed. ``0`` pings on every checkout. Only applies when ``pool_pre_ping`` is ``true``. Ignored for SQLite.",
+          "minimum": 0,
+          "title": "Pool Pre Ping Idle S",
+          "type": "number"
         },
         "pool_recycle_s": {
           "default": 1800,
@@ -930,7 +984,7 @@
       "type": "object"
     },
     "IdempotencyConfig": {
-      "description": "``Idempotency-Key`` replay store.\n\nSync ``FULL``-mode replay over the shared-state ``AtomicStore`` (memory\ndefault; Redis ⇒ cross-instance). Two TTLs: a *short* ``pending_ttl_s`` claim\n(sized to the request deadline + buffer, so a crash mid-flight frees the key\nin seconds rather than the full replay window) promoted to the *long*\n``ttl_s`` only once the response is stored. Responses over\n``max_response_bytes`` are recorded without their body (replay still prevents\na duplicate side-effect; only byte-for-byte body replay is dropped).\n\nCompliance modes (``metadata_only`` / kill-switch), ``require_for_mutations``,\nasync same-``job_id`` replay, and at-rest encryption are future work.",
+      "description": "``Idempotency-Key`` replay store.\n\nSync ``FULL``-mode replay over the shared-state ``AtomicStore`` (the\n``state:`` backend). Two TTLs: a *short* ``pending_ttl_s`` claim\n(sized to the request deadline + buffer, so a crash mid-flight frees the key\nin seconds rather than the full replay window) promoted to the *long*\n``ttl_s`` only once the response is stored. Responses over\n``max_response_bytes`` are recorded without their body (replay still prevents\na duplicate side-effect; only byte-for-byte body replay is dropped).\n\nCompliance modes (``metadata_only`` / kill-switch), ``require_for_mutations``,\nasync same-``job_id`` replay, and at-rest encryption are future work.",
       "properties": {
         "enabled": {
           "default": true,
@@ -958,7 +1012,7 @@
             }
           ],
           "default": null,
-          "description": "Replay window of a completed Idempotency-Key record, in seconds. Unset, it is 3600 (1 h) on the memory shared-state backend and 86400 (24 h) on redis. On memory, every record is held in process for this long, so the TTL divides the sustained idempotent request rate the idem budget can hold.",
+          "description": "Replay window of a completed Idempotency-Key record, in seconds. Unset, it is 3600 (1 h) on the memory shared-state backend and 86400 (24 h) on any other backend. On memory, every record is held in process for this long, so the TTL divides the sustained idempotent request rate the idem budget can hold.",
           "title": "Ttl S"
         }
       },
@@ -1074,6 +1128,20 @@
           "default": 30.0,
           "title": "Fetch Timeout S",
           "type": "number"
+        },
+        "max_import_request_bytes": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Cap on the raw `POST /apis` request body (all sources together). Unset means twice `max_spec_bytes`, which covers one maximum-size inline spec with typical JSON-string escaping; raise it for batches of heavily escaped specs (`\\uXXXX` or HTML-escaped content). Each inline source's content is separately capped at `max_spec_bytes`.",
+          "title": "Max Import Request Bytes"
         },
         "max_redirects": {
           "default": 5,
@@ -1214,7 +1282,7 @@
       "type": "object"
     },
     "MemoryBackendConfig": {
-      "description": "Bounds for the in-process (``memory``) shared-state backend.\n\nEvery key belongs to a namespace, its prefix up to the first ``:``\n(``idem`` for Idempotency-Key records, ``idem-body`` for their stored\nresponse bodies, ``auth`` for the auth surface's single-use markers,\n``login-csrf`` for login CSRF nonces, ``cb`` for circuit-breaker counters,\nand so on). Each namespace has its own budget, so one key kind filling up\nnever starves another. A namespace that is full of live entries refuses\nnew writes (the request that needed it gets a 503) rather than evicting a\nlive entry. Ignored by the redis backend.",
+      "description": "Bounds for the in-process (``memory``) shared-state backend.\n\nEvery key belongs to a namespace, its prefix up to the first ``:``\n(``idem`` for Idempotency-Key records, ``idem-body`` for their stored\nresponse bodies, ``auth`` for the auth surface's single-use markers,\n``login-csrf`` for login CSRF nonces, ``cb`` for circuit-breaker counters,\nand so on). Each namespace has its own budget, so one key kind filling up\nnever starves another. A namespace that is full of live entries refuses\nnew writes (the request that needed it gets a 503) rather than evicting a\nlive entry. Ignored by every other backend.",
       "properties": {
         "max_bytes_per_namespace": {
           "default": 16777216,
@@ -1232,7 +1300,7 @@
         },
         "max_total_bytes": {
           "default": 201326592,
-          "description": "Most approximate bytes all namespaces of one memory backend may hold together (201326592, 192 MiB, by default); a write past it is refused like a full namespace, never by evicting a live entry. Each surface that keeps shared state (auth, broker, control) has its own backend, so a process holds up to this much per such surface. Raise the container memory limit together with it.",
+          "description": "Most approximate bytes all namespaces of the memory backend may hold together (201326592, 192 MiB, by default); a write past it is refused like a full namespace, never by evicting a live entry. A process builds one backend shared by every surface it serves, so this caps the whole process's shared state. Raise the container memory limit together with it.",
           "minimum": 1,
           "title": "Max Total Bytes",
           "type": "integer"
@@ -1241,7 +1309,7 @@
           "additionalProperties": {
             "$ref": "#/$defs/MemoryNamespaceBudgetConfig"
           },
-          "description": "Per-namespace budget overrides, keyed by namespace (the key prefix before the first ``:``). Unless overridden here, idem (Idempotency-Key records) is 250000 entries / 134217728 bytes (128 MiB) and idem-body (their stored response bodies) 1000000 entries / 33554432 bytes (32 MiB), each with a 0.1 per-caller share; login-csrf (login page CSRF nonces) uses max_entries_per_namespace / max_bytes_per_namespace with a 0.02 per-client share, about 370 live nonces per IPv4 address or IPv6 /64 at the defaults (about 900 bytes each, 5-minute TTL), twice what the default authorize rate limit lets one IP request in that time; every other namespace uses max_entries_per_namespace / max_bytes_per_namespace. The sustained idempotent request rate idem can hold is min(max_entries, max_bytes / record_bytes) / broker.idempotency.ttl_s, where record_bytes is about 1000 bytes plus the response headers (capped at 512 bytes): about 30 req/s at the defaults and a 1 h TTL, and a tenth of that per caller. Above it, Idempotency-Key requests get 503 idempotency_unavailable; bodies (about 830 bytes + body length each) stop being stored for replay sooner, about 5 req/s of 1 KiB bodies, without refusing requests.",
+          "description": "Per-namespace budget overrides, keyed by namespace (the key prefix before the first ``:``). Unless overridden here, idem (Idempotency-Key records) is 250000 entries / 134217728 bytes (128 MiB) and idem-body (their stored response bodies) 1000000 entries / 33554432 bytes (32 MiB), each with a 0.1 per-caller share; login-csrf (login page CSRF nonces) uses max_entries_per_namespace / max_bytes_per_namespace with a 0.02 per-client share, about 370 live nonces per IPv4 address or IPv6 /64 at the defaults (about 900 bytes each, 5-minute TTL), twice what the default authorize rate limit lets one client network request in that time; every other namespace uses max_entries_per_namespace / max_bytes_per_namespace. The sustained idempotent request rate idem can hold is min(max_entries, max_bytes / record_bytes) / broker.idempotency.ttl_s, where record_bytes is about 1000 bytes plus the response headers (capped at 512 bytes): about 30 req/s at the defaults and a 1 h TTL, and a tenth of that per caller. Above it, Idempotency-Key requests get 503 idempotency_unavailable; bodies (about 830 bytes + body length each) stop being stored for replay sooner, about 5 req/s of 1 KiB bodies, without refusing requests.",
           "title": "Namespaces",
           "type": "object"
         }
@@ -1332,7 +1400,7 @@
         },
         "authorize_rpm": {
           "default": 30,
-          "description": "Sustained requests/minute allowed on the unauthenticated ``/authorize`` endpoints, keyed per ``client_id``+IP — except the local-login routes, whose ``client_id`` rides inside the signed login state and which are always keyed by bare IP. Behind a proxy, set ``auth.oauth_rate_limit.trusted_proxies`` or every client shares the proxy's IP bucket.",
+          "description": "Sustained requests/minute allowed per client network (IPv4 address or IPv6 /64) across the unauthenticated authorization flow: ``/authorize``, the IdP callback, the consent page, its submit and inline agent create, and the local-login form share one bucket, whatever ``client_id`` they name. A sign-in spends two to six requests (more after a mistyped password), so the defaults admit at least five back-to-back sign-ins and then at least five a minute per network; raise both for a large shared NAT or egress IP. Behind a proxy, set ``auth.oauth_rate_limit.trusted_proxies`` or every client shares the proxy's bucket.",
           "title": "Authorize Rpm",
           "type": "integer"
         },
@@ -1344,7 +1412,7 @@
         },
         "exchange_rpm": {
           "default": 60,
-          "description": "Sustained requests/minute allowed per ``client_id``+IP on the token endpoint (also reused per-IP for token revocation).",
+          "description": "Sustained requests/minute allowed per ``client_id`` + client network (IPv4 address or IPv6 /64) on the token endpoint (also reused per client network for token revocation).",
           "title": "Exchange Rpm",
           "type": "integer"
         },
@@ -1356,7 +1424,7 @@
         },
         "registration_rpm": {
           "default": 10,
-          "description": "Sustained requests/minute allowed per IP on anonymous dynamic client registration (``POST /oauth-clients``).",
+          "description": "Sustained requests/minute allowed per client network (IPv4 address or IPv6 /64) on anonymous dynamic client registration (``POST /oauth-clients``).",
           "title": "Registration Rpm",
           "type": "integer"
         },
@@ -1504,7 +1572,7 @@
       "type": "object"
     },
     "RetryConfig": {
-      "description": "Idempotency-aware upstream retry.\n\nThe ``RetryRunner`` decorator retries a failed attempt **only** when it is\nsafe to do so: a connect-phase failure (no bytes on the wire) is retryable\nfor any method, while a post-send failure (read timeout, mirrored ``429``/\n``503``) is retried only for idempotent methods or when an\n``Idempotency-Key`` is present — a blind ``POST`` retry is a double-spend.\nEach attempt still flows through the circuit breaker (retry *outside*,\nbreaker *inside*); the whole loop is bounded by the request deadline.",
+      "description": "Idempotency-aware upstream retry.\n\nThe ``RetryRunner`` decorator retries a failed attempt **only** when it is\nsafe to do so: a connect-phase failure (no bytes on the wire) is retryable\nfor any method, while a post-send failure (read timeout, mirrored ``429``/\n``503``) is retried only for idempotent HTTP methods — ``Idempotency-Key``\nis broker-consumed and stripped from outbound headers, so a post-send\n``POST`` or ``PATCH`` retry would double-spend (#1799).\nEach attempt still flows through the circuit breaker (retry *outside*,\nbreaker *inside*); the whole loop is bounded by the request deadline.",
       "properties": {
         "base_backoff_s": {
           "default": 0.2,
@@ -1666,6 +1734,13 @@
     "ServicesConfig": {
       "description": "Service-level settings (immutable after boot).",
       "properties": {
+        "background_task_drain_timeout_s": {
+          "default": 10.0,
+          "description": "On shutdown, how long (seconds) the app waits for work requests handed off after their response (e.g. streaming execution records) before cancelling what is still running. Runs before the databases close; each cancelled task is logged and counted on ``app.background_tasks`` (``outcome=cancelled``).",
+          "minimum": 0,
+          "title": "Background Task Drain Timeout S",
+          "type": "number"
+        },
         "request_timeout_s": {
           "default": 30.0,
           "title": "Request Timeout S",
@@ -1707,17 +1782,27 @@
       "type": "object"
     },
     "StateBackendConfig": {
-      "description": "Configuration for :func:`build_state_backend`.",
+      "description": "The process's shared-state backend (top-level ``state:`` section).\n\nOne backend per process holds the rate-limit buckets, circuit-breaker\ncounters, ``Idempotency-Key`` records and the auth surface's single-use\nmarkers of every surface the process serves.",
       "properties": {
         "backend": {
-          "$ref": "#/$defs/BackendKind",
-          "default": "memory"
+          "default": "memory",
+          "description": "Name of the shared-state backend to build: ``memory`` (in-process, the default), ``redis`` (deprecated), or a name an extension registered with ``register_state_backend``. An unregistered name fails at startup with the list of registered names.",
+          "pattern": "^[a-z0-9][a-z0-9_-]*$",
+          "title": "Backend",
+          "type": "string"
         },
         "memory": {
           "$ref": "#/$defs/MemoryBackendConfig"
         },
+        "options": {
+          "additionalProperties": true,
+          "description": "Settings for a backend registered by an extension, passed to its builder unvalidated (the builder validates them). Ignored by the built-in memory and redis backends.",
+          "title": "Options",
+          "type": "object"
+        },
         "redis_key_prefix": {
           "default": "jentic:broker:",
+          "description": "Prefix the deprecated ``redis`` backend puts on every key; set a per-environment value when deployments share one Redis.",
           "title": "Redis Key Prefix",
           "type": "string"
         },
@@ -1733,6 +1818,7 @@
             }
           ],
           "default": null,
+          "description": "Connection URL of the deprecated ``redis`` backend; required by it.",
           "title": "Redis Url"
         }
       },
@@ -2135,8 +2221,16 @@
       "type": "object"
     },
     "WorkerConfig": {
-      "description": "Background job-worker durability knobs.\n\nThe worker claims a job, sets a **visibility deadline** (``visibility_timeout_s``\nfrom claim), and processes it. A job left ``RUNNING`` past that deadline by a\ncrashed worker/pod is reclaimed on a later poll. A handler failure requeues the\njob with capped exponential backoff up to ``max_attempts`` claims; beyond that\nit is dead-lettered (poison-message handling) rather than looped forever.",
+      "description": "Background job-worker durability knobs.\n\nThe worker claims a job, sets a **visibility deadline** (``visibility_timeout_s``\nfrom claim), and processes it. A job left ``RUNNING`` past that deadline by a\ncrashed worker/pod is reclaimed on a later poll. A handler failure requeues the\njob with capped exponential backoff up to ``max_attempts`` claims; beyond that\nit is dead-lettered (poison-message handling) rather than looped forever.\n\nEach claim is a single atomic ``UPDATE`` (``FOR UPDATE SKIP LOCKED`` on\nPostgres, a serialised write transaction on SQLite), so any number of worker\nloops — across processes or replicas, each running up to ``concurrency``\njobs — can poll the same queue without double-claiming a job.",
       "properties": {
+        "concurrency": {
+          "default": 1,
+          "description": "Maximum jobs one worker process runs at once (1 = serial). Postgres only: SQLite requires 1, because a job's handler holds the database write lock across its upstream call, so a second concurrent job's writes would time out. Each in-flight job holds about 2 admin-DB connections at once (its handler transaction plus the run-time authorization or credential-audit session it opens), so ``2 * concurrency`` must stay below ``databases.admin.pool_max``, leaving the remainder for HTTP requests and other background work in the same process.",
+          "maximum": 64,
+          "minimum": 1,
+          "title": "Concurrency",
+          "type": "integer"
+        },
         "drain_timeout_s": {
           "default": 25.0,
           "title": "Drain Timeout S",
@@ -2146,6 +2240,14 @@
           "default": 5,
           "title": "Max Attempts",
           "type": "integer"
+        },
+        "poll_interval_s": {
+          "default": 2.0,
+          "description": "Idle wait (seconds) between job-queue polls when nothing is claimable. A job enqueued in the same process wakes the worker immediately, so this mainly bounds pickup latency for jobs enqueued by another process and how quickly visibility-expired jobs are reclaimed. Every poll is a write transaction (the claim is an ``UPDATE``) even when the queue is empty — on SQLite it takes the database write lock that request writes also wait on — so each process issues about ``1 / poll_interval_s`` of them per second while idle.",
+          "maximum": 60.0,
+          "minimum": 0.25,
+          "title": "Poll Interval S",
+          "type": "number"
         },
         "reconnect_backoff_base_s": {
           "default": 2.0,
@@ -2171,6 +2273,14 @@
         "retry_backoff_max_s": {
           "default": 60.0,
           "title": "Retry Backoff Max S",
+          "type": "number"
+        },
+        "sweep_interval_s": {
+          "default": 120.0,
+          "description": "Seconds between the worker's retention sweeps, which expire lapsed execution approvals and delete expired job results and long-expired access/refresh token rows. Measured in wall time, independent of ``poll_interval_s`` and wake-ups.",
+          "maximum": 86400.0,
+          "minimum": 1.0,
+          "title": "Sweep Interval S",
           "type": "number"
         },
         "visibility_timeout_s": {
@@ -2246,6 +2356,10 @@
     },
     "services": {
       "$ref": "#/$defs/ServicesConfig"
+    },
+    "state": {
+      "$ref": "#/$defs/StateBackendConfig",
+      "description": "The process's shared-state backend, built once and shared by every surface the process serves. The deprecated broker.resilience.backend section (and its JENTIC__BROKER__RESILIENCE__BACKEND__* env vars) is still read into it for one release."
     },
     "telemetry": {
       "$ref": "#/$defs/TelemetryConfig"

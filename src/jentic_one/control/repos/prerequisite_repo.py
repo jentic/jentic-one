@@ -14,6 +14,7 @@ from sqlalchemy import Boolean, bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import BindParameter
 
+from jentic_one.shared.db.locks import lock_credential_bindings
 from jentic_one.shared.db.types import UTCDateTime
 
 
@@ -138,6 +139,16 @@ class PrerequisiteRepository:
             {"owner_id": owner_id},
         )
         return [str(row[0]) for row in result.fetchall()]
+
+    @staticmethod
+    async def lock_bindings_for_credential(session: AsyncSession, *, credential_id: str) -> None:
+        """Hold the credential's binding lock until the admin transaction ends.
+
+        No binding to the credential can be created meanwhile, so a
+        :meth:`list_agents_for_credential` read in the same transaction stays
+        accurate until it commits or rolls back.
+        """
+        await lock_credential_bindings(session, credential_id)
 
     @staticmethod
     async def list_agents_for_credential(
@@ -273,6 +284,45 @@ class PrerequisiteRepository:
             {"rule_set_id": rule_set_id},
         )
         return int(result.scalar_one())
+
+    @staticmethod
+    async def count_bindings_for_rule_set_by_credential(
+        session: AsyncSession,
+        rule_set_id: str,
+        *,
+        visible_to: AgentVisibility,
+    ) -> dict[str, tuple[int, int]]:
+        """Per-credential ``(total_count, agent_visible_count)`` for a rule set (admin DB).
+
+        Pairs with a control-DB credential visibility lookup so a non-admin
+        caller's ``binding_count`` on ``GET /permission-rule-sets/{id}``
+        counts only bindings they can read (#1858): ``total_count`` applies to
+        credentials the caller created (where every bound agent is visible),
+        and ``agent_visible_count`` applies to credentials visible through any
+        other read grant (where only agents matching ``visible_to`` are visible).
+        """
+        owner_match = (
+            "a.id = :self_id OR a.owner_id IN :owner_ids"
+            if visible_to.owner_ids
+            else "a.id = :self_id"
+        )
+        stmt = text(
+            "SELECT b.credential_id, COUNT(*), "
+            f"COALESCE(SUM(CASE WHEN {owner_match} THEN 1 ELSE 0 END), 0) "
+            "FROM agent_credential_bindings b "
+            "JOIN agents a ON a.id = b.agent_id "
+            "WHERE b.rule_set_id = :rule_set_id "
+            "GROUP BY b.credential_id"
+        )
+        params: dict[str, object] = {
+            "rule_set_id": rule_set_id,
+            "self_id": visible_to.self_id,
+        }
+        if visible_to.owner_ids:
+            stmt = stmt.bindparams(bindparam("owner_ids", expanding=True))
+            params["owner_ids"] = list(visible_to.owner_ids)
+        result = await session.execute(stmt, params)
+        return {str(row[0]): (int(row[1]), int(row[2])) for row in result.fetchall()}
 
     @staticmethod
     async def list_rule_set_bindings_page(

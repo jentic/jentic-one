@@ -39,8 +39,9 @@ from jentic_one.broker.adapters.runners.base import (
     UpstreamRunner,
 )
 from jentic_one.broker.adapters.runners.registry import RunnerRegistry
-from jentic_one.broker.core.exceptions import CircuitOpenError
+from jentic_one.broker.core.errors import CircuitOpenError
 from jentic_one.broker.services.execution.executor import PipelineExecutor, _ctx_from_metadata
+from jentic_one.broker.services.execution.service import _circuit_event_last_emitted
 from jentic_one.broker.web.routers.execute import _resolve_broker
 from jentic_one.shared.broker.broker import Broker
 from jentic_one.shared.broker.execution import (
@@ -55,6 +56,8 @@ from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.jobs.execution_handler import ExecutionHandler
 from jentic_one.shared.jobs.protocols import ExecutionRecordNotPersistedError, UpstreamExecRequest
+from jentic_one.shared.models.actors import Origin
+from jentic_one.shared.models.events import ErrorSource, EventType
 from jentic_one.shared.schemas import OperationInfo
 from jentic_one.shared.web.app_factory import create_combined_app, create_surface_app
 from jentic_one.shared.web.container import AppContainer
@@ -478,3 +481,131 @@ def test_ctx_from_metadata_rebuilds_operation() -> None:
     assert full.operation == OperationInfo(id="op_x", path="/v1/things/{id}", method="GET")
 
     assert _ctx({}).operation is None
+
+
+class _StatusBroker(_SpyBroker):
+    def __init__(self, status_code: int) -> None:
+        super().__init__()
+        self._status_code = status_code
+
+    async def execute(self, request: RunnerRequest, context: ExecutionContext) -> ExecutionOutcome:
+        self.calls.append((request, context))
+        return ExecutionOutcome(
+            result=SharedRunnerResult(
+                status_code=self._status_code,
+                body=b"",
+                headers={},
+                content_type="text/plain",
+                duration_ms=2,
+            ),
+            context=context,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("broker", "api_vendor", "expected_type", "expected_tags", "expected_service_types"),
+    [
+        pytest.param(
+            _SpyBroker(),
+            "example",
+            EventType.EXECUTION_COMPLETED,
+            {Origin.MCP},
+            [],
+            id="completed",
+        ),
+        pytest.param(
+            _StatusBroker(401),
+            "example",
+            EventType.EXECUTION_FAILED,
+            {ErrorSource.AUTH_THIRDPARTY_UNAUTHORIZED, Origin.MCP},
+            [],
+            id="upstream-401",
+        ),
+        pytest.param(
+            _StatusBroker(403),
+            "example",
+            EventType.EXECUTION_FAILED,
+            {ErrorSource.AUTH_THIRDPARTY_FORBIDDEN, Origin.MCP},
+            [],
+            id="upstream-403",
+        ),
+        pytest.param(
+            _StatusBroker(401),
+            None,
+            EventType.EXECUTION_FAILED,
+            {Origin.MCP},
+            [],
+            id="upstream-401-vendorless",
+        ),
+        pytest.param(
+            _RaisingBroker(),
+            "example",
+            EventType.EXECUTION_FAILED,
+            {Origin.MCP},
+            [EventType.UPSTREAM_CIRCUIT_OPEN],
+            id="broker-error",
+        ),
+    ],
+)
+async def test_async_execution_emits_lifecycle_event_once(
+    broker: _SpyBroker,
+    api_vendor: str | None,
+    expected_type: str,
+    expected_tags: set[Any],
+    expected_service_types: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pins #1788: an async execution through ``ExecutionHandler`` and
+    ``PipelineExecutor`` emits exactly one ``execution.completed`` /
+    ``execution.failed`` event (carrying ``job_id``), never a second one from
+    ``run_execution``."""
+    broker.calls.clear()
+    _circuit_event_last_emitted.clear()
+    registry = RunnerRegistry()
+    registry.register(["http", "https"], _NoopRunner(), required=True)
+    handler = ExecutionHandler(
+        executor=PipelineExecutor(registry, broker_factory=lambda _runner: broker)
+    )
+    session = AsyncMock()
+    session.add = MagicMock()
+    db = SessionScope(session)
+
+    service_emit = AsyncMock()
+    handler_emit = AsyncMock()
+    monkeypatch.setattr(
+        "jentic_one.broker.services.execution.service.record_execution", AsyncMock()
+    )
+    monkeypatch.setattr("jentic_one.broker.services.execution.service.emit_event", service_emit)
+    monkeypatch.setattr("jentic_one.shared.jobs.execution_handler.emit_event", handler_emit)
+    monkeypatch.setattr(
+        "jentic_one.shared.jobs.execution_handler.maybe_emit_repeated_failure", AsyncMock()
+    )
+
+    try:
+        await handler.execute(
+            "job_once",
+            db,
+            payload={
+                "execution_id": "exec_once0000000000000000",
+                "upstream_url": "https://api.example.com/v1/things",
+                "method": "GET",
+                "trace_id": "d" * 32,
+                "api_vendor": api_vendor,
+                "api_name": "api",
+                "api_version": "1.0.0",
+                "origin": "mcp",
+            },
+            created_by="agt_abc123",
+            actor_type="agent",
+        )
+    finally:
+        _circuit_event_last_emitted.clear()
+
+    assert [c.kwargs.get("type") for c in service_emit.call_args_list] == expected_service_types
+    handler_emit.assert_awaited_once()
+    kwargs = handler_emit.call_args.kwargs
+    assert kwargs["type"] == expected_type
+    assert kwargs["job_id"] == "job_once"
+    assert kwargs["execution_id"] == "exec_once0000000000000000"
+    assert kwargs["tags"] == expected_tags

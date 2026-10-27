@@ -197,8 +197,11 @@ JWKS, then RFC 7523 JWT-bearer assertions exchanged at
   `archived` siblings. The Broker's hot path resolves against
   `current_revision_id` by default; agents can target a specific
   `draft` revision per call via the Broker's `Jentic-Revision`
-  header. Control-plane reads (`Search`, `Inspect`,
-  `Lookup`) accept matching `revision_id` / `revision_pins`
+  header (`vendor:name:version=<revision_id>`, with the
+  `revision_id` from the revision list). `revision_id` is an unprefixed UUID;
+  the header also accepts the equivalent `rev_<revision_id without hyphens>`
+  label, a header-only encoding rather than a resource ID. Control-plane
+  reads (`Search`, `Inspect`, `Lookup`) accept matching `revision_id` / `revision_pins`
   parameters so dashboards can preview an unpromoted revision
   before flipping `:promote`.
 - **ID prefixes.** Resource identifiers use a stable short prefix.
@@ -214,7 +217,6 @@ JWKS, then RFC 7523 JWT-bearer assertions exchanged at
   | `job_` | Async job | UUIDs also accepted on inputs for backward compatibility. |
   | `evt_` | Event | ULID-shaped. |
   | `op_` | Registered operation | |
-  | `rev_` | API revision | ULID-shaped. |
   | `usr_` | User | Org member. Resolves via `GET /users/{user_id}`. Used in `decided_by` and similar audit references. |
   | `inv_` | Invite token | One-time token issued at user creation. Plaintext value shown **once** at issue / re-issue; `:redeem-invite` consumes it. |
   | `areq_` | Access request (retired) | Retired (theme 7): the access-request flow is gone. Ids still appear in stored audit/event records. |
