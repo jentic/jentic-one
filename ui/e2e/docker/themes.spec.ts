@@ -288,7 +288,8 @@ for (const theme of THEMES) {
 				.first()
 				.click();
 			await expect(page.getByTestId('sheet-primitive')).toBeVisible();
-			await page.getByRole('button', { name: /Edit access/ }).click();
+			// The seeded binding has no rules (Blocked), so Manage access opens on the editor.
+			await expect(page.getByTestId('access-editor')).toBeVisible();
 			await page.getByRole('radio', { name: /^Custom rules/ }).click();
 			await page.getByRole('button', { name: 'By path' }).click();
 			await page.getByRole('button', { name: 'Add path rule' }).first().click();

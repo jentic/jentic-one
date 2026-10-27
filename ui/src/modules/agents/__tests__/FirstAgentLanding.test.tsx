@@ -167,7 +167,8 @@ describe('Agents page — zero agents', () => {
 		renderPage();
 		await landing();
 		const preview = screen.getByTestId('landing-preview');
-		const height = () => preview.getBoundingClientRect().height;
+		// To the pixel: layout rounding can leave a sub-pixel difference.
+		const height = () => Math.round(preview.getBoundingClientRect().height);
 		const first = height();
 
 		await user.click(screen.getByRole('radio', { name: /Connect over MCP/ }));

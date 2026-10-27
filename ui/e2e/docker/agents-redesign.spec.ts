@@ -430,8 +430,8 @@ test('a member without agents:write or credentials:write gets no binding verbs',
 	const sheet = await manageAccess(viewer, row);
 	await expect(sheet.getByRole('button', { name: /^Unbind/ })).toHaveCount(0);
 	await expect(sheet.getByRole('button', { name: /^Pause/ })).toHaveCount(0);
-	// A viewer reads the rules, with no way to edit them and no danger zone.
-	await expect(sheet.getByTestId('access-read-view')).toBeVisible();
+	// No way to edit the rules and no danger zone. (The rules read itself is
+	// owner-scoped: this member can't read an admin's credential's rules.)
 	await expect(sheet.getByRole('button', { name: /Edit access/ })).toHaveCount(0);
 	await expect(sheet.getByTestId('sidebar-danger-zone')).toHaveCount(0);
 	await viewer.context().close();
