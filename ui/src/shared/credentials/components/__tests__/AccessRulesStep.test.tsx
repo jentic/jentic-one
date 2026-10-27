@@ -86,6 +86,17 @@ async function openList(
 	if (fold) await user.click(fold);
 }
 
+/** Apply choices that leave action rules behind — which folds the list — then
+ * open it again and return the fresh list. */
+async function applyAndReopen(
+	user: ReturnType<typeof userEvent.setup>,
+	editor: HTMLElement,
+): Promise<HTMLElement> {
+	await applyChoices(user);
+	await user.click(await within(editor).findByRole('button', { name: /^Choose more actions/ }));
+	return within(editor).findByRole('list', { name: 'Operations' });
+}
+
 function stubOperations(): void {
 	worker.use(
 		http.get('/apis/acme.com/main/1.0.0/operations', () =>
@@ -863,7 +874,7 @@ describe('AccessRulesStep', () => {
 		const editor = screen.getByTestId('t-custom-editor');
 		await user.click(await within(editor).findByRole('button', { name: 'By action' }));
 		await openList(user, editor);
-		const list = await within(editor).findByRole('list', { name: 'Operations' });
+		let list = await within(editor).findByRole('list', { name: 'Operations' });
 		// No "Off" option: unset is nothing pressed, the default for an action in no rule.
 		for (const action of ['GET /items', 'POST /items']) {
 			expect(
@@ -879,7 +890,8 @@ describe('AccessRulesStep', () => {
 
 		await setAccess(user, list, 'GET /items', 'Allow');
 		await setAccess(user, list, 'POST /items', 'Ask');
-		await applyChoices(user);
+		// Applying folds the list behind the rules' cards; reopen it to go on.
+		list = await applyAndReopen(user, editor);
 		expect(onRules).toHaveBeenLastCalledWith([
 			{ effect: 'require-approval', methods: null, path: null, operations: ['createItem'] },
 			{ effect: 'allow', methods: null, path: null, operations: ['listItems'] },
@@ -891,7 +903,7 @@ describe('AccessRulesStep', () => {
 
 		// Ask → Deny.
 		await setAccess(user, list, 'POST /items', 'Deny');
-		await applyChoices(user);
+		list = await applyAndReopen(user, editor);
 		expect(onRules).toHaveBeenLastCalledWith([
 			{ effect: 'deny', methods: null, path: null, operations: ['createItem'] },
 			{ effect: 'allow', methods: null, path: null, operations: ['listItems'] },
