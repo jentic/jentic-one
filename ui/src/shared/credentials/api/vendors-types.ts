@@ -69,6 +69,8 @@ export interface ReviewSession {
 	digest: string;
 	/** The session's current revision; ``:confirm`` names it as ``revision_id``. */
 	revision?: { id: string; number: number } | null;
+	/** When a human last rejected this agent's ask for the same target (or binding). */
+	last_rejected_at?: string | null;
 	/** Edit sessions only: the binding change under review. */
 	edit?: ReviewEdit | null;
 	/** Whether this viewer may confirm the session as it stands. */

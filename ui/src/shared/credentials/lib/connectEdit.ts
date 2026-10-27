@@ -99,6 +99,69 @@ export function revisionChanges(
 	});
 }
 
+function plural(n: number, word: string): string {
+	return `${n} ${word}${n === 1 ? '' : 's'}`;
+}
+
+/** A revision's own reason: why it was asked for, as it was sent. */
+export function revisionReason(revision: SessionRevision): string | null {
+	const reason = revision.proposal.reason;
+	return typeof reason === 'string' && reason.trim() !== '' ? reason : null;
+}
+
+/**
+ * One line on what a revision did, e.g. "added 2 rules, asked to resume";
+ * "replaced the rule list" for a full replacement, and the rebase onto a
+ * changed binding for one no one made.
+ */
+export function revisionSummary(change: RevisionChange): string {
+	if (change.revision.created_by === null) return 'rebased onto the access as it is now';
+	const proposal = change.revision.proposal as {
+		rules?: { set?: unknown };
+		resume?: boolean | null;
+	};
+	const added = change.rules.filter((c) => c.kind === 'added').length;
+	const removed = change.rules.filter((c) => c.kind === 'removed').length;
+	const parts: string[] = [];
+	if (proposal.rules?.set !== undefined && (added > 0 || removed > 0)) {
+		parts.push('replaced the rule list');
+	} else {
+		if (added > 0) parts.push(`added ${plural(added, 'rule')}`);
+		if (removed > 0) parts.push(`removed ${plural(removed, 'rule')}`);
+	}
+	if (change.addedScopes.length > 0)
+		parts.push(`added ${plural(change.addedScopes.length, 'scope')}`);
+	if (change.removedScopes.length > 0) {
+		parts.push(`removed ${plural(change.removedScopes.length, 'scope')}`);
+	}
+	if (proposal.resume) parts.push('asked to resume');
+	return parts.length > 0 ? parts.join(', ') : 'changed the reason only';
+}
+
+/**
+ * The revision that put each added rule in the request, by rule content:
+ * the latest one that added it (a rule dropped and asked for again counts
+ * from its return).
+ */
+export function revisionsAddingRules(changes: readonly RevisionChange[]): Map<string, number> {
+	const introduced = new Map<string, number>();
+	for (const change of changes) {
+		for (const rule of change.rules) {
+			if (rule.kind === 'added') introduced.set(ruleKey(rule.rule), change.revision.number);
+			else introduced.delete(ruleKey(rule.rule));
+		}
+	}
+	return introduced;
+}
+
+/** The revision that added ``rule``, from :func:`revisionsAddingRules`. */
+export function revisionAddingRule(
+	introduced: ReadonlyMap<string, number>,
+	rule: PermissionRule,
+): number | undefined {
+	return introduced.get(ruleKey(rule));
+}
+
 /** Scopes the result holds that the credential's grant does not. */
 export function addedScopes(edit: ReviewEdit): string[] {
 	const granted = new Set(edit.current.granted_scopes ?? []);

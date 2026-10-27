@@ -7,7 +7,10 @@ import type {
 import {
 	addedScopes,
 	diffRules,
+	revisionAddingRule,
 	revisionChanges,
+	revisionsAddingRules,
+	revisionSummary,
 	ruleChanges,
 	rulesToConfirm,
 } from '@/shared/credentials/lib/connectEdit';
@@ -69,6 +72,28 @@ describe('connectEdit', () => {
 		expect(first.addedScopes).toEqual([]);
 		expect(second.rules.map((c) => [c.kind, c.rule.path])).toEqual([['added', '/v1/labels']]);
 		expect(second.addedScopes).toEqual(['send']);
+	});
+
+	it('sums up what each revision did, and which one added each rule', () => {
+		const rebased = { ...revision(3, [READ, SEND, LABEL], ['read', 'send']), created_by: null };
+		const replaced = {
+			...revision(2, [READ, SEND, LABEL], ['read', 'send']),
+			proposal: { rules: { set: [] }, resume: true },
+		};
+		const changes = revisionChanges(EDIT, [
+			revision(1, [READ, SEND], ['read']),
+			replaced,
+			rebased,
+		]);
+		expect(changes.map(revisionSummary)).toEqual([
+			'added 1 rule, removed 1 rule',
+			'replaced the rule list, added 1 scope, asked to resume',
+			'rebased onto the access as it is now',
+		]);
+		const introduced = revisionsAddingRules(changes);
+		expect(revisionAddingRule(introduced, SEND)).toBe(1);
+		expect(revisionAddingRule(introduced, LABEL)).toBe(2);
+		expect(revisionAddingRule(introduced, READ)).toBeUndefined();
 	});
 });
 

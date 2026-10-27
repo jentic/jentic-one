@@ -437,6 +437,8 @@ export interface MockConnectSession {
 	revisions?: SessionRevision[];
 	/** A create session's current revision (defaults to revision 1); `:amend` moves it. */
 	revision?: { id: string; number: number };
+	/** When a human last rejected this agent's ask for the same target (the review shows it). */
+	last_rejected_at?: string | null;
 }
 
 type MockSessionOutcome = 'rejected' | 'cancelled' | 'connected' | 'applied';
@@ -738,6 +740,7 @@ const connectSessionsHandlers = [
 			digest: reviewDigest(gated),
 			revision: gated.edit?.revision ?? createRevision(gated),
 			edit: gated.edit ?? null,
+			last_rejected_at: gated.last_rejected_at ?? null,
 			can_confirm: gated.can_confirm ?? true,
 			existing_credentials: gated.existing_credentials ?? [],
 			requested_by_actor_id: gated.requested_by_actor_id,

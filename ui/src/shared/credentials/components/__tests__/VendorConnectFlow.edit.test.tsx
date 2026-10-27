@@ -233,7 +233,10 @@ describe('VendorConnectFlow approve — edit sessions', () => {
 		);
 		expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled();
 
-		await user.click(screen.getByRole('button', { name: 'Show the new version' }));
+		// Who changed it and what they did, with the way to it and to the history.
+		expect(screen.getByRole('alert')).toHaveTextContent(/Revision 2: .*removed 1 rule, .* ago/);
+		expect(screen.getByRole('button', { name: 'See history' })).toBeInTheDocument();
+		await user.click(screen.getByRole('button', { name: 'Review the new version' }));
 		expect(screen.getByText('Revision 2')).toBeInTheDocument();
 		await user.click(screen.getByRole('button', { name: 'Approve' }));
 		await screen.findByText('Access to Work Gmail updated');
@@ -284,15 +287,15 @@ describe('VendorConnectFlow approve — edit sessions', () => {
 				number: 1,
 				created_by: 'agnt_1',
 				created_at: '2026-10-19T10:00:00Z',
-				proposal: {},
+				proposal: { reason: 'Needs to read mail' },
 				result: { rules: [READ, DENY], scopes: ['gmail.readonly'] },
 			},
 			{
 				id: 'csr_2',
 				number: 2,
-				created_by: 'agnt_1',
+				created_by: 'usr_owner',
 				created_at: '2026-10-19T10:05:00Z',
-				proposal: {},
+				proposal: { rules: { set: [READ, SEND] }, reason: 'Send only, no deletes' },
 				result: { rules: [READ, SEND], scopes: ['gmail.readonly'] },
 			},
 		];
@@ -306,9 +309,69 @@ describe('VendorConnectFlow approve — edit sessions', () => {
 		expect(revisionTwo).toBeDefined();
 		expect(revisionTwo).toHaveTextContent(/POST \/v1\/send.*Added/);
 		expect(revisionTwo).toHaveTextContent(/DELETE \/v1\/.*Removed/);
-		expect(within(history).getByText('Revision 1').closest('li')).toHaveTextContent(
-			'No rule changes.',
-		);
+		// What each revision did, why, and whether the agent or a reviewer made it.
+		expect(revisionTwo).toHaveTextContent('Reviewer');
+		expect(revisionTwo).toHaveTextContent('Replaced the rule list.');
+		expect(revisionTwo).toHaveTextContent('“Send only, no deletes”');
+		const revisionOne = within(history).getByText('Revision 1').closest('li');
+		expect(revisionOne).toHaveTextContent('No rule changes.');
+		expect(revisionOne).toHaveTextContent('Agent');
+		expect(revisionOne).toHaveTextContent('“Needs to read mail”');
+		// The front page names the revision that added each rule.
+		const front = screen.getByRole('region', { name: 'Rule changes' });
+		expect(
+			within(front)
+				.getByText(/POST \/v1\/send/)
+				.closest('li'),
+		).toHaveTextContent('Added in revision 2');
+	});
+
+	it('saves nothing when the reviewer continues without changing the rules', async () => {
+		const seeded = seedEdit(editBlock());
+		renderApprove(seeded.session_id);
+		const user = userEvent.setup();
+		const amends: Request[] = [];
+		const record = ({ request }: { request: Request }): void => {
+			if (request.url.endsWith(':amend')) amends.push(request);
+		};
+		worker.events.on('request:start', record);
+		try {
+			await user.click(await screen.findByRole('button', { name: 'Edit rules' }));
+			await user.click(await screen.findByRole('button', { name: 'Continue' }));
+			await screen.findByRole('region', { name: 'Rule changes' });
+			expect(screen.getByText('Revision 1')).toBeInTheDocument();
+			expect(amends).toEqual([]);
+		} finally {
+			worker.events.removeListener('request:start', record);
+		}
+	});
+
+	it('says Approve was refused when the request changed first', async () => {
+		const seeded = seedEdit(editBlock());
+		renderApprove(seeded.session_id);
+		const user = userEvent.setup();
+		await screen.findByRole('region', { name: 'Rule changes' });
+		// Amended between the last review read and the click.
+		seeded.edit = editBlock({ revision: { id: 'csr_2', number: 2 } });
+		await user.click(screen.getByRole('button', { name: 'Approve' }));
+		expect(
+			await screen.findByText(
+				'Not approved: this request changed while you were reviewing it.',
+			),
+		).toBeInTheDocument();
+		await user.click(await screen.findByRole('button', { name: 'Review the new version' }));
+		expect(screen.getByText('Revision 2')).toBeInTheDocument();
+	});
+
+	it('says when this agent’s ask was rejected before', async () => {
+		const seeded = seedEdit(editBlock());
+		seeded.last_rejected_at = '2026-10-20T09:00:00Z';
+		renderApprove(seeded.session_id);
+		expect(
+			await screen.findByText(
+				/This agent asked for this before, and the request was rejected/,
+			),
+		).toBeInTheDocument();
 	});
 
 	it('lists the conflicts and approves the reviewer’s rules to resolve them', async () => {

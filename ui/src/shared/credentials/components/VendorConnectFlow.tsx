@@ -31,7 +31,7 @@ import {
 	toast,
 } from '@/shared/ui';
 import type { RadioCardOption } from '@/shared/ui';
-import { cn } from '@/shared/lib/utils';
+import { cn, timeAgo } from '@/shared/lib/utils';
 import {
 	connectRequestsKey,
 	invalidateBindingSurfaces,
@@ -89,7 +89,12 @@ import {
 	scopeChanges,
 	type ScopeChange,
 	resumes,
+	revisionAddingRule,
 	revisionChanges,
+	type RevisionChange,
+	revisionReason,
+	revisionsAddingRules,
+	revisionSummary,
 	ruleChanges,
 	rulesToConfirm,
 	sameRules,
@@ -1472,6 +1477,7 @@ function VendorApproveFlow({
 				reason={session.reason}
 				loading={agents.isLoading}
 			/>
+			<PreviouslyRejected at={session.last_rejected_at} />
 
 			{apiTarget && <ApiTargetDetails session={session} />}
 
@@ -1657,6 +1663,27 @@ function EditApproveFlow({
 	const [failure, setFailure] = useState<string | null>(null);
 	const [historyOpen, setHistoryOpen] = useState(false);
 	const [rejectOpen, setRejectOpen] = useState(false);
+	// Approve was refused because the request had changed: the banner says so.
+	const [staleApprove, setStaleApprove] = useState(false);
+	const revisions = useConnectSessionRevisions(sessionId, pollToken);
+	const history = useMemo(
+		() => revisionChanges(shown, revisions.data ?? []),
+		[shown, revisions.data],
+	);
+	// Which revision put each added rule in the request, up to the one shown.
+	const introducedIn = useMemo(
+		() =>
+			revisionsAddingRules(history.filter((c) => c.revision.number <= shown.revision.number)),
+		[history, shown.revision.number],
+	);
+	const latestChange = history.find((c) => c.revision.id === latest.revision.id);
+	// A new revision the review poll found: read the history again to describe it.
+	const refetchedFor = useRef<string | null>(null);
+	useEffect(() => {
+		if (!revisions.data || latestChange || refetchedFor.current === latest.revision.id) return;
+		refetchedFor.current = latest.revision.id;
+		void revisions.refetch();
+	}, [latest.revision.id, latestChange, revisions]);
 
 	const goTo = (next: EditPhase): void => {
 		phaseRef.current = next;
@@ -1684,6 +1711,7 @@ function EditApproveFlow({
 		setShown(latest);
 		setResume(resumes(latest));
 		setError(null);
+		setStaleApprove(false);
 	};
 
 	// Everything the applied change shows on: the request lists, the
@@ -1758,8 +1786,13 @@ function EditApproveFlow({
 				void queryClient.invalidateQueries({ queryKey: connectRequestsKey });
 				return;
 			}
-			if (copy.action === 'reload') onReload();
-			setError(copy.message);
+			if (copy.action === 'reload') {
+				// The changed-request banner explains it once the new version is read.
+				onReload();
+				setStaleApprove(true);
+			} else {
+				setError(copy.message);
+			}
 			goTo('review');
 		}
 	};
@@ -1819,8 +1852,18 @@ function EditApproveFlow({
 		);
 	}
 	// A reviewer's change becomes a revision of the request, recorded as theirs.
+	// Saving what is already there changes nothing, so it sends nothing.
 	const saveRevision = async (body: AmendEditBody): Promise<void> => {
 		setError(null);
+		const sameScopes = (next: string[]): boolean =>
+			JSON.stringify([...next].sort()) === JSON.stringify([...shown.result.scopes].sort());
+		if (
+			(body.rules && sameRules(body.rules.set, rulesToConfirm(shown.result.rules))) ||
+			(body.scopes && sameScopes(body.scopes.set))
+		) {
+			goTo('review');
+			return;
+		}
 		try {
 			const amended = await amendMutation.mutateAsync(body);
 			setOwnRevision(amended.revision_id);
@@ -1878,19 +1921,14 @@ function EditApproveFlow({
 				}
 			/>
 
-			{changed && (
-				<div
-					role="alert"
-					className="border-warning/40 bg-warning/10 flex items-center justify-between gap-3 rounded-lg border p-3 text-sm"
-				>
-					<span>
-						This request changed while you were reviewing it (revision{' '}
-						{latest.revision.number}). Review the new version before approving.
-					</span>
-					<Button type="button" size="sm" variant="secondary" onClick={showLatest}>
-						Show the new version
-					</Button>
-				</div>
+			{(changed || staleApprove) && (
+				<RequestChangedBanner
+					change={changed ? latestChange : undefined}
+					agentId={byAgent ? shown.binding.agent_id : undefined}
+					afterApprove={staleApprove}
+					onReview={changed ? showLatest : undefined}
+					onHistory={(): void => setHistoryOpen(true)}
+				/>
 			)}
 
 			{error && <ErrorAlert message={error} />}
@@ -1928,6 +1966,7 @@ function EditApproveFlow({
 					loading={false}
 				/>
 			)}
+			{byAgent && <PreviouslyRejected at={session.last_rejected_at} />}
 
 			<div className="text-muted-foreground flex items-center justify-between text-xs">
 				<span>Revision {shown.revision.number}</span>
@@ -1941,7 +1980,12 @@ function EditApproveFlow({
 				</Button>
 			</div>
 			{historyOpen && (
-				<EditHistory sessionId={sessionId} pollToken={pollToken} edit={shown} />
+				<EditHistory
+					changes={history}
+					loading={revisions.isLoading}
+					failed={revisions.error != null}
+					agentId={byAgent ? shown.binding.agent_id : undefined}
+				/>
 			)}
 
 			{shown.widens_access && (
@@ -1977,7 +2021,11 @@ function EditApproveFlow({
 						</Button>
 					)}
 				</div>
-				<RuleChangeList changes={changes} agentId={shown.binding.agent_id} />
+				<RuleChangeList
+					changes={changes}
+					agentId={shown.binding.agent_id}
+					introducedIn={introducedIn}
+				/>
 			</section>
 
 			{shown.current.granted_scopes != null && (
@@ -2369,10 +2417,13 @@ function EditScopesFlow({
 function RuleChangeList({
 	changes,
 	agentId,
+	introducedIn,
 }: {
 	changes: readonly RuleChange[];
 	/** The binding's agent: whose asks read "Requested by agent". */
 	agentId?: string;
+	/** The revision that added each rule (see ``revisionsAddingRules``). */
+	introducedIn?: ReadonlyMap<string, number>;
 }) {
 	if (changes.length === 0) {
 		return <p className="text-muted-foreground text-xs">No rule changes.</p>;
@@ -2406,6 +2457,9 @@ function RuleChangeList({
 						{change.widens && <Badge variant="warning">Widens</Badge>}
 						{change.kind === 'added' && change.rule.added_by && (
 							<AddedBy actorId={change.rule.added_by} agentId={agentId} />
+						)}
+						{change.kind === 'added' && introducedIn && (
+							<IntroducedIn number={revisionAddingRule(introducedIn, change.rule)} />
 						)}
 					</div>
 					{change.rule.comment && (
@@ -2581,52 +2635,154 @@ function EditReviewScopesStep({
 }
 
 /** Each revision with its own change against the one before (revision 1: against today). */
-function EditHistory({
-	sessionId,
-	pollToken,
-	edit,
-}: {
-	sessionId: string;
-	pollToken?: string;
-	edit: ReviewEdit;
-}) {
-	const revisions = useConnectSessionRevisions(sessionId, pollToken);
-	const changes = useMemo(
-		() => revisionChanges(edit, revisions.data ?? []),
-		[edit, revisions.data],
+/** That this agent's ask for the same target was rejected before, and when. */
+function PreviouslyRejected({ at }: { at?: string | null }) {
+	if (!at) return null;
+	return (
+		<p role="note" className="text-warning flex items-center gap-2 text-sm">
+			<ShieldAlert className="h-4 w-4" />
+			This agent asked for this before, and the request was rejected on{' '}
+			{new Date(at).toLocaleString()}.
+		</p>
 	);
-	if (revisions.isLoading) return <Skeleton className="h-12 w-full" />;
-	if (revisions.error) return <ErrorAlert message="The history couldn't be loaded." />;
+}
+
+function IntroducedIn({ number }: { number: number | undefined }) {
+	if (number === undefined) return null;
+	return <span className="text-muted-foreground text-[11px]">Added in revision {number}</span>;
+}
+
+/** Who made a revision: the agent, a reviewer, or no one (a rebase). */
+function RevisionAuthor({ createdBy, agentId }: { createdBy: string | null; agentId?: string }) {
+	if (createdBy === null) return <span>Rebased</span>;
+	return (
+		<span className="inline-flex items-center gap-1">
+			{agentId !== undefined && (
+				<Badge variant={createdBy === agentId ? 'default' : 'neutral'}>
+					{createdBy === agentId ? 'Agent' : 'Reviewer'}
+				</Badge>
+			)}
+			<ActorLabel actorId={createdBy} />
+		</span>
+	);
+}
+
+function capitalise(text: string): string {
+	return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/**
+ * The request changed under the reviewer: who changed it, how long ago,
+ * what they did and why. Also shown when Approve was refused for it.
+ */
+function RequestChangedBanner({
+	change,
+	agentId,
+	afterApprove,
+	onReview,
+	onHistory,
+}: {
+	/** The new current revision; absent until it is read. */
+	change?: RevisionChange;
+	agentId?: string;
+	afterApprove: boolean;
+	/** Absent until the new version is read. */
+	onReview?: () => void;
+	onHistory: () => void;
+}) {
+	const reason = change ? revisionReason(change.revision) : null;
+	return (
+		<div
+			role="alert"
+			className="border-warning/40 bg-warning/10 flex items-start justify-between gap-3 rounded-lg border p-3 text-sm"
+		>
+			<div className="space-y-1">
+				<p className="font-medium">
+					{afterApprove
+						? 'Not approved: this request changed while you were reviewing it.'
+						: 'This request changed while you were reviewing it.'}
+				</p>
+				{change && (
+					<p className="text-xs">
+						Revision {change.revision.number}:{' '}
+						{change.revision.created_by === null ? (
+							'the request was rebased onto the access as it is now'
+						) : (
+							<>
+								<RevisionAuthor
+									createdBy={change.revision.created_by}
+									agentId={agentId}
+								/>{' '}
+								{revisionSummary(change)}
+							</>
+						)}
+						, {timeAgo(change.revision.created_at)} ago.
+					</p>
+				)}
+				{reason && <p className="text-foreground-sub text-[11px] italic">“{reason}”</p>}
+			</div>
+			<div className="flex shrink-0 gap-2">
+				{onReview && (
+					<Button type="button" size="sm" variant="secondary" onClick={onReview}>
+						Review the new version
+					</Button>
+				)}
+				<Button type="button" size="sm" variant="ghost" onClick={onHistory}>
+					See history
+				</Button>
+			</div>
+		</div>
+	);
+}
+
+/** Each revision: who made it and when, what it did and why, and its rule and scope diff. */
+function EditHistory({
+	changes,
+	loading,
+	failed,
+	agentId,
+}: {
+	changes: readonly RevisionChange[];
+	loading: boolean;
+	failed: boolean;
+	agentId?: string;
+}) {
+	if (loading) return <Skeleton className="h-12 w-full" />;
+	if (failed) return <ErrorAlert message="The history couldn't be loaded." />;
 	return (
 		<ol aria-label="Request history" className="space-y-3">
-			{changes.map(({ revision, rules, addedScopes: added, removedScopes }) => (
-				<li key={revision.id} className="space-y-1">
-					<p className="text-xs">
-						<span className="font-medium">Revision {revision.number}</span>{' '}
-						<span className="text-muted-foreground">
-							{revision.created_by ? (
-								<ActorLabel actorId={revision.created_by} />
-							) : (
-								'Rebased'
-							)}
-							{' · '}
-							{new Date(revision.created_at).toLocaleString()}
-						</span>
-					</p>
-					<RuleChangeList changes={rules} />
-					{added.length > 0 && (
+			{changes.map((change) => {
+				const { revision, rules, addedScopes: added, removedScopes } = change;
+				const reason = revisionReason(revision);
+				return (
+					<li key={revision.id} className="space-y-1">
 						<p className="text-xs">
-							Scopes added: <span className="font-mono">{added.join(', ')}</span>
+							<span className="font-medium">Revision {revision.number}</span>{' '}
+							<span className="text-muted-foreground">
+								<RevisionAuthor createdBy={revision.created_by} agentId={agentId} />
+								{' · '}
+								{new Date(revision.created_at).toLocaleString()}
+							</span>
 						</p>
-					)}
-					{removedScopes.length > 0 && (
-						<p className="text-xs">
-							Scopes dropped:{' '}
-							<span className="font-mono">{removedScopes.join(', ')}</span>
-						</p>
-					)}
-				</li>
-			))}
+						<p className="text-xs">{capitalise(revisionSummary(change))}.</p>
+						{reason && (
+							<p className="text-foreground-sub text-[11px] italic">“{reason}”</p>
+						)}
+						<RuleChangeList changes={rules} />
+						{added.length > 0 && (
+							<p className="text-xs">
+								Scopes added: <span className="font-mono">{added.join(', ')}</span>
+							</p>
+						)}
+						{removedScopes.length > 0 && (
+							<p className="text-xs">
+								Scopes dropped:{' '}
+								<span className="font-mono">{removedScopes.join(', ')}</span>
+							</p>
+						)}
+					</li>
+				);
+			})}
 		</ol>
 	);
 }

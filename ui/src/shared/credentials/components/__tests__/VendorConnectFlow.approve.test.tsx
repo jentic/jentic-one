@@ -321,6 +321,16 @@ describe('VendorConnectFlow approve — manual_* sessions', () => {
 		expect(mutatingRequests().filter((r) => r.url.endsWith(':amend'))).toEqual([]);
 	});
 
+	it('says when this agent’s ask for the API was rejected before', async () => {
+		const seeded = seedManualSession({ last_rejected_at: '2026-10-20T09:00:00Z' });
+		renderApprove(seeded.session_id);
+		expect(
+			await screen.findByText(
+				/This agent asked for this before, and the request was rejected/,
+			),
+		).toBeInTheDocument();
+	});
+
 	it('requires at least one rule and adds no fallback rule', async () => {
 		const seeded = seedManualSession({ requested_permission_rules: [] });
 		renderApprove(seeded.session_id);
