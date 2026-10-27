@@ -68,25 +68,6 @@ _execution_duration = _meter.create_histogram(
     description="Duration of broker executions in milliseconds",
 )
 
-_circuit_event_last_emitted: dict[str, datetime] = {}
-
-
-def _should_emit_circuit_event(host: str, cooldown_s: int = 15) -> bool:
-    """Return True if no circuit-open event was emitted for this host within the cooldown."""
-    now = datetime.now(UTC)
-    last = _circuit_event_last_emitted.get(host)
-    if last is not None and (now - last).total_seconds() < cooldown_s:
-        return False
-    _circuit_event_last_emitted[host] = now
-    stale = [
-        h
-        for h, ts in _circuit_event_last_emitted.items()
-        if (now - ts).total_seconds() > cooldown_s
-    ]
-    for h in stale:
-        _circuit_event_last_emitted.pop(h, None)
-    return True
-
 
 def default_pipeline(runner: UpstreamRunner) -> BrokerExecutionPipeline:
     """Build the default pipeline around the given runner + default post stages.
@@ -242,22 +223,23 @@ async def run_execution(
                     repeated_failure_counter=repeated_failure_counter,
                     origin=origin,
                 )
-            if isinstance(exc, CircuitOpenError):
+            # The breaker marks one refusal per host per open period as the one
+            # that reports it, across every process sharing the state backend.
+            if isinstance(exc, CircuitOpenError) and exc.report:
                 host = urlparse(ctx_req.upstream_url).netloc or "<unknown>"
-                if _should_emit_circuit_event(host):
-                    try:
-                        await emit_event(
-                            session,
-                            type=EventType.UPSTREAM_CIRCUIT_OPEN,
-                            severity=EventSeverity.WARNING,
-                            summary=f"Circuit breaker opened for upstream {host}",
-                            created_by=actor_id,
-                            actor_id=actor_id,
-                            actor_type=actor_type,
-                            data={"host": host},
-                        )
-                    except Exception:
-                        logger.warning("emit_circuit_event_failed", host=host)
+                try:
+                    await emit_event(
+                        session,
+                        type=EventType.UPSTREAM_CIRCUIT_OPEN,
+                        severity=EventSeverity.WARNING,
+                        summary=f"Circuit breaker opened for upstream {host}",
+                        created_by=actor_id,
+                        actor_id=actor_id,
+                        actor_type=actor_type,
+                        data={"host": host},
+                    )
+                except Exception:
+                    logger.warning("emit_circuit_event_failed", host=host)
         raise
 
     result = outcome.result

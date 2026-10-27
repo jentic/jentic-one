@@ -271,6 +271,27 @@ backend.
 - **The built-in `redis` backend is deprecated.** It still works this
   release and logs a `state_backend_deprecated` WARNING at startup; it is
   removed in a later release (see Deprecations).
+- **JWT-bearer `jti` replay records move to the admin database.** An admin
+  migration adds the `assertion_jtis` table, applied with the release's other
+  migrations (the Helm migration hook, or the usual upgrade step on Docker). A
+  `jti` is now single-use per agent across every auth replica, where before
+  each replica (and each restart) had its own in-memory record. Nothing to
+  configure; the table holds one small row per live assertion and prunes
+  itself.
+- **The remaining in-process counters use the shared-state backend.** The
+  broker's auth-failure event counters, the circuit-open event dedupe and
+  the MCP session-event dedupe and per-client caps now live on
+  `state.backend` instead of module globals, so on a registered shared
+  backend they are deployment-wide. On `memory` they stay per process, as
+  before.
+- **A surface assembled without its shared-state wiring fails loudly.** The
+  auth routers and the control and MCP connect limiters used to build a
+  private in-memory backend, with a WARNING, when an app was put together
+  without the auth surface's `install_on_app` or the control surface's
+  `install_connect_limiters`. They now raise a `RuntimeError` naming the
+  missing step (the MCP mount at startup, the others on first use). The
+  shipped app factories are unaffected; a custom assembly must call those
+  install functions.
 
 ## Upgrading to 0.42.3
 
