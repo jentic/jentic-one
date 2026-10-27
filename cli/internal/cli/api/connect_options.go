@@ -42,7 +42,7 @@ func (a *app) getConnectOptions(ctx context.Context, api *control.ApiTargetReque
 		if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusNotFound {
 			return nil, &ux.CodedError{
 				Code: ux.CodeResolveFailed,
-				Msg:  fmt.Sprintf("the registry holds no API %s", connectTargetLabel("", api)),
+				Msg:  "the registry holds no API " + connectTargetLabel("", api),
 				Actionable: "find it with search_catalog (`jentic catalog search`) and import it " +
 					"(import_api / `jentic catalog import`), then ask again",
 			}
