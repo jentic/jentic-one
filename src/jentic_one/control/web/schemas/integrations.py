@@ -905,6 +905,14 @@ class ReviewSessionResponse(BaseModel):
     revision: SessionRevisionRef | None = None
     # Edit sessions only.
     edit: ReviewEditResponse | None = None
+    last_rejected_at: datetime | None = Field(
+        default=None,
+        description=(
+            "When a human last rejected this agent's request for the same target "
+            "(or, for an edit, the same binding), within the last 30 days; null when "
+            "none. Lets the reviewer see that a request repeats one already rejected."
+        ),
+    )
 
 
 class SessionRevisionResponse(BaseModel):

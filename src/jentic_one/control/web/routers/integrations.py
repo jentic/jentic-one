@@ -532,6 +532,7 @@ def _review_response(data: ReviewData) -> ReviewSessionResponse:
             if data.revision_id is not None and data.revision_number is not None
             else None
         ),
+        last_rejected_at=data.last_rejected_at,
         api_reference=ApiReferenceResponse(
             vendor=data.api_vendor,
             name=data.api_name,

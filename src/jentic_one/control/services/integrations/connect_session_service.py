@@ -453,6 +453,8 @@ class ReviewData:
     revision_number: int | None = None
     # Edit sessions only: the binding change under review.
     edit: EditReview | None = None
+    # When a human last rejected this agent's ask for the same target (or binding).
+    last_rejected_at: datetime | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -991,12 +993,18 @@ def _require_state(row: ConnectSession, *, expected: str, action: str) -> None:
         raise InvalidStateTransitionError(row.id, row.state, action)
 
 
-def _require_revision(row: ConnectSession, revision_id: str | None) -> None:
-    """A confirm must name the session's current revision, the one its reviewer saw."""
-    if revision_id is None:
-        raise RevisionRequiredError()
-    if revision_id != row.current_revision_id:
-        raise RevisionChangedError(row.id, row.current_revision_id)
+async def _revision_changed(
+    session: Any, session_id: str, current_revision_id: str | None
+) -> RevisionChangedError:
+    """:class:`RevisionChangedError` naming the current revision by its number too."""
+    current = (
+        await ConnectSessionRevisionRepository.get_by_id(session, current_revision_id)
+        if current_revision_id is not None
+        else None
+    )
+    return RevisionChangedError(
+        session_id, current_revision_id, current.number if current is not None else None
+    )
 
 
 def _session_closed(row: ConnectSession) -> SessionClosedError:
@@ -1661,6 +1669,35 @@ class ConnectSessionService:
             return
         now = datetime.now(UTC)
         cooldown = timedelta(hours=hours)
+        ended = await self._last_rejected_at(
+            agent_id,
+            target_kind=target_kind,
+            vendor=vendor,
+            api_name=api_name,
+            api_version=api_version,
+            credential_id=credential_id,
+            since=now - cooldown,
+        )
+        if ended is None:
+            return
+        retry_after = max(1, math.ceil((ended + cooldown - now).total_seconds()))
+        raise RecentlyRejectedError(retry_after)
+
+    async def _last_rejected_at(
+        self,
+        agent_id: str,
+        *,
+        target_kind: str,
+        vendor: str,
+        api_name: str | None,
+        api_version: str | None,
+        credential_id: str | None,
+        since: datetime,
+    ) -> datetime | None:
+        """When a human last rejected the agent's ask for this target, if after ``since``.
+
+        With ``credential_id`` the ask is an edit, and the target is that binding.
+        """
         async with self._ctx.control_db.session() as session:
             if credential_id is not None:
                 ended = await ConnectSessionOutcomeRepository.latest_edit_ended_at(
@@ -1668,7 +1705,7 @@ class ConnectSessionService:
                     agent_id=agent_id,
                     credential_id=credential_id,
                     outcome=OUTCOME_REJECTED,
-                    since=now - cooldown,
+                    since=since,
                 )
             else:
                 ended = await ConnectSessionOutcomeRepository.latest_ended_at(
@@ -1679,14 +1716,29 @@ class ConnectSessionService:
                     vendor=vendor,
                     api_name=api_name,
                     api_version=api_version,
-                    since=now - cooldown,
+                    since=since,
                 )
-        if ended is None:
-            return
-        if ended.tzinfo is None:
+        if ended is not None and ended.tzinfo is None:
             ended = ended.replace(tzinfo=UTC)
-        retry_after = max(1, math.ceil((ended + cooldown - now).total_seconds()))
-        raise RecentlyRejectedError(retry_after)
+        return ended
+
+    async def _review_last_rejected_at(self, row: ConnectSession) -> datetime | None:
+        """When a human last rejected this agent's ask for the session's target.
+
+        Shown on the review so a repeat of a rejected request reads as one.
+        Outcomes are kept for :data:`_OUTCOME_RETENTION`, so that bounds it.
+        """
+        if row.agent_id is None or row.agent_id != row.initiator_actor_id:
+            return None
+        return await self._last_rejected_at(
+            row.agent_id,
+            target_kind=row.target_kind,
+            vendor=row.vendor,
+            api_name=row.api_name,
+            api_version=row.api_version,
+            credential_id=row.credential_id if row.intent == INTENT_EDIT else None,
+            since=datetime.now(UTC) - _OUTCOME_RETENTION,
+        )
 
     async def _check_open_session_caps(
         self, agent_id: str | None, identity: Identity, agent: AgentOwnerRow | None
@@ -1847,7 +1899,9 @@ class ConnectSessionService:
         ``resume`` resolve against the session's baseline like the ask it
         opened with; a create session's ``requested_permission_rules``,
         ``requested_scopes`` and ``reason`` replace its ask outright. The
-        target, flow and agent never change.
+        target, flow and agent never change. An amend that would leave the
+        same in place on approval writes nothing and returns the current
+        revision.
         """
         async with self._ctx.control_db.session() as read_session:
             row = await ConnectSessionRepository.get_by_id(read_session, session_id)
@@ -1944,6 +1998,11 @@ class ConnectSessionService:
             if row.dedupe_key is not None:
                 fields["dedupe_key"] = await self._amended_dedupe_key(row, scopes)
 
+        if digest == current.digest and not current.proposal.get("conflicts"):
+            # Approving it would leave the same in place: the current revision stands.
+            return AmendedSession(
+                session_id=row.id, revision_id=current.id, revision_number=current.number
+            )
         revision = ConnectSessionRevision(
             id=generate_ksuid("csr"),
             session_id=row.id,
@@ -1967,7 +2026,7 @@ class ConnectSessionService:
                     latest = await ConnectSessionRepository.get_by_id(session, row.id)
                     if latest is None or latest.state not in open_states:
                         raise _session_closed(row)
-                    raise RevisionChangedError(row.id, latest.current_revision_id)
+                    raise await _revision_changed(session, row.id, latest.current_revision_id)
                 await ConnectSessionRevisionRepository.insert(session, revision)
         except DatabaseIntegrityError:
             # The amended scopes now match another open session of the agent's.
@@ -2334,7 +2393,8 @@ class ConnectSessionService:
         assert row.agent_id is not None and row.baseline is not None
         await self._require_agent_binding_allowed(row.agent_id, identity, late_bound=False)
         if row.current_revision_id != revision_id:
-            raise RevisionChangedError(row.id, row.current_revision_id)
+            async with self._ctx.control_db.session() as session:
+                raise await _revision_changed(session, row.id, row.current_revision_id)
 
         live = await self._live_binding_snapshot(row)
         if live is None:
@@ -2343,7 +2403,12 @@ class ConnectSessionService:
             )
             raise EditBindingNotFoundError(row.credential_id)
         if not baseline_matches(row.baseline, live):
-            raise BaselineChangedError(row.id, await self._rebase_edit(row, live))
+            rebased = await self._rebase_edit(row, live)
+            async with self._ctx.control_db.session() as session:
+                revision = await ConnectSessionRevisionRepository.get_by_id(session, rebased)
+            raise BaselineChangedError(
+                row.id, rebased, revision.number if revision is not None else None
+            )
 
         conflicts = await self._revision_conflicts(row)
         if conflicts and not resolve_conflicts:
@@ -2369,7 +2434,7 @@ class ConnectSessionService:
             if not won:
                 current = await ConnectSessionRepository.get_by_id(session, row.id)
                 if current is not None and current.state == "created":
-                    raise RevisionChangedError(row.id, current.current_revision_id)
+                    raise await _revision_changed(session, row.id, current.current_revision_id)
                 raise InvalidStateTransitionError(row.id, row.state, "confirm")
             await self._write_change(session, row, change)
         await self._apply_admin_change(row, change)
@@ -2410,7 +2475,7 @@ class ConnectSessionService:
             if not won:
                 current = await ConnectSessionRepository.get_by_id(session, row.id)
                 if current is not None and current.state == "created":
-                    raise RevisionChangedError(row.id, current.current_revision_id)
+                    raise await _revision_changed(session, row.id, current.current_revision_id)
                 raise InvalidStateTransitionError(row.id, row.state, "confirm")
             polling = await ConnectSessionRepository.get_by_id(session, row.id)
         assert polling is not None
@@ -3059,6 +3124,7 @@ class ConnectSessionService:
             revision_id=revision.id,
             revision_number=revision.number,
             edit=edit,
+            last_rejected_at=await self._review_last_rejected_at(row),
         )
 
     async def _emit_edit_requested(self, row: ConnectSession, *, credential_name: str) -> None:
@@ -3237,7 +3303,16 @@ class ConnectSessionService:
             existing_credentials=await self._existing_candidates(row, identity, credential),
             revision_id=revision.id if revision is not None else None,
             revision_number=revision.number if revision is not None else None,
+            last_rejected_at=await self._review_last_rejected_at(row),
         )
+
+    async def _require_revision(self, row: ConnectSession, revision_id: str | None) -> None:
+        """A confirm must name the session's current revision, the one its reviewer saw."""
+        if revision_id is None:
+            raise RevisionRequiredError()
+        if revision_id != row.current_revision_id:
+            async with self._ctx.control_db.session() as session:
+                raise await _revision_changed(session, row.id, row.current_revision_id)
 
     async def _current_revision(self, row: ConnectSession) -> ConnectSessionRevision | None:
         if row.current_revision_id is None:
@@ -3638,7 +3713,7 @@ class ConnectSessionService:
         # Friendly pre-check for the common stale-page case; the CAS below
         # is the authoritative guard against a concurrent confirm.
         _require_state(row, expected="created", action="confirm")
-        _require_revision(row, revision_id)
+        await self._require_revision(row, revision_id)
 
         # Re-open the session's own source at confirm time: the pinned
         # registration, or the config entry when the FK is NULL. If that
@@ -3866,7 +3941,7 @@ class ConnectSessionService:
         kind = _variant_kind(variant)
         _require_confirm_kind(row, kind)
         checks = variant.checks
-        _require_revision(row, checks.revision_id)
+        await self._require_revision(row, checks.revision_id)
         late_bound = row.agent_id is None and checks.agent_id is not None
         effective_agent_id = row.agent_id if row.agent_id is not None else checks.agent_id
         if isinstance(variant, ExistingCredentialConfirm) and effective_agent_id is None:

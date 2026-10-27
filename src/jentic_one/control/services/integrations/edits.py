@@ -168,7 +168,13 @@ def resolve_edit(
         return False
 
     if request.set_rules is not None:
-        resolved = [{"id": None, **rule_content(r)} for r in request.set_rules]
+        # A rule the binding already has keeps its id, as in an add/remove change.
+        pool = [(rule_content(r), r["id"]) for r in rules]
+        resolved = []
+        for rule in request.set_rules:
+            content = rule_content(rule)
+            match = next((i for i, (c, _) in enumerate(pool) if c == content), None)
+            resolved.append({"id": pool.pop(match)[1] if match is not None else None, **content})
     else:
         removed = {rule_id for rule_id in request.remove if check(rule_id)}
         resolved = [r for r in rules if r["id"] not in removed]

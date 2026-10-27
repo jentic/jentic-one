@@ -289,7 +289,7 @@ async def test_confirm_must_name_the_current_revision(
     ctx = integration_context
     svc = ConnectSessionService(ctx)
     created = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
-    with pytest.raises(RevisionChangedError):
+    with pytest.raises(RevisionChangedError) as stale:
         await svc.confirm_edit(
             created.session_id,
             poll_token=None,
@@ -298,7 +298,43 @@ async def test_confirm_must_name_the_current_revision(
             permission_rules=[_READ, _SEND],
             resume=False,
         )
+    assert stale.value.current_revision_number == 1
+    assert "review revision 1" in str(stale.value)
     assert await _rules(ctx, binding) == [("allow", "/v1/")]
+
+
+async def test_an_amend_that_changes_nothing_keeps_the_current_revision(
+    integration_context: Context, binding: str
+) -> None:
+    """A reviewer saving the rules unchanged writes no empty revision."""
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    created = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+    review = await svc.get_review_data(created.session_id, poll_token=None, identity=_OWNER)
+    assert review.edit is not None
+    unchanged = await svc.amend_session(
+        created.session_id,
+        identity=_OWNER,
+        amend=SessionAmend(
+            fields=frozenset({"rules"}),
+            rules=EditRequest(set_rules=[rule_to_write(r) for r in review.edit.result["rules"]]),
+        ),
+    )
+    assert (unchanged.revision_id, unchanged.revision_number) == (created.revision_id, 1)
+
+
+async def test_the_review_shows_when_this_binding_s_edit_was_last_rejected(
+    integration_context: Context, binding: str
+) -> None:
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    created = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+    first = await svc.get_review_data(created.session_id, poll_token=None, identity=_OWNER)
+    assert first.last_rejected_at is None
+    await svc.reject_session(created.session_id, identity=_OWNER)
+    again = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+    review = await svc.get_review_data(again.session_id, poll_token=None, identity=_OWNER)
+    assert review.last_rejected_at is not None
 
 
 async def test_agents_never_confirm_an_edit(integration_context: Context, binding: str) -> None:

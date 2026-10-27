@@ -1630,6 +1630,60 @@ async def test_http_reject_status_and_cooldown(
         assert int(again.headers["Retry-After"]) > 0
 
 
+async def test_a_stale_confirm_names_the_revision_to_approve(env: Context) -> None:
+    await _import(env, _KEY_SCHEME)
+    created = await _connect(env)
+    widened = [*_RULES, {"effect": "allow", "methods": ["POST"], "path": "/v1/widgets"}]
+    async with _client(env, _OWNER) as owner:
+        first = (await owner.get(f"/connect-sessions/{created.session_id}")).json()
+        amended = await owner.post(
+            f"/connect-sessions/{created.session_id}:amend",
+            json={"requested_permission_rules": widened},
+        )
+        assert (amended.status_code, amended.json()["revision_number"]) == (200, 2), amended.text
+        # Sending the same ask again changes nothing: the current revision stands.
+        again = await owner.post(
+            f"/connect-sessions/{created.session_id}:amend",
+            json={"requested_permission_rules": widened},
+        )
+        assert again.json()["revision_id"] == amended.json()["revision_id"]
+
+        stale = await owner.post(
+            f"/connect-sessions/{created.session_id}:confirm",
+            json={
+                "kind": "api_key",
+                "key": _SECRET,
+                "permission_rules": _RULES,
+                "expected_agent_id": _AGENT_ID,
+                "digest": first["digest"],
+                "revision_id": first["revision"]["id"],
+            },
+        )
+    problem = stale.json()
+    assert (stale.status_code, problem["type"]) == (409, "revision_changed")
+    assert problem["current_revision_id"] == amended.json()["revision_id"]
+    assert problem["current_revision_number"] == 2
+    assert "review revision 2" in problem["detail"]
+    assert _SECRET not in stale.text
+
+
+async def test_the_review_shows_when_a_repeat_ask_was_last_rejected(env: Context) -> None:
+    await _import(env, _KEY_SCHEME)
+    first = await _connect(env)
+    review = await _svc(env).get_review_data(first.session_id, poll_token=None, identity=_OWNER)
+    assert review.last_rejected_at is None
+    await _svc(env).reject_session(first.session_id, identity=_OWNER)
+
+    again = await _connect(env)
+    async with _client(env, _OWNER) as owner:
+        shown = (await owner.get(f"/connect-sessions/{again.session_id}")).json()
+    assert shown["last_rejected_at"] is not None
+    # Another agent's ask for the same API is not a repeat.
+    other = await _connect(env, agent_id=_OTHER_AGENT_ID)
+    review = await _svc(env).get_review_data(other.session_id, poll_token=None, identity=_OWNER)
+    assert review.last_rejected_at is None
+
+
 async def test_connect_options_list_what_connect_would_ask_for(env: Context) -> None:
     await _import(env, {**_OAUTH_SCHEME, **_KEY_SCHEME})
     # With no app covering the API, an OAuth connect waits for one; the spec's

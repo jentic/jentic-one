@@ -297,7 +297,12 @@ def _connect_session_response_hook(
             credential_id=exc.credential_id, agent_id=exc.agent_id, base_url=str(request.base_url)
         )
     elif isinstance(exc, RevisionChangedError | BaselineChangedError):
-        extra["current_revision_id"] = exc.current_revision_id
+        # Says which revision to approve instead; it names no secrets.
+        extra.update(
+            detail=str(exc),
+            current_revision_id=exc.current_revision_id,
+            current_revision_number=exc.current_revision_number,
+        )
     elif isinstance(exc, EditConflictedError):
         extra["conflicts"] = exc.conflicts
     if not extra and not headers:

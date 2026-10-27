@@ -388,22 +388,38 @@ class EditOpenError(PointsAtAccessError):
 class RevisionChangedError(ConnectSessionServiceError):
     """The confirm names a revision that is no longer the session's current one."""
 
-    def __init__(self, session_id: str, current_revision_id: str | None) -> None:
-        super().__init__(f"session {session_id!r} changed since it was reviewed; review it again")
+    def __init__(
+        self,
+        session_id: str,
+        current_revision_id: str | None,
+        current_revision_number: int | None = None,
+    ) -> None:
+        super().__init__(
+            f"The request was amended after it was reviewed: review revision "
+            f"{current_revision_number} and approve that one instead."
+            if current_revision_number is not None
+            else "The request was amended after it was reviewed: review it again."
+        )
         self.session_id = session_id
         self.current_revision_id = current_revision_id
+        self.current_revision_number = current_revision_number
 
 
 class BaselineChangedError(ConnectSessionServiceError):
     """The binding changed after the edit opened; the session was rebased onto it."""
 
-    def __init__(self, session_id: str, current_revision_id: str) -> None:
+    def __init__(
+        self, session_id: str, current_revision_id: str, current_revision_number: int | None = None
+    ) -> None:
         super().__init__(
-            f"the binding changed since session {session_id!r} opened; "
-            "review the rebased request again"
+            "The binding changed after the request was opened, so the request was "
+            "rebased onto it: review "
+            + (f"revision {current_revision_number}" if current_revision_number else "it")
+            + " and approve that one instead."
         )
         self.session_id = session_id
         self.current_revision_id = current_revision_id
+        self.current_revision_number = current_revision_number
 
 
 class EditConflictedError(ConnectSessionServiceError):

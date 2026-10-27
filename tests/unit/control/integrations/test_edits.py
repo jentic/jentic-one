@@ -75,9 +75,10 @@ def test_remove_drops_by_id_and_before_a_removed_rule_takes_its_place() -> None:
 
 
 def test_set_replaces_the_list() -> None:
-    result, _ = resolve_edit(_baseline(), EditRequest(set_rules=[_READ, _DENY]))
-    assert _paths(result) == ["/repos", "/"]
-    assert all(r["id"] is None for r in result["rules"])
+    result, _ = resolve_edit(_baseline(), EditRequest(set_rules=[_READ, _SEND, _DENY]))
+    assert _paths(result) == ["/repos", "/send", "/"]
+    # Rules the binding has keep their ids; a new one has none.
+    assert [r["id"] for r in result["rules"]] == ["apr_read", None, "apr_deny"]
 
 
 @pytest.mark.parametrize(
