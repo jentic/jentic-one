@@ -1,0 +1,57 @@
+### gh pr list -R o/r (baseline)  (exit 0)
+  out:  
+  call: POST http://api.github.localhost/graphql | sha256= None | enc= None | len= 933
+### gh pr view <absolute github.com URL>  (exit 1)
+  out: error connecting to api.github.com check your internet connection or https://githubstatus.com 
+### gh api --paginate (absolute Link next)  (exit 1)
+  out: [{"number": 1, "title": "one"}error connecting to api.github.com check your internet connection or https://githubstatus.com 
+  call: GET http://api.github.localhost/repos/o/r/issues?per_page=100 | sha256= None | enc= None | len= 0
+### gh run view 1 --log (302 to blob host)  (exit 1)
+  out: error connecting to productionresultssa0.blob.core.windows.net check your internet connection or https://githubstatus.com 
+  call: GET http://api.github.localhost/repos/o/r/actions/runs/1?exclude_pull_requests=true | sha256= None | enc= None | len= 0
+  call: GET http://api.github.localhost/repos/o/r/actions/workflows/1 | sha256= None | enc= None | len= 0
+  call: GET http://api.github.localhost/repos/o/r/actions/runs/1/jobs?per_page=100 | sha256= None | enc= None | len= 0
+  call: GET http://api.github.localhost/repos/o/r/actions/runs/1/logs | sha256= None | enc= None | len= 0
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 56586)
+Traceback (most recent call last):
+  File "/usr/lib/python3.11/socketserver.py", line 691, in process_request_thread
+    self.finish_request(request, client_address)
+  File "/usr/lib/python3.11/socketserver.py", line 361, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "/usr/lib/python3.11/socketserver.py", line 755, in __init__
+    self.handle()
+  File "/usr/lib/python3.11/http/server.py", line 432, in handle
+    self.handle_one_request()
+  File "/usr/lib/python3.11/http/server.py", line 420, in handle_one_request
+    method()
+  File "/spike/mock.py", line 27, in _handle
+    return self._send(200, {"data": {"repository": {"pullRequest": {"number": 1, "title": "t", "state": "OPEN", "url": "https://github.com/o/r/pull/1", "author": {"login": "a"}}, "pullRequests": {"totalCount": 0, "nodes": [], "pageInfo": {"hasNextPage": False}}}}})
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/spike/mock.py", line 15, in _send
+    self.wfile.write(data)
+  File "/usr/lib/python3.11/socketserver.py", line 834, in write
+    self._sock.sendall(b)
+BrokenPipeError: [Errno 32] Broken pipe
+----------------------------------------
+### gh release download v1 (asset redirect)  (exit 1)
+  out: error connecting to api.github.com check your internet connection or https://githubstatus.com 
+  call: GET http://api.github.localhost/repos/o/r/releases/tags/v1 | sha256= None | enc= None | len= 0
+  call: POST http://api.github.localhost/graphql | sha256= None | enc= None | len= 226
+### aws s3 ls (list buckets)  (exit 0)
+  out:  
+  call: GET http://s3.eu-west-1.amazonaws.com/ | sha256= e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 | enc= None | len= 0
+### aws s3 ls s3://my-bucket (bucket host?)  (exit 0)
+  out:  
+  call: GET http://s3.eu-west-1.amazonaws.com/my-bucket?list-type=2&prefix=&delimiter=%2F&encoding-typ | sha256= e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 | enc= None | len= 0
+### aws s3 ls --region us-east-1 (pinned eu-west-1 endpoint)  (exit 0)
+  out:  
+  call: GET http://s3.eu-west-1.amazonaws.com/my-bucket?list-type=2&prefix=&delimiter=%2F&encoding-typ | sha256= e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 | enc= None | len= 0
+### aws ec2 describe-regions (no endpoint var)  (exit 255)
+  out:  aws: [ERROR]: Could not connect to the endpoint URL: "https://ec2.eu-west-1.amazonaws.com/" 
+### aws s3 cp 2MB file (payload signing?)  (exit 0)
+  out: Completed 256.0 KiB/1.9 MiB (67.5 MiB/s) with 1 file(s) remainingCompleted 512.0 KiB/1.9 MiB (130.1 MiB/s) with 1 file(s) remainingCompleted 768.0 KiB/1.9 MiB (190.7 Mi
+  call: PUT http://s3.eu-west-1.amazonaws.com/my-bucket/f.bin | sha256= 45e1a55d30ac666eb7f761dada31e3a263d49e6fff8f30e2988f7acb64eccc5a | enc= None | len= 2000000
+### aws s3api put-object (payload signing?)  (exit 0)
+  out: {     "ETag": "\"x\"" } 
+  call: PUT http://s3.eu-west-1.amazonaws.com/my-bucket/g.bin | sha256= 45e1a55d30ac666eb7f761dada31e3a263d49e6fff8f30e2988f7acb64eccc5a | enc= None | len= 2000000
