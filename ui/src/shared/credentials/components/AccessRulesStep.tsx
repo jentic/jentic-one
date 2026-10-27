@@ -41,7 +41,11 @@ import { useVendorOperationsProgress } from '@/shared/credentials/api/vendors-ho
 import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
 import { RuleListEditor } from '@/shared/credentials/components/RuleListEditor';
 import { ActionList } from '@/shared/credentials/components/ActionList';
-import { ActionChecklist, changedChoices } from '@/shared/credentials/components/ActionChecklist';
+import {
+	ActionChecklist,
+	changedChoices,
+	choiceCounts,
+} from '@/shared/credentials/components/ActionChecklist';
 import {
 	UnappliedChoicesDialog,
 	type UnappliedChoices,
@@ -232,7 +236,19 @@ export function AccessRulesStep({
 	const [staged, setStaged] = useState<ActionGroups | null>(null);
 	const shownGroups = staged ?? groups;
 	const unapplied = staged ? changedChoices(staged, groups) : 0;
-	const [appliedNote, setAppliedNote] = useState<number | null>(null);
+	// Applied choices show as rule cards; the operations list then folds behind
+	// a line that says how many are still unset, until Edit or the line opens it.
+	const hasActionRules = (['deny', 'ask', 'allow'] as const).some((g) => groups[g].length > 0);
+	const [listOpen, setListOpen] = useState(false);
+	const listShown = !hasActionRules || listOpen;
+	const unsetCount = useMemo(
+		() =>
+			choiceCounts(
+				groups,
+				ops.map((op) => op.operation_id),
+			).unset,
+		[groups, ops],
+	);
 	/** Editing one action rule: By action filtered to its ids. */
 	const [editing, setEditing] = useState<keyof ActionGroups | null>(null);
 	const editingIds = useMemo(
@@ -241,11 +257,9 @@ export function AccessRulesStep({
 	);
 	const apply = (): PermissionRule[] => {
 		const next = staged ? joinCustomRules(pathRules, staged) : customRules;
-		if (staged) {
-			onCustomRulesChange(next);
-			setAppliedNote(actionRuleCount(staged));
-		}
+		if (staged) onCustomRulesChange(next);
 		setStaged(null);
+		setListOpen(false);
 		return next;
 	};
 	const discard = (): void => setStaged(null);
@@ -287,16 +301,16 @@ export function AccessRulesStep({
 		if (to === buildMode) return;
 		if (to === 'path')
 			leaveActions(() => (setEditing(null), setBuild('path')), 'before switching to By path');
-		else {
-			setAppliedNote(null);
-			setBuild('action');
-		}
+		else setBuild('action');
 	};
 	const editActionRule = (g: keyof ActionGroups): void => {
-		setAppliedNote(null);
 		setEditing(g);
+		setListOpen(true);
 		setBuild('action');
 	};
+	/** Fold the operations list, settling staged choices first. */
+	const closeList = (context: string): void =>
+		leaveActions(() => (setEditing(null), setListOpen(false)), context);
 
 	// Action choices are checked first, so a path rule whose every match (on
 	// any API the list governs) is one of them decides nothing.
@@ -341,12 +355,7 @@ export function AccessRulesStep({
 					variant="secondary"
 					size="xs"
 					className="ml-auto"
-					onClick={(): void =>
-						leaveActions(
-							() => (setEditing(null), setBuild('path')),
-							'before returning to By path',
-						)
-					}
+					onClick={(): void => closeList('before closing the list')}
 				>
 					Done
 				</Button>
@@ -466,68 +475,134 @@ export function AccessRulesStep({
 							</div>
 						) : (
 							<>
-								{/* No line about the path rules here: what decides an
-								    action left unset is in the Details under the toggle. */}
-								<ActionChecklist
-									ops={ops}
-									complete={opsComplete}
-									failed={!opsComplete && opsQuery.isError}
-									value={shownGroups}
-									applied={groups}
-									onChange={(next): void => {
-										setAppliedNote(null);
-										setStaged(next);
-									}}
-									disabled={disabled}
-									testId={`${p}-actions`}
-									only={editingIds}
-									header={editingHeader}
-								/>
+								{hasActionRules && (
+									<Disclosure
+										open={listShown}
+										onToggle={(): void => {
+											if (listShown) closeList('before closing the list');
+											else setListOpen(true);
+										}}
+										icon={<ListChecks className="h-3.5 w-3.5" />}
+										label={
+											<>
+												{listShown
+													? 'Choose actions'
+													: 'Choose more actions'}
+												<span className="text-foreground-sub font-normal">
+													{' '}
+													· {unsetCount.toLocaleString()}
+													{opsComplete ? '' : '+'} not set
+												</span>
+											</>
+										}
+										controls={`${p}-actions-list`}
+									/>
+								)}
+								<ExpandReveal open={listShown} id={`${p}-actions-list`}>
+									<div className="space-y-2">
+										{/* No line about the path rules here: what decides an
+										    action left unset is in the Details under the toggle. */}
+										<ActionChecklist
+											ops={ops}
+											complete={opsComplete}
+											failed={!opsComplete && opsQuery.isError}
+											value={shownGroups}
+											applied={groups}
+											onChange={setStaged}
+											disabled={disabled}
+											testId={`${p}-actions`}
+											only={editingIds}
+											header={editingHeader}
+										/>
+										<div
+											className="flex flex-wrap items-center gap-2"
+											data-testid={`${p}-apply-row`}
+										>
+											<p
+												className="text-foreground-sub min-w-0 flex-1 text-xs"
+												aria-live="polite"
+												data-testid={`${p}-apply-status`}
+											>
+												{unapplied > 0 && (
+													<span className="text-foreground inline-flex items-center gap-1.5 font-medium">
+														<span
+															aria-hidden="true"
+															className="bg-caution h-1.5 w-1.5 rounded-full"
+														/>
+														{unapplied.toLocaleString()}{' '}
+														{unapplied === 1 ? 'change' : 'changes'} not
+														applied
+													</span>
+												)}
+											</p>
+											<Button
+												variant="ghost"
+												size="sm"
+												disabled={disabled || unapplied === 0}
+												onClick={discard}
+											>
+												Reset
+											</Button>
+											<Button
+												variant="secondary"
+												size="sm"
+												disabled={disabled || unapplied === 0}
+												onClick={(): void => void apply()}
+												data-testid={`${p}-apply`}
+											>
+												Apply
+											</Button>
+										</div>
+									</div>
+								</ExpandReveal>
+								{hasActionRules && (
+									<section
+										aria-label="Set by action"
+										className="space-y-1.5"
+										data-testid={`${p}-action-rules`}
+									>
+										<p className="text-foreground-sub text-[11px] font-medium">
+											Set by action
+										</p>
+										{actionRows}
+									</section>
+								)}
+								{pathRules.length > 0 && (
+									<section
+										aria-label="Path rules"
+										className="space-y-1.5"
+										data-testid={`${p}-path-rules`}
+									>
+										<div className="flex items-center gap-2">
+											<p className="text-foreground-sub text-[11px] font-medium">
+												Path rules
+											</p>
+											<Button
+												variant="ghost"
+												size="xs"
+												className="text-foreground-sub ml-auto"
+												disabled={disabled}
+												onClick={(): void => switchBuild('path')}
+											>
+												Edit
+											</Button>
+										</div>
+										<RuleListEditor
+											rules={pathRules}
+											onChange={setPathRules}
+											opTemplates={opsComplete ? pathSuggestions : undefined}
+											opsLoaded={opsComplete && pathSuggestions.length > 0}
+											decided={decided}
+											actionCatalog={actionCatalog}
+											readOnly
+										/>
+									</section>
+								)}
 								<SiblingActionsNote
 									rows={siblingRows}
 									onOpen={onOpenSibling}
 									testId={`${p}-sibling-actions`}
 								/>
-								<div
-									className="flex flex-wrap items-center gap-2"
-									data-testid={`${p}-apply-row`}
-								>
-									<p
-										className="text-foreground-sub min-w-0 flex-1 text-xs"
-										aria-live="polite"
-										data-testid={`${p}-apply-status`}
-									>
-										{unapplied > 0 ? (
-											<span className="text-foreground inline-flex items-center gap-1.5 font-medium">
-												<span
-													aria-hidden="true"
-													className="bg-caution h-1.5 w-1.5 rounded-full"
-												/>
-												{unapplied.toLocaleString()}{' '}
-												{unapplied === 1 ? 'change' : 'changes'} not applied
-											</span>
-										) : appliedNote != null ? (
-											`Applied — these choices make ${appliedNote.toLocaleString()} ${appliedNote === 1 ? 'rule' : 'rules'}.`
-										) : null}
-									</p>
-									<Button
-										variant="ghost"
-										size="sm"
-										disabled={disabled || unapplied === 0}
-										onClick={discard}
-									>
-										Reset
-									</Button>
-									<Button
-										variant="secondary"
-										size="sm"
-										disabled={disabled || unapplied === 0}
-										onClick={(): void => void apply()}
-										data-testid={`${p}-apply`}
-									>
-										Apply
-									</Button>
-								</div>
 							</>
 						)}
 					</div>

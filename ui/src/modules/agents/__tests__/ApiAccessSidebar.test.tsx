@@ -181,6 +181,14 @@ function tileOpener(title: string): HTMLElement {
 	});
 }
 
+/** Once action rules exist, By action folds its operations list behind their
+ * cards; open it and return the list. A no-op while it is already open. */
+async function openActions(editor: HTMLElement): Promise<HTMLElement> {
+	const fold = within(editor).queryByRole('button', { name: /^Choose more actions/ });
+	if (fold) await userEvent.setup().click(fold);
+	return within(editor).findByTestId('manage-actions');
+}
+
 /** The sidebar dialog, named by the clicked tile's API title. */
 async function openSidebar(title: string): Promise<HTMLElement> {
 	const user = userEvent.setup();
@@ -684,6 +692,7 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		);
 		const editor = await editAccess(dialog);
 		await user.click(within(editor).getByRole('button', { name: 'By action' }));
+		await openActions(editor);
 		expect(await within(editor).findByTestId('manage-actions-count')).toHaveTextContent(
 			'0 allow · 1 ask · 0 deny · 1 not set',
 		);
@@ -753,7 +762,7 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 
 		// A staged By action choice: the save area shows, Save is disabled with the reason.
 		await user.click(within(editor).getByRole('button', { name: 'By action' }));
-		const actions = await within(editor).findByTestId('manage-actions');
+		const actions = await openActions(editor);
 		await user.click(choose(actions, 'POST /chat.postMessage', 'Ask'));
 		const commit = within(dialog).getByTestId('access-commit');
 		const save = within(commit).getByRole('button', { name: /Save rules/ });
@@ -779,7 +788,7 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		const dialog = await openSidebar('Slack');
 		const editor = await editAccess(dialog);
 		await user.click(within(editor).getByRole('button', { name: 'By action' }));
-		const actions = await within(editor).findByTestId('manage-actions');
+		const actions = await openActions(editor);
 		await user.click(choose(actions, 'POST /chat.postMessage', 'Ask'));
 		await user.click(within(dialog).getByRole('button', { name: 'Close' }));
 		const guard = await screen.findByRole('dialog', { name: 'Apply 1 change by action?' });
@@ -905,7 +914,7 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 				'true',
 			),
 		);
-		const actions = within(editor).getByTestId('manage-actions');
+		const actions = await openActions(editor);
 		expect(choose(actions, 'POST /chat.postMessage', 'Ask')).toHaveAttribute(
 			'aria-pressed',
 			'true',
@@ -1144,7 +1153,7 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 			await screen.findByText('Article Search');
 			const dialog = await openSidebar('Article Search');
 			const editor = await editAccess(dialog);
-			const actions = await within(editor).findByTestId('manage-actions');
+			const actions = await openActions(editor);
 			expect(within(actions).getAllByRole('group', { name: /^Access for/ })).toHaveLength(1);
 			expect(accessFor(actions, 'GET /articlesearch.json')).toBeInTheDocument();
 			// Archive's own action is counted on its line, not in this list's summary.
@@ -1169,7 +1178,7 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 			await screen.findByText('Article Search');
 			const dialog = await openSidebar('Article Search');
 			const editor = await editAccess(dialog);
-			const actions = await within(editor).findByTestId('manage-actions');
+			const actions = await openActions(editor);
 			await user.click(choose(actions, 'GET /articlesearch.json', 'Allow'));
 			// Save waits for Apply; then it saves the applied draft.
 			expect(within(dialog).getByRole('button', { name: /Save rules/ })).toBeDisabled();
@@ -1191,7 +1200,7 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 			await screen.findByText('Article Search');
 			const dialog = await openSidebar('Article Search');
 			const editor = await editAccess(dialog);
-			await within(editor).findByTestId('manage-actions');
+			await openActions(editor);
 			await user.click(within(editor).getByRole('radio', { name: 'Read only' }));
 			await user.click(within(dialog).getByRole('button', { name: /Save rules/ }));
 			await waitFor(() => expect(saves).toHaveLength(1));

@@ -107,6 +107,7 @@ export function RuleListEditor({
 	addLabel = 'Add rule',
 	addFirst = false,
 	decided,
+	readOnly = false,
 	className,
 }: {
 	rules: readonly PermissionRule[];
@@ -153,11 +154,14 @@ export function RuleListEditor({
 	/** Operation ids already decided before these rules (By action's choices):
 	 * a row whose every match is one of them decides nothing, and says so. */
 	decided?: ReadonlySet<string>;
+	/** The rules as they are — no add verb, no row verbs, nothing when empty
+	 * (another editor owns them; this is context). */
+	readOnly?: boolean;
 	className?: string;
 }) {
 	const [editingIndex, setEditingIndex] = useState<number | null>(null);
 	const [adding, setAdding] = useState(() => !!openWhenEmpty && rules.length === 0);
-	if (hideAdd && adding) setAdding(false);
+	if ((hideAdd || readOnly) && adding) setAdding(false);
 	// While a form is open, every other row's verbs are disabled: the open edit
 	// is addressed by position, so a delete/move underneath it would land its
 	// Save on a different rule.
@@ -193,24 +197,26 @@ export function RuleListEditor({
 	// The list verbs: "Add rule" plus whatever the host contributes. While the
 	// list is empty (and the host has no custom empty state) they sit INSIDE
 	// the empty panel, so the next step is where the eye already is.
-	const actionRow = hideAdd ? null : (
-		<div className="flex flex-wrap items-center gap-2">
-			<Button
-				type="button"
-				variant="secondary"
-				size="sm"
-				onClick={(): void => setAdding(true)}
-				disabled={editingIndex !== null}
-				data-rule-add=""
-			>
-				<Plus className="h-4 w-4" aria-hidden="true" />
-				{addLabel}
-			</Button>
-			{addActions}
-		</div>
-	);
+	const actionRow =
+		hideAdd || readOnly ? null : (
+			<div className="flex flex-wrap items-center gap-2">
+				<Button
+					type="button"
+					variant="secondary"
+					size="sm"
+					onClick={(): void => setAdding(true)}
+					disabled={editingIndex !== null}
+					data-rule-add=""
+				>
+					<Plus className="h-4 w-4" aria-hidden="true" />
+					{addLabel}
+				</Button>
+				{addActions}
+			</div>
+		);
 	const isEmpty = rules.length === 0;
 	const defaultEmpty = isEmpty && emptyStateContent == null;
+	if (readOnly && isEmpty) return null;
 	const addArea = adding ? (
 		<RuleForm
 			commitLabel="Add"
@@ -262,18 +268,23 @@ export function RuleListEditor({
 									actionCatalog={actionCatalog}
 									decided={decided}
 									locked={formOpen}
-									onEdit={(): void => setEditingIndex(i)}
-									onDelete={(): void => onChange(rules.filter((_, j) => j !== i))}
-									onMoveUp={
-										i === 0
-											? undefined
-											: (): void => onChange(swap(rules, i, i - 1))
-									}
-									onMoveDown={
-										i === rules.length - 1
-											? undefined
-											: (): void => onChange(swap(rules, i, i + 1))
-									}
+									{...(readOnly
+										? {}
+										: {
+												onEdit: (): void => setEditingIndex(i),
+												onDelete: (): void =>
+													onChange(rules.filter((_, j) => j !== i)),
+												onMoveUp:
+													i === 0
+														? undefined
+														: (): void =>
+																onChange(swap(rules, i, i - 1)),
+												onMoveDown:
+													i === rules.length - 1
+														? undefined
+														: (): void =>
+																onChange(swap(rules, i, i + 1)),
+											})}
 								/>
 							)}
 						</li>
