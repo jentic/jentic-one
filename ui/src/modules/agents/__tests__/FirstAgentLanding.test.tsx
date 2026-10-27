@@ -455,7 +455,9 @@ describe('Agents page — zero agents', () => {
 		const res = await fetch(`/agents/${id}`);
 		const { created_at: createdAt } = (await res.json()) as { created_at: string };
 		const registered = screen.getByTestId('arrival-registered');
-		expect(registered).toHaveTextContent(`Registered just now · ${formatTimestamp(createdAt)}`);
+		// "just now" within the first second; a slower run reads "Ns ago".
+		expect(registered).toHaveTextContent(/^Registered (just now|\d+s ago) · /);
+		expect(registered).toHaveTextContent(formatTimestamp(createdAt));
 		// A neutral glyph, not a brand: the card vouches for nothing.
 		expect(screen.getByTestId('arrival-card').querySelector('[data-vendor-mark]')).toBeNull();
 	});
