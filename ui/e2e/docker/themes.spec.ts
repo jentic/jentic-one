@@ -292,7 +292,8 @@ for (const theme of THEMES) {
 			await expect(page.getByTestId('access-editor')).toBeVisible();
 			await page.getByRole('radio', { name: /^Custom rules/ }).click();
 			await page.getByRole('button', { name: 'By path' }).click();
-			await page.getByRole('button', { name: 'Add path rule' }).first().click();
+			// With no rules yet, By path opens straight on the add form.
+			await expect(page.getByLabel('Path pattern')).toBeVisible();
 			await capture(page, theme, 'agents-rule-editor');
 			await page.getByRole('button', { name: 'Cancel' }).click();
 			await page.getByRole('button', { name: 'Edit credential' }).click();
