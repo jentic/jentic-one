@@ -658,6 +658,19 @@ func (a *app) writeCLIConfig(draft *install.Draft) {
 	fmt.Fprintln(a.Out, theme.Dimf("Pointed the jentic CLI at the local broker (%s://%s).", cfg.Broker.Scheme, cfg.Broker.Host))
 }
 
+// Package-level seams over installDocker's Docker effects (requirement and
+// daemon probe, image pull, data-volume probe and reset). Its image build,
+// compose migrations and compose up go through the seams update.go and
+// docker_guard.go declare (buildStackImages, runComposeMigrations, composeUp),
+// so the install sequence is faked with the same calls as update's. Tests
+// that swap these globals must not run with t.Parallel().
+var (
+	dockerPreflight       = install.Preflight
+	pullAppImage          = install.PullAppImage
+	dataVolumeExists      = install.VolumeExists
+	resetFreshDataVolumes = install.ResetFreshDataVolumes
+)
+
 // installDocker performs the real containerized install under ~/.jentic. By
 // default it PULLS the published, signed app image
 // (ghcr.io/jentic/jentic-one-app:<version>) and threads that ref into the
@@ -666,7 +679,7 @@ func (a *app) writeCLIConfig(draft *install.Draft) {
 // stack, applies migrations in a one-shot container, and (unless --no-start)
 // brings the stack up. Mirrors installLocal for the Docker path.
 func (a *app) installDocker(ctx context.Context, draft *install.Draft, configPath, logsDir string, opts *installOptions) error {
-	results := install.Preflight(ctx, draft)
+	results := dockerPreflight(ctx, draft)
 	fmt.Fprintln(a.Out)
 	fmt.Fprint(a.Out, install.RenderPreflight(results))
 	if missing := install.Missing(results); len(missing) > 0 {
@@ -710,7 +723,7 @@ func (a *app) installDocker(ctx context.Context, draft *install.Draft, configPat
 		}
 		fmt.Fprintln(a.Out)
 		fmt.Fprint(a.Out, plan.RenderDockerBuildHeader())
-		if err := plan.BuildImages(a.Out); err != nil {
+		if err := buildStackImages(plan, a.Out); err != nil {
 			return fmt.Errorf("image build failed: %w", err)
 		}
 		if plan.FromGit {
@@ -721,7 +734,7 @@ func (a *app) installDocker(ctx context.Context, draft *install.Draft, configPat
 		fmt.Fprintln(a.Out)
 		fmt.Fprintln(a.Out, theme.Headingf("Pull app image"))
 		fmt.Fprintln(a.Out, theme.Dimf("  image: %s", appImage))
-		if err := install.PullAppImage(a.Out, appImage); err != nil {
+		if err := pullAppImage(a.Out, appImage); err != nil {
 			return err
 		}
 	}
@@ -745,7 +758,7 @@ func (a *app) installDocker(ctx context.Context, draft *install.Draft, configPat
 	dataVolumes := install.DataVolumeNames(draft.IsPostgres())
 	freshVolumes := true
 	for _, v := range dataVolumes {
-		exists, err := install.VolumeExists(v)
+		exists, err := dataVolumeExists(v)
 		if err != nil || exists {
 			// "Could not tell" must count as pre-existing: guessing "fresh"
 			// here would let the recovery path destroy a real database.
@@ -758,7 +771,7 @@ func (a *app) installDocker(ctx context.Context, draft *install.Draft, configPat
 	// depends_on makes compose start (and health-wait) the db automatically.
 	fmt.Fprintln(a.Out)
 	fmt.Fprint(a.Out, install.RenderMigrateHeader(configPath))
-	if err := install.RunComposeMigrations(a.Out, cfg.ComposePath); err != nil {
+	if err := runComposeMigrations(a.Out, cfg.ComposePath); err != nil {
 		return a.migrationFailure(cfg.ComposePath, dataVolumes, freshVolumes, err)
 	}
 	draft.MigrationsDone = true
@@ -768,7 +781,7 @@ func (a *app) installDocker(ctx context.Context, draft *install.Draft, configPat
 	}
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, install.RenderStartHeader())
-	if err := install.ComposeUp(a.Out, cfg.ComposePath); err != nil {
+	if err := composeUp(a.Out, cfg.ComposePath); err != nil {
 		// Non-fatal: the stack is built and configured; the user can bring it up
 		// with `jenticctl start` from the printed next steps.
 		fmt.Fprintln(a.Out, install.RenderStartWarning(err))
@@ -796,7 +809,7 @@ func (a *app) migrationFailure(composePath string, dataVolumes []string, fresh b
 	}
 
 	fmt.Fprintln(a.Out, theme.Dimf("Removing the freshly created database volume so the next attempt starts clean..."))
-	if resetErr := install.ResetFreshDataVolumes(a.Out, composePath, dataVolumes); resetErr != nil {
+	if resetErr := resetFreshDataVolumes(a.Out, composePath, dataVolumes); resetErr != nil {
 		fmt.Fprintln(a.Out, theme.Warnf(
 			"Could not remove the fresh database volume (%v).\n"+
 				"Before retrying, discard it manually:\n"+
@@ -859,7 +872,7 @@ func installLocal(ctx context.Context, a *app, draft *install.Draft, configPath 
 	install.EnsureUv(a.Out)
 
 	// Preflight: confirm required tools are available before doing any work.
-	results := install.Preflight(ctx, draft)
+	results := dockerPreflight(ctx, draft)
 	fmt.Fprintln(a.Out)
 	fmt.Fprint(a.Out, install.RenderPreflight(results))
 	if missing := install.Missing(results); len(missing) > 0 {

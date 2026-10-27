@@ -96,13 +96,6 @@ type catalogPreview struct {
 	SecuritySchemes map[string]map[string]any `json:"security_schemes"`
 }
 
-type catalogJob struct {
-	JobID  string `json:"job_id"`
-	Kind   string `json:"kind"`
-	Status string `json:"status"`
-	Error  string `json:"error"`
-}
-
 // catalogImportResult + its sub-shapes mirror the untyped /jobs/{id}/result body.
 type catalogAPIRef struct {
 	Vendor  string `json:"vendor"`
@@ -235,7 +228,7 @@ func (c *catalogClient) Import(ctx context.Context, apiID string) (string, error
 	return resp.JSON202.JobId, nil
 }
 
-func (c *catalogClient) Job(ctx context.Context, jobID string) (*catalogJob, error) {
+func (c *catalogClient) Job(ctx context.Context, jobID string) (*control.JobResponse, error) {
 	resp, err := c.sdk.GetJobWithResponse(ctx, jobID)
 	if err := apiErrorFor(resp, err); err != nil {
 		return nil, err
@@ -243,8 +236,7 @@ func (c *catalogClient) Job(ctx context.Context, jobID string) (*catalogJob, err
 	if resp.JSON200 == nil {
 		return nil, fmt.Errorf("unexpected backend response (status %d)", resp.StatusCode())
 	}
-	j := resp.JSON200
-	return &catalogJob{JobID: j.JobId, Kind: j.Kind, Status: j.Status, Error: deref(j.Error)}, nil
+	return resp.JSON200, nil
 }
 
 func (c *catalogClient) JobResult(ctx context.Context, jobID string) (*catalogImportResult, error) {

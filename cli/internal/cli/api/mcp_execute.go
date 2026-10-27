@@ -811,39 +811,39 @@ func (s *mcpServer) handleGetExecutionResult(ctx context.Context, req *mcp.CallT
 	cctx, cancel := context.WithTimeout(ctx, mcpCallTimeout+wait)
 	defer cancel()
 
-	poll, target := s.jobPollPayload, jobID
+	var (
+		payload map[string]any
+		soft    *mcp.CallToolResult
+	)
 	if heldExecutionID != "" {
-		// The review link a successful read reports stays known across the
-		// wait, so a later failed read can still hand it back.
-		var reviewURL string
-		poll = func(ctx context.Context, id string) (map[string]any, *mcp.CallToolResult) {
-			return s.heldPollPayload(ctx, id, &reviewURL)
-		}
-		target = heldExecutionID
+		payload, _, soft = s.followHeldExecution(cctx, heldExecutionID, wait)
+	} else {
+		payload, soft = s.pollJobUntilFinished(cctx, jobID, wait)
 	}
-	payload, soft := s.pollUntilFinished(cctx, poll, target, wait)
 	if soft != nil {
 		return soft, nil
 	}
 	return s.result(cctx, payload), nil
 }
 
-// pollPayloadFunc reads one poll payload for a held execution or job id; a
-// failure comes back as the soft-error result to return instead.
-type pollPayloadFunc func(ctx context.Context, id string) (map[string]any, *mcp.CallToolResult)
-
-// pollUntilFinished polls id, re-polling every heldWaitPoll until its status
-// is terminal or wait lapses; a zero wait polls exactly once.
-func (s *mcpServer) pollUntilFinished(
-	ctx context.Context, poll pollPayloadFunc, id string, wait time.Duration,
-) (map[string]any, *mcp.CallToolResult) {
-	interval := s.heldWaitPoll
-	if interval <= 0 {
-		interval = heldWaitPoll
+// pollInterval is the fixed interval between MCP polls of a held execution
+// or a job.
+func (s *mcpServer) pollInterval() time.Duration {
+	if s.heldWaitPoll > 0 {
+		return s.heldWaitPoll
 	}
+	return heldWaitPoll
+}
+
+// pollJobUntilFinished polls a job, re-polling every pollInterval until its
+// status is terminal or wait lapses; a zero wait polls exactly once.
+func (s *mcpServer) pollJobUntilFinished(
+	ctx context.Context, jobID string, wait time.Duration,
+) (map[string]any, *mcp.CallToolResult) {
+	interval := s.pollInterval()
 	deadline := time.Now().Add(wait)
 	for {
-		payload, soft := poll(ctx, id)
+		payload, soft := s.jobPollPayload(ctx, jobID)
 		if soft != nil || isTerminalJobStatus(payload["status"]) {
 			return payload, soft
 		}
@@ -859,9 +859,7 @@ func (s *mcpServer) pollUntilFinished(
 	}
 }
 
-// isTerminalJobStatus reports whether a polled status is final. A held
-// execution's statuses are a subset of a job's (a dead-lettered held call
-// reads as failed).
+// isTerminalJobStatus reports whether a polled job status is final.
 func isTerminalJobStatus(status any) bool {
 	switch status {
 	case catJobCompleted, catJobFailed, catJobCancelled, catJobDeadLetter:
@@ -870,52 +868,94 @@ func isTerminalJobStatus(status any) bool {
 	return false
 }
 
-// heldPollPayload polls one held execution — GET /executions/holds/{id},
-// plus its /result once the call has finished (completed, or failed: the
+// followHeldExecution follows a held execution for up to wait — the one
+// held-polling loop, agentops.PollHeldExecution, at pollInterval — and
+// returns the poll payload of its last read (heldPollPayload) and whether
+// the call has finished. A zero wait reads it once; a failed read is the
+// soft-error result to return instead. The review link a successful read
+// reports stays known across the wait, so a later failed read still names
+// it.
+func (s *mcpServer) followHeldExecution(
+	ctx context.Context, heldExecutionID string, wait time.Duration,
+) (map[string]any, bool, *mcp.CallToolResult) {
+	var reviewURL string
+	client, err := s.app.controlClient(ctx)
+	if err != nil {
+		s.logger.Warn("get_execution_result failed", "error", err)
+		return nil, false, s.heldPollError(ctx, heldExecutionID, reviewURL, err)
+	}
+	interval := s.pollInterval()
+	held, err := agentops.PollHeldExecution(ctx,
+		func(ctx context.Context) (*control.HeldExecutionDetailResponse, error) {
+			return agentops.GetHeldExecution(ctx, client, heldExecutionID)
+		},
+		agentops.HeldPoll{
+			Timeout: wait, Delay: interval, MaxDelay: interval,
+			Observe: func(h *control.HeldExecutionDetailResponse, _ time.Duration) {
+				if h.ReviewUrl != "" {
+					reviewURL = h.ReviewUrl
+				}
+			},
+		})
+	var (
+		timedOut   *agentops.HeldWaitTimeoutError
+		canceled   *agentops.HeldWaitCanceledError
+		notFound   *agentops.HeldNotFoundError
+		readErr    *agentops.HeldReadError
+		unexpected *agentops.HeldUnexpectedResponseError
+	)
+	switch {
+	case err == nil:
+		return s.heldPollPayload(ctx, client, held), true, nil
+	case errors.As(err, &timedOut), errors.As(err, &canceled):
+		return s.heldPollPayload(ctx, client, held), false, nil
+	case errors.As(err, &notFound):
+		// The identity resolved fine — the id is wrong (or not this
+		// agent's), so the recovery is re-reading the held execute
+		// envelope and calling this tool again (self-pointer).
+		return nil, false, s.softErrorNext(ctx, &ux.CodedError{
+			Code: ux.CodeResolveFailed,
+			Msg:  notFound.Error(),
+			Actionable: "Re-check the id — it is the held_execution_id of the held (202) execute response — " +
+				"and call get_execution_result again with the exact value.",
+			Details: map[string]any{"held_execution_id": heldExecutionID},
+		}, "get_execution_result")
+	case errors.As(err, &unexpected):
+		return nil, false, s.softError(ctx, &ux.CodedError{
+			Code:    ux.CodeInternalError,
+			Msg:     fmt.Sprintf("unexpected backend response (status %d)", unexpected.Status),
+			Details: map[string]any{"held_execution_id": heldExecutionID},
+		})
+	case errors.As(err, &readErr):
+		s.logger.Warn("get_execution_result failed", "held_execution_id", heldExecutionID, "error", readErr.Err)
+		return nil, false, s.heldPollError(ctx, heldExecutionID, reviewURL, readErr.Err)
+	default:
+		// agentops.GetHeldExecution returns only the typed errors above.
+		s.logger.Warn("get_execution_result failed", "held_execution_id", heldExecutionID, "error", err)
+		return nil, false, s.softError(ctx, &ux.CodedError{
+			Code:    ux.CodeInternalError,
+			Msg:     fmt.Sprintf("unexpected error reading held execution %s: %v", heldExecutionID, err),
+			Details: map[string]any{"held_execution_id": heldExecutionID},
+		})
+	}
+}
+
+// heldPollPayload is the poll payload of one held execution read — plus its
+// /result once the call has finished with one (completed, or failed: the
 // upstream response, or the problem explaining why it never ran). The
 // payload is {schema_version, held_execution_id, state, status, review_url,
 // expires_at, execution_id?, result? | result_error? | truncated+total_bytes,
 // agent_directive?}: state is the decision, status where the call stands,
 // and agent_directive (stillHeldAgentDirective) rides only while the call
-// has not finished. review_url is omitted when the control plane sends none.
-// *reviewURL carries the last review link seen, so a failed read still
-// names it. Kept in parity with the mounted app's held_execution_poll_payload.
-func (s *mcpServer) heldPollPayload(cctx context.Context, heldExecutionID string, reviewURL *string) (map[string]any, *mcp.CallToolResult) {
-	client, err := s.app.controlClient(cctx)
-	if err != nil {
-		s.logger.Warn("get_execution_result failed", "error", err)
-		return nil, s.heldPollError(cctx, heldExecutionID, *reviewURL, err)
-	}
-	resp, callErr := client.GetHeldExecutionWithResponse(cctx, heldExecutionID)
-	if err := apiErrorFor(resp, callErr); err != nil {
-		var he *HTTPError
-		if errors.As(err, &he) && he.StatusCode == http.StatusNotFound {
-			// The identity resolved fine — the id is wrong (or not this
-			// agent's), so the recovery is re-reading the held execute
-			// envelope and calling this tool again (self-pointer).
-			return nil, s.softErrorNext(cctx, &ux.CodedError{
-				Code: ux.CodeResolveFailed,
-				Msg:  fmt.Sprintf("held execution %q not found", heldExecutionID),
-				Actionable: "Re-check the id — it is the held_execution_id of the held (202) execute response — " +
-					"and call get_execution_result again with the exact value.",
-				Details: map[string]any{"held_execution_id": heldExecutionID},
-			}, "get_execution_result")
-		}
-		s.logger.Warn("get_execution_result failed", "held_execution_id", heldExecutionID, "error", err)
-		return nil, s.heldPollError(cctx, heldExecutionID, *reviewURL, err)
-	}
-	if resp.JSON200 == nil {
-		return nil, s.softError(cctx, &ux.CodedError{
-			Code:    ux.CodeInternalError,
-			Msg:     fmt.Sprintf("unexpected backend response (status %d)", resp.StatusCode()),
-			Details: map[string]any{"held_execution_id": heldExecutionID},
-		})
-	}
-
-	held := resp.JSON200
-	if held.ReviewUrl != "" {
-		*reviewURL = held.ReviewUrl
-	}
+// has not finished (agentops.HeldExecutionFinished). A decided hold whose
+// call reports no status has finished with no result to collect; it carries
+// heldNoStatusResultError. review_url is omitted when the control plane sends
+// none. The mounted app's held_execution_poll_payload decides "finished" by
+// the same rule (approvals.held_call_finished) and answers the same shape;
+// the shared goldens under cli/tests/golden/testdata/held_poll pin both.
+func (s *mcpServer) heldPollPayload(
+	ctx context.Context, client heldResultClient, held *control.HeldExecutionDetailResponse,
+) map[string]any {
 	var status any
 	if held.ExecutionStatus != nil {
 		status = string(*held.ExecutionStatus)
@@ -933,13 +973,18 @@ func (s *mcpServer) heldPollPayload(cctx context.Context, heldExecutionID string
 	if held.ExecutionId != nil && *held.ExecutionId != "" {
 		payload["execution_id"] = *held.ExecutionId
 	}
-	if status == agentops.HeldStatusCompleted || status == agentops.HeldStatusFailed {
-		s.attachHeldResult(cctx, client, heldExecutionID, payload)
-	}
-	if !isTerminalJobStatus(status) {
+	if !agentops.HeldExecutionFinished(held) {
 		payload["agent_directive"] = stillHeldAgentDirective
+		return payload
 	}
-	return payload, nil
+	if held.ExecutionStatus == nil {
+		payload["result_error"] = heldNoStatusResultError
+		return payload
+	}
+	if agentops.HasHeldResult(agentops.HeldExecutionStatus(held)) {
+		s.attachHeldResult(ctx, client, held.Id, payload)
+	}
+	return payload
 }
 
 // heldPollError is a failed read of a held execution as a soft error that

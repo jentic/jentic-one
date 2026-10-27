@@ -191,7 +191,7 @@ func (a *app) ensureDockerSchema(composePath string) error {
 
 	case install.SchemaUninitialized:
 		fmt.Fprintln(a.Out, theme.Warn.Render("Database has no schema (new or wiped volume) — creating it before start"))
-		if err := install.RunComposeMigrations(a.Out, composePath); err != nil {
+		if err := runComposeMigrations(a.Out, composePath); err != nil {
 			return fmt.Errorf("could not initialize the database schema: %w", err)
 		}
 		fmt.Fprintln(a.Out, theme.Successf("Schema created."))
