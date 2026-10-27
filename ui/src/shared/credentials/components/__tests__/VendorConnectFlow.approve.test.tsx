@@ -24,7 +24,7 @@ import {
 	seedMockAgentConnectSession,
 	type MockConnectSession,
 } from '@/shared/credentials/mocks/handlers';
-import type { ExistingCredential, PermissionRule } from '@/shared/credentials/api/vendors-types';
+import type { ExistingCredential, PermissionRule } from '@/shared/credentials/api/connect-types';
 
 /**
  * Approve mode for the connect-session kinds beyond a vendor OAuth sign-in:

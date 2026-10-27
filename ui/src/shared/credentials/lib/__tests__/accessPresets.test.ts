@@ -11,7 +11,7 @@ import {
 	rulesForPreset,
 } from '@/shared/credentials/lib/accessPresets';
 import { explainRules } from '@/shared/credentials/lib/rule-matcher';
-import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
+import type { PermissionRule } from '@/shared/credentials/api/connect-types';
 
 const GET_REPOS: PermissionRule = { effect: 'allow', methods: ['GET'], path: '/repos' };
 

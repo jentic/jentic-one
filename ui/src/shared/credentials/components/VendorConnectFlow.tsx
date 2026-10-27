@@ -88,7 +88,7 @@ import type {
 	ScopeClassification,
 	VendorScopeCatalog,
 	VendorSummary,
-} from '@/shared/credentials/api/vendors-types';
+} from '@/shared/credentials/api/connect-types';
 
 /**
  * Two modes:

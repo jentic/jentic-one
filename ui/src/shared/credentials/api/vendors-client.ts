@@ -2,20 +2,26 @@
  * Integrations repository tier — the ONLY place in the module that talks
  * HTTP. Views and hooks import this module, not `fetch` directly.
  *
- * The endpoints backing this module were added after the last OpenAPI
- * regeneration, so we hand-call them via `fetch` + `getToken` from
- * `@/shared/api`. Swap to generated services when `make openapi` runs.
+ * Every call goes through the generated services in `@/shared/api`; a
+ * failure is rethrown as an {@link IntegrationsApiError} carrying the
+ * problem's `type` slug and extension members. The one hand-built request is
+ * {@link cancelConnectSessionOnUnload}, whose `keepalive` fetch the
+ * generated client can't express.
  */
 
 import {
 	AgentsService,
+	ApiError,
+	ApiOperationsService,
 	CredentialsService,
 	IntegrationsService,
 	PermissionRuleSetsService,
+	VendorsService,
 	getToken,
 	problemDetailText,
 	type AgentListResponse,
 	type ConnectSessionSummaryResponse,
+	type IntegrationsConnectRequest,
 	type PermissionRuleReadSchema,
 	type PermissionRuleSchema,
 	type RuleSetResponse,
@@ -29,7 +35,11 @@ import type {
 	StatusResponse,
 	VendorAuthCapabilities,
 	VendorListResponse,
-} from '@/shared/credentials/api/vendors-types';
+	VendorOperation,
+	VendorOperationsPage,
+} from '@/shared/credentials/api/connect-types';
+
+export type { VendorOperation, VendorOperationsPage };
 
 export class IntegrationsApiError extends Error {
 	readonly status: number | null;
@@ -64,56 +74,68 @@ export class IntegrationsApiError extends Error {
 /** Problem+json members every problem carries; the rest are extensions. */
 const PROBLEM_MEMBERS = new Set(['type', 'title', 'detail', 'status', 'instance']);
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-	const token = await getToken();
-	const headers = new Headers(init.headers);
-	if (token) headers.set('Authorization', `Bearer ${token}`);
-	if (init.body && !headers.has('Content-Type')) {
-		headers.set('Content-Type', 'application/json');
-	}
-	headers.set('Accept', 'application/json');
-	let response: Response;
-	try {
-		response = await fetch(path, { ...init, headers });
-	} catch (err) {
-		throw new IntegrationsApiError('network error', null, err);
-	}
-	if (!response.ok) {
-		// Errors are RFC 9457 problem+json ({type, title, detail, instance, …});
-		// prefer the human-readable ``detail`` over the status text.
-		let detail: string | null = null;
-		let code: string | null = null;
-		const extensions: Record<string, unknown> = {};
-		try {
-			const body: unknown = await response.json();
-			detail = problemDetailText(body);
-			if (body && typeof body === 'object') {
-				const record = body as Record<string, unknown>;
-				if (typeof record.type === 'string' && record.type) code = record.type;
-				for (const [k, v] of Object.entries(record)) {
-					if (!PROBLEM_MEMBERS.has(k)) extensions[k] = v;
-				}
-			}
-		} catch {
-			// ignore parse failure — fall back to statusText
-		}
-		throw new IntegrationsApiError(
-			detail ?? (response.statusText || `HTTP ${response.status}`),
-			response.status,
-			undefined,
-			code,
-			extensions,
+/**
+ * A generated-client failure as an {@link IntegrationsApiError}. An HTTP error
+ * keeps the RFC 9457 body's ``detail`` (else the status text), ``type`` slug
+ * and extension members; anything else is a network error with no status.
+ */
+function toIntegrationsError(err: unknown, fallback: string): IntegrationsApiError {
+	if (err instanceof IntegrationsApiError) return err;
+	if (!(err instanceof ApiError)) {
+		return new IntegrationsApiError(
+			err instanceof Error && err.message ? err.message : fallback,
+			null,
+			err,
 		);
 	}
-	if (response.status === 204) return undefined as T;
-	return (await response.json()) as T;
+	const body: unknown = err.body;
+	let code: string | null = null;
+	const extensions: Record<string, unknown> = {};
+	if (body && typeof body === 'object') {
+		const record = body as Record<string, unknown>;
+		if (typeof record.type === 'string' && record.type) code = record.type;
+		for (const [k, v] of Object.entries(record)) {
+			if (!PROBLEM_MEMBERS.has(k)) extensions[k] = v;
+		}
+	}
+	return new IntegrationsApiError(
+		problemDetailText(body) ?? (err.statusText || `HTTP ${err.status}`),
+		err.status,
+		err,
+		code,
+		extensions,
+	);
 }
 
+/** Await a generated call, rethrowing its failure as an {@link IntegrationsApiError}. */
+async function call<T>(promise: PromiseLike<T>, fallback: string): Promise<T> {
+	try {
+		return await promise;
+	} catch (err) {
+		throw toIntegrationsError(err, fallback);
+	}
+}
+
+/**
+ * The view types widen the generated enums to their string values; the wire
+ * shape is the same, so a body crosses into the generated client as-is.
+ */
+function wire<T>(body: unknown): T {
+	return body as T;
+}
+
+/** The generated `:confirm` body union. */
+type ConfirmSessionWireBody = Parameters<
+	typeof IntegrationsService.confirmConnectSession
+>[0]['requestBody'];
+
 export function startIntegrationConnect(body: ConnectRequest): Promise<ConnectResponse> {
-	return request('/integrations:connect', {
-		method: 'POST',
-		body: JSON.stringify(body),
-	});
+	return call(
+		IntegrationsService.integrationsConnect({
+			requestBody: wire<IntegrationsConnectRequest>(body),
+		}),
+		'Failed to start the connect session.',
+	);
 }
 
 /**
@@ -129,33 +151,23 @@ export async function bindCredentialToAgentBlocked(
 	agentId: string,
 	credentialId: string,
 ): Promise<void> {
-	try {
-		await AgentsService.bindAgentCredential({
+	await call(
+		AgentsService.bindAgentCredential({
 			agentId,
 			requestBody: { credential_id: credentialId },
-		});
-	} catch (err) {
-		const status =
-			typeof (err as { status?: number })?.status === 'number'
-				? (err as { status: number }).status
-				: null;
-		throw new IntegrationsApiError(
-			(err as Error)?.message ?? 'Failed to bind the credential.',
-			status,
-			err,
-		);
-	}
+		}),
+		'Failed to bind the credential.',
+	);
 }
 
 /**
- * A session-scoped route, with the ``poll_token`` capability on the query
- * string when the caller holds one. Without it the backend authorises the
- * target agent's owner (holding ``credentials:write`` and ``agents:write``)
- * or ``org:admin`` instead; everyone else gets the same 403 as a wrong token.
+ * The ``poll_token`` capability for a session-scoped route, when the caller
+ * holds one. Without it the backend authorises the target agent's owner
+ * (holding ``credentials:write`` and ``agents:write``) or ``org:admin``
+ * instead; everyone else gets the same 403 as a wrong token.
  */
-function sessionUrl(sessionId: string, suffix: string, pollToken?: string): string {
-	const path = `/connect-sessions/${encodeURIComponent(sessionId)}${suffix}`;
-	return pollToken ? `${path}?poll_token=${encodeURIComponent(pollToken)}` : path;
+function pollTokenParam(pollToken?: string): string | undefined {
+	return pollToken || undefined;
 }
 
 /**
@@ -168,7 +180,13 @@ function sessionUrl(sessionId: string, suffix: string, pollToken?: string): stri
  * treat a 403 as "session gone / not yours".
  */
 export function getConnectSession(sessionId: string, pollToken?: string): Promise<ReviewSession> {
-	return request(sessionUrl(sessionId, '', pollToken));
+	return call(
+		IntegrationsService.getConnectSession({
+			sessionId,
+			pollToken: pollTokenParam(pollToken),
+		}),
+		'Failed to load the connect session.',
+	);
 }
 
 /**
@@ -184,17 +202,27 @@ export function confirmConnectSession(
 	pollToken: string | undefined,
 	body: ConfirmSessionBody,
 ): Promise<ConfirmSessionResponse> {
-	return request(sessionUrl(sessionId, ':confirm', pollToken), {
-		method: 'POST',
-		body: JSON.stringify(body),
-	});
+	return call(
+		IntegrationsService.confirmConnectSession({
+			sessionId,
+			pollToken: pollTokenParam(pollToken),
+			requestBody: wire<ConfirmSessionWireBody>(body),
+		}),
+		'Failed to confirm the connect session.',
+	) as Promise<ConfirmSessionResponse>;
 }
 
 export function pollConnectSessionStatus(
 	sessionId: string,
 	pollToken?: string,
 ): Promise<StatusResponse> {
-	return request(sessionUrl(sessionId, '/status', pollToken));
+	return call(
+		IntegrationsService.pollConnectSessionStatus({
+			sessionId,
+			pollToken: pollTokenParam(pollToken),
+		}),
+		'Failed to load the connect session status.',
+	);
 }
 
 /**
@@ -204,7 +232,13 @@ export function pollConnectSessionStatus(
  * whether the flow already finished.
  */
 export function cancelConnectSession(sessionId: string, pollToken?: string): Promise<void> {
-	return request(sessionUrl(sessionId, ':cancel', pollToken), { method: 'POST' });
+	return call(
+		IntegrationsService.cancelConnectSession({
+			sessionId,
+			pollToken: pollTokenParam(pollToken),
+		}),
+		'Failed to cancel the connect session.',
+	);
 }
 
 /**
@@ -220,7 +254,9 @@ export function cancelConnectSessionOnUnload(sessionId: string, pollToken?: stri
 	const token = getToken();
 	const headers = new Headers({ Accept: 'application/json' });
 	if (token) headers.set('Authorization', `Bearer ${token}`);
-	void fetch(sessionUrl(sessionId, ':cancel', pollToken), {
+	const path = `/connect-sessions/${encodeURIComponent(sessionId)}:cancel`;
+	const url = pollToken ? `${path}?poll_token=${encodeURIComponent(pollToken)}` : path;
+	void fetch(url, {
 		method: 'POST',
 		headers,
 		keepalive: true,
@@ -236,7 +272,10 @@ export function cancelConnectSessionOnUnload(sessionId: string, pollToken?: stri
  * route takes none. Closing the dialog without rejecting sends nothing.
  */
 export function rejectConnectSession(sessionId: string): Promise<void> {
-	return request(sessionUrl(sessionId, ':reject'), { method: 'POST' });
+	return call(
+		IntegrationsService.rejectConnectSession({ sessionId }),
+		'Failed to reject the connect request.',
+	);
 }
 
 /**
@@ -259,7 +298,10 @@ const OPEN_CONNECT_PAGE_LIMIT = 200;
 export async function listOpenConnectRequests(): Promise<ConnectSessionSummaryResponse[]> {
 	const pages = await Promise.all(
 		OPEN_CONNECT_STATES.map((state) =>
-			IntegrationsService.listConnectSessions({ state, limit: OPEN_CONNECT_PAGE_LIMIT }),
+			call(
+				IntegrationsService.listConnectSessions({ state, limit: OPEN_CONNECT_PAGE_LIMIT }),
+				'Failed to load connect requests.',
+			),
 		),
 	);
 	return pages
@@ -269,28 +311,7 @@ export async function listOpenConnectRequests(): Promise<ConnectSessionSummaryRe
 }
 
 export function listVendors(): Promise<VendorListResponse> {
-	return request('/vendors');
-}
-
-/**
- * One operation as returned by ``GET /apis/{vendor}/{name}/{version}/operations``.
- * Slim projection — the rules-page preview only needs
- * ``(method, path, operation_id)`` to feed the client-side matcher, plus
- * ``name`` for the display label. The full ``OperationSummaryResponse``
- * carries links + tags + description that the preview doesn't render.
- */
-export interface VendorOperation {
-	operation_id: string;
-	method: string;
-	path: string;
-	name?: string | null;
-	description?: string | null;
-}
-
-export interface VendorOperationsPage {
-	data: VendorOperation[];
-	has_more: boolean;
-	next_cursor: string | null;
+	return call(VendorsService.listVendors(), 'Failed to load vendors.');
 }
 
 /**
@@ -308,13 +329,18 @@ async function listVendorOperations(
 	version: string,
 	opts: { cursor?: string | null; limit?: number } = {},
 ): Promise<VendorOperationsPage | null> {
-	const params = new URLSearchParams();
-	if (opts.cursor) params.set('cursor', opts.cursor);
-	if (opts.limit != null) params.set('limit', String(opts.limit));
-	const qs = params.toString();
-	const url = `/apis/${encodeURIComponent(vendor)}/${encodeURIComponent(name)}/${encodeURIComponent(version)}/operations${qs ? `?${qs}` : ''}`;
 	try {
-		return await request<VendorOperationsPage>(url);
+		const page = await call(
+			ApiOperationsService.listApiOperations({
+				vendor,
+				name,
+				version,
+				cursor: opts.cursor || undefined,
+				limit: opts.limit,
+			}),
+			'Failed to load the API operations.',
+		);
+		return { data: page.data, has_more: page.has_more, next_cursor: page.next_cursor ?? null };
 	} catch (err) {
 		if (err instanceof IntegrationsApiError && err.status === 404) return null;
 		throw err;
@@ -374,20 +400,13 @@ export function getVendorAuthCapabilities(
 	// tile carried one. Without the pin, the server uses the platform config
 	// entry for the slug, else its single active registration (400 when
 	// several registrations share the slug).
-	const qs =
-		registrationId != null
-			? `?oauth_app_registration_id=${encodeURIComponent(registrationId)}`
-			: '';
-	return request(`/vendors/${encodeURIComponent(vendorKey)}/auth-capabilities${qs}`);
-}
-
-/** Wrap a generated-client failure as an {@link IntegrationsApiError}. */
-function toIntegrationsError(err: unknown, fallback: string): IntegrationsApiError {
-	const status =
-		typeof (err as { status?: number })?.status === 'number'
-			? (err as { status: number }).status
-			: null;
-	return new IntegrationsApiError((err as Error)?.message ?? fallback, status, err);
+	return call(
+		VendorsService.getAuthCapabilities({
+			vendorKey,
+			oauthAppRegistrationId: registrationId ?? undefined,
+		}),
+		'Failed to load the vendor.',
+	);
 }
 
 /**
@@ -439,10 +458,30 @@ export async function getPermissionRuleSet(ruleSetId: string): Promise<RuleSetRe
 	}
 }
 
+/** The server's largest `GET /agents` page. */
+const AGENT_PAGE_LIMIT = 200;
+
+/** Cap on pages fetched for the picker, so a runaway cursor can't hang the SPA. */
+const AGENT_PICKER_MAX_PAGES = 50;
+
 /**
- * Thin adapter around the generated AgentsService so views/hooks in this
- * module never touch `@/shared/api` directly.
+ * Every agent the caller can see, for the agent pickers: follows
+ * `next_cursor` until the last page (or the page cap, which leaves
+ * `has_more` set).
  */
 export async function listAgentsForPicker(): Promise<AgentListResponse> {
-	return AgentsService.listAgents({ limit: 100 });
+	const data: AgentListResponse['data'] = [];
+	let cursor: string | null = null;
+	for (let i = 0; i < AGENT_PICKER_MAX_PAGES; i++) {
+		const page: AgentListResponse = await call(
+			AgentsService.listAgents({ cursor, limit: AGENT_PAGE_LIMIT }),
+			'Failed to load agents.',
+		);
+		data.push(...page.data);
+		if (!page.has_more || !page.next_cursor) {
+			return { data, has_more: false, next_cursor: null };
+		}
+		cursor = page.next_cursor;
+	}
+	return { data, has_more: true, next_cursor: cursor };
 }

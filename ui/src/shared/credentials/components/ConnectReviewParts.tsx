@@ -20,7 +20,7 @@ import {
 	RadioCardGroup,
 } from '@/shared/ui';
 import type { RadioCardOption } from '@/shared/ui';
-import type { ExistingCredential, ReviewSession } from '@/shared/credentials/api/vendors-types';
+import type { ExistingCredential, ReviewSession } from '@/shared/credentials/api/connect-types';
 import {
 	isCatalogProvenance,
 	schemeSummary,
@@ -186,10 +186,10 @@ function candidateDescription(credential: ExistingCredential, requested: string[
 				Granted {scopeList(granted)}; the agent asked for {scopeList(requested)}. Missing{' '}
 				{scopeList(missing)}, so binding it as is would fail upstream.
 			</span>
-			{!credential.can_reauthorize && credential.other_bound_agent_ids.length > 0 && (
+			{!credential.can_reauthorize && (credential.other_bound_agent_ids ?? []).length > 0 && (
 				<span className="block">
 					{sharedWithCount(credential)} (
-					{credential.other_bound_agent_ids.map((id, i) => (
+					{(credential.other_bound_agent_ids ?? []).map((id, i) => (
 						<span key={id}>
 							{i > 0 && ', '}
 							<ActorLabel actorId={id} />

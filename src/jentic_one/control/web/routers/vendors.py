@@ -62,7 +62,6 @@ async def list_vendors(
 @router.get(
     "/vendors/{vendor_key}/auth-capabilities",
     summary="Get a vendor's OAuth flows and scopes",
-    response_model=None,
 )
 async def get_auth_capabilities(
     vendor_key: Annotated[

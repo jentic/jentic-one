@@ -50,7 +50,7 @@ import type {
 	StatusResponse,
 	VendorAuthCapabilities,
 	VendorListResponse,
-} from '@/shared/credentials/api/vendors-types';
+} from '@/shared/credentials/api/connect-types';
 
 const KEYS = {
 	// A token-less (owner / admin) read keys on `''`, apart from any token holder's.
@@ -84,9 +84,16 @@ export function useVendorAuthCapabilities(
 	});
 }
 
+/** The agent pickers' cache slice. */
+export const agentsPickerKey = [...sharedQueryKeys.agentsRoot, 'picker'] as const;
+
 export function useAgentsForPicker() {
 	return useQuery<AgentListResponse>({
-		queryKey: ['integrations', 'agents-picker'],
+		// Under the agents root, so agent mutations and `agent.*` stream events
+		// that invalidate it refresh the picker too. The cost: a mounted picker
+		// refetches every page (one request per 200 agents, capped at
+		// AGENT_PICKER_MAX_PAGES) on each such invalidation.
+		queryKey: agentsPickerKey,
 		queryFn: listAgentsForPicker,
 		staleTime: 30_000,
 	});

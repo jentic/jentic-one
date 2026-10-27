@@ -782,3 +782,38 @@ def test_confirm_shares_connect_rate_limit_bucket() -> None:
     assert "Retry-After" in third.headers
     assert third.headers["content-type"].startswith("application/problem+json")
     assert third.json()["type"] == "rate_limit_exceeded"
+
+
+def test_session_routes_declare_their_success_schemas_in_openapi() -> None:
+    """Each body-returning route names its response model, so the UI client is typed."""
+    app = _build_app(svc=AsyncMock(spec=ConnectSessionService))
+    spec = app.openapi()
+    paths = spec["paths"]
+
+    def success_schema(path: str, method: str, status: str) -> dict[str, Any]:
+        content = paths[path][method]["responses"][status]["content"]["application/json"]
+        schema: dict[str, Any] = content["schema"]
+        return schema
+
+    assert success_schema("/integrations:connect", "post", "201") == {
+        "$ref": "#/components/schemas/IntegrationsConnectResponse"
+    }
+    assert success_schema("/connect-sessions/{session_id}", "get", "200") == {
+        "$ref": "#/components/schemas/ReviewSessionResponse"
+    }
+    assert success_schema("/connect-sessions/{session_id}/status", "get", "200") == {
+        "$ref": "#/components/schemas/ConnectSessionStatusResponse"
+    }
+    confirm = success_schema("/connect-sessions/{session_id}:confirm", "post", "200")
+    assert {variant["$ref"] for variant in confirm["oneOf"]} == {
+        "#/components/schemas/DeviceAuthorizationConfirmSessionResponse",
+        "#/components/schemas/AuthCodeConfirmSessionResponse",
+        "#/components/schemas/ConnectedConfirmSessionResponse",
+        "#/components/schemas/ReauthorizeConfirmSessionResponse",
+    }
+    assert confirm["discriminator"]["propertyName"] == "kind"
+    review = spec["components"]["schemas"]["ReviewSessionResponse"]
+    assert (
+        review["properties"]["api_reference"]["$ref"]
+        == "#/components/schemas/ConnectSessionApiReferenceResponse"
+    )

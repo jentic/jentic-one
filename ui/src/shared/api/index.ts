@@ -273,3 +273,34 @@ export type { DecideHeldExecutionRequest } from '@/shared/api/generated/models/D
 // attention inbox and the Agents page; views use its hooks. Append-only.
 export { IntegrationsService } from '@/shared/api/generated/services/IntegrationsService';
 export type { ConnectSessionSummaryResponse } from '@/shared/api/generated/models/ConnectSessionSummaryResponse';
+
+// Connect-session and vendor-registry wire models (`IntegrationsService` is
+// exported above). The credentials module derives its view types from these.
+export { VendorsService } from '@/shared/api/generated/services/VendorsService';
+export type { IntegrationsConnectRequest } from '@/shared/api/generated/models/IntegrationsConnectRequest';
+export type { IntegrationsConnectResponse } from '@/shared/api/generated/models/IntegrationsConnectResponse';
+export type { ReviewSessionResponse } from '@/shared/api/generated/models/ReviewSessionResponse';
+export type { ReviewScopeResponse } from '@/shared/api/generated/models/ReviewScopeResponse';
+export type { ReviewAgentResponse } from '@/shared/api/generated/models/ReviewAgentResponse';
+export type { ReviewProvenanceResponse } from '@/shared/api/generated/models/ReviewProvenanceResponse';
+export type { ReviewSchemeResponse } from '@/shared/api/generated/models/ReviewSchemeResponse';
+export type { ExistingCredentialResponse } from '@/shared/api/generated/models/ExistingCredentialResponse';
+export type { OAuthConfirmSessionRequest } from '@/shared/api/generated/models/OAuthConfirmSessionRequest';
+export type { ApiKeyConfirmSessionRequest } from '@/shared/api/generated/models/ApiKeyConfirmSessionRequest';
+export type { BearerConfirmSessionRequest } from '@/shared/api/generated/models/BearerConfirmSessionRequest';
+export type { BasicConfirmSessionRequest } from '@/shared/api/generated/models/BasicConfirmSessionRequest';
+export type { OwnOAuthClientConfirmSessionRequest } from '@/shared/api/generated/models/OwnOAuthClientConfirmSessionRequest';
+export type { ExistingCredentialConfirmSessionRequest } from '@/shared/api/generated/models/ExistingCredentialConfirmSessionRequest';
+export type { ReauthorizeConfirmSessionRequest } from '@/shared/api/generated/models/ReauthorizeConfirmSessionRequest';
+export type { DeviceAuthorizationConfirmSessionResponse } from '@/shared/api/generated/models/DeviceAuthorizationConfirmSessionResponse';
+export type { AuthCodeConfirmSessionResponse } from '@/shared/api/generated/models/AuthCodeConfirmSessionResponse';
+export type { ConnectedConfirmSessionResponse } from '@/shared/api/generated/models/ConnectedConfirmSessionResponse';
+export type { ReauthorizeConfirmSessionResponse } from '@/shared/api/generated/models/ReauthorizeConfirmSessionResponse';
+export type { ConnectSessionStatusResponse } from '@/shared/api/generated/models/ConnectSessionStatusResponse';
+export type { VendorListResponse } from '@/shared/api/generated/models/VendorListResponse';
+export type { VendorSummaryResponse } from '@/shared/api/generated/models/VendorSummaryResponse';
+export type { VendorAuthCapabilitiesResponse } from '@/shared/api/generated/models/VendorAuthCapabilitiesResponse';
+export type { VendorFlowResponse } from '@/shared/api/generated/models/VendorFlowResponse';
+export type { VendorScopeResponse } from '@/shared/api/generated/models/VendorScopeResponse';
+export type { OperationSummaryListResponse } from '@/shared/api/generated/models/OperationSummaryListResponse';
+export type { OperationSummaryResponse } from '@/shared/api/generated/models/OperationSummaryResponse';

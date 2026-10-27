@@ -17,7 +17,7 @@ import type {
 	StatusResponse,
 	VendorAuthCapabilities,
 	VendorSummary,
-} from '@/shared/credentials/api/vendors-types';
+} from '@/shared/credentials/api/connect-types';
 import type { ApiResponse, CatalogEntryResponse } from '@/shared/api';
 
 /**
@@ -617,16 +617,18 @@ const connectSessionsHandlers = [
 
 	http.post('/integrations:connect', async ({ request }) => {
 		const body = (await request.json()) as ConnectRequest;
+		// The mock serves vendor targets only.
+		const vendor = body.vendor ?? '';
 		connectSessionSeq += 1;
 		const sessionId = `sess_mock_${connectSessionSeq}`;
 		const pollToken = `ptok_mock_${connectSessionSeq}`;
 		// The backend mints the pending credential row at `:connect` time —
 		// mirror it so the credentials list shows the pending shell.
 		const pendingCredential = makeMockCredential({
-			name: `${body.vendor} (connecting…)`,
+			name: `${vendor} (connecting…)`,
 			type: CredentialType.OAUTH2,
 			provider: 'direct_oauth2',
-			api: { vendor: body.vendor, name: 'default', version: '1.0.0' },
+			api: { vendor: vendor, name: 'default', version: '1.0.0' },
 			details: { grant_type: 'device_code', connected: false },
 		});
 		store.push(pendingCredential);
@@ -635,7 +637,7 @@ const connectSessionsHandlers = [
 			session_id: sessionId,
 			poll_token: pollToken,
 			state: 'created',
-			vendor_key: body.vendor,
+			vendor_key: vendor,
 			credential_id: credentialId,
 			agent_id: body.agent_id ?? null,
 			requested_by_actor_id: body.agent_id ?? 'usr_mock_owner',
@@ -761,7 +763,7 @@ const connectSessionsHandlers = [
 				return problem(409, 'Conflict', 'The review is stale.', 'review_stale');
 			}
 		}
-		if (needsReview && body.permission_rules.length === 0) {
+		if (needsReview && (body.permission_rules ?? []).length === 0) {
 			return problem(422, 'Unprocessable Entity', 'Rules required.', 'rules_required');
 		}
 		if (kind === 'existing_credential' || kind === 'reauthorize') {

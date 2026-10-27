@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { describe, expect, it } from 'vitest';
 import { render, screen, userEvent } from '@/__tests__/test-utils';
 import { RuleListEditor } from '@/shared/credentials/components/RuleListEditor';
-import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
+import type { PermissionRule } from '@/shared/credentials/api/connect-types';
 
 function Harness({ initial = [] as PermissionRule[] }: { initial?: PermissionRule[] }) {
 	const [rules, setRules] = useState<PermissionRule[]>(initial);

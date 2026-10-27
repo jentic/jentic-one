@@ -7,7 +7,7 @@ import type {
 	ExistingCredential,
 	ReviewScheme,
 	ReviewSession,
-} from '@/shared/credentials/api/vendors-types';
+} from '@/shared/credentials/api/connect-types';
 
 /** The secret a `manual_*` session collects, keyed by its `resolved_flow`. */
 export type SecretKind = 'api_key' | 'bearer' | 'basic';
@@ -211,6 +211,6 @@ export function describeConfirmError(error: unknown): ConfirmErrorCopy {
 
 /** "Used by 2 other agents" — the reason a credential can't be widened. */
 export function sharedWithCount(credential: ExistingCredential): string {
-	const n = credential.other_bound_agent_ids.length;
+	const n = credential.other_bound_agent_ids?.length ?? 0;
 	return n === 1 ? 'Used by 1 other agent' : `Used by ${n} other agents`;
 }
