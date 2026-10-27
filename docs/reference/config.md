@@ -408,6 +408,7 @@ Platform security event thresholds.
 | `security.execution_repeated_failure_threshold` | integer (>= 1) | `5` | `JENTIC__SECURITY__EXECUTION_REPEATED_FAILURE_THRESHOLD` |  |
 | `security.execution_repeated_failure_window_s` | integer (>= 1) | `300` | `JENTIC__SECURITY__EXECUTION_REPEATED_FAILURE_WINDOW_S` |  |
 | `security.execution_repeated_failure_critical_threshold` | integer (>= 1) | `20` | `JENTIC__SECURITY__EXECUTION_REPEATED_FAILURE_CRITICAL_THRESHOLD` |  |
+| `security.execution_repeated_failure_counter_max_entries` | integer (>= 1) | `10000` | `JENTIC__SECURITY__EXECUTION_REPEATED_FAILURE_COUNTER_MAX_ENTRIES` | Upper bound on live entries (per-key time buckets and dedup markers) the in-process repeated-failure counter holds on the `memory` shared-state backend. Each actor + toolkit/credential + operation key failing within two windows uses up to 4 entries (6 when a toolkit call also carries a credential). When the bound is reached the counter fails open: every failure runs the database scan until two windows after the store last rejected a key. The bound caps memory and never hides an emission, but a cardinality spike above it disables the pre-filter. Ignored on Redis. |
 
 ## `telemetry`
 

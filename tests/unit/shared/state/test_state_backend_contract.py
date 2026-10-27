@@ -58,7 +58,15 @@ def test_the_contract_covers_every_protocol_method() -> None:
         for name, _ in inspect.getmembers(SharedStateBackend, inspect.isfunction)
         if not name.startswith("_")
     }
-    assert methods == {"get", "set", "set_if_absent", "incr_with_ttl", "token_bucket", "aclose"}
+    assert methods == {
+        "get",
+        "set",
+        "set_if_absent",
+        "incr_with_ttl",
+        "incr_and_read",
+        "token_bucket",
+        "aclose",
+    }
     for method in methods:
         assert any(method in test for test in CONTRACT_TESTS), f"no contract test for {method}"
 

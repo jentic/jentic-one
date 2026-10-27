@@ -501,3 +501,27 @@ async def test_expiry_is_found_in_a_compacting_index(clock: FakeClock) -> None:
         await backend.set("ns:new", b"v", ttl_s=60.0)
     # The earliest live deadline is ns:65's (2_065 s), wherever it is indexed.
     assert refused.value.retry_after_s == 2_065
+
+
+async def test_incr_and_read_increments_then_reads_in_order(clock: FakeClock) -> None:
+    """One step increments every counter (TTL set only on creation) and reads the
+    rest; missing keys read as ``None``."""
+    backend = MemoryStateBackend(clock=clock)
+    await backend.set("marker", b"1", ttl_s=100.0)
+
+    assert await backend.incr_and_read(["a", "b"], ["prev", "marker"], ttl_s=10.0) == (
+        [1, 1],
+        [None, b"1"],
+    )
+    clock.advance(6.0)
+    assert await backend.incr_and_read(["a"], ["b"], ttl_s=10.0) == ([2], [b"1"])
+
+    clock.advance(5.0)  # past the creation TTL: the window does not slide
+    assert await backend.incr_and_read(["a"], [], ttl_s=10.0) == ([1], [])
+
+
+async def test_incr_and_read_respects_the_bound(clock: FakeClock) -> None:
+    backend = MemoryStateBackend(clock=clock, max_entries=1)
+    await backend.incr_and_read(["ns:a"], [], ttl_s=10.0)
+    with pytest.raises(StateBackendCapacityError):
+        await backend.incr_and_read(["ns:a", "ns:b"], [], ttl_s=10.0)
