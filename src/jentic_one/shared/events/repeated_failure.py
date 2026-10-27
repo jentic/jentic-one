@@ -42,18 +42,17 @@ from jentic_one.shared.schemas import OperationInfo
 from jentic_one.shared.state import (
     MEMORY_BACKEND,
     KeyValueStore,
-    MemoryStateBackend,
     StateBackendConfig,
     WindowCounterStore,
 )
-from jentic_one.shared.state.backend import ENTRY_OVERHEAD_BYTES
 
 logger = structlog.get_logger(__name__)
 
+# Key namespace on the shared-state backend. On the ``memory`` backend the
+# factory gives it its own budget (``state.memory.namespaces.repeated_failure``),
+# so a high-cardinality failure storm can neither grow without bound nor crowd
+# out other shared state.
 _KEY_PREFIX = "repeated_failure"
-# Upper bound on a counter key plus its value: ``repeated_failure:<window>:``
-# ``seen:<severity>:<32-hex digest>`` and a short integer or marker.
-_MAX_KEY_AND_VALUE_BYTES = 128
 # Windows a failure stays countable: the bucket TTL, the estimate's span
 # (current + previous bucket) and the degraded span after a backend error all
 # use it, so they cannot drift apart.
@@ -284,39 +283,27 @@ def _possible_severities(estimate: int, config: SecurityConfig) -> list[EventSev
 def build_repeated_failure_counter(
     backend_config: StateBackendConfig,
     shared_backend: CounterStore,
-    security_config: SecurityConfig,
     *,
     processes: int = 1,
 ) -> RepeatedFailureCounter | None:
     """Build the counter over the process's shared-state backend.
 
-    A shared backend is used as-is (bounded by its own TTLs and eviction
-    policy). On the ``memory`` backend the counter gets a dedicated store capped at
-    ``execution_repeated_failure_counter_max_entries`` so a high-cardinality failure
-    storm can neither grow without bound nor crowd out other shared state.
+    The counter's keys live in the ``repeated_failure`` namespace of the one
+    backend the process already holds. On the ``memory`` backend that namespace
+    has its own budget (``state.memory.namespaces.repeated_failure``), so a
+    high-cardinality failure storm can neither grow without bound nor crowd out
+    other shared state; a full namespace refuses writes and the counter fails
+    open. Any other backend is shared across this surface's processes and
+    replicas, bounded by its own TTLs and eviction policy, and counts globally.
 
     ``processes`` is how many worker processes serve this broker. A per-process
     ``memory`` count would see only a share of each key's failures and could
     hide an emission, so with more than one process on ``memory`` this returns
     ``None``: no gate, and every failure runs the scan.
     """
-    if backend_config.backend != MEMORY_BACKEND:
-        # Any backend but ``memory`` is shared across this surface's processes
-        # and replicas, so the process's own instance already counts globally.
-        return RepeatedFailureCounter(shared_backend)
-    if processes > 1:
+    if backend_config.backend == MEMORY_BACKEND and processes > 1:
         return None
-    max_entries = security_config.execution_repeated_failure_counter_max_entries
-    # Size the byte budgets from the entry bound so ``max_entries`` stays the
-    # binding limit: every key is a short, fixed-shape bucket or marker.
-    max_bytes = max_entries * (ENTRY_OVERHEAD_BYTES + _MAX_KEY_AND_VALUE_BYTES)
-    return RepeatedFailureCounter(
-        MemoryStateBackend(
-            max_entries=max_entries,
-            max_bytes=max_bytes,
-            max_total_bytes=max_bytes,
-        )
-    )
+    return RepeatedFailureCounter(shared_backend)
 
 
 async def maybe_emit_repeated_failure(

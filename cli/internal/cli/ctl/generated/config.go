@@ -1902,7 +1902,8 @@ func (j *McpOAuthConfig) UnmarshalJSON(value []byte) error {
 // and their open-circuit report claims, “broker-authfail“ and
 // “broker-authfail-emit“ for the broker's auth-failure counters,
 // “mcp-session“ and “mcp-session-cap“ for the MCP session-event dedupe,
-// and so on). Each namespace has its own budget, so one key kind filling up
+// “repeated_failure“ for the broker's repeated-failure counters, and so
+// on). Each namespace has its own budget, so one key kind filling up
 // never starves another. A namespace that is full of live entries refuses
 // new writes (the request that needed it gets a 503) rather than evicting a
 // live entry; the telemetry namespaces (“broker-authfail*“, the “cb“
@@ -1932,14 +1933,18 @@ type MemoryBackendConfig struct {
 	// max_bytes_per_namespace with a 0.02 per-client share, about 370 live nonces per
 	// IPv4 address or IPv6 /64 at the defaults (about 900 bytes each, 5-minute TTL),
 	// twice what the default authorize rate limit lets one client network request in
-	// that time; every other namespace uses max_entries_per_namespace /
-	// max_bytes_per_namespace. The sustained idempotent request rate idem can hold is
-	// min(max_entries, max_bytes / record_bytes) / broker.idempotency.ttl_s, where
-	// record_bytes is about 1000 bytes plus the response headers (capped at 512
-	// bytes): about 30 req/s at the defaults and a 1 h TTL, and a tenth of that per
-	// caller. Above it, Idempotency-Key requests get 503 idempotency_unavailable;
-	// bodies (about 830 bytes + body length each) stop being stored for replay
-	// sooner, about 5 req/s of 1 KiB bodies, without refusing requests.
+	// that time; repeated_failure (the broker's repeated-failure counters, which gate
+	// the execution.repeated_failure database scan) is 10000 entries / 8780000 bytes
+	// (about 8.4 MiB), about 2500 concurrently failing actor + credential + operation
+	// keys, and fails open when full (every failure runs the scan); every other
+	// namespace uses max_entries_per_namespace / max_bytes_per_namespace. The
+	// sustained idempotent request rate idem can hold is min(max_entries, max_bytes /
+	// record_bytes) / broker.idempotency.ttl_s, where record_bytes is about 1000
+	// bytes plus the response headers (capped at 512 bytes): about 30 req/s at the
+	// defaults and a 1 h TTL, and a tenth of that per caller. Above it,
+	// Idempotency-Key requests get 503 idempotency_unavailable; bodies (about 830
+	// bytes + body length each) stop being stored for replay sooner, about 5 req/s of
+	// 1 KiB bodies, without refusing requests.
 	Namespaces MemoryBackendConfigNamespaces `json:"namespaces,omitempty,omitzero" yaml:"namespaces,omitempty" mapstructure:"namespaces,omitempty"`
 }
 
@@ -1951,14 +1956,18 @@ type MemoryBackendConfig struct {
 // max_bytes_per_namespace with a 0.02 per-client share, about 370 live nonces per
 // IPv4 address or IPv6 /64 at the defaults (about 900 bytes each, 5-minute TTL),
 // twice what the default authorize rate limit lets one client network request in
-// that time; every other namespace uses max_entries_per_namespace /
-// max_bytes_per_namespace. The sustained idempotent request rate idem can hold is
-// min(max_entries, max_bytes / record_bytes) / broker.idempotency.ttl_s, where
-// record_bytes is about 1000 bytes plus the response headers (capped at 512
-// bytes): about 30 req/s at the defaults and a 1 h TTL, and a tenth of that per
-// caller. Above it, Idempotency-Key requests get 503 idempotency_unavailable;
-// bodies (about 830 bytes + body length each) stop being stored for replay sooner,
-// about 5 req/s of 1 KiB bodies, without refusing requests.
+// that time; repeated_failure (the broker's repeated-failure counters, which gate
+// the execution.repeated_failure database scan) is 10000 entries / 8780000 bytes
+// (about 8.4 MiB), about 2500 concurrently failing actor + credential + operation
+// keys, and fails open when full (every failure runs the scan); every other
+// namespace uses max_entries_per_namespace / max_bytes_per_namespace. The
+// sustained idempotent request rate idem can hold is min(max_entries, max_bytes /
+// record_bytes) / broker.idempotency.ttl_s, where record_bytes is about 1000 bytes
+// plus the response headers (capped at 512 bytes): about 30 req/s at the defaults
+// and a 1 h TTL, and a tenth of that per caller. Above it, Idempotency-Key
+// requests get 503 idempotency_unavailable; bodies (about 830 bytes + body length
+// each) stop being stored for replay sooner, about 5 req/s of 1 KiB bodies,
+// without refusing requests.
 type MemoryBackendConfigNamespaces map[string]MemoryNamespaceBudgetConfig
 
 // UnmarshalJSON implements json.Unmarshaler.
@@ -2573,16 +2582,6 @@ type SecurityConfig struct {
 	// "credential_expiry_sweep_interval_ticks".
 	CredentialExpirySweepIntervalTicks int `json:"credential_expiry_sweep_interval_ticks" yaml:"credential_expiry_sweep_interval_ticks" mapstructure:"credential_expiry_sweep_interval_ticks"`
 
-	// Upper bound on live entries (per-key time buckets and dedup markers) the
-	// in-process repeated-failure counter holds on the `memory` shared-state backend.
-	// Each actor + toolkit/credential + operation key failing within two windows uses
-	// up to 4 entries (6 when a toolkit call also carries a credential). When the
-	// bound is reached the counter fails open: every failure runs the database scan
-	// until two windows after the store last rejected a key. The bound caps memory
-	// and never hides an emission, but a cardinality spike above it disables the
-	// pre-filter. Ignored on Redis.
-	ExecutionRepeatedFailureCounterMaxEntries int `json:"execution_repeated_failure_counter_max_entries" yaml:"execution_repeated_failure_counter_max_entries" mapstructure:"execution_repeated_failure_counter_max_entries"`
-
 	// ExecutionRepeatedFailureCriticalThreshold corresponds to the JSON schema field
 	// "execution_repeated_failure_critical_threshold".
 	ExecutionRepeatedFailureCriticalThreshold int `json:"execution_repeated_failure_critical_threshold" yaml:"execution_repeated_failure_critical_threshold" mapstructure:"execution_repeated_failure_critical_threshold"`
@@ -2624,12 +2623,6 @@ func (j *SecurityConfig) UnmarshalJSON(value []byte) error {
 	}
 	if 1 > plain.CredentialExpirySweepIntervalTicks {
 		return fmt.Errorf("field %s: must be >= %v", "credential_expiry_sweep_interval_ticks", 1)
-	}
-	if v, ok := raw["execution_repeated_failure_counter_max_entries"]; !ok || v == nil {
-		plain.ExecutionRepeatedFailureCounterMaxEntries = 10000
-	}
-	if 1 > plain.ExecutionRepeatedFailureCounterMaxEntries {
-		return fmt.Errorf("field %s: must be >= %v", "execution_repeated_failure_counter_max_entries", 1)
 	}
 	if v, ok := raw["execution_repeated_failure_critical_threshold"]; !ok || v == nil {
 		plain.ExecutionRepeatedFailureCriticalThreshold = 20

@@ -23,6 +23,8 @@ from jentic_one.shared.events.repeated_failure import (
 )
 from jentic_one.shared.models.events import EventSeverity
 from jentic_one.shared.state import REDIS_BACKEND, MemoryStateBackend, StateBackendConfig
+from jentic_one.shared.state.backend import ENTRY_OVERHEAD_BYTES
+from jentic_one.shared.state.factory import REPEATED_FAILURE_MAX_ENTRIES, build_state_backend
 
 _WINDOW = 300
 _CONFIG = SecurityConfig(
@@ -274,22 +276,24 @@ async def test_a_full_bounded_store_degrades_every_key(clock: FakeClock) -> None
     assert await _fail(counter, key=_KEY) == [True]
 
 
-def test_memory_backend_gets_a_dedicated_bounded_store() -> None:
-    shared = MemoryStateBackend()
-    config = SecurityConfig(execution_repeated_failure_counter_max_entries=7)
-    counter = build_repeated_failure_counter(StateBackendConfig(), shared, config)
+def test_memory_backend_is_shared_under_its_own_namespace_budget() -> None:
+    """The counter writes to the process's one shared backend; its isolation is
+    the factory's built-in ``repeated_failure`` namespace budget, not a private
+    store."""
+    shared = build_state_backend(StateBackendConfig())
+    counter = build_repeated_failure_counter(StateBackendConfig(), shared)
     assert counter is not None
-    store = counter._store
-    assert isinstance(store, MemoryStateBackend)
-    assert store is not shared
-    assert store._budget("repeated_failure").max_entries == 7
+    assert counter._store is shared
+    assert isinstance(shared, MemoryStateBackend)
+    budget = shared._budget("repeated_failure")
+    assert budget.max_entries == REPEATED_FAILURE_MAX_ENTRIES
+    assert budget.max_bytes == REPEATED_FAILURE_MAX_ENTRIES * (ENTRY_OVERHEAD_BYTES + 128)
+    assert budget.max_owner_share is None
 
 
 def test_redis_backend_is_shared_as_is() -> None:
     shared = MemoryStateBackend()  # stands in for the process's Redis backend
-    counter = build_repeated_failure_counter(
-        StateBackendConfig(backend=REDIS_BACKEND), shared, SecurityConfig()
-    )
+    counter = build_repeated_failure_counter(StateBackendConfig(backend=REDIS_BACKEND), shared)
     assert counter is not None
     assert counter._store is shared
 
@@ -299,14 +303,10 @@ def test_memory_backend_across_several_processes_builds_no_gate() -> None:
     and could hide an emission, so several processes on memory scan every failure;
     Redis stays shared whatever the process count."""
     shared = MemoryStateBackend()
-    config = SecurityConfig()
-    assert build_repeated_failure_counter(StateBackendConfig(), shared, config, processes=2) is None
-    assert (
-        build_repeated_failure_counter(StateBackendConfig(), shared, config, processes=1)
-        is not None
-    )
+    assert build_repeated_failure_counter(StateBackendConfig(), shared, processes=2) is None
+    assert build_repeated_failure_counter(StateBackendConfig(), shared, processes=1) is not None
     redis_counter = build_repeated_failure_counter(
-        StateBackendConfig(backend=REDIS_BACKEND), shared, config, processes=4
+        StateBackendConfig(backend=REDIS_BACKEND), shared, processes=4
     )
     assert redis_counter is not None
     assert redis_counter._store is shared
