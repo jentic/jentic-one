@@ -75,6 +75,22 @@ class AgentRepository:
         return {row[0]: row[1] for row in result.all()}
 
     @staticmethod
+    async def list_ids_by_owner(session: AsyncSession, owner_id: str) -> list[str]:
+        """Ids of every agent ``owner_id`` owns, whatever the agent's status.
+
+        An owned agent's effective status follows its owner's account, so a
+        change to the owner's account changes what the broker must answer for
+        each of these agents.
+
+        Unscoped: for internal fan-out (such as broker cache eviction) after
+        the caller has authorized access to ``owner_id``. Never use it to build
+        a response payload.
+        """
+        stmt = select(Agent.id).where(Agent.owner_id == owner_id)
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
+
+    @staticmethod
     async def list_by_owner(
         session: AsyncSession,
         owner_id: str,

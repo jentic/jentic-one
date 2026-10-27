@@ -35,9 +35,6 @@ from jentic_one.shared.models.events import EventSeverity, EventType
 
 logger = structlog.get_logger()
 
-# Bound agents read for the re-authorize re-check: the permitted agent plus any
-# other is enough to refuse.
-
 
 class ConnectFlowError(Exception):
     """Raised when the connect flow fails for a domain reason."""

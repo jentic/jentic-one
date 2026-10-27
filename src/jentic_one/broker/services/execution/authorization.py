@@ -7,7 +7,7 @@ module owns that verdict: derive the caller's bindings for the discovered API
 theme-5 Phase 6b), select the credential, and evaluate
 the binding's permission rules — all **before** any secret is decrypted or
 audited. A denial raises the broker domain taxonomy
-(``broker/core/exceptions.py``); the web edge maps it to problem+json and the
+(``broker/core/errors.py``); the web edge maps it to problem+json and the
 worker records it on the job result (see :mod:`.queued_authorization`).
 """
 
@@ -23,17 +23,19 @@ from urllib.parse import urlparse
 import structlog
 
 from jentic_one.broker.core.denial import DenialReason
-from jentic_one.broker.core.exceptions import (
-    ActionDeniedError,
+from jentic_one.broker.core.directives import (
     AgentDirective,
-    BrokerError,
-    CredentialBindingSuspendedError,
-    CredentialIdentityMismatchError,
     credential_binding_suspended_directive,
     direct_action_denied_directive,
     direct_credential_identity_mismatch_directive,
     no_credential_binding_directive,
     suggested_permission_rules,
+)
+from jentic_one.broker.core.errors import (
+    ActionDeniedError,
+    BrokerError,
+    CredentialBindingSuspendedError,
+    CredentialIdentityMismatchError,
 )
 from jentic_one.broker.services.credentials.connect_target import resolve_connect_target
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
@@ -467,8 +469,8 @@ async def authorize_execution(
     ``path``), recorded on the denial event.
 
     Raises a :class:`BrokerError` (``ActionDeniedError`` /
-    ``CredentialIdentityMismatchError`` → 403, ``AmbiguousMatchError`` → 409,
-    and the credential-resolution taxonomy from ``CredentialService.select``)
+    ``CredentialIdentityMismatchError`` → 403, ``AmbiguousCredentialMatchError``
+    → 409, and the credential-resolution taxonomy from ``CredentialService.select``)
     when the execution is not allowed.
     """
     # Derive candidates (0 → 403 with the right directive), then select the

@@ -17,7 +17,7 @@ import pytest
 from jentic_one.broker.adapters.runners.base import RunnerRequest, RunnerResult, StreamingResult
 from jentic_one.broker.adapters.runners.circuit import CircuitBreakerRunner
 from jentic_one.broker.adapters.runners.http import HttpRunner
-from jentic_one.broker.core.exceptions import (
+from jentic_one.broker.core.errors import (
     CircuitOpenError,
     UpstreamBodyInterruptedError,
     UpstreamResponseTooLargeError,

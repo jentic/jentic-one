@@ -190,6 +190,12 @@ def _no_client_config_error() -> InvalidCredentialInputError:
     return InvalidCredentialInputError("This oauth2 credential has no client configuration to edit")
 
 
+def _require_https_oauth2_url(field: str, url: str | None) -> None:
+    """Reject a non-empty OAuth2 endpoint URL that does not use ``https://`` (#1779)."""
+    if url and not url.strip().lower().startswith("https://"):
+        raise InvalidCredentialInputError(f"Invalid {field}: must use https")
+
+
 class _UnmatchedScopeWarning(NamedTuple):
     """One advisory warning: the human message plus the scope it names."""
 
@@ -305,19 +311,22 @@ class CredentialService:
         api_scope = self._canonical_api_scope(payload.api)
         api_scope = await self._catalog_registered_scope(api_scope, payload.catalog_api_id)
 
-        stored_type = to_stored(payload.type, grant_type=payload.grant_type)
-        encryption = self._ctx.encryption
-
-        # Resolve the OAuth2 endpoints before the write transaction opens: on
-        # SQLite ``transaction()`` holds the process-wide writer lock, so a slow
-        # resolver inside it would fail concurrent writers on ``busy_timeout``.
+        # Resolve the OAuth2 endpoints before touching encryption or opening the
+        # write transaction: on SQLite ``transaction()`` holds the process-wide
+        # writer lock, so a slow resolver inside it would fail concurrent writers
+        # on ``busy_timeout``.
         validated_token_url: str | None = None
         validated_authorize_url: str | None = None
         if payload.type == CredentialType.OAUTH2:
+            _require_https_oauth2_url("token_url", payload.token_url)
+            _require_https_oauth2_url("authorize_url", payload.authorize_url)
             validated_token_url = await self._validated_oauth2_url("token_url", payload.token_url)
             validated_authorize_url = await self._validated_oauth2_url(
                 "authorize_url", payload.authorize_url
             )
+
+        stored_type = to_stored(payload.type, grant_type=payload.grant_type)
+        encryption = self._ctx.encryption
 
         async with self._ctx.control_db.transaction() as session:
             credential = await CredentialRepository.create(
@@ -400,7 +409,7 @@ class CredentialService:
                     secret = OAuth2Full(
                         client_id=payload.client_id or "",
                         client_secret="",
-                        token_url=payload.token_url or "",
+                        token_url=validated_token_url or "",
                         grant_type=grant,
                         scopes=payload.scopes,
                     )
@@ -425,7 +434,7 @@ class CredentialService:
                     secret = OAuth2Full(
                         client_id=payload.client_id or "",
                         client_secret=payload.client_secret or "",
-                        token_url=payload.token_url or "",
+                        token_url=validated_token_url or "",
                         grant_type=grant,
                         scopes=payload.scopes,
                     )
@@ -1354,12 +1363,17 @@ class CredentialService:
         return CredentialPage(data=data, has_more=has_more, next_cursor=next_cursor)
 
     async def _validated_oauth2_url(self, field: str, url: str | None) -> str | None:
-        """Check an OAuth2 endpoint against ``control.egress``; ``None``/empty passes through.
+        """Require an https OAuth2 endpoint that passes ``control.egress``.
 
-        Resolves DNS, so callers run it before opening a write transaction.
+        ``None``/empty passes through. These endpoints receive client
+        credentials and authorization codes, so plain http and private/metadata
+        targets the control-plane egress policy does not allowlist are refused
+        at write time (#1779). Resolves DNS, so callers run it before opening a
+        write transaction.
         """
         if not url:
             return None
+        _require_https_oauth2_url(field, url)
         try:
             return await validate_upstream_url_async(url, resolved_control_egress(self._ctx.config))
         except ValueError as exc:
@@ -1957,20 +1971,16 @@ class CredentialService:
         )
 
     async def _validate_update_token_url(self, payload: CredentialUpdate) -> str | None:
-        """SSRF-validate an OAuth2 ``token_url`` edit; ``None`` when none is sent.
+        """Require an https OAuth2 ``token_url`` edit that passes ``control.egress``.
 
-        The single update-path call site for upstream-URL validation, under
-        the control-plane egress allowlist. It resolves DNS off the event
-        loop, so callers run it before opening the write transaction.
+        ``None`` when none is sent. The single update-path call site for
+        upstream-URL validation, under the control-plane egress allowlist. It
+        resolves DNS off the event loop, so callers run it before opening the
+        write transaction.
         """
         if payload.type != CredentialType.OAUTH2 or payload.token_url is None:
             return None
-        try:
-            return await validate_upstream_url_async(
-                payload.token_url, resolved_control_egress(self._ctx.config)
-            )
-        except ValueError as exc:
-            raise InvalidCredentialInputError(f"Invalid token_url: {exc}") from exc
+        return await self._validated_oauth2_url("token_url", payload.token_url)
 
     @staticmethod
     def _audit_snapshot(credential: Credential) -> dict[str, Any]:

@@ -67,6 +67,9 @@ dbcost: ## Per-call statements/transactions per DB plane (pg_stat_statements)
 capacity: ## Closed-loop throughput sweep, workers x CPUs (ARGS="--configs 1x2,2x4")
 	$(PY) tests.perf.bench_capacity $(ARGS)
 
+monitoring: ## Admin dashboard reads: latency ramp, aggregate consistency under writes, cache pressure (ARGS="--seed 100000")
+	$(PY) tests.perf.bench_monitoring $(ARGS)
+
 profile: ## py-spy flamegraph + CPU share per subsystem (ARGS="--concurrency 32")
 	$(PY) tests.perf.pyspy_profile $(ARGS)
 

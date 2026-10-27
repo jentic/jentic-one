@@ -69,6 +69,12 @@ def _make_token(ctx: Context) -> str:
 
 
 @pytest.fixture()
+def registry_app(web_context: Context) -> FastAPI:
+    """The real registry app (token auth, lifespan disabled), for raw-ASGI tests."""
+    return _build_app(web_context)
+
+
+@pytest.fixture()
 async def registry_jwt_user(web_context: Context) -> AsyncGenerator[str, None]:
     """The active user row behind ``_make_token``'s subject."""
     async with seeded_jwt_user(web_context, _REGISTRY_JWT_SUB) as user_id:

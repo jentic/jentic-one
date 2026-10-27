@@ -24,7 +24,7 @@ import uuid
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from jentic_one.registry.ingest.exc import CatalogIdentityConflictError
+from jentic_one.registry.ingest.errors import CatalogIdentityConflictError
 from jentic_one.registry.ingest.models import ApiIdentifier, IngestSpecification, SpecType
 from jentic_one.registry.ingest.pipeline.ctx import PipelineContext
 from jentic_one.registry.ingest.stages.extract_api import ResolveApiStage

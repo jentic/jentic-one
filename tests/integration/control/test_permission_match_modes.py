@@ -22,6 +22,7 @@ from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.repos.agent_permission_rule_repo import AgentPermissionRuleRepository
 from jentic_one.shared.broker.protocols import RuleEvaluation
 from jentic_one.shared.db.session import DatabaseSession
+from tests.harness.db_round_trips import trace_round_trips
 
 pytestmark = pytest.mark.integration
 
@@ -279,3 +280,29 @@ async def test_deny_variant_distinguishes_empty_binding_from_no_match(
     )
     assert no_match.allowed is False
     assert no_match.rules_loaded == 1
+
+
+@pytest.mark.asyncio
+async def test_evaluator_reads_rules_without_begin_or_rollback(
+    control_db: DatabaseSession, clean_tables: None
+) -> None:
+    """Cold rule loads run in autocommit: one SELECT, no BEGIN/ROLLBACK (#1942)."""
+    cred_id = await _seed(control_db, cred_id="cred_1942_read")
+
+    async with control_db.session() as session:
+        await AgentPermissionRuleRepository.replace_user_rules(
+            session,
+            _AGENT_ID,
+            cred_id,
+            [{"effect": "allow", "path": "/v1/things", "match_mode": "prefix"}],
+            created_by="test",
+        )
+        await session.commit()
+
+    with trace_round_trips(control_db) as trace:
+        result = await _evaluate(
+            control_db, credential_id=cred_id, method="GET", path="/v1/things/1"
+        )
+    assert result.allowed is True
+    assert len(trace.statements) == 1, trace.statements
+    trace.assert_no_begin_or_rollback()

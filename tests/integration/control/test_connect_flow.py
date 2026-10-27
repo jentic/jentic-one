@@ -9,14 +9,17 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 
+from jentic_one.admin.repos.agent_credential_binding_repo import AgentCredentialBindingRepository
 from jentic_one.control.core.schema.connect_nonces import ConnectNonce
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.customer_api_keys import CustomerAPIKey
 from jentic_one.control.core.schema.oauth_client_credentials import OAuthClientCredential
 from jentic_one.control.core.schema.oauth_tokens import OAuthToken
 from jentic_one.control.repos import CredentialRepository, OAuthTokenRepository
+from jentic_one.control.repos.effects_repo import EffectsRepository
+from jentic_one.control.repos.prerequisite_repo import PrerequisiteRepository
 from jentic_one.control.services.credentials.connect_service import ConnectFlowError, ConnectService
 from jentic_one.control.services.credentials.errors import CredentialNotFoundError
 from jentic_one.control.services.credentials.providers.direct_oauth2 import DirectOAuth2Provider
@@ -46,6 +49,7 @@ from jentic_one.shared.config import (
     PipedreamProviderConfig,
 )
 from jentic_one.shared.context import Context
+from jentic_one.shared.db.locks import advisory_lock_key
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.credentials import CredentialType, StoredCredentialType
@@ -864,3 +868,121 @@ async def test_state_without_browser_binding_is_refused_and_not_consumed(
         assert await OAuthTokenRepository.get_by_credential(session, credential_id) is None
         consumed = (await session.execute(select(ConnectNonce))).scalars().all()
     assert consumed == []
+
+
+# --- Binding writers wait on the credential's bindings lock ---
+
+_LOCK_FIRST_AGENT = "agnt_lock_first"
+_LOCK_SECOND_AGENT = "agnt_lock_second"
+
+
+@pytest.fixture()
+async def lock_agents(integration_context: Context) -> AsyncGenerator[None, None]:
+    """Two approved agents registered by ``_OWNER``; their bindings are removed after."""
+    ctx = integration_context
+    await _delete_lock_agents(ctx)
+    async with ctx.admin_db.transaction() as session:
+        for agent_id in (_LOCK_FIRST_AGENT, _LOCK_SECOND_AGENT):
+            await session.execute(
+                text(
+                    "INSERT INTO agents (id, name, registered_by, status, created_by) "
+                    "VALUES (:id, :id, :owner, 'approved', :owner)"
+                ),
+                {"id": agent_id, "owner": _OWNER.sub},
+            )
+    yield
+    await _delete_lock_agents(ctx)
+
+
+async def _delete_lock_agents(ctx: Context) -> None:
+    ids = {"a": _LOCK_FIRST_AGENT, "b": _LOCK_SECOND_AGENT}
+    async with ctx.admin_db.transaction() as session:
+        await session.execute(
+            text("DELETE FROM agent_credential_bindings WHERE agent_id IN (:a, :b)"), ids
+        )
+        await session.execute(text("DELETE FROM agents WHERE id IN (:a, :b)"), ids)
+
+
+def _require_postgres(ctx: Context) -> None:
+    if ctx.admin_db.engine.dialect.name != "postgresql":
+        pytest.skip(
+            "the bindings lock is a Postgres advisory lock; on SQLite the admin "
+            "BEGIN IMMEDIATE serialises binding writers"
+        )
+
+
+async def _parked_on_bindings_lock(ctx: Context, credential_id: str) -> None:
+    """Return once a session waits on ``credential_id``'s bindings lock.
+
+    Only that credential's key in the admin database counts. pg_locks splits
+    a bigint advisory key into ``classid`` (high 32 bits) and ``objid`` (low
+    32 bits) with ``objsubid = 1``.
+    """
+    key = advisory_lock_key(f"credentials.bindings.{credential_id}")
+    while True:
+        async with ctx.admin_db.session() as session:
+            waiting = (
+                await session.execute(
+                    text(
+                        "SELECT count(*) FROM pg_locks"
+                        " WHERE locktype = 'advisory' AND NOT granted"
+                        " AND database = (SELECT oid FROM pg_database"
+                        " WHERE datname = current_database())"
+                        " AND objsubid = 1 AND classid = :hi AND objid = :lo"
+                    ),
+                    {"hi": (key >> 32) & 0xFFFFFFFF, "lo": key & 0xFFFFFFFF},
+                )
+            ).scalar_one()
+        if waiting:
+            return
+        await asyncio.sleep(0.01)
+
+
+async def _bind_second_agent(ctx: Context, credential_id: str, binder: str) -> None:
+    async with ctx.admin_db.transaction() as session:
+        if binder == "admin_repository":
+            await AgentCredentialBindingRepository.bind(
+                session,
+                agent_id=_LOCK_SECOND_AGENT,
+                credential_id=credential_id,
+                created_by=_OWNER.sub,
+            )
+        else:
+            await EffectsRepository.bind_agent_to_credential(
+                session,
+                agent_id=_LOCK_SECOND_AGENT,
+                credential_id=credential_id,
+                rule_set_id=None,
+                created_by=_OWNER.sub,
+            )
+
+
+async def _bound_agents(ctx: Context, credential_id: str) -> list[str]:
+    async with ctx.admin_db.session() as session:
+        rows = await PrerequisiteRepository.list_agents_for_credential(
+            session, credential_id=credential_id
+        )
+    return sorted(row.agent_id for row in rows)
+
+
+@pytest.mark.parametrize("binder", ["admin_repository", "connect_effects"])
+async def test_binding_waits_while_the_bindings_lock_is_held(
+    integration_context: Context,
+    clean_connect_tables: None,
+    lock_agents: None,
+    binder: str,
+) -> None:
+    """Both binding writers park on the credential's bindings lock and
+    commit only after the transaction holding it ends."""
+    ctx = integration_context
+    _require_postgres(ctx)
+    credential_id = await _connected(ctx)
+
+    async with asyncio.TaskGroup() as tg, ctx.admin_db.transaction() as held:
+        await PrerequisiteRepository.lock_bindings_for_credential(held, credential_id=credential_id)
+        bind = tg.create_task(_bind_second_agent(ctx, credential_id, binder))
+        await asyncio.wait_for(_parked_on_bindings_lock(ctx, credential_id), timeout=5)
+        assert not bind.done()
+        assert await _bound_agents(ctx, credential_id) == []
+
+    assert await _bound_agents(ctx, credential_id) == [_LOCK_SECOND_AGENT]

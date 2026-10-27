@@ -44,6 +44,7 @@ from jentic_one.shared.auth.api_key_resolver import ApiKeyResolver
 from jentic_one.shared.auth.errors import TokenValidationError
 from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION
 from jentic_one.shared.db.session import DatabaseSession
+from tests.harness.db_round_trips import trace_round_trips
 
 pytestmark = pytest.mark.integration
 
@@ -713,3 +714,55 @@ async def test_signed_jwt_for_an_owned_agent_follows_owner_status(
     await _set_user_row(admin_db, _OWNER, active=True)
     await asyncio.sleep(_VERDICT_TTL + 0.01)
     assert (await validator.validate(token)).sub == _OWNED_AGENT
+
+
+async def test_token_and_actor_status_resolvers_read_without_begin_or_rollback(
+    admin_db: DatabaseSession, clean_access_tokens: None
+) -> None:
+    """Token and actor-status reads run in autocommit (#1942)."""
+    await _seed_agent(admin_db, "agnt_opaque")
+    await _seed_user_row(admin_db, "usr_broker_read_only", active=True)
+    await _seed_opaque_token(admin_db, plaintext="at_autocommit_probe")
+    await _seed_pair_and_grants(
+        admin_db,
+        plaintext="at_autocommit_longlived",
+        actor_id="agnt_opaque",
+        family_id="fam_autocommit_ll",
+        snapshot=["apis:read"],
+        grants=[BROKER_EXECUTE_PERMISSION],
+    )
+
+    token_resolver = InProcessTokenResolver(admin_db)
+    status_resolver = ActorStatusResolver(admin_db)
+
+    with trace_round_trips(admin_db) as trace:
+        identity = await token_resolver.resolve_access_token("at_autocommit_probe")
+    assert identity is not None and identity.active is True
+    assert len(trace.statements) == 1, trace.statements
+    trace.assert_no_begin_or_rollback()
+
+    with trace_round_trips(admin_db) as trace:
+        ll_identity = await token_resolver.resolve_access_token("at_autocommit_longlived")
+    assert ll_identity is not None and ll_identity.active is True
+    assert ll_identity.permissions == [BROKER_EXECUTE_PERMISSION]
+    assert len(trace.statements) == 2, trace.statements
+    trace.assert_no_begin_or_rollback()
+
+    for actor_id, actor_type in (
+        ("agnt_opaque", "agent"),
+        ("usr_broker_read_only", "user"),
+    ):
+        with trace_round_trips(admin_db) as trace:
+            assert await status_resolver.is_active(actor_id=actor_id, actor_type=actor_type) is True
+        assert len(trace.statements) == 1, trace.statements
+        trace.assert_no_begin_or_rollback()
+
+        with trace_round_trips(admin_db) as trace:
+            auth = await status_resolver.authority(
+                actor_id=actor_id,
+                actor_type=actor_type,
+                permission=BROKER_EXECUTE_PERMISSION,
+            )
+        assert auth.active is True
+        assert len(trace.statements) == 1, trace.statements
+        trace.assert_no_begin_or_rollback()

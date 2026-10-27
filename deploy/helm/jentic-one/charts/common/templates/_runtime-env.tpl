@@ -2,7 +2,7 @@
 common.runtime-env: JENTIC_ENV for every Python surface.
 
 JENTIC_ENV is what arms the config loader's placeholder-secret guard
-(shared/config.py _require_or_generate_secret). In `development` — the
+(shared/config/_secrets.py _require_or_generate_secret). In `development` — the
 application's own default when the variable is absent — an empty or `change-me`
 value for the admin JWT secret, the invite pepper, or the connect state secret is
 replaced by a random per-process secret. That is right for dev and silently wrong

@@ -10,7 +10,7 @@ from jentic_one.registry.core.server_hosts import (
     hosts_from_spec,
     needs_review,
 )
-from jentic_one.registry.ingest.exc import (
+from jentic_one.registry.ingest.errors import (
     CatalogIdentityConflictError,
     DuplicateRevisionError,
 )

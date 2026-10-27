@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.user_secrets import UserSecret
@@ -67,15 +67,23 @@ class UserSecretRepository:
         return secret
 
     @staticmethod
-    async def record_failed_login(session: AsyncSession, user_id: str) -> UserSecret | None:
-        stmt = select(UserSecret).where(UserSecret.user_id == user_id)
+    async def record_failed_login(session: AsyncSession, user_id: str) -> int | None:
+        """Atomically add one to the failed-login count and return the new count.
+
+        The increment runs in the database as a single ``UPDATE … RETURNING``,
+        so concurrent failures each observe a distinct count and none is lost.
+        Callers decide the lockout from the returned count, never from a value
+        read earlier. Returns ``None`` when the user has no secret row.
+        """
+        stmt = (
+            update(UserSecret)
+            .where(UserSecret.user_id == user_id)
+            .values(failed_login_count=UserSecret.failed_login_count + 1)
+            .returning(UserSecret.failed_login_count)
+            .execution_options(synchronize_session="fetch")
+        )
         result = await session.execute(stmt)
-        secret = result.scalar_one_or_none()
-        if secret is None:
-            return None
-        secret.failed_login_count += 1
-        await session.flush()
-        return secret
+        return result.scalar_one_or_none()
 
     @staticmethod
     async def reset_failed_logins(session: AsyncSession, user_id: str) -> UserSecret | None:

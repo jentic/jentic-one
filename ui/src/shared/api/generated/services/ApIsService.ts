@@ -60,6 +60,11 @@ export class ApIsService {
     /**
      * Import Apis
      * Import OpenAPI/Arazzo content as new API revisions (async).
+     *
+     * The whole request body is capped at `ingest.max_import_request_bytes`
+     * (twice `ingest.max_spec_bytes` unless configured) and each inline source's
+     * content at `ingest.max_spec_bytes` (UTF-8 bytes); over either limit the
+     * request is refused with 413 before any job is queued.
      * @returns any Successful Response
      * @throws ApiError
      */
@@ -80,6 +85,7 @@ export class ApIsService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                413: `The request body exceeds \`ingest.max_import_request_bytes\`, or an inline source's content exceeds \`ingest.max_spec_bytes\` (type \`payload_too_large\`). Nothing was queued.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

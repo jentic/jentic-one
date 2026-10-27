@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from jentic_one.broker.adapters.runners.base import RunnerRequest, RunnerResult, UpstreamRunner
-from jentic_one.broker.core.exceptions import CircuitOpenError
+from jentic_one.broker.core.errors import CircuitOpenError
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.services.execution.service import (
     _circuit_event_last_emitted,

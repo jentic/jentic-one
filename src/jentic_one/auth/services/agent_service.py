@@ -62,6 +62,7 @@ from jentic_one.shared.auth.permission_catalog import (
     DEFAULT_AGENT_PERMISSIONS,
     ORG_ADMIN,
     OWNER_CREDENTIALS_READ,
+    compute_effective,
 )
 from jentic_one.shared.context import Context
 from jentic_one.shared.db import DatabaseIntegrityError
@@ -257,9 +258,14 @@ class AgentService:
         listing agents). Any other caller gets the same ``ActorNotFoundError``
         as an id that does not exist, so the response does not reveal that the
         agent exists.
+
+        The check runs on the implication-expanded permission set, like the
+        route gate: an API key carries its direct grants only, so a caller
+        holding ``agents:write`` (which implies ``agents:read``) gets the same
+        answer whichever channel it authenticates through.
         """
         view = await self.get_agent(agent_id, identity=identity)
-        permissions = set(identity.permissions)
+        permissions = compute_effective(set(identity.permissions))
         if ORG_ADMIN in permissions or AGENTS_READ in permissions:
             return view
         if identity.sub in (view.id, view.owner_id):

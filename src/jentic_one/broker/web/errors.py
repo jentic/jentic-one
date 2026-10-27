@@ -1,6 +1,7 @@
-"""Central problem+json exception handlers for the broker (the B-004 handler).
+"""Central problem+json exception handlers for the broker.
 
-Maps the domain-exception taxonomy (``broker/core/exceptions.py``) to
+Maps the domain-exception taxonomy (``broker/core/errors.py``) and the
+shared operation-discovery errors (``shared/discovery/errors.py``) to
 ``application/problem+json`` and **also** overrides FastAPI's
 ``RequestValidationError`` and Starlette's ``HTTPException`` (including the
 catch-all ``404``) so no default FastAPI/Starlette ``{"detail": …}`` shape ever
@@ -21,14 +22,18 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette import exceptions as starlette_exceptions
 
-from jentic_one.broker.core.exceptions import (
-    AgentDirective,
-    BrokerError,
-    ErrorOrigin,
-)
+from jentic_one.broker.core.directives import AgentDirective
+from jentic_one.broker.core.errors import BrokerError
 from jentic_one.broker.core.headers import JenticHeader
-from jentic_one.broker.core.problem import problem_body, status_for_broker_error
+from jentic_one.broker.core.problem import (
+    discovery_error_headers,
+    discovery_error_problem,
+    problem_body,
+    status_for_broker_error,
+)
+from jentic_one.shared.broker.execution import ErrorOrigin
 from jentic_one.shared.db.errors import DatabaseCommitOutcomeUnknownError, DatabaseUnavailableError
+from jentic_one.shared.discovery.errors import DiscoveryError
 from jentic_one.shared.web.errors import (
     DB_COMMIT_OUTCOME_UNKNOWN_DETAIL,
     log_database_unavailable,
@@ -78,6 +83,21 @@ async def handle_broker_error(_request: Request, exc: BrokerError) -> JSONRespon
         headers=exc.headers or None,
         instance=exc.instance,
     )
+
+
+async def handle_discovery_error(request: Request, exc: DiscoveryError) -> JSONResponse:
+    """Map a shared operation-discovery error (e.g. from the registry resolver) to problem+json.
+
+    ``instance`` is the request path only — the query string of an upstream URL
+    can carry secrets — which is the same value a queued execution's denial
+    records (``queued_execution_instance``).
+    """
+    body = discovery_error_problem(exc, instance=request.url.path)
+    hdrs = {
+        **discovery_error_headers(exc),
+        JenticHeader.ERROR_ORIGIN.value: ErrorOrigin.BROKER.value,
+    }
+    return JSONResponse(body, status_code=body["status"], media_type=_PROBLEM_JSON, headers=hdrs)
 
 
 async def handle_validation(_request: Request, exc: RequestValidationError) -> JSONResponse:
@@ -134,6 +154,7 @@ async def handle_database_unavailable(
 def install_broker_error_handlers(app: FastAPI) -> None:
     """Register the problem+json handlers on the broker app."""
     app.add_exception_handler(BrokerError, handle_broker_error)  # type: ignore[arg-type]
+    app.add_exception_handler(DiscoveryError, handle_discovery_error)  # type: ignore[arg-type]
     app.add_exception_handler(RequestValidationError, handle_validation)  # type: ignore[arg-type]
     app.add_exception_handler(
         starlette_exceptions.HTTPException,

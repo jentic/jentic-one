@@ -1,10 +1,11 @@
 """Transport-neutral problem+json projection of the broker error taxonomy.
 
-The single source for *which status a* ``BrokerError`` *maps to* and *what its
-RFC 9457 body looks like*. The web handler (``broker/web/errors.py``) renders it
-as an HTTP response; the async execution worker records the same body on a
-denied job's result, so a queued execution that is refused tells the caller the
-same story (``type``/``status``/``agent_directive``) the sync route would have.
+The single source for *which status a* ``BrokerError`` (or a shared
+operation-discovery error) *maps to* and *what its RFC 9457 body looks like*.
+The web handler (``broker/web/errors.py``) renders it as an HTTP response; the
+async execution worker records the same body on a denied job's result, so a
+queued execution that is refused tells the caller the same story
+(``type``/``status``/``agent_directive``) the sync route would have.
 
 Pure module — no FastAPI/Starlette imports.
 """
@@ -13,10 +14,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from jentic_one.broker.core.exceptions import (
+from jentic_one.broker.core.directives import AgentDirective
+from jentic_one.broker.core.errors import (
     ActionDeniedError,
-    AgentDirective,
-    AmbiguousMatchError,
+    AmbiguousCredentialMatchError,
     ApprovalHoldUnavailableError,
     ApprovalPendingLimitError,
     BrokerError,
@@ -28,20 +29,16 @@ from jentic_one.broker.core.exceptions import (
     CredentialRefreshTransientError,
     CredentialUndecryptableError,
     DeadlineExceededError,
-    ErrorOrigin,
     IdempotencyConflictError,
     IdempotencyInProgressError,
     IdempotencyUnavailableError,
     InvalidCredentialNameError,
     InvalidRevisionPinError,
-    MethodNotAllowedError,
     MutationRequiresIdempotencyKeyError,
-    OperationNotFoundError,
     PayloadTooLargeError,
     RateLimitExceededError,
     RunnerSchemeUnsupportedError,
     RunnerUnavailableError,
-    TooManyCandidatesError,
     UnauthorizedRevisionPinError,
     UpgradeNotSupportedError,
     UpstreamBodyInterruptedError,
@@ -49,6 +46,14 @@ from jentic_one.broker.core.exceptions import (
     UpstreamTimeoutError,
     UpstreamTransportError,
     UpstreamUrlNotAllowedError,
+)
+from jentic_one.shared.broker.execution import ErrorOrigin
+from jentic_one.shared.discovery.errors import (
+    AmbiguousMatchError,
+    DiscoveryError,
+    MethodNotAllowedError,
+    OperationNotFoundError,
+    TooManyCandidatesError,
 )
 
 # Domain exception → HTTP status error map.
@@ -58,10 +63,7 @@ STATUS_BY_ERROR: dict[type[BrokerError], int] = {
     ApprovalHoldUnavailableError: 503,
     CredentialIdentityMismatchError: 403,
     CredentialBindingSuspendedError: 403,
-    OperationNotFoundError: 404,
-    AmbiguousMatchError: 409,
-    MethodNotAllowedError: 405,
-    TooManyCandidatesError: 503,
+    AmbiguousCredentialMatchError: 409,
     InvalidCredentialNameError: 400,
     UpstreamUrlNotAllowedError: 400,
     UpgradeNotSupportedError: 426,
@@ -87,6 +89,20 @@ STATUS_BY_ERROR: dict[type[BrokerError], int] = {
     UpstreamBodyInterruptedError: 502,
     RunnerSchemeUnsupportedError: 501,
     RunnerUnavailableError: 503,
+}
+
+
+# Shared operation-discovery error → (HTTP status, problem ``type``). Every one
+# is raised before dispatch, so the upstream never saw the call; a
+# ``too_many_candidates`` 503 is retryable for that reason. The registry
+# renders the same error as its own 500 ``url_index_overloaded``
+# (``registry/web/errors.py``): there the overloaded index is the answering
+# surface's fault, here it is a dependency that failed before dispatch.
+DISCOVERY_PROBLEM_BY_ERROR: dict[type[DiscoveryError], tuple[int, str]] = {
+    OperationNotFoundError: (404, "operation_not_found"),
+    MethodNotAllowedError: (405, "method_not_allowed"),
+    AmbiguousMatchError: (409, "ambiguous_match"),
+    TooManyCandidatesError: (503, "too_many_candidates"),
 }
 
 
@@ -137,3 +153,24 @@ def broker_error_problem(exc: BrokerError) -> dict[str, Any]:
         directive=exc.directive,
         instance=exc.instance,
     )
+
+
+def discovery_error_problem(exc: DiscoveryError, *, instance: str | None = None) -> dict[str, Any]:
+    """The broker problem body for a shared operation-discovery error.
+
+    A 405 also names the methods the URL is served for in ``allowed_methods``
+    (the response carries them in ``Allow`` too). An unmapped subclass renders
+    as a 500.
+    """
+    status, problem_type = DISCOVERY_PROBLEM_BY_ERROR.get(type(exc), (500, "about:blank"))
+    extra = (
+        {"allowed_methods": exc.allowed_methods} if isinstance(exc, MethodNotAllowedError) else None
+    )
+    return problem_body(status, exc.detail, type=problem_type, extra=extra, instance=instance)
+
+
+def discovery_error_headers(exc: DiscoveryError) -> dict[str, str]:
+    """Response headers a discovery-error problem carries (``Allow`` on a 405)."""
+    if isinstance(exc, MethodNotAllowedError):
+        return {"Allow": ", ".join(exc.allowed_methods)}
+    return {}

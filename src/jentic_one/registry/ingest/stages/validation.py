@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-from jentic_one.registry.ingest.exc import IngestStageError
+from jentic_one.registry.ingest.errors import IngestStageError
 from jentic_one.registry.ingest.models import SpecType
 from jentic_one.registry.ingest.pipeline.ctx import PipelineContext
 from jentic_one.registry.ingest.stages.base import BasePipelineStage

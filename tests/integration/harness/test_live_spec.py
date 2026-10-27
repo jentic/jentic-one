@@ -7,16 +7,22 @@ URL — the contract Phase 2+ relies on.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
+from cryptography import x509
 from fastapi import FastAPI
 from httpx import AsyncClient
 
+from tests.harness.smoke_upstream.__main__ import write_self_signed_cert
 from tests.harness.smoke_upstream.routers.live_spec import (
     DEFAULT_PUBLIC_URL,
+    DEFAULT_TLS_PUBLIC_URL,
     LIVE_SPEC_PATH,
     OAUTH_TOKEN_PATH,
     PUBLIC_URL_ENV,
     SECURITY_SCHEME_NAMES,
+    TLS_PUBLIC_URL_ENV,
 )
 
 
@@ -37,6 +43,8 @@ async def test_live_spec_declares_all_security_schemes(smoke_client: AsyncClient
     body = (await smoke_client.get(LIVE_SPEC_PATH)).json()
     schemes = body["components"]["securitySchemes"]
     assert set(schemes) == set(SECURITY_SCHEME_NAMES)
+    token_url = schemes["oauth2Auth"]["flows"]["clientCredentials"]["tokenUrl"]
+    assert token_url == f"{DEFAULT_TLS_PUBLIC_URL}{OAUTH_TOKEN_PATH}"
 
 
 async def test_auth_operations_declare_security(smoke_client: AsyncClient) -> None:
@@ -69,7 +77,30 @@ async def test_public_url_override_is_reflected(
     token_url = body["components"]["securitySchemes"]["oauth2Auth"]["flows"]["clientCredentials"][
         "tokenUrl"
     ]
-    assert token_url == f"{override}{OAUTH_TOKEN_PATH}"
+    assert token_url == f"https://jentic-smoke-upstream:8443{OAUTH_TOKEN_PATH}"
+
+
+async def test_tls_public_url_override_is_reflected(
+    smoke_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tls_override = "https://jentic-smoke-upstream:9443"
+    monkeypatch.setenv(TLS_PUBLIC_URL_ENV, tls_override)
+    body = (await smoke_client.get(LIVE_SPEC_PATH)).json()
+    token_url = body["components"]["securitySchemes"]["oauth2Auth"]["flows"]["clientCredentials"][
+        "tokenUrl"
+    ]
+    assert token_url == f"{tls_override}{OAUTH_TOKEN_PATH}"
+
+
+def test_write_self_signed_cert_covers_incluster_and_local_hosts(tmp_path: Path) -> None:
+    cert_path, key_path = write_self_signed_cert(tmp_path)
+    assert cert_path.is_file()
+    assert key_path.is_file()
+    cert = x509.load_pem_x509_certificate(cert_path.read_bytes())
+    san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    dns_names = set(san.get_values_for_type(x509.DNSName))
+    assert {"localhost", "jentic-smoke-upstream"} <= dns_names
 
 
 async def test_health_returns_ok(smoke_client: AsyncClient) -> None:

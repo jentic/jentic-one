@@ -118,7 +118,6 @@ from jentic_one.registry.services.errors import (
     CatalogEntryNotFoundError,
     CatalogUnavailableError,
     InvalidApiFilterError,
-    OperationNotFoundError,
     OverlaySupersedeForbiddenError,
     SearchUnavailableError,
 )
@@ -139,6 +138,7 @@ from jentic_one.shared.catalog.protocols import (
     SecuritySchemesLookupProtocol,
 )
 from jentic_one.shared.context import Context
+from jentic_one.shared.discovery.errors import OperationNotFoundError
 from jentic_one.shared.jobs.hold import (
     HELD_AGENT_DIRECTIVE,
     STILL_HELD_AGENT_DIRECTIVE,
@@ -657,7 +657,7 @@ _IMPORT_POLL_STEP_SECONDS = 0.25
 _IMPORT_POLL_MAX_SECONDS = 2.0
 
 #: The stable leading fragment of ``DuplicateRevisionError``'s message
-#: (``registry/ingest/exc.py`` — also what the worker's IntegrityError
+#: (``registry/ingest/errors.py`` — also what the worker's IntegrityError
 #: translation mints for a lost one-active race, ``import_service.py``).
 #: ``job.error`` is truncated to 128 chars after a ~42-char wrapper prefix, so
 #: only the message head survives: match this fragment, never the full message.

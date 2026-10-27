@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 import uuid
 
-from jentic_one.broker.core.exceptions import InvalidRevisionPinError
+from jentic_one.broker.core.errors import InvalidRevisionPinError
 from jentic_one.shared.broker.revision_label import (
     REV_LABEL_PREFIX,
     decode_rev_label,

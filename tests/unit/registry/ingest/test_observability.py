@@ -14,7 +14,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from opentelemetry.trace import StatusCode
 from structlog.contextvars import get_contextvars
 
-from jentic_one.registry.ingest.exc import IngestPipelineError, IngestStageError
+from jentic_one.registry.ingest.errors import IngestPipelineError, IngestStageError
 from jentic_one.registry.ingest.ingestor import Ingestor
 from jentic_one.registry.ingest.models import ApiIdentifier, IngestSpecification, SpecType
 from jentic_one.registry.ingest.pipeline.ctx import PipelineContext

@@ -13,6 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.shared.db.ids import generate_ksuid
+from jentic_one.shared.db.locks import lock_credential_bindings
 
 
 class AgentOwnerRow(NamedTuple):
@@ -77,6 +78,7 @@ class EffectsRepository:
         the retry/reconcile path must converge without clobbering operator
         edits made between attempts.
         """
+        await lock_credential_bindings(session, credential_id)
         binding_id = generate_ksuid("acb")
         result = await session.execute(
             text(

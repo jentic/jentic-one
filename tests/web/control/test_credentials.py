@@ -164,9 +164,61 @@ def test_patch_oauth2_unsafe_token_url_is_rejected(cred_writer_client: TestClien
 
     resp = cred_writer_client.patch(
         f"/credentials/{cred_id}",
-        json={"type": "oauth2", "token_url": "http://169.254.169.254/latest"},
+        json={"type": "oauth2", "token_url": "https://169.254.169.254/latest"},
     )
     assert resp.status_code == 400, resp.text
+    got = cred_writer_client.get(f"/credentials/{cred_id}").json()
+    assert got["details"]["token_url"] == "https://auth.example/token"
+
+
+@pytest.mark.parametrize(
+    ("field", "bad_url"),
+    [
+        ("token_url", "http://auth.example/token"),
+        ("token_url", "auth.example/token"),
+        ("authorize_url", "http://auth.example/authorize"),
+        ("authorize_url", "auth.example/authorize"),
+    ],
+)
+def test_create_oauth2_non_https_urls_are_rejected(
+    cred_writer_client: TestClient, field: str, bad_url: str
+) -> None:
+    """Pins #1779: OAuth2 credential create rejects plain-http and scheme-less endpoints."""
+    body: dict[str, object] = {
+        "type": "oauth2",
+        "name": f"o-1779-{field}",
+        "api": {"vendor": "webtest-oauth.example", "name": "", "version": ""},
+        "provider": "static",
+        "grant_type": "authorization_code",
+        "token_url": "https://auth.example/token",
+        "authorize_url": "https://auth.example/authorize",
+        "client_id": "webtest-client",
+        "client_secret": "webtest-secret",  # pragma: allowlist secret
+        field: bad_url,
+    }
+    resp = cred_writer_client.post("/credentials", json=body)
+    assert resp.status_code == 400, resp.text
+    problem = resp.json()
+    assert problem["type"] == "invalid_credential_input"
+    assert problem["detail"] == f"Invalid {field}: must use https"
+    assert "webtest-secret" not in resp.text
+
+
+@pytest.mark.parametrize("bad_url", ["http://auth.example/v2/t", "auth.example/v2/t"])
+def test_patch_oauth2_non_https_token_url_is_rejected(
+    cred_writer_client: TestClient, bad_url: str
+) -> None:
+    """Pins #1779: OAuth2 credential PATCH rejects plain-http and scheme-less token_url."""
+    cred_id = _create_oauth2(cred_writer_client, grant_type="client_credentials", name="o-1779-p")
+
+    resp = cred_writer_client.patch(
+        f"/credentials/{cred_id}",
+        json={"type": "oauth2", "token_url": bad_url},
+    )
+    assert resp.status_code == 400, resp.text
+    problem = resp.json()
+    assert problem["type"] == "invalid_credential_input"
+    assert problem["detail"] == "Invalid token_url: must use https"
     got = cred_writer_client.get(f"/credentials/{cred_id}").json()
     assert got["details"]["token_url"] == "https://auth.example/token"
 

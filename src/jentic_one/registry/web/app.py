@@ -19,6 +19,7 @@ from jentic_one.registry.web.routers import (
 )
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseConsistencyError, DatabaseUnavailableError
+from jentic_one.shared.discovery.errors import DiscoveryError
 from jentic_one.shared.web.app_factory import create_surface_app
 from jentic_one.shared.web.health import make_health_router
 
@@ -43,6 +44,9 @@ def get_exception_handlers() -> list[tuple[type[Exception], Any]]:
     """Return registry-specific exception handlers for the combined app."""
     return [
         (RegistryServiceError, service_error_handler),
+        # Operation-discovery errors are shared with the broker, so they sit
+        # outside the registry's own base class.
+        (DiscoveryError, service_error_handler),
         # Belt-and-braces: catch an accidental async lazy load (MissingGreenlet,
         # mapped by the DB transaction wrapper to DatabaseConsistencyError) so it
         # maps to a known, logged 500 rather than escaping as an opaque unhandled

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from collections.abc import Sequence
 from typing import Any
 
 import sqlalchemy as sa
@@ -26,7 +27,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engin
 from jentic_one.shared.auth.api_key_resolver import ApiKeyResolver
 from jentic_one.shared.config import AppConfig, DatabaseConfig
 from jentic_one.shared.db.session import get_database_url
-from jentic_one.shared.models import ActorType
 from tests.harness.postgres import alembic_config_for
 
 #: The revision just below the drop, and the drop itself.
@@ -241,25 +241,15 @@ class PreDropApiKeyResolver(ApiKeyResolver):
     clauses are adapted so the key-resolution logic under test is the shipped one.
     """
 
-    async def _fetch_credential_row(self, session: AsyncSession, raw_key: str) -> Any:
+    async def _fetch_credential_rows(self, session: AsyncSession, raw_key: str) -> Sequence[Any]:
         key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
         stmt = text(
-            "SELECT a.id AS agent_id, a.name, a.status, a.owner_id, u.active AS owner_active"
+            "SELECT a.id AS agent_id, a.name, a.status, a.owner_id, u.active AS owner_active,"
+            " g.scope AS permission"
             " FROM agent_credentials ac"
             " JOIN agents a ON a.id = ac.agent_id"
             " LEFT JOIN users u ON u.id = a.owner_id"
+            " LEFT JOIN actor_scope_grants g ON g.actor_id = a.id AND g.actor_type = 'agent'"
             " WHERE ac.api_key_hash = :key_hash"
         ).columns(owner_active=Boolean)
-        return (await session.execute(stmt, {"key_hash": key_hash})).one_or_none()
-
-    async def _load_permissions(
-        self, session: AsyncSession, actor_id: str, actor_type: ActorType
-    ) -> list[str]:
-        result = await session.execute(
-            text(
-                "SELECT scope FROM actor_scope_grants"
-                " WHERE actor_id = :actor_id AND actor_type = :actor_type"
-            ),
-            {"actor_id": actor_id, "actor_type": actor_type.value},
-        )
-        return [row.scope for row in result.all()]
+        return (await session.execute(stmt, {"key_hash": key_hash})).all()

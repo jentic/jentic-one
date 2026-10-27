@@ -63,10 +63,18 @@ class BrokerCacheInvalidator:
         credential_id: str | None = None,
         rule_set_id: str | None = None,
         token: str | None = None,
+        user_id: str | None = None,
     ) -> None:
         if token is not None:
             self.opaque.invalidate(token)
             self.api_key.invalidate(token)
+        if user_id is not None:
+            # A user has no bindings or rules of its own: only its token and
+            # actor-status verdicts depend on its account status.
+            self.opaque.invalidate_actor(user_id)
+            self.api_key.invalidate_actor(user_id)
+            if self.actor_status is not None:
+                self.actor_status.invalidate_actor(user_id)
         if rule_set_id is not None:
             self.rule_evaluator.invalidate_rule_set(rule_set_id)
         if agent_id is not None and credential_id is not None:

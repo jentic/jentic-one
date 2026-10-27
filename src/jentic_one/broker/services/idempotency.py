@@ -35,7 +35,7 @@ from typing import Protocol, runtime_checkable
 
 import structlog
 
-from jentic_one.broker.core.exceptions import IdempotencyUnavailableError
+from jentic_one.broker.core.errors import IdempotencyUnavailableError
 from jentic_one.broker.core.headers import SENSITIVE_RESPONSE_HEADERS
 from jentic_one.shared.state.backend import (
     AtomicStore,
