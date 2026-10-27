@@ -236,8 +236,10 @@ export function ActionChecklist({
 					// Ask · Deny sit exactly above every row's — at any width, and
 					// with the scrollbar, since it scrolls (sticky) inside the list.
 					// It acts on exactly the rows on screen: all, or the filter's.
+					// Above the rows' choice labels (`z-10` inside each toggle), which
+					// would otherwise paint over it as they scroll under.
 					<li
-						className="bg-surface-inset sticky top-0 z-10 flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1"
+						className="bg-surface-inset sticky top-0 z-20 flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1"
 						data-testid={`${testId}-bulk`}
 					>
 						<span aria-hidden="true" className="h-1.5 w-1.5 shrink-0" />
