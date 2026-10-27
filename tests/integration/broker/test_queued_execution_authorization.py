@@ -36,7 +36,7 @@ from jentic_one.admin.core.schema.job_results import JobResult
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.core.schema.user_permission_grants import UserPermissionGrant
 from jentic_one.admin.core.schema.users import User
-from jentic_one.broker.core.exceptions import ActionDeniedError
+from jentic_one.broker.core.errors import ActionDeniedError
 from jentic_one.broker.core.setup import build_queued_execution_authorizer
 from jentic_one.broker.repos import AgentRuleEvaluator, CredentialBindingResolver
 from jentic_one.broker.repos.actor_status import ActorStatusResolver

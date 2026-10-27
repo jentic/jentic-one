@@ -39,7 +39,7 @@ CONFIG_REFERENCE_PATH = REPO_ROOT / "docs" / "reference" / "config.md"
 # Both survive into the env-var column (``JENTIC__…__<NAME>__…``), matching the
 # loader's generic nesting: any env segment becomes a dict key, and digit
 # segments are coerced back into list indices (see ``_env_overrides`` /
-# ``_coerce_indexed_dicts_to_lists`` in ``jentic_one.shared.config``).
+# ``_coerce_indexed_dicts_to_lists`` in ``jentic_one.shared.config.loader``).
 _MAP_KEY = "<name>"
 _LIST_INDEX = "<n>"
 
@@ -51,7 +51,7 @@ _HEADER = """\
      tests/arch/test_config_reference_conformance.py. -->
 
 Every configuration key jentic-one reads, generated from the
-[`AppConfig`](../../src/jentic_one/shared/config.py) Pydantic model — the same
+[`AppConfig`](../../src/jentic_one/shared/config/app.py) Pydantic model — the same
 source of truth behind [`config/config-schema.json`](../../config/config-schema.json)
 and the `jenticctl install` wizard. How the config system works (loading,
 `Context`, hot reload) is covered in

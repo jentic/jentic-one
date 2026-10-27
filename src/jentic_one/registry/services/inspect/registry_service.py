@@ -50,9 +50,10 @@ class RegistryService:
     ) -> ResolveResult | None:
         """Resolve a METHOD+URL to an operation and its API identity.
 
-        Returns ``None`` when no operation matches the URL. May raise the
-        registry lookup errors (``MethodNotAllowedError``, ``AmbiguousMatchError``,
-        ``TooManyCandidatesError``) for the same conditions as ``URLLookupService``.
+        Returns ``None`` when no operation matches the URL. May raise the shared
+        discovery errors (``shared/discovery/errors.py``: ``MethodNotAllowedError``,
+        ``AmbiguousMatchError``, ``TooManyCandidatesError``) for the same conditions
+        as ``URLLookupService``; the broker renders them as its own problems.
         """
         hit = await URLLookupService(self._session).resolve(
             method=method, url=url, revision_id=revision_id

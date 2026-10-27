@@ -83,9 +83,10 @@ def describe_live_host_owners(owners: list[LiveHostOwner]) -> str:
 def _candidate_rows() -> _CandidateSelect:
     """Select URL-index rows with their operation's path/method and revision joined.
 
-    Callers add the ``apis`` join (``_pinned_rows`` / ``_live_rows``). Every
-    join is a primary-key lookup, and the index row's FKs cascade on delete, so
-    the inner joins never drop a row that could otherwise match.
+    Callers add the ``apis`` join (``_pinned_rows`` on its primary key,
+    ``_live_rows`` on ``current_revision_id``). The joins here are primary-key
+    lookups, and the index row's FKs cascade on delete, so the inner joins never
+    drop a row that could otherwise match.
     """
     return (
         select(
@@ -121,16 +122,19 @@ def _live_rows() -> _CandidateSelect:
     Rows are ordered most-recently-live first so a caller ranking equally
     specific matches from *different* live revisions can prefer the newest one
     deterministically (see ``URLLookupService._match_and_rank``).
+
+    ``apis`` is joined on ``current_revision_id`` alone: the application only
+    ever points that column at one of the API's own revisions (the
+    ``ApiRepository`` writers' callers check or create the revision under the
+    API; the schema does not enforce it), so ``apis.id = api_revisions.api_id``
+    would be redundant. Adding it anyway makes Postgres treat the two
+    correlated conditions as independent and estimate one row for the join,
+    which flips the generic plan to scanning every live revision instead of
+    probing ``ix_operation_url_index_method_host_revision`` (#1976).
     """
     return (
         _candidate_rows()
-        .join(
-            Api,
-            and_(
-                Api.id == ApiRevision.api_id,
-                Api.current_revision_id == OperationURLIndex.revision_id,
-            ),
-        )
+        .join(Api, Api.current_revision_id == OperationURLIndex.revision_id)
         .order_by(
             func.coalesce(ApiRevision.promoted_at, ApiRevision.created_at).desc(),
             OperationURLIndex.revision_id,

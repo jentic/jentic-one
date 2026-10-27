@@ -22,7 +22,7 @@ from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos.agent_repo import AgentRepository
 from jentic_one.admin.repos.user_repo import UserRepository
-from jentic_one.broker.core.exceptions import ApprovalPendingLimitError
+from jentic_one.broker.core.errors import ApprovalPendingLimitError
 from jentic_one.broker.core.problem import broker_error_problem, status_for_broker_error
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.services.credentials.resolver import ResolvedCredential

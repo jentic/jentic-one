@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from jentic_one.registry.ingest._typecheck import check_type
-from jentic_one.registry.ingest.exc import (
+from jentic_one.registry.ingest.errors import (
     MissingProducedKeyError,
     MissingRequiredKeysError,
     WrongTypeProducedError,

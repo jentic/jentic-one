@@ -5,7 +5,7 @@
      tests/arch/test_config_reference_conformance.py. -->
 
 Every configuration key jentic-one reads, generated from the
-[`AppConfig`](../../src/jentic_one/shared/config.py) Pydantic model — the same
+[`AppConfig`](../../src/jentic_one/shared/config/app.py) Pydantic model — the same
 source of truth behind [`config/config-schema.json`](../../config/config-schema.json)
 and the `jenticctl install` wizard. How the config system works (loading,
 `Context`, hot reload) is covered in
@@ -314,6 +314,7 @@ Spec ingestion settings (fetch limits, timeouts, egress policy).
 | `ingest.egress.allowed_private_subnets` | list of string | — | `JENTIC__INGEST__EGRESS__ALLOWED_PRIVATE_SUBNETS` | CIDRs exempted from the private-IP egress block (e.g. `["10.50.0.0/16"]`). The cloud-metadata and platform-credential IPs (e.g. 169.254.169.254, 169.254.170.2, fd00:ec2::254, 100.100.100.200) are never exempted, even when a listed range covers them. Accepts a YAML list or a comma-separated string. |
 | `ingest.egress.allowed_internal_domains` | list of string | — | `JENTIC__INGEST__EGRESS__ALLOWED_INTERNAL_DOMAINS` | Domain suffixes (e.g. `[".svc.cluster.local"]`) whose resolved private IP is permitted. The resolved IP must still fall in an allowed subnet. Accepts a YAML list or a comma-separated string. |
 | `ingest.egress.dns_pinning_enabled` | boolean | `true` | `JENTIC__INGEST__EGRESS__DNS_PINNING_ENABLED` | Pin the outbound connection to the IP validated at connect time, closing the DNS-rebinding TOCTOU between pre-request validation and the runner's own resolution. Disable only to debug egress issues. |
+| `ingest.max_import_request_bytes` | integer (> 0) \| null | `null` | `JENTIC__INGEST__MAX_IMPORT_REQUEST_BYTES` | Cap on the raw `POST /apis` request body (all sources together). Unset means twice `max_spec_bytes`, which covers one maximum-size inline spec with typical JSON-string escaping; raise it for batches of heavily escaped specs (`\uXXXX` or HTML-escaped content). Each inline source's content is separately capped at `max_spec_bytes`. |
 
 ## `catalog`
 
@@ -327,6 +328,9 @@ Public API catalog settings (manifest source + staleness).
 | `catalog.update_sweep_deadline_seconds` | integer | `300` | `JENTIC__CATALOG__UPDATE_SWEEP_DEADLINE_SECONDS` |  |
 | `catalog.update_sweep_max_concurrency` | integer | `4` | `JENTIC__CATALOG__UPDATE_SWEEP_MAX_CONCURRENCY` |  |
 | `catalog.update_sweep_jitter_ratio` | number (>= 0.0, <= 1.0) | `0.15` | `JENTIC__CATALOG__UPDATE_SWEEP_JITTER_RATIO` |  |
+| `catalog.preview_cache_ttl_seconds` | integer (>= 0) | `300` | `JENTIC__CATALOG__PREVIEW_CACHE_TTL_SECONDS` | How long a catalog preview's upstream spec projection is reused before refetching. Zero disables the cache. The cache is per process: `POST /catalog:refresh` clears it only on the process that serves the refresh, so other workers or replicas can serve the previous projection until this TTL expires. |
+| `catalog.preview_cache_failure_ttl_seconds` | integer (>= 0) | `30` | `JENTIC__CATALOG__PREVIEW_CACHE_FAILURE_TTL_SECONDS` | How long a failed catalog preview fetch (upstream unavailable, oversized or unparseable spec) is remembered per spec URL before it is retried, so repeated previews of a broken spec do not refetch it on every request. Zero retries on the next request. Ignored when the preview cache is disabled. |
+| `catalog.preview_cache_max_entries` | integer (>= 0) | `16` | `JENTIC__CATALOG__PREVIEW_CACHE_MAX_ENTRIES` | Maximum number of catalog spec projections held in memory per process (least recently used evicted first). Zero disables the cache. |
 
 ## `credentials`
 

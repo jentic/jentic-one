@@ -25,7 +25,7 @@ import httpx
 import pytest
 from sqlalchemy import delete, select, update
 
-from jentic_one.broker.core.exceptions import (
+from jentic_one.broker.core.errors import (
     InvalidRevisionPinError,
     UnauthorizedRevisionPinError,
 )

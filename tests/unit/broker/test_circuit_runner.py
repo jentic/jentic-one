@@ -12,7 +12,7 @@ import pytest
 
 from jentic_one.broker.adapters.runners.base import RunnerRequest, RunnerResult
 from jentic_one.broker.adapters.runners.circuit import _NO_HOST_KEY, CircuitBreakerRunner
-from jentic_one.broker.core.exceptions import (
+from jentic_one.broker.core.errors import (
     BrokerError,
     CircuitOpenError,
     UpstreamTimeoutError,

@@ -39,6 +39,7 @@ from jentic_one.shared.config import (
     EntitlementConfig,
     HeldExecutionsConfig,
     IdempotencyConfig,
+    IngestConfig,
     OAuthRateLimitConfig,
     RuntimeConfig,
     SigningKeyConfig,
@@ -60,6 +61,11 @@ from jentic_one.shared.config import (
     resolved_auth_base_url,
     resolved_control_egress,
 )
+from jentic_one.shared.config import _state_compat as state_compat_module
+from jentic_one.shared.config import auth as auth_config_module
+from jentic_one.shared.config import broker as broker_config_module
+from jentic_one.shared.config import loader as loader_module
+from jentic_one.shared.config import runtime as runtime_config_module
 from jentic_one.shared.state import (
     MemoryBackendConfig,
     MemoryStateBackend,
@@ -208,6 +214,43 @@ def test_control_connect_manual_flows_default_on_and_env_overrides(
         yaml.dump({**sample_config_dict, "control": {"connect": {"manual_flows_ttl_hours": 0}}})
     )
     with pytest.raises(ConfigError, match="manual_flows_ttl_hours"):
+        load_config(bad)
+
+
+def test_import_request_and_preview_cache_limits(
+    config_file: Path, tmp_path: Path, sample_config_dict: dict[str, Any]
+):
+    config = load_config(config_file)
+    assert config.ingest.max_import_request_bytes is None
+    assert config.ingest.import_request_cap_bytes == 2 * config.ingest.max_spec_bytes
+    assert config.catalog.preview_cache_ttl_seconds == 300
+    assert config.catalog.preview_cache_max_entries == 16
+    assert config.catalog.preview_cache_failure_ttl_seconds == 30
+    # The default import cap tracks a raised per-spec cap.
+    assert IngestConfig(max_spec_bytes=1000).import_request_cap_bytes == 2000
+
+    env = {
+        "JENTIC__INGEST__MAX_IMPORT_REQUEST_BYTES": "1500",
+        "JENTIC__CATALOG__PREVIEW_CACHE_TTL_SECONDS": "0",
+        "JENTIC__CATALOG__PREVIEW_CACHE_MAX_ENTRIES": "4",
+        "JENTIC__CATALOG__PREVIEW_CACHE_FAILURE_TTL_SECONDS": "0",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.ingest.import_request_cap_bytes == 1500
+    assert config.catalog.preview_cache_ttl_seconds == 0
+    assert config.catalog.preview_cache_max_entries == 4
+    assert config.catalog.preview_cache_failure_ttl_seconds == 0
+
+    from_yaml = tmp_path / "limits.yaml"
+    from_yaml.write_text(
+        yaml.dump({**sample_config_dict, "ingest": {"max_import_request_bytes": 4096}})
+    )
+    assert load_config(from_yaml).ingest.import_request_cap_bytes == 4096
+
+    bad = tmp_path / "bad-limits.yaml"
+    bad.write_text(yaml.dump({**sample_config_dict, "ingest": {"max_import_request_bytes": 0}}))
+    with pytest.raises(ConfigError, match="max_import_request_bytes"):
         load_config(bad)
 
 
@@ -886,7 +929,7 @@ def test_oauth_trusted_proxies_invalid_entry_fails_load(tmp_path: Path, entry: s
 def test_oauth_trusted_proxies_warns_on_public_network(
     entry: str, warned: bool, monkeypatch: pytest.MonkeyPatch
 ):
-    monkeypatch.setattr(config_module, "_warned_public_trusted_proxies", set())
+    monkeypatch.setattr(auth_config_module, "_warned_public_trusted_proxies", set())
     with structlog.testing.capture_logs() as logs:
         OAuthRateLimitConfig(trusted_proxies=[entry])
         OAuthRateLimitConfig(trusted_proxies=[entry])
@@ -1385,7 +1428,7 @@ def test_oneshot_cache_survives_writes_after_open(
         def __exit__(self, *exc_info: object) -> None:
             self.release()
 
-    monkeypatch.setattr(config_module, "_ONESHOT_CACHE_LOCK", _ParkingLock())
+    monkeypatch.setattr(loader_module, "_ONESHOT_CACHE_LOCK", _ParkingLock())
     monkeypatch.setattr(io, "open", hooked_open)
     monkeypatch.setattr(builtins, "open", hooked_open)
 
@@ -1585,7 +1628,9 @@ def test_broker_retired_direct_bindings_flag_true_is_ignored(
     sample_config_dict["broker"] = {"direct_bindings_enabled": True}
     path = tmp_path / "cfg.yaml"
     path.write_text(yaml.dump(sample_config_dict))
-    monkeypatch.setattr(config_module, "_retired_direct_bindings_flag_warned", threading.Event())
+    monkeypatch.setattr(
+        broker_config_module, "_retired_direct_bindings_flag_warned", threading.Event()
+    )
     with structlog.testing.capture_logs() as logs:
         config = load_config(path)
         load_config(path)
@@ -1606,7 +1651,7 @@ def test_broker_retired_account_linking_base_url_is_ignored(
     }
     path = tmp_path / "cfg.yaml"
     path.write_text(yaml.dump(sample_config_dict))
-    monkeypatch.setattr(config_module, "_retired_account_linking_warned", threading.Event())
+    monkeypatch.setattr(broker_config_module, "_retired_account_linking_warned", threading.Event())
     with structlog.testing.capture_logs() as logs:
         config = load_config(path)
         load_config(path)
@@ -1621,7 +1666,7 @@ def test_broker_retired_account_linking_base_url_is_ignored(
 def test_broker_retired_account_linking_base_url_env_is_ignored(
     config_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(config_module, "_retired_account_linking_warned", threading.Event())
+    monkeypatch.setattr(broker_config_module, "_retired_account_linking_warned", threading.Event())
     env = {"JENTIC__BROKER__ACCOUNT_LINKING_BASE_URL": "https://console.example.com"}
     with patch.dict(os.environ, env, clear=False), structlog.testing.capture_logs() as logs:
         load_config(config_file)
@@ -1651,7 +1696,7 @@ def test_services_retired_sa_sweep_age_is_ignored(
     }
     path = tmp_path / "cfg.yaml"
     path.write_text(yaml.dump(sample_config_dict))
-    monkeypatch.setattr(config_module, "_retired_sa_sweep_age_warned", threading.Event())
+    monkeypatch.setattr(runtime_config_module, "_retired_sa_sweep_age_warned", threading.Event())
     with structlog.testing.capture_logs() as logs:
         config = load_config(path)
         load_config(path)
@@ -1666,7 +1711,7 @@ def test_services_retired_sa_sweep_age_is_ignored(
 def test_services_retired_sa_sweep_age_env_is_ignored(
     config_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(config_module, "_retired_sa_sweep_age_warned", threading.Event())
+    monkeypatch.setattr(runtime_config_module, "_retired_sa_sweep_age_warned", threading.Event())
     env = {"JENTIC__SERVICES__SERVICE_ACCOUNT_SWEEP_MIN_STAMP_AGE_HOURS": "48"}
     with patch.dict(os.environ, env, clear=False), structlog.testing.capture_logs() as logs:
         load_config(config_file)
@@ -2757,7 +2802,7 @@ def test_memory_backend_total_cap_defaults_and_is_configurable(config_file: Path
 
 @pytest.fixture()
 def _fresh_state_deprecation_latch(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(config_module, "_deprecated_state_section_warned", threading.Event())
+    monkeypatch.setattr(state_compat_module, "_deprecated_state_section_warned", threading.Event())
 
 
 def _write(tmp_path: Path, data: dict[str, Any]) -> Path:

@@ -22,7 +22,7 @@ import tracemalloc
 import pytest
 import structlog
 
-from jentic_one.broker.core.exceptions import IdempotencyUnavailableError
+from jentic_one.broker.core.errors import IdempotencyUnavailableError
 from jentic_one.broker.core.problem import status_for_broker_error
 from jentic_one.broker.services.idempotency import (
     MAX_RECORD_HEADER_BYTES,

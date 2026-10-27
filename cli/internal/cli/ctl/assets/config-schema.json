@@ -311,6 +311,27 @@
           "title": "Manifest Url",
           "type": "string"
         },
+        "preview_cache_failure_ttl_seconds": {
+          "default": 30,
+          "description": "How long a failed catalog preview fetch (upstream unavailable, oversized or unparseable spec) is remembered per spec URL before it is retried, so repeated previews of a broken spec do not refetch it on every request. Zero retries on the next request. Ignored when the preview cache is disabled.",
+          "minimum": 0,
+          "title": "Preview Cache Failure Ttl Seconds",
+          "type": "integer"
+        },
+        "preview_cache_max_entries": {
+          "default": 16,
+          "description": "Maximum number of catalog spec projections held in memory per process (least recently used evicted first). Zero disables the cache.",
+          "minimum": 0,
+          "title": "Preview Cache Max Entries",
+          "type": "integer"
+        },
+        "preview_cache_ttl_seconds": {
+          "default": 300,
+          "description": "How long a catalog preview's upstream spec projection is reused before refetching. Zero disables the cache. The cache is per process: `POST /catalog:refresh` clears it only on the process that serves the refresh, so other workers or replicas can serve the previous projection until this TTL expires.",
+          "minimum": 0,
+          "title": "Preview Cache Ttl Seconds",
+          "type": "integer"
+        },
         "update_check_interval_seconds": {
           "default": 86400,
           "title": "Update Check Interval Seconds",
@@ -1101,6 +1122,20 @@
           "default": 30.0,
           "title": "Fetch Timeout S",
           "type": "number"
+        },
+        "max_import_request_bytes": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Cap on the raw `POST /apis` request body (all sources together). Unset means twice `max_spec_bytes`, which covers one maximum-size inline spec with typical JSON-string escaping; raise it for batches of heavily escaped specs (`\\uXXXX` or HTML-escaped content). Each inline source's content is separately capped at `max_spec_bytes`.",
+          "title": "Max Import Request Bytes"
         },
         "max_redirects": {
           "default": 5,

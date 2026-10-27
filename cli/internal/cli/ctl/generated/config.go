@@ -434,6 +434,23 @@ type CatalogConfig struct {
 	// https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json
 	ManifestUrl string `json:"manifest_url" yaml:"manifest_url" mapstructure:"manifest_url"`
 
+	// How long a failed catalog preview fetch (upstream unavailable, oversized or
+	// unparseable spec) is remembered per spec URL before it is retried, so repeated
+	// previews of a broken spec do not refetch it on every request. Zero retries on
+	// the next request. Ignored when the preview cache is disabled.
+	PreviewCacheFailureTtlSeconds int `json:"preview_cache_failure_ttl_seconds" yaml:"preview_cache_failure_ttl_seconds" mapstructure:"preview_cache_failure_ttl_seconds"`
+
+	// Maximum number of catalog spec projections held in memory per process (least
+	// recently used evicted first). Zero disables the cache.
+	PreviewCacheMaxEntries int `json:"preview_cache_max_entries" yaml:"preview_cache_max_entries" mapstructure:"preview_cache_max_entries"`
+
+	// How long a catalog preview's upstream spec projection is reused before
+	// refetching. Zero disables the cache. The cache is per process: `POST
+	// /catalog:refresh` clears it only on the process that serves the refresh, so
+	// other workers or replicas can serve the previous projection until this TTL
+	// expires.
+	PreviewCacheTtlSeconds int `json:"preview_cache_ttl_seconds" yaml:"preview_cache_ttl_seconds" mapstructure:"preview_cache_ttl_seconds"`
+
 	// UpdateCheckIntervalSeconds corresponds to the JSON schema field
 	// "update_check_interval_seconds".
 	UpdateCheckIntervalSeconds int `json:"update_check_interval_seconds" yaml:"update_check_interval_seconds" mapstructure:"update_check_interval_seconds"`
@@ -467,6 +484,24 @@ func (j *CatalogConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["manifest_url"]; !ok || v == nil {
 		plain.ManifestUrl = "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json"
+	}
+	if v, ok := raw["preview_cache_failure_ttl_seconds"]; !ok || v == nil {
+		plain.PreviewCacheFailureTtlSeconds = 30
+	}
+	if 0 > plain.PreviewCacheFailureTtlSeconds {
+		return fmt.Errorf("field %s: must be >= %v", "preview_cache_failure_ttl_seconds", 0)
+	}
+	if v, ok := raw["preview_cache_max_entries"]; !ok || v == nil {
+		plain.PreviewCacheMaxEntries = 16
+	}
+	if 0 > plain.PreviewCacheMaxEntries {
+		return fmt.Errorf("field %s: must be >= %v", "preview_cache_max_entries", 0)
+	}
+	if v, ok := raw["preview_cache_ttl_seconds"]; !ok || v == nil {
+		plain.PreviewCacheTtlSeconds = 300
+	}
+	if 0 > plain.PreviewCacheTtlSeconds {
+		return fmt.Errorf("field %s: must be >= %v", "preview_cache_ttl_seconds", 0)
 	}
 	if v, ok := raw["update_check_interval_seconds"]; !ok || v == nil {
 		plain.UpdateCheckIntervalSeconds = 86400
@@ -1598,12 +1633,21 @@ type IngestConfig struct {
 	// FetchTimeoutS corresponds to the JSON schema field "fetch_timeout_s".
 	FetchTimeoutS float64 `json:"fetch_timeout_s" yaml:"fetch_timeout_s" mapstructure:"fetch_timeout_s"`
 
+	// Cap on the raw `POST /apis` request body (all sources together). Unset means
+	// twice `max_spec_bytes`, which covers one maximum-size inline spec with typical
+	// JSON-string escaping; raise it for batches of heavily escaped specs (`\uXXXX`
+	// or HTML-escaped content). Each inline source's content is separately capped at
+	// `max_spec_bytes`.
+	MaxImportRequestBytes interface{} `json:"max_import_request_bytes,omitempty,omitzero" yaml:"max_import_request_bytes,omitempty" mapstructure:"max_import_request_bytes,omitempty"`
+
 	// MaxRedirects corresponds to the JSON schema field "max_redirects".
 	MaxRedirects int `json:"max_redirects" yaml:"max_redirects" mapstructure:"max_redirects"`
 
 	// MaxSpecBytes corresponds to the JSON schema field "max_spec_bytes".
 	MaxSpecBytes int `json:"max_spec_bytes" yaml:"max_spec_bytes" mapstructure:"max_spec_bytes"`
 }
+
+type IngestConfigMaxImportRequestBytes_0 *int
 
 // UnmarshalJSON implements json.Unmarshaler.
 func (j *IngestConfig) UnmarshalJSON(value []byte) error {

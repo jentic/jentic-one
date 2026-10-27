@@ -14,13 +14,13 @@ from jentic_one.shared.db import DatabaseSession
 from jentic_one.shared.provider_config_store import load_provider_configs
 from jentic_one.shared.release_check import ReleaseChecker
 from jentic_one.shared.state import SharedStateBackend, build_state_backend
+from jentic_one.shared.ttl_cache import AsyncTTLCache
 
 if TYPE_CHECKING:
     from jentic_one.control.services.credentials.providers.registry import ProviderRegistry
+    from jentic_one.registry.services.catalog.manifest_builder import PreviewProjection
     from jentic_one.shared.broker.protocols import BrokerCacheInvalidatorProtocol
     from jentic_one.shared.telemetry.sink import TelemetrySink
-
-logger = structlog.get_logger(__name__)
 
 logger = structlog.get_logger(__name__)
 
@@ -65,6 +65,7 @@ class Context:
         self._control_db: DatabaseSession | None = None
         self._update_sweep_lock: asyncio.Lock | None = None
         self._release_checker: ReleaseChecker | None = None
+        self._catalog_preview_cache: AsyncTTLCache[str, PreviewProjection] | None = None
         self._state_backend: SharedStateBackend | None = None
         self._state_backend_closed = False
         # Product telemetry (issue #446). Resolved + owned by the lifespan when
@@ -211,8 +212,13 @@ class Context:
         credential_id: str | None = None,
         rule_set_id: str | None = None,
         token: str | None = None,
+        user_id: str | None = None,
     ) -> None:
         """Notify registered in-process broker caches to evict stale entries (#1837).
+
+        ``user_id`` evicts the user's cached token and actor-status verdicts.
+        ``agent_id`` evicts the same verdicts for the agent, plus its binding
+        and rule cache entries.
 
         No-op when no broker cache is wired onto this ``Context`` (e.g. a
         control-plane process in a multi-process deployment, where the broker's
@@ -224,6 +230,7 @@ class Context:
                 credential_id=credential_id,
                 rule_set_id=rule_set_id,
                 token=token,
+                user_id=user_id,
             )
 
     @property
@@ -282,6 +289,25 @@ class Context:
         if self._release_checker is None:
             self._release_checker = ReleaseChecker(self._config)
         return self._release_checker
+
+    @property
+    def catalog_preview_cache(self) -> AsyncTTLCache[str, PreviewProjection]:
+        """Process-wide cache of catalog spec preview projections, keyed by spec URL.
+
+        ``CatalogService`` is built per request, so the cache lives here to be
+        shared across every ``GET /catalog/{id}/operations`` on this process.
+        Sized by ``catalog.preview_cache_*``; lazily constructed on first access.
+        It is per process only: ``POST /catalog:refresh`` clears this process's
+        copy, while other workers or replicas keep theirs until the TTL expires.
+        """
+        if self._catalog_preview_cache is None:
+            cfg = self._config.catalog
+            self._catalog_preview_cache = AsyncTTLCache(
+                max_entries=cfg.preview_cache_max_entries,
+                ttl_seconds=cfg.preview_cache_ttl_seconds,
+                failure_ttl_seconds=cfg.preview_cache_failure_ttl_seconds,
+            )
+        return self._catalog_preview_cache
 
     @property
     def state_backend(self) -> SharedStateBackend:
