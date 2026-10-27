@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Broker API
-  version: "0.43.0" # x-release-please-version
+  version: "0.44.0" # x-release-please-version
   summary: Secure execution proxy for upstream APIs — credentials never leave the Broker.
   contact:
     name: Jentic Platform Team
@@ -125,7 +125,7 @@ paths:
                   value:
                     status: ok
                     surface: broker
-                    version: "0.43.0" # x-release-please-version
+                    version: "0.44.0" # x-release-please-version
                 notEntitled:
                   summary: Metered marketplace deployment whose entitlement lapsed.
                   value:
@@ -1088,7 +1088,7 @@ components:
       examples:
         - status: ok
           surface: broker
-          version: "0.43.0" # x-release-please-version
+          version: "0.44.0" # x-release-please-version
       required:
         - status
       properties:
@@ -1113,7 +1113,7 @@ components:
             Running Jentic One release (the same version as `info.version`
             in this spec). Absent on the `not_entitled` body.
           examples:
-            - "0.43.0" # x-release-please-version
+            - "0.44.0" # x-release-please-version
         reason:
           type: string
           description: Why the deployment is not entitled. Present only on the `not_entitled` body.
