@@ -4,10 +4,10 @@ One primary-key read answers every question a user credential depends on: is
 the account active, is it deleted (``users.deleted_at`` — delete is terminal,
 so a deleted row is refused even if it reads active), and was the credential
 issued under the account's current login-session generation
-(``users.session_generation``, bumped on disable, delete and password
-change/reset)? The login-JWT verifier and the broker's queued-work
-re-authorizer both read through here, so a change to user liveness lands in
-one place.
+(``users.session_generation``, bumped on disable, delete, password
+change/reset and a permission edit that narrows the user's effective set)?
+The login-JWT verifier and the broker's queued-work re-authorizer both read
+through here, so a change to user liveness lands in one place.
 
 Raw SQL against the admin schema: ``shared`` (and the broker) may not import
 the ``admin`` ORM.
