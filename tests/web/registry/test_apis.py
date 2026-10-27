@@ -469,7 +469,7 @@ async def test_list_and_detail_agree_on_update_available_for_published_over_cata
     current revision with no ``source_url`` plus a check row whose notified digest differs
     from the served digest — and assert both surfaces report ``update_available=True``.
     """
-    api = await _seed_api(web_context, vendor="published-over-catalog.com", source_url=None)
+    api = await _seed_api(web_context, vendor="published-over-catalog-com", source_url=None)
     # A prior catalog import left a check row; upstream then advanced past what we now serve.
     async with web_context.registry_db.transaction() as session:
         await CatalogUpdateCheckRepository.upsert(
@@ -482,13 +482,13 @@ async def test_list_and_detail_agree_on_update_available_for_published_over_cata
             notified_digest="sha256:upstream-new",  # != served f"sha256:{vendor}-api-v1"
         )
 
-    list_resp = authed_client.get("/apis", params={"vendor": "published-over-catalog.com"})
+    list_resp = authed_client.get("/apis", params={"vendor": "published-over-catalog-com"})
     assert list_resp.status_code == 200
     list_items = list_resp.json()["data"]
     assert len(list_items) == 1
     assert list_items[0]["update_available"] is True
 
-    detail_resp = authed_client.get("/apis/published-over-catalog.com/api/v1")
+    detail_resp = authed_client.get("/apis/published-over-catalog-com/api/v1")
     assert detail_resp.status_code == 200
     detail = detail_resp.json()
     assert detail["source_url"] is None  # the caveat precondition: manually published
