@@ -64,8 +64,10 @@ runs on Linux and macOS; on Windows, follow the
 One image (`ghcr.io/jentic/jentic-one-app`) runs both the control plane and the
 broker. The quickstart shape below keeps everything in SQLite files on one
 volume and runs with development-mode secrets — don't point it at a real
-credential (the quickstart config also ships no encryption keyset, so storing
-one fails until you configure `credentials.encryption`):
+credential. The one secret it does keep is the credential-encryption key,
+generated into `quickstart.env` below: back that file up with the volume, since
+without the key stored credentials are unreadable
+([backup & restore](docs/operations/backup-restore.md)):
 
 ```bash
 docker pull ghcr.io/jentic/jentic-one-app:latest
@@ -73,6 +75,14 @@ docker volume create jentic-data
 
 # Grab the quickstart config (SQLite on the volume; fetched from main) — tweak it, or use as is
 curl -fsSLO https://raw.githubusercontent.com/jentic/jentic-one/main/config/quickstart.env
+
+# Generate this install's credential-encryption key into it (once — a new key
+# makes credentials stored under the old one unreadable)
+grep -q '^JENTIC__CREDENTIALS__ENCRYPTION__' quickstart.env || cat >> quickstart.env <<EOF
+JENTIC__CREDENTIALS__ENCRYPTION__ACTIVE_ID=v1
+JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__0__ID=v1
+JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__0__MATERIAL=$(openssl rand -base64 32)
+EOF
 
 # Migrate, then start the two roles
 docker run --rm --env-file quickstart.env -v jentic-data:/data \
@@ -96,6 +106,8 @@ broker as one stack:
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/jentic/jentic-one/main/deploy/docker/quickstart/docker-compose.yaml
+# The credential-encryption key goes in .env next to it (once; back it up)
+grep -qs '^JENTIC_ENCRYPTION_KEY=' .env || echo "JENTIC_ENCRYPTION_KEY=$(openssl rand -base64 32)" >> .env
 docker compose up -d
 docker compose exec app python -m jentic_one create-admin --email you@example.com
 ```

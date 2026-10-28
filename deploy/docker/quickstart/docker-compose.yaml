@@ -5,12 +5,18 @@
 # one-shot init service; `app` and `broker` wait for it to finish.
 #
 #   curl -fsSLO https://raw.githubusercontent.com/jentic/jentic-one/main/deploy/docker/quickstart/docker-compose.yaml
+#   grep -qs '^JENTIC_ENCRYPTION_KEY=' .env || echo "JENTIC_ENCRYPTION_KEY=$(openssl rand -base64 32)" >> .env
 #   docker compose up -d
 #   docker compose exec app python -m jentic_one create-admin --email you@example.com
 #
 # Then sign in at http://127.0.0.1:8000. Agents call the broker on :8100.
 #
-# Trial use only: secrets are per-process dev values and the image tag floats.
+# The credential-encryption key is the one kept secret: generated once into
+# .env (the second command above), read from there by compose. Back .env up
+# with the volume — without the key, stored credentials are unreadable.
+#
+# Trial use only: the other secrets are per-process dev values and the image
+# tag floats.
 # The production shape (digest pin, external Postgres, real secrets, TLS) is
 # docs/installation/docker-compose.md.
 
@@ -36,6 +42,10 @@ x-env: &env
   JENTIC__DATABASES__CONTROL__PATH: /data/control.db
   JENTIC__DATABASES__ADMIN__BACKEND: sqlite
   JENTIC__DATABASES__ADMIN__PATH: /data/admin.db
+  # Credential-encryption keyset; the key itself comes from .env.
+  JENTIC__CREDENTIALS__ENCRYPTION__ACTIVE_ID: v1
+  JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__0__ID: v1
+  JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__0__MATERIAL: ${JENTIC_ENCRYPTION_KEY:?set JENTIC_ENCRYPTION_KEY in .env - see the header of this file}
   # Anonymous product telemetry (docs/reference/config.md#telemetry).
   # Set to "false" to opt out.
   JENTIC__TELEMETRY__ENABLED: "true"
