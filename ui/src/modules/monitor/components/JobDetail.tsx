@@ -68,20 +68,7 @@ export function JobDetail({ jobId, frame }: { jobId: string; frame: DetailFrameC
 			id={jobId}
 			idLabel="job id"
 			actions={
-				heldExecution ? (
-					<Button
-						variant="primary"
-						size={frame.mode === 'pane' ? 'sm' : undefined}
-						onClick={() =>
-							navigate(
-								held ? ROUTE_PATHS.approval(held.id) : ROUTE_PATHS.approvalsInbox(),
-							)
-						}
-						className={frame.mode === 'sheet' ? 'flex-1' : undefined}
-					>
-						{held ? 'Review' : 'Open inbox'}
-					</Button>
-				) : canCancel && job ? (
+				!heldExecution && canCancel && job ? (
 					<Button
 						variant="danger"
 						size={frame.mode === 'pane' ? 'sm' : undefined}
@@ -94,6 +81,21 @@ export function JobDetail({ jobId, frame }: { jobId: string; frame: DetailFrameC
 				) : undefined
 			}
 		>
+			{/* A held call's one verb sits at the top, in view: the footer can lie
+			    below the fold when the pane opens with the page at its top. */}
+			{heldExecution && (
+				<Button
+					variant="primary"
+					size="sm"
+					onClick={() =>
+						navigate(
+							held ? ROUTE_PATHS.approval(held.id) : ROUTE_PATHS.approvalsInbox(),
+						)
+					}
+				>
+					{held ? 'Review' : 'Open inbox'}
+				</Button>
+			)}
 			{query.isLoading ? (
 				<LoadingState />
 			) : query.isError || !job || !status ? (
