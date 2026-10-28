@@ -250,6 +250,7 @@ async def file_hold(
     payload: dict[str, Any],
     ttl_seconds: int,
     max_pending: int,
+    agent_reason: str | None = None,
 ) -> HoldOutcome:
     """File (or join) a hold inside the caller's admin-DB transaction.
 
@@ -262,6 +263,11 @@ async def file_hold(
     well, so two racing retries never produce two holds. The join and the cap
     run under a per-agent lock held to the end of the transaction, so
     concurrent filings cannot together exceed the cap.
+
+    ``agent_reason`` (the agent's own words) is stored on a new hold only. It
+    is not part of the fingerprint, so a retry that rewords it joins the
+    existing hold and the first reason stands — a reviewer may already be
+    reading it.
     """
     fingerprint = compute_execution_fingerprint(
         agent_id=agent_id,
@@ -309,6 +315,7 @@ async def file_hold(
                 matched_rule_id=matched_rule_id,
                 state=APPROVAL_PENDING,
                 expires_at=expires_at,
+                agent_reason=agent_reason,
                 trace_id=trace_id,
                 created_by=agent_id,
             )

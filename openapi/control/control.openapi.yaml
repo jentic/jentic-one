@@ -4552,6 +4552,7 @@ components:
         agent_id: agnt_6968b3984d1c238dbe7e2e29
         agent_name: billing-assistant
         agent_owner_id: usr_6968b3987ee4c3ec0b4ee3b9
+        agent_reason: Customer 4821 asked for a replacement order
         api_name: stripe
         api_vendor: stripe.com
         api_version: '2024-04-10'
@@ -4604,6 +4605,14 @@ components:
           examples:
           - usr_6968b3987ee4c3ec0b4ee3b9
           title: Agent Owner Id
+        agent_reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Why the agent says it made the call, in its own words (its Jentic-Reason request header). Unverified; null when the agent gave no reason.
+          examples:
+          - Customer 4821 asked for a replacement order
+          title: Agent Reason
         api_name:
           description: Name of the API called.
           examples:
@@ -4825,6 +4834,7 @@ components:
         data: &id065
         - _links: *id064
           agent_id: agnt_6968b3984d1c238dbe7e2e29
+          agent_reason: Customer 4821 asked for a replacement order
           api_name: stripe
           api_vendor: stripe.com
           api_version: '2024-04-10'
@@ -4881,6 +4891,7 @@ components:
       - &id248
         _links: *id064
         agent_id: agnt_6968b3984d1c238dbe7e2e29
+        agent_reason: Customer 4821 asked for a replacement order
         api_name: stripe
         api_vendor: stripe.com
         api_version: '2024-04-10'
@@ -4912,6 +4923,14 @@ components:
           - agnt_6968b3984d1c238dbe7e2e29
           title: Agent Id
           type: string
+        agent_reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Why the agent says it made the call, in its own words (its Jentic-Reason request header). Unverified; null when the agent gave no reason.
+          examples:
+          - Customer 4821 asked for a replacement order
+          title: Agent Reason
         api_name:
           description: Name of the API called.
           examples:

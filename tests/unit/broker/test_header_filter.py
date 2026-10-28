@@ -47,6 +47,13 @@ def test_retired_toolkit_header_not_forwarded_upstream() -> None:
     assert out["X-Keep"] == "1"
 
 
+def test_agent_reason_header_not_forwarded_upstream() -> None:
+    """The agent's ``Jentic-Reason`` is for the reviewer only; it never reaches the upstream."""
+    out = forward_headers({"Jentic-Reason": "Customer asked for a refund", "X-Keep": "1"}, {})
+    assert "jentic-reason" not in {k.lower() for k in out}
+    assert out["X-Keep"] == "1"
+
+
 def test_spoofable_forwarding_headers_stripped() -> None:
     out = forward_headers(
         {

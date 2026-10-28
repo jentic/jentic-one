@@ -88,6 +88,19 @@
           "type": "string"
         }
       },
+      "JenticReason": {
+        "description": "Why the agent is making this call, in its own words. Send it on\nany call that changes something: when the call is held for human\napproval, the reviewer sees it next to the request. Percent-encode\nit as UTF-8 (a header carries ASCII only); at most 1024 characters\nafter decoding (longer text is cut, control characters other than\nnewline and tab are dropped). Consumed by the broker — never\nforwarded upstream, and dropped when the call runs straight away.\n",
+        "example": "Customer%204821%20asked%20for%20a%20replacement%20order",
+        "in": "header",
+        "name": "Jentic-Reason",
+        "required": false,
+        "schema": {
+          "examples": [
+            "Customer%204821%20asked%20for%20a%20replacement%20order"
+          ],
+          "type": "string"
+        }
+      },
       "JenticRevision": {
         "description": "Pin upstream-API resolution to a specific `ApiRevision`\ninstead of the API's `current_revision_id`. Multi-valued —\nrepeat the header (or comma-separate) once per API you\nwant to pin. Each value is `vendor:name:version=<revision_id>`:\n`vendor`, `name` and `version` are the API's `api` reference,\nand `<revision_id>` is the revision's `revision_id` exactly as\nthe control plane returns it (`GET\n/apis/{vendor}/{name}/{version}/revisions`, the revision get,\nan import job's result, or `jentic apis revisions`). The\nequivalent `rev_<revision_id without hyphens>` label is\naccepted too.\n\nUse cases:\n\n- Test a `draft` revision against existing credentials\n  before promoting it.\n- Reproduce a historical execution against an `archived`\n  spec for diagnostic purposes (refused by default;\n  archived revisions are not pinnable from the hot path).\n\nThe Broker forwards the pin into the control-plane\n`POST /lookup/operation` call so URL → `operation_id`\nresolution sees the requested spec. When the header is\nabsent or the URL doesn't match a pinned API, the Broker\nresolves against `current_revision_id` as today.\n\nPinning a `draft` revision the caller doesn't have\naccess to returns `403`. Pinning an unknown or\n`archived` revision returns `422`. Pinning the same API\nto two different revisions in one header returns\n`422 invalid_revision_pin`; repeating the same revision\n(in either form) is allowed. The chosen revisions\nare recorded on the resulting `ExecutionRecord`\n(`pinned_revisions` field on the control plane).\n",
         "example": [
@@ -1617,6 +1630,9 @@
         },
         {
           "$ref": "#/components/parameters/JenticCredentialId"
+        },
+        {
+          "$ref": "#/components/parameters/JenticReason"
         }
       ],
       "patch": {
