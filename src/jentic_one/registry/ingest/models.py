@@ -80,8 +80,8 @@ class IngestSpecification(BaseModel):
     host_change_approved: bool = False
     #: Set by the ``Ingestor`` (never by a source) when this catalog ingest must not
     #: change the API's server hosts on its own: the API has bound credentials and
-    #: the change is not operator-approved. ``CreateRevisionStage`` then keeps a
-    #: host-changing revision as a DRAFT instead of making it current.
+    #: no organisation admin approved the change. ``CreateRevisionStage`` then keeps
+    #: a host-changing revision as a DRAFT instead of making it current.
     guard_host_change: bool = False
 
     def to_log_string(self) -> str:

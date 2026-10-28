@@ -299,8 +299,9 @@ class HostChangeRequiresOperatorError(RegistryServiceError):
     Making a revision current that declares different server hosts (or moves a host
     to plaintext ``http``) changes where, or how, the API's bound credentials are
     sent. That needs an organisation admin (``org:admin``). The caller sees a 403
-    naming the origins involved; the detail states the rule, not whether anyone
-    has a bound credential or an open session on the API.
+    naming the origins involved; the detail text names no credential, binding or
+    session. Being raised at all still marks the API as credential-bound — see
+    ``registry/ingest/host_change_guard.py`` for what that leaks and why.
     """
 
     def __init__(self, revision_id: str, *, current_hosts: list[str], new_hosts: list[str]) -> None:

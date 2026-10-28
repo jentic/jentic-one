@@ -802,10 +802,12 @@ async def _promote_revisions(env: CallEnv, revisions: list[Any]) -> dict[str, st
         state = str(rev.get("state") or "")
         if rev.get("held_for_review"):
             # Server-host change guard: the revision changes where the API's bound
-            # credentials are sent, so it stays a draft until an operator promotes it.
+            # credentials are sent, so it stays a draft until an organisation admin
+            # promotes it. The wording matches HostChangeRequiresOperatorError, since
+            # the agent relays this to its operator verbatim.
             promoted[revision_id] = (
-                "held for operator review: the new revision changes the API's server "
-                "hosts (promoting it requires credentials:write)"
+                "held for organisation-admin review: the new revision changes the API's "
+                "server hosts (making it current requires 'org:admin')"
             )
             continue
         if state != "draft":

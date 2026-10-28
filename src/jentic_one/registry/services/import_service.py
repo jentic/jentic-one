@@ -145,7 +145,8 @@ class ImportHandler:
                     )
                     held = result.held_host_change
                     if held is not None:
-                        # Server-host change guard: kept as a draft for operator review.
+                        # Server-host change guard: kept as a draft for an organisation
+                        # admin to review.
                         revisions[-1]["held_for_review"] = True
                         revisions[-1]["host_change"] = held.model_dump()
                     if result.server_url_changes is not None:

@@ -67,7 +67,7 @@ func newApisImportCmd(_ *app) *cobra.Command {
 	cmd.Flags().StringVar(&vendor, "vendor", "", "Override the vendor for the imported API")
 	cmd.Flags().StringVar(&name, "name", "", "Override the API name")
 	cmd.Flags().StringVar(&version, "version", "", "Override the API version")
-	cmd.Flags().StringVar(&submittedBy, "submitted-by", "", "Attribution for who submitted this import (default: server infers from the caller)")
+	cmd.Flags().StringVar(&submittedBy, "submitted-by", "", "Attribute this import to another principal (org:admin only; otherwise the server attributes it to the caller)")
 	planFlags(cmd)
 	return cmd
 }
