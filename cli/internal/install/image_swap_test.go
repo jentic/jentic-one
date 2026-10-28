@@ -48,9 +48,42 @@ func TestSwapImageTagRefusesADigestPin(t *testing.T) {
 }
 
 func TestSwapImageTagRefusesANonReleaseVersion(t *testing.T) {
-	for _, version := range []string{"main", "dev", "", "abc1234"} {
+	// "0.44.0+ci.7" is a legal semver but not a legal Docker tag ('+'), so it
+	// must be refused here rather than resolving to a reference that only fails
+	// deep inside `docker pull`.
+	for _, version := range []string{"main", "dev", "", "abc1234", "v0.44.0+ci.7"} {
 		if _, err := SwapImageTag("ghcr.io/jentic/jentic-one-app:0.43.0", version); err == nil {
 			t.Errorf("SwapImageTag(_, %q) = nil error, want a refusal", version)
+		}
+	}
+}
+
+// A tag an operator chose with --image-tag is as explicit as a digest pin, so
+// it gets the same refusal rather than being silently moved to the new release.
+func TestSwapImageTagRefusesAnOperatorsTagPin(t *testing.T) {
+	for _, pinned := range []string{"canary", "nightly", "2026-10-28"} {
+		ref := "ghcr.io/jentic/jentic-one-app:" + pinned
+		_, err := SwapImageTag(ref, "v0.44.0")
+		if err == nil {
+			t.Errorf("SwapImageTag(%q, _) = nil error, want a refusal", ref)
+			continue
+		}
+		if !strings.Contains(err.Error(), pinned) {
+			t.Errorf("error does not name the pinned tag %q: %v", pinned, err)
+		}
+	}
+}
+
+// The tags this tool writes itself DO move: a release tag from a release
+// install, and the "latest" fallback from a non-release one.
+func TestSwapImageTagMovesTheTagsTheInstallerWrites(t *testing.T) {
+	for _, current := range []string{"0.43.0", "latest"} {
+		got, err := SwapImageTag("ghcr.io/jentic/jentic-one-app:"+current, "v0.44.0")
+		if err != nil {
+			t.Fatalf("SwapImageTag(:%s, _): %v", current, err)
+		}
+		if got != "ghcr.io/jentic/jentic-one-app:0.44.0" {
+			t.Errorf("SwapImageTag(:%s, _) = %q", current, got)
 		}
 	}
 }

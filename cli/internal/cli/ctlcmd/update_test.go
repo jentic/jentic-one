@@ -956,7 +956,7 @@ func TestUpdateStackDockerNamesPortConflict(t *testing.T) {
 func writeStackCompose(t *testing.T, a *app, image string) {
 	t.Helper()
 	body := "name: jentic\nservices:\n" +
-		"  db:\n    image: postgres:17-alpine\n" +
+		"  db:\n    image: postgres:16\n" +
 		"  app:\n    image: " + image + "\n" +
 		"  broker:\n    image: " + image + "\n"
 	if err := os.WriteFile(a.Paths.ComposePath(), []byte(body), 0o600); err != nil {
@@ -1155,6 +1155,134 @@ func TestUpdateStackDockerRefusesToMoveADigestPinnedStack(t *testing.T) {
 	}
 	if calls.builds != 0 || len(calls.pulled) != 0 {
 		t.Errorf("builds=%d pulled=%v, want no work at all", calls.builds, calls.pulled)
+	}
+}
+
+// The operators #2011 actually hit have a manifest claiming the new version
+// while the compose file still runs the old image. That mismatch must count as
+// "needs a refresh", or the fix only ever reaches installs that were never
+// broken.
+func TestDockerStackImageLagsRecord(t *testing.T) {
+	for _, tc := range []struct {
+		name, image, recorded string
+		want                  bool
+	}{
+		{"compose behind the record", "ghcr.io/jentic/jentic-one-app:0.43.0", "v0.44.0", true},
+		{"compose matches the record", "ghcr.io/jentic/jentic-one-app:0.44.0", "v0.44.0", false},
+		{"compose ahead of the record", "ghcr.io/jentic/jentic-one-app:0.45.0", "v0.44.0", false},
+		{"from-source stack", install.AppImageTag, "v0.44.0", false},
+		{"digest pin has no version to compare", "ghcr.io/jentic/jentic-one-app@sha256:" + strings.Repeat("ab", 32), "v0.44.0", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := testApp(t)
+			writeStackCompose(t, a, tc.image)
+			m := &config.Manifest{Mode: config.ModeDocker, StackRef: tc.recorded}
+			if got := a.dockerStackImageLagsRecord(m); got != tc.want {
+				t.Errorf("dockerStackImageLagsRecord = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// A pulled stack updated to a ref with NO published image is refreshed by
+// building, and that build reads the operator's checkout like any other — so
+// the #949 guard must still apply. Reporting "this will pull" for any published
+// stack regardless of the ref skipped it, and the build then silently used the
+// checkout's HEAD instead of the pinned ref.
+func TestDockerStackPullsOnUpdateIsFalseForARefWithNoPublishedImage(t *testing.T) {
+	a := testApp(t)
+	writeStackCompose(t, a, "ghcr.io/jentic/jentic-one-app:0.43.0")
+
+	pulls, err := a.dockerStackPullsOnUpdate(config.ModeDocker, "v0.44.0")
+	if err != nil || !pulls {
+		t.Errorf("release ref: pulls=%v err=%v, want true", pulls, err)
+	}
+	pulls, err = a.dockerStackPullsOnUpdate(config.ModeDocker, "main")
+	if err != nil {
+		t.Fatalf("non-release ref: %v", err)
+	}
+	if pulls {
+		t.Error("non-release ref reports a pull, so the pinned-ref guard would be skipped")
+	}
+}
+
+// An unreadable compose file must surface as the parse failure, not collapse
+// into "false" and be diagnosed as a checkout conflict that is not the problem.
+func TestDockerStackPullsOnUpdateReportsAnUnreadableComposeFile(t *testing.T) {
+	a := testApp(t)
+	if err := os.WriteFile(a.Paths.ComposePath(), []byte("services:\n  app: [\n"), 0o600); err != nil {
+		t.Fatalf("write compose: %v", err)
+	}
+	if _, err := a.dockerStackPullsOnUpdate(config.ModeDocker, "v0.44.0"); err == nil {
+		t.Error("dockerStackPullsOnUpdate = nil error, want the parse failure to propagate")
+	}
+}
+
+// The refusals the stack half cannot escape are raised BEFORE the CLI half
+// swaps binaries. Raising them afterwards leaves the CLI ahead of the stack
+// with every retry hitting the same wall and no flag to work around it.
+func TestCheckDockerRefreshPossibleRefusesBeforeTheCLIHalf(t *testing.T) {
+	for _, tc := range []struct {
+		name, image, ref string
+		pinned           bool
+		wantErr          string
+	}{
+		{"digest pin", "ghcr.io/jentic/jentic-one-app@sha256:" + strings.Repeat("ab", 32), "v0.44.0", false, "digest"},
+		{"operator tag pin", "ghcr.io/jentic/jentic-one-app:canary", "v0.44.0", false, "canary"},
+		{"unpinned non-release", "ghcr.io/jentic/jentic-one-app:0.43.0", "main", false, "--ref"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := testApp(t)
+			writeStackCompose(t, a, tc.image)
+			err := a.checkDockerRefreshPossible(config.ModeDocker, tc.ref, tc.pinned)
+			if err == nil {
+				t.Fatalf("checkDockerRefreshPossible = nil error, want a refusal")
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error %q does not mention %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// The routes that CAN proceed are not refused up front.
+func TestCheckDockerRefreshPossibleAllowsTheWorkableRoutes(t *testing.T) {
+	for _, tc := range []struct {
+		name, image, ref string
+		pinned           bool
+	}{
+		{"release pull", "ghcr.io/jentic/jentic-one-app:0.43.0", "v0.44.0", false},
+		{"latest fallback moves", "ghcr.io/jentic/jentic-one-app:latest", "v0.44.0", false},
+		{"pinned conversion", "ghcr.io/jentic/jentic-one-app:0.43.0", "main", true},
+		{"from-source stack", install.AppImageTag, "main", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := testApp(t)
+			writeStackCompose(t, a, tc.image)
+			if err := a.checkDockerRefreshPossible(config.ModeDocker, tc.ref, tc.pinned); err != nil {
+				t.Errorf("checkDockerRefreshPossible = %v, want nil", err)
+			}
+		})
+	}
+}
+
+// Converting a pulled stack to a from-source one rewrites the compose file for
+// good, so a later failure must say that — not just that an image was rebuilt.
+func TestUpdateStackDockerConversionHintNamesTheComposeRepoint(t *testing.T) {
+	a := testApp(t)
+	writeStackCompose(t, a, "ghcr.io/jentic/jentic-one-app:0.43.0")
+	stubDockerStack(t)
+	origMigrate := runComposeMigrations
+	t.Cleanup(func() { runComposeMigrations = origMigrate })
+	runComposeMigrations = func(io.Writer, string) error { return errors.New("exit status 1") }
+
+	err := a.updateStackDocker(context.Background(), "main", true, true)
+	var staged *stackStageError
+	if !errors.As(err, &staged) {
+		t.Fatalf("err = %v, want a stackStageError", err)
+	}
+	if staged.hint != hintDockerConverted {
+		t.Errorf("hint = %q, want the conversion hint", staged.hint)
 	}
 }
 

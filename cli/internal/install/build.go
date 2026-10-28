@@ -487,8 +487,11 @@ func RenderStartHeader() string {
 // RenderPullHeader returns the styled header for pulling the app image, naming
 // the reference being pulled. Shared by the install and update pull routes so
 // the two announce the step identically.
+//
+// The two-space gap after "image:" matches RenderDockerBuildHeader, the other
+// header a Docker install prints, so their value columns line up.
 func RenderPullHeader(image string) string {
-	return headingStyle.Render("Pull app image") + "\n  image: " + commandStyle.Render(image) + "\n"
+	return headingStyle.Render("Pull app image") + "\n  image:  " + commandStyle.Render(image) + "\n"
 }
 
 // RenderStartWarning returns a styled warning shown when the app could not be

@@ -93,7 +93,35 @@ func releaseTag(version string) string {
 			return ""
 		}
 	}
+	// A Docker tag is [A-Za-z0-9_.-] only, so semver build metadata ("+ci.7")
+	// cannot be one. Refusing here turns such a ref into the caller's own
+	// "not a published release version" message, rather than a reference that
+	// resolves fine and then fails deep in `docker pull` with the daemon's raw
+	// "invalid reference format".
+	if !isDockerTag(v) {
+		return ""
+	}
 	return v
+}
+
+// isDockerTag reports whether s is a legal Docker image tag: up to 128 of
+// [A-Za-z0-9_.-], not opening with a separator.
+func isDockerTag(s string) bool {
+	if s == "" || len(s) > 128 {
+		return false
+	}
+	if strings.ContainsAny(s[:1], ".-_") {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '.', r == '-', r == '_':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // SwapImageTag returns ref with its tag replaced by the image tag for version,
@@ -113,7 +141,7 @@ func SwapImageTag(ref, version string) (string, error) {
 	if tag == "" {
 		return "", fmt.Errorf("%q is not a published release version", version)
 	}
-	repo, _, digest := splitImageRef(ref)
+	repo, current, digest := SplitImageRef(ref)
 	if digest != "" {
 		return "", fmt.Errorf(
 			"the stack image %s is pinned to a digest, which cannot be moved to %s automatically; "+
@@ -122,13 +150,23 @@ func SwapImageTag(ref, version string) (string, error) {
 	if repo == "" {
 		return "", fmt.Errorf("%q names no image repository", ref)
 	}
+	// Only a tag this tool chose is moved. A release tag is one it wrote for a
+	// release install, and "latest" is the fallback it writes for a non-release
+	// one; anything else ("canary", a date, a feature tag) is a deliberate pin
+	// an operator set with --image-tag, and moving it off would discard that
+	// decision as silently as re-deriving the registry would.
+	if current != "" && current != "latest" && releaseTag(current) == "" {
+		return "", fmt.Errorf(
+			"the stack image %s is pinned to the tag %q, which cannot be moved to %s automatically; "+
+				"reinstall with --image-tag to choose the new tag yourself", ref, current, tag)
+	}
 	return repo + ":" + tag, nil
 }
 
-// splitImageRef splits an image reference into its repository and whichever of
+// SplitImageRef splits an image reference into its repository and whichever of
 // a tag or a digest pins it. A ':' inside a registry host ("localhost:5000/app")
 // is not a tag separator, so only a ':' after the last '/' counts.
-func splitImageRef(ref string) (repo, tag, digest string) {
+func SplitImageRef(ref string) (repo, tag, digest string) {
 	if i := strings.Index(ref, "@"); i >= 0 {
 		return ref[:i], "", ref[i+1:]
 	}
