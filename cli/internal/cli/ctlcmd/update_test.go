@@ -949,6 +949,131 @@ func TestUpdateStackDockerNamesPortConflict(t *testing.T) {
 	}
 }
 
+// writeStackCompose writes a compose file whose app and broker run image, the
+// shape `jenticctl install` renders. The recorded image is the only record of
+// how the stack was installed, so it is what an update reads to decide between
+// pulling and building.
+func writeStackCompose(t *testing.T, a *app, image string) {
+	t.Helper()
+	body := "name: jentic\nservices:\n" +
+		"  db:\n    image: postgres:17-alpine\n" +
+		"  app:\n    image: " + image + "\n" +
+		"  broker:\n    image: " + image + "\n"
+	if err := os.WriteFile(a.Paths.ComposePath(), []byte(body), 0o600); err != nil {
+		t.Fatalf("write compose: %v", err)
+	}
+}
+
+// stubDockerStack neutralises the Docker-touching steps of updateStackDocker
+// and records which refresh route ran.
+type dockerStackCalls struct {
+	pulled []string
+	builds int
+}
+
+func stubDockerStack(t *testing.T) *dockerStackCalls {
+	t.Helper()
+	// ResolveAppImage consults these, so a developer's environment must not
+	// decide which image the assertions see.
+	t.Setenv(install.AppImageTagEnv, "")
+	t.Setenv(install.AppImageRepoEnv, "")
+	calls := &dockerStackCalls{}
+	origBuild, origPull, origMigrate, origUp := buildStackImages, pullAppImage, runComposeMigrations, composeUp
+	t.Cleanup(func() {
+		buildStackImages, pullAppImage, runComposeMigrations, composeUp = origBuild, origPull, origMigrate, origUp
+	})
+	buildStackImages = func(install.BuildPlan, io.Writer) error { calls.builds++; return nil }
+	pullAppImage = func(_ io.Writer, ref string) error { calls.pulled = append(calls.pulled, ref); return nil }
+	runComposeMigrations = func(io.Writer, string) error { return nil }
+	composeUp = func(io.Writer, string) error { return nil }
+	return calls
+}
+
+// A stack installed from a published image pulls the image for the target ref
+// and is repointed at it — no git clone, no local build. Pins #2011.
+//
+// The expected tag also pins that the image resolves from the ref rather than
+// from the running binary's version: the CLI half swaps the binary on disk and
+// the stack half carries on in the OLD process, whose cmdcore.Version() would
+// resolve the image the stack already runs (or :latest for a dev build).
+func TestUpdateStackDockerPullsForAPulledInstall(t *testing.T) {
+	a := testApp(t)
+	writeStackCompose(t, a, "ghcr.io/jentic/jentic-one-app:0.43.0")
+	calls := stubDockerStack(t)
+
+	if err := a.updateStackDocker(context.Background(), "v0.44.0", false, true); err != nil {
+		t.Fatalf("updateStackDocker: %v", err)
+	}
+
+	want := "ghcr.io/jentic/jentic-one-app:0.44.0"
+	if len(calls.pulled) != 1 || calls.pulled[0] != want {
+		t.Errorf("pulled = %v, want exactly [%s]", calls.pulled, want)
+	}
+	if calls.builds != 0 {
+		t.Errorf("builds = %d, want 0 — a pulled install must not build from source", calls.builds)
+	}
+	got, err := install.ComposeAppImage(a.Paths.ComposePath())
+	if err != nil || got != want {
+		t.Errorf("compose app image = (%q, %v), want %q — the stack would keep running the old image", got, err, want)
+	}
+}
+
+// A stack built from source keeps building, and its compose file (already on
+// the fixed local tag) is left alone.
+func TestUpdateStackDockerBuildsForALocalInstall(t *testing.T) {
+	a := testApp(t)
+	writeStackCompose(t, a, install.AppImageTag)
+	calls := stubDockerStack(t)
+
+	if err := a.updateStackDocker(context.Background(), "v0.44.0", false, true); err != nil {
+		t.Fatalf("updateStackDocker: %v", err)
+	}
+
+	if calls.builds != 1 || len(calls.pulled) != 0 {
+		t.Errorf("builds=%d pulled=%v, want 1 build and no pull", calls.builds, calls.pulled)
+	}
+	if got, err := install.ComposeAppImage(a.Paths.ComposePath()); err != nil || got != install.AppImageTag {
+		t.Errorf("compose app image = (%q, %v), want %q unchanged", got, err, install.AppImageTag)
+	}
+}
+
+// Updating a pulled stack to a ref with no published image builds from source
+// AND moves the compose file off the published reference — otherwise compose
+// keeps running the old tag and ignores the image just built.
+func TestUpdateStackDockerNonReleaseRefMovesAPulledStackToTheLocalTag(t *testing.T) {
+	a := testApp(t)
+	writeStackCompose(t, a, "ghcr.io/jentic/jentic-one-app:0.43.0")
+	calls := stubDockerStack(t)
+
+	if err := a.updateStackDocker(context.Background(), "main", true, true); err != nil {
+		t.Fatalf("updateStackDocker: %v", err)
+	}
+
+	if calls.builds != 1 || len(calls.pulled) != 0 {
+		t.Errorf("builds=%d pulled=%v, want 1 build and no pull for a non-release ref", calls.builds, calls.pulled)
+	}
+	if got, err := install.ComposeAppImage(a.Paths.ComposePath()); err != nil || got != install.AppImageTag {
+		t.Errorf("compose app image = (%q, %v), want %q", got, err, install.AppImageTag)
+	}
+}
+
+// A compose file naming no app image cannot be told apart, so the update builds
+// (which leaves the file alone) instead of guessing a registry tag.
+func TestUpdateStackDockerBuildsWhenTheComposeImageIsUnreadable(t *testing.T) {
+	a := testApp(t)
+	if err := os.WriteFile(a.Paths.ComposePath(), []byte("services: {}\n"), 0o600); err != nil {
+		t.Fatalf("write compose: %v", err)
+	}
+	calls := stubDockerStack(t)
+
+	if err := a.updateStackDocker(context.Background(), "v0.44.0", false, true); err != nil {
+		t.Fatalf("updateStackDocker: %v", err)
+	}
+	if calls.builds != 1 || len(calls.pulled) != 0 {
+		t.Errorf("builds=%d pulled=%v, want 1 build and no pull", calls.builds, calls.pulled)
+	}
+}
+
 // A compose failure that is not a port conflict keeps its original error.
 func TestWithPortConflictPassesOtherFailuresThrough(t *testing.T) {
 	cause := errors.New("migrations failed: exit status 1")

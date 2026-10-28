@@ -38,6 +38,7 @@ var configWriterAllowlist = map[string]bool{
 	"internal/update/download.go":         true, // extracts a verified release binary into the update stage dir (STATE, not config.yaml; sha256/cosign-verified before write)
 	"internal/install/start.go":           true, // pid file
 	"internal/install/compose.go":         true, // compose/init-schemas artifacts
+	"internal/install/compose_image.go":   true, // repoints the compose file's app image (same generated artifact as compose.go, not config.yaml)
 	"internal/install/build.go":           true, // build output tree
 	"internal/cli/cmdcore/updatenudge.go": true, // update-check timestamp (0600)
 	"internal/cli/ctlcmd/install.go":      true, // install writes env/compose out

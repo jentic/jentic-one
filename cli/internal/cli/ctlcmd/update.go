@@ -40,9 +40,11 @@ func newUpdateCmd(app *app) *cobra.Command {
 		Long: "update reports the installed CLI and server versions, compares the\n" +
 			"installed version against the latest release tag on GitHub, and (unless\n" +
 			"--check) rebuilds and replaces the jenticctl and jentic binaries in place,\n" +
-			"then rebuilds the installed stack. Use --cli-only or --stack-only to update\n" +
-			"just one half. A CLI already at the latest release is not swapped again, so\n" +
-			"a re-run after a failed stack half rebuilds only the stack.\n\n" +
+			"then refreshes the installed stack. A Docker stack running a published\n" +
+			"image pulls the image for the target release; one built from source is\n" +
+			"rebuilt. Use --cli-only or --stack-only to update just one half. A CLI\n" +
+			"already at the latest release is not swapped again, so a re-run after a\n" +
+			"failed stack half refreshes only the stack.\n\n" +
 			"A Homebrew-installed CLI is never swapped in place: the CLI half runs\n" +
 			"`brew upgrade jentic` instead, so brew's bookkeeping stays consistent\n" +
 			"(--ref cannot pin a Homebrew-managed CLI).",
@@ -298,6 +300,7 @@ var (
 	rebuildStack         = (*app).updateStack
 	foreignPortHolders   = install.ForeignPortHolders
 	buildStackImages     = install.BuildPlan.BuildImages
+	pullAppImage         = install.PullAppImage
 	runComposeMigrations = install.RunComposeMigrations
 	ensureUv             = install.EnsureUv
 	buildLocalStack      = install.BuildPlan.Execute
@@ -876,8 +879,8 @@ func (a *app) updateStackLocal(ctx context.Context, db, ref string, pinned bool)
 	return nil
 }
 
-// updateStackDocker rebuilds the app image, applies migrations in a one-shot
-// container, and recreates the running stack with the new image. preflighted
+// updateStackDocker brings the app image up to ref, applies migrations in a
+// one-shot container, and recreates the running stack with it. preflighted
 // is true when updateE already ran preflightDockerStack up front (combined
 // run), so we skip a redundant second check/announce; a standalone/stack-only
 // call passes false and preflights here.
@@ -898,18 +901,16 @@ func (a *app) updateStackDocker(ctx context.Context, ref string, pinned, preflig
 		}
 	}
 
-	plan := install.PlanLocalBuild(a.Paths.VenvPath(), a.Paths.SrcPath()).AtRef(ref, pinned)
-	fmt.Fprintln(a.Out)
-	fmt.Fprint(a.Out, plan.RenderDockerBuildHeader())
-	if err := buildStackImages(plan, a.Out); err != nil {
-		return fmt.Errorf("image build failed: %w", err)
+	if err := a.refreshDockerStackImage(composePath, ref, pinned); err != nil {
+		return err
 	}
 
-	// The image build overwrote the stack's fixed image tag, so any later
-	// failure leaves `jenticctl start` running the new image; the stage hint
-	// says so. The migration one-shot and `up` are the steps that bind host
-	// ports; tee their output so a bind failure becomes a named port conflict
-	// rather than the daemon's raw networking error (#976).
+	// The stack now resolves to the new image — the build overwrote the fixed
+	// local tag, or the compose file was repointed at the pulled reference — so
+	// any later failure leaves `jenticctl start` running it; the stage hint says
+	// so. The migration one-shot and `up` are the steps that bind host ports;
+	// tee their output so a bind failure becomes a named port conflict rather
+	// than the daemon's raw networking error (#976).
 	configPath := a.Paths.InstallConfigPath()
 	fmt.Fprintln(a.Out)
 	fmt.Fprint(a.Out, install.RenderMigrateHeader(configPath))
@@ -925,6 +926,64 @@ func (a *app) updateStackDocker(ctx context.Context, ref string, pinned, preflig
 		return &stackStageError{hint: hintDockerMigrationsRan, err: withPortConflict(fmt.Errorf("docker compose up: %w", err), tail.String())}
 	}
 	fmt.Fprintln(a.Out, theme.Successf("Stack updated (docker)."))
+	return nil
+}
+
+// refreshDockerStackImage brings the compose stack's app image up to ref by the
+// same route the install took, and leaves the compose file naming whatever the
+// stack should now run.
+//
+// A stack installed from a published image pulls the image for ref and is
+// repointed at it; one built from source is rebuilt, and the compose file
+// already names the fixed local tag. Updating a pulled stack to a ref with no
+// published image (a branch, a commit) builds from source and has to move the
+// compose file off the published reference too, or compose would keep running
+// the old tag and ignore the image just built.
+func (a *app) refreshDockerStackImage(composePath, ref string, pinned bool) error {
+	current, err := install.ComposeAppImage(composePath)
+	if err != nil {
+		// An unreadable compose file is not worth failing the update over: the
+		// build path is the safe default, since it leaves the file alone.
+		fmt.Fprintln(a.Out, theme.Warnf(
+			"warning: could not read the app image from %s (%v) — building from source", composePath, err))
+		current = ""
+	}
+	// An empty image means there is nothing to tell the two apart, so build.
+	fromPublishedImage := current != "" && current != install.AppImageTag
+
+	if fromPublishedImage && install.IsReleaseVersion(ref) {
+		// Resolved from ref, never from cmdcore.Version(): the CLI half swaps
+		// the binary on disk and this process carries on as the OLD one, so its
+		// own version still names the image the stack is already running.
+		image := install.ResolveAppImage(ref, "")
+		fmt.Fprintln(a.Out)
+		fmt.Fprintln(a.Out, theme.Headingf("Pull app image"))
+		fmt.Fprintln(a.Out, theme.Dimf("  image: %s", image))
+		if err := pullAppImage(a.Out, image); err != nil {
+			return err
+		}
+		if _, err := install.SetComposeAppImage(composePath, image); err != nil {
+			return fmt.Errorf("point the compose stack at %s: %w", image, err)
+		}
+		return nil
+	}
+
+	plan := install.PlanLocalBuild(a.Paths.VenvPath(), a.Paths.SrcPath()).AtRef(ref, pinned)
+	fmt.Fprintln(a.Out)
+	fmt.Fprint(a.Out, plan.RenderDockerBuildHeader())
+	if err := buildStackImages(plan, a.Out); err != nil {
+		return fmt.Errorf("image build failed: %w", err)
+	}
+	if fromPublishedImage {
+		changed, err := install.SetComposeAppImage(composePath, install.AppImageTag)
+		if err != nil {
+			return fmt.Errorf("point the compose stack at %s: %w", install.AppImageTag, err)
+		}
+		if changed {
+			fmt.Fprintln(a.Out, theme.Dimf(
+				"  compose now runs %s — %s has no published image", install.AppImageTag, ref))
+		}
+	}
 	return nil
 }
 
