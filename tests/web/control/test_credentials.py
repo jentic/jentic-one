@@ -1824,9 +1824,11 @@ def test_edit_connection_round_trip(
         f"/connect-sessions/{created['session_id']}:amend",
         json={"rules": {"set": [{"effect": "allow"}]}},
     )
+    # A malformed amend is refused without naming what the session changes: the
+    # 422 is raised before the route settles who is asking, so a directive here
+    # would tell any caller the credential and agent behind a session id.
     assert resp.status_code == 422, resp.text
-    assert resp.json()["agent_directive"]["strategy"] == "check_access"
-    assert resp.json()["agent_directive"]["parameters"]["access_url"].endswith(base)
+    assert "agent_directive" not in resp.json()
 
     history = cred_writer_client.get(f"/connect-sessions/{created['session_id']}/revisions")
     assert history.status_code == 200, history.text
