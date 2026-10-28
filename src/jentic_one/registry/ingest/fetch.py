@@ -342,9 +342,16 @@ _DEFAULT_INGEST_CONFIG = IngestConfig()
 #: early, and rate limiting. Every 5xx is treated the same way.
 _TRANSIENT_CLIENT_STATUSES = frozenset({408, 425, 429})
 
+#: 5xx codes that describe a permanent property of the server rather than a
+#: passing condition, so re-fetching the same URL gets the same answer. Retrying
+#: them only spends the whole backoff ladder before dead-lettering.
+_PERMANENT_SERVER_STATUSES = frozenset({501, 505, 510})
+
 
 def _is_transient_status(status_code: int) -> bool:
     """True when a later fetch of the same URL may get a different answer."""
+    if status_code in _PERMANENT_SERVER_STATUSES:
+        return False
     return status_code >= 500 or status_code in _TRANSIENT_CLIENT_STATUSES
 
 

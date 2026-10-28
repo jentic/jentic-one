@@ -263,9 +263,9 @@ def build_path_regex(path_template: str, *, operation_path: str | None = None) -
     with it, so the operation's own parameters keep the names
     :func:`expand_path_template` looks them up by.
     """
-    names = path_param_group_names(
-        *((operation_path,) if operation_path is not None else ()), path_template
-    )
+    templates = (*((operation_path,) if operation_path is not None else ()), path_template)
+    names = path_param_group_names(*templates)
+    catch_all = path_param_catch_all(*templates)
     parts = PATH_PARAM_RE.split(path_template)
     regex_parts: list[str] = []
     seen_groups: set[str] = set()
@@ -273,7 +273,7 @@ def build_path_regex(path_template: str, *, operation_path: str | None = None) -
         if i % 2 == 0:
             regex_parts.append(re.escape(part))
         else:
-            regex_parts.append(_path_param_group(part, names, seen_groups))
+            regex_parts.append(_path_param_group(part, names, seen_groups, catch_all))
     return re.compile("^" + "".join(regex_parts) + "$")
 
 
@@ -307,7 +307,32 @@ def path_param_group_names(*templates: str) -> dict[str, str]:
     return groups
 
 
-def _path_param_group(token: str, names: Mapping[str, str], seen_groups: set[str]) -> str:
+def path_param_catch_all(*templates: str) -> dict[str, bool]:
+    """Map each path-parameter name in ``templates`` to whether it is catch-all.
+
+    A name is catch-all only when **every** occurrence of it is: a repeat is
+    rendered once, as a named group plus back-references, so the one matcher has
+    to satisfy all of them. ``{+rest}`` matches across ``/`` and ``{rest}`` does
+    not, so a template carrying both can only be matched by the narrower of the
+    two — widening on the strength of one occurrence would let the single-segment
+    position span a separator it was never meant to.
+    """
+    catch_all: dict[str, bool] = {}
+    for template in templates:
+        for token in PATH_PARAM_RE.findall(template):
+            if token.startswith(_SV_TOKEN_PREFIX):
+                continue
+            name, is_catch_all = _split_param_token(token)
+            catch_all[name] = catch_all.get(name, True) and is_catch_all
+    return catch_all
+
+
+def _path_param_group(
+    token: str,
+    names: Mapping[str, str],
+    seen_groups: set[str],
+    catch_all: Mapping[str, bool] | None = None,
+) -> str:
     """Regex for one ``{token}`` path parameter, recording its group in ``seen_groups``.
 
     The first occurrence of a parameter is a named capture group. A repeat of
@@ -320,11 +345,23 @@ def _path_param_group(token: str, names: Mapping[str, str], seen_groups: set[str
     occurrence.
     """
     name, is_catch_all = _split_param_token(token)
-    group = names[name]
+    if catch_all is not None:
+        # Reconciled across every occurrence of this name, not taken from
+        # whichever one happens to be rendered first.
+        is_catch_all = catch_all.get(name, is_catch_all)
+    body = ".+" if is_catch_all else "[^/]+"
+    group = names.get(name)
+    if group is None:
+        # A server-variable token (``{~svN}``) that reached here is not a path
+        # parameter, so path_param_group_names allocated it no group. Match it
+        # without capturing rather than failing: the callers that resolve such a
+        # token against a real server variable handle it before this point, and
+        # one that does not is still a position in the path.
+        return f"(?:{body})"
     if group in seen_groups:
         return f"(?P={group})"
     seen_groups.add(group)
-    return f"(?P<{group}>{'.+' if is_catch_all else '[^/]+'})"
+    return f"(?P<{group}>{body})"
 
 
 def expand_path_template(path_template: str, path_params: Mapping[str, str]) -> str | None:
@@ -352,7 +389,13 @@ def expand_path_template(path_template: str, path_params: Mapping[str, str]) -> 
             out.append(part)
             continue
         name, _is_catch_all = _split_param_token(part)
-        value = path_params.get(names[name])
+        group = names.get(name)
+        if group is None:
+            # Not a path parameter (a ``{~svN}`` server-variable token), so no
+            # captured value can name it — the same "cannot rebuild this path"
+            # answer as a group whose value is missing.
+            return None
+        value = path_params.get(group)
         if value is None:
             return None
         out.append(value)
@@ -690,15 +733,16 @@ def _render_server_template(
     *,
     in_host: bool,
     param_groups: Mapping[str, str] | None = None,
+    param_catch_all: Mapping[str, bool] | None = None,
 ) -> tuple[str, str]:
     """Render a tokenized host/path into ``(stored pattern, regex body)``.
 
     ``param_groups`` names the path's undeclared placeholders (see
     :func:`path_param_group_names`); it defaults to an allocation over
-    ``template`` alone.
+    ``template`` alone, made only if an undeclared placeholder is actually
+    reached. The ``in_host`` render never consults it, and this runs once per
+    binding combination per entry.
     """
-    if param_groups is None:
-        param_groups = path_param_group_names(template)
     display: list[str] = []
     regex: list[str] = []
     seen_groups: set[str] = set()
@@ -735,7 +779,11 @@ def _render_server_template(
         if in_host:
             regex.append(r"[^:/]+")
         else:
-            regex.append(_path_param_group(part, param_groups, seen_groups))
+            if param_groups is None:
+                param_groups = path_param_group_names(template)
+            if param_catch_all is None:
+                param_catch_all = path_param_catch_all(template)
+            regex.append(_path_param_group(part, param_groups, seen_groups, param_catch_all))
     return "".join(display), "".join(regex)
 
 
@@ -774,6 +822,7 @@ def _entry_for_bindings(
         bindings,
         in_host=False,
         param_groups=path_param_group_names(normalize_path_template(operation_path), full_path),
+        param_catch_all=path_param_catch_all(normalize_path_template(operation_path), full_path),
     )
     return URLIndexEntry(
         host_pattern=host_display,

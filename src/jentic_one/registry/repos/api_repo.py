@@ -166,7 +166,27 @@ class ApiRepository:
                 )
                 .on_conflict_do_nothing(index_elements=["vendor", "name", "version"])
             )
-            api = (await session.execute(locking_read)).scalar_one()
+            api = (await session.execute(locking_read)).scalar_one_or_none()
+            if api is None:
+                # The row that won the conflict was deleted between the insert
+                # and this read, so there is nothing to lock. Insert again:
+                # `scalar_one` here would raise NoResultFound, which the session
+                # maps to a generic 500 instead of converging the way this
+                # method's contract promises.
+                await session.execute(
+                    insert(Api)
+                    .values(
+                        vendor=vendor,
+                        name=name,
+                        version=version,
+                        display_name=display_name,
+                        description=description,
+                        created_by=created_by,
+                        catalog_api_id=catalog_api_id,
+                    )
+                    .on_conflict_do_nothing(index_elements=["vendor", "name", "version"])
+                )
+                api = (await session.execute(locking_read)).scalar_one()
         if (
             catalog_api_id is not None
             and api.catalog_api_id

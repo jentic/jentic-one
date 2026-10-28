@@ -162,7 +162,17 @@ class RelativeServerUrlError(IngestStageError):
         super().__init__(message)
 
 
-class MissingRequiredKeysError(IngestStageError):
+class PipelineContractError(IngestStageError):
+    """A stage violated the pipeline's own key/type contract.
+
+    Distinct from the refusals a bad document produces: the document is
+    irrelevant here, a stage did not supply or consume what it declared. That is
+    a fault in this codebase, so it is logged as one — with a traceback, at
+    ERROR, so it is alertable — rather than as a caller-fixable outcome.
+    """
+
+
+class MissingRequiredKeysError(PipelineContractError):
     """Raised when required keys are missing from stage context."""
 
     def __init__(self, missing_keys: set[str], stage: object | None = None) -> None:
@@ -173,7 +183,7 @@ class MissingRequiredKeysError(IngestStageError):
         self.stage = stage
 
 
-class MissingProducedKeyError(IngestStageError):
+class MissingProducedKeyError(PipelineContractError):
     """Raised when a stage fails to produce an expected key."""
 
     def __init__(self, missing_key: str, stage: object | None = None) -> None:
@@ -184,7 +194,7 @@ class MissingProducedKeyError(IngestStageError):
         self.stage = stage
 
 
-class BaseWrongTypeError(IngestStageError):
+class BaseWrongTypeError(PipelineContractError):
     """Base for type-mismatch errors in stage context."""
 
     error_string: str = "wrong type"

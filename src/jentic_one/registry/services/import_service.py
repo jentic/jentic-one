@@ -578,14 +578,26 @@ class ImportHandler:
                     deprecated_reason=OverlayDeprecationReason.SUPERSEDED_BY_REIMPORT,
                     expected_status=OverlayStatus.CONFIRMED,
                 )
-            if demoted == 0:
-                logger.warning(
-                    "overlay_supersede_not_deprecated",
-                    job_id=job_id,
-                    overlay_id=target_overlay_id,
-                    reason="overlay_not_confirmed_or_missing",
-                )
-                return True
+        except Exception:
+            logger.exception(
+                "overlay_supersede_deprecate_failed",
+                job_id=job_id,
+                overlay_id=target_overlay_id,
+            )
+            return False
+        if demoted == 0:
+            logger.warning(
+                "overlay_supersede_not_deprecated",
+                job_id=job_id,
+                overlay_id=target_overlay_id,
+                reason="overlay_not_confirmed_or_missing",
+            )
+            return True
+        # The demote has committed, so the event and the counter are strictly
+        # after the durable work. A failure here must stay logged: reporting it
+        # as a failed supersede makes the caller fail the whole import job, and
+        # the worker then requeues an import whose writes are already done.
+        try:
             await self._emit_overlay_deprecated(
                 job_id=job_id,
                 overlay=overlay,
@@ -596,11 +608,10 @@ class ImportHandler:
             record_overlay_auto_deprecated()
         except Exception:
             logger.exception(
-                "overlay_supersede_deprecate_failed",
+                "overlay_supersede_notify_failed",
                 job_id=job_id,
                 overlay_id=target_overlay_id,
             )
-            return False
         return True
 
     async def _resolve_superseded_overlay_id(

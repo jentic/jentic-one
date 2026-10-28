@@ -9,7 +9,11 @@ from typing import Any, ClassVar
 import structlog
 from opentelemetry.trace.status import Status, StatusCode
 
-from jentic_one.registry.ingest.errors import IngestStageError, UnexpectedStageError
+from jentic_one.registry.ingest.errors import (
+    IngestStageError,
+    PipelineContractError,
+    UnexpectedStageError,
+)
 from jentic_one.registry.ingest.observability import stage_duration, stages_total, tracer
 from jentic_one.registry.ingest.pipeline.ctx import PipelineContext
 
@@ -46,13 +50,24 @@ class BasePipelineStage(abc.ABC):
                 await self._run(ctx)
                 ctx.ensure_produces(self._produces, self)
                 await self.post_run(ctx)
+            except PipelineContractError as exc:
+                status = "error"
+                span.record_exception(exc)
+                span.set_status(Status(StatusCode.ERROR, str(exc)))
+                # The pipeline's own contract, not the document: a stage did not
+                # supply or consume what it declared. A fault in this codebase,
+                # so it keeps ERROR and a traceback — a caller cannot fix it, and
+                # nothing else in the run reports it (the classifier reads it as
+                # deterministic and fails the job on the first attempt).
+                log.error("stage_contract_violation", error=exc.message, exc_info=True)
+                raise
             except IngestStageError as exc:
                 status = "error"
                 span.record_exception(exc)
                 span.set_status(Status(StatusCode.ERROR, str(exc)))
                 # A stage raises an ingest error on purpose (a refused document,
                 # a duplicate): a caller-fixable outcome, not a system fault.
-                log.warning("stage_failed", stage=self.name, error=exc.message)
+                log.warning("stage_failed", error=exc.message)
                 raise
             except Exception as exc:
                 status = "error"
@@ -60,7 +75,6 @@ class BasePipelineStage(abc.ABC):
                 span.set_status(Status(StatusCode.ERROR, str(exc)))
                 log.error(
                     "stage_unexpected_error",
-                    stage=self.name,
                     error=str(exc),
                     error_type=type(exc).__name__,
                     exc_info=True,

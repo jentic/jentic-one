@@ -140,3 +140,41 @@ def test_fallback_entry_names_operation_params_first() -> None:
 
     found = _resolve(expansion.entries, "api.example.com:8443", "/1/y/2")
     assert found == [{"a_b__2": "1", "a_b": "2"}]
+
+
+def test_server_variable_token_does_not_raise() -> None:
+    """A ``{~svN}`` token that no server variable resolves is a path position, not
+    a path parameter: it matches without capturing rather than raising.
+
+    ``path_param_group_names`` skips the reserved ``~sv`` prefix, so the group
+    lookup has no entry for it — indexing that map unconditionally turned an odd
+    template into a ``KeyError``, which surfaces as a dead-lettered import on the
+    ingest side and a 500 on the permission-path binding on the lookup side.
+    """
+    for template in ("/a/{~sv0}", "/a/{~svX}", "/a/{~sv99}"):
+        assert build_path_regex(template).fullmatch("/a/anything") is not None
+
+    # The lookup side answers "cannot rebuild this path" instead of raising.
+    assert expand_path_template("/a/{~sv0}", {}) is None
+
+    # And the index builders compile a row for it.
+    expansion = build_server_index_entries("https://api.example.com", None, "/x/{~sv0}")
+    assert len(expansion.entries) == 1
+
+
+def test_repeated_param_with_mixed_operators_takes_the_narrower_matcher() -> None:
+    """A repeat is rendered once, so its single matcher must satisfy every
+    occurrence: catch-all only when all of them are.
+
+    Taking the first occurrence's operator let ``/{+rest}/mirror/{rest}`` widen
+    the single-segment position to span ``/``, and
+    ``/{rest}/mirror/{+rest}`` narrow the catch-all so it could never match.
+    """
+    narrow = "^/(?P<rest>[^/]+)/mirror/(?P=rest)$"
+    assert build_path_regex("/{rest}/mirror/{+rest}").pattern == narrow
+    assert build_path_regex("/{+rest}/mirror/{rest}").pattern == narrow
+
+    # Unmixed occurrences keep their own operator.
+    assert build_path_regex("/{+rest}/mirror/{+rest}").pattern == "^/(?P<rest>.+)/mirror/(?P=rest)$"
+    assert build_path_regex("/a/{+rest}").pattern == "^/a/(?P<rest>.+)$"
+    assert build_path_regex("/a/{rest}").pattern == "^/a/(?P<rest>[^/]+)$"
