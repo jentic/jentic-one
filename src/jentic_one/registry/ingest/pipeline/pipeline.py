@@ -8,6 +8,7 @@ from opentelemetry.trace.status import Status, StatusCode
 from jentic_one.registry.ingest.errors import (
     IngestPipelineError,
     IngestStageError,
+    PipelineContractError,
     UnexpectedStageError,
 )
 from jentic_one.registry.ingest.models import IngestSpecification, SpecType
@@ -51,12 +52,15 @@ class Pipeline(BasePipeline):
                 span.record_exception(exc)
                 span.set_status(Status(StatusCode.ERROR))
                 # The failing stage already logged the detail: at error level
-                # with a traceback for an exception it did not anticipate, at
-                # warning level for a refusal it raised itself.
-                if isinstance(exc, UnexpectedStageError):
-                    log.error("pipeline_failed", stage=exc.message)
+                # with a traceback for an exception it did not anticipate or a
+                # violation of the pipeline's own contract, at warning level for
+                # a refusal it raised itself. This line mirrors that split, so
+                # an alert on `pipeline_failed` at ERROR sees the same set of
+                # faults the stage-level alert does.
+                if isinstance(exc, UnexpectedStageError | PipelineContractError):
+                    log.error("pipeline_failed", error=exc.message)
                 else:
-                    log.warning("pipeline_failed", stage=exc.message)
+                    log.warning("pipeline_failed", error=exc.message)
                 raise IngestPipelineError(exc.message) from exc
             else:
                 log.info("pipeline_complete")

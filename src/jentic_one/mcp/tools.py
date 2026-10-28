@@ -1369,8 +1369,7 @@ async def job_poll_payload(env: CallEnv, job_id: str) -> dict[str, Any]:
     """The poll payload for one job (Go: ``handleGetExecutionResult`` body).
 
     ``{job_id, kind, status, error?, execution_id?, result?}`` — the result
-    rides once the job is ``completed``, or ``failed`` with a recorded outcome
-    (an approved execution that ran and failed).
+    rides once the job is ``completed``.
     """
     require_permissions(env.identity, ["jobs:read"])
     _require_db(env.ctx, "admin", "job polling")
@@ -1412,12 +1411,7 @@ async def job_poll_payload(env: CallEnv, job_id: str) -> dict[str, Any]:
         payload["error"] = job.error
     if job.execution_id:
         payload["execution_id"] = job.execution_id
-    if job.status in (_JOB_COMPLETED, _JOB_FAILED):
-        # A failed job is included because an approved execution that ends
-        # ``failed`` carries its outcome in the result, not in ``job.error`` —
-        # without this the poll answers a bare ``{status: "failed"}`` with
-        # neither. A failed job that recorded no result attaches nothing (see
-        # _attach_job_result), so this adds no noise for the ordinary case.
+    if job.status == _JOB_COMPLETED:
         await _attach_job_result(env, job_id, payload)
     return payload
 

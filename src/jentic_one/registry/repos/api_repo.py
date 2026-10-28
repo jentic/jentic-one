@@ -153,7 +153,7 @@ class ApiRepository:
         api = (await session.execute(locking_read)).scalar_one_or_none()
         if api is None:
             insert = sqlite_insert if session.get_bind().dialect.name == "sqlite" else pg_insert
-            await session.execute(
+            insert_stmt = (
                 insert(Api)
                 .values(
                     vendor=vendor,
@@ -166,26 +166,17 @@ class ApiRepository:
                 )
                 .on_conflict_do_nothing(index_elements=["vendor", "name", "version"])
             )
+            await session.execute(insert_stmt)
             api = (await session.execute(locking_read)).scalar_one_or_none()
             if api is None:
                 # The row that won the conflict was deleted between the insert
-                # and this read, so there is nothing to lock. Insert again:
-                # `scalar_one` here would raise NoResultFound, which the session
-                # maps to a generic 500 instead of converging the way this
-                # method's contract promises.
-                await session.execute(
-                    insert(Api)
-                    .values(
-                        vendor=vendor,
-                        name=name,
-                        version=version,
-                        display_name=display_name,
-                        description=description,
-                        created_by=created_by,
-                        catalog_api_id=catalog_api_id,
-                    )
-                    .on_conflict_do_nothing(index_elements=["vendor", "name", "version"])
-                )
+                # and this read, leaving nothing to lock. Insert once more:
+                # `scalar_one` on the first read would raise NoResultFound, which
+                # the session maps to a generic 500 instead of converging the way
+                # this method's contract promises. A second delete racing the same
+                # window is the caller's own concurrent DELETE, which the final
+                # `scalar_one` reports rather than looping on.
+                await session.execute(insert_stmt)
                 api = (await session.execute(locking_read)).scalar_one()
         if (
             catalog_api_id is not None

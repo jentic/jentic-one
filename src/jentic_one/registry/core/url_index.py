@@ -331,7 +331,7 @@ def _path_param_group(
     token: str,
     names: Mapping[str, str],
     seen_groups: set[str],
-    catch_all: Mapping[str, bool] | None = None,
+    catch_all: Mapping[str, bool],
 ) -> str:
     """Regex for one ``{token}`` path parameter, recording its group in ``seen_groups``.
 
@@ -345,10 +345,9 @@ def _path_param_group(
     occurrence.
     """
     name, is_catch_all = _split_param_token(token)
-    if catch_all is not None:
-        # Reconciled across every occurrence of this name, not taken from
-        # whichever one happens to be rendered first.
-        is_catch_all = catch_all.get(name, is_catch_all)
+    # Reconciled across every occurrence of this name, not taken from whichever
+    # one happens to be rendered first.
+    is_catch_all = catch_all.get(name, is_catch_all)
     body = ".+" if is_catch_all else "[^/]+"
     group = names.get(name)
     if group is None:
@@ -732,16 +731,19 @@ def _render_server_template(
     bindings: Mapping[str, _Binding],
     *,
     in_host: bool,
-    param_groups: Mapping[str, str] | None = None,
-    param_catch_all: Mapping[str, bool] | None = None,
+    param_groups: Mapping[str, str],
+    param_catch_all: Mapping[str, bool],
 ) -> tuple[str, str]:
     """Render a tokenized host/path into ``(stored pattern, regex body)``.
 
-    ``param_groups`` names the path's undeclared placeholders (see
-    :func:`path_param_group_names`); it defaults to an allocation over
-    ``template`` alone, made only if an undeclared placeholder is actually
-    reached. The ``in_host`` render never consults it, and this runs once per
-    binding combination per entry.
+    ``param_groups`` and ``param_catch_all`` describe the path's undeclared
+    placeholders (see :func:`path_param_group_names` and
+    :func:`path_param_catch_all`). Both are required: the caller allocates them
+    over the operation path FIRST so the operation keeps the names
+    :func:`expand_path_template` resolves, and defaulting them here would
+    allocate over the merged path instead — giving a server base-path
+    placeholder an operation parameter's group. The ``in_host`` render consults
+    neither, and passes empty maps.
     """
     display: list[str] = []
     regex: list[str] = []
@@ -779,10 +781,6 @@ def _render_server_template(
         if in_host:
             regex.append(r"[^:/]+")
         else:
-            if param_groups is None:
-                param_groups = path_param_group_names(template)
-            if param_catch_all is None:
-                param_catch_all = path_param_catch_all(template)
             regex.append(_path_param_group(part, param_groups, seen_groups, param_catch_all))
     return "".join(display), "".join(regex)
 
@@ -811,7 +809,7 @@ def _entry_for_bindings(
     parsed = parse_server_url(tokenized)
     full_path = normalize_path_template(merge_paths(parsed.path, operation_path))
     host_display, host_regex = _render_server_template(
-        parsed.host, captured, bindings, in_host=True
+        parsed.host, captured, bindings, in_host=True, param_groups={}, param_catch_all={}
     )
     # The operation's own parameters are named first, so a server base-path
     # placeholder that sanitizes onto one of them takes the suffixed group and
