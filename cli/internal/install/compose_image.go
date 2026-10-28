@@ -68,7 +68,7 @@ func SetComposeAppImage(composePath, image string) (bool, error) {
 	if updated == string(raw) {
 		return false, fmt.Errorf("could not rewrite the %q service image in %s", composeServiceApp, composePath)
 	}
-	if err := os.WriteFile(composePath, []byte(updated), 0o600); err != nil {
+	if err := os.WriteFile(composePath, []byte(updated), 0o600); err != nil { //nolint:gosec // composePath is the CLI-managed ~/.jentic compose file, not user input.
 		return false, fmt.Errorf("write %s: %w", composePath, err)
 	}
 	return true, nil
