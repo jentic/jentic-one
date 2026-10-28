@@ -176,6 +176,20 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 		if err != nil {
 			return fmt.Errorf("%w — fix it, or reinstall with `jenticctl install`", err)
 		}
+		// Refuse what the stack half cannot do BEFORE the CLI half swaps the
+		// binaries. These are static preconditions — a missing compose file, a
+		// digest-pinned image, an unpinned ref with no published image, or a
+		// compose shape the repoint cannot rewrite — so a refusal raised after
+		// the swap would leave the CLI on the new version and the stack on the
+		// old one, with every retry hitting the same wall and no flag to escape
+		// it.
+		//
+		// Ahead of the checkout question below, so a stack that cannot be
+		// refreshed at all is named as such rather than diagnosed as a `--ref`
+		// conflict it does not have.
+		if err := a.checkDockerRefreshPossible(manifest.Mode, ref, pinned); err != nil {
+			return err
+		}
 		if pinned && !pulls {
 			if plan := install.PlanLocalBuild(a.Paths.VenvPath(), a.Paths.SrcPath()).AtRef(ref, pinned); plan.PinnedRefIgnored() {
 				return fmt.Errorf("--ref %s cannot be applied: the stack builds from the local checkout at %s, "+
@@ -183,15 +197,6 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 					"or unset %s to build from a managed clone",
 					ref, plan.SourceDir, ref, install.SrcEnv)
 			}
-		}
-		// Refuse what the stack half cannot do BEFORE the CLI half swaps the
-		// binaries. These are static preconditions — a digest-pinned or
-		// tag-pinned image, or an unpinned ref with no published image — so a
-		// refusal raised after the swap would leave the CLI on the new version
-		// and the stack on the old one, with every retry hitting the same wall
-		// and no flag to escape it.
-		if err := a.checkDockerRefreshPossible(manifest.Mode, ref, pinned); err != nil {
-			return err
 		}
 	}
 

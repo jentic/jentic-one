@@ -1233,6 +1233,64 @@ func TestCheckDockerRefreshPossibleRefusesAMissingComposeFile(t *testing.T) {
 	}
 }
 
+// fakeRepoRoot builds the minimum tree install.RepoRoot() recognises as a
+// checkout, so a test can make PlanLocalBuild read a local checkout rather than
+// a managed clone (and therefore make PinnedRefIgnored() true).
+//
+// Built rather than located: this package's TestMain deliberately chdirs into a
+// sandbox home, so there is no real checkout above the working directory.
+func fakeRepoRoot(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "src", "jentic_one"), 0o755); err != nil {
+		t.Fatalf("mkdir fake checkout: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pyproject.toml"),
+		[]byte("[project]\nname = \"jentic-one\"\n"), 0o600); err != nil {
+		t.Fatalf("write fake pyproject: %v", err)
+	}
+	return root
+}
+
+// A docker stack that cannot be refreshed at all is named as such, not
+// diagnosed as a `--ref`-versus-checkout conflict it does not have.
+//
+// `dockerStackPullsOnUpdate` answers false for a missing compose file, so with
+// `--ref` set and a checkout present the pinned-ref guard would fire first and
+// blame the checkout — while the real problem, 20 lines further on, is that
+// there is no stack to refresh.
+func TestUpdateENamesAMissingComposeStackNotTheCheckout(t *testing.T) {
+	a := testApp(t)
+	m := &config.Manifest{
+		Mode: config.ModeDocker, DB: "sqlite", Ref: "v0.43.0", StackRef: "v0.43.0", CLIVersion: "v0.43.0",
+	}
+	if err := m.Save(a.Paths); err != nil {
+		t.Fatalf("save manifest: %v", err)
+	}
+	// No compose file written: docker mode, nothing to refresh.
+	//
+	// $JENTIC_SRC must name a real checkout, or PlanLocalBuild falls back to a
+	// managed clone, PinnedRefIgnored() is false, and the checkout guard never
+	// fires — which would make this test pass whichever order the two run in.
+	t.Setenv(install.SrcEnv, fakeRepoRoot(t))
+	stubDaemonUp(t)
+	f := stubUpdateFlow(t, "v0.44.0")
+
+	err := a.updateE(context.Background(), &updateOptions{yes: true, ref: "v0.44.0", stackOnly: true})
+	if err == nil {
+		t.Fatal("updateE = nil error, want a refusal")
+	}
+	if strings.Contains(err.Error(), "local checkout") {
+		t.Errorf("blamed the checkout instead of the missing stack: %v", err)
+	}
+	if !strings.Contains(err.Error(), "no compose stack") {
+		t.Errorf("error does not name the missing compose stack: %v", err)
+	}
+	if len(f.cliSwaps) != 0 {
+		t.Errorf("cliSwaps = %v, want none before the refusal", f.cliSwaps)
+	}
+}
+
 // A compose shape the repoint cannot rewrite is refused before anything is
 // pulled or built: the cause is static, so discovering it afterwards leaves an
 // image fetched and no retry that behaves differently.
