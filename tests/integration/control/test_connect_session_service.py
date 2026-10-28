@@ -2856,13 +2856,18 @@ async def test_adding_scopes_runs_beside_an_open_agent_edit(
     assert again.value.session_id == open_edit.session_id
 
 
-async def _land_grant(svc: ConnectSessionService, credential_id: str) -> None:
+async def _land_grant(
+    svc: ConnectSessionService,
+    credential_id: str,
+    granted: list[str] | None = None,
+) -> None:
+    """The vendor answers the poll, granting ``granted`` (``read:user repo`` by default)."""
     echo = identity_echo.IdentityEchoResult(display="octo", raw={"login": "octo"})
     with (
         patch.object(
             DeviceAuthorizationHandler,
             "advance",
-            new=AsyncMock(return_value=_success(["read:user", "repo"])),
+            new=AsyncMock(return_value=_success(granted or ["read:user", "repo"])),
         ),
         patch.object(identity_echo, "echo_identity", new=AsyncMock(return_value=echo)),
     ):
@@ -2926,6 +2931,147 @@ async def test_rules_changed_while_a_grant_is_out_are_kept_and_the_rest_reopens(
     assert again.edit is not None and again.state == "created"
     assert again.edit.needs_vendor_consent is False
     assert [r["path"] for r in again.edit.result["rules"]] == ["/orgs", "/repos"]
+    # The grant that landed is on the rail, like any applied change.
+    applied = await EventService(ctx).list_all(
+        EventFilter(event_type=[EventType.CREDENTIAL_PERMISSION_RULE_SET]),
+        identity=Identity(sub=_USER_ID, permissions=["events:read"]),
+    )
+    assert [e.data.get("credential_id") for e in applied.data].count(credential_id) >= 1
+
+
+async def test_scopes_the_vendor_adds_of_its_own_are_not_a_kept_removal(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    """A vendor that appends its own scope (``openid``) hasn't kept a removed one.
+
+    Only a scope the change removes counts, so the wider grant lands.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    credential_id = await _connected_device_credential(ctx, svc)
+    with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)):
+        edit = await svc.create_edit_session(
+            credential_id=credential_id,
+            agent_id=_AGENT_ID,
+            identity=_USER_IDENTITY,
+            request=EditRequest(add_scopes=["repo"]),
+            apply=True,
+        )
+    await _land_grant(svc, credential_id, ["read:user", "repo", "openid"])
+
+    assert await _token_scope(ctx, credential_id) == "read:user repo openid"
+    status = await svc.get_status(
+        edit.session_id, poll_token=edit.poll_token, identity=_USER_IDENTITY
+    )
+    assert (status.status, status.error_code) == ("applied", None)
+
+
+async def test_an_agent_bound_while_the_grant_is_out_holds_the_wider_token_back(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    """A wider grant reaches every bound agent, so it waits for another review.
+
+    The approver saw who the credential served; an agent bound while the
+    vendor sign-in was out was not part of that.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    credential_id = await _connected_device_credential(ctx, svc)
+    with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)):
+        edit = await svc.create_edit_session(
+            credential_id=credential_id,
+            agent_id=_AGENT_ID,
+            identity=_USER_IDENTITY,
+            request=EditRequest(add_scopes=["repo"]),
+            apply=True,
+        )
+    async with ctx.admin_db.transaction() as session:
+        await session.execute(
+            text(
+                "INSERT INTO agents (id, name, registered_by, owner_id, status) "
+                "VALUES ('agnt_late_bound', 'late', :u, :u, 'approved')"
+            ),
+            {"u": _USER_ID},
+        )
+        await EffectsRepository.bind_agent_to_credential(
+            session,
+            agent_id="agnt_late_bound",
+            credential_id=credential_id,
+            rule_set_id=None,
+            created_by=_USER_ID,
+        )
+    try:
+        await _land_grant(svc, credential_id)
+
+        # The credential keeps the grant it had: nothing was widened.
+        assert await _token_scope(ctx, credential_id) == "read:user"
+        status = await svc.get_status(
+            edit.session_id, poll_token=edit.poll_token, identity=_USER_IDENTITY
+        )
+        assert (status.status, status.error_code) == ("failed", "binding_now_shared")
+    finally:
+        async with ctx.admin_db.transaction() as session:
+            await session.execute(
+                text("DELETE FROM agent_credential_bindings WHERE agent_id = 'agnt_late_bound'")
+            )
+            await session.execute(text("DELETE FROM agents WHERE id = 'agnt_late_bound'"))
+
+
+async def test_a_grant_holding_a_scope_the_catalog_dropped_is_still_editable(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    """Only what a change adds is validated, at the ask and at the confirm.
+
+    A grant carrying a scope the vendor's catalog no longer offers would
+    otherwise open an edit that could never be confirmed.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    credential_id = await _connected_device_credential(ctx, svc)
+    # The vendor's last grant carried a scope its catalog doesn't list.
+    with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)):
+        await svc.create_edit_session(
+            credential_id=credential_id,
+            agent_id=_AGENT_ID,
+            identity=_USER_IDENTITY,
+            request=EditRequest(add_scopes=["repo"]),
+            apply=True,
+        )
+    # It granted one of its own instead, and not the one that was asked for.
+    await _land_grant(svc, credential_id, ["read:user", "legacy:thing"])
+    assert await _token_scope(ctx, credential_id) == "read:user legacy:thing"
+
+    edit = await svc.create_edit_session(
+        credential_id=credential_id,
+        agent_id=_AGENT_ID,
+        identity=_AGENT_IDENTITY,
+        request=EditRequest(add_scopes=["repo"]),
+    )
+    review = await svc.get_review_data(edit.session_id, poll_token=None, identity=_USER_IDENTITY)
+    assert review.edit is not None
+    with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)):
+        challenge = await svc.confirm_edit(
+            edit.session_id,
+            poll_token=None,
+            identity=_USER_IDENTITY,
+            revision_id=review.edit.revision_id,
+            permission_rules=list(review.edit.result["rules"]),
+            resume=False,
+            confirmed_scopes=review.edit.result["scopes"],
+        )
+    assert isinstance(challenge, DeviceAuthorizationConfirmResult)
 
 
 async def test_a_scopes_only_change_lands_beside_rules_changed_meanwhile(

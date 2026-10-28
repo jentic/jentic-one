@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 
 from fastapi import Request
 from fastapi.exceptions import RequestValidationError
@@ -20,9 +19,6 @@ from jentic_one.control.services.credentials.errors import (
     RuleSetNameConflictError,
     RuleSetNotFoundError,
     UnsupportedProviderForTypeError,
-)
-from jentic_one.control.services.integrations.connect_session_service import (
-    ConnectSessionService,
 )
 from jentic_one.control.services.integrations.device_authorization import (
     DeviceAuthorizationError,
@@ -221,18 +217,20 @@ def check_access_directive(
 
 #: Request fields carrying permission rules on the edit and amend routes.
 _RULE_FIELDS = frozenset({"rules", "requested_permission_rules"})
-_AMEND_PATH = re.compile(r"/connect-sessions/(?P<session_id>[^/]+):amend$")
 
 
 async def _edit_rules_validation_enricher(
     request: Request, exc: RequestValidationError
 ) -> dict[str, object] | None:
-    """A malformed rule on an edit or amend points the agent at its current access.
+    """A malformed rule on an edit points the agent at its current access.
 
     Only the rule fields count: a rule the binding's schema refuses usually
     means the caller is working from a wrong picture of its access. The
-    credential comes from the edit request's body, or from the session an
-    amend names.
+    credential comes from the request's own body, never from a lookup: a
+    validation error is raised before the route checks who is asking, so
+    resolving the session an amend names would tell any caller which
+    credential and agent it belongs to, where the well-formed path answers
+    the uniform 403.
     """
     if not any(_RULE_FIELDS.intersection(map(str, err.get("loc", ()))) for err in exc.errors()):
         return None
@@ -245,14 +243,6 @@ async def _edit_rules_validation_enricher(
         credential_id = raw if isinstance(raw, str) and raw else None
         raw_agent = body.get("agent_id")
         agent_id = raw_agent if isinstance(raw_agent, str) and raw_agent else None
-    elif (match := _AMEND_PATH.search(path)) is not None:
-        ctx = getattr(request.app.state, "ctx", None)
-        if ctx is None:
-            return None
-        target = await ConnectSessionService(ctx).edit_binding_of(match["session_id"])
-        if target is None:
-            return None
-        credential_id, agent_id = target
     if credential_id is None:
         return None
     return {

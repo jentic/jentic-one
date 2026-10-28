@@ -50,6 +50,7 @@ from jentic_one.control.services.integrations.errors import (
     RecentlyRejectedError,
     RevisionChangedError,
     RuleSetConfirmForbiddenError,
+    RulesRequiredError,
     SessionClosedError,
     UnknownRuleError,
 )
@@ -301,6 +302,47 @@ async def test_confirm_must_name_the_current_revision(
     assert stale.value.current_revision_number == 1
     assert "revision 1 is now the current one" in str(stale.value)
     assert await _rules(ctx, binding) == [("allow", "/v1/")]
+
+
+async def test_an_approver_cannot_strip_every_rule(
+    integration_context: Context, binding: str
+) -> None:
+    """An empty rule list is default deny: the agent could call nothing.
+
+    The console won't offer it; the API refuses it too. A binding that has no
+    rules to begin with stays editable.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    created = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+    with pytest.raises(RulesRequiredError):
+        await svc.confirm_edit(
+            created.session_id,
+            poll_token=None,
+            identity=_OWNER,
+            revision_id=created.revision_id,
+            permission_rules=[],
+            resume=False,
+        )
+    assert await _rules(ctx, binding) == [("allow", "/v1/")]
+
+    # A binding that holds no rules to begin with stays editable: the same
+    # empty confirm goes through, because it strips nothing.
+    async with ctx.control_db.transaction() as session:
+        await AgentPermissionRuleRepository.replace_user_rules(
+            session, _AGENT, binding, [], created_by=_OWNER.sub
+        )
+    rebased = await svc.get_review_data(created.session_id, poll_token=None, identity=_OWNER)
+    assert rebased.edit is not None
+    await svc.confirm_edit(
+        created.session_id,
+        poll_token=None,
+        identity=_OWNER,
+        revision_id=rebased.edit.revision_id,
+        permission_rules=[],
+        resume=False,
+    )
+    assert await _rules(ctx, binding) == []
 
 
 async def test_an_amend_that_changes_nothing_keeps_the_current_revision(

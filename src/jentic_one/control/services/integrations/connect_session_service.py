@@ -2457,11 +2457,23 @@ class ConnectSessionService:
         if credential is None or consent is None:
             raise ScopesNotSupportedError()
         handler_cls = consent.handler_cls
+        granted = set((row.baseline or {}).get("granted_scopes") or [])
         if consent.entry is not None:
-            unknown = self._vendors.validate_scopes(consent.entry, change["scopes"])
+            # What the change adds, as the open path validates: a scope the
+            # grant already holds is not re-checked, so a credential carrying
+            # one the catalog dropped stays editable instead of wedging.
+            unknown = self._vendors.validate_scopes(
+                consent.entry, sorted(set(change["scopes"]) - granted)
+            )
             if unknown:
                 raise ScopeValidationError(unknown)
         await self._require_scope_change_allowed(credential, row.agent_id, identity)
+        # The agents the approver saw the widening reach: one that binds while
+        # the grant is out does not get it without another review.
+        change = {
+            **change,
+            "shared_with": sorted(await self._other_bound_agent_ids(credential.id, row.agent_id)),
+        }
 
         async with self._ctx.control_db.transaction() as session:
             won = await ConnectSessionRepository.transition_edit(
@@ -2895,12 +2907,18 @@ class ConnectSessionService:
             owner = rule_set.get("created_by")
             if ORG_ADMIN not in identity.permissions and owner != identity.sub:
                 raise RuleSetConfirmForbiddenError(rule_set["id"])
+        rules = [rule_to_write(r) for r in permission_rules]
+        _, before = target_rules(baseline)
+        # Stripping every rule is default deny: the agent could call nothing.
+        # A binding that already has none is left editable (its scopes, resume).
+        if not rules and before:
+            raise RulesRequiredError()
         granted = list(baseline.get("granted_scopes") or [])
         # The approved scopes exactly, so a removal narrows the grant; none
         # approved keeps it as it is.
         scopes = sorted(set(confirmed_scopes) if confirmed_scopes is not None else set(granted))
         return {
-            "rules": [rule_to_write(r) for r in permission_rules],
+            "rules": rules,
             "rule_set_id": rule_set["id"] if rule_set is not None and not copy_curated else None,
             "detach_rule_set": copy_curated,
             "resume": resume and bool(baseline["suspended"]),
@@ -2944,29 +2962,44 @@ class ConnectSessionService:
         to add before) that no longer exists is listed in the proposal's
         ``conflicts``. Returns the new current revision id.
         """
-        async with self._ctx.control_db.transaction() as session:
-            current = await ConnectSessionRevisionRepository.get_by_id(
-                session, row.current_revision_id or ""
-            )
-            if current is None:
-                raise SessionNotFoundError(row.id)
-            request = EditRequest.from_proposal(current.proposal)
-            result, dropped = resolve_edit(live, request, lenient=True, previous=current.result)
-            proposal = {
-                **request.as_proposal(),
-                "rebased_from": current.number,
-                "dropped": dropped,
-                "conflicts": _edit_conflicts(dropped),
-            }
-            revision = await ConnectSessionRevisionRepository.append(
-                session,
+        try:
+            async with self._ctx.control_db.transaction() as session:
+                current = await ConnectSessionRevisionRepository.get_by_id(
+                    session, row.current_revision_id or ""
+                )
+                if current is None:
+                    raise SessionNotFoundError(row.id)
+                request = EditRequest.from_proposal(current.proposal)
+                result, dropped = resolve_edit(live, request, lenient=True, previous=current.result)
+                proposal = {
+                    **request.as_proposal(),
+                    "rebased_from": current.number,
+                    "dropped": dropped,
+                    "conflicts": _edit_conflicts(dropped),
+                }
+                revision = await ConnectSessionRevisionRepository.append(
+                    session,
+                    session_id=row.id,
+                    proposal=proposal,
+                    result=result,
+                    digest=revision_digest(baseline=live, result=result, reason=request.reason),
+                    created_by=None,
+                )
+                await ConnectSessionRepository.update_fields(session, row.id, baseline=live)
+        except DatabaseIntegrityError:
+            # Reading an edit rebases it, so two readers can rebase at once and
+            # the unique ``(session_id, number)`` index refuses the second. The
+            # rebase is the same either way: the one that landed stands.
+            async with self._ctx.control_db.session() as session:
+                fresh = await ConnectSessionRepository.get_by_id(session, row.id)
+            if fresh is None or fresh.current_revision_id is None:
+                raise SessionNotFoundError(row.id) from None
+            _logger.info(
+                "connect_session.edit_rebase_raced",
                 session_id=row.id,
-                proposal=proposal,
-                result=result,
-                digest=revision_digest(baseline=live, result=result, reason=request.reason),
-                created_by=None,
+                revision_id=fresh.current_revision_id,
             )
-            await ConnectSessionRepository.update_fields(session, row.id, baseline=live)
+            return fresh.current_revision_id
         _logger.info(
             "connect_session.edit_rebased",
             session_id=row.id,
@@ -3070,8 +3103,14 @@ class ConnectSessionService:
         snapshot["suspended"] = binding.suspended
         return snapshot
 
-    async def _edit_review(self, row: ConnectSession) -> EditReview:
-        """The review block of an edit session: baseline, current revision and reach."""
+    async def _edit_review(
+        self, row: ConnectSession
+    ) -> tuple[EditReview, Credential | None, ConnectSessionRevision]:
+        """The review block of an edit session: baseline, current revision and reach.
+
+        The credential and revision it read come back with it, so the caller
+        building the review around it reads neither again.
+        """
         assert row.agent_id is not None and row.baseline is not None
         async with self._ctx.control_db.session() as session:
             revision = (
@@ -3083,7 +3122,7 @@ class ConnectSessionService:
         if revision is None:
             raise SessionNotFoundError(row.id)
         others = await self._other_bound_agents(row.credential_id, row.agent_id)
-        return EditReview(
+        review = EditReview(
             agent_id=row.agent_id,
             credential_id=row.credential_id,
             credential_name=credential.name if credential is not None else None,
@@ -3096,15 +3135,12 @@ class ConnectSessionService:
             needs_vendor_consent=scopes_changed(row.baseline, revision.result),
             conflicts=list(revision.proposal.get("conflicts") or []),
         )
+        return review, credential, revision
 
     async def _edit_review_data(self, row: ConnectSession, identity: Identity) -> ReviewData:
         """``get_review_data`` for an edit session."""
-        edit = await self._edit_review(row)
+        edit, credential, revision = await self._edit_review(row)
         agent = await self._agent_view(row.agent_id)
-        async with self._ctx.control_db.session() as session:
-            credential = await CredentialRepository.get_by_id(session, row.credential_id)
-            revision = await ConnectSessionRevisionRepository.get_by_id(session, edit.revision_id)
-        assert revision is not None
         return ReviewData(
             session_id=row.id,
             state=row.state,
@@ -3321,14 +3357,6 @@ class ConnectSessionService:
             return await ConnectSessionRevisionRepository.get_by_id(
                 session, row.current_revision_id
             )
-
-    async def edit_binding_of(self, session_id: str) -> tuple[str, str | None] | None:
-        """The ``(credential_id, agent_id)`` an edit session changes; ``None`` otherwise."""
-        async with self._ctx.control_db.session() as session:
-            row = await ConnectSessionRepository.get_by_id(session, session_id)
-        if row is None or row.intent != INTENT_EDIT:
-            return None
-        return row.credential_id, row.agent_id
 
     async def list_revisions(
         self, session_id: str, *, poll_token: str | None, identity: Identity
@@ -4315,6 +4343,7 @@ class ConnectSessionService:
                 raise ScopeValidationError(unknown)
         await self._require_scope_change_allowed(credential, agent_id, identity)
         change: dict[str, Any] = {
+            "shared_with": sorted(await self._other_bound_agent_ids(credential.id, agent_id)),
             "rules": [rule_to_write(r) for r in variant.checks.permission_rules],
             "rule_set_id": None,
             "detach_rule_set": False,
@@ -5069,12 +5098,40 @@ class ConnectSessionService:
                 row.id, "failed", "consented as another account", error_code="account_changed"
             )
             return StatusResult(status="failed", error_code="account_changed")
+        granted = set((row.baseline or {}).get("granted_scopes") or [])
+        approved_shared = change.get("shared_with")
+        widens = bool(set(change["scopes"]) - granted)
+        if approved_shared is not None and row.agent_id is not None and widens:
+            # A wider grant reaches every agent bound to the credential. The
+            # approver saw the ones bound at the time; one that bound since has
+            # to be reviewed, so the grant is not stored.
+            appeared = sorted(
+                set(await self._other_bound_agent_ids(row.credential_id, row.agent_id))
+                - set(approved_shared)
+            )
+            if appeared:
+                _logger.warning(
+                    "connect_session.edit_binding_now_shared",
+                    session_id=row.id,
+                    credential_id=row.credential_id,
+                    agents=appeared,
+                )
+                await self._mark_terminal(
+                    row.id,
+                    "failed",
+                    "another agent was bound to the credential while the grant was out",
+                    error_code="binding_now_shared",
+                )
+                return StatusResult(status="failed", error_code="binding_now_shared")
+
         # Some vendors carry earlier scopes into a new grant. One that kept a
         # scope the change removes isn't written: the credential keeps its
         # token, and the scope has to be revoked at the vendor. The rest of
         # the change (rules, resume) still lands, flagged ``scopes_not_removed``;
-        # with nothing else in it, the change fails.
-        kept = sorted(set(tokens.granted_scopes or []) - set(change["scopes"]))
+        # with nothing else in it, the change fails. Only a scope the change
+        # removes counts, so scopes a vendor adds of its own (``openid``) do
+        # not read as one it kept.
+        kept = sorted((granted - set(change["scopes"])) & set(tokens.granted_scopes or []))
         scopes_kept = row.baseline is not None and bool(kept)
         if scopes_kept:
             assert row.baseline is not None
@@ -5164,6 +5221,9 @@ class ConnectSessionService:
         if not won:
             return StatusResult(status="failed", error_code="session_closed")
         await self._apply_admin_change(row, change)
+        # The grant (and a resume) landed, so it is audited like any applied
+        # change; ``keep_rules`` keeps the rules out of it, as none were written.
+        await self._record_change_applied(row, change, origin=Origin.SYSTEM.value)
         live = await self._live_binding_snapshot(row)
         if live is not None:
             await self._rebase_edit(row, live)

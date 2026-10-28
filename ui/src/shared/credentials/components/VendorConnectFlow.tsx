@@ -2151,6 +2151,9 @@ function signInFailure(status: StatusResponse | undefined): string {
 	if (status?.error_code === 'scopes_not_removed') {
 		return 'The vendor kept scopes this change removes, so nothing changed. Revoke the app’s access at the vendor to drop them, then try again.';
 	}
+	if (status?.error_code === 'binding_now_shared') {
+		return 'Another agent was bound to this credential while you were signing in, and the wider scopes would reach it too, so nothing changed. Review the request again.';
+	}
 	return 'The scopes weren’t granted, so nothing changed.';
 }
 
