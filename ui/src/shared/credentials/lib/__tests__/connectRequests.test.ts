@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ConnectSessionSummaryResponse } from '@/shared/api';
 import {
+	describeConnectAsks,
 	groupConnectRequestsByAgent,
 	summariseConnectTargets,
 } from '@/shared/credentials/lib/connectRequests';
@@ -59,5 +60,20 @@ describe('summariseConnectTargets', () => {
 				row('d', 'x', at, 'Jira'),
 			]),
 		).toBe('GitHub, Slack and 2 more');
+	});
+});
+
+describe('describeConnectAsks', () => {
+	it('words connects and access changes apart', () => {
+		const create = row('s1', 'agnt_a', '2026-10-09T10:00:00Z', 'GitHub');
+		const edit = {
+			...row('s2', 'agnt_a', '2026-10-09T10:01:00Z', 'Gmail'),
+			intent: 'edit' as ConnectSessionSummaryResponse['intent'],
+		};
+		expect(describeConnectAsks([create])).toBe('connect GitHub');
+		expect(describeConnectAsks([edit])).toBe('change its access to Gmail');
+		expect(describeConnectAsks([create, edit])).toBe(
+			'connect GitHub and change its access to Gmail',
+		);
 	});
 });

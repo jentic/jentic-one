@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import AsyncIterator
-from contextlib import AsyncExitStack, asynccontextmanager
 
 import structlog
 
@@ -13,10 +11,6 @@ from jentic_one.control.repos import (
     CredentialRepository,
     OAuthClientCredentialRepository,
     OAuthTokenRepository,
-)
-from jentic_one.control.repos.prerequisite_repo import (
-    CredentialBoundAgentRow,
-    PrerequisiteRepository,
 )
 from jentic_one.control.scoping.filters import build_access_filters
 from jentic_one.control.services.credentials.errors import CredentialNotFoundError
@@ -41,26 +35,9 @@ from jentic_one.shared.models.events import EventSeverity, EventType
 
 logger = structlog.get_logger()
 
-# Bound agents read for the re-authorize re-check: the permitted agent plus any
-# other is enough to refuse.
-_SOLE_BINDING_PROBE = 2
-
 
 class ConnectFlowError(Exception):
     """Raised when the connect flow fails for a domain reason."""
-
-
-def _refuse_unless_sole(
-    rows: list[CredentialBoundAgentRow], credential_id: str, sole_agent_id: str
-) -> None:
-    """Raise unless ``sole_agent_id`` is the only agent among the bound ``rows``."""
-    if any(row.agent_id != sole_agent_id for row in rows):
-        logger.warning(
-            "oauth_reauthorize_refused_other_agent_bound",
-            credential_id=credential_id,
-            agent_id=sole_agent_id,
-        )
-        raise ConnectFlowError("re-authorize refused: another agent is bound to the credential")
 
 
 class ConnectService:
@@ -76,17 +53,12 @@ class ConnectService:
         *,
         identity: Identity,
         redirect_uri: str | None = None,
-        sole_agent_id: str | None = None,
         browser_binding: BrowserBindingClaim | None = None,
     ) -> ConnectChallenge:
         """Load the caller's credential, resolve provider, initiate connect flow.
 
         A credential the caller cannot see is a 404. Visibility includes owner
         delegation (see the comment on the filter below).
-
-        ``sole_agent_id`` marks a re-authorize that must stay sole-bound; it is
-        only honoured from this keyword, never from ``request.extra``, so an
-        HTTP caller cannot inject it through the request body.
 
         ``browser_binding`` names the browser that may finish the flow: its
         hash rides the signed state and the callback requires the matching
@@ -113,14 +85,12 @@ class ConnectService:
 
         provider = self._ctx.providers.get(provider_name)
 
-        extra = {k: v for k, v in request.extra.items() if k != "sole_agent_id"}
+        extra = dict(request.extra)
         extra.update(
             credential_id=credential_id,
             actor_id=identity.sub,
             actor_type=str(identity.actor_type),
         )
-        if sole_agent_id is not None:
-            extra["sole_agent_id"] = sole_agent_id
         enriched_request = ConnectRequest(
             scopes=request.scopes,
             extra=extra,
@@ -167,34 +137,16 @@ class ConnectService:
             # theme-8 Phase 4): that actor can no longer own a credential.
             raise ConnectFlowError(f"Unsupported actor_type in state: {state.actor_type}") from exc
         try:
-            if state.sole_agent_id is not None:
-                # Refuse before the code is spent at the vendor. The binding
-                # check that decides whether the grant is stored runs again
-                # below, under the bindings lock.
-                await self._require_sole_binding(state.credential_id, state.sole_agent_id)
             provider = self._ctx.providers.get(state.provider)
             result = await provider.complete_connect(self._ctx, state=state, callback=callback)
 
-            # The bindings lock is taken inside the control transaction, after
-            # the refresh lock: control then admin is the order the other
-            # paths that hold both transactions use (the credential expiry
-            # scan, the rule path rewrite), so on SQLite the two write locks
-            # are never taken in opposite orders. ``bindings_held`` releases
-            # it only after the control transaction commits or rolls back.
-            async with (
-                AsyncExitStack() as bindings_held,
-                self._ctx.control_db.transaction() as session,
-            ):
+            async with self._ctx.control_db.transaction() as session:
                 # Same lock as the broker refresh and a token_url edit, then
                 # re-check the endpoint: a cross-origin edit that committed
                 # while the code was being exchanged has moved the credential
                 # away from the origin this grant was minted at, and storing
                 # it would hand its refresh token to the new origin.
                 await OAuthTokenRepository.acquire_refresh_lock(session, state.credential_id)
-                if state.sole_agent_id is not None:
-                    await bindings_held.enter_async_context(
-                        self._sole_binding_held(state.credential_id, state.sole_agent_id)
-                    )
                 credential = await CredentialRepository.get_by_id(session, state.credential_id)
                 if credential is None:
                     raise CredentialNotFoundError(state.credential_id)
@@ -288,41 +240,6 @@ class ConnectService:
             actor_type=actor_type,
         )
         return state.credential_id
-
-    async def _require_sole_binding(self, credential_id: str, sole_agent_id: str) -> None:
-        """Refuse a re-authorize whose credential has gained another bound agent.
-
-        Suspended bindings count: lifting the suspension would hand that
-        agent the wider scopes too.
-        """
-        async with self._ctx.admin_db.session() as admin_session:
-            rows = await PrerequisiteRepository.list_agents_for_credential(
-                admin_session, credential_id=credential_id, limit=_SOLE_BINDING_PROBE
-            )
-        _refuse_unless_sole(rows, credential_id, sole_agent_id)
-
-    @asynccontextmanager
-    async def _sole_binding_held(
-        self, credential_id: str, sole_agent_id: str
-    ) -> AsyncIterator[None]:
-        """Keep a re-authorize's credential sole-bound while its grant is stored.
-
-        Takes the credential's bindings lock in an admin transaction, checks
-        that ``sole_agent_id`` is still the only bound agent, and holds the
-        lock until the context exits, which the caller arranges to follow the
-        token write's commit or rollback. A binding committed while the code
-        was exchanged is seen here and the wider grant is discarded; a binding
-        attempted while the lock is held waits until the grant is stored.
-        """
-        async with self._ctx.admin_db.transaction() as admin_session:
-            await PrerequisiteRepository.lock_bindings_for_credential(
-                admin_session, credential_id=credential_id
-            )
-            rows = await PrerequisiteRepository.list_agents_for_credential(
-                admin_session, credential_id=credential_id, limit=_SOLE_BINDING_PROBE
-            )
-            _refuse_unless_sole(rows, credential_id, sole_agent_id)
-            yield
 
     async def _emit_connect_telemetry(
         self, *, type: str, summary: str, created_by: str, actor_type: ActorType

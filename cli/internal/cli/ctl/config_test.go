@@ -175,7 +175,7 @@ func TestBackendConfig_ExplicitZeroValuesSurviveRoundTrip(t *testing.T) {
 			"auth": {"failed_login_lockout_seconds": 0}
 		},
 		"control": {
-			"connect": {"manual_flows_enabled": false, "rejection_cooldown_hours": 0}
+			"connect": {"manual_flows_enabled": false, "rejection_cooldown_hours": 12}
 		},
 		"catalog": {
 			"manifest_url": ""
@@ -210,8 +210,8 @@ func TestBackendConfig_ExplicitZeroValuesSurviveRoundTrip(t *testing.T) {
 		if cfg.Control.Connect.ManualFlowsEnabled {
 			t.Errorf("%s: control.connect.manual_flows_enabled = true, want false (reverted to default?)", label)
 		}
-		if got := cfg.Control.Connect.RejectionCooldownHours; got != 0 {
-			t.Errorf("%s: control.connect.rejection_cooldown_hours = %v, want 0 (reverted to default?)", label, got)
+		if got := cfg.Control.Connect.RejectionCooldownHours; got != 12 {
+			t.Errorf("%s: control.connect.rejection_cooldown_hours = %v, want 12 (reverted to default?)", label, got)
 		}
 		if cfg.Databases.Admin.PoolPrePing {
 			t.Errorf("%s: databases.admin.pool_pre_ping = true, want false (reverted to default?)", label)

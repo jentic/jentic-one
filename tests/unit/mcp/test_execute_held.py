@@ -18,7 +18,6 @@ from unittest.mock import MagicMock
 import httpx
 import mcp.types as mcp_types
 import pytest
-from mcp.shared.exceptions import MCPError
 
 import jentic_one.mcp.execute as ex
 import jentic_one.mcp.tools as tools_mod
@@ -243,8 +242,9 @@ async def test_forged_or_foreign_request_state_is_refused(
         replace(env, request_state="v1:not-a-real-token"),
         replace(_env(sub="agnt_other"), request_state=first.request_state),
     ):
-        with pytest.raises(MCPError):
-            await _execute(bad)
+        refused = await _execute(bad)
+        assert isinstance(refused, mcp_types.CallToolResult) and refused.is_error
+        assert _json(refused)["error_code"] == "MISSING_ARGUMENT"
 
 
 def test_front_door_selection() -> None:
@@ -339,5 +339,6 @@ async def test_get_execution_result_requires_exactly_one_id(
     job_polls: Callable[[list[str]], list[str]], arguments: dict[str, Any]
 ) -> None:
     job_polls(["held"])
-    with pytest.raises(MCPError):
-        await dispatch_mcp_tool_call(_env(), "get_execution_result", arguments)
+    refused = await dispatch_mcp_tool_call(_env(), "get_execution_result", arguments)
+    assert isinstance(refused, mcp_types.CallToolResult) and refused.is_error
+    assert _json(refused)["error_code"] == "MISSING_ARGUMENT"

@@ -2,15 +2,17 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AmendSessionRequest } from '../models/AmendSessionRequest';
 import type { ApiKeyConfirmSessionRequest } from '../models/ApiKeyConfirmSessionRequest';
 import type { BasicConfirmSessionRequest } from '../models/BasicConfirmSessionRequest';
 import type { BearerConfirmSessionRequest } from '../models/BearerConfirmSessionRequest';
 import type { ConnectSessionListResponse } from '../models/ConnectSessionListResponse';
+import type { EditConfirmSessionRequest } from '../models/EditConfirmSessionRequest';
+import type { EditConnectionRequest } from '../models/EditConnectionRequest';
 import type { ExistingCredentialConfirmSessionRequest } from '../models/ExistingCredentialConfirmSessionRequest';
 import type { IntegrationsConnectRequest } from '../models/IntegrationsConnectRequest';
 import type { OAuthConfirmSessionRequest } from '../models/OAuthConfirmSessionRequest';
 import type { OwnOAuthClientConfirmSessionRequest } from '../models/OwnOAuthClientConfirmSessionRequest';
-import type { ReauthorizeConfirmSessionRequest } from '../models/ReauthorizeConfirmSessionRequest';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
@@ -116,6 +118,48 @@ export class IntegrationsService {
         });
     }
     /**
+     * List a connect session's revisions
+     * Every version of what the session asks for, oldest first.
+     *
+     * The review shows the current revision against today's access; this is the
+     * history behind it, one entry per ask and amend. Gated like the review
+     * read.
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static listConnectSessionRevisions({
+        sessionId,
+        pollToken,
+    }: {
+        /**
+         * ID of the connect session.
+         */
+        sessionId: string,
+        /**
+         * Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
+         */
+        pollToken?: (string | null),
+    }): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/connect-sessions/{session_id}/revisions',
+            path: {
+                'session_id': sessionId,
+            },
+            query: {
+                'poll_token': pollToken,
+            },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
      * Poll a connect session's status
      * Poll the lifecycle status of a connect session.
      *
@@ -160,6 +204,54 @@ export class IntegrationsService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Amend an open connect session's request
+     * Change what an open session asks for; the reviewer sees the new revision.
+     *
+     * The session's initiator, or a human who may confirm it (a reviewer
+     * editing the request; the revision records who made it), while it is open
+     * (not yet confirmed or ended); a closed session is 409 `session_closed`.
+     * The fields sent replace those parts of the ask and the rest stay. Edit sessions take `rules` and
+     * `resume`, relative to the binding as it was when the edit opened; create
+     * sessions take `requested_permission_rules` and `requested_scopes`, which
+     * replace the ask outright; both take `reason`. The session id, approval
+     * URL and poll token stay the same, and any confirm must name the new
+     * `revision_id`.
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static amendConnectSession({
+        sessionId,
+        requestBody,
+    }: {
+        /**
+         * ID of the connect session.
+         */
+        sessionId: string,
+        /**
+         * Change an open session's ask; fields sent replace those parts, the rest stay.
+         */
+        requestBody: AmendSessionRequest,
+    }): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/connect-sessions/{session_id}:amend',
+            path: {
+                'session_id': sessionId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                409: `The session is closed: confirmed or ended`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -225,7 +317,8 @@ export class IntegrationsService {
      * variant): OAuth scopes, a secret for a ``manual_*`` session
      * (``api_key`` / ``bearer`` / ``basic``), the approver's own OAuth client
      * for an ``awaiting_app`` session, or a credential the approver already
-     * holds (``existing_credential``, ``reauthorize``). Secrets are write-only:
+     * holds (``existing_credential``), or an edit session's
+     * final rules (``edit``, naming the reviewed ``revision_id``). Secrets are write-only:
      * they never appear in a response, audit entry or log.
      *
      * Shares the ``:connect`` per-actor rate bucket — this is the endpoint
@@ -256,7 +349,7 @@ export class IntegrationsService {
         /**
          * How to complete the session, selected by `kind`. A body without `kind` is the `oauth` variant.
          */
-        requestBody: (OAuthConfirmSessionRequest | ApiKeyConfirmSessionRequest | BearerConfirmSessionRequest | BasicConfirmSessionRequest | OwnOAuthClientConfirmSessionRequest | ExistingCredentialConfirmSessionRequest | ReauthorizeConfirmSessionRequest),
+        requestBody: (OAuthConfirmSessionRequest | ApiKeyConfirmSessionRequest | BearerConfirmSessionRequest | BasicConfirmSessionRequest | OwnOAuthClientConfirmSessionRequest | ExistingCredentialConfirmSessionRequest | EditConfirmSessionRequest),
         /**
          * Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
          */
@@ -292,9 +385,9 @@ export class IntegrationsService {
      * Only the target agent's owner (holding ``credentials:write`` and
      * ``agents:write``) or ``org:admin``; there is no poll-token path and an
      * agent can never reject. Everyone else gets the uniform 403. The agent's
-     * ``/status`` then reports ``failed`` with ``error_code: rejected``, and
-     * its repeat ``:connect`` for the same target answers 429
-     * ``recently_rejected`` for the rejection cooldown. Closing the dialog
+     * ``/status`` then reports ``failed`` with ``error_code: rejected``. With a
+     * rejection cooldown set (off by default), its repeat ``:connect`` for the
+     * same target answers 429 ``recently_rejected`` until it lapses. Closing the dialog
      * without rejecting makes no call; an unmount cancel stays ``cancelled``.
      * @returns void
      * @throws ApiError
@@ -317,6 +410,63 @@ export class IntegrationsService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * How a connection to an API would be made
+     * List the API's declared security schemes and how `:connect` would collect each.
+     *
+     * Resolved as `:connect` resolves an API target, so a scope marked
+     * `requestable` is one `requested_scopes` may name: for OAuth, the
+     * connecting app's scope catalog (the spec's other scopes are listed but
+     * not requestable); with no app, the spec's scopes. An API the registry
+     * doesn't hold is 404 `unknown_api`: import it first.
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static integrationsConnectOptions({
+        vendor,
+        name,
+        version,
+        registrationId,
+    }: {
+        /**
+         * The API's vendor.
+         */
+        vendor: string,
+        /**
+         * The API's name.
+         */
+        name: string,
+        /**
+         * The API's version.
+         */
+        version: string,
+        /**
+         * Pin a shared OAuth app, as `oauth_app_registration_id` on `:connect`.
+         */
+        registrationId?: (string | null),
+    }): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/integrations/{vendor}/{name}/{version}/connect-options',
+            path: {
+                'vendor': vendor,
+                'name': name,
+                'version': version,
+            },
+            query: {
+                'registration_id': registrationId,
+            },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `The registry holds no such API`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -366,6 +516,48 @@ export class IntegrationsService {
                 409: `The API declares no supported scheme, its hosts cannot be pinned, the agent is inactive, or the agent's binding for the API is suspended`,
                 422: `Unprocessable Entity`,
                 429: `Rate limit, open-session cap, or a recent rejection`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Ask to change a credential binding
+     * Open a connect session that edits an existing binding instead of creating one.
+     *
+     * The change (rules to add, remove or replace, and resuming a suspended
+     * binding) is resolved against the binding as it is now, and a human
+     * approves it on the review page; nothing changes until then. An agent
+     * edits its own binding and must omit `agent_id`; a human names the agent
+     * and must be its owner or an org admin. A change that is already in place
+     * is 422 `nothing_to_change`, and a rule id the binding does not hold is 422
+     * `unknown_rule`. A binding can have several open edits, each rebased as
+     * others land; an agent asking again while its own is open is 409
+     * `edit_open` with that session's `session_id`, to amend instead.
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static integrationsEditConnection({
+        requestBody,
+    }: {
+        /**
+         * Ask to change an existing credential binding; a human approves the change.
+         */
+        requestBody: EditConnectionRequest,
+    }): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/integrations:edit-connection',
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `No binding the caller may edit for this credential`,
+                409: `The calling agent already has an open edit of this binding; amend it`,
+                422: `Unprocessable Entity`,
+                429: `Rate limit or open-session cap`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
             },

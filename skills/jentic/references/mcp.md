@@ -70,6 +70,11 @@ request_connection {"vendor": "github", "reason": "read open PRs to summarise th
 request_connection {"api": {"vendor": "stripe-com", "name": "stripe-com-api", "version": "2024-06-20"}, "reason": "list this month's charges"}
 ```
 
+Before asking for an OAuth connection, read which scopes you can name with
+`inspect_api {"api": "vendor/name/version"}` (`jentic apis auth` on the CLI):
+each declared scheme, how a connection would collect it, and the scopes marked
+`requestable`. Ask only for those, in `requested_scopes`.
+
 It returns `{session_id, approval_url, resolved_flow}` — relay the
 `approval_url` to your human operator, who approves in their browser (and
 enters the key, for an `api` connect); you cannot open or approve it, and
@@ -221,14 +226,18 @@ the directive's `suggested_rules` as `requested_permission_rules`) and relay
 the `approval_url`;
 a denial carrying a `provisioning_url` means a connect request you opened
 is still waiting — relay that link to your operator rather than calling
-`request_connection` again. The denial taxonomy
+`request_connection` again (a repeat call returns that open request,
+`already_open`; change it with `amend_request`). A rules denial
+(`action_denied`) is **change-shaped**: call `show_access`, then
+`request_access_change` with `parameters.edit`, and relay the
+`approval_url`. The denial taxonomy
 (`no_credential_binding`, `credential_binding_suspended`,
 `credential_undecryptable`, `credential_identity_mismatch`,
 `ambiguous_credential_binding` — the per-code meanings are surface-independent
 and live in `references/recovery.md`) applies unchanged — the same codes,
 delivered in the envelope instead of stderr.
 
-## The 9 mount tools (each maps onto the loop)
+## The 12 mount tools (each maps onto the loop)
 
 - `whoami` — your identity, status, permissions, and credential bindings with the
   APIs each one serves; start here and decide access from it.
@@ -236,6 +245,19 @@ delivered in the envelope instead of stderr.
   registry API) when no binding serves the API you need; relay the returned
   `approval_url` to your operator (they approve — you never poll or
   approve), then confirm with `whoami` and retry.
+- `show_access` — what your binding to one credential lets you do: rules
+  with their ids, the shared rule set (whose rules apply instead), granted
+  scopes, suspension. Read it before asking for a change, and when a change
+  request is refused with `next_tool: show_access`.
+- `request_access_change` — ask for a change to one binding (rules to add,
+  remove or replace, OAuth scopes to add, resume); the recovery for
+  `action_denied`, whose `parameters.edit` names the credential and the rule
+  to ask for. Relay the `approval_url`; nothing changes until a human
+  approves. If one is already open you get it back with
+  `next_tool: amend_request`.
+- `amend_request` — change an open request (an access change, or a
+  `request_connection` ask) instead of asking again; the approval link stays
+  the same.
 - `search_apis` — search the imported registry for operations by
   natural-language query; each hit carries the `target` to pass to
   `inspect_operation`/`execute`.
@@ -254,7 +276,7 @@ delivered in the envelope instead of stderr.
   server reports the same duplicate as a failed dead-letter import; either
   way it's already there).
 
-The stdio server serves these nine plus `get_started` (pre-auth setup
+The stdio server serves these twelve plus `get_started` (pre-auth setup
 diagnosis on a CLI machine).
 
 **Structural facts:** every tool result carries an `instance` stamp

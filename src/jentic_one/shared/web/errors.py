@@ -87,14 +87,44 @@ def sanitize_validation_errors(errors: Iterable[Any]) -> list[dict[str, Any]]:
     return sanitized
 
 
+#: Adds extension members to a request-validation 422 for the routes it
+#: recognises; returns ``None`` for every other request.
+ValidationEnricher = Callable[
+    [Request, RequestValidationError], Coroutine[Any, Any, dict[str, Any] | None]
+]
+
+_VALIDATION_ENRICHERS: list[ValidationEnricher] = []
+
+
+def register_validation_enricher(enricher: ValidationEnricher) -> None:
+    """Let a surface add members to the 422 its own routes' validation errors produce.
+
+    Idempotent. An enricher must only ever add server data, never echo input.
+    """
+    if enricher not in _VALIDATION_ENRICHERS:
+        _VALIDATION_ENRICHERS.append(enricher)
+
+
 async def request_validation_error_handler(
-    _request: Request, exc: RequestValidationError
+    request: Request, exc: RequestValidationError
 ) -> JSONResponse:
-    """FastAPI's default 422 body (``{"detail": [...]}``) without echoed input."""
-    return JSONResponse(
-        status_code=422,
-        content={"detail": sanitize_validation_errors(exc.errors())},
-    )
+    """FastAPI's default 422 body (``{"detail": [...]}``) without echoed input.
+
+    Registered enrichers may add members for routes they own; a failing
+    enricher never turns the 422 into a 500.
+    """
+    content: dict[str, Any] = {"detail": sanitize_validation_errors(exc.errors())}
+    for enricher in _VALIDATION_ENRICHERS:
+        try:
+            extra = await enricher(request, exc)
+        except Exception:
+            structlog.get_logger("jentic_one.shared.web.errors").warning(
+                "validation_enricher_failed", exc_info=True
+            )
+            continue
+        if extra:
+            content.update({k: v for k, v in extra.items() if k not in content})
+    return JSONResponse(status_code=422, content=content)
 
 
 def log_database_unavailable(

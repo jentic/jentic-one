@@ -1,24 +1,24 @@
-"""Shared credential: re-authorizing never widens another agent's access.
+"""Shared credential: using an existing credential that lacks scopes, in one step.
 
-Re-authorize (incremental consent on a credential the approver already holds)
-is offered only when no other agent is bound to it. Extends
-``test_connect_session_api_targets.py`` (the review/confirm-time refusal) with
-the consent-completion re-check: another agent bound while the approver is at
-the vendor's consent screen makes the callback refuse the wider grant.
+Picking an existing OAuth credential whose grant lacks scopes the session
+asks for runs a vendor consent for them on that credential's own client, and
+the bind, rules and wider scopes land together with the grant. The review
+lists every other agent bound to the credential, because the wider grant
+reaches them too. Until the grant lands nothing changes: the agent is not
+bound, and the agents already bound keep exactly what they had.
 """
 
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
+import httpx
 import pytest
 
 from jentic_one.control.repos.oauth_token_repo import OAuthTokenRepository
-from jentic_one.control.services.credentials.connect_service import (
-    ConnectFlowError,
-    ConnectService,
-)
+from jentic_one.control.services.credentials.connect_service import ConnectService
 from jentic_one.control.services.credentials.schemas.connect import (
     AuthCodeChallenge,
     ConnectCallback,
@@ -27,25 +27,24 @@ from jentic_one.control.services.credentials.schemas.connect import (
 from jentic_one.control.services.credentials.schemas.provision import ProvisionResult
 from jentic_one.control.services.credentials.state import new_browser_binding
 from jentic_one.control.services.integrations.connect_session_service import (
-    ConnectedConfirmResult,
+    AuthCodeConfirmResult,
     ExistingCredentialConfirm,
-    ReauthorizeConfirmResult,
 )
 from jentic_one.shared.context import Context
 from tests.integration.control.connect_sec.support import (
+    AGENT,
     AGENT_ID,
     OAUTH_SCHEME,
     OWNER,
-    RULES,
     SIBLING_AGENT_ID,
     bind,
     checks,
-    client,
     connect,
     digest,
     existing_credential,
     import_spec,
     is_bound,
+    revision,
     svc,
 )
 
@@ -55,14 +54,15 @@ pytestmark = pytest.mark.integration
 _BINDING = new_browser_binding()
 
 
-async def _reauthorize(ctx: Context, session_id: str, credential_id: str) -> Any:
+async def _use_existing(ctx: Context, session_id: str, credential_id: str) -> Any:
     return await svc(ctx).confirm_variant(
         session_id,
         poll_token=None,
         variant=ExistingCredentialConfirm(
             credential_id=credential_id,
-            reauthorize=True,
-            checks=checks(await digest(ctx, session_id)),
+            checks=checks(
+                await digest(ctx, session_id), revision_id=await revision(ctx, session_id)
+            ),
         ),
         identity=OWNER,
         browser_binding=_BINDING.claim,
@@ -71,6 +71,89 @@ async def _reauthorize(ctx: Context, session_id: str, credential_id: str) -> Any
 
 def _state_of(authorize_url: str) -> str:
     return parse_qs(urlsplit(authorize_url).query)["state"][0]
+
+
+class _TokenEndpoint:
+    """httpx.AsyncClient stand-in: every code exchanges for ``read write``."""
+
+    async def __aenter__(self) -> _TokenEndpoint:
+        return self
+
+    async def __aexit__(self, *a: object) -> bool:
+        return False
+
+    async def post(self, *args: object, **kwargs: object) -> httpx.Response:
+        return httpx.Response(
+            200, json={"access_token": "wider-access", "expires_in": 3600, "scope": "read write"}
+        )
+
+
+async def _granted(ctx: Context, credential_id: str) -> str | None:
+    async with ctx.control_db.session() as session:
+        token = await OAuthTokenRepository.get_by_credential(session, credential_id)
+    return token.scope if token is not None else None
+
+
+async def test_a_narrow_credential_is_used_in_one_step_and_lands_with_the_grant(
+    env: Context,
+) -> None:
+    await import_spec(env, OAUTH_SCHEME)
+    created = await connect(env, requested_scopes=["read", "write"])
+    narrow = await existing_credential(env, oauth_scope="read")
+    await bind(env, SIBLING_AGENT_ID, narrow)
+
+    review = await svc(env).get_review_data(created.session_id, poll_token=None, identity=OWNER)
+    (view,) = review.existing_credentials
+    assert (view.missing_scopes, view.needs_vendor_consent, view.can_bind) == (
+        ["write"],
+        True,
+        True,
+    )
+    assert [a.agent_id for a in view.other_bound_agents] == [SIBLING_AGENT_ID]
+
+    result = await _use_existing(env, created.session_id, narrow)
+    assert isinstance(result, AuthCodeConfirmResult)
+    assert result.authorize_url.startswith("https://auth.vault.example/authorize?")
+    # Nothing has changed yet: not bound, and the sibling keeps its grant.
+    assert not await is_bound(env, AGENT_ID, narrow)
+    assert await _granted(env, narrow) == "read"
+    status = await svc(env).get_status(
+        created.session_id, poll_token=created.poll_token, identity=AGENT
+    )
+    assert status.status == "pending"
+
+    with patch("httpx.AsyncClient", return_value=_TokenEndpoint()):
+        landed = await svc(env).complete_from_callback(
+            raw_state=_state_of(result.authorize_url),
+            code="vendor-code",
+            browser_binding=_BINDING.value,
+        )
+    assert (landed.status, landed.credential_id) == ("connected", narrow)
+    assert await is_bound(env, AGENT_ID, narrow)
+    assert await _granted(env, narrow) == "read write"
+    status = await svc(env).get_status(
+        created.session_id, poll_token=created.poll_token, identity=AGENT
+    )
+    assert (status.status, status.credential_id) == ("connected", narrow)
+
+
+async def test_a_failed_consent_never_binds_or_widens(env: Context) -> None:
+    await import_spec(env, OAUTH_SCHEME)
+    created = await connect(env, requested_scopes=["read", "write"])
+    narrow = await existing_credential(env, oauth_scope="read")
+    result = await _use_existing(env, created.session_id, narrow)
+    assert isinstance(result, AuthCodeConfirmResult)
+    await svc(env).mark_terminal_from_callback(
+        raw_state=_state_of(result.authorize_url),
+        error="access_denied",
+        browser_binding=_BINDING.value,
+    )
+    assert not await is_bound(env, AGENT_ID, narrow)
+    assert await _granted(env, narrow) == "read"
+    status = await svc(env).get_status(
+        created.session_id, poll_token=created.poll_token, identity=AGENT
+    )
+    assert status.status == "failed"
 
 
 @pytest.fixture()
@@ -87,96 +170,10 @@ def vendor_grants_everything(env: Context, monkeypatch: pytest.MonkeyPatch) -> l
     return exchanged
 
 
-async def _granted(ctx: Context, credential_id: str) -> str | None:
-    async with ctx.control_db.session() as session:
-        token = await OAuthTokenRepository.get_by_credential(session, credential_id)
-    return token.scope if token is not None else None
-
-
-async def test_reauthorize_over_http_is_refused_while_another_agent_is_bound(
-    env: Context,
-) -> None:
-    await import_spec(env, OAUTH_SCHEME)
-    created = await connect(env, requested_scopes=["read", "write"])
-    narrow = await existing_credential(env, oauth_scope="read")
-    await bind(env, SIBLING_AGENT_ID, narrow)
-    async with client(env, OWNER) as owner:
-        refused = await owner.post(
-            f"/connect-sessions/{created.session_id}:confirm",
-            json={
-                "kind": "reauthorize",
-                "credential_id": narrow,
-                "permission_rules": RULES,
-                "expected_agent_id": AGENT_ID,
-                "digest": await digest(env, created.session_id),
-            },
-        )
-    assert (refused.status_code, refused.json()["type"]) == (409, "reauthorize_unavailable")
-    assert not await is_bound(env, AGENT_ID, narrow)
-    assert await _granted(env, narrow) == "read"
-
-
-async def test_consent_completion_refuses_when_another_agent_was_bound_meanwhile(
-    env: Context, vendor_grants_everything: list[str]
-) -> None:
-    await import_spec(env, OAUTH_SCHEME)
-    created = await connect(env, requested_scopes=["read", "write"])
-    narrow = await existing_credential(env, oauth_scope="read")
-    result = await _reauthorize(env, created.session_id, narrow)
-    assert isinstance(result, ReauthorizeConfirmResult)
-
-    # While the approver is on the vendor's consent screen, a sibling agent's
-    # narrower ask binds the same credential (its grant already covers ``read``).
-    sibling = await connect(env, agent_id=SIBLING_AGENT_ID, requested_scopes=["read"])
-    bound = await svc(env).confirm_variant(
-        sibling.session_id,
-        poll_token=None,
-        variant=ExistingCredentialConfirm(
-            credential_id=narrow,
-            reauthorize=False,
-            checks=checks(
-                await digest(env, sibling.session_id), expected_agent_id=SIBLING_AGENT_ID
-            ),
-        ),
-        identity=OWNER,
-    )
-    assert isinstance(bound, ConnectedConfirmResult)
-    assert await is_bound(env, SIBLING_AGENT_ID, narrow)
-
-    with pytest.raises(ConnectFlowError):
-        await ConnectService(env).complete(
-            _state_of(result.authorize_url),
-            ConnectCallback(code="vendor-code"),
-            browser_binding=_BINDING.value,
-        )
-    # The wider grant was never stored (nor the code even exchanged).
-    assert await _granted(env, narrow) == "read"
-    assert vendor_grants_everything == []
-
-
-async def test_consent_completion_widens_when_the_agent_is_still_the_only_one(
-    env: Context, vendor_grants_everything: list[str]
-) -> None:
-    await import_spec(env, OAUTH_SCHEME)
-    created = await connect(env, requested_scopes=["read", "write"])
-    narrow = await existing_credential(env, oauth_scope="read")
-    result = await _reauthorize(env, created.session_id, narrow)
-    assert isinstance(result, ReauthorizeConfirmResult)
-    assert (
-        await ConnectService(env).complete(
-            _state_of(result.authorize_url),
-            ConnectCallback(code="vendor-code"),
-            browser_binding=_BINDING.value,
-        )
-        == narrow
-    )
-    assert await _granted(env, narrow) == "read write"
-
-
 async def test_plain_reconnect_of_a_shared_credential_is_unaffected(
     env: Context, vendor_grants_everything: list[str]
 ) -> None:
-    """The re-check rides only re-authorize states, not the owner's own reconnect."""
+    """The owner's own reconnect of a shared credential needs no connect session."""
     narrow = await existing_credential(env, oauth_scope="read")
     await bind(env, AGENT_ID, narrow)
     await bind(env, SIBLING_AGENT_ID, narrow)

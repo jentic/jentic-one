@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
-import structlog.testing
 from sqlalchemy import delete, select, text
 
 from jentic_one.admin.repos.agent_credential_binding_repo import AgentCredentialBindingRepository
@@ -409,30 +408,6 @@ async def test_agent_without_owner_delegation_cannot_connect(
 
     with pytest.raises(CredentialNotFoundError):
         await ConnectService(ctx).begin(credential_id, ConnectRequest(), identity=identity)
-
-
-async def test_sole_agent_id_in_request_extra_is_ignored(
-    integration_context: Context, clean_connect_tables: None
-) -> None:
-    """``sole_agent_id`` is honoured only from the keyword, never from ``extra``.
-
-    ``extra`` is caller-supplied on ``POST /credentials/{id}/connect``.
-    """
-    ctx = integration_context
-    credential_id = await _connectable_credential(ctx)
-    secret = ctx.config.credentials.connect.state_secret.get_secret_value()
-    svc = ConnectService(ctx)
-    smuggled = ConnectRequest(extra={"sole_agent_id": "agnt_injected"})
-
-    ignored = await svc.begin(credential_id, smuggled, identity=_OWNER)
-    assert isinstance(ignored, AuthCodeChallenge)
-    assert decode_state(secret, ignored.state).sole_agent_id is None
-
-    explicit = await svc.begin(
-        credential_id, smuggled, identity=_OWNER, sole_agent_id="agnt_explicit"
-    )
-    assert isinstance(explicit, AuthCodeChallenge)
-    assert decode_state(secret, explicit.state).sole_agent_id == "agnt_explicit"
 
 
 # --- Pipedream connect flow tests ---
@@ -895,19 +870,19 @@ async def test_state_without_browser_binding_is_refused_and_not_consumed(
     assert consumed == []
 
 
-# --- Re-authorize: the credential must stay sole-bound until the grant is stored ---
+# --- Binding writers wait on the credential's bindings lock ---
 
-_REAUTH_FIRST_AGENT = "agnt_reauth_first"
-_REAUTH_SECOND_AGENT = "agnt_reauth_second"
+_LOCK_FIRST_AGENT = "agnt_lock_first"
+_LOCK_SECOND_AGENT = "agnt_lock_second"
 
 
 @pytest.fixture()
-async def reauth_agents(integration_context: Context) -> AsyncGenerator[None, None]:
+async def lock_agents(integration_context: Context) -> AsyncGenerator[None, None]:
     """Two approved agents registered by ``_OWNER``; their bindings are removed after."""
     ctx = integration_context
-    await _delete_reauth_agents(ctx)
+    await _delete_lock_agents(ctx)
     async with ctx.admin_db.transaction() as session:
-        for agent_id in (_REAUTH_FIRST_AGENT, _REAUTH_SECOND_AGENT):
+        for agent_id in (_LOCK_FIRST_AGENT, _LOCK_SECOND_AGENT):
             await session.execute(
                 text(
                     "INSERT INTO agents (id, name, registered_by, status, created_by) "
@@ -916,98 +891,16 @@ async def reauth_agents(integration_context: Context) -> AsyncGenerator[None, No
                 {"id": agent_id, "owner": _OWNER.sub},
             )
     yield
-    await _delete_reauth_agents(ctx)
+    await _delete_lock_agents(ctx)
 
 
-async def _delete_reauth_agents(ctx: Context) -> None:
-    ids = {"a": _REAUTH_FIRST_AGENT, "b": _REAUTH_SECOND_AGENT}
+async def _delete_lock_agents(ctx: Context) -> None:
+    ids = {"a": _LOCK_FIRST_AGENT, "b": _LOCK_SECOND_AGENT}
     async with ctx.admin_db.transaction() as session:
         await session.execute(
             text("DELETE FROM agent_credential_bindings WHERE agent_id IN (:a, :b)"), ids
         )
         await session.execute(text("DELETE FROM agents WHERE id IN (:a, :b)"), ids)
-
-
-async def _bind(ctx: Context, agent_id: str, credential_id: str) -> None:
-    async with ctx.admin_db.transaction() as session:
-        await AgentCredentialBindingRepository.bind(
-            session, agent_id=agent_id, credential_id=credential_id, created_by=_OWNER.sub
-        )
-
-
-async def _stored_access_token(ctx: Context, credential_id: str) -> str:
-    async with ctx.control_db.session() as session:
-        token = await OAuthTokenRepository.get_by_credential(session, credential_id)
-    assert token is not None
-    return ctx.encryption.decrypt(token.encrypted_access_token)
-
-
-@pytest.mark.parametrize("second_agent_binds", [False, True])
-async def test_reauthorize_rechecks_sole_binding_before_storing_grant(
-    integration_context: Context,
-    clean_connect_tables: None,
-    reauth_agents: None,
-    second_agent_binds: bool,
-) -> None:
-    """A re-authorize for the credential's only bound agent stores the new
-    grant only if no other agent is bound once the code exchange returns. A
-    binding that commits while the vendor is answering is seen by the check
-    in the token-write transaction: the connect is refused with the
-    other-agent-bound error and the stored grant is left as it was. With no
-    second binding the same flow stores the new grant."""
-    ctx = integration_context
-    provider = _RecordingOAuth2()
-    _patch_provider_registry(ctx, "my_oauth", provider)
-    credential_id = await _connected(ctx)
-    await _bind(ctx, _REAUTH_FIRST_AGENT, credential_id)
-
-    svc = ConnectService(ctx)
-    challenge = await svc.begin(
-        credential_id,
-        ConnectRequest(scopes=["read", "write"]),
-        identity=_OWNER,
-        browser_binding=_BINDING.claim,
-        sole_agent_id=_REAUTH_FIRST_AGENT,
-    )
-    assert isinstance(challenge, AuthCodeChallenge)
-    release = asyncio.Event()
-    provider.hold_after_exchange = release
-
-    with structlog.testing.capture_logs() as logs:
-        async with asyncio.TaskGroup() as tg:
-            complete = tg.create_task(
-                _raises(
-                    svc.complete(
-                        challenge.state,
-                        ConnectCallback(code="code-reauthorize"),
-                        browser_binding=_BINDING.value,
-                    )
-                )
-            )
-            await asyncio.wait_for(provider.exchanged.wait(), timeout=5)
-            if second_agent_binds:
-                await _bind(ctx, _REAUTH_SECOND_AGENT, credential_id)
-            release.set()
-
-    # The pre-exchange check passed: the code reached the vendor exactly once.
-    assert provider.posted_to == ["https://idp.example.com/token"]
-    refusals = [
-        entry
-        for entry in logs
-        if entry["event"] == "oauth_reauthorize_refused_other_agent_bound"
-        and entry["credential_id"] == credential_id
-        and entry["agent_id"] == _REAUTH_FIRST_AGENT
-    ]
-    if second_agent_binds:
-        error = complete.result()
-        assert isinstance(error, ConnectFlowError)
-        assert str(error) == "re-authorize refused: another agent is bound to the credential"
-        assert len(refusals) == 1
-        assert await _stored_access_token(ctx, credential_id) == "at-old"
-    else:
-        assert complete.result() is None
-        assert refusals == []
-        assert await _stored_access_token(ctx, credential_id) == "at-reconnected"
 
 
 def _require_postgres(ctx: Context) -> None:
@@ -1045,37 +938,19 @@ async def _parked_on_bindings_lock(ctx: Context, credential_id: str) -> None:
         await asyncio.sleep(0.01)
 
 
-async def _blocked_by(db: DatabaseSession, holder_pid: int) -> None:
-    """Return once some session waits on a lock held by backend ``holder_pid``."""
-    while True:
-        async with db.session() as session:
-            waiting = (
-                await session.execute(
-                    text(
-                        "SELECT count(*) FROM pg_stat_activity"
-                        " WHERE CAST(:pid AS integer) = ANY(pg_blocking_pids(pid))"
-                    ),
-                    {"pid": holder_pid},
-                )
-            ).scalar_one()
-        if waiting:
-            return
-        await asyncio.sleep(0.01)
-
-
 async def _bind_second_agent(ctx: Context, credential_id: str, binder: str) -> None:
     async with ctx.admin_db.transaction() as session:
         if binder == "admin_repository":
             await AgentCredentialBindingRepository.bind(
                 session,
-                agent_id=_REAUTH_SECOND_AGENT,
+                agent_id=_LOCK_SECOND_AGENT,
                 credential_id=credential_id,
                 created_by=_OWNER.sub,
             )
         else:
             await EffectsRepository.bind_agent_to_credential(
                 session,
-                agent_id=_REAUTH_SECOND_AGENT,
+                agent_id=_LOCK_SECOND_AGENT,
                 credential_id=credential_id,
                 rule_set_id=None,
                 created_by=_OWNER.sub,
@@ -1091,10 +966,10 @@ async def _bound_agents(ctx: Context, credential_id: str) -> list[str]:
 
 
 @pytest.mark.parametrize("binder", ["admin_repository", "connect_effects"])
-async def test_binding_waits_while_sole_binding_check_holds_lock(
+async def test_binding_waits_while_the_bindings_lock_is_held(
     integration_context: Context,
     clean_connect_tables: None,
-    reauth_agents: None,
+    lock_agents: None,
     binder: str,
 ) -> None:
     """Both binding writers park on the credential's bindings lock and
@@ -1110,63 +985,4 @@ async def test_binding_waits_while_sole_binding_check_holds_lock(
         assert not bind.done()
         assert await _bound_agents(ctx, credential_id) == []
 
-    assert await _bound_agents(ctx, credential_id) == [_REAUTH_SECOND_AGENT]
-
-
-async def test_reauthorize_holds_bindings_lock_until_grant_commits(
-    integration_context: Context,
-    clean_connect_tables: None,
-    reauth_agents: None,
-) -> None:
-    """A binding attempted while a re-authorize is storing its grant waits
-    for the token write to commit, so the grant is stored for the sole
-    agent and the binding commits only after it. The token write is parked by
-    holding the token row, which the re-authorize reaches with the bindings
-    lock already taken."""
-    ctx = integration_context
-    _require_postgres(ctx)
-    provider = _RecordingOAuth2()
-    _patch_provider_registry(ctx, "my_oauth", provider)
-    credential_id = await _connected(ctx)
-    await _bind(ctx, _REAUTH_FIRST_AGENT, credential_id)
-    svc = ConnectService(ctx)
-    challenge = await svc.begin(
-        credential_id,
-        ConnectRequest(scopes=["read", "write"]),
-        identity=_OWNER,
-        browser_binding=_BINDING.claim,
-        sole_agent_id=_REAUTH_FIRST_AGENT,
-    )
-    assert isinstance(challenge, AuthCodeChallenge)
-    token_when_bound: list[str] = []
-
-    async def reauthorize() -> None:
-        await svc.complete(
-            challenge.state,
-            ConnectCallback(code="code-reauthorize"),
-            browser_binding=_BINDING.value,
-        )
-
-    async def bind() -> None:
-        await _bind_second_agent(ctx, credential_id, "admin_repository")
-        token_when_bound.append(await _stored_access_token(ctx, credential_id))
-
-    async with asyncio.TaskGroup() as tg, ctx.control_db.transaction() as row_holder:
-        await row_holder.execute(
-            text("SELECT id FROM oauth_tokens WHERE credential_id = :cid FOR UPDATE"),
-            {"cid": credential_id},
-        )
-        holder_pid = (await row_holder.execute(text("SELECT pg_backend_pid()"))).scalar_one()
-        reauth_task = tg.create_task(reauthorize())
-        await asyncio.wait_for(_blocked_by(ctx.control_db, int(holder_pid)), timeout=5)
-        bind_task = tg.create_task(bind())
-        await asyncio.wait_for(_parked_on_bindings_lock(ctx, credential_id), timeout=5)
-        assert not reauth_task.done()
-        assert not bind_task.done()
-
-    # The binding committed only once the new grant was visible.
-    assert token_when_bound == ["at-reconnected"]
-    assert await _stored_access_token(ctx, credential_id) == "at-reconnected"
-    assert await _bound_agents(ctx, credential_id) == sorted(
-        [_REAUTH_FIRST_AGENT, _REAUTH_SECOND_AGENT]
-    )
+    assert await _bound_agents(ctx, credential_id) == [_LOCK_SECOND_AGENT]

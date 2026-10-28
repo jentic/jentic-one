@@ -224,6 +224,20 @@ steps are what stands between you and Phase 6b.
 **Rollback after Phase 6b** is two steps, not one — see the Phase 6b
 section below.
 
+## Upgrading to the connect-session edits release
+
+The first release that carries connect-session edits (an agent asking for a
+change to its own access).
+
+- **The rejection cooldown is off by default.**
+  `control.connect.rejection_cooldown_hours` now defaults to `0` (it was
+  `24`), so an agent whose request a human rejected may ask again at once
+  instead of getting `429 recently_rejected`. Its open requests are still
+  capped by `control.connect.max_open_sessions_per_agent` (currently default
+  `10`; `429 too_many_open_sessions` past it). A value you set is kept; set
+  it to keep the hold (it now also covers an agent's access-change requests
+  for the same binding).
+
 ## Upgrading to 0.44.0
 
 - **Breaking: `toolkit_id` is no longer a filter on `GET /executions` or

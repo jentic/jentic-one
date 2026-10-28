@@ -541,10 +541,11 @@ def test_grant_channel_bearer_resolves_through_verify_token() -> None:
         )
         assert resp.status_code == 200
         assert seen["credential"] == "at_grant_channel"
-        # Malformed args are an invalid-params protocol error — proving the
-        # call passed auth and reached the tool dispatcher.
-        body = resp.json()
-        assert body.get("error", {}).get("code") == -32602
+        # Malformed args come back as a coded tool error, proving the call
+        # passed auth and reached the tool dispatcher.
+        result = resp.json()["result"]
+        assert result["isError"] is True
+        assert '"MISSING_ARGUMENT"' in result["content"][0]["text"]
 
 
 def test_resolved_identity_is_stamped_origin_mcp(monkeypatch: pytest.MonkeyPatch) -> None:

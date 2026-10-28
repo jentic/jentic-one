@@ -811,6 +811,249 @@
         "title": "AgentResponse",
         "type": "object"
       },
+      "AmendSessionRequest": {
+        "additionalProperties": false,
+        "description": "Change an open session's ask; fields sent replace those parts, the rest stay.",
+        "examples": [
+          {
+            "reason": "Also needs to label issues",
+            "requested_permission_rules": [
+              {
+                "comment": "Lets the agent draft replies, never send them.",
+                "effect": "allow",
+                "match_mode": "prefix",
+                "methods": [
+                  "GET"
+                ],
+                "operations": [
+                  "listCharges"
+                ],
+                "path": "/v1/charges"
+              }
+            ],
+            "requested_scopes": [
+              "repo"
+            ],
+            "resume": true,
+            "rules": {
+              "add": [
+                {
+                  "before": "apr_6968b3987c22b63e87e79f06",
+                  "rule": {
+                    "comment": "Lets the agent draft replies, never send them.",
+                    "effect": "allow",
+                    "match_mode": "prefix",
+                    "methods": [
+                      "GET"
+                    ],
+                    "operations": [
+                      "listCharges"
+                    ],
+                    "path": "/v1/charges"
+                  }
+                }
+              ],
+              "remove": [
+                "apr_6968b3987c22b63e87e79f06"
+              ],
+              "set": [
+                {
+                  "comment": "Lets the agent draft replies, never send them.",
+                  "effect": "allow",
+                  "match_mode": "prefix",
+                  "methods": [
+                    "GET"
+                  ],
+                  "operations": [
+                    "listCharges"
+                  ],
+                  "path": "/v1/charges"
+                }
+              ]
+            },
+            "scopes": {
+              "add": [
+                "gmail.send"
+              ],
+              "comments": {
+                "gmail.send": "To send the replies I draft"
+              },
+              "remove": [
+                "gmail.modify"
+              ],
+              "set": [
+                "gmail.readonly",
+                "gmail.send"
+              ]
+            }
+          }
+        ],
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why, shown to the reviewer.",
+            "examples": [
+              "Also needs to label issues"
+            ],
+            "title": "Reason"
+          },
+          "requested_permission_rules": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/PermissionRuleSchema"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Create sessions: the rules to ask for, replacing the current ask.",
+            "examples": [
+              [
+                {
+                  "comment": "Lets the agent draft replies, never send them.",
+                  "effect": "allow",
+                  "match_mode": "prefix",
+                  "methods": [
+                    "GET"
+                  ],
+                  "operations": [
+                    "listCharges"
+                  ],
+                  "path": "/v1/charges"
+                }
+              ]
+            ],
+            "title": "Requested Permission Rules"
+          },
+          "requested_scopes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Create sessions: the scopes to ask for, replacing the current ask.",
+            "examples": [
+              [
+                "repo"
+              ]
+            ],
+            "title": "Requested Scopes"
+          },
+          "resume": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Edit sessions: resume a suspended binding.",
+            "examples": [
+              true
+            ],
+            "title": "Resume"
+          },
+          "rules": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EditRulesRequest"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Edit sessions: the rule change, relative to the baseline.",
+            "examples": [
+              {
+                "add": [
+                  {
+                    "before": "apr_6968b3987c22b63e87e79f06",
+                    "rule": {
+                      "comment": "Lets the agent draft replies, never send them.",
+                      "effect": "allow",
+                      "match_mode": "prefix",
+                      "methods": [
+                        "GET"
+                      ],
+                      "operations": [
+                        "listCharges"
+                      ],
+                      "path": "/v1/charges"
+                    }
+                  }
+                ],
+                "remove": [
+                  "apr_6968b3987c22b63e87e79f06"
+                ],
+                "set": [
+                  {
+                    "comment": "Lets the agent draft replies, never send them.",
+                    "effect": "allow",
+                    "match_mode": "prefix",
+                    "methods": [
+                      "GET"
+                    ],
+                    "operations": [
+                      "listCharges"
+                    ],
+                    "path": "/v1/charges"
+                  }
+                ]
+              }
+            ]
+          },
+          "scopes": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EditScopesRequest"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Edit sessions: the scope change, replacing the current ask.",
+            "examples": [
+              {
+                "add": [
+                  "gmail.send"
+                ],
+                "comments": {
+                  "gmail.send": "To send the replies I draft"
+                },
+                "remove": [
+                  "gmail.modify"
+                ],
+                "set": [
+                  "gmail.readonly",
+                  "gmail.send"
+                ]
+              }
+            ]
+          }
+        },
+        "title": "AmendSessionRequest",
+        "type": "object"
+      },
       "ApiImportLinksResponse": {
         "description": "Hypermedia links for an import response.",
         "examples": [
@@ -1010,6 +1253,7 @@
             "kind": "api_key",
             "permission_rules": [
               {
+                "comment": "Lets the agent draft replies, never send them.",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -1020,7 +1264,8 @@
                 ],
                 "path": "/v1/charges"
               }
-            ]
+            ],
+            "revision_id": "csr_6968b3983b8b91c75627bee6"
           }
         ],
         "properties": {
@@ -1091,6 +1336,7 @@
             "examples": [
               [
                 {
+                  "comment": "Lets the agent draft replies, never send them.",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -1109,6 +1355,22 @@
             "maxItems": 100,
             "title": "Permission Rules",
             "type": "array"
+          },
+          "revision_id": {
+            "anyOf": [
+              {
+                "maxLength": 30,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.",
+            "examples": [
+              "csr_6968b3983b8b91c75627bee6"
+            ],
+            "title": "Revision Id"
           }
         },
         "required": [
@@ -3328,6 +3590,7 @@
             "password": "example-secret",
             "permission_rules": [
               {
+                "comment": "Lets the agent draft replies, never send them.",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -3339,6 +3602,7 @@
                 "path": "/v1/charges"
               }
             ],
+            "revision_id": "csr_6968b3983b8b91c75627bee6",
             "username": "svc-reporting"
           }
         ],
@@ -3410,6 +3674,7 @@
             "examples": [
               [
                 {
+                  "comment": "Lets the agent draft replies, never send them.",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -3428,6 +3693,22 @@
             "maxItems": 100,
             "title": "Permission Rules",
             "type": "array"
+          },
+          "revision_id": {
+            "anyOf": [
+              {
+                "maxLength": 30,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.",
+            "examples": [
+              "csr_6968b3983b8b91c75627bee6"
+            ],
+            "title": "Revision Id"
           },
           "username": {
             "description": "Username to store.",
@@ -3461,6 +3742,7 @@
             "kind": "bearer",
             "permission_rules": [
               {
+                "comment": "Lets the agent draft replies, never send them.",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -3472,6 +3754,7 @@
                 "path": "/v1/charges"
               }
             ],
+            "revision_id": "csr_6968b3983b8b91c75627bee6",
             "token": "example-secret"
           }
         ],
@@ -3530,6 +3813,7 @@
             "examples": [
               [
                 {
+                  "comment": "Lets the agent draft replies, never send them.",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -3548,6 +3832,22 @@
             "maxItems": 100,
             "title": "Permission Rules",
             "type": "array"
+          },
+          "revision_id": {
+            "anyOf": [
+              {
+                "maxLength": 30,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.",
+            "examples": [
+              "csr_6968b3983b8b91c75627bee6"
+            ],
+            "title": "Revision Id"
           },
           "token": {
             "description": "Bearer token to store; write-only.",
@@ -3822,6 +4122,279 @@
           "type"
         ],
         "title": "BearerTokenUpdateRequest",
+        "type": "object"
+      },
+      "BindingAccessResponse": {
+        "description": "A binding's permission rules plus the rest of what it grants.",
+        "examples": [
+          {
+            "data": [
+              {
+                "_comment": "Read-only access to charges.",
+                "_system": false,
+                "effect": "allow",
+                "id": "apr_6968b3987c22b63e87e79f06",
+                "match_mode": "prefix",
+                "methods": [
+                  "GET"
+                ],
+                "operations": [
+                  "listCharges"
+                ],
+                "path": "/v1/charges"
+              }
+            ],
+            "granted_scopes": [
+              "repo",
+              "read:user"
+            ],
+            "rule_set": {
+              "curated": false,
+              "id": "prs_6968b3987c22b63e87e79f05",
+              "name": "Stripe read-only",
+              "rules": [
+                {
+                  "_comment": "Read-only access to charges.",
+                  "_system": false,
+                  "effect": "allow",
+                  "id": "apr_6968b3987c22b63e87e79f06",
+                  "match_mode": "prefix",
+                  "methods": [
+                    "GET"
+                  ],
+                  "operations": [
+                    "listCharges"
+                  ],
+                  "path": "/v1/charges"
+                }
+              ]
+            },
+            "scope_catalog": [
+              {
+                "classification": "write",
+                "description": "Send email as the user.",
+                "name": "gmail.send"
+              }
+            ],
+            "scopes_editable": true,
+            "suspended": false
+          }
+        ],
+        "properties": {
+          "data": {
+            "description": "The binding's permission rules, in evaluation order.",
+            "examples": [
+              [
+                {
+                  "_comment": "Read-only access to charges.",
+                  "_system": false,
+                  "effect": "allow",
+                  "id": "apr_6968b3987c22b63e87e79f06",
+                  "match_mode": "prefix",
+                  "methods": [
+                    "GET"
+                  ],
+                  "operations": [
+                    "listCharges"
+                  ],
+                  "path": "/v1/charges"
+                }
+              ]
+            ],
+            "items": {
+              "$ref": "#/components/schemas/PermissionRuleReadSchema"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "granted_scopes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Scopes the credential's OAuth grant holds; null when it has none.",
+            "examples": [
+              [
+                "repo",
+                "read:user"
+              ]
+            ],
+            "title": "Granted Scopes"
+          },
+          "rule_set": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BindingRuleSetSchema"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The shared rule set the binding points at; null when its own rules (`data`) apply. While a set is attached, `data` is dormant.",
+            "examples": [
+              {
+                "curated": false,
+                "id": "prs_6968b3987c22b63e87e79f05",
+                "name": "Stripe read-only",
+                "rules": [
+                  {
+                    "_comment": "Read-only access to charges.",
+                    "_system": false,
+                    "effect": "allow",
+                    "id": "apr_6968b3987c22b63e87e79f06",
+                    "match_mode": "prefix",
+                    "methods": [
+                      "GET"
+                    ],
+                    "operations": [
+                      "listCharges"
+                    ],
+                    "path": "/v1/charges"
+                  }
+                ]
+              }
+            ]
+          },
+          "scope_catalog": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ScopeOptionSchema"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The scopes the credential's vendor offers; an edit can add only these. Null when its client has no catalog, in which case a scope is passed to the vendor as named.",
+            "examples": [
+              [
+                {
+                  "classification": "write",
+                  "description": "Send email as the user.",
+                  "name": "gmail.send"
+                }
+              ]
+            ],
+            "title": "Scope Catalog"
+          },
+          "scopes_editable": {
+            "default": false,
+            "description": "True when an edit can change the credential's OAuth scopes (add or remove); the approver signs in to the vendor again for the new set.",
+            "examples": [
+              true
+            ],
+            "title": "Scopes Editable",
+            "type": "boolean"
+          },
+          "suspended": {
+            "description": "True when the binding is suspended and the agent cannot use it.",
+            "examples": [
+              false
+            ],
+            "title": "Suspended",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "data",
+          "suspended"
+        ],
+        "title": "BindingAccessResponse",
+        "type": "object"
+      },
+      "BindingRuleSetSchema": {
+        "description": "The shared rule set a binding points at.",
+        "examples": [
+          {
+            "curated": false,
+            "id": "prs_6968b3987c22b63e87e79f05",
+            "name": "Stripe read-only",
+            "rules": [
+              {
+                "_comment": "Read-only access to charges.",
+                "_system": false,
+                "effect": "allow",
+                "id": "apr_6968b3987c22b63e87e79f06",
+                "match_mode": "prefix",
+                "methods": [
+                  "GET"
+                ],
+                "operations": [
+                  "listCharges"
+                ],
+                "path": "/v1/charges"
+              }
+            ]
+          }
+        ],
+        "properties": {
+          "curated": {
+            "description": "True for a curated set, which an edit can copy but never change.",
+            "examples": [
+              false
+            ],
+            "title": "Curated",
+            "type": "boolean"
+          },
+          "id": {
+            "description": "ID of the rule set (`prs_…`).",
+            "examples": [
+              "prs_6968b3987c22b63e87e79f05"
+            ],
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "description": "Name of the rule set.",
+            "examples": [
+              "Stripe read-only"
+            ],
+            "title": "Name",
+            "type": "string"
+          },
+          "rules": {
+            "description": "The set's rules, in evaluation order. They apply instead of `data`.",
+            "examples": [
+              [
+                {
+                  "_comment": "Read-only access to charges.",
+                  "_system": false,
+                  "effect": "allow",
+                  "id": "apr_6968b3987c22b63e87e79f06",
+                  "match_mode": "prefix",
+                  "methods": [
+                    "GET"
+                  ],
+                  "operations": [
+                    "listCharges"
+                  ],
+                  "path": "/v1/charges"
+                }
+              ]
+            ],
+            "items": {
+              "$ref": "#/components/schemas/PermissionRuleReadSchema"
+            },
+            "title": "Rules",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "curated",
+          "rules"
+        ],
+        "title": "BindingRuleSetSchema",
         "type": "object"
       },
       "Body_consentAgentCreate": {
@@ -4327,6 +4900,7 @@
                 "created_at": "2026-01-15T09:30:00Z",
                 "credential_id": "cred_6968b39855d91a3561684b32",
                 "error_code": "access_denied",
+                "intent": "create",
                 "reason": "Needs read access to triage issues in the platform repo.",
                 "requested_by_actor_id": "agnt_6968b3984d1c238dbe7e2e29",
                 "session_id": "cs_6968b3983b8b91c75627bee5",
@@ -4350,6 +4924,7 @@
                   "created_at": "2026-01-15T09:30:00Z",
                   "credential_id": "cred_6968b39855d91a3561684b32",
                   "error_code": "access_denied",
+                  "intent": "create",
                   "reason": "Needs read access to triage issues in the platform repo.",
                   "requested_by_actor_id": "agnt_6968b3984d1c238dbe7e2e29",
                   "session_id": "cs_6968b3983b8b91c75627bee5",
@@ -4405,6 +4980,7 @@
             "created_at": "2026-01-15T09:30:00Z",
             "credential_id": "cred_6968b39855d91a3561684b32",
             "error_code": "access_denied",
+            "intent": "create",
             "reason": "Needs read access to triage issues in the platform repo.",
             "requested_by_actor_id": "agnt_6968b3984d1c238dbe7e2e29",
             "session_id": "cs_6968b3983b8b91c75627bee5",
@@ -4454,7 +5030,7 @@
             "type": "string"
           },
           "credential_id": {
-            "description": "ID of the session's credential (pending until the session connects).",
+            "description": "ID of the session's credential: pending until a create session connects; an edit session's is the live credential it changes.",
             "examples": [
               "cred_6968b39855d91a3561684b32"
             ],
@@ -4475,6 +5051,19 @@
               "access_denied"
             ],
             "title": "Error Code"
+          },
+          "intent": {
+            "default": "create",
+            "description": "`create` connects a new credential; `edit` changes an existing binding.",
+            "enum": [
+              "create",
+              "edit"
+            ],
+            "examples": [
+              "create"
+            ],
+            "title": "Intent",
+            "type": "string"
           },
           "reason": {
             "anyOf": [
@@ -5969,6 +6558,604 @@
         "title": "DeviceAuthorizationRegistrationCreateRequest",
         "type": "object"
       },
+      "EditConfirmSessionRequest": {
+        "additionalProperties": false,
+        "description": "Approve an edit session's change with the final rules the reviewer chose.",
+        "examples": [
+          {
+            "confirmed_scopes": [
+              "gmail.readonly",
+              "gmail.send"
+            ],
+            "kind": "edit",
+            "permission_rules": [
+              {
+                "comment": "Lets the agent draft replies, never send them.",
+                "effect": "allow",
+                "match_mode": "prefix",
+                "methods": [
+                  "GET"
+                ],
+                "operations": [
+                  "listCharges"
+                ],
+                "path": "/v1/charges"
+              }
+            ],
+            "resolve_conflicts": false,
+            "resume": false,
+            "revision_id": "csr_6968b3983b8b91c75627bee6"
+          }
+        ],
+        "properties": {
+          "confirmed_scopes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The final scope set (at most 100). Scopes beyond the credential's grant start a vendor consent; the rules and scopes land together when it completes. Omit to keep the grant as it is.",
+            "examples": [
+              [
+                "gmail.readonly",
+                "gmail.send"
+              ]
+            ],
+            "title": "Confirmed Scopes"
+          },
+          "kind": {
+            "const": "edit",
+            "description": "Confirm variant; always `edit`.",
+            "examples": [
+              "edit"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "permission_rules": {
+            "description": "The final rule list to apply, in order (at most 100). Replaces the binding's own rules, or its shared rule set's rules while one is attached.",
+            "examples": [
+              [
+                {
+                  "comment": "Lets the agent draft replies, never send them.",
+                  "effect": "allow",
+                  "match_mode": "prefix",
+                  "methods": [
+                    "GET"
+                  ],
+                  "operations": [
+                    "listCharges"
+                  ],
+                  "path": "/v1/charges"
+                }
+              ]
+            ],
+            "items": {
+              "$ref": "#/components/schemas/PermissionRuleSchema"
+            },
+            "maxItems": 100,
+            "title": "Permission Rules",
+            "type": "array"
+          },
+          "resolve_conflicts": {
+            "default": false,
+            "description": "Approve a revision that lists `conflicts`: the reviewer's `permission_rules` settle them. Without it, such a confirm is 409 edit_conflicted.",
+            "examples": [
+              false
+            ],
+            "title": "Resolve Conflicts",
+            "type": "boolean"
+          },
+          "resume": {
+            "default": false,
+            "description": "Switch the binding back on if it is suspended.",
+            "examples": [
+              false
+            ],
+            "title": "Resume",
+            "type": "boolean"
+          },
+          "revision_id": {
+            "description": "The revision the reviewer saw (`edit.revision.id`); a newer one is 409 revision_changed.",
+            "examples": [
+              "csr_6968b3983b8b91c75627bee6"
+            ],
+            "maxLength": 30,
+            "minLength": 1,
+            "title": "Revision Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "revision_id",
+          "permission_rules"
+        ],
+        "title": "EditConfirmSessionRequest",
+        "type": "object"
+      },
+      "EditConnectionRequest": {
+        "additionalProperties": false,
+        "description": "Ask to change an existing credential binding; a human approves the change.",
+        "examples": [
+          {
+            "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
+            "apply": true,
+            "credential_id": "cred_6968b39855d91a3561684b32",
+            "reason": "Needs to send replies, not just read",
+            "rules": {
+              "add": [
+                {
+                  "before": "apr_6968b3987c22b63e87e79f06",
+                  "rule": {
+                    "comment": "Lets the agent draft replies, never send them.",
+                    "effect": "allow",
+                    "match_mode": "prefix",
+                    "methods": [
+                      "GET"
+                    ],
+                    "operations": [
+                      "listCharges"
+                    ],
+                    "path": "/v1/charges"
+                  }
+                }
+              ],
+              "remove": [
+                "apr_6968b3987c22b63e87e79f06"
+              ],
+              "set": [
+                {
+                  "comment": "Lets the agent draft replies, never send them.",
+                  "effect": "allow",
+                  "match_mode": "prefix",
+                  "methods": [
+                    "GET"
+                  ],
+                  "operations": [
+                    "listCharges"
+                  ],
+                  "path": "/v1/charges"
+                }
+              ]
+            },
+            "scopes": {
+              "add": [
+                "gmail.send"
+              ],
+              "comments": {
+                "gmail.send": "To send the replies I draft"
+              },
+              "remove": [
+                "gmail.modify"
+              ],
+              "set": [
+                "gmail.readonly",
+                "gmail.send"
+              ]
+            }
+          }
+        ],
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "maxLength": 30,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The binding's agent. Required for humans; agent callers must omit it.",
+            "examples": [
+              "agnt_6968b3984d1c238dbe7e2e29"
+            ],
+            "title": "Agent Id"
+          },
+          "apply": {
+            "default": false,
+            "description": "A human approving their own change as they make it: it is written at once, with no review. A change that adds scopes starts the vendor consent instead (`challenge`). Agent callers are 403.",
+            "examples": [
+              true
+            ],
+            "title": "Apply",
+            "type": "boolean"
+          },
+          "credential_id": {
+            "description": "The binding's credential; it must already be bound to the agent.",
+            "examples": [
+              "cred_6968b39855d91a3561684b32"
+            ],
+            "maxLength": 30,
+            "minLength": 1,
+            "title": "Credential Id",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why the change is needed, shown to the reviewer.",
+            "examples": [
+              "Needs to send replies, not just read"
+            ],
+            "title": "Reason"
+          },
+          "resume": {
+            "default": false,
+            "description": "Switch a suspended binding back on; a no-op if it is already active.",
+            "title": "Resume",
+            "type": "boolean"
+          },
+          "rules": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EditRulesRequest"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The rule change. While the binding points at a shared rule set, it changes that set's rules.",
+            "examples": [
+              {
+                "add": [
+                  {
+                    "before": "apr_6968b3987c22b63e87e79f06",
+                    "rule": {
+                      "comment": "Lets the agent draft replies, never send them.",
+                      "effect": "allow",
+                      "match_mode": "prefix",
+                      "methods": [
+                        "GET"
+                      ],
+                      "operations": [
+                        "listCharges"
+                      ],
+                      "path": "/v1/charges"
+                    }
+                  }
+                ],
+                "remove": [
+                  "apr_6968b3987c22b63e87e79f06"
+                ],
+                "set": [
+                  {
+                    "comment": "Lets the agent draft replies, never send them.",
+                    "effect": "allow",
+                    "match_mode": "prefix",
+                    "methods": [
+                      "GET"
+                    ],
+                    "operations": [
+                      "listCharges"
+                    ],
+                    "path": "/v1/charges"
+                  }
+                ]
+              }
+            ]
+          },
+          "scopes": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EditScopesRequest"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The scope change. OAuth credentials connected through an authorization-code or device-authorization app only; others are 422 scopes_not_supported.",
+            "examples": [
+              {
+                "add": [
+                  "gmail.send"
+                ],
+                "comments": {
+                  "gmail.send": "To send the replies I draft"
+                },
+                "remove": [
+                  "gmail.modify"
+                ],
+                "set": [
+                  "gmail.readonly",
+                  "gmail.send"
+                ]
+              }
+            ]
+          }
+        },
+        "required": [
+          "credential_id"
+        ],
+        "title": "EditConnectionRequest",
+        "type": "object"
+      },
+      "EditRuleAdd": {
+        "additionalProperties": false,
+        "description": "One rule to add to the binding.",
+        "examples": [
+          {
+            "before": "apr_6968b3987c22b63e87e79f06",
+            "rule": {
+              "comment": "Lets the agent draft replies, never send them.",
+              "effect": "allow",
+              "match_mode": "prefix",
+              "methods": [
+                "GET"
+              ],
+              "operations": [
+                "listCharges"
+              ],
+              "path": "/v1/charges"
+            }
+          }
+        ],
+        "properties": {
+          "before": {
+            "anyOf": [
+              {
+                "maxLength": 30,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "ID of the rule to insert this one before (first match wins); appended when omitted.",
+            "examples": [
+              "apr_6968b3987c22b63e87e79f06"
+            ],
+            "title": "Before"
+          },
+          "rule": {
+            "$ref": "#/components/schemas/PermissionRuleSchema",
+            "description": "The rule to add.",
+            "examples": [
+              {
+                "comment": "Lets the agent draft replies, never send them.",
+                "effect": "allow",
+                "match_mode": "prefix",
+                "methods": [
+                  "GET"
+                ],
+                "operations": [
+                  "listCharges"
+                ],
+                "path": "/v1/charges"
+              }
+            ]
+          }
+        },
+        "required": [
+          "rule"
+        ],
+        "title": "EditRuleAdd",
+        "type": "object"
+      },
+      "EditRulesRequest": {
+        "additionalProperties": false,
+        "description": "A change to the binding's rules: `add`/`remove`, or the full list in `set`.",
+        "examples": [
+          {
+            "add": [
+              {
+                "before": "apr_6968b3987c22b63e87e79f06",
+                "rule": {
+                  "comment": "Lets the agent draft replies, never send them.",
+                  "effect": "allow",
+                  "match_mode": "prefix",
+                  "methods": [
+                    "GET"
+                  ],
+                  "operations": [
+                    "listCharges"
+                  ],
+                  "path": "/v1/charges"
+                }
+              }
+            ],
+            "remove": [
+              "apr_6968b3987c22b63e87e79f06"
+            ],
+            "set": [
+              {
+                "comment": "Lets the agent draft replies, never send them.",
+                "effect": "allow",
+                "match_mode": "prefix",
+                "methods": [
+                  "GET"
+                ],
+                "operations": [
+                  "listCharges"
+                ],
+                "path": "/v1/charges"
+              }
+            ]
+          }
+        ],
+        "properties": {
+          "add": {
+            "description": "Rules to add (at most 100).",
+            "examples": [
+              [
+                {
+                  "before": "apr_6968b3987c22b63e87e79f06",
+                  "rule": {
+                    "comment": "Lets the agent draft replies, never send them.",
+                    "effect": "allow",
+                    "match_mode": "prefix",
+                    "methods": [
+                      "GET"
+                    ],
+                    "operations": [
+                      "listCharges"
+                    ],
+                    "path": "/v1/charges"
+                  }
+                }
+              ]
+            ],
+            "items": {
+              "$ref": "#/components/schemas/EditRuleAdd"
+            },
+            "maxItems": 100,
+            "title": "Add",
+            "type": "array"
+          },
+          "remove": {
+            "description": "IDs of rules to remove (at most 100).",
+            "examples": [
+              [
+                "apr_6968b3987c22b63e87e79f06"
+              ]
+            ],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Remove",
+            "type": "array"
+          },
+          "set": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/PermissionRuleSchema"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The full rule list to replace the current one with, in order (at most 100). Not combined with add or remove.",
+            "examples": [
+              [
+                {
+                  "comment": "Lets the agent draft replies, never send them.",
+                  "effect": "allow",
+                  "match_mode": "prefix",
+                  "methods": [
+                    "GET"
+                  ],
+                  "operations": [
+                    "listCharges"
+                  ],
+                  "path": "/v1/charges"
+                }
+              ]
+            ],
+            "title": "Set"
+          }
+        },
+        "title": "EditRulesRequest",
+        "type": "object"
+      },
+      "EditScopesRequest": {
+        "additionalProperties": false,
+        "description": "A change to the binding's OAuth credential scopes: `add`/`remove`, or the full list in `set`.\n\nConfirming a change runs a vendor sign-in for exactly the resulting scopes;\nother agents bound to the credential get the change too.",
+        "examples": [
+          {
+            "add": [
+              "gmail.send"
+            ],
+            "comments": {
+              "gmail.send": "To send the replies I draft"
+            },
+            "remove": [
+              "gmail.modify"
+            ],
+            "set": [
+              "gmail.readonly",
+              "gmail.send"
+            ]
+          }
+        ],
+        "properties": {
+          "add": {
+            "description": "Scopes to add (at most 100).",
+            "examples": [
+              [
+                "gmail.send"
+              ]
+            ],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Add",
+            "type": "array"
+          },
+          "comments": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Why each scope is asked for (added or removed), by scope name. Shown to the reviewer.",
+            "examples": [
+              {
+                "gmail.send": "To send the replies I draft"
+              }
+            ],
+            "maxProperties": 100,
+            "title": "Comments",
+            "type": "object"
+          },
+          "remove": {
+            "description": "Scopes to remove (at most 100).",
+            "examples": [
+              [
+                "gmail.modify"
+              ]
+            ],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Remove",
+            "type": "array"
+          },
+          "set": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The full scope list to replace the grant's with. Not combined with add or remove.",
+            "examples": [
+              [
+                "gmail.readonly",
+                "gmail.send"
+              ]
+            ],
+            "title": "Set"
+          }
+        },
+        "title": "EditScopesRequest",
+        "type": "object"
+      },
       "EffectivePermission": {
         "description": "A single effective permission with provenance.",
         "examples": [
@@ -7001,7 +8188,7 @@
       },
       "ExistingCredentialConfirmSessionRequest": {
         "additionalProperties": false,
-        "description": "Bind a credential the approver already holds (OAuth only if its grant covers the ask).",
+        "description": "Bind a credential the approver already holds.\n\nWhen its OAuth grant lacks scopes the session asks for, the response is\nthe vendor challenge for them and the bind lands with the grant.",
         "examples": [
           {
             "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
@@ -7011,6 +8198,7 @@
             "kind": "existing_credential",
             "permission_rules": [
               {
+                "comment": "Lets the agent draft replies, never send them.",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -7021,7 +8209,8 @@
                 ],
                 "path": "/v1/charges"
               }
-            ]
+            ],
+            "revision_id": "csr_6968b3983b8b91c75627bee6"
           }
         ],
         "properties": {
@@ -7089,6 +8278,7 @@
             "examples": [
               [
                 {
+                  "comment": "Lets the agent draft replies, never send them.",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -7107,6 +8297,22 @@
             "maxItems": 100,
             "title": "Permission Rules",
             "type": "array"
+          },
+          "revision_id": {
+            "anyOf": [
+              {
+                "maxLength": 30,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.",
+            "examples": [
+              "csr_6968b3983b8b91c75627bee6"
+            ],
+            "title": "Revision Id"
           }
         },
         "required": [
@@ -8261,6 +9467,7 @@
             "reason": "Needs read access to triage issues in the platform repo.",
             "requested_permission_rules": [
               {
+                "comment": "Lets the agent draft replies, never send them.",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -8397,6 +9604,7 @@
             "examples": [
               [
                 {
+                  "comment": "Lets the agent draft replies, never send them.",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -12148,6 +13356,7 @@
             "kind": "oauth",
             "permission_rules": [
               {
+                "comment": "Lets the agent draft replies, never send them.",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -12158,7 +13367,8 @@
                 ],
                 "path": "/v1/charges"
               }
-            ]
+            ],
+            "revision_id": "csr_6968b3983b8b91c75627bee6"
           }
         ],
         "properties": {
@@ -12238,6 +13448,7 @@
             "examples": [
               [
                 {
+                  "comment": "Lets the agent draft replies, never send them.",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -12256,6 +13467,22 @@
             "maxItems": 100,
             "title": "Permission Rules",
             "type": "array"
+          },
+          "revision_id": {
+            "anyOf": [
+              {
+                "maxLength": 30,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.",
+            "examples": [
+              "csr_6968b3983b8b91c75627bee6"
+            ],
+            "title": "Revision Id"
           }
         },
         "required": [
@@ -14061,6 +15288,7 @@
             "kind": "own_oauth_client",
             "permission_rules": [
               {
+                "comment": "Lets the agent draft replies, never send them.",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -14072,6 +15300,7 @@
                 "path": "/v1/charges"
               }
             ],
+            "revision_id": "csr_6968b3983b8b91c75627bee6",
             "token_url": "https://github.com/login/oauth/access_token"
           }
         ],
@@ -14178,6 +15407,7 @@
             "examples": [
               [
                 {
+                  "comment": "Lets the agent draft replies, never send them.",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -14196,6 +15426,22 @@
             "maxItems": 100,
             "title": "Permission Rules",
             "type": "array"
+          },
+          "revision_id": {
+            "anyOf": [
+              {
+                "maxLength": 30,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.",
+            "examples": [
+              "csr_6968b3983b8b91c75627bee6"
+            ],
+            "title": "Revision Id"
           },
           "token_url": {
             "description": "Token endpoint URL of the OAuth app.",
@@ -14333,6 +15579,7 @@
                 "_comment": "Read-only access to charges.",
                 "_system": false,
                 "effect": "allow",
+                "id": "apr_6968b3987c22b63e87e79f06",
                 "match_mode": "prefix",
                 "methods": [
                   "GET"
@@ -14354,6 +15601,7 @@
                   "_comment": "Read-only access to charges.",
                   "_system": false,
                   "effect": "allow",
+                  "id": "apr_6968b3987c22b63e87e79f06",
                   "match_mode": "prefix",
                   "methods": [
                     "GET"
@@ -14385,6 +15633,7 @@
             "_comment": "Read-only access to charges.",
             "_system": false,
             "effect": "allow",
+            "id": "apr_6968b3987c22b63e87e79f06",
             "match_mode": "prefix",
             "methods": [
               "GET"
@@ -14432,6 +15681,21 @@
             ],
             "title": "Effect",
             "type": "string"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "ID of the rule (`apr_…` on a binding, `prr_…` in a rule set), so a connect-session edit can name it in `remove` or `before`.",
+            "examples": [
+              "apr_6968b3987c22b63e87e79f06"
+            ],
+            "title": "Id"
           },
           "match_mode": {
             "default": "regex",
@@ -14514,6 +15778,7 @@
         "description": "Permission rule for an agent↔credential binding.\n\nRules are evaluated first-match-wins. If no rule matches, the request is\ndenied (default-deny). A binding with zero rules therefore blocks all\noperations — users must explicitly add at least one allow rule.",
         "examples": [
           {
+            "comment": "Lets the agent draft replies, never send them.",
             "effect": "allow",
             "match_mode": "prefix",
             "methods": [
@@ -14526,6 +15791,22 @@
           }
         ],
         "properties": {
+          "comment": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why the rule is there, in words. Shown wherever the rule is listed.",
+            "examples": [
+              "Lets the agent draft replies, never send them."
+            ],
+            "title": "Comment"
+          },
           "effect": {
             "description": "Whether this rule allows the matched request, denies it, or holds it for human approval before the broker executes it.",
             "enum": [
@@ -14823,6 +16104,7 @@
           {
             "add": [
               {
+                "comment": "Lets the agent draft replies, never send them.",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -14857,6 +16139,7 @@
             "examples": [
               [
                 {
+                  "comment": "Lets the agent draft replies, never send them.",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -15569,125 +16852,6 @@
         "title": "ProviderDiscoveryResponse",
         "type": "object"
       },
-      "ReauthorizeConfirmSessionRequest": {
-        "additionalProperties": false,
-        "description": "Bind the approver's OAuth credential and re-consent it with the requested scopes.\n\nRefused when another agent is bound to the credential.",
-        "examples": [
-          {
-            "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
-            "credential_id": "cred_6968b39855d91a3561684b32",
-            "digest": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
-            "expected_agent_id": "agnt_6968b3984d1c238dbe7e2e29",
-            "kind": "reauthorize",
-            "permission_rules": [
-              {
-                "effect": "allow",
-                "match_mode": "prefix",
-                "methods": [
-                  "GET"
-                ],
-                "operations": [
-                  "listCharges"
-                ],
-                "path": "/v1/charges"
-              }
-            ]
-          }
-        ],
-        "properties": {
-          "agent_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Agent to bind when the session has none; ignored if the session already has one.",
-            "examples": [
-              "agnt_6968b3984d1c238dbe7e2e29"
-            ],
-            "title": "Agent Id"
-          },
-          "credential_id": {
-            "description": "ID of the approver's OAuth credential to bind and re-consent.",
-            "examples": [
-              "cred_6968b39855d91a3561684b32"
-            ],
-            "maxLength": 30,
-            "minLength": 1,
-            "title": "Credential Id",
-            "type": "string"
-          },
-          "digest": {
-            "description": "Review digest echoed from the review data; a mismatch is 409 review_stale.",
-            "examples": [
-              "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
-            ],
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Digest",
-            "type": "string"
-          },
-          "expected_agent_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Agent ID from the review the approver saw; a mismatch is 409 review_stale.",
-            "examples": [
-              "agnt_6968b3984d1c238dbe7e2e29"
-            ],
-            "title": "Expected Agent Id"
-          },
-          "kind": {
-            "const": "reauthorize",
-            "description": "Confirm variant; always `reauthorize`.",
-            "examples": [
-              "reauthorize"
-            ],
-            "title": "Kind",
-            "type": "string"
-          },
-          "permission_rules": {
-            "description": "Permission rules to bind for the agent (at most 100).",
-            "examples": [
-              [
-                {
-                  "effect": "allow",
-                  "match_mode": "prefix",
-                  "methods": [
-                    "GET"
-                  ],
-                  "operations": [
-                    "listCharges"
-                  ],
-                  "path": "/v1/charges"
-                }
-              ]
-            ],
-            "items": {
-              "$ref": "#/components/schemas/PermissionRuleSchema"
-            },
-            "maxItems": 100,
-            "title": "Permission Rules",
-            "type": "array"
-          }
-        },
-        "required": [
-          "permission_rules",
-          "digest",
-          "kind",
-          "credential_id"
-        ],
-        "title": "ReauthorizeConfirmSessionRequest",
-        "type": "object"
-      },
       "RedeemInviteRequest": {
         "description": "Payload for redeeming an invite token.",
         "examples": [
@@ -16161,6 +17325,7 @@
             "name": "Stripe read-only",
             "rules": [
               {
+                "comment": "Lets the agent draft replies, never send them.",
                 "effect": "allow",
                 "match_mode": "prefix",
                 "methods": [
@@ -16205,6 +17370,7 @@
             "examples": [
               [
                 {
+                  "comment": "Lets the agent draft replies, never send them.",
                   "effect": "allow",
                   "match_mode": "prefix",
                   "methods": [
@@ -16319,6 +17485,7 @@
                 "_comment": "Read-only access to charges.",
                 "_system": false,
                 "effect": "allow",
+                "id": "apr_6968b3987c22b63e87e79f06",
                 "match_mode": "prefix",
                 "methods": [
                   "GET"
@@ -16411,6 +17578,7 @@
                   "_comment": "Read-only access to charges.",
                   "_system": false,
                   "effect": "allow",
+                  "id": "apr_6968b3987c22b63e87e79f06",
                   "match_mode": "prefix",
                   "methods": [
                     "GET"
@@ -16636,6 +17804,54 @@
           }
         },
         "title": "RuntimeConfig",
+        "type": "object"
+      },
+      "ScopeOptionSchema": {
+        "description": "One scope the credential's vendor offers, which an edit can add or remove.",
+        "examples": [
+          {
+            "classification": "write",
+            "description": "Send email as the user.",
+            "name": "gmail.send"
+          }
+        ],
+        "properties": {
+          "classification": {
+            "description": "What the scope lets a holder do.",
+            "enum": [
+              "read",
+              "write",
+              "admin"
+            ],
+            "examples": [
+              "write"
+            ],
+            "title": "Classification",
+            "type": "string"
+          },
+          "description": {
+            "description": "What the scope grants, in words.",
+            "examples": [
+              "Send email as the user."
+            ],
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "description": "The scope as the vendor names it.",
+            "examples": [
+              "gmail.send"
+            ],
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "classification",
+          "description"
+        ],
+        "title": "ScopeOptionSchema",
         "type": "object"
       },
       "SearchLinksResponse": {
@@ -34200,6 +35416,7 @@
                       "created_at": "2026-01-15T09:30:00Z",
                       "credential_id": "cred_6968b39855d91a3561684b32",
                       "error_code": "access_denied",
+                      "intent": "create",
                       "reason": "Needs read access to triage issues in the platform repo.",
                       "requested_by_actor_id": "agnt_6968b3984d1c238dbe7e2e29",
                       "session_id": "cs_6968b3983b8b91c75627bee5",
@@ -34549,6 +35766,196 @@
       },
       "summary": "Get review data for a connect session"
     },
+    "/connect-sessions/{session_id}/revisions": {
+      "description": "`GET`: List a connect session's revisions.",
+      "get": {
+        "description": "Every version of what the session asks for, oldest first.\n\nThe review shows the current revision against today's access; this is the\nhistory behind it, one entry per ask and amend. Gated like the review\nread.",
+        "operationId": "listConnectSessionRevisions",
+        "parameters": [
+          {
+            "description": "ID of the connect session.",
+            "examples": {
+              "example": {
+                "summary": "Connect session ID",
+                "value": "cs_6968b3983b8b91c75627bee5"
+              }
+            },
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "description": "ID of the connect session.",
+              "examples": [
+                "cs_6968b3983b8b91c75627bee5"
+              ],
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.",
+            "examples": {
+              "example": {
+                "summary": "Opaque flow handle",
+                "value": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+              }
+            },
+            "in": "query",
+            "name": "poll_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "examples": [
+                    "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.",
+              "examples": [
+                "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+              ],
+              "title": "Poll Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "OAuth2": []
+          }
+        ],
+        "summary": "List a connect session's revisions",
+        "tags": [
+          "Integrations"
+        ]
+      },
+      "summary": "List a connect session's revisions"
+    },
     "/connect-sessions/{session_id}/status": {
       "description": "`GET`: Poll a connect session's status.",
       "get": {
@@ -34739,6 +36146,266 @@
       },
       "summary": "Poll a connect session's status"
     },
+    "/connect-sessions/{session_id}:amend": {
+      "description": "`POST`: Amend an open connect session's request.",
+      "post": {
+        "description": "Change what an open session asks for; the reviewer sees the new revision.\n\nThe session's initiator, or a human who may confirm it (a reviewer\nediting the request; the revision records who made it), while it is open\n(not yet confirmed or ended); a closed session is 409 `session_closed`.\nThe fields sent replace those parts of the ask and the rest stay. Edit sessions take `rules` and\n`resume`, relative to the binding as it was when the edit opened; create\nsessions take `requested_permission_rules` and `requested_scopes`, which\nreplace the ask outright; both take `reason`. The session id, approval\nURL and poll token stay the same, and any confirm must name the new\n`revision_id`.",
+        "operationId": "amendConnectSession",
+        "parameters": [
+          {
+            "description": "ID of the connect session.",
+            "examples": {
+              "example": {
+                "summary": "Connect session ID",
+                "value": "cs_6968b3983b8b91c75627bee5"
+              }
+            },
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "description": "ID of the connect session.",
+              "examples": [
+                "cs_6968b3983b8b91c75627bee5"
+              ],
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "reason": "Also needs to label issues",
+                "requested_permission_rules": [
+                  {
+                    "comment": "Lets the agent draft replies, never send them.",
+                    "effect": "allow",
+                    "match_mode": "prefix",
+                    "methods": [
+                      "GET"
+                    ],
+                    "operations": [
+                      "listCharges"
+                    ],
+                    "path": "/v1/charges"
+                  }
+                ],
+                "requested_scopes": [
+                  "repo"
+                ],
+                "resume": true,
+                "rules": {
+                  "add": [
+                    {
+                      "before": "apr_6968b3987c22b63e87e79f06",
+                      "rule": {
+                        "comment": "Lets the agent draft replies, never send them.",
+                        "effect": "allow",
+                        "match_mode": "prefix",
+                        "methods": [
+                          "GET"
+                        ],
+                        "operations": [
+                          "listCharges"
+                        ],
+                        "path": "/v1/charges"
+                      }
+                    }
+                  ],
+                  "remove": [
+                    "apr_6968b3987c22b63e87e79f06"
+                  ],
+                  "set": [
+                    {
+                      "comment": "Lets the agent draft replies, never send them.",
+                      "effect": "allow",
+                      "match_mode": "prefix",
+                      "methods": [
+                        "GET"
+                      ],
+                      "operations": [
+                        "listCharges"
+                      ],
+                      "path": "/v1/charges"
+                    }
+                  ]
+                },
+                "scopes": {
+                  "add": [
+                    "gmail.send"
+                  ],
+                  "comments": {
+                    "gmail.send": "To send the replies I draft"
+                  },
+                  "remove": [
+                    "gmail.modify"
+                  ],
+                  "set": [
+                    "gmail.readonly",
+                    "gmail.send"
+                  ]
+                }
+              },
+              "schema": {
+                "$ref": "#/components/schemas/AmendSessionRequest"
+              }
+            }
+          },
+          "description": "Change an open session's ask; fields sent replace those parts, the rest stay.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request conflicts with the current state of the resource.",
+                  "instance": "/example/path",
+                  "status": 409,
+                  "title": "Conflict",
+                  "type": "conflict"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "The session is closed: confirmed or ended"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "OAuth2": []
+          }
+        ],
+        "summary": "Amend an open connect session's request",
+        "tags": [
+          "Integrations"
+        ]
+      },
+      "summary": "Amend an open connect session's request"
+    },
     "/connect-sessions/{session_id}:cancel": {
       "description": "`POST`: Cancel an in-flight connect session.",
       "post": {
@@ -34927,7 +36594,7 @@
     "/connect-sessions/{session_id}:confirm": {
       "description": "`POST`: Confirm a connect session.",
       "post": {
-        "description": "Called by the review page after the human confirms selections.\n\nThe body's ``kind`` picks the variant (no ``kind`` is the OAuth\nvariant): OAuth scopes, a secret for a ``manual_*`` session\n(``api_key`` / ``bearer`` / ``basic``), the approver's own OAuth client\nfor an ``awaiting_app`` session, or a credential the approver already\nholds (``existing_credential``, ``reauthorize``). Secrets are write-only:\nthey never appear in a response, audit entry or log.\n\nShares the ``:connect`` per-actor rate bucket — this is the endpoint\nthat actually fires the vendor's device-authorization call, and a\nfailed ``begin`` leaves the session retryable, so it must not be\nfree to hammer during a vendor incident. Gated like the review read\n(``poll_token`` or owner / ``org:admin``; 403 otherwise). An agent\nwhose binding to a credential covering the session's API is suspended\n(including one picked at confirm) is refused with 409\n``connect_session_binding_suspended``.\n\nA response carrying an ``authorize_url`` also sets a short-lived\n``HttpOnly`` cookie scoped to the OAuth callback path: the vendor\nsign-in completes only in the approver's browser that called this\nendpoint, whoever opened the session.",
+        "description": "Called by the review page after the human confirms selections.\n\nThe body's ``kind`` picks the variant (no ``kind`` is the OAuth\nvariant): OAuth scopes, a secret for a ``manual_*`` session\n(``api_key`` / ``bearer`` / ``basic``), the approver's own OAuth client\nfor an ``awaiting_app`` session, or a credential the approver already\nholds (``existing_credential``), or an edit session's\nfinal rules (``edit``, naming the reviewed ``revision_id``). Secrets are write-only:\nthey never appear in a response, audit entry or log.\n\nShares the ``:connect`` per-actor rate bucket — this is the endpoint\nthat actually fires the vendor's device-authorization call, and a\nfailed ``begin`` leaves the session retryable, so it must not be\nfree to hammer during a vendor incident. Gated like the review read\n(``poll_token`` or owner / ``org:admin``; 403 otherwise). An agent\nwhose binding to a credential covering the session's API is suspended\n(including one picked at confirm) is refused with 409\n``connect_session_binding_suspended``.\n\nA response carrying an ``authorize_url`` also sets a short-lived\n``HttpOnly`` cookie scoped to the OAuth callback path: the vendor\nsign-in completes only in the approver's browser that called this\nendpoint, whoever opened the session.",
         "operationId": "confirmConnectSession",
         "parameters": [
           {
@@ -34991,10 +36658,10 @@
                     "api_key": "#/components/schemas/ApiKeyConfirmSessionRequest",
                     "basic": "#/components/schemas/BasicConfirmSessionRequest",
                     "bearer": "#/components/schemas/BearerConfirmSessionRequest",
+                    "edit": "#/components/schemas/EditConfirmSessionRequest",
                     "existing_credential": "#/components/schemas/ExistingCredentialConfirmSessionRequest",
                     "oauth": "#/components/schemas/OAuthConfirmSessionRequest",
-                    "own_oauth_client": "#/components/schemas/OwnOAuthClientConfirmSessionRequest",
-                    "reauthorize": "#/components/schemas/ReauthorizeConfirmSessionRequest"
+                    "own_oauth_client": "#/components/schemas/OwnOAuthClientConfirmSessionRequest"
                   },
                   "propertyName": "kind"
                 },
@@ -35018,7 +36685,7 @@
                     "$ref": "#/components/schemas/ExistingCredentialConfirmSessionRequest"
                   },
                   {
-                    "$ref": "#/components/schemas/ReauthorizeConfirmSessionRequest"
+                    "$ref": "#/components/schemas/EditConfirmSessionRequest"
                   }
                 ],
                 "title": "Body"
@@ -35198,7 +36865,7 @@
     "/connect-sessions/{session_id}:reject": {
       "description": "`POST`: Reject an agent's connect request.",
       "post": {
-        "description": "End the session as rejected — the approve dialog's explicit Reject.\n\nOnly the target agent's owner (holding ``credentials:write`` and\n``agents:write``) or ``org:admin``; there is no poll-token path and an\nagent can never reject. Everyone else gets the uniform 403. The agent's\n``/status`` then reports ``failed`` with ``error_code: rejected``, and\nits repeat ``:connect`` for the same target answers 429\n``recently_rejected`` for the rejection cooldown. Closing the dialog\nwithout rejecting makes no call; an unmount cancel stays ``cancelled``.",
+        "description": "End the session as rejected — the approve dialog's explicit Reject.\n\nOnly the target agent's owner (holding ``credentials:write`` and\n``agents:write``) or ``org:admin``; there is no poll-token path and an\nagent can never reject. Everyone else gets the uniform 403. The agent's\n``/status`` then reports ``failed`` with ``error_code: rejected``. With a\nrejection cooldown set (off by default), its repeat ``:connect`` for the\nsame target answers 429 ``recently_rejected`` until it lapses. Closing the dialog\nwithout rejecting makes no call; an unmount cancel stays ``cancelled``.",
         "operationId": "rejectConnectSession",
         "parameters": [
           {
@@ -36800,7 +38467,7 @@
     "/credentials/{credential_id}/agents/{agent_id}/permissions": {
       "description": "`GET`: List binding permission rules. `PUT`: Replace binding permission rules. `PATCH`: Patch binding permission rules.",
       "get": {
-        "description": "List the ordered PBAC rules for a direct `(agent, credential)` binding.",
+        "description": "List the ordered PBAC rules for a direct `(agent, credential)` binding.\n\nAlso returns the rest of what the binding grants: the shared rule set it\npoints at (whose rules apply instead of `data`), the credential's granted\nOAuth scopes and the ones an edit can add, and whether the binding is\nsuspended. The bound agent can read its own binding.",
         "operationId": "listAgentCredentialPermissions",
         "parameters": [
           {
@@ -36854,6 +38521,7 @@
                       "_comment": "Read-only access to charges.",
                       "_system": false,
                       "effect": "allow",
+                      "id": "apr_6968b3987c22b63e87e79f06",
                       "match_mode": "prefix",
                       "methods": [
                         "GET"
@@ -36863,10 +38531,44 @@
                       ],
                       "path": "/v1/charges"
                     }
-                  ]
+                  ],
+                  "granted_scopes": [
+                    "repo",
+                    "read:user"
+                  ],
+                  "rule_set": {
+                    "curated": false,
+                    "id": "prs_6968b3987c22b63e87e79f05",
+                    "name": "Stripe read-only",
+                    "rules": [
+                      {
+                        "_comment": "Read-only access to charges.",
+                        "_system": false,
+                        "effect": "allow",
+                        "id": "apr_6968b3987c22b63e87e79f06",
+                        "match_mode": "prefix",
+                        "methods": [
+                          "GET"
+                        ],
+                        "operations": [
+                          "listCharges"
+                        ],
+                        "path": "/v1/charges"
+                      }
+                    ]
+                  },
+                  "scope_catalog": [
+                    {
+                      "classification": "write",
+                      "description": "Send email as the user.",
+                      "name": "gmail.send"
+                    }
+                  ],
+                  "scopes_editable": true,
+                  "suspended": false
                 },
                 "schema": {
-                  "$ref": "#/components/schemas/PermissionRuleListResponse"
+                  "$ref": "#/components/schemas/BindingAccessResponse"
                 }
               }
             },
@@ -37062,6 +38764,7 @@
               "example": {
                 "add": [
                   {
+                    "comment": "Lets the agent draft replies, never send them.",
                     "effect": "allow",
                     "match_mode": "prefix",
                     "methods": [
@@ -37096,6 +38799,7 @@
                       "_comment": "Read-only access to charges.",
                       "_system": false,
                       "effect": "allow",
+                      "id": "apr_6968b3987c22b63e87e79f06",
                       "match_mode": "prefix",
                       "methods": [
                         "GET"
@@ -37324,6 +39028,7 @@
                       "_comment": "Read-only access to charges.",
                       "_system": false,
                       "effect": "allow",
+                      "id": "apr_6968b3987c22b63e87e79f06",
                       "match_mode": "prefix",
                       "methods": [
                         "GET"
@@ -41855,6 +43560,253 @@
       },
       "summary": "Backend identity"
     },
+    "/integrations/{vendor}/{name}/{version}/connect-options": {
+      "description": "`GET`: How a connection to an API would be made.",
+      "get": {
+        "description": "List the API's declared security schemes and how `:connect` would collect each.\n\nResolved as `:connect` resolves an API target, so a scope marked\n`requestable` is one `requested_scopes` may name: for OAuth, the\nconnecting app's scope catalog (the spec's other scopes are listed but\nnot requestable); with no app, the spec's scopes. An API the registry\ndoesn't hold is 404 `unknown_api`: import it first.",
+        "operationId": "integrationsConnectOptions",
+        "parameters": [
+          {
+            "description": "The API's vendor.",
+            "examples": {
+              "example": {
+                "summary": "Example path value for `vendor`",
+                "value": "googleapis.com"
+              }
+            },
+            "in": "path",
+            "name": "vendor",
+            "required": true,
+            "schema": {
+              "description": "The API's vendor.",
+              "examples": [
+                "googleapis.com"
+              ],
+              "title": "Vendor",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The API's name.",
+            "examples": {
+              "example": {
+                "summary": "Example path value for `name`",
+                "value": "gmail"
+              }
+            },
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "The API's name.",
+              "examples": [
+                "gmail"
+              ],
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The API's version.",
+            "examples": {
+              "example": {
+                "summary": "Example path value for `version`",
+                "value": "v1"
+              }
+            },
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "description": "The API's version.",
+              "examples": [
+                "v1"
+              ],
+              "title": "Version",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Pin a shared OAuth app, as `oauth_app_registration_id` on `:connect`.",
+            "examples": {
+              "example": {
+                "summary": "OAuth app registration ID",
+                "value": "oar_6968b39821e5f89a6975f501"
+              }
+            },
+            "in": "query",
+            "name": "registration_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "examples": [
+                    "oar_6968b39821e5f89a6975f501"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Pin a shared OAuth app, as `oauth_app_registration_id` on `:connect`.",
+              "examples": [
+                "oar_6968b39821e5f89a6975f501"
+              ],
+              "title": "Registration Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The requested resource does not exist or is not visible to you.",
+                  "instance": "/example/path",
+                  "status": 404,
+                  "title": "Not Found",
+                  "type": "not_found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "The registry holds no such API"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "OAuth2": []
+          }
+        ],
+        "summary": "How a connection to an API would be made",
+        "tags": [
+          "Integrations"
+        ]
+      },
+      "summary": "How a connection to an API would be made"
+    },
     "/integrations:connect": {
       "description": "`POST`: Start an integration connect session.",
       "post": {
@@ -41877,6 +43829,7 @@
                 "reason": "Needs read access to triage issues in the platform repo.",
                 "requested_permission_rules": [
                   {
+                    "comment": "Lets the agent draft replies, never send them.",
                     "effect": "allow",
                     "match_mode": "prefix",
                     "methods": [
@@ -42085,6 +44038,263 @@
         ]
       },
       "summary": "Start an integration connect session"
+    },
+    "/integrations:edit-connection": {
+      "description": "`POST`: Ask to change a credential binding.",
+      "post": {
+        "description": "Open a connect session that edits an existing binding instead of creating one.\n\nThe change (rules to add, remove or replace, and resuming a suspended\nbinding) is resolved against the binding as it is now, and a human\napproves it on the review page; nothing changes until then. An agent\nedits its own binding and must omit `agent_id`; a human names the agent\nand must be its owner or an org admin. A change that is already in place\nis 422 `nothing_to_change`, and a rule id the binding does not hold is 422\n`unknown_rule`. A binding can have several open edits, each rebased as\nothers land; an agent asking again while its own is open is 409\n`edit_open` with that session's `session_id`, to amend instead.",
+        "operationId": "integrationsEditConnection",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
+                "apply": true,
+                "credential_id": "cred_6968b39855d91a3561684b32",
+                "reason": "Needs to send replies, not just read",
+                "rules": {
+                  "add": [
+                    {
+                      "before": "apr_6968b3987c22b63e87e79f06",
+                      "rule": {
+                        "comment": "Lets the agent draft replies, never send them.",
+                        "effect": "allow",
+                        "match_mode": "prefix",
+                        "methods": [
+                          "GET"
+                        ],
+                        "operations": [
+                          "listCharges"
+                        ],
+                        "path": "/v1/charges"
+                      }
+                    }
+                  ],
+                  "remove": [
+                    "apr_6968b3987c22b63e87e79f06"
+                  ],
+                  "set": [
+                    {
+                      "comment": "Lets the agent draft replies, never send them.",
+                      "effect": "allow",
+                      "match_mode": "prefix",
+                      "methods": [
+                        "GET"
+                      ],
+                      "operations": [
+                        "listCharges"
+                      ],
+                      "path": "/v1/charges"
+                    }
+                  ]
+                },
+                "scopes": {
+                  "add": [
+                    "gmail.send"
+                  ],
+                  "comments": {
+                    "gmail.send": "To send the replies I draft"
+                  },
+                  "remove": [
+                    "gmail.modify"
+                  ],
+                  "set": [
+                    "gmail.readonly",
+                    "gmail.send"
+                  ]
+                }
+              },
+              "schema": {
+                "$ref": "#/components/schemas/EditConnectionRequest"
+              }
+            }
+          },
+          "description": "Ask to change an existing credential binding; a human approves the change.",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The requested resource does not exist or is not visible to you.",
+                  "instance": "/example/path",
+                  "status": 404,
+                  "title": "Not Found",
+                  "type": "not_found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "No binding the caller may edit for this credential"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request conflicts with the current state of the resource.",
+                  "instance": "/example/path",
+                  "status": 409,
+                  "title": "Conflict",
+                  "type": "conflict"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "The calling agent already has an open edit of this binding; amend it"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Too many requests; retry after the indicated delay.",
+                  "instance": "/example/path",
+                  "status": 429,
+                  "title": "Too Many Requests",
+                  "type": "rate_limit_exceeded"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Rate limit or open-session cap"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "OAuth2": []
+          }
+        ],
+        "summary": "Ask to change a credential binding",
+        "tags": [
+          "Integrations"
+        ]
+      },
+      "summary": "Ask to change a credential binding"
     },
     "/jobs": {
       "description": "`GET`: List Jobs.",
@@ -47987,6 +50197,7 @@
                 "name": "Stripe read-only",
                 "rules": [
                   {
+                    "comment": "Lets the agent draft replies, never send them.",
                     "effect": "allow",
                     "match_mode": "prefix",
                     "methods": [
@@ -48024,6 +50235,7 @@
                       "_comment": "Read-only access to charges.",
                       "_system": false,
                       "effect": "allow",
+                      "id": "apr_6968b3987c22b63e87e79f06",
                       "match_mode": "prefix",
                       "methods": [
                         "GET"
@@ -48412,6 +50624,7 @@
                       "_comment": "Read-only access to charges.",
                       "_system": false,
                       "effect": "allow",
+                      "id": "apr_6968b3987c22b63e87e79f06",
                       "match_mode": "prefix",
                       "methods": [
                         "GET"
@@ -48626,6 +50839,7 @@
                       "_comment": "Read-only access to charges.",
                       "_system": false,
                       "effect": "allow",
+                      "id": "apr_6968b3987c22b63e87e79f06",
                       "match_mode": "prefix",
                       "methods": [
                         "GET"
@@ -48838,6 +51052,7 @@
                       "_comment": "Read-only access to charges.",
                       "_system": false,
                       "effect": "allow",
+                      "id": "apr_6968b3987c22b63e87e79f06",
                       "match_mode": "prefix",
                       "methods": [
                         "GET"

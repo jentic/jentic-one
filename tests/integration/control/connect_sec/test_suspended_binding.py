@@ -50,6 +50,7 @@ from tests.integration.control.connect_sec.support import (
     existing_credential,
     import_spec,
     is_bound,
+    revision,
     session_row,
     svc,
 )
@@ -194,6 +195,7 @@ async def _late_bind_confirm(ctx: Context, session_id: str, poll_token: str) -> 
                 permission_rules=RULES,
                 expected_agent_id=None,
                 digest=review.digest,
+                revision_id=review.revision_id,
                 agent_id=AGENT_ID,
             ),
         ),
@@ -245,7 +247,10 @@ async def test_confirm_is_refused_when_the_binding_was_suspended_after_the_ask(
                 kind="api_key",
                 secret=ApiKeySecret(key=SecretStr(_SECRET)),
                 checks=ConfirmChecks(
-                    permission_rules=RULES, expected_agent_id=AGENT_ID, digest=review
+                    permission_rules=RULES,
+                    expected_agent_id=AGENT_ID,
+                    digest=review,
+                    revision_id=await revision(env, created.session_id),
                 ),
             ),
             identity=OWNER,

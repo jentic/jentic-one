@@ -1701,6 +1701,31 @@
       "authenticated": true,
       "group": "Any authenticated actor",
       "implied_permissions": {
+        "credentials:write": [
+          "credentials:connect",
+          "credentials:read"
+        ]
+      },
+      "method": "GET",
+      "operation_id": "listConnectSessionRevisions",
+      "path": "/connect-sessions/{session_id}/revisions",
+      "public": false,
+      "required_permissions": [
+        "credentials:write"
+      ],
+      "summary": "List a connect session's revisions",
+      "surface": "connect-sessions",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_permissions": {
         "credentials:connect": [],
         "credentials:write": [
           "credentials:connect",
@@ -1716,6 +1741,33 @@
         "credentials:write"
       ],
       "summary": "Poll a connect session's status",
+      "surface": "connect-sessions",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_permissions": {
+        "credentials:connect": [],
+        "credentials:write": [
+          "credentials:connect",
+          "credentials:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "amendConnectSession",
+      "path": "/connect-sessions/{session_id}:amend",
+      "public": false,
+      "required_permissions": [
+        "credentials:connect",
+        "credentials:write"
+      ],
+      "summary": "Amend an open connect session's request",
       "surface": "connect-sessions",
       "typical_caller": "any"
     },
@@ -2446,6 +2498,33 @@
           "credentials:read"
         ]
       },
+      "method": "GET",
+      "operation_id": "integrationsConnectOptions",
+      "path": "/integrations/{vendor}/{name}/{version}/connect-options",
+      "public": false,
+      "required_permissions": [
+        "credentials:connect",
+        "credentials:write"
+      ],
+      "summary": "How a connection to an API would be made",
+      "surface": "integrations",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_permissions": {
+        "credentials:connect": [],
+        "credentials:write": [
+          "credentials:connect",
+          "credentials:read"
+        ]
+      },
       "method": "POST",
       "operation_id": "integrationsConnect",
       "path": "/integrations:connect",
@@ -2456,6 +2535,33 @@
       ],
       "summary": "Start an integration connect session",
       "surface": "integrations:connect",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_permissions": {
+        "credentials:connect": [],
+        "credentials:write": [
+          "credentials:connect",
+          "credentials:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "integrationsEditConnection",
+      "path": "/integrations:edit-connection",
+      "public": false,
+      "required_permissions": [
+        "credentials:connect",
+        "credentials:write"
+      ],
+      "summary": "Ask to change a credential binding",
+      "surface": "integrations:edit-connection",
       "typical_caller": "any"
     },
     {
@@ -4751,5 +4857,5 @@
     "total": 27
   },
   "schema": "jentic.endpoint-permission-tree/v1",
-  "total": 170
+  "total": 174
 }

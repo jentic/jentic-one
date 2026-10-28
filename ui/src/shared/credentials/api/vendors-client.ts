@@ -15,17 +15,23 @@ import {
 	getToken,
 	problemDetailText,
 	type AgentListResponse,
+	type BindingAccessResponse,
 	type ConnectSessionSummaryResponse,
 	type PermissionRuleReadSchema,
 	type PermissionRuleSchema,
 	type RuleSetResponse,
 } from '@/shared/api';
 import type {
+	AmendSessionBody,
+	AmendedSession,
 	ConfirmSessionBody,
 	ConfirmSessionResponse,
 	ConnectRequest,
 	ConnectResponse,
+	EditConnectionBody,
+	EditConnectionResult,
 	ReviewSession,
+	SessionRevision,
 	StatusResponse,
 	VendorAuthCapabilities,
 	VendorListResponse,
@@ -117,6 +123,18 @@ export function startIntegrationConnect(body: ConnectRequest): Promise<ConnectRe
 }
 
 /**
+ * Ask to change a binding's access (`POST /integrations:edit-connection`). The
+ * change waits on an approval, the same review an agent's request gets; an
+ * edit already open for the binding is a 409 `edit_open` naming its session.
+ */
+export function startEditConnection(body: EditConnectionBody): Promise<EditConnectionResult> {
+	return request('/integrations:edit-connection', {
+		method: 'POST',
+		body: JSON.stringify(body),
+	});
+}
+
+/**
  * Bind an existing credential to an agent in "start blocked" mode (no
  * rules). Lives here rather than in ``modules/agents/api`` so the
  * post-connect "Bind to more agents" CTA — which is a credentials-
@@ -190,6 +208,28 @@ export function confirmConnectSession(
 	});
 }
 
+/** Every revision of a session, oldest first; gated like the review read. */
+export async function listConnectSessionRevisions(
+	sessionId: string,
+	pollToken?: string,
+): Promise<SessionRevision[]> {
+	const body = await request<{ data: SessionRevision[] }>(
+		sessionUrl(sessionId, '/revisions', pollToken),
+	);
+	return body.data;
+}
+
+/** Change an open session's ask as a new revision (``POST …:amend``). */
+export function amendConnectSession(
+	sessionId: string,
+	body: AmendSessionBody,
+): Promise<AmendedSession> {
+	return request(sessionUrl(sessionId, ':amend'), {
+		method: 'POST',
+		body: JSON.stringify(body),
+	});
+}
+
 export function pollConnectSessionStatus(
 	sessionId: string,
 	pollToken?: string,
@@ -230,8 +270,9 @@ export function cancelConnectSessionOnUnload(sessionId: string, pollToken?: stri
 
 /**
  * Reject an agent's request — the approve dialog's explicit Reject. The agent
- * sees ``failed`` with ``error_code: rejected`` and may not ask again for the
- * same target during the rejection cooldown. Owner (``credentials:write`` and
+ * sees ``failed`` with ``error_code: rejected``; with a rejection cooldown set
+ * (off by default) it may not ask again for the same target until it lapses.
+ * Owner (``credentials:write`` and
  * ``agents:write``) or ``org:admin`` only; there is no poll-token path, so the
  * route takes none. Closing the dialog without rejecting sends nothing.
  */
@@ -424,6 +465,18 @@ export async function listBindingPermissions(
 			agentId,
 		});
 		return res.data;
+	} catch (err) {
+		throw toIntegrationsError(err, 'Failed to load the access rules.');
+	}
+}
+
+/** Everything one binding grants: its rules, rule set, scopes and suspension. */
+export async function getBindingAccess(
+	agentId: string,
+	credentialId: string,
+): Promise<BindingAccessResponse> {
+	try {
+		return await CredentialsService.listAgentCredentialPermissions({ credentialId, agentId });
 	} catch (err) {
 		throw toIntegrationsError(err, 'Failed to load the access rules.');
 	}

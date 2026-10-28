@@ -9,6 +9,7 @@ from jentic_one.control.core.schema.authorization_code_app_registration_details 
 from jentic_one.control.core.schema.basic_credentials import BasicCredential
 from jentic_one.control.core.schema.connect_nonces import ConnectNonce
 from jentic_one.control.core.schema.connect_session_outcomes import ConnectSessionOutcome
+from jentic_one.control.core.schema.connect_session_revisions import ConnectSessionRevision
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.customer_api_keys import CustomerAPIKey
@@ -38,6 +39,7 @@ __all__ = [
     "ConnectNonce",
     "ConnectSession",
     "ConnectSessionOutcome",
+    "ConnectSessionRevision",
     "ControlBase",
     "Credential",
     "CustomerAPIKey",

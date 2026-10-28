@@ -272,6 +272,22 @@ class PrerequisiteRepository:
         return bool(result.rowcount)  # type: ignore[attr-defined]
 
     @staticmethod
+    async def resume_binding(session: AsyncSession, *, agent_id: str, credential_id: str) -> bool:
+        """Switch a suspended direct binding back on (admin DB, raw SQL).
+
+        Clears ``suspended_reason`` like the admin repository's resume.
+        Returns ``False`` when no such binding exists.
+        """
+        result = await session.execute(
+            text(
+                "UPDATE agent_credential_bindings SET suspended = :off, suspended_reason = NULL "
+                "WHERE agent_id = :agent_id AND credential_id = :credential_id"
+            ),
+            {"off": False, "agent_id": agent_id, "credential_id": credential_id},
+        )
+        return bool(result.rowcount)  # type: ignore[attr-defined]
+
+    @staticmethod
     async def count_bindings_for_rule_set(session: AsyncSession, rule_set_id: str) -> int:
         """Count direct bindings referencing a shared rule set (admin DB).
 
