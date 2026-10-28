@@ -1,7 +1,7 @@
 /**
- * Pending held executions, collapsed per agent — the one grouping the
- * attention inbox and the Agents page "Waiting for you" section share, so the
- * two never disagree on what an agent is waiting for.
+ * Pending held executions, collapsed per agent — the one grouping the bell,
+ * the rail's Inbox and the waiting card on an agent share, so they never
+ * disagree on what an agent is waiting for.
  */
 import type { HeldExecutionResponse } from '@/shared/api';
 import { usePermissionsKnown } from '@/shared/auth/useCanAccess';
@@ -35,19 +35,6 @@ export function groupApprovalsByAgent(
 			return { agentId, approvals: sorted, since: sorted[0].created_at };
 		})
 		.sort((a, b) => Date.parse(a.since) - Date.parse(b.since));
-}
-
-/** "POST /v1/charges on api.stripe.com/payments" — what one held call does. */
-export function describeHeldCall(approval: HeldExecutionResponse): string {
-	return `${approval.method} ${approval.path} on ${approval.api_vendor}/${approval.api_name}`;
-}
-
-/** "a call to api.stripe.com/payments", "3 calls" — a group's headline. */
-export function summariseHeldCalls(approvals: readonly HeldExecutionResponse[]): string {
-	if (approvals.length === 1) {
-		return `a call to ${approvals[0].api_vendor}/${approvals[0].api_name}`;
-	}
-	return `${approvals.length} calls`;
 }
 
 /**

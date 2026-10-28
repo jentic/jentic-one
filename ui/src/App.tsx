@@ -1,4 +1,4 @@
-import { Navigate, useRoutes, type RouteObject } from 'react-router';
+import { Navigate, useLocation, useRoutes, type RouteObject } from 'react-router';
 import { useEffect } from 'react';
 import { AuthGuard } from '@/shared/auth/AuthGuard';
 import { SetupGate } from '@/shared/auth/SetupGate';
@@ -13,6 +13,15 @@ import { moduleRoutes, ROUTES } from '@/shared/app/routes';
 import { PlaceholderPage } from '@/shared/app/placeholders';
 import { sortedNavItems, registerExtraNavItems, type NavItem } from '@/shared/app/nav';
 import { publicDocsRoutes } from '@/modules/docs/routes';
+
+/**
+ * An unknown in-app path goes to the shell home with its query kept, so a
+ * link whose path is stale (`?inbox=1`, `?review=`) still opens what it meant to.
+ */
+function HomeRedirect() {
+	const { search } = useLocation();
+	return <Navigate to={{ pathname: '/', search }} replace />;
+}
 
 /**
  * Route tree. All paths are relative to the router `basename` (`/app`, set in
@@ -139,7 +148,7 @@ function buildRoutes(extraRoutes: RouteObject[] = []): RouteObject[] {
 		},
 		// Unknown in-app path → the shell home. (A bare host hit at `/`, before
 		// the basename, is redirected to `/app/` by the backend.)
-		{ path: '*', element: <Navigate to="/" replace /> },
+		{ path: '*', element: <HomeRedirect /> },
 	];
 }
 

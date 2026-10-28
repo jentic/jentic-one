@@ -9,7 +9,8 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { ArrowUpRight } from 'lucide-react';
-import { ROUTES } from '@/shared/app/routes';
+import { ROUTE_PATHS } from '@/shared/app/routes';
+import { usePendingApprovals } from '@/shared/approvals';
 import { ActorLabel, AppLink, Button, ErrorAlert, LoadingState, ConfirmDialog } from '@/shared/ui';
 import {
 	isCancellableJob,
@@ -42,9 +43,15 @@ export function JobDetail({ jobId, frame }: { jobId: string; frame: DetailFrameC
 		isAdmin && job != null && status != null && isCancellableJob(status, job.kind);
 	const span = job ? formatSpan(job.created_at, job.updated_at) : null;
 	const navigate = useNavigate();
-	// A held execution settles through its review on the Approvals page, never
-	// by cancelling the job.
+	// A held execution settles through its review, never by cancelling the job:
+	// the button opens the call's review pop-up when the waiting list names it
+	// (the hold and its job share the execution id), else the rail's Inbox.
 	const heldExecution = status === 'held' && job?.kind === 'execution';
+	const pending = usePendingApprovals({ enabled: heldExecution });
+	const held =
+		heldExecution && job?.execution_id
+			? pending.data?.approvals.find((call) => call.execution_id === job.execution_id)
+			: undefined;
 	// A held call's execution record is written only once it runs.
 	const hasExecutionRecord = status !== 'held';
 
@@ -65,10 +72,14 @@ export function JobDetail({ jobId, frame }: { jobId: string; frame: DetailFrameC
 					<Button
 						variant="primary"
 						size={frame.mode === 'pane' ? 'sm' : undefined}
-						onClick={() => navigate(ROUTES.approvals)}
+						onClick={() =>
+							navigate(
+								held ? ROUTE_PATHS.approval(held.id) : ROUTE_PATHS.approvalsInbox(),
+							)
+						}
 						className={frame.mode === 'sheet' ? 'flex-1' : undefined}
 					>
-						Open approvals
+						{held ? 'Review' : 'Open inbox'}
 					</Button>
 				) : canCancel && job ? (
 					<Button
