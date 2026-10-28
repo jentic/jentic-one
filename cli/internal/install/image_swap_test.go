@@ -34,6 +34,38 @@ func TestSwapImageTagKeepsTheRegistryAndRepository(t *testing.T) {
 	}
 }
 
+// An explicit --image-tag is the way past a pin SwapImageTag will not move on
+// its own, and it keeps the registry rule: a bare tag applies to the repository
+// the stack already runs, a full reference is taken as given.
+func TestApplyImageOverride(t *testing.T) {
+	t.Setenv(AppImageTagEnv, "")
+	t.Setenv(AppImageRepoEnv, "")
+
+	for _, tc := range []struct{ name, current, override, want string }{
+		{"bare tag keeps the mirror", "registry.corp/jentic-one-app:0.43.0", "0.44.0", "registry.corp/jentic-one-app:0.44.0"},
+		{"bare tag keeps the default repo", "ghcr.io/jentic/jentic-one-app:canary", "0.44.0", "ghcr.io/jentic/jentic-one-app:0.44.0"},
+		{"non-version tag is honoured", "ghcr.io/jentic/jentic-one-app:0.43.0", "canary", "ghcr.io/jentic/jentic-one-app:canary"},
+		{"digest applies to the same repo", "ghcr.io/jentic/jentic-one-app:0.43.0", "@sha256:abc", "ghcr.io/jentic/jentic-one-app@sha256:abc"},
+		{"full reference wins", "registry.corp/jentic-one-app:0.43.0", "other.io/team/app:1.2.3", "other.io/team/app:1.2.3"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ApplyImageOverride(tc.current, tc.override)
+			if err != nil {
+				t.Fatalf("ApplyImageOverride(%q, %q): %v", tc.current, tc.override, err)
+			}
+			if got != tc.want {
+				t.Errorf("ApplyImageOverride(%q, %q) = %q, want %q", tc.current, tc.override, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestApplyImageOverrideRejectsAnEmptyOverride(t *testing.T) {
+	if _, err := ApplyImageOverride("ghcr.io/jentic/jentic-one-app:0.43.0", "  "); err == nil {
+		t.Error("ApplyImageOverride = nil error, want a refusal")
+	}
+}
+
 // A digest pin names an exact image and there is no way to learn the new
 // digest, so it is refused rather than quietly downgraded to a mutable tag.
 func TestSwapImageTagRefusesADigestPin(t *testing.T) {

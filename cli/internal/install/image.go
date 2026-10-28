@@ -1,6 +1,7 @@
 package install
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -161,6 +162,31 @@ func SwapImageTag(ref, version string) (string, error) {
 				"reinstall with --image-tag to choose the new tag yourself", ref, current, tag)
 	}
 	return repo + ":" + tag, nil
+}
+
+// ApplyImageOverride resolves an operator's explicit `--image-tag` against the
+// reference a stack already runs.
+//
+// A full reference ("registry/repo:tag", or one with an @digest) is taken
+// verbatim — the operator named the whole image. A bare tag or "@sha256:…" is
+// applied to the repository `current` already names, so choosing a new tag does
+// not also move a mirrored install onto the published default. That is the same
+// registry-preserving rule as SwapImageTag; the difference is that the tag comes
+// from the operator rather than from the target release, which is what makes
+// this the way past a pin SwapImageTag refuses to move on its own.
+func ApplyImageOverride(current, override string) (string, error) {
+	override = strings.TrimSpace(override)
+	if override == "" {
+		return "", errors.New("no image override given")
+	}
+	if isFullImageRef(override) {
+		return override, nil
+	}
+	repo, _, _ := SplitImageRef(current)
+	if repo == "" {
+		return "", fmt.Errorf("%q names no image repository to apply %q to", current, override)
+	}
+	return applyRef(repo, override), nil
 }
 
 // SplitImageRef splits an image reference into its repository and whichever of

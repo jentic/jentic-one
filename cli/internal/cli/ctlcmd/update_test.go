@@ -183,7 +183,7 @@ func TestUpdateStackDockerFailsFastWhenDaemonDown(t *testing.T) {
 		return nil
 	}
 
-	err := app.updateStackDocker(context.Background(), "", false, false)
+	err := app.updateStackDocker(context.Background(), "", false, false, "")
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("update should surface the daemon guard error, got %v", err)
 	}
@@ -243,7 +243,7 @@ func stubUpdateFlow(t *testing.T, latest string) *updateFakes {
 		}, nil, true, nil
 	}
 	refreshSkills = func(*app) { f.skillRefresh++ }
-	rebuildStack = func(_ *app, _ context.Context, _, _, ref string, _, preflighted bool) error {
+	rebuildStack = func(_ *app, _ context.Context, _, _, ref string, _, preflighted bool, _ string) error {
 		f.stackBuilds = append(f.stackBuilds, ref)
 		f.preflighted = append(f.preflighted, preflighted)
 		return f.stackErr
@@ -859,7 +859,7 @@ func TestUpdateStackStageHints(t *testing.T) {
 			}
 			stubStackSteps(t, tt.build, tt.migrate, tt.up)
 
-			err := a.updateStack(context.Background(), tt.mode, install.BackendPostgres, "v0.28.0", false, true)
+			err := a.updateStack(context.Background(), tt.mode, install.BackendPostgres, "v0.28.0", false, true, "")
 			if !errors.Is(err, fail) {
 				t.Fatalf("err = %v, want the step failure", err)
 			}
@@ -939,7 +939,7 @@ func TestUpdateStackDockerNamesPortConflict(t *testing.T) {
 		return nil
 	}
 
-	err := a.updateStackDocker(context.Background(), "v0.28.0", false, true)
+	err := a.updateStackDocker(context.Background(), "v0.28.0", false, true, "")
 	var conflict *hostPortConflictError
 	if !errors.As(err, &conflict) || conflict.port != "5432" {
 		t.Fatalf("err = %v, want a host-port conflict on 5432", err)
@@ -1001,7 +1001,7 @@ func TestUpdateStackDockerPullsForAPulledInstall(t *testing.T) {
 	writeStackCompose(t, a, "ghcr.io/jentic/jentic-one-app:0.43.0")
 	calls := stubDockerStack(t)
 
-	if err := a.updateStackDocker(context.Background(), "v0.44.0", false, true); err != nil {
+	if err := a.updateStackDocker(context.Background(), "v0.44.0", false, true, ""); err != nil {
 		t.Fatalf("updateStackDocker: %v", err)
 	}
 
@@ -1025,7 +1025,7 @@ func TestUpdateStackDockerBuildsForALocalInstall(t *testing.T) {
 	writeStackCompose(t, a, install.AppImageTag)
 	calls := stubDockerStack(t)
 
-	if err := a.updateStackDocker(context.Background(), "v0.44.0", false, true); err != nil {
+	if err := a.updateStackDocker(context.Background(), "v0.44.0", false, true, ""); err != nil {
 		t.Fatalf("updateStackDocker: %v", err)
 	}
 
@@ -1045,7 +1045,7 @@ func TestUpdateStackDockerNonReleaseRefMovesAPulledStackToTheLocalTag(t *testing
 	writeStackCompose(t, a, "ghcr.io/jentic/jentic-one-app:0.43.0")
 	calls := stubDockerStack(t)
 
-	if err := a.updateStackDocker(context.Background(), "main", true, true); err != nil {
+	if err := a.updateStackDocker(context.Background(), "main", true, true, ""); err != nil {
 		t.Fatalf("updateStackDocker: %v", err)
 	}
 
@@ -1066,7 +1066,7 @@ func TestUpdateStackDockerBuildsWhenNoAppImageIsNamed(t *testing.T) {
 	}
 	calls := stubDockerStack(t)
 
-	if err := a.updateStackDocker(context.Background(), "v0.44.0", false, true); err != nil {
+	if err := a.updateStackDocker(context.Background(), "v0.44.0", false, true, ""); err != nil {
 		t.Fatalf("updateStackDocker: %v", err)
 	}
 	if calls.builds != 1 || len(calls.pulled) != 0 {
@@ -1084,7 +1084,7 @@ func TestUpdateStackDockerFailsFastOnAnUnparseableComposeFile(t *testing.T) {
 	}
 	calls := stubDockerStack(t)
 
-	err := a.updateStackDocker(context.Background(), "v0.44.0", false, true)
+	err := a.updateStackDocker(context.Background(), "v0.44.0", false, true, "")
 	if err == nil {
 		t.Fatal("updateStackDocker = nil error, want a parse failure")
 	}
@@ -1105,7 +1105,7 @@ func TestUpdateStackDockerPullKeepsAMirrorsRegistry(t *testing.T) {
 	writeStackCompose(t, a, "registry.corp/jentic-one-app:0.43.0")
 	calls := stubDockerStack(t)
 
-	if err := a.updateStackDocker(context.Background(), "v0.44.0", false, true); err != nil {
+	if err := a.updateStackDocker(context.Background(), "v0.44.0", false, true, ""); err != nil {
 		t.Fatalf("updateStackDocker: %v", err)
 	}
 
@@ -1127,7 +1127,7 @@ func TestUpdateStackDockerRefusesToConvertAPulledStackOnAnUnpinnedNonReleaseRef(
 	writeStackCompose(t, a, "ghcr.io/jentic/jentic-one-app:0.43.0")
 	calls := stubDockerStack(t)
 
-	err := a.updateStackDocker(context.Background(), "main", false, true)
+	err := a.updateStackDocker(context.Background(), "main", false, true, "")
 	if err == nil {
 		t.Fatal("updateStackDocker = nil error, want a refusal")
 	}
@@ -1149,7 +1149,7 @@ func TestUpdateStackDockerRefusesToMoveADigestPinnedStack(t *testing.T) {
 	writeStackCompose(t, a, "ghcr.io/jentic/jentic-one-app@sha256:"+strings.Repeat("ab", 32))
 	calls := stubDockerStack(t)
 
-	err := a.updateStackDocker(context.Background(), "v0.44.0", false, true)
+	err := a.updateStackDocker(context.Background(), "v0.44.0", false, true, "")
 	if err == nil || !strings.Contains(err.Error(), "digest") {
 		t.Fatalf("err = %v, want a refusal naming the digest pin", err)
 	}
@@ -1193,11 +1193,11 @@ func TestDockerStackPullsOnUpdateIsFalseForARefWithNoPublishedImage(t *testing.T
 	a := testApp(t)
 	writeStackCompose(t, a, "ghcr.io/jentic/jentic-one-app:0.43.0")
 
-	pulls, err := a.dockerStackPullsOnUpdate(config.ModeDocker, "v0.44.0")
+	pulls, err := a.dockerStackPullsOnUpdate(config.ModeDocker, "v0.44.0", "")
 	if err != nil || !pulls {
 		t.Errorf("release ref: pulls=%v err=%v, want true", pulls, err)
 	}
-	pulls, err = a.dockerStackPullsOnUpdate(config.ModeDocker, "main")
+	pulls, err = a.dockerStackPullsOnUpdate(config.ModeDocker, "main", "")
 	if err != nil {
 		t.Fatalf("non-release ref: %v", err)
 	}
@@ -1213,7 +1213,7 @@ func TestDockerStackPullsOnUpdateReportsAnUnreadableComposeFile(t *testing.T) {
 	if err := os.WriteFile(a.Paths.ComposePath(), []byte("services:\n  app: [\n"), 0o600); err != nil {
 		t.Fatalf("write compose: %v", err)
 	}
-	if _, err := a.dockerStackPullsOnUpdate(config.ModeDocker, "v0.44.0"); err == nil {
+	if _, err := a.dockerStackPullsOnUpdate(config.ModeDocker, "v0.44.0", ""); err == nil {
 		t.Error("dockerStackPullsOnUpdate = nil error, want the parse failure to propagate")
 	}
 }
@@ -1234,7 +1234,7 @@ func TestCheckDockerRefreshPossibleRefusesBeforeTheCLIHalf(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			a := testApp(t)
 			writeStackCompose(t, a, tc.image)
-			err := a.checkDockerRefreshPossible(config.ModeDocker, tc.ref, tc.pinned)
+			err := a.checkDockerRefreshPossible(config.ModeDocker, tc.ref, tc.pinned, "")
 			if err == nil {
 				t.Fatalf("checkDockerRefreshPossible = nil error, want a refusal")
 			}
@@ -1242,6 +1242,69 @@ func TestCheckDockerRefreshPossibleRefusesBeforeTheCLIHalf(t *testing.T) {
 				t.Errorf("error %q does not mention %q", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+// An explicit --image-tag is the way past the pin refusals: without it a
+// digest- or tag-pinned stack cannot be updated at all, and because the refusal
+// precedes the CLI half it would block that too.
+func TestImageTagUnblocksAPinnedStack(t *testing.T) {
+	digest := "ghcr.io/jentic/jentic-one-app@sha256:" + strings.Repeat("ab", 32)
+	for _, tc := range []struct{ name, image, override, want string }{
+		{"digest pin moves to a tag", digest, "0.44.0", "ghcr.io/jentic/jentic-one-app:0.44.0"},
+		{"tag pin moves to the release", "ghcr.io/jentic/jentic-one-app:canary", "0.44.0", "ghcr.io/jentic/jentic-one-app:0.44.0"},
+		{"mirror keeps its registry", "registry.corp/jentic-one-app:canary", "0.44.0", "registry.corp/jentic-one-app:0.44.0"},
+		{"a new pin is honoured", "ghcr.io/jentic/jentic-one-app:0.43.0", "canary", "ghcr.io/jentic/jentic-one-app:canary"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := testApp(t)
+			writeStackCompose(t, a, tc.image)
+			calls := stubDockerStack(t)
+
+			// Not refused up front any more ...
+			if err := a.checkDockerRefreshPossible(config.ModeDocker, "v0.44.0", false, tc.override); err != nil {
+				t.Fatalf("checkDockerRefreshPossible = %v, want nil with --image-tag", err)
+			}
+			// ... and the refresh pulls and repoints to the named image.
+			if err := a.updateStackDocker(context.Background(), "v0.44.0", false, true, tc.override); err != nil {
+				t.Fatalf("updateStackDocker: %v", err)
+			}
+			if len(calls.pulled) != 1 || calls.pulled[0] != tc.want {
+				t.Errorf("pulled = %v, want exactly [%s]", calls.pulled, tc.want)
+			}
+			if got, err := install.ComposeAppImage(a.Paths.ComposePath()); err != nil || got != tc.want {
+				t.Errorf("compose app image = (%q, %v), want %q", got, err, tc.want)
+			}
+			if calls.builds != 0 {
+				t.Errorf("builds = %d, want 0", calls.builds)
+			}
+		})
+	}
+}
+
+// --image-tag has no meaning for a stack built from source: say so and name the
+// reinstall that would move it onto published images, rather than half-applying.
+func TestImageTagOnAFromSourceStackIsRefused(t *testing.T) {
+	a := testApp(t)
+	writeStackCompose(t, a, install.AppImageTag)
+
+	err := a.checkDockerRefreshPossible(config.ModeDocker, "v0.44.0", false, "0.44.0")
+	if err == nil {
+		t.Fatal("checkDockerRefreshPossible = nil error, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "jenticctl install") {
+		t.Errorf("error does not name the reinstall remedy: %v", err)
+	}
+}
+
+// An unpinned non-release ref is still refused WITHOUT --image-tag, so the new
+// flag does not quietly reopen the accidental-conversion path.
+func TestImageTagDoesNotReopenTheUnpinnedConversion(t *testing.T) {
+	a := testApp(t)
+	writeStackCompose(t, a, "ghcr.io/jentic/jentic-one-app:0.43.0")
+
+	if err := a.checkDockerRefreshPossible(config.ModeDocker, "main", false, ""); err == nil {
+		t.Error("checkDockerRefreshPossible = nil error, want the unpinned refusal to stand")
 	}
 }
 
@@ -1259,7 +1322,7 @@ func TestCheckDockerRefreshPossibleAllowsTheWorkableRoutes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			a := testApp(t)
 			writeStackCompose(t, a, tc.image)
-			if err := a.checkDockerRefreshPossible(config.ModeDocker, tc.ref, tc.pinned); err != nil {
+			if err := a.checkDockerRefreshPossible(config.ModeDocker, tc.ref, tc.pinned, ""); err != nil {
 				t.Errorf("checkDockerRefreshPossible = %v, want nil", err)
 			}
 		})
@@ -1276,7 +1339,7 @@ func TestUpdateStackDockerConversionHintNamesTheComposeRepoint(t *testing.T) {
 	t.Cleanup(func() { runComposeMigrations = origMigrate })
 	runComposeMigrations = func(io.Writer, string) error { return errors.New("exit status 1") }
 
-	err := a.updateStackDocker(context.Background(), "main", true, true)
+	err := a.updateStackDocker(context.Background(), "main", true, true, "")
 	var staged *stackStageError
 	if !errors.As(err, &staged) {
 		t.Fatalf("err = %v, want a stackStageError", err)
@@ -1297,7 +1360,7 @@ func TestUpdateStackDockerPullRouteHintNamesTheComposeChangeNotARebuild(t *testi
 	t.Cleanup(func() { runComposeMigrations = origMigrate })
 	runComposeMigrations = func(io.Writer, string) error { return errors.New("exit status 1") }
 
-	err := a.updateStackDocker(context.Background(), "v0.44.0", false, true)
+	err := a.updateStackDocker(context.Background(), "v0.44.0", false, true, "")
 	var staged *stackStageError
 	if !errors.As(err, &staged) {
 		t.Fatalf("err = %v, want a stackStageError", err)

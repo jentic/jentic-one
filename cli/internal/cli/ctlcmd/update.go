@@ -25,6 +25,7 @@ import (
 
 type updateOptions struct {
 	ref       string
+	imageTag  string
 	baseURL   string
 	check     bool
 	cliOnly   bool
@@ -58,6 +59,7 @@ func newUpdateCmd(app *app) *cobra.Command {
 	cmd.Flags().BoolVar(&opts.stackOnly, "stack-only", false, "update only the stack (not the CLI binary)")
 	cmd.Flags().BoolVarP(&opts.yes, "yes", "y", false, "skip the confirmation prompt")
 	cmd.Flags().StringVar(&opts.ref, "ref", "", "git ref to update to, pinning a specific tag/branch/commit (default: the latest release tag)")
+	cmd.Flags().StringVar(&opts.imageTag, "image-tag", "", "Docker stack only: image tag, @digest, or full reference to move the stack to (a bare tag applies to the registry the stack already runs). Required to move a stack pinned with --image-tag or to a digest")
 	cmd.Flags().StringVar(&opts.baseURL, "base-url", "", "Jentic control-plane base URL (for the server probe)")
 	return cmd
 }
@@ -172,7 +174,7 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 	// pin IS honoured and the question does not apply. Only ask about the
 	// checkout when the refresh would actually read it.
 	if doStack {
-		pulls, err := a.dockerStackPullsOnUpdate(manifest.Mode, ref)
+		pulls, err := a.dockerStackPullsOnUpdate(manifest.Mode, ref, opts.imageTag)
 		if err != nil {
 			return fmt.Errorf("%w — fix it, or reinstall with `jenticctl install`", err)
 		}
@@ -190,7 +192,7 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 		// refusal raised after the swap would leave the CLI on the new version
 		// and the stack on the old one, with every retry hitting the same wall
 		// and no flag to escape it.
-		if err := a.checkDockerRefreshPossible(manifest.Mode, ref, pinned); err != nil {
+		if err := a.checkDockerRefreshPossible(manifest.Mode, ref, pinned, opts.imageTag); err != nil {
 			return err
 		}
 	}
@@ -301,7 +303,7 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 		}
 	}
 	if doStack {
-		if err := rebuildStack(a, ctx, manifest.Mode, manifest.DB, ref, pinned, preflighted); err != nil {
+		if err := rebuildStack(a, ctx, manifest.Mode, manifest.DB, ref, pinned, preflighted, opts.imageTag); err != nil {
 			if cliUpdated {
 				return newStackDivergedError(err, cliTargetLabel(brewManaged, cliLanded), ref, stackVersion, stackRetryCommand(ref, pinned))
 			}
@@ -882,13 +884,13 @@ func binaryVersion(path string) (string, error) {
 // the stack is built from — the same one the CLI half targets, so the two halves
 // stay in lockstep. preflighted is true when updateE already ran the Docker
 // preflight up front (combined run), so the docker path skips a redundant one.
-func (a *app) updateStack(ctx context.Context, mode, db, ref string, pinned, preflighted bool) error {
+func (a *app) updateStack(ctx context.Context, mode, db, ref string, pinned, preflighted bool, imageTag string) error {
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Warn.Render("Stack update runs forward-only migrations — back up your data first"))
 	fmt.Fprintln(a.Out, theme.Dim.Render("  SQLite: copy ~/.jentic/data/*.db · Postgres: pg_dump your database"))
 
 	if mode == config.ModeDocker {
-		return a.updateStackDocker(ctx, ref, pinned, preflighted)
+		return a.updateStackDocker(ctx, ref, pinned, preflighted, imageTag)
 	}
 	return a.updateStackLocal(ctx, db, ref, pinned)
 }
@@ -956,7 +958,7 @@ func (a *app) updateStackLocal(ctx context.Context, db, ref string, pinned bool)
 // is true when updateE already ran preflightDockerStack up front (combined
 // run), so we skip a redundant second check/announce; a standalone/stack-only
 // call passes false and preflights here.
-func (a *app) updateStackDocker(ctx context.Context, ref string, pinned, preflighted bool) error {
+func (a *app) updateStackDocker(ctx context.Context, ref string, pinned, preflighted bool, imageTag string) error {
 	composePath := a.Paths.ComposePath()
 	if !proc.FileExists(composePath) {
 		return fmt.Errorf("no compose stack at %s — run `jenticctl install` first", composePath)
@@ -973,7 +975,7 @@ func (a *app) updateStackDocker(ctx context.Context, ref string, pinned, preflig
 		}
 	}
 
-	pulled, err := a.refreshDockerStackImage(composePath, ref, pinned)
+	pulled, err := a.refreshDockerStackImage(composePath, ref, pinned, imageTag)
 	if err != nil {
 		return err
 	}
@@ -1032,7 +1034,7 @@ func dockerStackRunsPublishedImage(composePath string) (image string, published 
 // A compose file that cannot be read is reported as an error rather than as
 // false, so the caller states the parse failure instead of diagnosing a
 // checkout conflict that is not the real problem.
-func (a *app) dockerStackPullsOnUpdate(mode, ref string) (bool, error) {
+func (a *app) dockerStackPullsOnUpdate(mode, ref, imageTag string) (bool, error) {
 	if mode != config.ModeDocker {
 		return false, nil
 	}
@@ -1044,7 +1046,9 @@ func (a *app) dockerStackPullsOnUpdate(mode, ref string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return published && install.IsReleaseVersion(ref), nil
+	// An explicit --image-tag names the image directly, so the refresh pulls
+	// whatever the target ref looks like.
+	return published && (imageTag != "" || install.IsReleaseVersion(ref)), nil
 }
 
 // dockerStackImageLagsRecord reports whether a Docker stack running a published
@@ -1090,7 +1094,7 @@ func (a *app) dockerStackImageLagsRecord(manifest *config.Manifest) bool {
 // instead, before the CLI half swaps the binaries: a refusal after the swap
 // leaves the CLI ahead of the stack, and because the cause is static, every
 // retry fails the same way with no flag to work around it.
-func (a *app) checkDockerRefreshPossible(mode, ref string, pinned bool) error {
+func (a *app) checkDockerRefreshPossible(mode, ref string, pinned bool, imageTag string) error {
 	if mode != config.ModeDocker {
 		return nil
 	}
@@ -1103,6 +1107,20 @@ func (a *app) checkDockerRefreshPossible(mode, ref string, pinned bool) error {
 		return err
 	}
 	if !published {
+		if imageTag != "" {
+			return fmt.Errorf(
+				"--image-tag applies to a stack running a published image; this one runs %s, built from source. "+
+					"Reinstall with `jenticctl install --image-tag %s` to move it onto a published image",
+				install.AppImageTag, imageTag)
+		}
+		return nil
+	}
+	// An explicit override is the operator naming the image themselves, which is
+	// what gets a digest- or tag-pinned stack past the refusals below.
+	if imageTag != "" {
+		if _, err := install.ApplyImageOverride(current, imageTag); err != nil {
+			return err
+		}
 		return nil
 	}
 	if !install.IsReleaseVersion(ref) {
@@ -1128,7 +1146,7 @@ func (a *app) checkDockerRefreshPossible(mode, ref string, pinned bool) error {
 // A stack running a published image pulls the image for ref — on the registry
 // and repository it already names — and is repointed at it. One built from
 // source is rebuilt, and its compose file already names the fixed local tag.
-func (a *app) refreshDockerStackImage(composePath, ref string, pinned bool) (dockerRefreshRoute, error) {
+func (a *app) refreshDockerStackImage(composePath, ref string, pinned bool, imageTag string) (dockerRefreshRoute, error) {
 	current, published, err := dockerStackRunsPublishedImage(composePath)
 	if err != nil {
 		// Every step after this one reads the same file and cannot parse it
@@ -1137,8 +1155,8 @@ func (a *app) refreshDockerStackImage(composePath, ref string, pinned bool) (doc
 	}
 
 	if published {
-		if install.IsReleaseVersion(ref) {
-			return routePulled, a.pullDockerStackImage(composePath, current, ref)
+		if imageTag != "" || install.IsReleaseVersion(ref) {
+			return routePulled, a.pullDockerStackImage(composePath, current, ref, imageTag)
 		}
 		// A ref with no published image can only be served by building, which
 		// converts the stack to a from-source one for good. Do that only when
@@ -1189,7 +1207,7 @@ func errUnpinnedNonReleaseOnPulledStack(current, ref string) error {
 
 // pullDockerStackImage pulls the image for ref and repoints the compose file at
 // it, keeping the registry and repository current already names.
-func (a *app) pullDockerStackImage(composePath, current, ref string) error {
+func (a *app) pullDockerStackImage(composePath, current, ref, imageTag string) error {
 	// The tag comes from ref and the repository from the deployed reference —
 	// never from this binary's own version or the image environment overrides.
 	// The CLI half swaps the binary on disk and this process carries on as the
@@ -1197,7 +1215,15 @@ func (a *app) pullDockerStackImage(composePath, current, ref string) error {
 	// re-deriving the repository would move a mirrored install to another
 	// registry. Deriving the tag from ref alone also keeps the ref that
 	// recordStackBuild files true of the image actually installed.
-	image, err := install.SwapImageTag(current, ref)
+	resolve := func() (string, error) {
+		if imageTag != "" {
+			// The operator named the image, so an explicit override moves a pin
+			// SwapImageTag would refuse to move on its own.
+			return install.ApplyImageOverride(current, imageTag)
+		}
+		return install.SwapImageTag(current, ref)
+	}
+	image, err := resolve()
 	if err != nil {
 		return err
 	}

@@ -3682,6 +3682,11 @@
               "usage": "update only the CLI binary"
             },
             {
+              "name": "image-tag",
+              "type": "string",
+              "usage": "Docker stack only: image tag, @digest, or full reference to move the stack to (a bare tag applies to the registry the stack already runs). Required to move a stack pinned with --image-tag or to a digest"
+            },
+            {
               "name": "ref",
               "type": "string",
               "usage": "git ref to update to, pinning a specific tag/branch/commit (default: the latest release tag)"
