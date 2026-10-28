@@ -18,6 +18,7 @@ from jentic_one.registry.core.schema.apis import Api
 from jentic_one.shared.db.errors import DatabaseIntegrityError
 from jentic_one.shared.db.keyset import apply_desc_keyset
 from jentic_one.shared.models import ApiRevisionSourceType, ApiRevisionState
+from jentic_one.shared.pagination import Cursor
 
 # The unique constraints whose violation means "this revision already exists".
 #   - uq_api_revisions_api_id_spec_digest: identical content re-imported.
@@ -462,7 +463,7 @@ class ApiRevisionRepository:
         *,
         api_id: uuid.UUID,
         limit: int = 50,
-        cursor: tuple[datetime, str] | None = None,
+        cursor: Cursor | None = None,
         states: list[str] | None = None,
     ) -> list[ApiRevision]:
         stmt = (

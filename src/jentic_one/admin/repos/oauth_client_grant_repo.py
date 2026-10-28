@@ -14,6 +14,7 @@ from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
 from jentic_one.shared.db.keyset import apply_desc_keyset
 from jentic_one.shared.models.actors import ActorStatus
 from jentic_one.shared.models.oauth_clients import OAuthGrantStatus
+from jentic_one.shared.pagination import Cursor
 
 
 class OAuthClientGrantRepository:
@@ -129,7 +130,7 @@ class OAuthClientGrantRepository:
         user_id: str | None = None,
         status: str | None = None,
         limit: int = 50,
-        cursor: tuple[datetime, str] | None = None,
+        cursor: Cursor | None = None,
         filters: Sequence[ColumnElement[bool]] | None = None,
     ) -> list[OAuthClientGrant]:
         """List grant rows for the grant listing surfaces, newest first.

@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
 from typing import cast
 
 import structlog
@@ -18,6 +17,7 @@ from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.operations import Operation
 from jentic_one.shared.db.keyset import apply_asc_keyset
 from jentic_one.shared.models import ApiRevisionState
+from jentic_one.shared.pagination import Cursor
 
 logger = structlog.get_logger()
 
@@ -181,7 +181,7 @@ class OperationRepository:
         *,
         revision_id: uuid.UUID,
         limit: int = 50,
-        cursor: tuple[datetime, str] | None = None,
+        cursor: Cursor | None = None,
     ) -> list[Operation]:
         stmt = (
             select(Operation)

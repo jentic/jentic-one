@@ -17,6 +17,7 @@ from jentic_one.shared.db.keyset import (
     asc_keyset_predicate,
     desc_keyset_predicate,
 )
+from jentic_one.shared.pagination import Cursor
 
 _ROWS = Table(
     "rows",
@@ -63,7 +64,9 @@ def test_apply_desc_keyset_without_cursor_leaves_statement_unchanged() -> None:
 
 
 def test_apply_desc_keyset_with_cursor_adds_where_clause() -> None:
-    stmt = apply_desc_keyset(select(_ROWS), _ROWS.c.created_at, _ROWS.c.id, (_TS, "row_b"))
+    stmt = apply_desc_keyset(
+        select(_ROWS), _ROWS.c.created_at, _ROWS.c.id, Cursor(timestamp=_TS, id="row_b")
+    )
     sql = _sql(stmt, SQLiteDialect())
     assert "WHERE (rows.created_at, rows.id) < (" in sql
 
@@ -74,6 +77,8 @@ def test_apply_asc_keyset_without_cursor_leaves_statement_unchanged() -> None:
 
 
 def test_apply_asc_keyset_with_cursor_adds_where_clause() -> None:
-    stmt = apply_asc_keyset(select(_ROWS), _ROWS.c.created_at, _ROWS.c.id, (_TS, "row_b"))
+    stmt = apply_asc_keyset(
+        select(_ROWS), _ROWS.c.created_at, _ROWS.c.id, Cursor(timestamp=_TS, id="row_b")
+    )
     sql = _sql(stmt, SQLiteDialect())
     assert "WHERE (rows.created_at, rows.id) > (" in sql

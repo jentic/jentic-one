@@ -19,6 +19,7 @@ from jentic_one.control.core.schema.oauth_tokens import OAuthToken
 from jentic_one.shared.db.keyset import apply_desc_keyset
 from jentic_one.shared.models.api_identity import slugify_api_field
 from jentic_one.shared.models.credentials import StoredCredentialType
+from jentic_one.shared.pagination import Cursor
 
 # Secret-material child relationships on ``Credential`` (one row per credential).
 _CHILD_RELATIONSHIPS: tuple[str, ...] = (
@@ -181,7 +182,7 @@ class CredentialRepository:
     async def list_all(
         session: AsyncSession,
         *,
-        cursor: tuple[datetime, str] | None = None,
+        cursor: Cursor | None = None,
         limit: int = 50,
         vendor: str | None = None,
         filters: Sequence[ColumnElement[bool]] | None = None,

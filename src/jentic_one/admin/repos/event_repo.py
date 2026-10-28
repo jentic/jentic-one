@@ -13,6 +13,7 @@ from jentic_one.admin.core.schema.events import Event
 from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.db.keyset import apply_desc_keyset, asc_keyset_predicate
 from jentic_one.shared.db.utils import insert_append_only_row
+from jentic_one.shared.pagination import Cursor
 
 
 class EventRepository:
@@ -114,7 +115,7 @@ class EventRepository:
         session: AsyncSession,
         *,
         limit: int = 25,
-        cursor: tuple[datetime, str] | None = None,
+        cursor: Cursor | None = None,
         event_type: list[str] | None = None,
         severity: list[str] | None = None,
         requires_action: bool | None = None,
@@ -151,7 +152,7 @@ class EventRepository:
     @staticmethod
     async def list_after_cursor(
         session: AsyncSession,
-        cursor: tuple[datetime, str],
+        cursor: Cursor,
         *,
         limit: int = 100,
         event_type: list[str] | None = None,
@@ -162,15 +163,14 @@ class EventRepository:
         actor_type: str | None = None,
         filters: list[ColumnElement[bool]] | None = None,
     ) -> list[Event]:
-        """Return events after the (created_at, id) cursor using two-tuple comparison.
+        """Return events after ``cursor``, comparing ``(created_at, id)`` as a pair.
 
         Unlike pure KSUID ordering, this correctly handles events created within
         the same second whose random payload yields out-of-order IDs.
         """
-        cursor_dt, cursor_id = cursor
         stmt = (
             select(Event)
-            .where(asc_keyset_predicate(Event.created_at, Event.id, cursor_dt, cursor_id))
+            .where(asc_keyset_predicate(Event.created_at, Event.id, cursor.timestamp, cursor.id))
             .order_by(Event.created_at.asc(), Event.id.asc())
             .limit(limit)
         )

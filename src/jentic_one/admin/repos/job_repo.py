@@ -14,6 +14,7 @@ from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.services.errors import JobNotFoundError
 from jentic_one.shared.db.keyset import apply_desc_keyset
 from jentic_one.shared.models import JobKind, JobStatus
+from jentic_one.shared.pagination import Cursor
 
 
 class JobRepository:
@@ -86,7 +87,7 @@ class JobRepository:
         session: AsyncSession,
         *,
         limit: int = 25,
-        cursor: tuple[datetime, str] | None = None,
+        cursor: Cursor | None = None,
         kind: str | None = None,
         status: list[str] | None = None,
         since: datetime | None = None,

@@ -16,6 +16,7 @@ from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.overlays import Overlay
 from jentic_one.shared.db.keyset import apply_desc_keyset
 from jentic_one.shared.models import OverlayStatus
+from jentic_one.shared.pagination import Cursor
 
 
 class _Unset(Enum):
@@ -179,7 +180,7 @@ class OverlayRepository:
         *,
         api_id: uuid.UUID,
         limit: int = 50,
-        cursor: tuple[datetime, str] | None = None,
+        cursor: Cursor | None = None,
         status: str | None = None,
     ) -> list[Overlay]:
         stmt = (

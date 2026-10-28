@@ -6,7 +6,6 @@ Shared, reusable ordered rule lists. Flush-only, never commits.
 from __future__ import annotations
 
 from collections.abc import Collection
-from datetime import datetime
 
 from sqlalchemy import delete, func, insert, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +16,7 @@ from jentic_one.control.core.schema.permission_rule_sets import (
 )
 from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.db.keyset import apply_desc_keyset
+from jentic_one.shared.pagination import Cursor
 
 
 class PermissionRuleSetRepository:
@@ -80,7 +80,7 @@ class PermissionRuleSetRepository:
     async def list_page(
         session: AsyncSession,
         *,
-        cursor: tuple[datetime, str] | None = None,
+        cursor: Cursor | None = None,
         limit: int = 50,
     ) -> list[PermissionRuleSet]:
         """List rule sets paginated by (created_at DESC, id DESC)."""

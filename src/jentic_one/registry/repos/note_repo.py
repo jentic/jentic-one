@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
-from datetime import datetime
 from enum import Enum, auto
 
 from sqlalchemy import delete, select
@@ -15,6 +14,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from jentic_one.registry.core.schema.notes import Note
 from jentic_one.shared.db.keyset import apply_desc_keyset
 from jentic_one.shared.db.utils import utcnow
+from jentic_one.shared.pagination import Cursor
 
 
 class _Unset(Enum):
@@ -83,7 +83,7 @@ class NoteRepository:
         session: AsyncSession,
         *,
         limit: int = 50,
-        cursor: tuple[datetime, str] | None = None,
+        cursor: Cursor | None = None,
         api_ids: list[uuid.UUID] | None = None,
         operation_id: str | None = None,
         execution_id: str | None = None,

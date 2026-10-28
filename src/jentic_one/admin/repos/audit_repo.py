@@ -12,6 +12,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.shared.db.keyset import apply_desc_keyset
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
+from jentic_one.shared.pagination import Cursor
 
 
 class AuditRepository:
@@ -115,7 +116,7 @@ class AuditRepository:
         target_id: str,
         *,
         limit: int = 50,
-        cursor: tuple[datetime, str] | None = None,
+        cursor: Cursor | None = None,
         actor_id: str | None = None,
         origin: str | None = None,
         since: datetime | None = None,
@@ -149,7 +150,7 @@ class AuditRepository:
         actor_id: str,
         *,
         limit: int = 50,
-        cursor: tuple[datetime, str] | None = None,
+        cursor: Cursor | None = None,
         origin: str | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
@@ -179,7 +180,7 @@ class AuditRepository:
         session: AsyncSession,
         *,
         limit: int = 50,
-        cursor: tuple[datetime, str] | None = None,
+        cursor: Cursor | None = None,
         origin: str | None = None,
         since: datetime | None = None,
         until: datetime | None = None,

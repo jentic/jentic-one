@@ -11,6 +11,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.shared.db.keyset import apply_desc_keyset
+from jentic_one.shared.pagination import Cursor
 
 
 class ExecutionRecordRepository:
@@ -87,7 +88,7 @@ class ExecutionRecordRepository:
         session: AsyncSession,
         *,
         limit: int = 50,
-        cursor: tuple[datetime, str] | None = None,
+        cursor: Cursor | None = None,
         trace_id: str | None = None,
         status: list[str] | None = None,
         from_: datetime | None = None,

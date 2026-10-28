@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
 from typing import Any, cast
 from urllib.parse import urlparse
 
@@ -17,6 +16,7 @@ from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.security_schemes import SecurityScheme
 from jentic_one.registry.core.schema.servers import Server
 from jentic_one.shared.db.keyset import apply_desc_keyset
+from jentic_one.shared.pagination import Cursor
 
 
 class CatalogApiIdConflictError(Exception):
@@ -240,7 +240,7 @@ class ApiRepository:
         session: AsyncSession,
         *,
         limit: int = 50,
-        cursor: tuple[datetime, str] | None = None,
+        cursor: Cursor | None = None,
         vendor: str | None = None,
     ) -> list[Api]:
         stmt = select(Api).order_by(Api.created_at.desc(), Api.id.desc()).limit(limit)

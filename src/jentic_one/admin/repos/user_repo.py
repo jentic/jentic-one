@@ -16,6 +16,7 @@ from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.services.errors import UserDeletedError, UserNotFoundError
 from jentic_one.shared.db.keyset import apply_desc_keyset
 from jentic_one.shared.models import AuthProvider, InviteState
+from jentic_one.shared.pagination import Cursor
 
 
 def _invite_state_clause(invite_state: InviteState) -> ColumnElement[bool]:
@@ -214,7 +215,7 @@ class UserRepository:
         session: AsyncSession,
         *,
         limit: int = 50,
-        cursor: tuple[datetime, str] | None = None,
+        cursor: Cursor | None = None,
         invite_state: InviteState | None = None,
         filters: Sequence[ColumnElement[bool]] | None = None,
     ) -> list[User]:

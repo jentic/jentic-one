@@ -16,6 +16,7 @@ from jentic_one.registry.services.errors import (
 )
 from jentic_one.registry.services.operation_service import OperationService
 from jentic_one.shared.pagination import (
+    Cursor,
     InvalidCursorError,
     decode_cursor,
     encode_cursor,
@@ -26,17 +27,15 @@ def test_encode_decode_cursor_str_roundtrip() -> None:
     ts = datetime(2024, 3, 15, 12, 0, 0, tzinfo=UTC)
     id_str = "op_abc123def456"
     encoded = encode_cursor(ts, id_str)
-    decoded_ts, decoded_id = decode_cursor(encoded, id_kind="str")
-    assert decoded_ts == ts
-    assert decoded_id == id_str
+    assert decode_cursor(encoded, id_kind="str") == Cursor(timestamp=ts, id=id_str)
 
 
 def test_decode_cursor_str_allows_non_uuid() -> None:
     payload = {"t": "2024-01-01T00:00:00+00:00", "id": "op_not_a_uuid_at_all"}
     encoded = base64.b64encode(json.dumps(payload).encode()).decode()
-    ts, decoded_id = decode_cursor(encoded, id_kind="str")
-    assert decoded_id == "op_not_a_uuid_at_all"
-    assert ts.tzinfo is not None
+    decoded = decode_cursor(encoded, id_kind="str")
+    assert decoded.id == "op_not_a_uuid_at_all"
+    assert decoded.timestamp.tzinfo is not None
 
 
 def test_decode_cursor_str_invalid_base64() -> None:
@@ -59,8 +58,7 @@ def test_decode_cursor_str_missing_fields() -> None:
 def test_decode_cursor_str_naive_timestamp_gets_utc() -> None:
     payload = {"t": "2024-01-01T00:00:00", "id": "op_123"}
     encoded = base64.b64encode(json.dumps(payload).encode()).decode()
-    ts, _ = decode_cursor(encoded, id_kind="str")
-    assert ts.tzinfo == UTC
+    assert decode_cursor(encoded, id_kind="str").timestamp.tzinfo == UTC
 
 
 @pytest.mark.asyncio

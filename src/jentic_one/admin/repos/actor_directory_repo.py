@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
 from typing import Any
 
 from sqlalchemy import Boolean, String, case, literal, select, union_all
@@ -15,6 +14,7 @@ from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.users import User
 from jentic_one.shared.db.keyset import apply_desc_keyset
 from jentic_one.shared.models import ActorStatus, ActorType
+from jentic_one.shared.pagination import Cursor
 
 
 def _build_union(
@@ -58,7 +58,7 @@ class ActorDirectoryRepository:
         session: AsyncSession,
         *,
         limit: int = 1000,
-        cursor: tuple[datetime, str] | None = None,
+        cursor: Cursor | None = None,
         agent_filters: Sequence[ColumnElement[bool]] = (),
         user_filters: Sequence[ColumnElement[bool]] = (),
     ) -> list[Any]:

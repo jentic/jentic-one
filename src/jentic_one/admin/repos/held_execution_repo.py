@@ -12,6 +12,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.shared.db.keyset import apply_desc_keyset
 from jentic_one.shared.db.utils import db_now
+from jentic_one.shared.pagination import Cursor
 
 _PENDING = "pending"
 
@@ -45,7 +46,7 @@ class HeldExecutionRepository:
         state: str | None = None,
         agent_id: str | None = None,
         limit: int = 25,
-        cursor: tuple[datetime, str] | None = None,
+        cursor: Cursor | None = None,
         filters: Sequence[ColumnElement[bool]] | None = None,
     ) -> list[HeldExecution]:
         """Approvals newest first, keyset-paginated on ``(created_at, id)``."""

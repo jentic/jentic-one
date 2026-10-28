@@ -11,6 +11,7 @@ import pytest
 
 from jentic_one.shared.pagination import (
     MAX_CURSOR_LENGTH,
+    Cursor,
     CursorIdKind,
     InvalidCursorError,
     InvalidSearchCursorError,
@@ -27,26 +28,21 @@ def test_encode_decode_round_trip_utc() -> None:
     ts = datetime(2024, 6, 15, 12, 0, 0, tzinfo=UTC)
     uid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
     cursor = encode_cursor(ts, uid)
-    decoded_ts, decoded_id = decode_cursor(cursor, id_kind="uuid")
-    assert decoded_ts == ts
-    assert decoded_id == uid
+    assert decode_cursor(cursor, id_kind="uuid") == Cursor(timestamp=ts, id=uid)
 
 
 def test_encode_decode_naive_datetime_gets_utc() -> None:
     ts = datetime(2024, 1, 1, 0, 0, 0)
     uid = "00000000-0000-0000-0000-000000000001"
     cursor = encode_cursor(ts, uid)
-    decoded_ts, _ = decode_cursor(cursor, id_kind="uuid")
-    assert decoded_ts.tzinfo == UTC
+    assert decode_cursor(cursor, id_kind="uuid").timestamp.tzinfo == UTC
 
 
 def test_encode_decode_round_trip_with_explicit_utc() -> None:
     ts = datetime(2024, 3, 15, 8, 30, 0, tzinfo=UTC)
     uid = "12345678-1234-1234-1234-123456789abc"
     cursor = encode_cursor(ts, uid)
-    decoded_ts, decoded_id = decode_cursor(cursor, id_kind="uuid")
-    assert decoded_ts == ts
-    assert decoded_id == uid
+    assert decode_cursor(cursor, id_kind="uuid") == Cursor(timestamp=ts, id=uid)
 
 
 def test_decode_cursor_malformed_base64() -> None:
@@ -76,18 +72,14 @@ def test_decode_cursor_non_uuid_id() -> None:
 def test_decode_cursor_str_accepts_non_uuid_id() -> None:
     ts = datetime(2024, 6, 1, 12, 0, 0, tzinfo=UTC)
     cursor = encode_cursor(ts, "my-string-id")
-    decoded_ts, decoded_id = decode_cursor(cursor, id_kind="str")
-    assert decoded_ts == ts
-    assert decoded_id == "my-string-id"
+    assert decode_cursor(cursor, id_kind="str") == Cursor(timestamp=ts, id="my-string-id")
 
 
 def test_decode_cursor_str_accepts_uuid_id() -> None:
     ts = datetime(2024, 6, 1, 12, 0, 0, tzinfo=UTC)
     uid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
     cursor = encode_cursor(ts, uid)
-    decoded_ts, decoded_id = decode_cursor(cursor, id_kind="str")
-    assert decoded_ts == ts
-    assert decoded_id == uid
+    assert decode_cursor(cursor, id_kind="str") == Cursor(timestamp=ts, id=uid)
 
 
 def test_decode_cursor_str_malformed_raises_error() -> None:

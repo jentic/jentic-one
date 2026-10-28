@@ -3626,10 +3626,7 @@ class ConnectSessionService:
         own. Rows are slim summaries — the ``poll_token``
         capability never leaves the service on this path.
         """
-        decoded_cursor = None
-        if cursor is not None:
-            ts, sid = decode_cursor(cursor, id_kind="str")
-            decoded_cursor = (ts, sid)
+        decoded_cursor = decode_cursor(cursor, id_kind="str") if cursor is not None else None
 
         access_filters = build_access_filters(
             identity,

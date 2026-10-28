@@ -6,6 +6,7 @@ import json
 import math
 import uuid
 from base64 import b64decode, b64encode
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Generic, Literal, TypeVar
 
@@ -18,6 +19,7 @@ CursorIdKind = Literal["uuid", "str"]
 
 __all__ = [
     "MAX_CURSOR_LENGTH",
+    "Cursor",
     "CursorIdKind",
     "InvalidCursorError",
     "InvalidSearchCursorError",
@@ -35,6 +37,20 @@ __all__ = [
 #: characters; the cap rejects an oversized (e.g. deeply nested) payload before
 #: it reaches the JSON parser.
 MAX_CURSOR_LENGTH = 1024
+
+
+@dataclass(frozen=True, slots=True)
+class Cursor:
+    """A decoded keyset position: the sort timestamp and the row id that breaks its ties.
+
+    Carried as one value rather than a bare pair so a caller cannot transpose
+    the two fields, and so the keyset helpers name what they compare. The id is
+    a string for both key shapes: a KSUID as stored, and a UUID already
+    validated by :func:`decode_cursor`.
+    """
+
+    timestamp: datetime
+    id: str
 
 
 class InvalidCursorError(ValueError):
@@ -78,8 +94,8 @@ def _load_cursor_payload(cursor: str) -> dict[str, Any]:
     return payload
 
 
-def decode_cursor(cursor: str, *, id_kind: CursorIdKind) -> tuple[datetime, str]:
-    """Decode a cursor back into ``(timestamp, id)``.
+def decode_cursor(cursor: str, *, id_kind: CursorIdKind) -> Cursor:
+    """Decode a cursor back into a :class:`Cursor`.
 
     ``id_kind`` names the check the id must pass: ``"uuid"`` for listings
     keyed by UUID primary keys, ``"str"`` for KSUID and other string keys.
@@ -99,7 +115,7 @@ def decode_cursor(cursor: str, *, id_kind: CursorIdKind) -> tuple[datetime, str]
             uuid.UUID(raw_id)
     except (ValueError, TypeError, KeyError) as exc:
         raise InvalidCursorError("Invalid pagination cursor") from exc
-    return ts, raw_id
+    return Cursor(timestamp=ts, id=raw_id)
 
 
 def encode_search_cursor(distance: float, operation_id: str) -> str:

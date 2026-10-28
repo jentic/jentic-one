@@ -37,16 +37,13 @@ class EventService:
         cursor: str | None = None,
         limit: int = 25,
     ) -> Page[EventView]:
-        cursor_tuple = None
-        if cursor is not None:
-            cursor_dt, cursor_id = decode_cursor(cursor, id_kind="str")
-            cursor_tuple = (cursor_dt, cursor_id)
+        cursor_key = decode_cursor(cursor, id_kind="str") if cursor is not None else None
 
         async with self._ctx.admin_db.session() as session:
             events = await EventRepository.list_all(
                 session,
                 limit=limit + 1,
-                cursor=cursor_tuple,
+                cursor=cursor_key,
                 event_type=filter.event_type,
                 severity=[str(s) for s in filter.severity] if filter.severity else None,
                 requires_action=filter.requires_action,

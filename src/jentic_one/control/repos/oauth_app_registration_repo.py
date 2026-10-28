@@ -23,6 +23,7 @@ from jentic_one.control.core.schema.device_authorization_app_registration_detail
 )
 from jentic_one.control.core.schema.oauth_app_registrations import OAuthAppRegistration
 from jentic_one.shared.db.keyset import apply_desc_keyset
+from jentic_one.shared.pagination import Cursor
 
 FLOW_KIND_AUTH_CODE = "authorization_code"
 FLOW_KIND_DEVICE_AUTHORIZATION = "device_authorization"
@@ -158,7 +159,7 @@ class OAuthAppRegistrationRepository:
         api_vendor: str | None = None,
         flow_kind: str | None = None,
         include_inactive: bool = False,
-        cursor: tuple[dt.datetime, str] | None = None,
+        cursor: Cursor | None = None,
         limit: int = 50,
     ) -> list[OAuthAppRegistration]:
         """List registrations paginated by (created_at DESC, id DESC)."""

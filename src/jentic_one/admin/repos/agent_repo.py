@@ -15,6 +15,7 @@ from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.services.errors import AgentNotFoundError
 from jentic_one.shared.db.keyset import apply_desc_keyset
 from jentic_one.shared.models import ActorStatus
+from jentic_one.shared.pagination import Cursor
 
 
 class AgentRepository:
@@ -97,7 +98,7 @@ class AgentRepository:
         owner_id: str,
         *,
         limit: int = 50,
-        cursor: tuple[datetime, str] | None = None,
+        cursor: Cursor | None = None,
         filters: Sequence[ColumnElement[bool]] | None = None,
     ) -> list[Agent]:
         stmt = (
@@ -118,7 +119,7 @@ class AgentRepository:
         session: AsyncSession,
         *,
         limit: int = 50,
-        cursor: tuple[datetime, str] | None = None,
+        cursor: Cursor | None = None,
         status: str | None = None,
         filters: Sequence[ColumnElement[bool]] | None = None,
     ) -> list[Agent]:

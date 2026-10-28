@@ -14,6 +14,7 @@ from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.repos.overlay_repo import OverlayRepository
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import OverlayStatus
+from jentic_one.shared.pagination import Cursor
 
 pytestmark = pytest.mark.integration
 
@@ -152,7 +153,7 @@ async def test_list_page_cursor_pagination(registry_db: DatabaseSession, sample_
             session,
             api_id=sample_api.id,
             limit=3,
-            cursor=(last.created_at, last.id),
+            cursor=Cursor(timestamp=last.created_at, id=last.id),
         )
 
     assert len(second_page) == 2

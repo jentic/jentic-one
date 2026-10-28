@@ -7,7 +7,11 @@ skips a row. Filtering on the sort key alone drops the rest of such a run,
 which is why every cursor carries the id and every listing compares it.
 
 Every repository builds its keyset predicate here, so the comparison is spelled
-once (``tests/arch/test_keyset_helper.py`` rejects hand-written copies). It is a
+once (``tests/arch/test_keyset_helper.py`` rejects hand-written copies). The
+``apply_*`` wrappers take a :class:`~jentic_one.shared.pagination.Cursor`, the
+``(timestamp, id)`` key every listing pages on; a listing keyed on something
+else (the lexical search strategy's relevance distance) calls the predicates
+directly with its own values. It is a
 row-value comparison, ``(sort, id) < (:s, :id)`` (``>`` for ascending order):
 PostgreSQL can use it as a single range condition on a ``(sort, id)`` index, and
 SQLite (3.15+) evaluates it with the same lexicographic semantics. Both columns
@@ -21,6 +25,8 @@ from typing import Any
 
 from sqlalchemy import Select, SQLColumnExpression, tuple_
 from sqlalchemy.sql.elements import ColumnElement
+
+from jentic_one.shared.pagination import Cursor
 
 __all__ = [
     "apply_asc_keyset",
@@ -54,26 +60,24 @@ def apply_desc_keyset[SelectT: Select[Any]](
     stmt: SelectT,
     sort_col: SQLColumnExpression[Any],
     id_col: SQLColumnExpression[Any],
-    cursor: tuple[object, object] | None,
+    cursor: Cursor | None,
 ) -> SelectT:
     """Narrow ``stmt`` to rows after ``cursor`` in descending order; no-op when ``None``."""
     if cursor is None:
         return stmt
-    sort_value, id_value = cursor
-    return stmt.where(desc_keyset_predicate(sort_col, id_col, sort_value, id_value))
+    return stmt.where(desc_keyset_predicate(sort_col, id_col, cursor.timestamp, cursor.id))
 
 
 def apply_asc_keyset[SelectT: Select[Any]](
     stmt: SelectT,
     sort_col: SQLColumnExpression[Any],
     id_col: SQLColumnExpression[Any],
-    cursor: tuple[object, object] | None,
+    cursor: Cursor | None,
 ) -> SelectT:
     """Narrow ``stmt`` to rows after ``cursor`` in ascending order; no-op when ``None``."""
     if cursor is None:
         return stmt
-    sort_value, id_value = cursor
-    return stmt.where(asc_keyset_predicate(sort_col, id_col, sort_value, id_value))
+    return stmt.where(asc_keyset_predicate(sort_col, id_col, cursor.timestamp, cursor.id))
 
 
 def _types(*cols: SQLColumnExpression[Any]) -> list[Any]:

@@ -18,6 +18,7 @@ from jentic_one.control.core.schema.connect_sessions import (
     ConnectSession,
 )
 from jentic_one.shared.db.keyset import apply_desc_keyset
+from jentic_one.shared.pagination import Cursor
 
 # The non-terminal states. A session outside these is frozen — no transition
 # (including the terminal sweep) may touch it. ``awaiting_app`` is an OAuth
@@ -96,7 +97,7 @@ class ConnectSessionRepository:
     async def list_all(
         session: AsyncSession,
         *,
-        cursor: tuple[datetime, str] | None = None,
+        cursor: Cursor | None = None,
         limit: int = 50,
         state: str | None = None,
         vendor: str | None = None,
