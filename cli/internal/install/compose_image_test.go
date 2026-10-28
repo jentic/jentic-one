@@ -76,7 +76,8 @@ func TestComposeAppImageWithoutAnAppServiceIsEmpty(t *testing.T) {
 func TestSetComposeAppImageMovesAppAndBrokerOnly(t *testing.T) {
 	path := writeCompose(t, "ghcr.io/jentic/jentic-one-app:0.43.0")
 
-	changed, err := SetComposeAppImage(path, "ghcr.io/jentic/jentic-one-app:0.44.0")
+	changed, err := SetComposeAppImage(path,
+		"ghcr.io/jentic/jentic-one-app:0.43.0", "ghcr.io/jentic/jentic-one-app:0.44.0")
 	if err != nil {
 		t.Fatalf("SetComposeAppImage: %v", err)
 	}
@@ -114,7 +115,7 @@ func TestSetComposeAppImageToTheSameValueIsANoOp(t *testing.T) {
 		t.Fatalf("read: %v", err)
 	}
 
-	changed, err := SetComposeAppImage(path, AppImageTag)
+	changed, err := SetComposeAppImage(path, AppImageTag, AppImageTag)
 	if err != nil {
 		t.Fatalf("SetComposeAppImage: %v", err)
 	}
@@ -130,14 +131,104 @@ func TestSetComposeAppImageToTheSameValueIsANoOp(t *testing.T) {
 	}
 }
 
-// Repointing a compose file with no app image fails loudly rather than
-// appending a service or silently doing nothing.
+// Repointing with no current image fails loudly rather than appending a service
+// or silently doing nothing.
 func TestSetComposeAppImageWithoutAnAppServiceErrors(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "docker-compose.yaml")
 	if err := os.WriteFile(path, []byte("services: {}\n"), 0o600); err != nil {
 		t.Fatalf("write compose: %v", err)
 	}
-	if _, err := SetComposeAppImage(path, AppImageTag); err == nil {
+	if _, err := SetComposeAppImage(path, "", AppImageTag); err == nil {
 		t.Error("SetComposeAppImage = nil error, want a failure")
+	}
+}
+
+// A service whose image merely STARTS WITH the app's — a debug sidecar beside
+// the app's own tag — must not be rewritten into a tag that does not exist.
+func TestSetComposeAppImageLeavesAPrefixMatchingSidecarAlone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "docker-compose.yaml")
+	body := "services:\n" +
+		"  app:\n    image: ghcr.io/jentic/jentic-one-app:0.43.0\n" +
+		"  debug:\n    image: ghcr.io/jentic/jentic-one-app:0.43.0-debug\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write compose: %v", err)
+	}
+
+	if _, err := SetComposeAppImage(path,
+		"ghcr.io/jentic/jentic-one-app:0.43.0", "ghcr.io/jentic/jentic-one-app:0.44.0"); err != nil {
+		t.Fatalf("SetComposeAppImage: %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	got := string(raw)
+	if !strings.Contains(got, "image: ghcr.io/jentic/jentic-one-app:0.43.0-debug") {
+		t.Errorf("the sidecar's image was rewritten:\n%s", got)
+	}
+	if !strings.Contains(got, "image: ghcr.io/jentic/jentic-one-app:0.44.0\n") {
+		t.Errorf("the app's image was not moved:\n%s", got)
+	}
+}
+
+// A quoted or oddly spaced value is still matched, and its quoting survives —
+// otherwise the repoint fails after a successful pull or build.
+func TestSetComposeAppImageHandlesQuotedAndSpacedValues(t *testing.T) {
+	for _, tc := range []struct{ name, line, want string }{
+		{"double-quoted", `    image: "ghcr.io/jentic/jentic-one-app:0.43.0"`, `    image: "ghcr.io/jentic/jentic-one-app:0.44.0"`},
+		{"single-quoted", `    image: 'ghcr.io/jentic/jentic-one-app:0.43.0'`, `    image: 'ghcr.io/jentic/jentic-one-app:0.44.0'`},
+		{"extra-spaces", "    image:   ghcr.io/jentic/jentic-one-app:0.43.0", "    image: ghcr.io/jentic/jentic-one-app:0.44.0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "docker-compose.yaml")
+			if err := os.WriteFile(path, []byte("services:\n  app:\n"+tc.line+"\n"), 0o600); err != nil {
+				t.Fatalf("write compose: %v", err)
+			}
+			current, err := ComposeAppImage(path)
+			if err != nil {
+				t.Fatalf("ComposeAppImage: %v", err)
+			}
+			if _, err := SetComposeAppImage(path, current, "ghcr.io/jentic/jentic-one-app:0.44.0"); err != nil {
+				t.Fatalf("SetComposeAppImage: %v", err)
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read back: %v", err)
+			}
+			if !strings.Contains(string(raw), tc.want) {
+				t.Errorf("rewrote to:\n%s\nwant a line %q", raw, tc.want)
+			}
+		})
+	}
+}
+
+// The compose file holds operator edits and the managed database password and
+// no update can regenerate it, so the repoint must not truncate in place: the
+// replacement arrives whole, by rename, and keeps its 0600 mode.
+func TestSetComposeAppImageWritesAtomicallyAndKeepsMode(t *testing.T) {
+	path := writeCompose(t, "ghcr.io/jentic/jentic-one-app:0.43.0")
+
+	if _, err := SetComposeAppImage(path,
+		"ghcr.io/jentic/jentic-one-app:0.43.0", "ghcr.io/jentic/jentic-one-app:0.44.0"); err != nil {
+		t.Fatalf("SetComposeAppImage: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("mode = %v, want 0600", got)
+	}
+	// No temp file is left behind for the next read to trip over.
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	for _, e := range entries {
+		if e.Name() != "docker-compose.yaml" {
+			t.Errorf("stray file left in the install dir: %s", e.Name())
+		}
 	}
 }

@@ -1059,7 +1059,7 @@ func TestUpdateStackDockerNonReleaseRefMovesAPulledStackToTheLocalTag(t *testing
 
 // A compose file naming no app image cannot be told apart, so the update builds
 // (which leaves the file alone) instead of guessing a registry tag.
-func TestUpdateStackDockerBuildsWhenTheComposeImageIsUnreadable(t *testing.T) {
+func TestUpdateStackDockerBuildsWhenNoAppImageIsNamed(t *testing.T) {
 	a := testApp(t)
 	if err := os.WriteFile(a.Paths.ComposePath(), []byte("services: {}\n"), 0o600); err != nil {
 		t.Fatalf("write compose: %v", err)
@@ -1071,6 +1071,114 @@ func TestUpdateStackDockerBuildsWhenTheComposeImageIsUnreadable(t *testing.T) {
 	}
 	if calls.builds != 1 || len(calls.pulled) != 0 {
 		t.Errorf("builds=%d pulled=%v, want 1 build and no pull", calls.builds, calls.pulled)
+	}
+}
+
+// An unparseable compose file fails before any work: every step after the
+// refresh reads the same file and cannot parse it either, so proceeding would
+// cost the operator a full image build and then die anyway.
+func TestUpdateStackDockerFailsFastOnAnUnparseableComposeFile(t *testing.T) {
+	a := testApp(t)
+	if err := os.WriteFile(a.Paths.ComposePath(), []byte("services:\n  app: [\n"), 0o600); err != nil {
+		t.Fatalf("write compose: %v", err)
+	}
+	calls := stubDockerStack(t)
+
+	err := a.updateStackDocker(context.Background(), "v0.44.0", false, true)
+	if err == nil {
+		t.Fatal("updateStackDocker = nil error, want a parse failure")
+	}
+	if !strings.Contains(err.Error(), "compose file") {
+		t.Errorf("error does not name the compose file: %v", err)
+	}
+	if calls.builds != 0 || len(calls.pulled) != 0 {
+		t.Errorf("builds=%d pulled=%v, want no work before the parse failure", calls.builds, calls.pulled)
+	}
+}
+
+// The pull keeps the registry and repository the stack already runs: a mirrored
+// install must not be marched onto the published default, which would violate
+// the operator's registry policy and fail outright on a host that cannot reach
+// ghcr.io.
+func TestUpdateStackDockerPullKeepsAMirrorsRegistry(t *testing.T) {
+	a := testApp(t)
+	writeStackCompose(t, a, "registry.corp/jentic-one-app:0.43.0")
+	calls := stubDockerStack(t)
+
+	if err := a.updateStackDocker(context.Background(), "v0.44.0", false, true); err != nil {
+		t.Fatalf("updateStackDocker: %v", err)
+	}
+
+	want := "registry.corp/jentic-one-app:0.44.0"
+	if len(calls.pulled) != 1 || calls.pulled[0] != want {
+		t.Errorf("pulled = %v, want exactly [%s]", calls.pulled, want)
+	}
+	if got, err := install.ComposeAppImage(a.Paths.ComposePath()); err != nil || got != want {
+		t.Errorf("compose app image = (%q, %v), want %q", got, err, want)
+	}
+}
+
+// An unpinned non-release ref is a FALLBACK — the tracked ref used when the
+// release lookup fails (rate limit, offline). Converting a published-image
+// stack to a from-source one is permanent and has no undo flag, so a transient
+// network error must not trigger it.
+func TestUpdateStackDockerRefusesToConvertAPulledStackOnAnUnpinnedNonReleaseRef(t *testing.T) {
+	a := testApp(t)
+	writeStackCompose(t, a, "ghcr.io/jentic/jentic-one-app:0.43.0")
+	calls := stubDockerStack(t)
+
+	err := a.updateStackDocker(context.Background(), "main", false, true)
+	if err == nil {
+		t.Fatal("updateStackDocker = nil error, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "--ref") {
+		t.Errorf("error does not say how to proceed: %v", err)
+	}
+	if calls.builds != 0 || len(calls.pulled) != 0 {
+		t.Errorf("builds=%d pulled=%v, want no work at all", calls.builds, calls.pulled)
+	}
+	if got, _ := install.ComposeAppImage(a.Paths.ComposePath()); got != "ghcr.io/jentic/jentic-one-app:0.43.0" {
+		t.Errorf("compose app image = %q, want the install left untouched", got)
+	}
+}
+
+// A digest-pinned stack names an exact image and there is no way to learn the
+// new digest, so the update refuses rather than downgrading it to a tag.
+func TestUpdateStackDockerRefusesToMoveADigestPinnedStack(t *testing.T) {
+	a := testApp(t)
+	writeStackCompose(t, a, "ghcr.io/jentic/jentic-one-app@sha256:"+strings.Repeat("ab", 32))
+	calls := stubDockerStack(t)
+
+	err := a.updateStackDocker(context.Background(), "v0.44.0", false, true)
+	if err == nil || !strings.Contains(err.Error(), "digest") {
+		t.Fatalf("err = %v, want a refusal naming the digest pin", err)
+	}
+	if calls.builds != 0 || len(calls.pulled) != 0 {
+		t.Errorf("builds=%d pulled=%v, want no work at all", calls.builds, calls.pulled)
+	}
+}
+
+// A failure after the image step must name what is actually on disk: the pull
+// route rebuilt nothing, so telling the operator the image was rebuilt sends
+// them looking for the wrong state.
+func TestUpdateStackDockerPullRouteHintNamesTheComposeChangeNotARebuild(t *testing.T) {
+	a := testApp(t)
+	writeStackCompose(t, a, "ghcr.io/jentic/jentic-one-app:0.43.0")
+	stubDockerStack(t)
+	origMigrate := runComposeMigrations
+	t.Cleanup(func() { runComposeMigrations = origMigrate })
+	runComposeMigrations = func(io.Writer, string) error { return errors.New("exit status 1") }
+
+	err := a.updateStackDocker(context.Background(), "v0.44.0", false, true)
+	var staged *stackStageError
+	if !errors.As(err, &staged) {
+		t.Fatalf("err = %v, want a stackStageError", err)
+	}
+	if staged.hint != hintDockerImagePulled {
+		t.Errorf("hint = %q, want the pulled-image hint", staged.hint)
+	}
+	if strings.Contains(staged.hint, "rebuilt") {
+		t.Errorf("hint claims a rebuild that never happened: %q", staged.hint)
 	}
 }
 

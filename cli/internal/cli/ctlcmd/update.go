@@ -167,7 +167,12 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 	// to a ref would clobber their work. Refuse rather than build something other
 	// than what was asked for — silently ignoring the pin is the bug being fixed
 	// here (#949).
-	if doStack && pinned {
+	//
+	// A Docker stack running a published image is refreshed by pulling the image
+	// for the ref, never by building, so the operator's checkout is irrelevant to
+	// it and the pin IS honoured. Only ask about the checkout when the refresh
+	// would actually read it.
+	if doStack && pinned && !a.dockerStackPullsOnUpdate(manifest.Mode) {
 		if plan := install.PlanLocalBuild(a.Paths.VenvPath(), a.Paths.SrcPath()).AtRef(ref, pinned); plan.PinnedRefIgnored() {
 			return fmt.Errorf("--ref %s cannot be applied: the stack builds from the local checkout at %s, "+
 				"so the ref would be ignored. Check out %s there yourself and re-run without --ref, "+
@@ -380,7 +385,22 @@ const (
 	hintLocalMigrateFailed  = "the app is stopped and its environment is already rebuilt; finish the update before running `jenticctl start`"
 	hintDockerImageRebuilt  = "the stack image is already rebuilt; don't start the stack until the update finishes"
 	hintDockerMigrationsRan = "the stack image is already rebuilt and migrations have run; don't start the stack until the update finishes"
+	// The pull route rebuilds nothing; what changed is the compose file, which
+	// now names the new image, so an operator reverting by hand needs to know
+	// that rather than be told about a build that never ran.
+	hintDockerImagePulled    = "the compose stack already names the new image; don't start the stack until the update finishes"
+	hintDockerPulledMigrated = "the compose stack already names the new image and migrations have run; don't start the stack until the update finishes"
 )
+
+// dockerStageHints pairs the post-image and post-migration stage hints for the
+// route the refresh took, so a failure after it names the change that is
+// actually on disk.
+func dockerStageHints(pulled bool) (afterImage, afterMigrations string) {
+	if pulled {
+		return hintDockerImagePulled, hintDockerPulledMigrated
+	}
+	return hintDockerImageRebuilt, hintDockerMigrationsRan
+}
 
 // cliTargetLabel words where the CLI half landed for the divergence message:
 // a brew-managed CLI reaches whatever the cask ships, not necessarily ref.
@@ -901,88 +921,151 @@ func (a *app) updateStackDocker(ctx context.Context, ref string, pinned, preflig
 		}
 	}
 
-	if err := a.refreshDockerStackImage(composePath, ref, pinned); err != nil {
+	pulled, err := a.refreshDockerStackImage(composePath, ref, pinned)
+	if err != nil {
 		return err
 	}
 
 	// The stack now resolves to the new image — the build overwrote the fixed
 	// local tag, or the compose file was repointed at the pulled reference — so
-	// any later failure leaves `jenticctl start` running it; the stage hint says
-	// so. The migration one-shot and `up` are the steps that bind host ports;
-	// tee their output so a bind failure becomes a named port conflict rather
-	// than the daemon's raw networking error (#976).
+	// any later failure leaves `jenticctl start` running it; the stage hints name
+	// whichever of the two actually happened. The migration one-shot and `up` are
+	// the steps that bind host ports; tee their output so a bind failure becomes
+	// a named port conflict rather than the daemon's raw networking error (#976).
+	hintAfterImage, hintAfterMigrations := dockerStageHints(pulled)
 	configPath := a.Paths.InstallConfigPath()
 	fmt.Fprintln(a.Out)
 	fmt.Fprint(a.Out, install.RenderMigrateHeader(configPath))
 	tail := &tailBuffer{}
 	if err := runComposeMigrations(io.MultiWriter(a.Out, tail), composePath); err != nil {
-		return &stackStageError{hint: hintDockerImageRebuilt, err: withPortConflict(fmt.Errorf("migrations failed: %w", err), tail.String())}
+		return &stackStageError{hint: hintAfterImage, err: withPortConflict(fmt.Errorf("migrations failed: %w", err), tail.String())}
 	}
 
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, install.RenderStartHeader())
 	tail = &tailBuffer{}
 	if err := composeUp(io.MultiWriter(a.Out, tail), composePath); err != nil {
-		return &stackStageError{hint: hintDockerMigrationsRan, err: withPortConflict(fmt.Errorf("docker compose up: %w", err), tail.String())}
+		return &stackStageError{hint: hintAfterMigrations, err: withPortConflict(fmt.Errorf("docker compose up: %w", err), tail.String())}
 	}
 	fmt.Fprintln(a.Out, theme.Successf("Stack updated (docker)."))
 	return nil
 }
 
-// refreshDockerStackImage brings the compose stack's app image up to ref by the
-// same route the install took, and leaves the compose file naming whatever the
-// stack should now run.
+// dockerStackRunsPublishedImage reports whether the compose stack at
+// composePath runs a published image (rather than one built from source), which
+// is what decides between pulling and building on an update.
 //
-// A stack installed from a published image pulls the image for ref and is
-// repointed at it; one built from source is rebuilt, and the compose file
-// already names the fixed local tag. Updating a pulled stack to a ref with no
-// published image (a branch, a commit) builds from source and has to move the
-// compose file off the published reference too, or compose would keep running
-// the old tag and ignore the image just built.
-func (a *app) refreshDockerStackImage(composePath, ref string, pinned bool) error {
+// The compose file is the single authority for this: it is what the running
+// stack resolves its image from, so it cannot drift the way a route recorded
+// once at install time could. `install` decides the route from its flags and
+// the CLI's own version; an update does not re-run that decision, it reads what
+// that decision produced.
+func dockerStackRunsPublishedImage(composePath string) (image string, published bool, err error) {
 	current, err := install.ComposeAppImage(composePath)
 	if err != nil {
-		// An unreadable compose file is not worth failing the update over: the
-		// build path is the safe default, since it leaves the file alone.
-		fmt.Fprintln(a.Out, theme.Warnf(
-			"warning: could not read the app image from %s (%v) — building from source", composePath, err))
-		current = ""
+		return "", false, err
 	}
-	// An empty image means there is nothing to tell the two apart, so build.
-	fromPublishedImage := current != "" && current != install.AppImageTag
+	return current, current != "" && current != install.AppImageTag, nil
+}
 
-	if fromPublishedImage && install.IsReleaseVersion(ref) {
-		// Resolved from ref, never from cmdcore.Version(): the CLI half swaps
-		// the binary on disk and this process carries on as the OLD one, so its
-		// own version still names the image the stack is already running.
-		image := install.ResolveAppImage(ref, "")
-		fmt.Fprintln(a.Out)
-		fmt.Fprintln(a.Out, theme.Headingf("Pull app image"))
-		fmt.Fprintln(a.Out, theme.Dimf("  image: %s", image))
-		if err := pullAppImage(a.Out, image); err != nil {
-			return err
+// dockerStackPullsOnUpdate reports whether a stack-half update would refresh
+// this stack by pulling rather than building, which is the case where the
+// operator's own checkout plays no part in the refresh.
+//
+// Best-effort by design: anything it cannot determine answers false, which
+// leaves the stricter build-path guards in force.
+func (a *app) dockerStackPullsOnUpdate(mode string) bool {
+	if mode != config.ModeDocker {
+		return false
+	}
+	composePath := a.Paths.ComposePath()
+	if !proc.FileExists(composePath) {
+		return false
+	}
+	_, published, err := dockerStackRunsPublishedImage(composePath)
+	return err == nil && published
+}
+
+// refreshDockerStackImage brings the compose stack's app image up to ref by the
+// route the install took, and leaves the compose file naming whatever the stack
+// should now run.
+//
+// A stack running a published image pulls the image for ref — on the registry
+// and repository it already names — and is repointed at it. One built from
+// source is rebuilt, and its compose file already names the fixed local tag.
+func (a *app) refreshDockerStackImage(composePath, ref string, pinned bool) (pulled bool, err error) {
+	current, published, err := dockerStackRunsPublishedImage(composePath)
+	if err != nil {
+		// Every step after this one reads the same file and cannot parse it
+		// either, so failing here costs the operator a pointless image build.
+		return false, fmt.Errorf("%w — fix it, or reinstall with `jenticctl install`", err)
+	}
+
+	if published {
+		if install.IsReleaseVersion(ref) {
+			return true, a.pullDockerStackImage(composePath, current, ref)
 		}
-		if _, err := install.SetComposeAppImage(composePath, image); err != nil {
-			return fmt.Errorf("point the compose stack at %s: %w", image, err)
+		// A ref with no published image can only be served by building, which
+		// converts the stack to a from-source one for good. Do that only when
+		// the operator pinned the ref themselves: an unpinned ref is a fallback
+		// (`manifest.Ref` when the release lookup fails — a rate limit or an
+		// offline host), and a transient network error must not silently change
+		// how the stack is deployed.
+		if !pinned {
+			return false, fmt.Errorf(
+				"the stack runs the published image %s, but the update target %q is not a release "+
+					"(the latest release could not be looked up, so the tracked ref was used). "+
+					"Re-run when the release lookup works, or pass --ref <version> to pin a release",
+				current, ref)
 		}
-		return nil
+		fmt.Fprintln(a.Out, theme.Warnf(
+			"warning: %s has no published image, so the stack is rebuilt from source and will be "+
+				"built from source from now on; reinstall to go back to published images", ref))
 	}
 
 	plan := install.PlanLocalBuild(a.Paths.VenvPath(), a.Paths.SrcPath()).AtRef(ref, pinned)
 	fmt.Fprintln(a.Out)
 	fmt.Fprint(a.Out, plan.RenderDockerBuildHeader())
 	if err := buildStackImages(plan, a.Out); err != nil {
-		return fmt.Errorf("image build failed: %w", err)
+		return false, fmt.Errorf("image build failed: %w", err)
 	}
-	if fromPublishedImage {
-		changed, err := install.SetComposeAppImage(composePath, install.AppImageTag)
+	if published {
+		changed, err := install.SetComposeAppImage(composePath, current, install.AppImageTag)
 		if err != nil {
-			return fmt.Errorf("point the compose stack at %s: %w", install.AppImageTag, err)
+			return false, fmt.Errorf("point the compose stack at %s: %w", install.AppImageTag, err)
 		}
 		if changed {
-			fmt.Fprintln(a.Out, theme.Dimf(
-				"  compose now runs %s — %s has no published image", install.AppImageTag, ref))
+			fmt.Fprintln(a.Out, theme.Dimf("  compose now runs %s", install.AppImageTag))
 		}
+	}
+	return false, nil
+}
+
+// pullDockerStackImage pulls the image for ref and repoints the compose file at
+// it, keeping the registry and repository current already names.
+func (a *app) pullDockerStackImage(composePath, current, ref string) error {
+	// The tag comes from ref and the repository from the deployed reference —
+	// never from this binary's own version or the image environment overrides.
+	// The CLI half swaps the binary on disk and this process carries on as the
+	// OLD one, so its version still names the image the stack already runs; and
+	// re-deriving the repository would move a mirrored install to another
+	// registry. Deriving the tag from ref alone also keeps the ref that
+	// recordStackBuild files true of the image actually installed.
+	image, err := install.SwapImageTag(current, ref)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(a.Out)
+	fmt.Fprint(a.Out, install.RenderPullHeader(image))
+	if err := pullAppImage(a.Out, image); err != nil {
+		return fmt.Errorf("%w\nthe stack still runs %s; no change has been made", err, current)
+	}
+	changed, err := install.SetComposeAppImage(composePath, current, image)
+	if err != nil {
+		return fmt.Errorf("point the compose stack at %s: %w", image, err)
+	}
+	if changed {
+		fmt.Fprintln(a.Out, theme.Dimf("  compose now runs %s", image))
 	}
 	return nil
 }
