@@ -3,9 +3,20 @@ package install
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+// requireUnixPerms skips a test that asserts a POSIX permission bit. Windows
+// carries only a read-only flag, so Go reports 0666/0444 there whatever mode
+// was set.
+func requireUnixPerms(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits are not represented on Windows")
+	}
+}
 
 // A compose file in the shape the template renders: a database service on its
 // own image, and app + broker sharing the app image. The database image is the
@@ -217,6 +228,7 @@ func TestSetComposeAppImageLeavesNonServiceBlocksAlone(t *testing.T) {
 // An operator who widened the compose file's mode (a shared ops group) keeps
 // it: a repoint must not quietly narrow the file back to 0600.
 func TestSetComposeAppImageKeepsAWidenedMode(t *testing.T) {
+	requireUnixPerms(t)
 	path := writeCompose(t, "ghcr.io/jentic/jentic-one-app:0.43.0")
 	if err := os.Chmod(path, 0o640); err != nil {
 		t.Fatalf("chmod: %v", err)
@@ -314,6 +326,7 @@ func TestSetComposeAppImageHandlesQuotedAndSpacedValues(t *testing.T) {
 // no update can regenerate it, so the repoint must not truncate in place: the
 // replacement arrives whole, by rename, and keeps its 0600 mode.
 func TestSetComposeAppImageWritesAtomicallyAndKeepsMode(t *testing.T) {
+	requireUnixPerms(t)
 	path := writeCompose(t, "ghcr.io/jentic/jentic-one-app:0.43.0")
 
 	if _, err := SetComposeAppImage(path, "ghcr.io/jentic/jentic-one-app:0.44.0"); err != nil {

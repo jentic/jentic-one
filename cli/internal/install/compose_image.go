@@ -200,14 +200,15 @@ func splitEOL(line string) (body, eol string) {
 }
 
 // atomicWriteFile replaces path's contents via a temp file in the same
-// directory and a rename, keeping the destination's existing mode, and fsyncs
-// the directory so the rename itself is durable.
+// directory and a rename, keeping the destination's existing mode.
 //
 // The compose file holds the operator's own edits and the managed database
 // password, and no update can regenerate it, so a truncating write could lose
-// it outright. Losing only the rename is nearly as bad: the pull and the
-// migrations have already happened, so the stack would boot the old image
-// against the new schema.
+// it outright: a reader either sees the old file or the new one, never a
+// half-written one. The new contents are fsynced before the rename; the
+// directory entry is flushed too where the platform allows it (see syncDir),
+// so on a host that does not, a crash in the instant after the rename can
+// still lose the repoint.
 //
 // Near-identical helpers live in internal/config, internal/mcpcfg and
 // internal/skillgen; they are worth promoting to one shared implementation.
@@ -244,18 +245,23 @@ func atomicWriteFile(path string, data []byte) error {
 	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("replace %s: %w", path, err)
 	}
-	return syncDir(dir)
+	syncDir(dir)
+	return nil
 }
 
-// syncDir flushes a directory entry so a completed rename survives a crash.
-func syncDir(dir string) error {
+// syncDir flushes a directory entry so a completed rename is durable, where the
+// platform supports it.
+//
+// Best-effort on purpose: flushing a directory handle is a POSIX notion and
+// fails outright on Windows ("Access is denied"), where the rename carries its
+// own ordering. Returning that error would make every repoint fail there, so
+// the sync is attempted and its result dropped — the file's own contents are
+// already fsynced before the rename either way.
+func syncDir(dir string) {
 	d, err := os.Open(dir) //nolint:gosec // dir is the CLI-managed ~/.jentic install root.
 	if err != nil {
-		return fmt.Errorf("open %s: %w", dir, err)
+		return
 	}
-	defer func() { _ = d.Close() }()
-	if err := d.Sync(); err != nil {
-		return fmt.Errorf("sync %s: %w", dir, err)
-	}
-	return nil
+	_ = d.Sync()
+	_ = d.Close()
 }
