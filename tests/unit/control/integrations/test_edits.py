@@ -81,6 +81,25 @@ def test_set_replaces_the_list() -> None:
     assert [r["id"] for r in result["rules"]] == ["apr_read", None, "apr_deny"]
 
 
+def test_adding_a_rule_the_binding_already_has_changes_nothing() -> None:
+    """One permission is listed once: a comment doesn't make it a second rule."""
+    result, _ = resolve_edit(_baseline(), EditRequest(add=[RuleAdd(_READ)]))
+    assert _paths(result) == ["/", "/repos"]
+    commented, _ = resolve_edit(
+        _baseline(), EditRequest(add=[RuleAdd(_READ | {"comment": "why I need it"})])
+    )
+    assert _paths(commented) == ["/", "/repos"]
+    # Asked for twice in one request, it still lands once.
+    twice, _ = resolve_edit(_baseline(), EditRequest(add=[RuleAdd(_SEND), RuleAdd(_SEND)]))
+    assert _paths(twice) == ["/", "/repos", "/send"]
+
+
+def test_a_full_list_sent_with_a_duplicate_keeps_one_of_it() -> None:
+    result, _ = resolve_edit(_baseline(), EditRequest(set_rules=[_SEND, _SEND, _READ]))
+    assert _paths(result) == ["/send", "/repos"]
+    assert [r["id"] for r in result["rules"]] == [None, "apr_read"]
+
+
 @pytest.mark.parametrize(
     "request_",
     [EditRequest(remove=["apr_gone"]), EditRequest(add=[RuleAdd(_SEND, before="apr_gone")])],

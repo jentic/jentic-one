@@ -121,6 +121,11 @@ def rule_content(rule: Mapping[str, Any]) -> dict[str, Any]:
     return content
 
 
+def rule_match(rule: Mapping[str, Any]) -> dict[str, Any]:
+    """What a rule does, without its comment: two rules matching here are one permission."""
+    return {key: value for key, value in rule_content(rule).items() if key != "comment"}
+
+
 def rule_to_write(rule: Mapping[str, Any]) -> dict[str, object]:
     """A result rule as the rule repositories write it (no id, no unset fields)."""
     return {key: value for key, value in rule_content(rule).items() if value is not None}
@@ -170,9 +175,12 @@ def resolve_edit(
     if request.set_rules is not None:
         # A rule the binding already has keeps its id, as in an add/remove change.
         pool = [(rule_content(r), r["id"]) for r in rules]
-        resolved = []
+        resolved: list[dict[str, Any]] = []
         for rule in request.set_rules:
             content = rule_content(rule)
+            if any(rule_match(r) == rule_match(content) for r in resolved):
+                # The same permission twice over: the list already has it.
+                continue
             match = next((i for i, (c, _) in enumerate(pool) if c == content), None)
             resolved.append({"id": pool.pop(match)[1] if match is not None else None, **content})
     else:
@@ -180,6 +188,11 @@ def resolve_edit(
         resolved = [r for r in rules if r["id"] not in removed]
         for add in request.add:
             new = {"id": None, **rule_content(add.rule)}
+            if any(rule_match(r) == rule_match(new) for r in resolved):
+                # Already allowed (or denied) exactly this, comment aside: adding
+                # it again would list one permission twice, and twice more on a
+                # rebase that re-resolves the same ask.
+                continue
             if add.before is None or not check(add.before):
                 resolved.append(new)
                 continue
