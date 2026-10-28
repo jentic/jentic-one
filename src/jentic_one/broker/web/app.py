@@ -32,11 +32,12 @@ from jentic_one.broker.web.errors import install_broker_error_handlers
 from jentic_one.broker.web.middleware import AdmissionControlMiddleware, _AdmissionGate
 from jentic_one.broker.web.readiness import make_readiness_router
 from jentic_one.broker.web.routers import execute
+from jentic_one.broker.web.server_timing import ServerTimingMiddleware
 from jentic_one.shared.broker.execution import UpstreamRunner
 from jentic_one.shared.context import Context
+from jentic_one.shared.events.repeated_failure import build_repeated_failure_counter
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.resilience import CircuitBreaker, RateLimiter
-from jentic_one.shared.state import build_state_backend
 from jentic_one.shared.tracing import instrument_outbound_client
 from jentic_one.shared.web.app_factory import create_surface_app
 from jentic_one.shared.web.container import AppContainer
@@ -72,6 +73,9 @@ def create_app(ctx: Context, container: AppContainer | None = None) -> FastAPI:
     resilience = ctx.config.broker.resilience
     upstream_cfg = resilience.upstream
     meter = get_meter("broker")
+    # Built while the app is assembled, so an unknown or misconfigured
+    # ``state.backend`` fails before the process serves.
+    shared_state = ctx.state_backend
 
     @asynccontextmanager
     async def broker_lifespan(app: FastAPI) -> AsyncGenerator[None]:
@@ -97,10 +101,17 @@ def create_app(ctx: Context, container: AppContainer | None = None) -> FastAPI:
             description="Requests currently in flight through the admission gate.",
         )
 
-        # One shared-state backend per process powers both the rate limiter and
-        # the circuit breaker (memory default; Redis ⇒ cluster-wide).
-        state = build_state_backend(resilience.backend)
+        # The process's one shared-state backend powers the rate limiter, the
+        # circuit breaker and the idempotency store. The app lifespan closes
+        # it last (``ctx.close_state_backend()``), after the worker has drained.
+        state = shared_state
         app.state.broker_state_backend = state
+
+        # Cheap shared-state pre-filter in front of the repeated-failure DB scan
+        # (sync + streaming router paths and the async worker alike).
+        app.state.broker_repeated_failure_counter = build_repeated_failure_counter(
+            ctx.config.state, state
+        )
 
         rl = resilience.rate_limit
         app.state.broker_rate_limiter = (
@@ -114,7 +125,7 @@ def create_app(ctx: Context, container: AppContainer | None = None) -> FastAPI:
             SharedStateIdempotencyStore(
                 state,
                 pending_ttl_s=idem.pending_ttl_s,
-                done_ttl_s=idem.replay_ttl_s(resilience.backend.backend),
+                done_ttl_s=idem.replay_ttl_s(ctx.config.state.backend),
                 max_response_bytes=idem.max_response_bytes,
             )
             if idem.enabled
@@ -200,15 +211,15 @@ def create_app(ctx: Context, container: AppContainer | None = None) -> FastAPI:
         try:
             yield
         finally:
-            # Drain step 4 — close the shared client/runners and state
-            # backend LAST, after the surface lifespan has already flipped the
-            # gate unready (step 1) and drained the worker (step 2), so no
-            # in-flight job hits a closed pool (PoolClosed). The registry drains
-            # every runner; the provider closes the shared HTTP pool the HTTP
-            # runner borrows (its lifecycle is still provider-owned today).
+            # Drain step 4 — close the shared client/runners LAST, after the
+            # surface lifespan has already flipped the gate unready (step 1)
+            # and drained the worker (step 2), so no in-flight job hits a
+            # closed pool (PoolClosed). The registry drains every runner; the
+            # provider closes the shared HTTP pool the HTTP runner borrows (its
+            # lifecycle is still provider-owned today). The shared-state
+            # backend is the process's and closes with the Context.
             await registry.aclose()
             await provider.aclose()
-            await state.aclose()
 
     app = create_surface_app(
         ctx,
@@ -219,6 +230,11 @@ def create_app(ctx: Context, container: AppContainer | None = None) -> FastAPI:
         container=container,
         include_instance_router=False,
     )
+    # Opt-in Server-Timing (#1717): absent unless enabled, so the default path
+    # pays nothing beyond the stage hooks' context-variable reads. Added before
+    # admission control so it sits inside it: a shed 503 carries no timing.
+    if ctx.config.broker.server_timing:
+        app.add_middleware(ServerTimingMiddleware)
     # One admission gate shared by the shedding middleware and the readiness
     # probe, so both observe the same in-flight counter.
     gate = _AdmissionGate(max_in_flight=resilience.max_in_flight)

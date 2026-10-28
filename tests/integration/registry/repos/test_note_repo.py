@@ -10,6 +10,7 @@ from sqlalchemy import delete
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.repos.note_repo import UNSET, NoteRepository
 from jentic_one.shared.db.session import DatabaseSession
+from jentic_one.shared.pagination import Cursor
 
 pytestmark = pytest.mark.integration
 
@@ -130,8 +131,7 @@ async def test_list_page_cursor_pagination(registry_db: DatabaseSession, sample_
             session,
             api_ids=[sample_api.id],
             limit=3,
-            cursor_created_at=last.created_at,
-            cursor_id=last.id,
+            cursor=Cursor(timestamp=last.created_at, id=last.id),
         )
 
     assert len(second_page) == 2

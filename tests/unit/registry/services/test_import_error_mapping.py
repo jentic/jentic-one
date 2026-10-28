@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from jentic_one.registry.ingest.exc import DuplicateRevisionError, IngestStageError
+from jentic_one.registry.ingest.errors import DuplicateRevisionError, IngestStageError
 from jentic_one.registry.ingest.fetch import IngestSource
 from jentic_one.registry.services.errors import HostOwnedByOtherVendorError
 from jentic_one.registry.services.import_service import _readable_source_error

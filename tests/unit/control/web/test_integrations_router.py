@@ -51,6 +51,7 @@ from jentic_one.control.services.vendors.service import (
     UnknownVendorError,
 )
 from jentic_one.control.web.app import get_exception_handlers
+from jentic_one.control.web.connect_limits import install_connect_limiters
 from jentic_one.control.web.deps import get_connect_session_service
 from jentic_one.control.web.routers import integrations as integrations_router
 from jentic_one.shared.auth.identity import Identity
@@ -92,6 +93,8 @@ def _build_app(*, svc: Any, identity: Identity = _USER_IDENTITY) -> FastAPI:
     # ``:confirm`` reads the state TTL and public origin to set the
     # browser-binding cookie; nothing else in this router touches ``Context``.
     app.dependency_overrides[shared_deps.get_ctx] = lambda: _CTX
+    # The connect limiters production installs on the shared-state backend.
+    install_connect_limiters(app, SimpleNamespace(state_backend=MemoryStateBackend()))  # type: ignore[arg-type]
     return app
 
 
@@ -252,6 +255,7 @@ def test_connect_returns_session_id_and_poll_token() -> None:
         "approval_url": "https://example.com/app/agents?approve=sess_9",
         "poll_token": "tok9",
         "resolved_flow": "authorization_code",
+        "revision_id": None,
     }
 
 
@@ -615,6 +619,7 @@ def test_list_sessions_never_includes_poll_token() -> None:
         "error_code",
         "created_at",
         "credential_id",
+        "intent",
     }
 
 

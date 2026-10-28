@@ -255,7 +255,7 @@ const UNTAGGED = 'Other';
 
 /**
  * Placeholder Control Plane origin used by the committed specs (mirrors
- * `PUBLISHED_SERVERS` in `shared/web/openapi_meta.py`). The Broker spec cites it
+ * `PUBLISHED_SERVERS` in `shared/web/openapi_meta/content.py`). The Broker spec cites it
  * for its control-plane links and job URLs.
  */
 export const CONTROL_PLACEHOLDER_ORIGIN = 'https://control.your-instance.example';

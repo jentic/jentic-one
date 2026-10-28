@@ -165,8 +165,9 @@ export class AgentsService {
      *
      * Returns the agent's name, description, owner, `status`, approval or
      * denial details, and whether it currently has an API key (`has_api_key`).
-     * Readable by the agent itself, its owner, and `org:admin`; an agent outside
-     * the caller's visibility answers 404.
+     * Readable by the agent itself, its owner, `org:admin`, and a caller holding
+     * `agents:read` (implied by `agents:write`); an agent outside the caller's
+     * visibility answers 404.
      * @returns AgentResponse Successful Response
      * @throws ApiError
      */
@@ -318,9 +319,10 @@ export class AgentsService {
      *
      * Each binding names the credential, the API it serves, when it was bound,
      * whether it is `suspended` (and why), and any attached permission
-     * `rule_set_id`. Credential secrets are never returned. Readable by the
-     * agent itself, its owner, and `org:admin` (404 otherwise). The list is not
-     * paginated.
+     * `rule_set_id`. Credential secrets are never returned. Readable like
+     * `GET /agents/{agent_id}`: by the agent itself, its owner, `org:admin`, and a
+     * caller holding `agents:read` (implied by `agents:write`); 404 otherwise.
+     * The list is not paginated.
      * @returns CredentialBindingListResponse Successful Response
      * @throws ApiError
      */

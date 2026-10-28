@@ -128,8 +128,9 @@ approval — and retry the blocked call.
   the original call later — don't wait or poll. Asking again for the same
   API returns the same request.
 - **Rejected means stop.** If a request comes back rejected (or
-  `recently_rejected`), don't ask again — tell your user what was rejected
-  and why you needed it.
+  `recently_rejected`), don't ask again on your own: tell your user what was
+  rejected and why you needed it, and ask again only if they tell you to
+  (with the change they asked for).
 - **Where API connect requests aren't available** (the error says so), or
   the spec declares no auth the flow can collect, fall back to reporting the
   gap — once, richly, as above.
@@ -263,8 +264,11 @@ a failure by its symptom, not by assuming access: transport failures
 - Access is granted by a human: your operator approves every connection and
   binds you in the dashboard. You can *start* a connect session yourself
   (`jentic connect` / `request_connection`, by vendor key or API identity),
-  but you can't approve it, bind an existing credential, or grant yourself
-  permissions.
+  and ask for a change to a binding's rules or scopes (`jentic access edit` /
+  `request_access_change`, after reading it with `jentic access show` /
+  `show_access`), but you can't approve either, bind an existing credential,
+  or grant yourself permissions. Change an open request with `jentic access
+  amend` / `amend_request` rather than asking again.
 - **Verify which backend you're talking to before diagnosing "missing" APIs
   or credentials** — compare `instance` stamps (see step 3) and stick to one
   surface for the whole task.

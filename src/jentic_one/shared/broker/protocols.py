@@ -208,12 +208,17 @@ class CredentialDerivation:
       cross-tenant leak into a directive.
     - ``identity_mismatch`` — nearest-miss diagnostic when the agent is bound
       but none of its bound credentials cover the operation identity.
+    - ``binding_suspended`` — the agent holds a *suspended* binding to a
+      credential covering the API. Computed only for an empty
+      ``credentials``; the recovery is the operator's (resume the binding),
+      never a new connect.
     """
 
     credentials: tuple[BoundCredential, ...]
     agent_bound_any: bool
     api_served: bool
     identity_mismatch: IdentityMismatch | None
+    binding_suspended: bool = False
 
 
 @runtime_checkable
@@ -316,8 +321,9 @@ class BrokerCacheInvalidatorProtocol(Protocol):
     ``control`` call ``ctx.invalidate_broker_caches(...)`` so an unbind, agent
     disable, API-key rotation/revocation, or credential delete/deactivation
     evicts stale entries immediately in single-process deployments without
-    importing ``jentic_one.broker``. Multi-process deployments remain bounded
-    by the configured cache TTLs.
+    importing ``jentic_one.broker``. ``admin`` calls it with ``user_id`` when a
+    user is disabled, deleted or re-enabled. Multi-process deployments remain
+    bounded by the configured cache TTLs.
     """
 
     def invalidate(
@@ -327,6 +333,7 @@ class BrokerCacheInvalidatorProtocol(Protocol):
         credential_id: str | None = None,
         rule_set_id: str | None = None,
         token: str | None = None,
+        user_id: str | None = None,
     ) -> None: ...
 
 

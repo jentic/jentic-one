@@ -323,7 +323,11 @@ export class UsersService {
      * Set User Permissions
      * Set the assigned permissions for a user.
      *
-     * A deleted user's permissions cannot be changed (409).
+     * A deleted user's permissions cannot be changed (409). When the new set
+     * removes any of the user's effective permissions, their login sessions
+     * end: every login JWT issued before the change is refused (401), and the
+     * user signs in again for a token with the narrower set. This includes a
+     * caller narrowing their own permissions.
      * @returns UserResponse Successful Response
      * @throws ApiError
      */

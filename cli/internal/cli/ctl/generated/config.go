@@ -72,8 +72,51 @@ type AdminConfig struct {
 	// Auth corresponds to the JSON schema field "auth".
 	Auth *AdminAuthConfig `json:"auth,omitempty,omitzero" yaml:"auth,omitempty" mapstructure:"auth,omitempty"`
 
+	// Events corresponds to the JSON schema field "events".
+	Events *AdminEventsConfig `json:"events,omitempty,omitzero" yaml:"events,omitempty" mapstructure:"events,omitempty"`
+
 	// Invite corresponds to the JSON schema field "invite".
 	Invite *AdminInviteConfig `json:"invite,omitempty,omitzero" yaml:"invite,omitempty" mapstructure:"invite,omitempty"`
+}
+
+// Admin event-stream settings.
+type AdminEventsConfig struct {
+	// Minimum seconds between re-verifications of an open ``GET /events/stream``: its
+	// credential, ``events:read`` / ``org:admin`` permission, and the scope of the
+	// events it delivers. Checks run only at a poll or page boundary, so a check
+	// happens at the first poll or page after the interval elapses; an idle stream
+	// polls every few seconds, so a value below its poll interval behaves as that
+	// interval. A disabled caller, a revoked or expired token, or a revoked
+	// permission ends the stream at that check; a narrower permission set narrows it.
+	// Permissions are those the credential carries: API keys and ``at_`` access
+	// tokens resolve them live (an ephemeral agent ``at_`` keeps the subset it was
+	// minted with). A login session JWT carries the set it was issued with, but
+	// removing any of a user's effective permissions revokes their login sessions, so
+	// a stream opened with one ends at that check. The stream re-verifies the token
+	// it was opened with, so a permission added to a user reaches a login-session
+	// stream once the client reconnects with a newer login JWT.
+	StreamRecheckSeconds float64 `json:"stream_recheck_seconds" yaml:"stream_recheck_seconds" mapstructure:"stream_recheck_seconds"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *AdminEventsConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain AdminEventsConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["stream_recheck_seconds"]; !ok || v == nil {
+		plain.StreamRecheckSeconds = 5.0
+	}
+	if 0 >= plain.StreamRecheckSeconds {
+		return fmt.Errorf("field %s: must be > %v", "stream_recheck_seconds", 0)
+	}
+	*j = AdminEventsConfig(plain)
+	return nil
 }
 
 // Admin invite token settings.
@@ -183,36 +226,6 @@ func (j *AuthConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-type BackendKind string
-
-const BackendKindMemory BackendKind = "memory"
-const BackendKindRedis BackendKind = "redis"
-
-var enumValues_BackendKind = []interface{}{
-	"memory",
-	"redis",
-}
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *BackendKind) UnmarshalJSON(value []byte) error {
-	var v string
-	if err := json.Unmarshal(value, &v); err != nil {
-		return err
-	}
-	var ok bool
-	for _, expected := range enumValues_BackendKind {
-		if reflect.DeepEqual(v, expected) {
-			ok = true
-			break
-		}
-	}
-	if !ok {
-		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_BackendKind, v)
-	}
-	*j = BackendKind(v)
-	return nil
-}
-
 type BaseModel map[string]interface{}
 
 // Broker surface configuration.
@@ -245,6 +258,19 @@ type BrokerConfig struct {
 
 	// RuleCacheTtlS corresponds to the JSON schema field "rule_cache_ttl_s".
 	RuleCacheTtlS float64 `json:"rule_cache_ttl_s" yaml:"rule_cache_ttl_s" mapstructure:"rule_cache_ttl_s"`
+
+	// Emit a W3C ``Server-Timing`` header on execute responses with per-stage
+	// durations (``jentic-auth``, ``jentic-egress``, ``jentic-discover``,
+	// ``jentic-rules``, ``jentic-body``, ``jentic-idempotency``, ``jentic-cred``,
+	// ``jentic-upstream``, ``jentic-persist``, ``jentic-total``) for authenticated
+	// callers. A broker-generated error raised before the upstream call lists the
+	// stages that ran without durations. ``jentic-upstream`` includes the
+	// circuit-breaker check, so a circuit-open ``503`` carries durations even though
+	// no upstream request was sent. Off by default: timing data aids side-channel
+	// probing and fingerprinting, so enable it only where callers are trusted with it
+	// (e.g. while diagnosing latency). Streaming responses carry only the stages
+	// known before the headers are sent (no ``jentic-persist``).
+	ServerTiming bool `json:"server_timing,omitempty,omitzero" yaml:"server_timing,omitempty" mapstructure:"server_timing,omitempty"`
 
 	// How long (seconds) a streaming execution persist waits for one of the
 	// ``broker.streaming_persist_max_concurrency`` slots. Past it the record is
@@ -309,6 +335,9 @@ func (j *BrokerConfig) UnmarshalJSON(value []byte) error {
 	if v, ok := raw["rule_cache_ttl_s"]; !ok || v == nil {
 		plain.RuleCacheTtlS = 3.0
 	}
+	if v, ok := raw["server_timing"]; !ok || v == nil {
+		plain.ServerTiming = false
+	}
 	if v, ok := raw["streaming_persist_acquire_timeout_s"]; !ok || v == nil {
 		plain.StreamingPersistAcquireTimeoutS = 5.0
 	}
@@ -339,18 +368,15 @@ func (j *BrokerConfig) UnmarshalJSON(value []byte) error {
 
 // Resilience envelope: admission + rate limit / circuit.
 //
-// The shared-state “backend“ selection drives *both* the rate limiter and
-// the circuit breaker (memory default; Redis is cluster-wide). Queue
-// backpressure / async-credential / retention knobs are future work.
+// The rate limiter and circuit breaker run on the process's shared-state
+// backend (the top-level “state:“ section). Queue backpressure /
+// async-credential / retention knobs are future work.
 type BrokerResilienceConfig struct {
-	// Backend corresponds to the JSON schema field "backend".
-	Backend *StateBackendConfig `json:"backend,omitempty,omitzero" yaml:"backend,omitempty" mapstructure:"backend,omitempty"`
-
 	// CircuitBreaker corresponds to the JSON schema field "circuit_breaker".
 	CircuitBreaker *CircuitBreakerConfig `json:"circuit_breaker,omitempty,omitzero" yaml:"circuit_breaker,omitempty" mapstructure:"circuit_breaker,omitempty"`
 
 	// Hard admission cap on concurrently executing brokered calls, **per broker
-	// process** — replicas multiply it. At the cap, new requests are shed with 429 +
+	// process** — replicas multiply it. At the cap, new requests are shed with 503 +
 	// ``Retry-After: shed_retry_after_s``.
 	MaxInFlight int `json:"max_in_flight" yaml:"max_in_flight" mapstructure:"max_in_flight"`
 
@@ -373,7 +399,7 @@ type BrokerResilienceConfig struct {
 	// Retry corresponds to the JSON schema field "retry".
 	Retry *RetryConfig `json:"retry,omitempty,omitzero" yaml:"retry,omitempty" mapstructure:"retry,omitempty"`
 
-	// ``Retry-After`` (seconds) returned with the 429 when admission sheds at
+	// ``Retry-After`` (seconds) returned with the 503 when admission sheds at
 	// ``max_in_flight``.
 	ShedRetryAfterS int `json:"shed_retry_after_s" yaml:"shed_retry_after_s" mapstructure:"shed_retry_after_s"`
 
@@ -424,6 +450,23 @@ type CatalogConfig struct {
 	// https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json
 	ManifestUrl string `json:"manifest_url" yaml:"manifest_url" mapstructure:"manifest_url"`
 
+	// How long a failed catalog preview fetch (upstream unavailable, oversized or
+	// unparseable spec) is remembered per spec URL before it is retried, so repeated
+	// previews of a broken spec do not refetch it on every request. Zero retries on
+	// the next request. Ignored when the preview cache is disabled.
+	PreviewCacheFailureTtlSeconds int `json:"preview_cache_failure_ttl_seconds" yaml:"preview_cache_failure_ttl_seconds" mapstructure:"preview_cache_failure_ttl_seconds"`
+
+	// Maximum number of catalog spec projections held in memory per process (least
+	// recently used evicted first). Zero disables the cache.
+	PreviewCacheMaxEntries int `json:"preview_cache_max_entries" yaml:"preview_cache_max_entries" mapstructure:"preview_cache_max_entries"`
+
+	// How long a catalog preview's upstream spec projection is reused before
+	// refetching. Zero disables the cache. The cache is per process: `POST
+	// /catalog:refresh` clears it only on the process that serves the refresh, so
+	// other workers or replicas can serve the previous projection until this TTL
+	// expires.
+	PreviewCacheTtlSeconds int `json:"preview_cache_ttl_seconds" yaml:"preview_cache_ttl_seconds" mapstructure:"preview_cache_ttl_seconds"`
+
 	// UpdateCheckIntervalSeconds corresponds to the JSON schema field
 	// "update_check_interval_seconds".
 	UpdateCheckIntervalSeconds int `json:"update_check_interval_seconds" yaml:"update_check_interval_seconds" mapstructure:"update_check_interval_seconds"`
@@ -457,6 +500,24 @@ func (j *CatalogConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["manifest_url"]; !ok || v == nil {
 		plain.ManifestUrl = "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json"
+	}
+	if v, ok := raw["preview_cache_failure_ttl_seconds"]; !ok || v == nil {
+		plain.PreviewCacheFailureTtlSeconds = 30
+	}
+	if 0 > plain.PreviewCacheFailureTtlSeconds {
+		return fmt.Errorf("field %s: must be >= %v", "preview_cache_failure_ttl_seconds", 0)
+	}
+	if v, ok := raw["preview_cache_max_entries"]; !ok || v == nil {
+		plain.PreviewCacheMaxEntries = 16
+	}
+	if 0 > plain.PreviewCacheMaxEntries {
+		return fmt.Errorf("field %s: must be >= %v", "preview_cache_max_entries", 0)
+	}
+	if v, ok := raw["preview_cache_ttl_seconds"]; !ok || v == nil {
+		plain.PreviewCacheTtlSeconds = 300
+	}
+	if 0 > plain.PreviewCacheTtlSeconds {
+		return fmt.Errorf("field %s: must be >= %v", "preview_cache_ttl_seconds", 0)
 	}
 	if v, ok := raw["update_check_interval_seconds"]; !ok || v == nil {
 		plain.UpdateCheckIntervalSeconds = 86400
@@ -629,6 +690,12 @@ type ConfigSchemaJson struct {
 	// Services corresponds to the JSON schema field "services".
 	Services *ServicesConfig `json:"services,omitempty,omitzero" yaml:"services,omitempty" mapstructure:"services,omitempty"`
 
+	// The process's shared-state backend, built once and shared by every surface the
+	// process serves. The deprecated broker.resilience.backend section (and its
+	// JENTIC__BROKER__RESILIENCE__BACKEND__* env vars) is still read into it for one
+	// release.
+	State *StateBackendConfig `json:"state,omitempty,omitzero" yaml:"state,omitempty" mapstructure:"state,omitempty"`
+
 	// Telemetry corresponds to the JSON schema field "telemetry".
 	Telemetry *TelemetryConfig `json:"telemetry,omitempty,omitzero" yaml:"telemetry,omitempty" mapstructure:"telemetry,omitempty"`
 
@@ -710,10 +777,10 @@ type ControlConnectConfig struct {
 	// `too_many_open_sessions`.
 	MaxOpenSessionsPerOwner int `json:"max_open_sessions_per_owner" yaml:"max_open_sessions_per_owner" mapstructure:"max_open_sessions_per_owner"`
 
-	// Hours after a human rejects an agent's connect request during which the agent's
-	// repeat `:connect` for the same target gets 429 `recently_rejected`. 0 turns the
-	// cooldown off.
-	RejectionCooldownHours int `json:"rejection_cooldown_hours" yaml:"rejection_cooldown_hours" mapstructure:"rejection_cooldown_hours"`
+	// Hours after a human rejects an agent's connect or access-change request during
+	// which the agent's repeat ask for the same target (or binding) gets 429
+	// `recently_rejected`. Off (0) by default: an agent may ask again at once.
+	RejectionCooldownHours int `json:"rejection_cooldown_hours,omitempty,omitzero" yaml:"rejection_cooldown_hours,omitempty" mapstructure:"rejection_cooldown_hours,omitempty"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
@@ -749,7 +816,7 @@ func (j *ControlConnectConfig) UnmarshalJSON(value []byte) error {
 		return fmt.Errorf("field %s: must be >= %v", "max_open_sessions_per_owner", 1)
 	}
 	if v, ok := raw["rejection_cooldown_hours"]; !ok || v == nil {
-		plain.RejectionCooldownHours = 24
+		plain.RejectionCooldownHours = 0
 	}
 	if 0 > plain.RejectionCooldownHours {
 		return fmt.Errorf("field %s: must be >= %v", "rejection_cooldown_hours", 0)
@@ -875,15 +942,25 @@ type DatabaseConfig struct {
 	// Maximum connections in the PostgreSQL connection pool (ignored for SQLite).
 	PoolMax int `json:"pool_max" yaml:"pool_max" mapstructure:"pool_max"`
 
-	// PostgreSQL: test each pooled connection on checkout and transparently replace a
-	// dead one. On asyncpg the ping costs three round trips (``BEGIN``, ``;``,
-	// ``ROLLBACK``) per checkout. With ``false``, ``pool_recycle_s`` and TCP
-	// keepalive do not cover a Postgres restart or failover, a pooler/proxy restart,
-	// or a terminated backend: after such an event the first request on each pool per
-	// process can fail with an HTTP 503 (work run through the retrying transaction
-	// helper is re-run on a fresh connection instead). Only disable it where those
-	// events are rare and that error is acceptable. Ignored for SQLite.
+	// PostgreSQL: test pooled connections on checkout and transparently replace a
+	// dead one. By default the wire ping (three round trips on asyncpg: ``BEGIN``,
+	// ``;``, ``ROLLBACK``) runs only when the connection has sat idle in the pool for
+	// at least ``pool_pre_ping_idle_s`` seconds; active checkouts within that window
+	// skip the wire ping unless the driver connection is already closed. With
+	// ``false``, ``pool_recycle_s`` and TCP keepalive do not cover a Postgres restart
+	// or failover, a pooler/proxy restart, or a terminated backend: after such an
+	// event the first request on each pool per process can fail with an HTTP 503
+	// (work run through the retrying transaction helper is re-run on a fresh
+	// connection instead). Only disable it where those events are rare and that error
+	// is acceptable. Ignored for SQLite.
 	PoolPrePing bool `json:"pool_pre_ping" yaml:"pool_pre_ping" mapstructure:"pool_pre_ping"`
+
+	// PostgreSQL: seconds a connection must sit idle in the pool before checkout runs
+	// the ``pool_pre_ping`` wire check. Active checkouts returning within this window
+	// skip the wire ping unless the driver connection is already closed. ``0`` pings
+	// on every checkout. Only applies when ``pool_pre_ping`` is ``true``. Ignored for
+	// SQLite.
+	PoolPrePingIdleS float64 `json:"pool_pre_ping_idle_s" yaml:"pool_pre_ping_idle_s" mapstructure:"pool_pre_ping_idle_s"`
 
 	// PostgreSQL: replace a pooled connection once it is this many seconds old, on
 	// its next checkout, so a connection silently dropped by a middlebox or left
@@ -992,6 +1069,12 @@ func (j *DatabaseConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["pool_pre_ping"]; !ok || v == nil {
 		plain.PoolPrePing = true
+	}
+	if v, ok := raw["pool_pre_ping_idle_s"]; !ok || v == nil {
+		plain.PoolPrePingIdleS = 1.0
+	}
+	if 0 > plain.PoolPrePingIdleS {
+		return fmt.Errorf("field %s: must be >= %v", "pool_pre_ping_idle_s", 0)
 	}
 	if v, ok := raw["pool_recycle_s"]; !ok || v == nil {
 		plain.PoolRecycleS = 1800
@@ -1421,8 +1504,8 @@ func (j *HeldExecutionsConfig) UnmarshalJSON(value []byte) error {
 
 // “Idempotency-Key“ replay store.
 //
-// Sync “FULL“-mode replay over the shared-state “AtomicStore“ (memory
-// default; Redis ⇒ cross-instance). Two TTLs: a *short* “pending_ttl_s“ claim
+// Sync “FULL“-mode replay over the shared-state “AtomicStore“ (the
+// “state:“ backend). Two TTLs: a *short* “pending_ttl_s“ claim
 // (sized to the request deadline + buffer, so a crash mid-flight frees the key
 // in seconds rather than the full replay window) promoted to the *long*
 // “ttl_s“ only once the response is stored. Responses over
@@ -1442,9 +1525,9 @@ type IdempotencyConfig struct {
 	PendingTtlS float64 `json:"pending_ttl_s" yaml:"pending_ttl_s" mapstructure:"pending_ttl_s"`
 
 	// Replay window of a completed Idempotency-Key record, in seconds. Unset, it is
-	// 3600 (1 h) on the memory shared-state backend and 86400 (24 h) on redis. On
-	// memory, every record is held in process for this long, so the TTL divides the
-	// sustained idempotent request rate the idem budget can hold.
+	// 3600 (1 h) on the memory shared-state backend and 86400 (24 h) on any other
+	// backend. On memory, every record is held in process for this long, so the TTL
+	// divides the sustained idempotent request rate the idem budget can hold.
 	TtlS interface{} `json:"ttl_s,omitempty,omitzero" yaml:"ttl_s,omitempty" mapstructure:"ttl_s,omitempty"`
 }
 
@@ -1566,12 +1649,21 @@ type IngestConfig struct {
 	// FetchTimeoutS corresponds to the JSON schema field "fetch_timeout_s".
 	FetchTimeoutS float64 `json:"fetch_timeout_s" yaml:"fetch_timeout_s" mapstructure:"fetch_timeout_s"`
 
+	// Cap on the raw `POST /apis` request body (all sources together). Unset means
+	// twice `max_spec_bytes`, which covers one maximum-size inline spec with typical
+	// JSON-string escaping; raise it for batches of heavily escaped specs (`\uXXXX`
+	// or HTML-escaped content). Each inline source's content is separately capped at
+	// `max_spec_bytes`.
+	MaxImportRequestBytes interface{} `json:"max_import_request_bytes,omitempty,omitzero" yaml:"max_import_request_bytes,omitempty" mapstructure:"max_import_request_bytes,omitempty"`
+
 	// MaxRedirects corresponds to the JSON schema field "max_redirects".
 	MaxRedirects int `json:"max_redirects" yaml:"max_redirects" mapstructure:"max_redirects"`
 
 	// MaxSpecBytes corresponds to the JSON schema field "max_spec_bytes".
 	MaxSpecBytes int `json:"max_spec_bytes" yaml:"max_spec_bytes" mapstructure:"max_spec_bytes"`
 }
+
+type IngestConfigMaxImportRequestBytes_0 *int
 
 // UnmarshalJSON implements json.Unmarshaler.
 func (j *IngestConfig) UnmarshalJSON(value []byte) error {
@@ -1806,11 +1898,17 @@ func (j *McpOAuthConfig) UnmarshalJSON(value []byte) error {
 // Every key belongs to a namespace, its prefix up to the first “:“
 // (“idem“ for Idempotency-Key records, “idem-body“ for their stored
 // response bodies, “auth“ for the auth surface's single-use markers,
-// “login-csrf“ for login CSRF nonces, “cb“ for circuit-breaker counters,
-// and so on). Each namespace has its own budget, so one key kind filling up
+// “login-csrf“ for login CSRF nonces, “cb“ for circuit-breaker counters
+// and their open-circuit report claims, “broker-authfail“ and
+// “broker-authfail-emit“ for the broker's auth-failure counters,
+// “mcp-session“ and “mcp-session-cap“ for the MCP session-event dedupe,
+// “repeated_failure“ for the broker's repeated-failure counters, and so
+// on). Each namespace has its own budget, so one key kind filling up
 // never starves another. A namespace that is full of live entries refuses
 // new writes (the request that needed it gets a 503) rather than evicting a
-// live entry. Ignored by the redis backend.
+// live entry; the telemetry namespaces (“broker-authfail*“, the “cb“
+// report claims, “mcp-session*“) only skip the count or fall back to the
+// database dedupe instead. Ignored by every other backend.
 type MemoryBackendConfig struct {
 	// Default most approximate bytes (key + value + about 750 bytes of per-entry
 	// overhead) one key namespace may hold before its writes are refused.
@@ -1820,11 +1918,11 @@ type MemoryBackendConfig struct {
 	// refused.
 	MaxEntriesPerNamespace int `json:"max_entries_per_namespace" yaml:"max_entries_per_namespace" mapstructure:"max_entries_per_namespace"`
 
-	// Most approximate bytes all namespaces of one memory backend may hold together
+	// Most approximate bytes all namespaces of the memory backend may hold together
 	// (201326592, 192 MiB, by default); a write past it is refused like a full
-	// namespace, never by evicting a live entry. Each surface that keeps shared state
-	// (auth, broker, control) has its own backend, so a process holds up to this much
-	// per such surface. Raise the container memory limit together with it.
+	// namespace, never by evicting a live entry. A process builds one backend shared
+	// by every surface it serves, so this caps the whole process's shared state.
+	// Raise the container memory limit together with it.
 	MaxTotalBytes int `json:"max_total_bytes" yaml:"max_total_bytes" mapstructure:"max_total_bytes"`
 
 	// Per-namespace budget overrides, keyed by namespace (the key prefix before the
@@ -1835,14 +1933,18 @@ type MemoryBackendConfig struct {
 	// max_bytes_per_namespace with a 0.02 per-client share, about 370 live nonces per
 	// IPv4 address or IPv6 /64 at the defaults (about 900 bytes each, 5-minute TTL),
 	// twice what the default authorize rate limit lets one client network request in
-	// that time; every other namespace uses max_entries_per_namespace /
-	// max_bytes_per_namespace. The sustained idempotent request rate idem can hold is
-	// min(max_entries, max_bytes / record_bytes) / broker.idempotency.ttl_s, where
-	// record_bytes is about 1000 bytes plus the response headers (capped at 512
-	// bytes): about 30 req/s at the defaults and a 1 h TTL, and a tenth of that per
-	// caller. Above it, Idempotency-Key requests get 503 idempotency_unavailable;
-	// bodies (about 830 bytes + body length each) stop being stored for replay
-	// sooner, about 5 req/s of 1 KiB bodies, without refusing requests.
+	// that time; repeated_failure (the broker's repeated-failure counters, which gate
+	// the execution.repeated_failure database scan) is 10000 entries / 8780000 bytes
+	// (about 8.4 MiB), about 2500 concurrently failing actor + credential + operation
+	// keys, and fails open when full (every failure runs the scan); every other
+	// namespace uses max_entries_per_namespace / max_bytes_per_namespace. The
+	// sustained idempotent request rate idem can hold is min(max_entries, max_bytes /
+	// record_bytes) / broker.idempotency.ttl_s, where record_bytes is about 1000
+	// bytes plus the response headers (capped at 512 bytes): about 30 req/s at the
+	// defaults and a 1 h TTL, and a tenth of that per caller. Above it,
+	// Idempotency-Key requests get 503 idempotency_unavailable; bodies (about 830
+	// bytes + body length each) stop being stored for replay sooner, about 5 req/s of
+	// 1 KiB bodies, without refusing requests.
 	Namespaces MemoryBackendConfigNamespaces `json:"namespaces,omitempty,omitzero" yaml:"namespaces,omitempty" mapstructure:"namespaces,omitempty"`
 }
 
@@ -1854,14 +1956,18 @@ type MemoryBackendConfig struct {
 // max_bytes_per_namespace with a 0.02 per-client share, about 370 live nonces per
 // IPv4 address or IPv6 /64 at the defaults (about 900 bytes each, 5-minute TTL),
 // twice what the default authorize rate limit lets one client network request in
-// that time; every other namespace uses max_entries_per_namespace /
-// max_bytes_per_namespace. The sustained idempotent request rate idem can hold is
-// min(max_entries, max_bytes / record_bytes) / broker.idempotency.ttl_s, where
-// record_bytes is about 1000 bytes plus the response headers (capped at 512
-// bytes): about 30 req/s at the defaults and a 1 h TTL, and a tenth of that per
-// caller. Above it, Idempotency-Key requests get 503 idempotency_unavailable;
-// bodies (about 830 bytes + body length each) stop being stored for replay sooner,
-// about 5 req/s of 1 KiB bodies, without refusing requests.
+// that time; repeated_failure (the broker's repeated-failure counters, which gate
+// the execution.repeated_failure database scan) is 10000 entries / 8780000 bytes
+// (about 8.4 MiB), about 2500 concurrently failing actor + credential + operation
+// keys, and fails open when full (every failure runs the scan); every other
+// namespace uses max_entries_per_namespace / max_bytes_per_namespace. The
+// sustained idempotent request rate idem can hold is min(max_entries, max_bytes /
+// record_bytes) / broker.idempotency.ttl_s, where record_bytes is about 1000 bytes
+// plus the response headers (capped at 512 bytes): about 30 req/s at the defaults
+// and a 1 h TTL, and a tenth of that per caller. Above it, Idempotency-Key
+// requests get 503 idempotency_unavailable; bodies (about 830 bytes + body length
+// each) stop being stored for replay sooner, about 5 req/s of 1 KiB bodies,
+// without refusing requests.
 type MemoryBackendConfigNamespaces map[string]MemoryNamespaceBudgetConfig
 
 // UnmarshalJSON implements json.Unmarshaler.
@@ -2699,20 +2805,39 @@ func (j *SigningKeyConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// Configuration for :func:`build_state_backend`.
+// The process's shared-state backend (top-level “state:“ section).
+//
+// One backend per process holds the rate-limit buckets, circuit-breaker
+// counters, “Idempotency-Key“ records, the auth surface's single-use
+// markers, the broker's auth-failure counters and the MCP session-event
+// dedupe of every surface the process serves.
 type StateBackendConfig struct {
-	// Backend corresponds to the JSON schema field "backend".
-	Backend BackendKind `json:"backend" yaml:"backend" mapstructure:"backend"`
+	// Name of the shared-state backend to build: ``memory`` (in-process, the
+	// default), ``redis`` (deprecated), or a name an extension registered with
+	// ``register_state_backend``. An unregistered name fails at startup with the list
+	// of registered names.
+	Backend string `json:"backend" yaml:"backend" mapstructure:"backend"`
 
 	// Memory corresponds to the JSON schema field "memory".
 	Memory *MemoryBackendConfig `json:"memory,omitempty,omitzero" yaml:"memory,omitempty" mapstructure:"memory,omitempty"`
 
-	// RedisKeyPrefix corresponds to the JSON schema field "redis_key_prefix".
+	// Settings for a backend registered by an extension, passed to its builder
+	// unvalidated (the builder validates them). Ignored by the built-in memory and
+	// redis backends.
+	Options StateBackendConfigOptions `json:"options,omitempty,omitzero" yaml:"options,omitempty" mapstructure:"options,omitempty"`
+
+	// Prefix the deprecated ``redis`` backend puts on every key; set a
+	// per-environment value when deployments share one Redis.
 	RedisKeyPrefix string `json:"redis_key_prefix" yaml:"redis_key_prefix" mapstructure:"redis_key_prefix"`
 
-	// RedisUrl corresponds to the JSON schema field "redis_url".
+	// Connection URL of the deprecated ``redis`` backend; required by it.
 	RedisUrl interface{} `json:"redis_url,omitempty,omitzero" yaml:"redis_url,omitempty" mapstructure:"redis_url,omitempty"`
 }
+
+// Settings for a backend registered by an extension, passed to its builder
+// unvalidated (the builder validates them). Ignored by the built-in memory and
+// redis backends.
+type StateBackendConfigOptions map[string]interface{}
 
 type StateBackendConfigRedisUrl_0 *string
 
@@ -2729,6 +2854,9 @@ func (j *StateBackendConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["backend"]; !ok || v == nil {
 		plain.Backend = "memory"
+	}
+	if matched, _ := regexp.MatchString(`^[a-z0-9][a-z0-9_-]*$`, string(plain.Backend)); !matched {
+		return fmt.Errorf("field %s pattern match: must match %s", "Backend", `^[a-z0-9][a-z0-9_-]*$`)
 	}
 	if v, ok := raw["redis_key_prefix"]; !ok || v == nil {
 		plain.RedisKeyPrefix = "jentic:broker:"
@@ -3249,31 +3377,83 @@ type VendorIdentityProbeConfig struct {
 
 type VendorIdentityProbeConfigMethod string
 
-const VendorIdentityProbeConfigMethodGET VendorIdentityProbeConfigMethod = "GET"
-const VendorIdentityProbeConfigMethodPOST VendorIdentityProbeConfigMethod = "POST"
+type VendorAuthConfigIdentityProbe_0 = VendorIdentityProbeConfig
 
-var enumValues_VendorIdentityProbeConfigMethod = []interface{}{
-	"GET",
-	"POST",
+const VendorScopeConfigClassificationRead VendorScopeConfigClassification = "read"
+const VendorScopeConfigClassificationWrite VendorScopeConfigClassification = "write"
+const VendorScopeConfigClassificationAdmin VendorScopeConfigClassification = "admin"
+
+// A single OAuth scope exposed by the vendor.
+//
+// `classification` drives the review-page UX: read scopes are pre-selected by
+// default; write/admin scopes get a warning flag. `description` is
+// human-facing copy displayed on the review page.
+type VendorScopeConfig struct {
+	// Classification corresponds to the JSON schema field "classification".
+	Classification VendorScopeConfigClassification `json:"classification" yaml:"classification" mapstructure:"classification"`
+
+	// Default corresponds to the JSON schema field "default".
+	Default bool `json:"default,omitempty,omitzero" yaml:"default,omitempty" mapstructure:"default,omitempty"`
+
+	// Description corresponds to the JSON schema field "description".
+	Description string `json:"description,omitempty,omitzero" yaml:"description,omitempty" mapstructure:"description,omitempty"`
+
+	// Name corresponds to the JSON schema field "name".
+	Name string `json:"name" yaml:"name" mapstructure:"name"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorIdentityProbeConfigMethod) UnmarshalJSON(value []byte) error {
+func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["name"]; raw != nil && !ok {
+		return fmt.Errorf("field name in VendorScopeConfig: required")
+	}
+	type Plain VendorScopeConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["classification"]; !ok || v == nil {
+		plain.Classification = "read"
+	}
+	if v, ok := raw["default"]; !ok || v == nil {
+		plain.Default = false
+	}
+	if v, ok := raw["description"]; !ok || v == nil {
+		plain.Description = ""
+	}
+	*j = VendorScopeConfig(plain)
+	return nil
+}
+
+var enumValues_VendorScopeConfigClassification = []interface{}{
+	"read",
+	"write",
+	"admin",
+}
+
+type VendorScopeConfigClassification string
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *VendorScopeConfigClassification) UnmarshalJSON(value []byte) error {
 	var v string
 	if err := json.Unmarshal(value, &v); err != nil {
 		return err
 	}
 	var ok bool
-	for _, expected := range enumValues_VendorIdentityProbeConfigMethod {
+	for _, expected := range enumValues_VendorScopeConfigClassification {
 		if reflect.DeepEqual(v, expected) {
 			ok = true
 			break
 		}
 	}
 	if !ok {
-		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorIdentityProbeConfigMethod, v)
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorScopeConfigClassification, v)
 	}
-	*j = VendorIdentityProbeConfigMethod(v)
+	*j = VendorScopeConfigClassification(v)
 	return nil
 }
 
@@ -3304,90 +3484,15 @@ func (j *VendorIdentityProbeConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
+const VendorIdentityProbeConfigMethodPOST VendorIdentityProbeConfigMethod = "POST"
+const VendorIdentityProbeConfigMethodGET VendorIdentityProbeConfigMethod = "GET"
+
+type VendorRegistryConfigEntries map[string]VendorAuthConfig
+
 // Top-level vendor auth registry.
 type VendorRegistryConfig struct {
 	// Entries corresponds to the JSON schema field "entries".
 	Entries VendorRegistryConfigEntries `json:"entries,omitempty,omitzero" yaml:"entries,omitempty" mapstructure:"entries,omitempty"`
-}
-
-type VendorRegistryConfigEntries map[string]VendorAuthConfig
-
-// A single OAuth scope exposed by the vendor.
-//
-// `classification` drives the review-page UX: read scopes are pre-selected by
-// default; write/admin scopes get a warning flag. `description` is
-// human-facing copy displayed on the review page.
-type VendorScopeConfig struct {
-	// Classification corresponds to the JSON schema field "classification".
-	Classification VendorScopeConfigClassification `json:"classification" yaml:"classification" mapstructure:"classification"`
-
-	// Default corresponds to the JSON schema field "default".
-	Default bool `json:"default,omitempty,omitzero" yaml:"default,omitempty" mapstructure:"default,omitempty"`
-
-	// Description corresponds to the JSON schema field "description".
-	Description string `json:"description,omitempty,omitzero" yaml:"description,omitempty" mapstructure:"description,omitempty"`
-
-	// Name corresponds to the JSON schema field "name".
-	Name string `json:"name" yaml:"name" mapstructure:"name"`
-}
-
-type VendorScopeConfigClassification string
-
-const VendorScopeConfigClassificationAdmin VendorScopeConfigClassification = "admin"
-const VendorScopeConfigClassificationRead VendorScopeConfigClassification = "read"
-const VendorScopeConfigClassificationWrite VendorScopeConfigClassification = "write"
-
-var enumValues_VendorScopeConfigClassification = []interface{}{
-	"read",
-	"write",
-	"admin",
-}
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorScopeConfigClassification) UnmarshalJSON(value []byte) error {
-	var v string
-	if err := json.Unmarshal(value, &v); err != nil {
-		return err
-	}
-	var ok bool
-	for _, expected := range enumValues_VendorScopeConfigClassification {
-		if reflect.DeepEqual(v, expected) {
-			ok = true
-			break
-		}
-	}
-	if !ok {
-		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorScopeConfigClassification, v)
-	}
-	*j = VendorScopeConfigClassification(v)
-	return nil
-}
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
-	var raw map[string]interface{}
-	if err := json.Unmarshal(value, &raw); err != nil {
-		return err
-	}
-	if _, ok := raw["name"]; raw != nil && !ok {
-		return fmt.Errorf("field name in VendorScopeConfig: required")
-	}
-	type Plain VendorScopeConfig
-	var plain Plain
-	if err := json.Unmarshal(value, &plain); err != nil {
-		return err
-	}
-	if v, ok := raw["classification"]; !ok || v == nil {
-		plain.Classification = "read"
-	}
-	if v, ok := raw["default"]; !ok || v == nil {
-		plain.Default = false
-	}
-	if v, ok := raw["description"]; !ok || v == nil {
-		plain.Description = ""
-	}
-	*j = VendorScopeConfig(plain)
-	return nil
 }
 
 // Background job-worker durability knobs.
@@ -3529,4 +3634,27 @@ func (j *WorkerConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-type VendorAuthConfigIdentityProbe_0 = VendorIdentityProbeConfig
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *VendorIdentityProbeConfigMethod) UnmarshalJSON(value []byte) error {
+	var v string
+	if err := json.Unmarshal(value, &v); err != nil {
+		return err
+	}
+	var ok bool
+	for _, expected := range enumValues_VendorIdentityProbeConfigMethod {
+		if reflect.DeepEqual(v, expected) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorIdentityProbeConfigMethod, v)
+	}
+	*j = VendorIdentityProbeConfigMethod(v)
+	return nil
+}
+
+var enumValues_VendorIdentityProbeConfigMethod = []interface{}{
+	"GET",
+	"POST",
+}

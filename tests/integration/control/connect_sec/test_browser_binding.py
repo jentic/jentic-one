@@ -69,6 +69,8 @@ from tests.integration.control.connect_sec.support import (
     digest,
     existing_credential,
     import_spec,
+    is_bound,
+    revision,
     session_row,
     svc,
 )
@@ -340,6 +342,7 @@ async def _confirm(
             "permission_rules": RULES,
             "expected_agent_id": agent_id,
             "digest": await digest(ctx, session_id),
+            "revision_id": await revision(ctx, session_id),
             **body,
         },
     )
@@ -380,8 +383,8 @@ class _Approval:
 
     async def connected(self, ctx: Context, exchanges: int) -> bool:
         """Whether the vendor sign-in has been completed (anything written)."""
-        if self.credential_id is not None:  # re-authorize: the wider grant landed
-            return await _granted(ctx, self.credential_id) == "read write"
+        if self.credential_id is not None:  # an existing credential: bound once the grant lands
+            return await is_bound(ctx, AGENT_ID, self.credential_id)
         row = await session_row(ctx, self.session_id)
         assert row is not None
         if exchanges == 0:
@@ -402,13 +405,13 @@ async def _approval(ctx: Context, kind: str) -> _Approval:
     created = await connect(ctx, requested_scopes=["read", "write"])
     narrow = await existing_credential(ctx, oauth_scope="read")
     return _Approval(
-        {"kind": "reauthorize", "credential_id": narrow},
+        {"kind": "existing_credential", "credential_id": narrow},
         created.session_id,
         credential_id=narrow,
     )
 
 
-@pytest.mark.parametrize("kind", ["oauth", "own_oauth_client", "reauthorize"])
+@pytest.mark.parametrize("kind", ["oauth", "own_oauth_client", "existing_credential"])
 async def test_agent_session_callback_completes_only_in_the_approvers_browser(
     env: Context, vendor: list[str], kind: str
 ) -> None:

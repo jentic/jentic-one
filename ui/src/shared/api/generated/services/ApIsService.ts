@@ -27,7 +27,7 @@ export class ApIsService {
         limit = 50,
     }: {
         /**
-         * Only return APIs from this vendor.
+         * Only return APIs from this vendor. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         vendor?: (string | null),
         /**
@@ -60,6 +60,11 @@ export class ApIsService {
     /**
      * Import Apis
      * Import OpenAPI/Arazzo content as new API revisions (async).
+     *
+     * The whole request body is capped at `ingest.max_import_request_bytes`
+     * (twice `ingest.max_spec_bytes` unless configured) and each inline source's
+     * content at `ingest.max_spec_bytes` (UTF-8 bytes); over either limit the
+     * request is refused with 413 before any job is queued.
      * @returns any Successful Response
      * @throws ApiError
      */
@@ -80,6 +85,7 @@ export class ApIsService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                413: `The request body exceeds \`ingest.max_import_request_bytes\`, or an inline source's content exceeds \`ingest.max_spec_bytes\` (type \`payload_too_large\`). Nothing was queued.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -98,15 +104,15 @@ export class ApIsService {
         version,
     }: {
         /**
-         * Vendor of the API.
+         * Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         vendor: string,
         /**
-         * Name of the API.
+         * Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         name: string,
         /**
-         * Version of the API.
+         * Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
          */
         version: string,
     }): CancelablePromise<void> {
@@ -142,15 +148,15 @@ export class ApIsService {
         version,
     }: {
         /**
-         * Vendor of the API.
+         * Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         vendor: string,
         /**
-         * Name of the API.
+         * Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         name: string,
         /**
-         * Version of the API.
+         * Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
          */
         version: string,
     }): CancelablePromise<ApiResponse> {
@@ -185,15 +191,15 @@ export class ApIsService {
         requestBody,
     }: {
         /**
-         * Vendor of the API.
+         * Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         vendor: string,
         /**
-         * Name of the API.
+         * Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         name: string,
         /**
-         * Version of the API.
+         * Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
          */
         version: string,
         /**
@@ -244,15 +250,15 @@ export class ApIsService {
         limit = 50,
     }: {
         /**
-         * Vendor of the API.
+         * Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         vendor: string,
         /**
-         * Name of the API.
+         * Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         name: string,
         /**
-         * Version of the API.
+         * Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
          */
         version: string,
         /**
@@ -308,15 +314,15 @@ export class ApIsService {
         revisionId,
     }: {
         /**
-         * Vendor of the API.
+         * Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         vendor: string,
         /**
-         * Name of the API.
+         * Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         name: string,
         /**
-         * Version of the API.
+         * Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
          */
         version: string,
         /**
@@ -362,15 +368,15 @@ export class ApIsService {
         revisionId,
     }: {
         /**
-         * Vendor of the API.
+         * Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         vendor: string,
         /**
-         * Name of the API.
+         * Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         name: string,
         /**
-         * Version of the API.
+         * Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
          */
         version: string,
         /**
@@ -416,15 +422,15 @@ export class ApIsService {
         revisionId,
     }: {
         /**
-         * Vendor of the API.
+         * Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         vendor: string,
         /**
-         * Name of the API.
+         * Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         name: string,
         /**
-         * Version of the API.
+         * Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
          */
         version: string,
         /**
@@ -470,15 +476,15 @@ export class ApIsService {
         revisionId,
     }: {
         /**
-         * Vendor of the API.
+         * Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         vendor: string,
         /**
-         * Name of the API.
+         * Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         name: string,
         /**
-         * Version of the API.
+         * Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
          */
         version: string,
         /**
@@ -517,15 +523,15 @@ export class ApIsService {
         version,
     }: {
         /**
-         * Vendor of the API.
+         * Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         vendor: string,
         /**
-         * Name of the API.
+         * Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         name: string,
         /**
-         * Version of the API.
+         * Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
          */
         version: string,
     }): CancelablePromise<SecuritySchemeListResponse> {

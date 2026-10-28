@@ -25,6 +25,7 @@ from jentic_one.registry.services.import_service import ImportHandler
 from jentic_one.shared.catalog import CatalogAutoImportProtocol
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
+from jentic_one.shared.events.repeated_failure import RepeatedFailureCounter
 from jentic_one.shared.jobs.catalog_update_scanner import CatalogUpdateScanner
 from jentic_one.shared.jobs.connect_poll_scanner import ConnectPollScanner
 from jentic_one.shared.jobs.credential_expiry_scanner import CredentialExpiryScanner
@@ -260,6 +261,7 @@ def _start_worker(
     credential_injector: Any | None = None,
     execution_authorizer: Any | None = None,
     actor_status: Any | None = None,
+    repeated_failure_counter: RepeatedFailureCounter | None = None,
 ) -> tuple[WorkerLoop, asyncio.Task[None]] | None:
     """Start the background worker if the admin DB is available.
 
@@ -288,7 +290,9 @@ def _start_worker(
     credential is resolved (the handler refuses a credential injector without
     one). ``actor_status`` is the broker's ``ActorStatusResolver``: the handler
     builds the identity it injects for from a live read of the actor row (and
-    likewise refuses an injector without it).
+    likewise refuses an injector without it). ``repeated_failure_counter`` is
+    the broker's shared-state gate in front of the repeated-failure scan
+    (``None`` scans on every failed job).
 
     Returns the ``(worker, task)`` pair so the lifespan can **drain** the worker
     (let the in-flight job finish or be reclaimed) before tearing the shared
@@ -316,6 +320,7 @@ def _start_worker(
                 # Same predicate the broker's hold path files under, so a held
                 # payload the broker encrypted is one this worker can decrypt.
                 encryption=ctx.encryption if ctx.has_encryption_keyset else None,
+                repeated_failure_counter=repeated_failure_counter,
             ),
         )
 
@@ -573,12 +578,14 @@ async def _run_shutdown_handlers(app: FastAPI) -> None:
 
     FastAPI runs an app's own shutdown handlers only from its default lifespan,
     and every app built here has its own ``lifespan``, so the factory's
-    lifespans run them through this helper. Surface installers use them to
-    close what they built (the auth and control surfaces' shared-state
-    backends). Register on ``app.router`` itself: an included router's
-    handlers already run through that router's lifespan, which FastAPI merges
-    into the app's, and are copied onto ``app.router`` too, so they would run
-    twice. Best-effort: a failing handler is logged and the rest still run.
+    lifespans run them through this helper, for installers (container
+    ``extra_installers`` included) that register one to close what they built.
+    The process's shared-state backend is not closed here; the lifespan closes
+    it last (``ctx.close_state_backend()``). Register on ``app.router`` itself:
+    an included router's handlers already run through that router's lifespan,
+    which FastAPI merges into the app's, and are copied onto ``app.router``
+    too, so they would run twice. Best-effort: a failing handler is logged and
+    the rest still run.
     """
     for handler in list(app.router.on_shutdown):
         try:
@@ -639,6 +646,16 @@ def create_surface_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+        # The process's shared-state backend closes last, after the surface's
+        # own extra_lifespan (the broker's runners) has exited.
+        try:
+            async with _surface_lifespan(app):
+                yield
+        finally:
+            await ctx.close_state_backend()
+
+    @asynccontextmanager
+    async def _surface_lifespan(app: FastAPI) -> AsyncGenerator[None]:
         await ctx.startup()
         instrument_databases(ctx)
         telemetry_handle = await _start_telemetry(ctx)
@@ -662,6 +679,9 @@ def create_surface_app(
                 credential_injector=getattr(app.state, "broker_credential_injector", None),
                 execution_authorizer=getattr(app.state, "broker_execution_authorizer", None),
                 actor_status=getattr(app.state, "broker_actor_status", None),
+                repeated_failure_counter=getattr(
+                    app.state, "broker_repeated_failure_counter", None
+                ),
             )
             scanner_task = _start_expiry_scanner(ctx, enabled_apps)
             catalog_scanner_task = _start_catalog_update_scanner(ctx, enabled_apps)
@@ -950,6 +970,15 @@ def create_combined_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+        try:
+            async with _combined_lifespan(app):
+                yield
+        finally:
+            # The process's shared-state backend closes once, last.
+            await ctx.close_state_backend()
+
+    @asynccontextmanager
+    async def _combined_lifespan(app: FastAPI) -> AsyncGenerator[None]:
         await ctx.startup()
         instrument_databases(ctx)
         telemetry_handle = await _start_telemetry(ctx)

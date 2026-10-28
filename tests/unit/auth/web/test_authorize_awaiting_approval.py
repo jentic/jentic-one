@@ -20,6 +20,7 @@ from jentic_one.auth.web import flow
 from jentic_one.auth.web.errors import service_error_handler
 from jentic_one.auth.web.routers import authorize
 from jentic_one.shared.config import AuthConfig
+from jentic_one.shared.state.backend import MemoryStateBackend
 
 _AUTHORIZE_PARAMS = {
     "response_type": "code",
@@ -63,6 +64,7 @@ def app() -> FastAPI:
     mock_ctx.config.auth.platform_clients = []
     mock_ctx.config.admin.auth.jwt_secret.get_secret_value = MagicMock(return_value="secret")
     app.state.ctx = mock_ctx
+    app.state.auth_state_backend = MemoryStateBackend()
 
     authorize_svc = MagicMock()
     authorize_svc.get_authorize_redirect_url = MagicMock(

@@ -6,15 +6,19 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import func, or_, select, text, update
+from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.control.core.schema.connect_sessions import (
+    INTENT_CREATE,
+    INTENT_EDIT,
     TARGET_KIND_API,
     TARGET_KIND_VENDOR,
     ConnectSession,
 )
+from jentic_one.shared.db.keyset import apply_desc_keyset
+from jentic_one.shared.pagination import Cursor
 
 # The non-terminal states. A session outside these is frozen — no transition
 # (including the terminal sweep) may touch it. ``awaiting_app`` is an OAuth
@@ -51,8 +55,12 @@ class ConnectSessionRepository:
         preferred_flow: str | None = None,
         reason: str | None = None,
         created_by: str | None = None,
+        intent: str = INTENT_CREATE,
+        baseline: dict[str, Any] | None = None,
     ) -> ConnectSession:
         row = ConnectSession(
+            intent=intent,
+            baseline=baseline,
             credential_id=credential_id,
             target_kind=target_kind,
             vendor=vendor,
@@ -89,7 +97,7 @@ class ConnectSessionRepository:
     async def list_all(
         session: AsyncSession,
         *,
-        cursor: tuple[datetime, str] | None = None,
+        cursor: Cursor | None = None,
         limit: int = 50,
         state: str | None = None,
         vendor: str | None = None,
@@ -109,12 +117,7 @@ class ConnectSessionRepository:
             stmt = stmt.where(ConnectSession.state == state)
         if vendor is not None:
             stmt = stmt.where(ConnectSession.vendor == vendor)
-        if cursor is not None:
-            cursor_ts, cursor_id = cursor
-            stmt = stmt.where(
-                (ConnectSession.created_at < cursor_ts)
-                | ((ConnectSession.created_at == cursor_ts) & (ConnectSession.id < cursor_id))
-            )
+        stmt = apply_desc_keyset(stmt, ConnectSession.created_at, ConnectSession.id, cursor)
         if filters is not None:
             for f in filters:
                 stmt = stmt.where(f)
@@ -131,11 +134,14 @@ class ConnectSessionRepository:
         Used by the connect-poll scanner to dispatch: a candidate credential
         with a live session takes the session-mode advancement path, one
         without takes the raw-credential path. Only sessions in
-        ``LIVE_STATES`` count (terminal states are already frozen).
+        ``LIVE_STATES`` count (terminal states are already frozen). An edit
+        session counts only once confirmed (``polling``): before that it
+        wraps a live credential without driving any flow on it.
         """
         stmt = select(ConnectSession).where(
             ConnectSession.credential_id == credential_id,
             ConnectSession.state.in_(LIVE_STATES),
+            or_(ConnectSession.intent == INTENT_CREATE, ConnectSession.state == "polling"),
         )
         result = await session.execute(stmt)
         return result.scalars().first()
@@ -147,6 +153,7 @@ class ConnectSessionRepository:
         *,
         to_state: str,
         from_states: tuple[str, ...],
+        revision_id: str | None = None,
         **fields: Any,
     ) -> bool:
         """Compare-and-swap the session state; extra ``fields`` ride the same UPDATE.
@@ -156,13 +163,40 @@ class ConnectSessionRepository:
         row is missing or already moved on — the caller must then treat the
         operation as lost to a concurrent winner and leave the row alone.
         This is the single line of defence against terminal races (callback
-        replay, multi-pod scanner overlap, concurrent confirms).
+        replay, multi-pod scanner overlap, concurrent confirms). ``revision_id``,
+        when given, must also still be the session's current revision.
+        """
+        stmt = update(ConnectSession).where(
+            ConnectSession.id == session_id,
+            ConnectSession.state.in_(from_states),
+        )
+        if revision_id is not None:
+            # A confirm also checks the revision its reviewer saw is still
+            # current, in the same UPDATE an amend would race.
+            stmt = stmt.where(ConnectSession.current_revision_id == revision_id)
+        stmt = stmt.values(state=to_state, **fields)
+        result = await session.execute(stmt)
+        await session.flush()
+        return bool(getattr(result, "rowcount", 0))
+
+    @staticmethod
+    async def transition_edit(
+        session: AsyncSession, session_id: str, *, revision_id: str, to_state: str, **fields: Any
+    ) -> bool:
+        """Compare-and-swap an edit session out of ``created`` on its current revision.
+
+        The revision check rides the same UPDATE, so an amend that lands
+        between the caller's read and this write makes it lose: an approval
+        only ever applies to the revision its reviewer saw. ``fields`` ride
+        the same UPDATE.
         """
         stmt = (
             update(ConnectSession)
             .where(
                 ConnectSession.id == session_id,
-                ConnectSession.state.in_(from_states),
+                ConnectSession.intent == INTENT_EDIT,
+                ConnectSession.state == "created",
+                ConnectSession.current_revision_id == revision_id,
             )
             .values(state=to_state, **fields)
         )
@@ -180,6 +214,7 @@ class ConnectSessionRepository:
         exclude_flows: Sequence[str] | None = None,
         target_kind: str | None = None,
         exclude_target_kind: str | None = None,
+        intent: str | None = None,
     ) -> list[str]:
         """Return ids of live sessions created before ``older_than``.
 
@@ -189,7 +224,8 @@ class ConnectSessionRepository:
         they — and their upfront ``pending`` credential rows — would
         otherwise leak forever. ``flows`` / ``exclude_flows`` narrow the
         sweep by ``resolved_flow`` so each flow family gets its own cutoff;
-        ``target_kind`` / ``exclude_target_kind`` narrow it by target kind.
+        ``target_kind`` / ``exclude_target_kind`` narrow it by target kind,
+        ``intent`` by create or edit.
         """
         stmt = select(ConnectSession.id).where(
             ConnectSession.state.in_(LIVE_STATES),
@@ -203,6 +239,8 @@ class ConnectSessionRepository:
             stmt = stmt.where(ConnectSession.target_kind == target_kind)
         if exclude_target_kind is not None:
             stmt = stmt.where(ConnectSession.target_kind != exclude_target_kind)
+        if intent is not None:
+            stmt = stmt.where(ConnectSession.intent == intent)
         stmt = stmt.order_by(ConnectSession.created_at.asc()).limit(limit)
         result = await session.execute(stmt)
         return [str(row_id) for row_id in result.scalars().all()]
@@ -290,18 +328,82 @@ class ConnectSessionRepository:
         return result.scalars().first()
 
     @staticmethod
-    async def rotate_poll_token(
-        session: AsyncSession, session_id: str, *, poll_token_hash: str
+    async def advance_revision(
+        session: AsyncSession,
+        session_id: str,
+        *,
+        open_states: tuple[str, ...],
+        from_revision_id: str | None,
+        to_revision_id: str,
+        **fields: Any,
     ) -> bool:
-        """Replace an open session's poll-token digest; False when it is no longer open."""
+        """Point an open session at a new revision, if nothing moved it first.
+
+        Compare-and-swap on the session still being in ``open_states`` and on
+        ``from_revision_id`` still being current, so an amend never lands on
+        a session a confirm has just closed. ``fields`` ride the same UPDATE.
+        """
         stmt = (
             update(ConnectSession)
-            .where(ConnectSession.id == session_id, ConnectSession.state.in_(LIVE_STATES))
-            .values(poll_token_hash=poll_token_hash)
+            .where(
+                ConnectSession.id == session_id,
+                ConnectSession.state.in_(open_states),
+                ConnectSession.current_revision_id == from_revision_id,
+            )
+            .values(current_revision_id=to_revision_id, **fields)
         )
         result = await session.execute(stmt)
         await session.flush()
         return bool(getattr(result, "rowcount", 0))
+
+    @staticmethod
+    async def get_open_vendor_create(
+        session: AsyncSession, *, agent_id: str, vendor: str
+    ) -> ConnectSession | None:
+        """The agent's open create session for a vendor key, whatever it asks for."""
+        stmt = (
+            select(ConnectSession)
+            .where(
+                ConnectSession.intent == INTENT_CREATE,
+                ConnectSession.target_kind == TARGET_KIND_VENDOR,
+                ConnectSession.state.in_(LIVE_STATES),
+                ConnectSession.agent_id == agent_id,
+                ConnectSession.initiator_actor_id == agent_id,
+                ConnectSession.vendor == vendor,
+            )
+            .order_by(ConnectSession.created_at.desc())
+        )
+        result = await session.execute(stmt)
+        return result.scalars().first()
+
+    @staticmethod
+    async def get_open_edit(
+        session: AsyncSession, *, agent_id: str, credential_id: str, initiator_actor_id: str
+    ) -> ConnectSession | None:
+        """``initiator_actor_id``'s newest open edit of one binding.
+
+        A binding can have any number of open edits; this finds the caller's
+        own, so an agent asking again amends its request instead.
+        """
+        stmt = (
+            select(ConnectSession)
+            .where(
+                ConnectSession.intent == INTENT_EDIT,
+                ConnectSession.state.in_(LIVE_STATES),
+                ConnectSession.agent_id == agent_id,
+                ConnectSession.credential_id == credential_id,
+                ConnectSession.initiator_actor_id == initiator_actor_id,
+            )
+            .order_by(ConnectSession.created_at.desc())
+        )
+        result = await session.execute(stmt)
+        return result.scalars().first()
+
+    @staticmethod
+    async def delete(session: AsyncSession, session_id: str) -> None:
+        """Delete one session row; its revisions cascade with it."""
+        await session.execute(delete(ConnectSession).where(ConnectSession.id == session_id))
+        await session.flush()
 
     @staticmethod
     async def acquire_open_session_cap_lock(session: AsyncSession, owner_key: str) -> None:

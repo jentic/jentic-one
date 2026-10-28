@@ -35,9 +35,11 @@ vendored fallback under [`vendored/`](vendored/) guarded by
 - [`test_web_links_absolute.py`](test_web_links_absolute.py) — routers build links through `build_link`, never by hand
 - [`test_broker_runner_seam.py`](test_broker_runner_seam.py) — the broker execution path stays runner-shaped, not inlined
 - [`test_worker_no_inline_dispatch.py`](test_worker_no_inline_dispatch.py) — the async worker holds no inline upstream dispatch
+- [`test_no_process_local_state.py`](test_no_process_local_state.py) — no module-level mutable cache in the modules and packages holding cross-request state (it lives on `Context.state_backend` or in the database), and no `MemoryStateBackend` built outside the state factory; process-local exceptions are allowlisted with a reason
 - [`test_search_encapsulation.py`](test_search_encapsulation.py) — services and web never import search strategy modules directly
 - [`test_no_ml_in_core_surfaces.py`](test_no_ml_in_core_surfaces.py) — core surfaces never import ML embedding modules
 - [`test_error_handler_consistency.py`](test_error_handler_consistency.py) — MRO-walk error handling lives only in the shared module
+- [`test_error_modules.py`](test_error_modules.py) — error modules are named `errors.py`, the broker's error module holds only exception classes, and each operation-discovery error is defined once
 - [`test_admin_base_usage.py`](test_admin_base_usage.py), [`test_admin_secrets_isolation.py`](test_admin_secrets_isolation.py), [`test_admin_services_no_sqlalchemy.py`](test_admin_services_no_sqlalchemy.py), [`test_admin_services_style_a.py`](test_admin_services_style_a.py) — the admin surface's model base, secrets isolation, and service style
 
 ## Single-import-point facades
@@ -53,6 +55,7 @@ vendored fallback under [`vendored/`](vendored/) guarded by
 
 - [`test_orm_conventions.py`](test_orm_conventions.py) — ORM model conventions
 - [`test_no_backref.py`](test_no_backref.py) — no SQLAlchemy `backref`
+- [`test_keyset_helper.py`](test_keyset_helper.py) — keyset pagination predicates come from `shared/db/keyset.py`, never hand-written
 - [`test_no_direct_db.py`](test_no_direct_db.py) — model modules never import DB internals directly
 - [`test_no_manual_commit.py`](test_no_manual_commit.py) — no production `session.commit()`/`rollback()`
 - [`test_migration_single_head.py`](test_migration_single_head.py) — exactly one alembic head per migration tree

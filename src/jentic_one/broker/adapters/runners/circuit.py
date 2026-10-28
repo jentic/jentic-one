@@ -27,7 +27,7 @@ from jentic_one.broker.adapters.runners.base import (
     StreamingUpstreamRunner,
     UpstreamRunner,
 )
-from jentic_one.broker.core.exceptions import (
+from jentic_one.broker.core.errors import (
     BrokerError,
     CircuitOpenError,
     UpstreamTimeoutError,
@@ -77,17 +77,21 @@ class CircuitBreakerRunner:
         self._breaker = breaker
         self._blocking = enforcement_mode == "blocking"
 
+    async def _open_error(self, host: str, retry_after_s: int) -> CircuitOpenError:
+        return CircuitOpenError(
+            detail="Upstream circuit open; the broker is fast-failing to let it recover.",
+            type="circuit_open",
+            headers={"Retry-After": str(retry_after_s)},
+            report=await self._breaker.claim_open_report(host),
+        )
+
     async def run(self, request: RunnerRequest) -> RunnerResult:
         host = _host_of(request.url)
         decision = await self._breaker.allow(host)
         if not decision.allowed:
             if self._blocking:
                 _circuit_open_total.add(1, {"upstream": host})
-                raise CircuitOpenError(
-                    detail="Upstream circuit open; the broker is fast-failing to let it recover.",
-                    type="circuit_open",
-                    headers={"Retry-After": str(decision.retry_after_s)},
-                )
+                raise await self._open_error(host, decision.retry_after_s)
             # observation mode: count what we *would* have shed, then proceed.
             _circuit_would_block_total.add(1, {"upstream": host})
 
@@ -118,11 +122,7 @@ class CircuitBreakerRunner:
         if not decision.allowed:
             if self._blocking:
                 _circuit_open_total.add(1, {"upstream": host})
-                raise CircuitOpenError(
-                    detail="Upstream circuit open; the broker is fast-failing to let it recover.",
-                    type="circuit_open",
-                    headers={"Retry-After": str(decision.retry_after_s)},
-                )
+                raise await self._open_error(host, decision.retry_after_s)
             _circuit_would_block_total.add(1, {"upstream": host})
 
         if not isinstance(self._inner, StreamingUpstreamRunner):  # pragma: no cover - config guard

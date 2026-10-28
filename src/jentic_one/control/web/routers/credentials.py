@@ -35,7 +35,7 @@ from jentic_one.control.services.credentials.schemas.credentials import (
     CredentialUpdate,
 )
 from jentic_one.control.services.credentials.schemas.provision import APIReference
-from jentic_one.control.services.credentials.service import CredentialService
+from jentic_one.control.services.credentials.service import BindingAccess, CredentialService
 from jentic_one.control.services.credentials.state import (
     OAUTH_CALLBACK_PATH,
     StateError,
@@ -43,6 +43,7 @@ from jentic_one.control.services.credentials.state import (
 )
 from jentic_one.control.services.integrations.connect_session_service import (
     ConnectSessionService,
+    ScopeOptions,
 )
 from jentic_one.control.web.connect_binding import (
     clear_browser_binding_cookie,
@@ -79,12 +80,15 @@ from jentic_one.control.web.schemas.credentials import (
     RuleSetUpdateRequest,
 )
 from jentic_one.control.web.schemas.permission_rules import (
+    BindingAccessResponse,
+    BindingRuleSetSchema,
     PermissionRuleListResponse,
     PermissionRuleReadSchema,
     PermissionRuleSchema,
     PermissionsPatchRequest,
     PermissionTestRequest,
     PermissionTestResponse,
+    ScopeOptionSchema,
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
@@ -562,9 +566,12 @@ async def list_credential_agents(
 # --- Per-binding permission rules (theme 5 phase 1) ---
 
 
-def _to_permission_rule(rule: AgentPermissionRule) -> PermissionRuleReadSchema:
+def _to_permission_rule(
+    rule: AgentPermissionRule | PermissionRuleSetRule,
+) -> PermissionRuleReadSchema:
     return PermissionRuleReadSchema.model_validate(
         {
+            "id": rule.id,
             "effect": rule.effect,
             "methods": rule.methods,
             "path": rule.path,
@@ -573,6 +580,39 @@ def _to_permission_rule(rule: AgentPermissionRule) -> PermissionRuleReadSchema:
             "_system": rule.is_system,
             "_comment": rule.comment,
         }
+    )
+
+
+def binding_access_response(
+    access: BindingAccess, scopes: ScopeOptions | None = None
+) -> BindingAccessResponse:
+    """Project a binding's access onto the wire shape (shared with the MCP mount)."""
+    rule_set = None
+    if access.rule_set is not None:
+        rule_set = BindingRuleSetSchema(
+            id=access.rule_set.id,
+            name=access.rule_set.name,
+            curated=access.rule_set.curated,
+            rules=[_to_permission_rule(r) for r in access.rule_set_rules],
+        )
+    return BindingAccessResponse(
+        data=[_to_permission_rule(r) for r in access.rules],
+        rule_set=rule_set,
+        granted_scopes=access.granted_scopes,
+        suspended=access.suspended,
+        scopes_editable=scopes.supported if scopes is not None else False,
+        scope_catalog=(
+            [
+                ScopeOptionSchema(
+                    name=scope.name,
+                    classification=scope.classification,
+                    description=scope.description,
+                )
+                for scope in scopes.catalog
+            ]
+            if scopes is not None and scopes.catalog is not None
+            else None
+        ),
     )
 
 
@@ -598,10 +638,17 @@ async def list_agent_permissions(
         required_permissions=["credentials:read", "owner:credentials:read"]
     ),
     svc: CredentialService = Depends(get_credential_service),
-) -> PermissionRuleListResponse:
-    """List the ordered PBAC rules for a direct `(agent, credential)` binding."""
-    rules = await svc.list_agent_permissions(credential_id, agent_id, identity=identity)
-    return PermissionRuleListResponse(data=[_to_permission_rule(r) for r in rules])
+    sessions: ConnectSessionService = Depends(get_connect_session_service),
+) -> BindingAccessResponse:
+    """List the ordered PBAC rules for a direct `(agent, credential)` binding.
+
+    Also returns the rest of what the binding grants: the shared rule set it
+    points at (whose rules apply instead of `data`), the credential's granted
+    OAuth scopes and the ones an edit can add, and whether the binding is
+    suspended. The bound agent can read its own binding.
+    """
+    access = await svc.get_binding_access(credential_id, agent_id, identity=identity)
+    return binding_access_response(access, await sessions.scope_options(credential_id))
 
 
 @router.put(
@@ -791,20 +838,7 @@ def _to_rule_set_response(
         rule_set_id=rule_set.id,
         name=rule_set.name,
         description=rule_set.description,
-        rules=[
-            PermissionRuleReadSchema.model_validate(
-                {
-                    "effect": r.effect,
-                    "methods": r.methods,
-                    "path": r.path,
-                    "match_mode": r.match_mode,
-                    "operations": r.operations,
-                    "_system": r.is_system,
-                    "_comment": r.comment,
-                }
-            )
-            for r in rules
-        ],
+        rules=[_to_permission_rule(r) for r in rules],
         binding_count=binding_count,
         curated=rule_set.curated,
         created_by=rule_set.created_by,

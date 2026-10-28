@@ -7,7 +7,7 @@ module owns that verdict: derive the caller's bindings for the discovered API
 theme-5 Phase 6b), select the credential, and evaluate
 the binding's permission rules — all **before** any secret is decrypted or
 audited. A denial raises the broker domain taxonomy
-(``broker/core/exceptions.py``); the web edge maps it to problem+json and the
+(``broker/core/errors.py``); the web edge maps it to problem+json and the
 worker records it on the job result (see :mod:`.queued_authorization`).
 """
 
@@ -23,18 +23,26 @@ from urllib.parse import urlparse
 import structlog
 
 from jentic_one.broker.core.denial import DenialReason
-from jentic_one.broker.core.exceptions import (
-    ActionDeniedError,
-    BrokerError,
-    CredentialIdentityMismatchError,
+from jentic_one.broker.core.directives import (
+    AgentDirective,
+    credential_binding_suspended_directive,
     direct_action_denied_directive,
     direct_credential_identity_mismatch_directive,
     no_credential_binding_directive,
     suggested_permission_rules,
 )
+from jentic_one.broker.core.errors import (
+    ActionDeniedError,
+    BrokerError,
+    CredentialBindingSuspendedError,
+    CredentialIdentityMismatchError,
+)
 from jentic_one.broker.services.credentials.connect_target import resolve_connect_target
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
-from jentic_one.broker.services.credentials.provisioning import open_session_provisioning_url
+from jentic_one.broker.services.credentials.provisioning import (
+    open_edit_provisioning_url,
+    open_session_provisioning_url,
+)
 from jentic_one.broker.services.credentials.resolver import ResolvedCredential
 from jentic_one.shared.access_guidance import ConnectTarget
 from jentic_one.shared.auth.identity import Identity
@@ -140,6 +148,31 @@ def _empty_credential_derivation_denial(
     )
 
 
+def _suspended_binding_denial(api: APIReference, *, instance: str) -> BrokerError:
+    """The denial for an agent whose binding covering the API is suspended.
+
+    Checked before the other empty-set cases: the suspension is why the call
+    has no credential, and its recovery is the operator's alone, so the
+    directive carries no connect suggestion (and no connect target or open
+    session is looked up for it).
+    """
+    _authz_denied.add(
+        1,
+        {
+            "reason": DenialReason.CREDENTIAL_BINDING_SUSPENDED.value,
+            "mode": "direct",
+            "vendor": api.vendor,
+        },
+    )
+    return CredentialBindingSuspendedError(
+        "The credential binding for this API is suspended",
+        instance=instance,
+        directive=credential_binding_suspended_directive(
+            vendor=api.vendor, name=api.name, version=api.version
+        ),
+    )
+
+
 async def _emit_credential_binding_unserved(
     ctx: Context, *, api: APIReference, identity: Identity, trace_id: str | None = None
 ) -> None:
@@ -194,12 +227,12 @@ async def derive_credential_bindings(
 ) -> CredentialDerivation:
     """Derive the caller's credential-binding candidates for this execution.
 
-    ``0 → 403`` (no binding / credential identity mismatch — with the
-    operator-visible ``CREDENTIAL_BINDING_UNSERVED`` emit for the pre-binding
-    nothing-serves case). Candidate *selection* among ``N ≥ 1`` (name header →
-    most-specific-wins → ``Jentic-Credential-Id`` tie-breaker → 409) is owned
-    by ``CredentialService.select``, which shares the resolver with injection
-    so selection and injection can never disagree.
+    ``0 → 403`` (no binding / suspended binding / credential identity
+    mismatch — with the operator-visible ``CREDENTIAL_BINDING_UNSERVED`` emit
+    for the pre-binding nothing-serves case). Candidate *selection* among
+    ``N ≥ 1`` (name header → most-specific-wins → ``Jentic-Credential-Id``
+    tie-breaker → 409) is owned by ``CredentialService.select``, which shares
+    the resolver with injection so selection and injection can never disagree.
 
     Non-agent actors (users) follow the **same** derivation rule — no
     implicit bypass. Retired toolkit keys resolve as their successor agents
@@ -220,6 +253,8 @@ async def derive_credential_bindings(
         version=api.version,
     )
     if not derivation.credentials:
+        if derivation.binding_suspended:
+            raise _suspended_binding_denial(api, instance=instance)
         denial = _empty_credential_derivation_denial(
             derivation,
             api,
@@ -346,6 +381,7 @@ async def _deny(
     operation_id: str | None = None,
     operation_method: str | None = None,
     operation_path: str | None = None,
+    directive: AgentDirective | None = None,
 ) -> NoReturn:
     """Count, record (``PBAC_DENIED``) and raise a rule-level ``action_denied``.
 
@@ -389,7 +425,7 @@ async def _deny(
         detail=detail,
         type="action_denied",
         instance=instance,
-        directive=direct_action_denied_directive(),
+        directive=directive or direct_action_denied_directive(),
     )
 
 
@@ -433,8 +469,8 @@ async def authorize_execution(
     ``path``), recorded on the denial event.
 
     Raises a :class:`BrokerError` (``ActionDeniedError`` /
-    ``CredentialIdentityMismatchError`` → 403, ``AmbiguousMatchError`` → 409,
-    and the credential-resolution taxonomy from ``CredentialService.select``)
+    ``CredentialIdentityMismatchError`` → 403, ``AmbiguousCredentialMatchError``
+    → 409, and the credential-resolution taxonomy from ``CredentialService.select``)
     when the execution is not allowed.
     """
     # Derive candidates (0 → 403 with the right directive), then select the
@@ -551,6 +587,13 @@ async def authorize_execution(
                 "or attach a rule set."
                 if no_rules
                 else "The requested operation is denied by a credential-binding permission rule."
+            ),
+            directive=direct_action_denied_directive(
+                credential_id=selected_credential.credential_id,
+                suggested_rules=suggested_permission_rules(method=method, path=path),
+                open_edit_url=await open_edit_provisioning_url(
+                    ctx, identity=identity, credential_id=selected_credential.credential_id
+                ),
             ),
         )
 

@@ -56,9 +56,8 @@ from jentic_one.broker.adapters.runners.base import (
     StreamingResult,
     StreamingUpstreamRunner,
 )
-from jentic_one.broker.core.exceptions import (
+from jentic_one.broker.core.errors import (
     BrokerError,
-    ErrorOrigin,
     UpstreamBodyInterruptedError,
     UpstreamTimeoutError,
 )
@@ -69,7 +68,10 @@ from jentic_one.broker.core.headers import (
 )
 from jentic_one.broker.core.proxy_headers import passthrough_streaming_headers
 from jentic_one.broker.core.schemas import ExecuteRequestContext
-from jentic_one.shared.broker.execution import StreamingOutcome
+from jentic_one.shared.broker.execution import (
+    ErrorOrigin,
+    StreamingOutcome,
+)
 from jentic_one.shared.logging import mark_response_aborted
 
 __all__ = [

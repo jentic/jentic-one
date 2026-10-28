@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Broker API
-  version: "0.43.0" # x-release-please-version
+  version: "0.44.0" # x-release-please-version
   summary: Secure execution proxy for upstream APIs — credentials never leave the Broker.
   contact:
     name: Jentic Platform Team
@@ -125,7 +125,7 @@ paths:
                   value:
                     status: ok
                     surface: broker
-                    version: "0.43.0" # x-release-please-version
+                    version: "0.44.0" # x-release-please-version
                 notEntitled:
                   summary: Metered marketplace deployment whose entitlement lapsed.
                   value:
@@ -308,6 +308,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
         "409":
           $ref: "#/components/responses/Conflict"
         "413":
@@ -360,6 +362,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
         "409":
           $ref: "#/components/responses/Conflict"
         "413":
@@ -411,6 +415,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
         "409":
           $ref: "#/components/responses/Conflict"
         "413":
@@ -459,6 +465,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
         "409":
           $ref: "#/components/responses/Conflict"
         "413":
@@ -508,6 +516,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
         "409":
           $ref: "#/components/responses/Conflict"
         "413":
@@ -546,6 +556,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
         "409":
           $ref: "#/components/responses/Conflict"
         "413":
@@ -583,6 +595,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
         "409":
           $ref: "#/components/responses/Conflict"
         "413":
@@ -655,6 +669,32 @@ components:
         type: string
         examples:
           - Stripe prod key
+    ServerTiming:
+      description: |
+        W3C Server-Timing. When the upstream sends its own
+        `Server-Timing`, it is forwarded. When the deployment
+        enables `broker.server_timing` (off by default), the Broker
+        appends a second field with per-stage durations in milliseconds
+        for authenticated callers: `jentic-auth`, `jentic-egress`,
+        `jentic-discover`, `jentic-rules`, `jentic-body`,
+        `jentic-idempotency`, `jentic-cred`, `jentic-upstream`,
+        `jentic-persist`, `jentic-total` — fixed names in the reserved
+        `jentic-` namespace (an upstream entry claiming that prefix is
+        dropped), no identifiers. Only the stages that ran are listed. On
+        a streamed response the headers precede the body, so
+        `jentic-upstream` is the wait for the upstream headers and
+        `jentic-persist` is absent. The field also appears on
+        post-authentication error responses: with durations once the
+        upstream was called (e.g. a `504`), and as stage names only for an
+        error the Broker raises before the upstream call (e.g. `404`,
+        `403`, `409`, `424`). `jentic-upstream` includes the circuit-breaker
+        check, so a circuit-open `503` carries durations even though no
+        upstream request was sent. It never appears on `401`, a missing-permission
+        `403`, a rate-limit `429` or a load-shed `503`.
+      schema:
+        type: string
+        examples:
+          - jentic-auth;dur=1.4, jentic-egress;dur=0.3, jentic-discover;dur=0.9, jentic-rules;dur=2.1, jentic-body;dur=0.1, jentic-cred;dur=3.0, jentic-upstream;dur=84.2, jentic-persist;dur=4.7, jentic-total;dur=97.6
   parameters:
     UpstreamUrl:
       name: upstream_url
@@ -858,6 +898,16 @@ components:
                     created_at: "2026-09-01T00:00:00Z"
               items:
                 $ref: "#/components/schemas/CredentialCandidate"
+            allowed_methods:
+              type: array
+              description: |
+                The HTTP methods the upstream URL is registered for, on a
+                `method_not_allowed` 405. Mirrored in the `Allow` response
+                header.
+              examples:
+                - [GET, PUT]
+              items:
+                type: string
             intent_id:
               type: string
               description: |
@@ -1082,7 +1132,7 @@ components:
       examples:
         - status: ok
           surface: broker
-          version: "0.43.0" # x-release-please-version
+          version: "0.44.0" # x-release-please-version
       required:
         - status
       properties:
@@ -1107,7 +1157,7 @@ components:
             Running Jentic One release (the same version as `info.version`
             in this spec). Absent on the `not_entitled` body.
           examples:
-            - "0.43.0" # x-release-please-version
+            - "0.44.0" # x-release-please-version
         reason:
           type: string
           description: Why the deployment is not entitled. Present only on the `not_entitled` body.
@@ -1208,6 +1258,8 @@ components:
           $ref: "#/components/headers/JenticCredentialId"
         Jentic-Credential-Name:
           $ref: "#/components/headers/JenticCredentialName"
+        Server-Timing:
+          $ref: "#/components/headers/ServerTiming"
       content:
         "*/*":
           schema:
@@ -1269,6 +1321,8 @@ components:
             type: string
             examples:
               - getTrack
+        Server-Timing:
+          $ref: "#/components/headers/ServerTiming"
       content:
         application/json:
           schema:
@@ -1351,7 +1405,8 @@ components:
         token lacking the required `capabilities:execute` permission
         (`type: insufficient_scope`, the RFC 6750 code), attempting to pin a `draft`
         revision they don't own, using a credential they aren't bound to
-        (`no_credential_binding`), or being denied by a binding's
+        (`no_credential_binding`), holding only a suspended binding for the
+        API (`credential_binding_suspended`), or being denied by a binding's
         permission rules. Body is RFC 9457 `application/problem+json`.
       content:
         application/problem+json:
@@ -1389,6 +1444,27 @@ components:
                     to that credential (in the dashboard, or via POST
                     /agents/{agent_id}/credentials) — only a human can grant the
                     binding. Once bound, retry this call.
+            credential_binding_suspended:
+              summary: The caller's binding for this API is suspended by its operator.
+              value:
+                type: credential_binding_suspended
+                title: The credential binding for this API is suspended
+                status: 403
+                detail: The credential binding for this API is suspended
+                error_origin: broker
+                instance: /api.example.com/v1/users
+                agent_directive:
+                  strategy: prompt_human
+                  parameters:
+                    api:
+                      vendor: api.example.com
+                      name: main
+                      version: "1.0.0"
+                  human_readable_instruction: >-
+                    Your operator has suspended your access to 'api.example.com/main'.
+                    Ask your operator whether they will resume it — only they can. Do
+                    not request a new connection for this API. Once they resume it,
+                    retry this call.
     NotFound:
       description: |
         Upstream URL doesn't resolve to a registered API operation, or
@@ -1409,6 +1485,37 @@ components:
                 detail: Operation not found — unregistered upstream URL.
                 error_origin: broker
                 instance: /api.example.com/v1/unknown
+    MethodNotAllowed:
+      description: |
+        The upstream URL matches a registered API operation, but not for
+        the request's HTTP method (`method_not_allowed`). The broker answers
+        before dispatch, so the upstream never saw the call. The `Allow`
+        header and the `allowed_methods` member name the methods the URL
+        is registered for; resend with one of them. Body is RFC 9457
+        `application/problem+json`. A 405 the upstream itself returns is
+        mirrored with `error_origin: upstream` instead.
+      headers:
+        Allow:
+          description: Comma-separated HTTP methods the upstream URL is registered for.
+          schema:
+            type: string
+            examples:
+              - GET, PUT
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/BrokerProblem"
+          examples:
+            method_not_allowed:
+              summary: The URL is registered only for other HTTP methods.
+              value:
+                type: method_not_allowed
+                title: "Method not allowed; allowed: GET, PUT"
+                status: 405
+                detail: "Method not allowed; allowed: GET, PUT"
+                error_origin: broker
+                instance: /api.example.com/v1/widgets
+                allowed_methods: [GET, PUT]
     Conflict:
       description: |
         Conflict (RFC 9457 `application/problem+json`), distinguished by
@@ -1426,6 +1533,11 @@ components:
         - `idempotency_in_progress` — a request with this `Idempotency-Key`
           is still being processed. The response carries a `Retry-After`
           header; retry after that delay to obtain the replayed result.
+        - `ambiguous_match` — the upstream URL matches more than one
+          registered operation with equal specificity, so the broker cannot
+          tell which API the call is for. Raised before dispatch; the
+          registered specs overlap and need an operator fix (or a
+          `Jentic-Revision` pin that disambiguates).
       content:
         application/problem+json:
           schema:
@@ -1469,6 +1581,15 @@ components:
                 detail: Idempotency-Key reused with a different request.
                 error_origin: broker
                 instance: /api.example.com/v1/orders
+            ambiguous_match:
+              summary: The upstream URL matches several registered operations equally.
+              value:
+                type: ambiguous_match
+                title: "Ambiguous URL match: 2 candidates with equal specificity"
+                status: 409
+                detail: "Ambiguous URL match: 2 candidates with equal specificity"
+                error_origin: broker
+                instance: /api.example.com/v1/widgets
     CredentialNotProvisioned:
       description: |
         A bound credential is an unusable dependency, so the broker cannot
@@ -1661,6 +1782,15 @@ components:
                 status: 503
                 detail: The Idempotency-Key claim could not be recorded, so the request was not executed; retry after the indicated delay.
                 error_origin: broker
+            too_many_candidates:
+              summary: The URL index returned more candidates than the broker can rank; nothing was dispatched.
+              value:
+                type: too_many_candidates
+                title: URL index returned too many candidates
+                status: 503
+                detail: URL index returned too many candidates
+                error_origin: broker
+                instance: /api.example.com/v1/widgets
     PayloadTooLarge:
       description: |
         Request body exceeded the broker's per-`Content-Type` size cap

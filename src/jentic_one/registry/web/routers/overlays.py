@@ -14,6 +14,7 @@ from jentic_one.registry.services.overlay_service import (
     OverlayService,
     OverlayView,
 )
+from jentic_one.registry.web.params import ApiNamePath, ApiVendorPath, ApiVersionPath
 from jentic_one.registry.web.schemas.overlays import (
     OverlayConfirmRequest,
     OverlayLinksResponse,
@@ -25,7 +26,6 @@ from jentic_one.registry.web.schemas.overlays import (
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import OverlayStatus
-from jentic_one.shared.pagination import InvalidCursorError
 from jentic_one.shared.web import get_ctx, get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.links import build_link
@@ -128,15 +128,9 @@ def _build_overlay_list_item(
 )
 async def submit_overlay(
     request: Request,
-    vendor: Annotated[
-        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
-    ],
-    name: Annotated[
-        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
-    ],
-    version: Annotated[
-        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
-    ],
+    vendor: ApiVendorPath,
+    name: ApiNamePath,
+    version: ApiVersionPath,
     body: OverlaySubmitRequest,
     identity: Identity = get_current_identity(required_permissions=["apis:write"]),
     ctx: Context = Depends(get_ctx),
@@ -179,15 +173,9 @@ async def submit_overlay(
 @router.get("", response_model=OverlayListResponse, summary="List an API's overlays")
 async def list_overlays(
     request: Request,
-    vendor: Annotated[
-        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
-    ],
-    name: Annotated[
-        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
-    ],
-    version: Annotated[
-        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
-    ],
+    vendor: ApiVendorPath,
+    name: ApiNamePath,
+    version: ApiVersionPath,
     identity: Identity = get_current_identity(required_permissions=["apis:read"]),
     ctx: Context = Depends(get_ctx),
     cursor: str | None = Query(
@@ -217,13 +205,7 @@ async def list_overlays(
     true.
     """
     svc = OverlayService(ctx)
-    try:
-        page = await svc.list_page(vendor, name, version, limit=limit, cursor=cursor, status=status)
-    except InvalidCursorError:
-        raise BadRequest(
-            detail="Invalid pagination cursor",
-            instance=request.url.path,
-        ) from None
+    page = await svc.list_page(vendor, name, version, limit=limit, cursor=cursor, status=status)
 
     data = [_build_overlay_list_item(item, request, vendor, name, version) for item in page.data]
 
@@ -234,15 +216,9 @@ async def list_overlays(
 @router.get("/{overlay_id}", response_model=OverlayResponse)
 async def get_overlay(
     request: Request,
-    vendor: Annotated[
-        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
-    ],
-    name: Annotated[
-        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
-    ],
-    version: Annotated[
-        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
-    ],
+    vendor: ApiVendorPath,
+    name: ApiNamePath,
+    version: ApiVersionPath,
     overlay_id: Annotated[
         str, Path(description="ID of the overlay.", openapi_examples=ex.example(ex.OVERLAY_ID))
     ],
@@ -260,15 +236,9 @@ async def get_overlay(
 @router.patch("/{overlay_id}", response_model=OverlayResponse, summary="Edit an overlay")
 async def update_overlay(
     request: Request,
-    vendor: Annotated[
-        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
-    ],
-    name: Annotated[
-        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
-    ],
-    version: Annotated[
-        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
-    ],
+    vendor: ApiVendorPath,
+    name: ApiNamePath,
+    version: ApiVersionPath,
     overlay_id: Annotated[
         str, Path(description="ID of the overlay.", openapi_examples=ex.example(ex.OVERLAY_ID))
     ],
@@ -318,15 +288,9 @@ async def update_overlay(
 
 @router.delete("/{overlay_id}", status_code=204, summary="Deprecate an overlay")
 async def deprecate_overlay(
-    vendor: Annotated[
-        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
-    ],
-    name: Annotated[
-        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
-    ],
-    version: Annotated[
-        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
-    ],
+    vendor: ApiVendorPath,
+    name: ApiNamePath,
+    version: ApiVersionPath,
     overlay_id: Annotated[
         str, Path(description="ID of the overlay.", openapi_examples=ex.example(ex.OVERLAY_ID))
     ],
@@ -352,15 +316,9 @@ async def deprecate_overlay(
 )
 async def confirm_overlay(
     request: Request,
-    vendor: Annotated[
-        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
-    ],
-    name: Annotated[
-        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
-    ],
-    version: Annotated[
-        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
-    ],
+    vendor: ApiVendorPath,
+    name: ApiNamePath,
+    version: ApiVersionPath,
     overlay_id: Annotated[
         str, Path(description="ID of the overlay.", openapi_examples=ex.example(ex.OVERLAY_ID))
     ],
@@ -396,15 +354,9 @@ async def confirm_overlay(
     summary="Roll back a confirmed overlay",
 )
 async def rollback_overlay(
-    vendor: Annotated[
-        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
-    ],
-    name: Annotated[
-        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
-    ],
-    version: Annotated[
-        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
-    ],
+    vendor: ApiVendorPath,
+    name: ApiNamePath,
+    version: ApiVersionPath,
     overlay_id: Annotated[
         str, Path(description="ID of the overlay.", openapi_examples=ex.example(ex.OVERLAY_ID))
     ],

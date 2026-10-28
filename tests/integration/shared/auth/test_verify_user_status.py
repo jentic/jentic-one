@@ -16,10 +16,10 @@ go through the real app built by the composition root.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from functools import partialmethod
 from pathlib import Path
 
 import pytest
@@ -30,12 +30,14 @@ from sqlalchemy import delete, func, select, update
 
 from jentic_one.__main__ import _build_app
 from jentic_one.admin.core.schema.access_tokens import AccessToken
+from jentic_one.admin.core.schema.agent_credentials import AgentCredential
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.refresh_tokens import RefreshToken
 from jentic_one.admin.core.schema.user_permission_grants import UserPermissionGrant
 from jentic_one.admin.core.schema.user_secrets import UserSecret
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import (
+    AgentCredentialRepository,
     AgentRepository,
     UserPermissionGrantRepository,
     UserRepository,
@@ -44,20 +46,20 @@ from jentic_one.admin.repos import (
 from jentic_one.admin.services import AuthService, UserService
 from jentic_one.admin.services._support.passwords import hash_password
 from jentic_one.admin.services.errors import ConflictError, InvalidCredentialsError
-from jentic_one.admin.services.event_stream_service import EventStreamService
 from jentic_one.admin.services.schemas.auth import LoginPayload
-from jentic_one.admin.web.routers import events as events_router
 from jentic_one.auth.services.errors import InvalidGrantError
 from jentic_one.auth.services.token_service import TokenService
 from jentic_one.broker.repos.actor_status import ActorStatusResolver
 from jentic_one.broker.repos.token_resolver import InProcessTokenResolver
 from jentic_one.mcp.installer import mcp_lifespan
+from jentic_one.shared.auth.api_key_resolver import ApiKeyResolver
 from jentic_one.shared.auth.identity import ChangePasswordPayload, Identity
 from jentic_one.shared.auth.tokens import InvalidTokenError, issue_jwt
 from jentic_one.shared.auth.verify import verify_token
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorStatus, ActorType, InviteState
+from tests.harness.event_stream import StreamProbe
 
 pytestmark = pytest.mark.integration
 
@@ -113,6 +115,9 @@ async def actors(integration_context: Context) -> AsyncGenerator[_Actors, None]:
             agents = select(Agent.id).where(Agent.created_by == _SEED_MARKER)
             await session.execute(delete(AccessToken).where(AccessToken.actor_id.in_(agents)))
             await session.execute(delete(RefreshToken).where(RefreshToken.actor_id.in_(agents)))
+            await session.execute(
+                delete(AgentCredential).where(AgentCredential.agent_id.in_(agents))
+            )
             await session.execute(delete(Agent).where(Agent.created_by == _SEED_MARKER))
             await session.execute(delete(AccessToken).where(AccessToken.actor_id.in_(ids)))
             await session.execute(delete(RefreshToken).where(RefreshToken.actor_id.in_(ids)))
@@ -401,6 +406,46 @@ async def test_deleted_row_refuses_every_credential_even_when_active(
         actor_id=actors.user_id, actor_type=ActorType.USER.value
     )
 
+    # An agent owned by the deleted-but-active user must also be treated as
+    # having an inactive owner across AgentRepository, ApiKeyResolver,
+    # TokenService, InProcessTokenResolver, and ActorStatusResolver.
+    raw_jak = "jak_deleted_owner_integration_key"
+    async with ctx.admin_db.session() as session:
+        owned_agent = await AgentRepository.create(
+            session,
+            name="deleted-owner-agent",
+            owner_id=actors.user_id,
+            registered_by=actors.user_id,
+            created_by=_SEED_MARKER,
+            status=ActorStatus.ACTIVE,
+        )
+        await AgentCredentialRepository.set_api_key_hash(
+            session,
+            owned_agent.id,
+            api_key_hash=hashlib.sha256(raw_jak.encode()).hexdigest(),
+            created_by=_SEED_MARKER,
+        )
+        await session.commit()
+        with_owner = await AgentRepository.get_with_owner_active(session, owned_agent.id)
+    assert with_owner is not None and with_owner[1] is False
+    assert await ApiKeyResolver(ctx.admin_db).resolve(raw_jak) is None
+
+    agent_access, _agent_refresh = await tokens.issue_pair(owned_agent.id, ActorType.AGENT, [])
+    resolved_agent = await tokens.resolve_access_token(agent_access)
+    assert resolved_agent is not None and not resolved_agent.active
+    brokered_agent = await InProcessTokenResolver(ctx.admin_db).resolve_access_token(agent_access)
+    assert brokered_agent is not None and not brokered_agent.active
+    status_resolver = ActorStatusResolver(ctx.admin_db)
+    assert not await status_resolver.is_active(
+        actor_id=owned_agent.id, actor_type=ActorType.AGENT.value
+    )
+    agent_authority = await status_resolver.authority(
+        actor_id=owned_agent.id,
+        actor_type=ActorType.AGENT.value,
+        permission="broker:execute",
+    )
+    assert not agent_authority.active
+
     async with _client(ctx, _FULL) as client:
         _assert_refused(await _get(client, "/users/me", jwt))
         _assert_refused(await _get(client, "/me", access))
@@ -479,24 +524,20 @@ async def test_admin_db_unavailable_is_503_on_mcp_mount(
 
 
 async def test_open_event_stream_ends_when_user_disabled(
-    integration_context: Context, actors: _Actors, monkeypatch: pytest.MonkeyPatch
+    integration_context: Context, actors: _Actors, fast_stream: StreamProbe
 ) -> None:
     """An open ``/events/stream`` re-verifies its credential, so disabling the user
     ends the stream instead of letting it run on indefinitely."""
     ctx = integration_context
-    monkeypatch.setattr(events_router, "_STREAM_RECHECK_SECONDS", 0.0)
-    monkeypatch.setattr(
-        EventStreamService,
-        "stream",
-        partialmethod(EventStreamService.stream, poll_interval_seconds=0.05),
-    )
     token = await _login(ctx)
 
     async with _client(ctx, _FULL) as client:
         # The ASGI transport returns once the response body ends, so the request
         # only completes if the stream closes itself.
         request = asyncio.create_task(_get(client, "/events/stream", token))
-        await asyncio.sleep(0.3)
+        # Disable only once the first heartbeat has passed a recheck and gone
+        # out; disabling sooner races that recheck and ends the stream empty.
+        await fast_stream.wait_for_items(2)
         assert not request.done(), "the stream must stay open while the user is active"
         with structlog.testing.capture_logs() as logs:
             await UserService(ctx).disable(actors.user_id, identity=_operator(actors))
@@ -504,5 +545,8 @@ async def test_open_event_stream_ends_when_user_disabled(
 
     assert resp.status_code == 200
     assert "event: heartbeat" in resp.text
+    assert resp.text.endswith(
+        'event: stream_closed\ndata: {"type":"stream_closed","reason":"refused"}\n\n'
+    )
     closed = [e for e in logs if e["event"] == "sse_stream_credential_unverified"]
     assert [e["reason"] for e in closed] == ["refused"]

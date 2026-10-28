@@ -19,7 +19,7 @@ import structlog
 
 from jentic_one.broker.adapters.runners.base import RunnerRequest, StreamingResult
 from jentic_one.broker.adapters.runners.http import HttpRunner
-from jentic_one.broker.core.exceptions import (
+from jentic_one.broker.core.errors import (
     UpstreamBodyInterruptedError,
     UpstreamResponseTooLargeError,
     UpstreamTimeoutError,
@@ -350,6 +350,7 @@ async def test_persist_callback_calls_persist_streaming_execution() -> None:
             actor_type="agent",
             origin=None,
             security_config=mock_ctx.config.security,
+            repeated_failure_counter=None,
         )
 
 
@@ -395,6 +396,7 @@ async def test_persist_callback_sets_failed_on_upstream_error() -> None:
             actor_type="agent",
             origin=None,
             security_config=mock_ctx.config.security,
+            repeated_failure_counter=None,
         )
 
 

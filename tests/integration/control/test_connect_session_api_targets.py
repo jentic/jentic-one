@@ -63,7 +63,7 @@ from jentic_one.control.services.integrations.connect_session_service import (
     ConnectSessionService,
     ExistingCredentialConfirm,
     OwnClientConfirm,
-    ReauthorizeConfirmResult,
+    ReviewData,
     SecretConfirm,
 )
 from jentic_one.control.services.integrations.errors import (
@@ -71,12 +71,11 @@ from jentic_one.control.services.integrations.errors import (
     AuthTypeNotDeclaredError,
     AuthTypeRequiredError,
     ConfirmKindMismatchError,
+    ConnectOpenError,
     ExistingCredentialNotFoundError,
-    InsufficientGrantedScopesError,
     InvalidPollTokenError,
     InvalidStateTransitionError,
     NoDeclaredSchemeError,
-    ReauthorizeUnavailableError,
     RecentlyRejectedError,
     ReservedAuthFieldError,
     ReviewStaleError,
@@ -97,6 +96,7 @@ from jentic_one.control.services.oauth_app_registrations.service import (
 )
 from jentic_one.control.services.vendors.service import AmbiguousVendorError
 from jentic_one.control.web.app import get_exception_handlers
+from jentic_one.control.web.connect_limits import install_connect_limiters
 from jentic_one.control.web.routers import integrations as integrations_router
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
@@ -330,17 +330,23 @@ async def _bound(ctx: Context, agent_id: str, credential_id: str) -> bool:
     return row is not None
 
 
-def _checks(digest: str, *, rules: list[dict[str, object]] | None = None) -> ConfirmChecks:
+def _checks(
+    review: ReviewData,
+    *,
+    rules: list[dict[str, object]] | None = None,
+    digest: str | None = None,
+) -> ConfirmChecks:
+    """The checks of a confirm answering ``review`` (its digest and revision)."""
     return ConfirmChecks(
         permission_rules=_RULES if rules is None else rules,
         expected_agent_id=_AGENT_ID,
-        digest=digest,
+        digest=review.digest if digest is None else digest,
+        revision_id=review.revision_id,
     )
 
 
-async def _digest(ctx: Context, session_id: str) -> str:
-    review = await _svc(ctx).get_review_data(session_id, poll_token=None, identity=_OWNER)
-    return review.digest
+async def _review(ctx: Context, session_id: str) -> ReviewData:
+    return await _svc(ctx).get_review_data(session_id, poll_token=None, identity=_OWNER)
 
 
 async def _confirm_key(
@@ -352,7 +358,7 @@ async def _confirm_key(
         variant=SecretConfirm(
             kind="api_key",
             secret=ApiKeySecret(key=SecretStr(secret)),
-            checks=_checks(await _digest(ctx, session_id)),
+            checks=_checks(await _review(ctx, session_id)),
         ),
         identity=identity,
     )
@@ -820,7 +826,7 @@ async def test_confirm_bearer_and_basic(
         created.session_id,
         poll_token=None,
         variant=SecretConfirm(
-            kind=kind, secret=secret, checks=_checks(await _digest(env, created.session_id))
+            kind=kind, secret=secret, checks=_checks(await _review(env, created.session_id))
         ),
         identity=_OWNER,
     )
@@ -839,17 +845,17 @@ async def test_confirm_bearer_and_basic(
 async def test_confirm_refuses_a_mismatched_kind(env: Context) -> None:
     await _import(env, _KEY_SCHEME)
     created = await _connect(env)
-    digest = await _digest(env, created.session_id)
+    review = await _review(env, created.session_id)
     with pytest.raises(ConfirmKindMismatchError) as mismatch:
         await _svc(env).confirm_variant(
             created.session_id,
             poll_token=None,
             variant=SecretConfirm(
-                kind="bearer", secret=BearerSecret(SecretStr(_SECRET)), checks=_checks(digest)
+                kind="bearer", secret=BearerSecret(SecretStr(_SECRET)), checks=_checks(review)
             ),
             identity=_OWNER,
         )
-    assert mismatch.value.allowed == ["api_key", "existing_credential", "reauthorize"]
+    assert mismatch.value.allowed == ["api_key", "existing_credential"]
     with pytest.raises(ConfirmKindMismatchError):
         await _svc(env).confirm(
             created.session_id,
@@ -863,7 +869,7 @@ async def test_confirm_refuses_a_mismatched_kind(env: Context) -> None:
 async def test_confirm_refuses_a_stale_review_and_an_empty_rule_list(env: Context) -> None:
     await _import(env, _KEY_SCHEME)
     created = await _connect(env)
-    digest = await _digest(env, created.session_id)
+    review = await _review(env, created.session_id)
     svc = _svc(env)
 
     def _variant(checks: ConfirmChecks) -> SecretConfirm:
@@ -873,7 +879,7 @@ async def test_confirm_refuses_a_stale_review_and_an_empty_rule_list(env: Contex
         await svc.confirm_variant(
             created.session_id,
             poll_token=None,
-            variant=_variant(_checks("0" * 64)),
+            variant=_variant(_checks(review, digest="0" * 64)),
             identity=_OWNER,
         )
     with pytest.raises(ReviewStaleError):
@@ -882,7 +888,10 @@ async def test_confirm_refuses_a_stale_review_and_an_empty_rule_list(env: Contex
             poll_token=None,
             variant=_variant(
                 ConfirmChecks(
-                    permission_rules=_RULES, expected_agent_id=_OTHER_AGENT_ID, digest=digest
+                    permission_rules=_RULES,
+                    expected_agent_id=_OTHER_AGENT_ID,
+                    digest=review.digest,
+                    revision_id=review.revision_id,
                 )
             ),
             identity=_OWNER,
@@ -891,7 +900,7 @@ async def test_confirm_refuses_a_stale_review_and_an_empty_rule_list(env: Contex
         await svc.confirm_variant(
             created.session_id,
             poll_token=None,
-            variant=_variant(_checks(digest, rules=[])),
+            variant=_variant(_checks(review, rules=[])),
             identity=_OWNER,
         )
     row = await _row(env, created.session_id)
@@ -912,14 +921,14 @@ async def test_confirm_refuses_a_stale_review_and_an_empty_rule_list(env: Contex
 async def test_scheme_change_ends_the_session(env: Context) -> None:
     await _import(env, _KEY_SCHEME)
     created = await _connect(env)
-    digest = await _digest(env, created.session_id)
+    review = await _review(env, created.session_id)
     await _import(env, {"key": {"type": "apiKey", "in": "header", "name": "X-Other-Key"}})
     with pytest.raises(SchemeChangedError):
         await _svc(env).confirm_variant(
             created.session_id,
             poll_token=None,
             variant=SecretConfirm(
-                kind="api_key", secret=ApiKeySecret(SecretStr(_SECRET)), checks=_checks(digest)
+                kind="api_key", secret=ApiKeySecret(SecretStr(_SECRET)), checks=_checks(review)
             ),
             identity=_OWNER,
         )
@@ -933,7 +942,7 @@ async def test_scheme_change_ends_the_session(env: Context) -> None:
 async def test_host_change_ends_the_session(env: Context) -> None:
     await _import(env, _KEY_SCHEME)
     created = await _connect(env)
-    digest = await _digest(env, created.session_id)
+    review = await _review(env, created.session_id)
     # An operator-approved re-import makes the new host current.
     await _import(env, _KEY_SCHEME, servers=[{"url": "https://evil.example"}], approved=True)
     with pytest.raises(ServersChangedError):
@@ -941,7 +950,7 @@ async def test_host_change_ends_the_session(env: Context) -> None:
             created.session_id,
             poll_token=None,
             variant=SecretConfirm(
-                kind="api_key", secret=ApiKeySecret(SecretStr(_SECRET)), checks=_checks(digest)
+                kind="api_key", secret=ApiKeySecret(SecretStr(_SECRET)), checks=_checks(review)
             ),
             identity=_OWNER,
         )
@@ -966,7 +975,7 @@ async def test_binding_is_removed_when_a_cancel_wins(
     await _import(env, _KEY_SCHEME)
     created = await _connect(env)
     svc = _svc(env)
-    digest = await _digest(env, created.session_id)
+    review = await _review(env, created.session_id)
     original = ConnectSessionService._bind_for_confirm
 
     async def bind_then_cancel(self: ConnectSessionService, *args: Any, **kwargs: Any) -> bool:
@@ -982,7 +991,7 @@ async def test_binding_is_removed_when_a_cancel_wins(
             created.session_id,
             poll_token=None,
             variant=SecretConfirm(
-                kind="api_key", secret=ApiKeySecret(SecretStr(_SECRET)), checks=_checks(digest)
+                kind="api_key", secret=ApiKeySecret(SecretStr(_SECRET)), checks=_checks(review)
             ),
             identity=_OWNER,
         )
@@ -994,7 +1003,7 @@ async def test_binding_is_kept_when_a_concurrent_confirm_wins(
 ) -> None:
     await _import(env, _KEY_SCHEME)
     created = await _connect(env)
-    digest = await _digest(env, created.session_id)
+    review = await _review(env, created.session_id)
     row = await _row(env, created.session_id)
     assert row is not None
     original = ConnectSessionService._bind_for_confirm
@@ -1015,7 +1024,7 @@ async def test_binding_is_kept_when_a_concurrent_confirm_wins(
             created.session_id,
             poll_token=None,
             variant=SecretConfirm(
-                kind="api_key", secret=ApiKeySecret(SecretStr("other")), checks=_checks(digest)
+                kind="api_key", secret=ApiKeySecret(SecretStr("other")), checks=_checks(review)
             ),
             identity=_OWNER,
         )
@@ -1034,17 +1043,18 @@ async def test_agent_archived_between_check_and_bind_is_refused(
 ) -> None:
     await _import(env, _KEY_SCHEME)
     created = await _connect(env)
-    digest = await _digest(env, created.session_id)
+    review = await _review(env, created.session_id)
     row = await _row(env, created.session_id)
     assert row is not None
     original = ConnectSessionService._require_agent_binding_allowed
 
-    async def check_then_archive(self: ConnectSessionService, *args: Any, **kwargs: Any) -> None:
-        await original(self, *args, **kwargs)
+    async def check_then_archive(self: ConnectSessionService, *args: Any, **kwargs: Any) -> Any:
+        result = await original(self, *args, **kwargs)
         async with env.admin_db.transaction() as session:
             await session.execute(
                 text("UPDATE agents SET status = 'archived' WHERE id = :id"), {"id": _AGENT_ID}
             )
+        return result
 
     monkeypatch.setattr(ConnectSessionService, "_require_agent_binding_allowed", check_then_archive)
     with pytest.raises(AgentInactiveError):
@@ -1052,7 +1062,7 @@ async def test_agent_archived_between_check_and_bind_is_refused(
             created.session_id,
             poll_token=None,
             variant=SecretConfirm(
-                kind="api_key", secret=ApiKeySecret(SecretStr(_SECRET)), checks=_checks(digest)
+                kind="api_key", secret=ApiKeySecret(SecretStr(_SECRET)), checks=_checks(review)
             ),
             identity=_OWNER,
         )
@@ -1071,9 +1081,10 @@ async def _existing_credential(
     *,
     oauth_scope: str | None = None,
     name: str = "Mine",
+    created_by: str = _OWNER_ID,
     provider_account_ref: str | None = None,
 ) -> str:
-    """A connected credential of the owner's covering the API (OAuth when a scope is given).
+    """A connected credential covering the API (OAuth when a scope is given).
 
     ``provider_account_ref`` stands in for the identity-echo display name a
     connect-session finalise writes onto a ``direct_oauth2`` credential.
@@ -1088,7 +1099,7 @@ async def _existing_credential(
                 name=name,
                 api_vendor=_VENDOR,
                 api_name=_NAME,
-                created_by=_OWNER_ID,
+                created_by=created_by,
                 state="connected",
                 provider_account_ref=provider_account_ref,
             )
@@ -1102,7 +1113,7 @@ async def _existing_credential(
                     client_id="mine",
                     encrypted_client_secret=ctx.encryption.encrypt("mine-secret"),
                     authorize_url="https://auth.widgets.example/authorize",
-                    created_by=_OWNER_ID,
+                    created_by=created_by,
                 )
             )
             session.add(
@@ -1111,22 +1122,19 @@ async def _existing_credential(
                     credential_id=credential_id,
                     encrypted_access_token=ctx.encryption.encrypt("access"),
                     scope=oauth_scope,
-                    created_by=_OWNER_ID,
+                    created_by=created_by,
                 )
             )
     return credential_id
 
 
-async def _confirm_existing(
-    ctx: Context, session_id: str, credential_id: str, *, reauthorize: bool = False
-) -> Any:
+async def _confirm_existing(ctx: Context, session_id: str, credential_id: str) -> Any:
     return await _svc(ctx).confirm_variant(
         session_id,
         poll_token=None,
         variant=ExistingCredentialConfirm(
             credential_id=credential_id,
-            reauthorize=reauthorize,
-            checks=_checks(await _digest(ctx, session_id)),
+            checks=_checks(await _review(ctx, session_id)),
         ),
         identity=_OWNER,
     )
@@ -1169,14 +1177,12 @@ async def test_granted_scope_check_for_an_existing_oauth_credential(env: Context
     review = await _svc(env).get_review_data(created.session_id, poll_token=None, identity=_OWNER)
     views = {c.credential_id: c for c in review.existing_credentials}
     assert views[wide].can_bind and views[wide].missing_scopes == []
+    assert views[wide].needs_vendor_consent is False
     assert views[wide].type == views[narrow].type == "oauth2"
-    assert not views[narrow].can_bind and views[narrow].missing_scopes == ["write"]
-    assert views[narrow].can_reauthorize is True
+    # The narrow one is usable too: binding it runs a consent for ``write`` first.
+    assert views[narrow].can_bind and views[narrow].missing_scopes == ["write"]
+    assert views[narrow].needs_vendor_consent is True
 
-    with pytest.raises(InsufficientGrantedScopesError) as narrower:
-        await _confirm_existing(env, created.session_id, narrow)
-    assert narrower.value.missing == ["write"]
-    assert not await _bound(env, _AGENT_ID, narrow)
     result = await _confirm_existing(env, created.session_id, wide)
     assert isinstance(result, ConnectedConfirmResult)
 
@@ -1220,7 +1226,9 @@ async def test_oauth_credential_without_a_live_grant_is_not_offered(env: Context
         assert not await _bound(env, _AGENT_ID, refused)
 
 
-async def test_reauthorize_only_when_no_other_agent_is_bound(env: Context) -> None:
+async def test_a_narrow_credential_consents_first_and_binds_only_with_the_grant(
+    env: Context,
+) -> None:
     await _import(env, _OAUTH_SCHEME)
     created = await _connect(env, requested_scopes=["read", "write"])
     narrow = await _existing_credential(env, oauth_scope="read")
@@ -1234,22 +1242,19 @@ async def test_reauthorize_only_when_no_other_agent_is_bound(env: Context) -> No
         )
     review = await _svc(env).get_review_data(created.session_id, poll_token=None, identity=_OWNER)
     (view,) = review.existing_credentials
-    assert view.other_bound_agent_ids == [_OTHER_AGENT_ID]
-    assert view.can_reauthorize is False
-    with pytest.raises(ReauthorizeUnavailableError):
-        await _confirm_existing(env, created.session_id, narrow, reauthorize=True)
+    # The other agent is named: the wider grant reaches it too.
+    assert [a.agent_id for a in view.other_bound_agents] == [_OTHER_AGENT_ID]
+    assert view.can_bind is True  # the approver owns the credential
 
-    async with env.admin_db.transaction() as session:
-        await session.execute(
-            text("DELETE FROM agent_credential_bindings WHERE agent_id = :a"),
-            {"a": _OTHER_AGENT_ID},
-        )
-    result = await _confirm_existing(env, created.session_id, narrow, reauthorize=True)
-    assert isinstance(result, ReauthorizeConfirmResult)
-    assert result.credential_id == narrow
+    result = await _confirm_existing(env, created.session_id, narrow)
+    assert isinstance(result, AuthCodeConfirmResult)
     assert result.authorize_url.startswith("https://auth.widgets.example/authorize?")
     assert "write" in result.authorize_url and "read" in result.authorize_url
-    assert await _bound(env, _AGENT_ID, narrow)
+    # Not bound until the grant lands; the session now targets the credential.
+    assert not await _bound(env, _AGENT_ID, narrow)
+    row = await _row(env, created.session_id)
+    assert row is not None
+    assert (row.intent, row.credential_id, row.state) == ("edit", narrow, "polling")
 
 
 async def test_own_oauth_client_resolves_awaiting_app(env: Context) -> None:
@@ -1265,7 +1270,7 @@ async def test_own_oauth_client_resolves_awaiting_app(env: Context) -> None:
             authorize_url="https://auth.widgets.example/authorize",
             token_url="https://auth.widgets.example/token",
             confirmed_scopes=["read"],
-            checks=_checks(await _digest(env, created.session_id)),
+            checks=_checks(await _review(env, created.session_id)),
         ),
         identity=_OWNER,
     )
@@ -1300,7 +1305,7 @@ async def test_session_callback_discards_grant_minted_before_token_url_move(env:
             authorize_url="https://auth.widgets.example/authorize",
             token_url="https://auth.widgets.example/token",
             confirmed_scopes=["read"],
-            checks=_checks(await _digest(env, created.session_id)),
+            checks=_checks(await _review(env, created.session_id)),
         ),
         identity=_OWNER,
         browser_binding=binding.claim,
@@ -1359,29 +1364,24 @@ async def test_session_callback_discards_grant_minted_before_token_url_move(env:
 # ---------------------------------------------------------------------------
 
 
-async def test_repeat_ask_returns_the_open_session_with_a_new_token(env: Context) -> None:
+async def test_repeat_ask_is_refused_naming_the_open_session(env: Context) -> None:
     await _import(env, _KEY_SCHEME)
     first = await _connect(env)
-    second = await _connect(env, auth_type="key")
-    assert (second.session_id, second.approval_url) == (first.session_id, first.approval_url)
+    with pytest.raises(ConnectOpenError) as refused:
+        await _connect(env, auth_type="key")
+    assert (refused.value.session_id, refused.value.approval_url) == (
+        first.session_id,
+        first.approval_url,
+    )
+    # The open session and its token are untouched; the agent amends it instead.
     svc = _svc(env)
-    with pytest.raises(InvalidPollTokenError):
-        await svc.get_status(first.session_id, poll_token=first.poll_token, identity=_AGENT)
     assert (
-        await svc.get_status(first.session_id, poll_token=second.poll_token, identity=_AGENT)
+        await svc.get_status(first.session_id, poll_token=first.poll_token, identity=_AGENT)
     ).status == "pending"
 
-    # Concurrent repeats all land on the one session; exactly one token survives.
-    racers = await asyncio.gather(*(_connect(env) for _ in range(3)))
-    assert {r.session_id for r in racers} == {first.session_id}
-    alive = 0
-    for r in racers:
-        try:
-            await svc.get_status(r.session_id, poll_token=r.poll_token, identity=_AGENT)
-            alive += 1
-        except InvalidPollTokenError:
-            pass
-    assert alive == 1
+    # Concurrent repeats are all refused; the one session stays.
+    racers = await asyncio.gather(*(_connect(env) for _ in range(3)), return_exceptions=True)
+    assert all(isinstance(r, ConnectOpenError) for r in racers)
     async with env.control_db.session() as session:
         count = (await session.execute(text("SELECT COUNT(*) FROM connect_sessions"))).scalar()
     assert count == 1
@@ -1400,8 +1400,9 @@ async def test_open_session_caps(env: Context, monkeypatch: pytest.MonkeyPatch) 
             api_target=ApiTarget(vendor=_VENDOR, name="other", version=_VERSION),
         )
     assert (per_agent.value.scope, per_agent.value.limit) == ("agent", 1)
-    # A repeat ask for the open target is not a new session, so the cap allows it.
-    assert (await _connect(env)).resolved_flow == "manual_api_key"
+    # A repeat ask for the open target names that session rather than hitting the cap.
+    with pytest.raises(ConnectOpenError):
+        await _connect(env)
 
     monkeypatch.setattr(env.config.control.connect, "max_open_sessions_per_agent", 10)
     monkeypatch.setattr(env.config.control.connect, "max_open_sessions_per_owner", 1)
@@ -1436,7 +1437,10 @@ async def test_api_target_keeps_its_ttl_after_resolving_to_oauth(env: Context) -
 # ---------------------------------------------------------------------------
 
 
-async def test_reject_ends_the_session_and_starts_the_cooldown(env: Context) -> None:
+async def test_reject_ends_the_session_and_starts_the_cooldown(
+    env: Context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(env.config.control.connect, "rejection_cooldown_hours", 24)
     await _import(env, _KEY_SCHEME)
     created = await _connect(env)
     svc = _svc(env)
@@ -1463,13 +1467,22 @@ async def test_reject_ends_the_session_and_starts_the_cooldown(env: Context) -> 
     assert 0 < cooldown.value.retry_after_seconds <= 24 * 3600
     # Another agent, or the same agent for another target, is unaffected.
     assert (await _connect(env, agent_id=_OTHER_AGENT_ID)).resolved_flow == "manual_api_key"
+    # The hold is on the agent: a person can still connect for it.
+    by_owner = await _svc(env).create_session(
+        vendor_key="",
+        agent_id=_AGENT_ID,
+        identity=_OWNER,
+        api_target=_TARGET,
+        requested_permission_rules=_RULES,
+    )
+    assert by_owner.resolved_flow == "manual_api_key"
 
 
-async def test_cooldown_zero_disables_it(env: Context, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_no_cooldown_by_default(env: Context) -> None:
     await _import(env, _KEY_SCHEME)
     created = await _connect(env)
     await _svc(env).reject_session(created.session_id, identity=_ADMIN)
-    monkeypatch.setattr(env.config.control.connect, "rejection_cooldown_hours", 0)
+    # Off unless set: the agent asks again at once, e.g. for what the reviewer asked for.
     assert (await _connect(env)).session_id != created.session_id
 
 
@@ -1498,6 +1511,7 @@ def _app(ctx: Context, identity: Identity) -> FastAPI:
         app.add_exception_handler(exc_class, handler)
     app.add_exception_handler(RequestValidationError, request_validation_error_handler)  # type: ignore[arg-type]
     app.state.ctx = ctx
+    install_connect_limiters(app, ctx)
     app.state.security_schemes_lookup = ApiSecurityLookupService(ctx)
     app.dependency_overrides[resolve_identity] = lambda: identity
     return app
@@ -1558,6 +1572,7 @@ async def test_http_confirm_secret_variant_and_hidden_input(env: Context) -> Non
             "key": _SECRET,
             "permission_rules": _RULES,
             "expected_agent_id": _AGENT_ID,
+            "revision_id": review["revision"]["id"],
         }
         # Missing digest: a 422 that never echoes the secret.
         invalid = await client.post(f"/connect-sessions/{created.session_id}:confirm", json=body)
@@ -1590,7 +1605,10 @@ async def test_http_confirm_secret_variant_and_hidden_input(env: Context) -> Non
         assert _SECRET not in ok.text
 
 
-async def test_http_reject_status_and_cooldown(env: Context) -> None:
+async def test_http_reject_status_and_cooldown(
+    env: Context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(env.config.control.connect, "rejection_cooldown_hours", 24)
     await _import(env, _KEY_SCHEME)
     created = await _connect(env)
     async with _client(env, _AGENT) as agent_client:
@@ -1614,3 +1632,163 @@ async def test_http_reject_status_and_cooldown(env: Context) -> None:
         again = await agent_client.post("/integrations:connect", json=_API_BODY)
         assert (again.status_code, again.json()["type"]) == (429, "recently_rejected")
         assert int(again.headers["Retry-After"]) > 0
+
+
+async def test_a_stale_confirm_names_the_revision_to_approve(env: Context) -> None:
+    await _import(env, _KEY_SCHEME)
+    created = await _connect(env)
+    widened = [*_RULES, {"effect": "allow", "methods": ["POST"], "path": "/v1/widgets"}]
+    async with _client(env, _OWNER) as owner:
+        first = (await owner.get(f"/connect-sessions/{created.session_id}")).json()
+        amended = await owner.post(
+            f"/connect-sessions/{created.session_id}:amend",
+            json={"requested_permission_rules": widened},
+        )
+        assert (amended.status_code, amended.json()["revision_number"]) == (200, 2), amended.text
+        # Sending the same ask again changes nothing: the current revision stands.
+        again = await owner.post(
+            f"/connect-sessions/{created.session_id}:amend",
+            json={"requested_permission_rules": widened},
+        )
+        assert again.json()["revision_id"] == amended.json()["revision_id"]
+
+        stale = await owner.post(
+            f"/connect-sessions/{created.session_id}:confirm",
+            json={
+                "kind": "api_key",
+                "key": _SECRET,
+                "permission_rules": _RULES,
+                "expected_agent_id": _AGENT_ID,
+                "digest": first["digest"],
+                "revision_id": first["revision"]["id"],
+            },
+        )
+    problem = stale.json()
+    assert (stale.status_code, problem["type"]) == (409, "revision_changed")
+    assert problem["current_revision_id"] == amended.json()["revision_id"]
+    assert problem["current_revision_number"] == 2
+    assert "revision 2 is now the current one" in problem["detail"]
+    assert _SECRET not in stale.text
+
+
+async def test_the_review_shows_when_a_repeat_ask_was_last_rejected(env: Context) -> None:
+    await _import(env, _KEY_SCHEME)
+    first = await _connect(env)
+    review = await _svc(env).get_review_data(first.session_id, poll_token=None, identity=_OWNER)
+    assert review.last_rejected_at is None
+    await _svc(env).reject_session(first.session_id, identity=_OWNER)
+
+    again = await _connect(env)
+    async with _client(env, _OWNER) as owner:
+        shown = (await owner.get(f"/connect-sessions/{again.session_id}")).json()
+    assert shown["last_rejected_at"] is not None
+    # Another agent's ask for the same API is not a repeat.
+    other = await _connect(env, agent_id=_OTHER_AGENT_ID)
+    review = await _svc(env).get_review_data(other.session_id, poll_token=None, identity=_OWNER)
+    assert review.last_rejected_at is None
+
+
+async def test_connect_options_list_what_connect_would_ask_for(env: Context) -> None:
+    await _import(env, {**_OAUTH_SCHEME, **_KEY_SCHEME})
+    # With no app covering the API, an OAuth connect waits for one; the spec's
+    # scopes are what a request may name.
+    options = await _svc(env).connect_options(_TARGET)
+    assert options.api_target_supported is True
+    by_name = {s.name: s for s in options.schemes}
+    assert (by_name["key"].kind, by_name["key"].flow, by_name["key"].scopes) == (
+        "api_key",
+        "manual_api_key",
+        [],
+    )
+    oauth = by_name["oauth"]
+    assert (oauth.kind, oauth.flow, oauth.vendor_key) == ("oauth2", "awaiting_app", None)
+    assert [(s.name, s.requestable, s.description) for s in oauth.scopes] == [
+        ("read", True, "Read"),
+        ("write", True, "Write"),
+    ]
+
+    # A covering app decides: its catalog is requestable, the spec's other scopes aren't.
+    env.config.vendors.entries["widgets"] = _covering_entry()
+    oauth = {s.name: s for s in (await _svc(env).connect_options(_TARGET)).schemes}["oauth"]
+    assert (oauth.flow, oauth.vendor_key) == ("authorization_code", "widgets")
+    assert [(s.name, s.requestable, s.default) for s in oauth.scopes] == [
+        ("read", True, True),
+        ("write", False, False),
+    ]
+    # And :connect takes the same app.
+    connected = await _connect(env, requested_scopes=["read"], auth_type="oauth")
+    assert connected.resolved_flow == "authorization_code"
+
+
+async def test_connect_options_for_an_api_the_registry_lacks(env: Context) -> None:
+    with pytest.raises(UnknownApiError):
+        await _svc(env).connect_options(ApiTarget(vendor="nope", name="nope", version="v0"))
+
+
+async def test_admin_confirm_attributes_credential_to_agent_owner_and_scopes_candidates(
+    env: Context,
+) -> None:
+    """When org:admin reviews or confirms a session for another user's agent (#1838):
+    - ``existing_credentials`` lists only credentials owned by the target agent's
+      owner or by the admin (never a third user's credential);
+    - confirming with a third user's credential raises ``ExistingCredentialNotFoundError``;
+    - confirming with a secret attributes ``created_by`` to the target agent's
+      owner while recording the admin as the audit actor.
+    """
+    await _import(env, _KEY_SCHEME)
+    owner_cred = await _existing_credential(env, name="OwnerCred", created_by=_OWNER_ID)
+    admin_cred = await _existing_credential(env, name="AdminCred", created_by=_ADMIN.sub)
+    stranger_cred = await _existing_credential(env, name="StrangerCred", created_by=_STRANGER_ID)
+
+    created = await _connect(env)
+    svc = _svc(env)
+    review = await svc.get_review_data(created.session_id, poll_token=None, identity=_ADMIN)
+    candidate_ids = {c.credential_id for c in review.existing_credentials}
+    assert candidate_ids == {owner_cred, admin_cred}
+    assert stranger_cred not in candidate_ids
+
+    with pytest.raises(ExistingCredentialNotFoundError):
+        await svc.confirm_variant(
+            created.session_id,
+            poll_token=None,
+            variant=ExistingCredentialConfirm(
+                credential_id=stranger_cred,
+                checks=_checks(review),
+            ),
+            identity=_ADMIN,
+        )
+    assert not await _bound(env, _AGENT_ID, stranger_cred)
+
+    result = await svc.confirm_variant(
+        created.session_id,
+        poll_token=None,
+        variant=SecretConfirm(
+            kind="api_key",
+            secret=ApiKeySecret(SecretStr(_SECRET)),
+            checks=_checks(review),
+        ),
+        identity=_ADMIN,
+    )
+    assert isinstance(result, ConnectedConfirmResult)
+    async with env.control_db.session() as session:
+        cred = await CredentialRepository.get_by_id(session, result.credential_id)
+        key_row = (
+            await session.execute(
+                select(CustomerAPIKey).where(CustomerAPIKey.credential_id == result.credential_id)
+            )
+        ).scalar_one_or_none()
+    assert cred is not None and cred.created_by == _OWNER_ID
+    assert key_row is not None and key_row.created_by == _OWNER_ID
+
+    async with env.admin_db.session() as session:
+        audit_row = (
+            await session.execute(
+                select(AuditEntry).where(
+                    AuditEntry.target_id == created.session_id,
+                    AuditEntry.action == "confirm",
+                )
+            )
+        ).scalar_one()
+    assert audit_row.actor_id == _ADMIN.sub
+    assert audit_row.after is not None
+    assert audit_row.after.get("credential_created_by") == _OWNER_ID

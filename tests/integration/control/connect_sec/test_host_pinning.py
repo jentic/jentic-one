@@ -39,6 +39,7 @@ from tests.integration.control.connect_sec.support import (
     import_spec,
     is_bound,
     key_variant,
+    revision,
     session_row,
     spec_source,
     svc,
@@ -104,6 +105,7 @@ async def test_servers_changed_between_create_and_confirm_fails_the_session(
                 "permission_rules": RULES,
                 "expected_agent_id": AGENT_ID,
                 "digest": review_digest,
+                "revision_id": await revision(env, created.session_id),
             },
         )
     assert (refused.status_code, refused.json()["type"]) == (409, "servers_changed")
@@ -166,7 +168,7 @@ async def test_unpinned_host_variable_appearing_after_create_fails_the_confirm(
         await svc(env).confirm_variant(
             created.session_id,
             poll_token=None,
-            variant=key_variant(_CANARY, review_digest),
+            variant=key_variant(_CANARY, review_digest, await revision(env, created.session_id)),
             identity=OWNER,
         )
 
@@ -258,7 +260,7 @@ async def test_a_pasted_spec_moving_the_hosts_never_connects_to_them(env: Contex
     result = await svc(env).confirm_variant(
         created.session_id,
         poll_token=None,
-        variant=key_variant(_CANARY, review_digest),
+        variant=key_variant(_CANARY, review_digest, await revision(env, created.session_id)),
         identity=OWNER,
     )
     assert isinstance(result, ConnectedConfirmResult)

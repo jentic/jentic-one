@@ -3,7 +3,7 @@
 Exercises UserService against a real database (no mocking) and asserts that
 the expected audit_entries rows are written for create, update, delete,
 disable, and enable — including, on Postgres, when a delete races a redeem,
-an enable or a second delete.
+an invite reissue, an enable or a second delete.
 """
 
 from __future__ import annotations
@@ -657,3 +657,56 @@ async def test_concurrent_deletes_write_one_audit_entry(
     assert len([e for e in entries if e.action == AuditAction.DELETE.value]) == 1
 
     await _cleanup_user(ctx, user_id)
+
+
+@pytest.mark.skipif(_SQLITE, reason="row locks require Postgres")
+async def test_delete_of_pending_admin_does_not_deadlock_with_invite_reissue(
+    integration_context: Context, admin_user: str
+) -> None:
+    """Pins #1802: deleting an active ``org:admin`` who still has a pending
+    invite while that invite is being reissued must not deadlock on Postgres.
+
+    Reissue first locks the active ``invite_tokens`` row to mark it redeemed,
+    then inserts the replacement token (whose ``user_id`` foreign key takes
+    ``FOR KEY SHARE`` on ``users``). Delete locks active ``org:admin`` rows in
+    ``users`` (``FOR NO KEY UPDATE``) and then waits on the ``invite_tokens``
+    row lock; because ``FOR NO KEY UPDATE`` does not conflict with ``FOR KEY
+    SHARE``, reissue finishes its insert and commits, and delete then completes.
+    """
+    ctx = integration_context
+    service = UserService(ctx)
+    org_admin = Identity(sub=admin_user, email="test@local", permissions=["org:admin"])
+    async with ctx.admin_db.session() as session:
+        stale = await UserRepository.get_by_email(session, "audit-race-admin-reissue@test.local")
+    if stale is not None:
+        await _cleanup_user(ctx, stale.id)
+
+    created = await service.create(
+        UserCreatePayload(
+            email="audit-race-admin-reissue@test.local",
+            first_name="A",
+            last_name="R",
+            permissions=["org:admin"],
+        ),
+        identity=org_admin,
+    )
+    user_id = created.user.id
+    try:
+        async with ctx.admin_db.transaction() as session:
+            for token in await InviteTokenRepository.get_active_for_user(session, user_id):
+                assert await InviteTokenRepository.redeem(session, token.id)
+            delete_task = asyncio.create_task(service.delete(user_id, identity=org_admin))
+            await asyncio.sleep(0.5)
+            assert not delete_task.done(), "delete should wait on the invite token row lock"
+            reissued = await InviteService(ctx).issue_for_user(
+                session, user_id, actor_id=org_admin.sub
+            )
+
+        await delete_task
+        user = await _user_row(ctx, user_id)
+        assert user.deleted_at is not None
+        assert user.active is False
+        with pytest.raises(InviteTokenNotFoundError):
+            await InviteService(ctx).redeem(reissued.token, "a-long-enough-password")
+    finally:
+        await _cleanup_user(ctx, user_id)

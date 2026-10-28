@@ -8,7 +8,8 @@ Exercises the full claim/replay state machine over the in-process memory backend
 - a retry while the original is still pending is ``IN_PROGRESS`` with a ``Retry-After``,
 - callers are isolated (one caller's key never replays another's),
 - a short pending TTL frees a crashed claim before the long replay window,
-- sensitive response headers are scrubbed and oversized bodies are dropped,
+- sensitive and per-exchange (``Server-Timing``) response headers are not stored
+  and oversized bodies are dropped,
 - the memory backend's byte budget tracks the real memory it allocates.
 """
 
@@ -22,7 +23,7 @@ import tracemalloc
 import pytest
 import structlog
 
-from jentic_one.broker.core.exceptions import IdempotencyUnavailableError
+from jentic_one.broker.core.errors import IdempotencyUnavailableError
 from jentic_one.broker.core.problem import status_for_broker_error
 from jentic_one.broker.services.idempotency import (
     MAX_RECORD_HEADER_BYTES,
@@ -30,7 +31,7 @@ from jentic_one.broker.services.idempotency import (
     SharedStateIdempotencyStore,
 )
 from jentic_one.shared.config import IdempotencyConfig
-from jentic_one.shared.state import BackendKind, MemoryBackendConfig
+from jentic_one.shared.state import MEMORY_BACKEND, MemoryBackendConfig
 from jentic_one.shared.state.backend import MemoryStateBackend, NamespaceBudget
 
 
@@ -202,6 +203,7 @@ async def test_sensitive_headers_scrubbed_on_store() -> None:
             "content-type": "application/json",
             "Set-Cookie": "session=abc",
             "Authorization": "Bearer secret",
+            "Server-Timing": "db;dur=12.5",
         },
         body=b"{}",
     )
@@ -211,6 +213,9 @@ async def test_sensitive_headers_scrubbed_on_store() -> None:
     assert "content-type" in replay.stored.headers
     assert "Set-Cookie" not in replay.stored.headers
     assert "Authorization" not in replay.stored.headers
+    # Per-exchange latency: a replay makes no upstream call, so it must not
+    # re-assert the original upstream's timing.
+    assert "Server-Timing" not in replay.stored.headers
 
 
 @pytest.mark.asyncio
@@ -488,7 +493,7 @@ async def test_default_budgets_hold_the_documented_sustained_rate() -> None:
 
     memory = MemoryBackendConfig()
     budgets = memory.budgets()
-    ttl_s = IdempotencyConfig().replay_ttl_s(BackendKind.MEMORY)
+    ttl_s = IdempotencyConfig().replay_ttl_s(MEMORY_BACKEND)
     assert ttl_s == 3_600
     idem, body = budgets["idem"], budgets["idem-body"]
     records_per_s = min(idem.max_entries, idem.max_bytes // record_bytes) / ttl_s

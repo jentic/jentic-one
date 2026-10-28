@@ -40,7 +40,6 @@ def _sample_stats_row() -> OverallStatsRow:
         p50_ms=200.0,
         p95_ms=500.0,
         pending=3,
-        active_now=5,
     )
 
 
@@ -305,6 +304,12 @@ async def test_query_usage_assembles_response_correctly() -> None:
             new_callable=AsyncMock,
             return_value=_sample_trends(),
         ) as mock_trend,
+        # Read outside the window's snapshot, so it is its own repository call.
+        patch(
+            "jentic_one.admin.services.monitoring_service.MonitoringRepository.active_now",
+            new_callable=AsyncMock,
+            return_value=5,
+        ),
     ):
         result = await svc.get_usage_stats(since=1719792000, until=1719878400)
 
@@ -425,3 +430,41 @@ def test_cache_eviction_caps_at_max_entries() -> None:
 
     svc._evict_stale_usage_entries(now)
     assert len(svc._usage_cache) <= _USAGE_CACHE_MAX_ENTRIES
+
+
+# ── ``api_id`` is ``vendor/name``; a malformed value must narrow, never widen ──
+# Dropping an unparseable ``api_id`` answered a narrower question with org-wide
+# totals under a 200 — the one outcome a filter must never produce.
+
+
+def test_api_id_vendor_and_name_both_apply() -> None:
+    f = MonitoringService._build_repo_filters(UsageFilters(api_id="stripe/payments"))
+    assert f == UsageQueryFilters(api_vendor="stripe", api_name="payments")
+
+
+def test_a_slashless_api_id_filters_on_the_vendor() -> None:
+    f = MonitoringService._build_repo_filters(UsageFilters(api_id="stripe"))
+    assert f is not None
+    assert f.api_vendor == "stripe"
+    # Unset rather than empty: an empty name would match no row at all.
+    assert f.api_name is None
+    # The filter reaches SQL, which is what stops the result widening.
+    assert len(f.to_clauses()) == 1
+
+
+def test_a_trailing_slash_api_id_filters_on_the_vendor() -> None:
+    f = MonitoringService._build_repo_filters(UsageFilters(api_id="stripe/"))
+    assert f is not None
+    assert (f.api_vendor, f.api_name) == ("stripe", None)
+
+
+def test_an_api_name_with_slashes_keeps_them() -> None:
+    f = MonitoringService._build_repo_filters(UsageFilters(api_id="stripe/pay/v2"))
+    assert f is not None
+    assert (f.api_vendor, f.api_name) == ("stripe", "pay/v2")
+
+
+def test_no_api_id_adds_no_api_clause() -> None:
+    assert MonitoringService._build_repo_filters(UsageFilters()) is None
+    f = MonitoringService._build_repo_filters(UsageFilters(agent_id="agt_a"))
+    assert f == UsageQueryFilters(actor_id="agt_a")

@@ -7,7 +7,10 @@ Select one with :func:`get_backend` based on ``DatabaseConfig.backend``.
 from __future__ import annotations
 
 from jentic_one.shared.db.backends.base import DatabaseBackend
-from jentic_one.shared.db.backends.postgres import PostgresBackend
+from jentic_one.shared.db.backends.postgres import (
+    PostgresBackend,
+    configure_idle_gated_pre_ping,
+)
 from jentic_one.shared.db.backends.registry import get_backend
 from jentic_one.shared.db.backends.sqlite import (
     SqliteBackend,
@@ -20,6 +23,7 @@ __all__ = [
     "DatabaseBackend",
     "PostgresBackend",
     "SqliteBackend",
+    "configure_idle_gated_pre_ping",
     "configure_sqlite_pragmas",
     "enable_sqlite_foreign_keys",
     "enable_sqlite_manual_begin",

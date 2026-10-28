@@ -27,22 +27,27 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.schema import CreateTable
+from starlette.applications import Starlette
+from starlette.requests import Request
 
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.admin.repos.event_repo import EventRepository
 from jentic_one.broker.adapters.runners.base import RunnerRequest, RunnerResult, UpstreamRunner
-from jentic_one.broker.core.exceptions import BrokerError
+from jentic_one.broker.core.errors import BrokerError
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.services.execution.service import (
     default_broker,
     persist_streaming_execution,
     run_execution,
 )
+from jentic_one.broker.web.deps import get_repeated_failure_counter
 from jentic_one.shared.config import SecurityConfig
+from jentic_one.shared.events.repeated_failure import RepeatedFailureCounter
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.schemas import OperationInfo
+from jentic_one.shared.state import MemoryStateBackend
 from tests.unit.fake_tx import SessionScope
 
 _ACTOR = "agt_broker"
@@ -164,6 +169,32 @@ async def test_run_execution_emits_repeated_failure_on_broker_error(session: Asy
     assert events[0].data["operation_id"] == _OPERATION
 
 
+async def test_run_execution_threads_the_counter(session: AsyncSession) -> None:
+    """The sync path hands its counter to the detector: failures below the
+    threshold issue no scan (and emit nothing), the crossing one emits once."""
+    config = SecurityConfig(execution_repeated_failure_threshold=3)
+    store = MemoryStateBackend()
+    counter = RepeatedFailureCounter(store)
+
+    for i in range(4):
+        with pytest.raises(BrokerError):
+            await run_execution(
+                _ctx_req(),
+                body=None,
+                headers=None,
+                admin_db=SessionScope(session, commit=True),
+                broker=default_broker(_FailRunner()),
+                actor_id=_ACTOR,
+                actor_type="agent",
+                security_config=config,
+                repeated_failure_counter=counter,
+            )
+        assert len(await _repeated_events(session)) == (0 if i < 2 else 1)
+    # The emissions alone match the ungated scan; the counted buckets prove the
+    # counter was actually threaded through.
+    assert store._kv
+
+
 async def test_run_execution_no_repeated_failure_without_security_config(
     session: AsyncSession,
 ) -> None:
@@ -206,6 +237,46 @@ async def test_persist_streaming_execution_emits_repeated_failure(session: Async
     events = await _repeated_events(session)
     assert len(events) == 1
     assert events[0].severity == EventSeverity.ERROR.value
+
+
+async def test_persist_streaming_execution_threads_the_counter(session: AsyncSession) -> None:
+    """The counter handed to the streaming path gates the scan end to end: the
+    failures below the threshold emit nothing and the crossing one emits once."""
+    config = SecurityConfig(execution_repeated_failure_threshold=3)
+    store = MemoryStateBackend()
+    counter = RepeatedFailureCounter(store)
+
+    for i in range(4):
+        await persist_streaming_execution(
+            session,
+            execution_id=f"exec_stream_gated_{i}",
+            started_at=datetime.now(UTC),
+            status=ExecutionStatus.FAILED,
+            http_status=502,
+            duration_ms=10,
+            error="Upstream returned 502",
+            ctx_req=_ctx_req(),
+            actor_id=_ACTOR,
+            actor_type="agent",
+            security_config=config,
+            repeated_failure_counter=counter,
+        )
+        assert len(await _repeated_events(session)) == (0 if i < 2 else 1)
+    assert store._kv  # the counter was threaded through, not just the scan
+
+
+def test_router_paths_read_the_lifespan_counter() -> None:
+    """The sync and streaming router paths both take the counter from
+    ``get_repeated_failure_counter`` — the one the broker lifespan stores on
+    ``app.state`` and hands to the async worker."""
+    app = Starlette()
+    counter = RepeatedFailureCounter(MemoryStateBackend())
+    app.state.broker_repeated_failure_counter = counter
+    request = Request({"type": "http", "app": app})
+    assert get_repeated_failure_counter(request) is counter
+
+    bare = Request({"type": "http", "app": Starlette()})
+    assert get_repeated_failure_counter(bare) is None
 
 
 async def test_streaming_completed_does_not_emit_repeated_failure(session: AsyncSession) -> None:

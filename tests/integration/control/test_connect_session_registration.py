@@ -82,6 +82,14 @@ pytestmark = pytest.mark.integration
 _BINDING = new_browser_binding()
 
 
+async def _revision(ctx: Context, session_id: str) -> str:
+    """The session's current revision, which every confirm names."""
+    async with ctx.control_db.session() as session:
+        row = await ConnectSessionRepository.get_by_id(session, session_id)
+    assert row is not None and row.current_revision_id is not None
+    return row.current_revision_id
+
+
 _USER_ID = "usr_alice"
 _AGENT_ID = "agnt_scout"
 # Confirming for an owned agent needs both write permissions (the bind
@@ -239,6 +247,7 @@ async def test_confirm_against_db_registration_stamps_fk_and_skips_occ(
 
     confirmed = await svc.confirm(
         created.session_id,
+        revision_id=await _revision(ctx, created.session_id),
         poll_token=created.poll_token,
         confirmed_scopes=["scope-a"],
         permission_rules=[],
@@ -351,6 +360,7 @@ async def test_legacy_embedded_path_still_writes_oauth_client_credentials(
     )
     confirmed = await svc.confirm(
         created.session_id,
+        revision_id=await _revision(ctx, created.session_id),
         poll_token=created.poll_token,
         confirmed_scopes=["scope-a"],
         permission_rules=[],
@@ -399,6 +409,7 @@ async def test_complete_from_callback_through_registration_end_to_end(
     )
     confirmed = await svc.confirm(
         created.session_id,
+        revision_id=await _revision(ctx, created.session_id),
         poll_token=created.poll_token,
         confirmed_scopes=["scope-a"],
         permission_rules=[],
@@ -488,6 +499,7 @@ async def test_finalise_fails_session_when_registration_disabled_mid_flow(
     )
     await svc.confirm(
         created.session_id,
+        revision_id=await _revision(ctx, created.session_id),
         poll_token=created.poll_token,
         confirmed_scopes=["scope-a"],
         permission_rules=[],
@@ -562,6 +574,7 @@ async def test_config_session_ignores_registration_added_after_connect(
     assert review.vendor_display_name == "Shared Auth Vendor"
     confirmed = await svc.confirm(
         created.session_id,
+        revision_id=await _revision(ctx, created.session_id),
         poll_token=created.poll_token,
         confirmed_scopes=["scope-a"],
         permission_rules=[],
@@ -600,6 +613,7 @@ async def test_confirm_cancels_when_config_entry_removed_after_connect(
     with pytest.raises(OAuthAppChangedError):
         await svc.confirm(
             created.session_id,
+            revision_id=await _revision(ctx, created.session_id),
             poll_token=created.poll_token,
             confirmed_scopes=["scope-a"],
             permission_rules=[],
@@ -638,6 +652,7 @@ async def test_confirm_cancels_when_pinned_registration_disabled(
     with pytest.raises(OAuthAppChangedError):
         await svc.confirm(
             created.session_id,
+            revision_id=await _revision(ctx, created.session_id),
             poll_token=created.poll_token,
             confirmed_scopes=["scope-a"],
             permission_rules=[],
@@ -820,6 +835,7 @@ async def _pinned_session_awaiting_callback(
     )
     confirmed = await svc.confirm(
         created.session_id,
+        revision_id=await _revision(ctx, created.session_id),
         poll_token=created.poll_token,
         confirmed_scopes=["scope-a"],
         permission_rules=[],

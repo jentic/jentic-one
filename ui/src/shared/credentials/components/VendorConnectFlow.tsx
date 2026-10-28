@@ -31,15 +31,21 @@ import {
 	toast,
 } from '@/shared/ui';
 import type { RadioCardOption } from '@/shared/ui';
+import { cn, timeAgo } from '@/shared/lib/utils';
 import {
 	connectRequestsKey,
 	invalidateBindingSurfaces,
+	invalidateEditSurfaces,
 	useAgentsForPicker,
 	useCancelConnectSession,
 	useConfirmConnectSession,
 	useConnectSession,
+	useAmendConnectSession,
+	useBindingAccess,
+	useConnectSessionRevisions,
 	usePollConnectSessionStatus,
 	useRejectConnectSession,
+	useStartEditConnection,
 	useStartIntegrationConnect,
 	useVendorAuthCapabilities,
 	useVendorOperations,
@@ -47,6 +53,7 @@ import {
 import {
 	cancelConnectSession,
 	cancelConnectSessionOnUnload,
+	IntegrationsApiError,
 } from '@/shared/credentials/api/vendors-client';
 import { useProviders } from '@/shared/credentials/api';
 import {
@@ -74,18 +81,42 @@ import {
 	secretKindOf,
 	secretNoun,
 } from '@/shared/credentials/lib/connectReview';
+import {
+	addedScopes,
+	removedScopes,
+	describeConflict,
+	describeRuleMatch,
+	scopeChanges,
+	type ScopeChange,
+	resumes,
+	revisionAddingRule,
+	revisionChanges,
+	type RevisionChange,
+	revisionReason,
+	revisionsAddingRules,
+	revisionSummary,
+	ruleChanges,
+	rulesToConfirm,
+	sameRules,
+	type RuleChange,
+} from '@/shared/credentials/lib/connectEdit';
 import { isHttpsVendorUrl, openVendorUrl } from '@/shared/credentials/lib/safe-navigation';
+import { EffectBadge } from '@/shared/credentials/components/EffectBadge';
 import { useSharedAppSurface } from '@/shared/credentials/lib/sharedAppSurface';
 import type {
+	AmendEditBody,
 	AuthCodeConfirmResponse,
 	ConfirmResponse,
 	ConfirmSessionBody,
 	ConfirmSessionResponse,
 	DeviceAuthorizationConfirmResponse,
+	EditConfirmRequest,
 	PermissionRule,
+	ReviewEdit,
 	ReviewScope,
 	ReviewSession,
 	ScopeClassification,
+	StatusResponse,
 	VendorScopeCatalog,
 	VendorSummary,
 } from '@/shared/credentials/api/vendors-types';
@@ -150,6 +181,19 @@ export type VendorConnectFlowProps =
 			renderPostConnect?: (info: PostConnectInfo) => ReactNode;
 			onBack: () => void;
 			onDone: () => void;
+	  }
+	| {
+			/**
+			 * A person adding scopes to a binding's credential: their own change,
+			 * applied at once through an edit session, via the vendor sign-in.
+			 */
+			mode: 'edit-scopes';
+			agentId: string;
+			credentialId: string;
+			credentialName: string;
+			vendorKey: string;
+			onBack: () => void;
+			onDone: () => void;
 	  };
 
 /** The credential a completed self connect created (and bound, when an agent was set). */
@@ -191,6 +235,18 @@ const DEFAULT_ALLOW_GET_RULE: PermissionRule = {
 const EMPTY_PATHS: readonly string[] = [];
 
 export function VendorConnectFlow(props: VendorConnectFlowProps) {
+	if (props.mode === 'edit-scopes') {
+		return (
+			<EditScopesFlow
+				agentId={props.agentId}
+				credentialId={props.credentialId}
+				credentialName={props.credentialName}
+				vendorKey={props.vendorKey}
+				onBack={props.onBack}
+				onDone={props.onDone}
+			/>
+		);
+	}
 	if (props.mode === 'approve') {
 		return (
 			<VendorApproveFlow
@@ -245,7 +301,11 @@ function VendorSelfConnectFlow({
 	const [scopesTouched, setScopesTouched] = useState(false);
 	const [phase, setPhase] = useState<Phase>('configure');
 	const [rules, setRules] = useState<PermissionRule[] | null>(null);
-	const [session, setSession] = useState<{ id: string; pollToken: string } | null>(null);
+	const [session, setSession] = useState<{
+		id: string;
+		pollToken: string;
+		revisionId: string | null;
+	} | null>(null);
 	const [challenge, setChallenge] = useState<ConfirmResponse | null>(null);
 	// User-editable credential label. Pre-filled with the vendor display
 	// name so the input shows a sensible default the user can edit. Sent
@@ -276,7 +336,9 @@ function VendorSelfConnectFlow({
 	// request when the component unmounts and the backend never sees
 	// it. Hold the effective (id, token) in a ref so the cleanup can
 	// hit the raw client without depending on the mutation lifecycle.
-	const sessionRef = useRef<{ id: string; pollToken: string } | null>(null);
+	const sessionRef = useRef<{ id: string; pollToken: string; revisionId: string | null } | null>(
+		null,
+	);
 	const phaseRef = useRef<Phase>('configure');
 
 	// Fire ``:connect`` — invoked from Continue-click on the configure
@@ -303,7 +365,11 @@ function VendorSelfConnectFlow({
 					? { oauth_app_registration_id: vendor.registration_id }
 					: {}),
 			});
-			const next = { id: result.session_id, pollToken: result.poll_token };
+			const next = {
+				id: result.session_id,
+				pollToken: result.poll_token,
+				revisionId: result.revision_id ?? null,
+			};
 			sessionRef.current = next;
 			setSession(next);
 			return next;
@@ -473,6 +539,7 @@ function VendorSelfConnectFlow({
 				confirmed_scopes: Array.from(selectedScopes),
 				permission_rules: finalRules,
 				agent_id: agentId,
+				revision_id: session.revisionId,
 			});
 			// A vendor session's OAuth confirm always answers with a vendor
 			// challenge; the other result kinds belong to approve mode.
@@ -820,8 +887,7 @@ interface StepError {
 
 /** How the session ended inside the dialog, when `:confirm` (not `/status`) decided it. */
 type LocalOutcome =
-	| { status: 'connected'; credentialId: string; reauthorizeUrl?: string }
-	| { status: 'failed'; message: string };
+	{ status: 'connected'; credentialId: string } | { status: 'failed'; message: string };
 
 function VendorApproveFlow({
 	sessionId,
@@ -858,6 +924,7 @@ function VendorApproveFlow({
 	const [rejectOpen, setRejectOpen] = useState(false);
 
 	const confirmMutation = useConfirmConnectSession(sessionId, pollToken);
+	const amendMutation = useAmendConnectSession(sessionId);
 	const cancelMutation = useCancelConnectSession();
 	const rejectMutation = useRejectConnectSession();
 	const phaseRef = useRef<ApprovePhase>('configure');
@@ -1046,11 +1113,36 @@ function VendorApproveFlow({
 	};
 
 	/** The review the approver saw, echoed so the server can refuse a stale one. */
-	const reviewed = (finalRules: PermissionRule[]) => ({
+	const reviewed = (
+		finalRules: PermissionRule[],
+		review: ReviewSession | undefined = session,
+	) => ({
 		permission_rules: finalRules,
-		expected_agent_id: session?.agent?.agent_id ?? null,
-		digest: session?.digest ?? '',
+		expected_agent_id: review?.agent?.agent_id ?? null,
+		digest: review?.digest ?? '',
+		revision_id: review?.revision?.id ?? null,
 	});
+
+	/**
+	 * The approver's rules, saved as a revision of the request (recorded as
+	 * theirs) when they differ from what it asks. Resolves to the review to
+	 * confirm against, re-read after a save; null when the save failed.
+	 */
+	const saveRules = async (finalRules: PermissionRule[]): Promise<ReviewSession | null> => {
+		if (!session) return null;
+		if (sameRules(finalRules, session.requested_permission_rules ?? [])) return session;
+		try {
+			await amendMutation.mutateAsync({ requested_permission_rules: finalRules });
+			const fresh = await sessionQuery.refetch();
+			return fresh.data ?? null;
+		} catch (err) {
+			setStepError({
+				phase: 'rules',
+				message: err instanceof Error ? err.message : 'Your rules couldn’t be saved.',
+			});
+			return null;
+		}
+	};
 
 	const afterFailedConfirm = (err: unknown, from: ApprovePhase): void => {
 		const copy = describeConfirmError(err);
@@ -1096,8 +1188,8 @@ function VendorApproveFlow({
 		}
 	};
 
-	const finishConnected = (credentialId: string, reauthorizeUrl?: string): void => {
-		setOutcome({ status: 'connected', credentialId, reauthorizeUrl });
+	const finishConnected = (credentialId: string): void => {
+		setOutcome({ status: 'connected', credentialId });
 		goToPhase('terminal');
 		void queryClient.invalidateQueries({ queryKey: connectRequestsKey });
 		void queryClient.invalidateQueries({ queryKey: ['credentials'] });
@@ -1122,13 +1214,6 @@ function VendorApproveFlow({
 			finishConnected(result.credential_id);
 			return;
 		}
-		if (result.kind === 'reauthorize') {
-			finishConnected(result.credential_id, result.authorize_url);
-			if (isHttpsVendorUrl(result.authorize_url)) {
-				openVendorUrl(result.authorize_url, '_blank', 'noopener,noreferrer');
-			}
-			return;
-		}
 		startVendorChallenge(result);
 	};
 
@@ -1138,13 +1223,15 @@ function VendorApproveFlow({
 	const afterRules = async (finalRules: PermissionRule[]): Promise<void> => {
 		setStepError(null);
 		setRules(finalRules);
-		if (method.kind === 'existing' || method.kind === 'reauthorize') {
+		const review = await saveRules(finalRules);
+		if (!review) return;
+		if (method.kind === 'existing') {
 			handleResult(
 				await sendConfirm(
 					{
-						kind: method.kind === 'existing' ? 'existing_credential' : 'reauthorize',
+						kind: 'existing_credential',
 						credential_id: method.credentialId,
-						...reviewed(finalRules),
+						...reviewed(finalRules, review),
 					},
 					'rules',
 					false,
@@ -1164,7 +1251,7 @@ function VendorApproveFlow({
 			await sendConfirm(
 				{
 					confirmed_scopes: Array.from(selectedScopes ?? []),
-					...reviewed(finalRules),
+					...reviewed(finalRules, review),
 				},
 				'rules',
 				false,
@@ -1197,6 +1284,18 @@ function VendorApproveFlow({
 	const errorFor = (step: ApprovePhase): string | null =>
 		stepError?.phase === step ? stepError.message : null;
 
+	if (session?.edit) {
+		return (
+			<EditApproveFlow
+				sessionId={sessionId}
+				pollToken={pollToken}
+				session={session as ReviewSession & { edit: ReviewEdit }}
+				onReload={(): void => void sessionQuery.refetch()}
+				onBack={onBack}
+				onDone={onDone}
+			/>
+		);
+	}
 	if (sessionQuery.isLoading) {
 		return (
 			<div className="space-y-4">
@@ -1237,11 +1336,7 @@ function VendorApproveFlow({
 					renderPostConnect={renderPostConnect}
 					boundAgentId={boundAgentId}
 					onDone={onDone}
-				>
-					{outcome.status === 'connected' && outcome.reauthorizeUrl && (
-						<ReauthorizeNotice display={display} url={outcome.reauthorizeUrl} />
-					)}
-				</TerminalStep>
+				></TerminalStep>
 			);
 		}
 		return (
@@ -1282,7 +1377,7 @@ function VendorApproveFlow({
 				onChange={setRules}
 				onBack={(): void => goToPhase('configure')}
 				onContinue={(finalRules: PermissionRule[]) => void afterRules(finalRules)}
-				submitting={confirmMutation.isPending}
+				submitting={confirmMutation.isPending || amendMutation.isPending}
 				error={errorFor('rules')}
 				apiReference={session.api_reference}
 				// An API target always takes the approver's own rules: an
@@ -1382,6 +1477,7 @@ function VendorApproveFlow({
 				reason={session.reason}
 				loading={agents.isLoading}
 			/>
+			<PreviouslyRejected at={session.last_rejected_at} />
 
 			{apiTarget && <ApiTargetDetails session={session} />}
 
@@ -1500,33 +1596,6 @@ function VendorApproveFlow({
 	);
 }
 
-/** After a re-authorize: the agent is bound; the vendor consent for more scopes runs on. */
-function ReauthorizeNotice({ display, url }: { display: VendorDisplay; url: string }) {
-	return (
-		<div className="space-y-3">
-			<p className="text-muted-foreground text-center text-sm">
-				Finish granting the extra scopes in the {display.displayName} window. Until you do,
-				calls that need them still fail.
-			</p>
-			{isHttpsVendorUrl(url) ? (
-				<Button
-					type="button"
-					variant="secondary"
-					className="w-full"
-					onClick={(): void => {
-						openVendorUrl(url, '_blank', 'noopener,noreferrer');
-					}}
-				>
-					<ExternalLink className="h-4 w-4" />
-					Open {display.displayName}
-				</Button>
-			) : (
-				<UnsafeVendorUrlNotice />
-			)}
-		</div>
-	);
-}
-
 // ---------------------------------------------------------------------------
 // Rules step — page 2 of the dialog
 // ---------------------------------------------------------------------------
@@ -1546,6 +1615,1181 @@ function ReauthorizeNotice({ display, url }: { display: VendorDisplay; url: stri
  * delete controls. Agent-requested rules (approve mode) carry a
  * "requested by agent" pill.
  */
+// ---------------------------------------------------------------------------
+// Edit sessions: approving a change to an existing binding
+// ---------------------------------------------------------------------------
+
+/** The edit review's steps. */
+type EditPhase = 'review' | 'rules' | 'scopes' | 'awaiting' | 'terminal';
+
+/**
+ * The approve dialog for an edit session: the combined diff between the
+ * binding's access today and what approving the current revision leaves in
+ * place. A new revision (the agent amended its ask) pauses Approve behind a
+ * banner until the reviewer opens it; the reviewer's own rules are what get
+ * applied. Added OAuth scopes run a vendor consent before anything lands.
+ */
+function EditApproveFlow({
+	sessionId,
+	pollToken,
+	session,
+	onReload,
+	onBack,
+	onDone,
+}: {
+	sessionId: string;
+	pollToken?: string;
+	session: ReviewSession & { edit: ReviewEdit };
+	onReload: () => void;
+	onBack: () => void;
+	onDone: () => void;
+}) {
+	const latest = session.edit;
+	const queryClient = useQueryClient();
+	const confirmMutation = useConfirmConnectSession(sessionId, pollToken);
+	const rejectMutation = useRejectConnectSession();
+	const cancelMutation = useCancelConnectSession();
+	const [shown, setShown] = useState<ReviewEdit>(latest);
+	const [phase, setPhase] = useState<EditPhase>('review');
+	const phaseRef = useRef<EditPhase>('review');
+	const [resume, setResume] = useState<boolean>(() => resumes(latest));
+	// The reviewer's own edit, saved as a revision: shown once it's read back.
+	const amendMutation = useAmendConnectSession(sessionId);
+	const [ownRevision, setOwnRevision] = useState<string | null>(null);
+	// The rules while the reviewer edits them, before they're saved.
+	const [draftRules, setDraftRules] = useState<PermissionRule[]>([]);
+	const [challenge, setChallenge] = useState<ConfirmResponse | null>(null);
+	const [error, setError] = useState<string | null>(null);
+	const [failure, setFailure] = useState<string | null>(null);
+	const [historyOpen, setHistoryOpen] = useState(false);
+	const [rejectOpen, setRejectOpen] = useState(false);
+	// Approve was refused because the request had changed: the banner says so.
+	const [staleApprove, setStaleApprove] = useState(false);
+	const revisions = useConnectSessionRevisions(sessionId, pollToken);
+	const history = useMemo(
+		() => revisionChanges(shown, revisions.data ?? []),
+		[shown, revisions.data],
+	);
+	// Which revision put each added rule in the request, up to the one shown.
+	const introducedIn = useMemo(
+		() =>
+			revisionsAddingRules(history.filter((c) => c.revision.number <= shown.revision.number)),
+		[history, shown.revision.number],
+	);
+	const latestChange = history.find((c) => c.revision.id === latest.revision.id);
+	// A new revision the review poll found: read the history again to describe it.
+	const refetchedFor = useRef<string | null>(null);
+	useEffect(() => {
+		if (!revisions.data || latestChange || refetchedFor.current === latest.revision.id) return;
+		refetchedFor.current = latest.revision.id;
+		void revisions.refetch();
+	}, [latest.revision.id, latestChange, revisions]);
+
+	const goTo = (next: EditPhase): void => {
+		phaseRef.current = next;
+		setPhase(next);
+	};
+	useEffect(() => {
+		if (ownRevision !== null && latest.revision.id === ownRevision) {
+			setShown(latest);
+			setOwnRevision(null);
+		}
+	}, [latest, ownRevision]);
+	const changed = latest.revision.id !== shown.revision.id && latest.revision.id !== ownRevision;
+	const conflicts = shown.conflicts ?? [];
+	const changes = useMemo(() => ruleChanges(shown), [shown]);
+	const newScopes = useMemo(() => addedScopes(shown), [shown]);
+	const droppedScopes = useMemo(() => removedScopes(shown), [shown]);
+	const scopes = useMemo(() => scopeChanges(shown), [shown]);
+	const credentialName = shown.binding.credential_name ?? session.vendor_display_name;
+	const display: VendorDisplay = { displayName: credentialName, iconKey: session.vendor_key };
+	// A person's own change (the human Edit access flow): no agent asked, so
+	// there is nothing to reject. Discarding it cancels the request.
+	const byAgent = session.requested_by_actor_id === shown.binding.agent_id;
+
+	const showLatest = (): void => {
+		setShown(latest);
+		setResume(resumes(latest));
+		setError(null);
+		setStaleApprove(false);
+	};
+
+	// Everything the applied change shows on: the request lists, the
+	// credential, and the agent's binding surfaces (rules, tiles, rule sets).
+	const afterApplied = useCallback((): void => {
+		void queryClient.invalidateQueries({ queryKey: connectRequestsKey });
+		void queryClient.invalidateQueries({ queryKey: ['credentials'] });
+		void invalidateEditSurfaces(queryClient, shown);
+		toast({ title: 'Access updated', variant: 'success' });
+	}, [queryClient, shown]);
+
+	const polling = usePollConnectSessionStatus(sessionId, pollToken, {
+		enabled: phase === 'awaiting',
+		intervalMs:
+			challenge?.kind === 'device_authorization'
+				? (challenge.poll_interval_seconds ?? 5) * 1000
+				: undefined,
+	});
+
+	useEffect(() => {
+		if (phase !== 'awaiting') return;
+		const err = polling.error as { status?: number } | undefined;
+		const status = polling.data?.status;
+		if (err?.status === 403 || status === 'failed' || status === 'expired') {
+			setFailure(signInFailure(polling.data));
+			goTo('terminal');
+			void queryClient.invalidateQueries({ queryKey: connectRequestsKey });
+			return;
+		}
+		if (status === 'applied') {
+			goTo('terminal');
+			afterApplied();
+		}
+	}, [phase, polling.data, polling.error, queryClient, afterApplied]);
+
+	// Closing the dialog while the vendor consent runs cancels it; before
+	// approving, closing leaves the request open.
+	useEffect(() => {
+		return () => {
+			if (phaseRef.current !== 'awaiting') return;
+			void cancelConnectSession(sessionId, pollToken).catch(() => {});
+		};
+	}, [sessionId, pollToken]);
+
+	const approve = async (): Promise<void> => {
+		setError(null);
+		const body: EditConfirmRequest = {
+			kind: 'edit',
+			revision_id: shown.revision.id,
+			permission_rules: rulesToConfirm(shown.result.rules),
+			resume,
+			confirmed_scopes: shown.needs_vendor_consent ? shown.result.scopes : null,
+			resolve_conflicts: conflicts.length > 0,
+		};
+		try {
+			const result = await confirmMutation.mutateAsync(body);
+			if (result.kind === 'connected') {
+				goTo('terminal');
+				afterApplied();
+				return;
+			}
+			setChallenge(result);
+			goTo('awaiting');
+			if (result.kind === 'authorization_code' && isHttpsVendorUrl(result.authorize_url)) {
+				openVendorUrl(result.authorize_url, '_blank', 'noopener,noreferrer');
+			}
+		} catch (err) {
+			const copy = describeConfirmError(err);
+			if (copy.action === 'ended') {
+				setFailure(copy.message);
+				goTo('terminal');
+				void queryClient.invalidateQueries({ queryKey: connectRequestsKey });
+				return;
+			}
+			if (copy.action === 'reload') {
+				// The changed-request banner explains it once the new version is read.
+				onReload();
+				setStaleApprove(true);
+			} else {
+				setError(copy.message);
+			}
+			goTo('review');
+		}
+	};
+
+	const handleDiscard = (): void => {
+		cancelMutation.mutate({ sessionId, pollToken });
+		phaseRef.current = 'terminal';
+		onBack();
+	};
+
+	const handleReject = async (): Promise<void> => {
+		try {
+			await rejectMutation.mutateAsync({ sessionId });
+			setRejectOpen(false);
+			phaseRef.current = 'terminal';
+			toast({ title: 'Request rejected', variant: 'success' });
+			onDone();
+		} catch {
+			// surfaced in the confirm dialog below.
+		}
+	};
+
+	if (phase === 'terminal') {
+		return (
+			<TerminalStep
+				display={display}
+				status={failure ? 'failed' : 'applied'}
+				connectedAs={null}
+				errorCode={null}
+				failureMessage={failure ?? undefined}
+				credentialId={null}
+				boundAgentId={shown.binding.agent_id}
+				onDone={onDone}
+			>
+				{!failure && polling.data?.error_code === 'scopes_not_removed' && (
+					<p role="status" className="text-warning text-sm">
+						The rest of the change applied, but the vendor kept scopes it removes, so
+						the scopes didn’t change. Revoke the app’s access at the vendor to drop
+						them, then edit the scopes again.
+					</p>
+				)}
+			</TerminalStep>
+		);
+	}
+	if (phase === 'awaiting' && challenge) {
+		return (
+			<AwaitingStep
+				display={display}
+				challenge={challenge}
+				status={polling.data?.status ?? 'pending'}
+				onCancel={(): void => {
+					cancelMutation.mutate({ sessionId, pollToken });
+					phaseRef.current = 'terminal';
+					onBack();
+				}}
+			/>
+		);
+	}
+	// A reviewer's change becomes a revision of the request, recorded as theirs.
+	// Saving what is already there changes nothing, so it sends nothing.
+	const saveRevision = async (body: AmendEditBody): Promise<void> => {
+		setError(null);
+		const sameScopes = (next: string[]): boolean =>
+			JSON.stringify([...next].sort()) === JSON.stringify([...shown.result.scopes].sort());
+		if (
+			(body.rules && sameRules(body.rules.set, rulesToConfirm(shown.result.rules))) ||
+			(body.scopes && sameScopes(body.scopes.set))
+		) {
+			goTo('review');
+			return;
+		}
+		try {
+			const amended = await amendMutation.mutateAsync(body);
+			setOwnRevision(amended.revision_id);
+			onReload();
+			goTo('review');
+		} catch (err) {
+			setError(err instanceof Error ? err.message : 'Your change couldn’t be saved.');
+		}
+	};
+
+	if (phase === 'rules') {
+		return (
+			<RulesStep
+				display={display}
+				requestedRules={rulesToConfirm(
+					shown.result.rules.filter((r) => r.added_by === shown.binding.agent_id),
+				)}
+				currentRules={draftRules}
+				onChange={setDraftRules}
+				onBack={(): void => goTo('review')}
+				onContinue={(finalRules: PermissionRule[]): void =>
+					void saveRevision({ rules: { set: finalRules } })
+				}
+				submitting={amendMutation.isPending}
+				error={error}
+				apiReference={session.api_reference}
+				requireRule
+			/>
+		);
+	}
+	if (phase === 'scopes') {
+		return (
+			<EditReviewScopesStep
+				display={display}
+				edit={shown}
+				saving={amendMutation.isPending}
+				error={error}
+				onBack={(): void => goTo('review')}
+				onSave={(next: string[]): void => void saveRevision({ scopes: { set: next } })}
+			/>
+		);
+	}
+
+	const canConfirm = session.can_confirm;
+	const ruleSet = shown.current.rule_set;
+	const otherAgents = shown.other_bound_agents;
+	return (
+		<div className="space-y-5">
+			<VendorHeader
+				display={display}
+				subtitle={
+					byAgent
+						? `An agent is asking to change what it can do with ${credentialName}.`
+						: `Review your change to what the agent can do with ${credentialName}.`
+				}
+			/>
+
+			{(changed || staleApprove) && (
+				<RequestChangedBanner
+					change={changed ? latestChange : undefined}
+					agentId={byAgent ? shown.binding.agent_id : undefined}
+					afterApprove={staleApprove}
+					onReview={changed ? showLatest : undefined}
+					onHistory={(): void => setHistoryOpen(true)}
+				/>
+			)}
+
+			{error && <ErrorAlert message={error} />}
+
+			{conflicts.length > 0 && (
+				<section
+					aria-label="Conflicts"
+					className="border-warning/40 bg-warning/10 space-y-1 rounded-lg border p-3 text-sm"
+				>
+					<p className="font-medium">
+						This request no longer fits the access as it is now.
+					</p>
+					<ul className="list-disc space-y-0.5 pl-5 text-xs">
+						{conflicts.map((conflict, i) => (
+							<li key={i}>{describeConflict(conflict)}</li>
+						))}
+					</ul>
+					<p className="text-muted-foreground text-xs">
+						Check the rules below and edit them if needed: approving applies them as
+						shown. Or leave it for the agent to update its request.
+					</p>
+				</section>
+			)}
+
+			{byAgent && (
+				<AgentRequestCard
+					agent={
+						session.agent?.name
+							? { id: session.agent.agent_id, name: session.agent.name }
+							: undefined
+					}
+					actorId={shown.binding.agent_id}
+					ownerId={session.agent?.owner_id ?? null}
+					reason={session.reason}
+					loading={false}
+				/>
+			)}
+			{byAgent && <PreviouslyRejected at={session.last_rejected_at} />}
+
+			<div className="text-muted-foreground flex items-center justify-between text-xs">
+				<span>Revision {shown.revision.number}</span>
+				<Button
+					type="button"
+					variant="ghost"
+					size="sm"
+					onClick={(): void => setHistoryOpen((open) => !open)}
+				>
+					{historyOpen ? 'Hide history' : 'History'}
+				</Button>
+			</div>
+			{historyOpen && (
+				<EditHistory
+					changes={history}
+					loading={revisions.isLoading}
+					failed={revisions.error != null}
+					agentId={byAgent ? shown.binding.agent_id : undefined}
+				/>
+			)}
+
+			{shown.widens_access && (
+				<p className="text-warning flex items-center gap-2 text-sm">
+					<ShieldAlert className="h-4 w-4" />
+					This change gives the agent more access than it has today.
+				</p>
+			)}
+
+			{ruleSet && (
+				<p className="text-muted-foreground text-sm">
+					{ruleSet.curated
+						? `These rules come from the curated set ${ruleSet.name}. Approving copies them onto this binding; the set itself doesn't change.`
+						: `These rules belong to the shared rule set ${ruleSet.name}. Approving changes the set for every binding that uses it.`}
+				</p>
+			)}
+
+			<section aria-label="Rule changes" className="space-y-2">
+				<div className="flex items-center justify-between">
+					<h3 className="text-sm font-medium">Rules</h3>
+					{canConfirm && (
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							onClick={(): void => {
+								setDraftRules(rulesToConfirm(shown.result.rules));
+								setError(null);
+								goTo('rules');
+							}}
+						>
+							Edit rules
+						</Button>
+					)}
+				</div>
+				<RuleChangeList
+					changes={changes}
+					agentId={shown.binding.agent_id}
+					introducedIn={introducedIn}
+				/>
+			</section>
+
+			{shown.current.granted_scopes != null && (
+				<section aria-label="Scope changes" className="space-y-2 text-sm">
+					<div className="flex items-center justify-between">
+						<h3 className="font-medium">Scopes</h3>
+						{canConfirm && (
+							<Button
+								type="button"
+								variant="ghost"
+								size="sm"
+								onClick={(): void => {
+									setError(null);
+									goTo('scopes');
+								}}
+							>
+								Edit scopes
+							</Button>
+						)}
+					</div>
+					<ScopeChangeList changes={scopes} agentId={shown.binding.agent_id} />
+					{(newScopes.length > 0 || droppedScopes.length > 0) && (
+						<p className="text-muted-foreground text-xs">
+							Approving asks you to sign in to the vendor again for the new set of
+							scopes; nothing changes until you do.
+						</p>
+					)}
+					{(newScopes.length > 0 || droppedScopes.length > 0) &&
+						otherAgents.length > 0 && (
+							<p className="text-muted-foreground text-xs">
+								The changes also reach{' '}
+								{otherAgents.length === 1
+									? '1 other agent'
+									: `${otherAgents.length} other agents`}{' '}
+								using this credential:{' '}
+								{otherAgents.map((agent, i) => (
+									<span key={agent.agent_id}>
+										{i > 0 && ', '}
+										<ActorLabel actorId={agent.agent_id} />
+									</span>
+								))}
+								.
+							</p>
+						)}
+				</section>
+			)}
+
+			{shown.current.suspended && (
+				<Checkbox checked={resume} onChange={setResume} className="text-sm">
+					Switch this binding back on (it is suspended)
+				</Checkbox>
+			)}
+
+			{!canConfirm && <ConfirmBlockedNotice reason={confirmBlockedReason(session)} />}
+
+			<div className="bg-surface-sheet-foot border-hairline-field sticky -bottom-4 z-10 -mx-5 mt-auto -mb-4 flex items-center justify-between gap-2 border-t px-5 py-3.5">
+				<div className="flex items-center gap-1">
+					<Button type="button" variant="ghost" size="sm" onClick={onBack}>
+						{canConfirm ? 'Not now' : 'Close'}
+					</Button>
+					{canConfirm && byAgent && (
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							className="text-danger hover:text-danger"
+							onClick={(): void => {
+								rejectMutation.reset();
+								setRejectOpen(true);
+							}}
+						>
+							Reject
+						</Button>
+					)}
+					{canConfirm && !byAgent && (
+						<Button type="button" variant="ghost" size="sm" onClick={handleDiscard}>
+							Discard
+						</Button>
+					)}
+				</div>
+				{canConfirm && (
+					<Button
+						type="button"
+						variant="primary"
+						disabled={changed || confirmMutation.isPending}
+						onClick={(): void => void approve()}
+					>
+						{confirmMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+						{conflicts.length > 0
+							? 'Resolve and approve'
+							: shown.needs_vendor_consent
+								? 'Approve and sign in'
+								: 'Approve'}
+					</Button>
+				)}
+			</div>
+
+			<ConfirmDialog
+				open={rejectOpen}
+				title="Reject this request?"
+				body={
+					<div className="space-y-2">
+						<p>The agent is told it was rejected. Its access stays as it is.</p>
+						{rejectMutation.error && (
+							<ErrorAlert message="The request couldn't be rejected. Try again." />
+						)}
+					</div>
+				}
+				confirmLabel="Reject"
+				onConfirm={(): void => void handleReject()}
+				onClose={(): void => setRejectOpen(false)}
+				pending={rejectMutation.isPending}
+			/>
+		</div>
+	);
+}
+
+/** Why a scope change's vendor sign-in ended without applying it. */
+function signInFailure(status: StatusResponse | undefined): string {
+	if (status?.status === 'expired') {
+		return 'The sign-in expired before the scopes were granted. Nothing changed.';
+	}
+	if (status?.error_code === 'scopes_not_removed') {
+		return 'The vendor kept scopes this change removes, so nothing changed. Revoke the app’s access at the vendor to drop them, then try again.';
+	}
+	if (status?.error_code === 'binding_now_shared') {
+		return 'Another agent was bound to this credential while you were signing in, and the wider scopes would reach it too, so nothing changed. Review the request again.';
+	}
+	return 'The scopes weren’t granted, so nothing changed.';
+}
+
+/** Why a person's change was refused, for the scopes step. */
+function describeEditError(err: unknown): string {
+	if (err instanceof IntegrationsApiError && err.code === 'connect_session_unknown_scopes') {
+		const unknown = err.extensions.unknown_scopes;
+		const names = Array.isArray(unknown) ? unknown.join(', ') : '';
+		return `The vendor doesn’t offer ${names ? `these scopes: ${names}` : 'those scopes'}. Check the names and try again.`;
+	}
+	if (err instanceof IntegrationsApiError && err.code === 'nothing_to_change') {
+		return 'Those are the scopes it has already.';
+	}
+	return err instanceof Error ? err.message : 'The change couldn’t be started. Try again.';
+}
+
+/**
+ * A person changing the scopes on a binding's credential (adding, removing or
+ * both): their own change, applied as they make it through an edit session
+ * (`apply`). It goes straight to the vendor sign-in for the new set, the same
+ * step an approved agent request runs. An agent's open request for the
+ * binding is rebased onto it once it lands.
+ */
+function EditScopesFlow({
+	agentId,
+	credentialId,
+	credentialName,
+	vendorKey,
+	onBack,
+	onDone,
+}: {
+	agentId: string;
+	credentialId: string;
+	credentialName: string;
+	vendorKey: string;
+	onBack: () => void;
+	onDone: () => void;
+}) {
+	const queryClient = useQueryClient();
+	const access = useBindingAccess(agentId, credentialId);
+	const start = useStartEditConnection();
+	const cancelMutation = useCancelConnectSession();
+	const [typed, setTyped] = useState('');
+	// The scopes ticked; untouched, it is the grant as it stands.
+	const [picked, setPicked] = useState<Set<string> | null>(null);
+	const [reason, setReason] = useState('');
+	const [error, setError] = useState<string | null>(null);
+	const [consent, setConsent] = useState<{
+		sessionId: string;
+		pollToken: string;
+		challenge: ConfirmResponse;
+	} | null>(null);
+	const [outcome, setOutcome] = useState<{ failed: string | null } | null>(null);
+	const scopesId = useId();
+	const reasonId = useId();
+	const display: VendorDisplay = { displayName: credentialName, iconKey: vendorKey };
+
+	const polling = usePollConnectSessionStatus(consent?.sessionId ?? '', consent?.pollToken, {
+		enabled: consent != null && outcome == null,
+		intervalMs:
+			consent?.challenge.kind === 'device_authorization'
+				? (consent.challenge.poll_interval_seconds ?? 5) * 1000
+				: undefined,
+	});
+	useEffect(() => {
+		if (!consent || outcome) return;
+		const status = polling.data?.status;
+		if (status === 'applied') {
+			setOutcome({ failed: null });
+			void queryClient.invalidateQueries({ queryKey: ['credentials'] });
+			void invalidateEditSurfaces(queryClient, {
+				binding: { agent_id: agentId, credential_id: credentialId },
+				other_bound_agents: [],
+			});
+			toast({ title: 'Access updated', variant: 'success' });
+		} else if (status === 'failed' || status === 'expired') {
+			setOutcome({
+				failed: signInFailure(polling.data),
+			});
+		}
+	}, [consent, outcome, polling.data, queryClient, agentId, credentialId]);
+
+	if (outcome) {
+		return (
+			<TerminalStep
+				display={display}
+				status={outcome.failed ? 'failed' : 'applied'}
+				connectedAs={null}
+				errorCode={null}
+				failureMessage={outcome.failed ?? undefined}
+				credentialId={null}
+				boundAgentId={agentId}
+				onDone={onDone}
+			/>
+		);
+	}
+	if (consent) {
+		return (
+			<AwaitingStep
+				display={display}
+				challenge={consent.challenge}
+				status={polling.data?.status ?? 'pending'}
+				onCancel={(): void => {
+					cancelMutation.mutate({
+						sessionId: consent.sessionId,
+						pollToken: consent.pollToken,
+					});
+					onBack();
+				}}
+			/>
+		);
+	}
+	if (access.isPending) {
+		return (
+			<div role="status" aria-live="polite" aria-busy="true">
+				<span className="sr-only">Loading access…</span>
+				<Skeleton className="h-32 rounded-lg" />
+			</div>
+		);
+	}
+	const data = access.data;
+	if (!data) {
+		return (
+			<ErrorAlert
+				message="Failed to load this binding's access."
+				onRetry={() => void access.refetch()}
+			/>
+		);
+	}
+
+	const granted = data.granted_scopes ?? [];
+	const chosen = picked ?? new Set(granted);
+	// Every scope to tick or untick: the vendor's catalog, plus any the grant
+	// holds that it doesn't list. Without a catalog, the grant's scopes, and
+	// more are named as text and passed to the vendor as asked.
+	const options = [
+		...(data.scope_catalog ?? []).map((scope) => ({ ...scope, default: false })),
+		...granted
+			.filter((name) => !data.scope_catalog?.some((scope) => scope.name === name))
+			.map((name) => ({
+				name,
+				classification: 'read' as const,
+				default: false,
+				description: '',
+			})),
+	];
+	const next = [
+		...new Set([
+			...chosen,
+			...(data.scope_catalog ? [] : typed.split(/[\s,]+/).filter(Boolean)),
+		]),
+	].sort();
+	const changed = JSON.stringify(next) !== JSON.stringify([...granted].sort());
+	const toggle = (name: string): void =>
+		setPicked(() => {
+			const updated = new Set(chosen);
+			if (updated.has(name)) updated.delete(name);
+			else updated.add(name);
+			return updated;
+		});
+
+	const submit = async (): Promise<void> => {
+		setError(null);
+		try {
+			const result = await start.mutateAsync({
+				agent_id: agentId,
+				credential_id: credentialId,
+				scopes: { set: next },
+				reason: reason.trim() || undefined,
+				apply: true,
+			});
+			if (result.challenge) {
+				setConsent({
+					sessionId: result.session_id,
+					pollToken: result.poll_token,
+					challenge: result.challenge,
+				});
+				if (
+					result.challenge.kind === 'authorization_code' &&
+					isHttpsVendorUrl(result.challenge.authorize_url)
+				) {
+					openVendorUrl(result.challenge.authorize_url, '_blank', 'noopener,noreferrer');
+				}
+			}
+		} catch (err) {
+			setError(describeEditError(err));
+		}
+	};
+
+	return (
+		<div className="space-y-5">
+			<VendorHeader
+				display={display}
+				subtitle={`Change the OAuth scopes on ${credentialName}.`}
+			/>
+
+			{!data.scopes_editable ? (
+				<p className="text-muted-foreground text-sm">
+					This credential’s scopes can’t be changed here.
+				</p>
+			) : (
+				<>
+					{options.length > 0 && (
+						<ScopeChooseField
+							label="Scopes"
+							loading={false}
+							error={null}
+							scopes={options}
+							selected={chosen}
+							onToggle={toggle}
+						/>
+					)}
+					{!data.scope_catalog && (
+						<div className="space-y-1">
+							<Label htmlFor={scopesId}>Scopes to add</Label>
+							<Input
+								id={scopesId}
+								value={typed}
+								onChange={(e) => setTyped(e.target.value)}
+								placeholder="Separate scopes with spaces or commas"
+							/>
+						</div>
+					)}
+					<p className="text-muted-foreground text-xs">
+						Granted today: {granted.length > 0 ? granted.join(', ') : 'none'}. Saving
+						signs in to the vendor again for the new set; every agent using this
+						credential gets the change.
+					</p>
+				</>
+			)}
+
+			<div className="space-y-1">
+				<Label htmlFor={reasonId}>Reason (optional)</Label>
+				<Input
+					id={reasonId}
+					value={reason}
+					maxLength={1024}
+					onChange={(e) => setReason(e.target.value)}
+					placeholder="Kept in the change's history"
+				/>
+			</div>
+
+			{error && <ErrorAlert message={error} />}
+
+			<div className="bg-surface-sheet-foot border-hairline-field sticky -bottom-4 z-10 -mx-5 mt-auto -mb-4 flex items-center justify-between border-t px-5 py-3.5">
+				<Button type="button" variant="ghost" size="sm" onClick={onBack}>
+					Cancel
+				</Button>
+				<Button
+					type="button"
+					variant="primary"
+					loading={start.isPending}
+					disabled={!changed}
+					onClick={(): void => void submit()}
+				>
+					Sign in and save
+				</Button>
+			</div>
+		</div>
+	);
+}
+
+/** Rule-by-rule change rows: added, removed and kept, with widening flagged. */
+function RuleChangeList({
+	changes,
+	agentId,
+	introducedIn,
+}: {
+	changes: readonly RuleChange[];
+	/** The binding's agent: whose asks read "Requested by agent". */
+	agentId?: string;
+	/** The revision that added each rule (see ``revisionsAddingRules``). */
+	introducedIn?: ReadonlyMap<string, number>;
+}) {
+	if (changes.length === 0) {
+		return <p className="text-muted-foreground text-xs">No rule changes.</p>;
+	}
+	return (
+		<ul className="space-y-1">
+			{changes.map((change, i) => (
+				<li
+					key={`${change.kind}-${change.rule.id ?? i}`}
+					className={cn(
+						'rounded px-2 py-1 text-sm',
+						change.kind === 'added' && 'bg-success/10',
+						change.kind === 'removed' && 'bg-danger/10',
+					)}
+				>
+					<div className="flex flex-wrap items-center gap-2">
+						<EffectBadge effect={change.rule.effect}>{change.rule.effect}</EffectBadge>
+						<span
+							className={cn(
+								'font-mono text-xs',
+								change.kind === 'removed' && 'line-through',
+							)}
+						>
+							{describeRuleMatch(change.rule)}
+						</span>
+						{change.kind !== 'kept' && (
+							<Badge variant={change.kind === 'added' ? 'success' : 'danger'}>
+								{change.kind === 'added' ? 'Added' : 'Removed'}
+							</Badge>
+						)}
+						{change.widens && <Badge variant="warning">Widens</Badge>}
+						{change.kind === 'added' && change.rule.added_by && (
+							<AddedBy actorId={change.rule.added_by} agentId={agentId} />
+						)}
+						{change.kind === 'added' && introducedIn && (
+							<IntroducedIn number={revisionAddingRule(introducedIn, change.rule)} />
+						)}
+					</div>
+					{change.rule.comment && (
+						<p className="text-foreground-sub mt-0.5 text-[11px] italic">
+							{change.rule.comment}
+						</p>
+					)}
+				</li>
+			))}
+		</ul>
+	);
+}
+
+/** Scope-by-scope rows, like the rule rows: added, removed and kept, with who asked and why. */
+function ScopeChangeList({
+	changes,
+	agentId,
+}: {
+	changes: readonly ScopeChange[];
+	agentId?: string;
+}) {
+	if (changes.length === 0) {
+		return <p className="text-muted-foreground text-xs">No scopes.</p>;
+	}
+	return (
+		<ul className="space-y-1">
+			{changes.map((change) => (
+				<li
+					key={change.scope}
+					className={cn(
+						'rounded px-2 py-1 text-sm',
+						change.kind === 'added' && 'bg-success/10',
+						change.kind === 'removed' && 'bg-danger/10',
+					)}
+				>
+					<div className="flex flex-wrap items-center gap-2">
+						<span
+							className={cn(
+								'font-mono text-xs',
+								change.kind === 'removed' && 'line-through',
+							)}
+						>
+							{change.scope}
+						</span>
+						{change.kind === 'kept' ? (
+							<Badge variant="default">Granted</Badge>
+						) : (
+							<Badge variant={change.kind === 'added' ? 'success' : 'danger'}>
+								{change.kind === 'added' ? 'Added' : 'Removed'}
+							</Badge>
+						)}
+						{change.kind !== 'kept' && change.addedBy && (
+							<AddedBy actorId={change.addedBy} agentId={agentId} />
+						)}
+					</div>
+					{change.comment && (
+						<p className="text-foreground-sub mt-0.5 text-[11px] italic">
+							{change.comment}
+						</p>
+					)}
+				</li>
+			))}
+		</ul>
+	);
+}
+
+/** Who put a change in the request: the agent asking, or a reviewer by name. */
+function AddedBy({ actorId, agentId }: { actorId: string; agentId?: string }) {
+	if (actorId === agentId) return <Badge variant="default">Requested by agent</Badge>;
+	return (
+		<span className="text-muted-foreground text-[11px]">
+			Added by <ActorLabel actorId={actorId} />
+		</span>
+	);
+}
+
+/**
+ * The reviewer's view of the scopes: what the agent has today and what the
+ * request asks for, ticked, beside the rest the vendor offers. Saving makes
+ * the new set a revision of the request.
+ */
+function EditReviewScopesStep({
+	display,
+	edit,
+	saving,
+	error,
+	onBack,
+	onSave,
+}: {
+	display: VendorDisplay;
+	edit: ReviewEdit;
+	saving: boolean;
+	error: string | null;
+	onBack: () => void;
+	onSave: (scopes: string[]) => void;
+}) {
+	const access = useBindingAccess(edit.binding.agent_id, edit.binding.credential_id);
+	const [picked, setPicked] = useState<Set<string>>(() => new Set(edit.result.scopes));
+	const [typed, setTyped] = useState('');
+	const typedId = useId();
+	const granted = edit.current.granted_scopes ?? [];
+	const catalog = access.data?.scope_catalog ?? null;
+	const listed = new Set(catalog?.map((scope) => scope.name) ?? []);
+	const options = [
+		...(catalog ?? []).map((scope) => ({ ...scope, default: false })),
+		...[...new Set([...granted, ...edit.result.scopes])]
+			.filter((name) => !listed.has(name))
+			.map((name) => ({
+				name,
+				classification: 'read' as const,
+				default: false,
+				description: '',
+			})),
+	];
+	const next = [
+		...new Set([...picked, ...(catalog ? [] : typed.split(/[\s,]+/).filter(Boolean))]),
+	].sort();
+	const unchanged = JSON.stringify(next) === JSON.stringify([...edit.result.scopes].sort());
+
+	return (
+		<div className="space-y-5">
+			<VendorHeader
+				display={display}
+				subtitle="Change the scopes this request asks for. Saving makes it a new revision."
+			/>
+			<ScopeChooseField
+				label="Scopes"
+				loading={access.isPending}
+				error={null}
+				scopes={options}
+				selected={picked}
+				onToggle={(name: string): void =>
+					setPicked((current) => {
+						const updated = new Set(current);
+						if (updated.has(name)) updated.delete(name);
+						else updated.add(name);
+						return updated;
+					})
+				}
+			/>
+			{!access.isPending && !catalog && (
+				<div className="space-y-1">
+					<Label htmlFor={typedId}>Scopes to add</Label>
+					<Input
+						id={typedId}
+						value={typed}
+						onChange={(e) => setTyped(e.target.value)}
+						placeholder="Separate scopes with spaces or commas"
+					/>
+				</div>
+			)}
+			<p className="text-muted-foreground text-xs">
+				Granted today: {granted.length > 0 ? granted.join(', ') : 'none'}.
+			</p>
+			{error && <ErrorAlert message={error} />}
+			<div className="bg-surface-sheet-foot border-hairline-field sticky -bottom-4 z-10 -mx-5 mt-auto -mb-4 flex items-center justify-between border-t px-5 py-3.5">
+				<Button type="button" variant="ghost" size="sm" onClick={onBack} disabled={saving}>
+					<ArrowLeft className="h-4 w-4" />
+					Back
+				</Button>
+				<Button
+					type="button"
+					variant="primary"
+					loading={saving}
+					disabled={unchanged}
+					onClick={(): void => onSave(next)}
+				>
+					Save scopes
+				</Button>
+			</div>
+		</div>
+	);
+}
+
+/** Each revision with its own change against the one before (revision 1: against today). */
+/** That this agent's ask for the same target was rejected before, and when. */
+function PreviouslyRejected({ at }: { at?: string | null }) {
+	if (!at) return null;
+	return (
+		<p role="note" className="text-warning flex items-center gap-2 text-sm">
+			<ShieldAlert className="h-4 w-4" />
+			This agent asked for this before, and the request was rejected on{' '}
+			{new Date(at).toLocaleString()}.
+		</p>
+	);
+}
+
+function IntroducedIn({ number }: { number: number | undefined }) {
+	if (number === undefined) return null;
+	return <span className="text-muted-foreground text-[11px]">Added in revision {number}</span>;
+}
+
+/** Who made a revision: the agent, a reviewer, or no one (a rebase). */
+function RevisionAuthor({ createdBy, agentId }: { createdBy: string | null; agentId?: string }) {
+	if (createdBy === null) return <span>Rebased</span>;
+	return (
+		<span className="inline-flex items-center gap-1">
+			{agentId !== undefined && (
+				<Badge variant={createdBy === agentId ? 'default' : 'neutral'}>
+					{createdBy === agentId ? 'Agent' : 'Reviewer'}
+				</Badge>
+			)}
+			<ActorLabel actorId={createdBy} />
+		</span>
+	);
+}
+
+function capitalise(text: string): string {
+	return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/**
+ * The request changed under the reviewer: who changed it, how long ago,
+ * what they did and why. Also shown when Approve was refused for it.
+ */
+function RequestChangedBanner({
+	change,
+	agentId,
+	afterApprove,
+	onReview,
+	onHistory,
+}: {
+	/** The new current revision; absent until it is read. */
+	change?: RevisionChange;
+	agentId?: string;
+	afterApprove: boolean;
+	/** Absent until the new version is read. */
+	onReview?: () => void;
+	onHistory: () => void;
+}) {
+	const reason = change ? revisionReason(change.revision) : null;
+	return (
+		<div
+			role="alert"
+			className="border-warning/40 bg-warning/10 flex items-start justify-between gap-3 rounded-lg border p-3 text-sm"
+		>
+			<div className="space-y-1">
+				<p className="font-medium">
+					{afterApprove
+						? 'Not approved: this request changed while you were reviewing it.'
+						: 'This request changed while you were reviewing it.'}
+				</p>
+				{change && (
+					<p className="text-xs">
+						Revision {change.revision.number}:{' '}
+						{change.revision.created_by === null ? (
+							'the request was rebased onto the access as it is now'
+						) : (
+							<>
+								<RevisionAuthor
+									createdBy={change.revision.created_by}
+									agentId={agentId}
+								/>{' '}
+								{revisionSummary(change)}
+							</>
+						)}
+						, {timeAgo(change.revision.created_at)} ago.
+					</p>
+				)}
+				{reason && <p className="text-foreground-sub text-[11px] italic">“{reason}”</p>}
+			</div>
+			<div className="flex shrink-0 gap-2">
+				{onReview && (
+					<Button type="button" size="sm" variant="secondary" onClick={onReview}>
+						Review the new version
+					</Button>
+				)}
+				<Button type="button" size="sm" variant="ghost" onClick={onHistory}>
+					See history
+				</Button>
+			</div>
+		</div>
+	);
+}
+
+/** Each revision: who made it and when, what it did and why, and its rule and scope diff. */
+function EditHistory({
+	changes,
+	loading,
+	failed,
+	agentId,
+}: {
+	changes: readonly RevisionChange[];
+	loading: boolean;
+	failed: boolean;
+	agentId?: string;
+}) {
+	if (loading) return <Skeleton className="h-12 w-full" />;
+	if (failed) return <ErrorAlert message="The history couldn't be loaded." />;
+	return (
+		<ol aria-label="Request history" className="space-y-3">
+			{changes.map((change) => {
+				const { revision, rules, addedScopes: added, removedScopes } = change;
+				const reason = revisionReason(revision);
+				return (
+					<li key={revision.id} className="space-y-1">
+						<p className="text-xs">
+							<span className="font-medium">Revision {revision.number}</span>{' '}
+							<span className="text-muted-foreground">
+								<RevisionAuthor createdBy={revision.created_by} agentId={agentId} />
+								{' · '}
+								{new Date(revision.created_at).toLocaleString()}
+							</span>
+						</p>
+						<p className="text-xs">{capitalise(revisionSummary(change))}.</p>
+						{reason && (
+							<p className="text-foreground-sub text-[11px] italic">“{reason}”</p>
+						)}
+						<RuleChangeList changes={rules} />
+						{added.length > 0 && (
+							<p className="text-xs">
+								Scopes added: <span className="font-mono">{added.join(', ')}</span>
+							</p>
+						)}
+						{removedScopes.length > 0 && (
+							<p className="text-xs">
+								Scopes dropped:{' '}
+								<span className="font-mono">{removedScopes.join(', ')}</span>
+							</p>
+						)}
+					</li>
+				);
+			})}
+		</ol>
+	);
+}
+
 function RulesStep({
 	display,
 	requestedRules,
@@ -1804,7 +3048,10 @@ function ScopeChooseField({
 	selected,
 	onToggle,
 	agentRequested,
+	label = 'What can this agent do?',
 }: {
+	/** The field's heading. */
+	label?: string;
 	loading: boolean;
 	error: Error | null;
 	scopes: VendorScopeCatalog[];
@@ -1818,7 +3065,7 @@ function ScopeChooseField({
 	if (loading) {
 		return (
 			<div className="space-y-2">
-				<Label>What can this agent do?</Label>
+				<Label>{label}</Label>
 				<div className="space-y-1.5">
 					<Skeleton className="h-12 w-full" />
 					<Skeleton className="h-12 w-full" />
@@ -1841,7 +3088,7 @@ function ScopeChooseField({
 	return (
 		<div className="space-y-2">
 			<div className="flex items-baseline justify-between">
-				<Label>What can this agent do?</Label>
+				<Label>{label}</Label>
 				<span className="text-muted-foreground text-xs">
 					{selected.size} of {scopes.length} selected
 				</span>
@@ -2123,7 +3370,7 @@ function TerminalStep({
 	// omit ``onRetry`` and the button is hidden.
 	onRetry?: () => void;
 }) {
-	const success = status === 'connected';
+	const success = status === 'connected' || status === 'applied';
 	// A finished connect closes itself after a short countdown — unless the step
 	// asks for something more (the re-authorize notice), or the operator does
 	// anything in it (pick agents to bind, Stay open), which keeps it open.
@@ -2151,7 +3398,9 @@ function TerminalStep({
 				<div>
 					<p className="text-foreground text-base font-semibold">
 						{success
-							? `Connected to ${display.displayName}`
+							? status === 'applied'
+								? `Access to ${display.displayName} updated`
+								: `Connected to ${display.displayName}`
 							: status === 'expired'
 								? 'The code expired'
 								: failureMessage

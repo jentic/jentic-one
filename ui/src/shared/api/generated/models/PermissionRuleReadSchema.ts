@@ -19,6 +19,10 @@ export type PermissionRuleReadSchema = {
      */
     effect: PermissionRuleReadSchema.effect;
     /**
+     * ID of the rule (`apr_…` on a binding, `prr_…` in a rule set), so a connect-session edit can name it in `remove` or `before`.
+     */
+    id?: (string | null);
+    /**
      * How `path` is interpreted: `regex` (full-match), `prefix` or `exact`.
      */
     match_mode?: PermissionRuleReadSchema.match_mode;

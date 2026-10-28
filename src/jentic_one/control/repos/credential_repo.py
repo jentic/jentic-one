@@ -16,8 +16,10 @@ from sqlalchemy.sql.elements import ColumnElement
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.oauth_app_registrations import OAuthAppRegistration
 from jentic_one.control.core.schema.oauth_tokens import OAuthToken
+from jentic_one.shared.db.keyset import apply_desc_keyset
 from jentic_one.shared.models.api_identity import slugify_api_field
 from jentic_one.shared.models.credentials import StoredCredentialType
+from jentic_one.shared.pagination import Cursor
 
 # Secret-material child relationships on ``Credential`` (one row per credential).
 _CHILD_RELATIONSHIPS: tuple[str, ...] = (
@@ -180,7 +182,7 @@ class CredentialRepository:
     async def list_all(
         session: AsyncSession,
         *,
-        cursor: tuple[datetime, str] | None = None,
+        cursor: Cursor | None = None,
         limit: int = 50,
         vendor: str | None = None,
         filters: Sequence[ColumnElement[bool]] | None = None,
@@ -189,12 +191,7 @@ class CredentialRepository:
         stmt = select(Credential).order_by(Credential.created_at.desc(), Credential.id.desc())
         if vendor is not None:
             stmt = stmt.where(Credential.api_vendor == vendor)
-        if cursor is not None:
-            cursor_ts, cursor_id = cursor
-            stmt = stmt.where(
-                (Credential.created_at < cursor_ts)
-                | ((Credential.created_at == cursor_ts) & (Credential.id < cursor_id))
-            )
+        stmt = apply_desc_keyset(stmt, Credential.created_at, Credential.id, cursor)
         if filters is not None:
             for f in filters:
                 stmt = stmt.where(f)
@@ -300,11 +297,15 @@ class CredentialRepository:
         *,
         created_by: str,
     ) -> Credential | None:
-        """Re-attribute a credential to a different creator (connect-session confirm)."""
+        """Re-attribute a credential (and any child material rows) to a creator."""
         credential = await session.get(Credential, credential_id)
         if credential is None:
             return None
         credential.created_by = created_by
+        for rel in _CHILD_RELATIONSHIPS:
+            child = getattr(credential, rel)
+            if child is not None:
+                child.created_by = created_by
         await session.flush()
         return credential
 
@@ -366,13 +367,16 @@ class CredentialRepository:
         version: str | None,
         account_ref_providers: Collection[str],
         exclude_ids: Sequence[str] = (),
+        created_by_in: Sequence[str] | None = None,
         filters: Sequence[ColumnElement[bool]] | None = None,
         limit: int = 50,
     ) -> list[Credential]:
         """Connected, active credentials whose API scope covers the identity.
 
         A NULL ``api_name`` / ``api_version`` on the credential is a wildcard;
-        a ``None`` reference axis matches any value. ``filters`` carries the
+        a ``None`` reference axis matches any value. ``created_by_in``
+        optionally restricts rows to a set of creator IDs (e.g. the target
+        agent's owner and the confirming admin, #1838); ``filters`` carries the
         caller's access scoping.
 
         An interactive OAuth grant (authorization_code / device_code) counts
@@ -419,12 +423,43 @@ class CredentialRepository:
             )
         if exclude_ids:
             stmt = stmt.where(Credential.id.not_in(list(exclude_ids)))
+        if created_by_in is not None:
+            stmt = stmt.where(Credential.created_by.in_(list(created_by_in)))
         if filters is not None:
             for f in filters:
                 stmt = stmt.where(f)
         stmt = stmt.order_by(Credential.created_at.desc(), Credential.id.desc()).limit(limit)
         result = await session.execute(stmt)
         return list(result.scalars().all())
+
+    @staticmethod
+    async def any_covering(
+        session: AsyncSession,
+        *,
+        credential_ids: Sequence[str],
+        vendor: str,
+        name: str | None,
+        version: str | None,
+    ) -> bool:
+        """Whether any of ``credential_ids`` has an API scope covering the identity.
+
+        Same coverage as :meth:`list_connected_covering` (a NULL credential
+        axis is a wildcard; a ``None`` reference axis matches any value), but
+        whatever the credential's state.
+        """
+        if not credential_ids:
+            return False
+        stmt = select(Credential.id).where(
+            Credential.id.in_(list(credential_ids)), Credential.api_vendor == vendor
+        )
+        if name is not None:
+            stmt = stmt.where(or_(Credential.api_name.is_(None), Credential.api_name == name))
+        if version is not None:
+            stmt = stmt.where(
+                or_(Credential.api_version.is_(None), Credential.api_version == version)
+            )
+        result = await session.execute(stmt.limit(1))
+        return result.first() is not None
 
     @staticmethod
     async def delete(session: AsyncSession, credential_id: str) -> bool:

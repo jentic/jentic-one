@@ -250,7 +250,7 @@ class AgentRuleEvaluator:
         binding_label = _binding_label(
             agent_id=agent_id, credential_id=credential_id, rule_set_id=rule_set_id
         )
-        async with self._control_db.session() as session:
+        async with self._control_db.read_session() as session:
             rows = (await session.execute(query, params)).all()
         # Row columns: id(0), effect(1), methods(2), path(3), operations(4), match_mode(5)
         return [

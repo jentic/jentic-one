@@ -111,6 +111,8 @@ export function describeConfirmError(error: unknown): ConfirmErrorCopy {
 	const problem = (error ?? {}) as ProblemLike;
 	switch (problem.code) {
 		case 'review_stale':
+		case 'revision_changed':
+		case 'revision_required':
 		case 'confirm_kind_mismatch':
 			return {
 				action: 'reload',
@@ -142,6 +144,12 @@ export function describeConfirmError(error: unknown): ConfirmErrorCopy {
 				message:
 					"The agent is archived, disabled or gone, so it can't be given this credential.",
 			};
+		case 'connect_session_binding_suspended':
+			return {
+				action: 'ended',
+				message:
+					"This agent's access to this API is suspended. Resume or remove that binding before approving a new connection.",
+			};
 		case 'connect_session_invalid_state':
 			return {
 				action: 'ended',
@@ -162,11 +170,29 @@ export function describeConfirmError(error: unknown): ConfirmErrorCopy {
 				}. Pick another option.`,
 			};
 		}
-		case 'reauthorize_unavailable':
+		case 'baseline_changed':
 			return {
 				action: 'reload',
 				message:
-					"That credential is used by other agents, so it can't be re-authorized with more scopes. Connect a new credential instead.",
+					"The agent's access changed since it asked, so the request was updated to fit. Check the new version before you approve.",
+			};
+		case 'rule_set_confirm_forbidden':
+			return {
+				action: 'stay',
+				message:
+					"These rules belong to a shared rule set you don't own. Its owner or an admin has to approve this change.",
+			};
+		case 'scopes_not_supported':
+			return {
+				action: 'stay',
+				message:
+					"This credential's scopes can't be widened here. Approve the rules without new scopes, or connect a new credential.",
+			};
+		case 'scope_change_forbidden':
+			return {
+				action: 'reload',
+				message:
+					'That credential is used by other agents, and only its owner or an admin can change its scopes. Connect a new credential instead.',
 			};
 		case 'existing_credential_not_found':
 			return {
@@ -203,8 +229,8 @@ export function describeConfirmError(error: unknown): ConfirmErrorCopy {
 	};
 }
 
-/** "Used by 2 other agents" — the reason a credential can't be widened. */
+/** "1 other agent" / "2 other agents" — who else a wider grant reaches. */
 export function sharedWithCount(credential: ExistingCredential): string {
-	const n = credential.other_bound_agent_ids.length;
-	return n === 1 ? 'Used by 1 other agent' : `Used by ${n} other agents`;
+	const n = credential.other_bound_agents.length;
+	return n === 1 ? '1 other agent' : `${n} other agents`;
 }

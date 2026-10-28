@@ -166,7 +166,6 @@ class DirectOAuth2Provider(OAuth2Provider):
             issued_at=datetime.now(UTC),
             nonce=nonce,
             redirect_uri=redirect_uri,
-            sole_agent_id=request.extra.get("sole_agent_id") or None,
             browser_binding_hash=request.browser_binding_hash,
             browser_host=request.browser_host,
         )

@@ -5,11 +5,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import datetime
 
-from sqlalchemy import literal, select, tuple_
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
+from jentic_one.shared.db.keyset import apply_desc_keyset
+from jentic_one.shared.pagination import Cursor
 
 
 class ExecutionRecordRepository:
@@ -86,8 +88,7 @@ class ExecutionRecordRepository:
         session: AsyncSession,
         *,
         limit: int = 50,
-        cursor_ts: datetime | None = None,
-        cursor_id: str | None = None,
+        cursor: Cursor | None = None,
         trace_id: str | None = None,
         status: list[str] | None = None,
         from_: datetime | None = None,
@@ -104,13 +105,7 @@ class ExecutionRecordRepository:
             .order_by(ExecutionRecord.started_at.desc(), ExecutionRecord.id.desc())
             .limit(limit)
         )
-        if cursor_ts is not None and cursor_id is not None:
-            stmt = stmt.where(
-                tuple_(ExecutionRecord.started_at, ExecutionRecord.id)
-                < tuple_(literal(cursor_ts), literal(cursor_id))
-            )
-        elif cursor_ts is not None:
-            stmt = stmt.where(ExecutionRecord.started_at < cursor_ts)
+        stmt = apply_desc_keyset(stmt, ExecutionRecord.started_at, ExecutionRecord.id, cursor)
         if trace_id is not None:
             stmt = stmt.where(ExecutionRecord.trace_id == trace_id)
         if status is not None:

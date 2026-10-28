@@ -324,6 +324,24 @@ func (e BearerTokenUpdateRequestType) Valid() bool {
 	}
 }
 
+// Defines values for ConnectSessionSummaryResponseIntent.
+const (
+	ConnectSessionSummaryResponseIntentCreate ConnectSessionSummaryResponseIntent = "create"
+	ConnectSessionSummaryResponseIntentEdit   ConnectSessionSummaryResponseIntent = "edit"
+)
+
+// Valid indicates whether the value is a known member of the ConnectSessionSummaryResponseIntent enum.
+func (e ConnectSessionSummaryResponseIntent) Valid() bool {
+	switch e {
+	case ConnectSessionSummaryResponseIntentCreate:
+		return true
+	case ConnectSessionSummaryResponseIntentEdit:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ConnectSessionSummaryResponseState.
 const (
 	ConnectSessionSummaryResponseStateAwaitingApp ConnectSessionSummaryResponseState = "awaiting_app"
@@ -429,6 +447,21 @@ const (
 func (e DeviceAuthorizationRegistrationCreateRequestFlowKind) Valid() bool {
 	switch e {
 	case DeviceAuthorizationRegistrationCreateRequestFlowKindDeviceAuthorization:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EditConfirmSessionRequestKind.
+const (
+	EditConfirmSessionRequestKindEdit EditConfirmSessionRequestKind = "edit"
+)
+
+// Valid indicates whether the value is a known member of the EditConfirmSessionRequestKind enum.
+func (e EditConfirmSessionRequestKind) Valid() bool {
+	switch e {
+	case EditConfirmSessionRequestKindEdit:
 		return true
 	default:
 		return false
@@ -1029,15 +1062,21 @@ func (e PermissionRuleSchemaMatchMode) Valid() bool {
 	}
 }
 
-// Defines values for ReauthorizeConfirmSessionRequestKind.
+// Defines values for ScopeOptionSchemaClassification.
 const (
-	Reauthorize ReauthorizeConfirmSessionRequestKind = "reauthorize"
+	Admin ScopeOptionSchemaClassification = "admin"
+	Read  ScopeOptionSchemaClassification = "read"
+	Write ScopeOptionSchemaClassification = "write"
 )
 
-// Valid indicates whether the value is a known member of the ReauthorizeConfirmSessionRequestKind enum.
-func (e ReauthorizeConfirmSessionRequestKind) Valid() bool {
+// Valid indicates whether the value is a known member of the ScopeOptionSchemaClassification enum.
+func (e ScopeOptionSchemaClassification) Valid() bool {
 	switch e {
-	case Reauthorize:
+	case Admin:
+		return true
+	case Read:
+		return true
+	case Write:
 		return true
 	default:
 		return false
@@ -1461,6 +1500,41 @@ type AgentResponse struct {
 	Status string `json:"status"`
 }
 
+// AmendSessionRequest Change an open session's ask; fields sent replace those parts, the rest stay.
+//
+// Examples: {"reason":"Also needs to label issues","requested_permission_rules":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"requested_scopes":["repo"],"resume":true,"rules":{"add":[{"before":"apr_6968b3987c22b63e87e79f06","rule":{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}}],"remove":["apr_6968b3987c22b63e87e79f06"],"set":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]},"scopes":{"add":["gmail.send"],"comments":{"gmail.send":"To send the replies I draft"},"remove":["gmail.modify"],"set":["gmail.readonly","gmail.send"]}}
+type AmendSessionRequest struct {
+	// Reason Why, shown to the reviewer.
+	//
+	// Examples: Also needs to label issues
+	Reason *string `json:"reason,omitempty"`
+
+	// RequestedPermissionRules Create sessions: the rules to ask for, replacing the current ask.
+	//
+	// Examples: [{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	RequestedPermissionRules *[]PermissionRuleSchema `json:"requested_permission_rules,omitempty"`
+
+	// RequestedScopes Create sessions: the scopes to ask for, replacing the current ask.
+	//
+	// Examples: ["repo"]
+	RequestedScopes *[]string `json:"requested_scopes,omitempty"`
+
+	// Resume Edit sessions: resume a suspended binding.
+	//
+	// Examples: true
+	Resume *bool `json:"resume,omitempty"`
+
+	// Rules Edit sessions: the rule change, relative to the baseline.
+	//
+	// Examples: {"add":[{"before":"apr_6968b3987c22b63e87e79f06","rule":{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}}],"remove":["apr_6968b3987c22b63e87e79f06"],"set":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+	Rules *EditRulesRequest `json:"rules,omitempty"`
+
+	// Scopes Edit sessions: the scope change, replacing the current ask.
+	//
+	// Examples: {"add":["gmail.send"],"comments":{"gmail.send":"To send the replies I draft"},"remove":["gmail.modify"],"set":["gmail.readonly","gmail.send"]}
+	Scopes *EditScopesRequest `json:"scopes,omitempty"`
+}
+
 // ApiImportLinksResponse Hypermedia links for an import response.
 //
 // Examples: {"self":"https://jentic.example.com/jobs/job_6968b3985e8c9902207afaeb"}
@@ -1533,7 +1607,7 @@ type ApiInfoResponse struct {
 
 // ApiKeyConfirmSessionRequest Confirm a “manual_api_key“ session with the API key to store.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","key":"example-secret","kind":"api_key","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","key":"example-secret","kind":"api_key","permission_rules":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"revision_id":"csr_6968b3983b8b91c75627bee6"}
 type ApiKeyConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
 	//
@@ -1562,8 +1636,13 @@ type ApiKeyConfirmSessionRequest struct {
 
 	// PermissionRules Permission rules to bind for the agent (at most 100).
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
+
+	// RevisionId The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.
+	//
+	// Examples: csr_6968b3983b8b91c75627bee6
+	RevisionId *string `json:"revision_id,omitempty"`
 }
 
 // ApiKeyConfirmSessionRequestKind Confirm variant; always `api_key`.
@@ -1914,7 +1993,7 @@ type ApiSourceInline struct {
 	// Examples: stripe
 	ApiName *string `json:"api_name,omitempty"`
 
-	// Content Raw OpenAPI or Arazzo document as a JSON or YAML string.
+	// Content Raw OpenAPI or Arazzo document as a JSON or YAML string. At most `ingest.max_spec_bytes` UTF-8 bytes (25 MiB by default); larger content is refused with 413.
 	//
 	// Examples: {"openapi": "3.1.0", "info": {"title": "Stripe API", "version": "2024-04-10"}, "paths": {}}
 	Content string `json:"content"`
@@ -2313,7 +2392,7 @@ type BasicAuthUpdateRequestType string
 
 // BasicConfirmSessionRequest Confirm a “manual_basic“ session with the username and password to store.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"basic","password":"example-secret","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"username":"svc-reporting"}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"basic","password":"example-secret","permission_rules":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"revision_id":"csr_6968b3983b8b91c75627bee6","username":"svc-reporting"}
 type BasicConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
 	//
@@ -2342,8 +2421,13 @@ type BasicConfirmSessionRequest struct {
 
 	// PermissionRules Permission rules to bind for the agent (at most 100).
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
+
+	// RevisionId The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.
+	//
+	// Examples: csr_6968b3983b8b91c75627bee6
+	RevisionId *string `json:"revision_id,omitempty"`
 
 	// Username Username to store.
 	//
@@ -2358,7 +2442,7 @@ type BasicConfirmSessionRequestKind string
 
 // BearerConfirmSessionRequest Confirm a “manual_bearer“ session with the bearer token to store.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"bearer","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"token":"example-secret"}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"bearer","permission_rules":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"revision_id":"csr_6968b3983b8b91c75627bee6","token":"example-secret"}
 type BearerConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
 	//
@@ -2382,8 +2466,13 @@ type BearerConfirmSessionRequest struct {
 
 	// PermissionRules Permission rules to bind for the agent (at most 100).
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
+
+	// RevisionId The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.
+	//
+	// Examples: csr_6968b3983b8b91c75627bee6
+	RevisionId *string `json:"revision_id,omitempty"`
 
 	// Token Bearer token to store; write-only.
 	//
@@ -2480,6 +2569,66 @@ type BearerTokenUpdateRequest struct {
 //
 // Examples: bearer_token
 type BearerTokenUpdateRequestType string
+
+// BindingAccessResponse A binding's permission rules plus the rest of what it grants.
+//
+// Examples: {"data":[{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"granted_scopes":["repo","read:user"],"rule_set":{"curated":false,"id":"prs_6968b3987c22b63e87e79f05","name":"Stripe read-only","rules":[{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]},"scope_catalog":[{"classification":"write","description":"Send email as the user.","name":"gmail.send"}],"scopes_editable":true,"suspended":false}
+type BindingAccessResponse struct {
+	// Data The binding's permission rules, in evaluation order.
+	//
+	// Examples: [{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	Data []PermissionRuleReadSchema `json:"data"`
+
+	// GrantedScopes Scopes the credential's OAuth grant holds; null when it has none.
+	//
+	// Examples: ["repo","read:user"]
+	GrantedScopes *[]string `json:"granted_scopes,omitempty"`
+
+	// RuleSet The shared rule set the binding points at; null when its own rules (`data`) apply. While a set is attached, `data` is dormant.
+	//
+	// Examples: {"curated":false,"id":"prs_6968b3987c22b63e87e79f05","name":"Stripe read-only","rules":[{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+	RuleSet *BindingRuleSetSchema `json:"rule_set,omitempty"`
+
+	// ScopeCatalog The scopes the credential's vendor offers; an edit can add only these. Null when its client has no catalog, in which case a scope is passed to the vendor as named.
+	//
+	// Examples: [{"classification":"write","description":"Send email as the user.","name":"gmail.send"}]
+	ScopeCatalog *[]ScopeOptionSchema `json:"scope_catalog,omitempty"`
+
+	// ScopesEditable True when an edit can change the credential's OAuth scopes (add or remove); the approver signs in to the vendor again for the new set.
+	//
+	// Examples: true
+	ScopesEditable *bool `json:"scopes_editable,omitempty"`
+
+	// Suspended True when the binding is suspended and the agent cannot use it.
+	//
+	// Examples: false
+	Suspended bool `json:"suspended"`
+}
+
+// BindingRuleSetSchema The shared rule set a binding points at.
+//
+// Examples: {"curated":false,"id":"prs_6968b3987c22b63e87e79f05","name":"Stripe read-only","rules":[{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+type BindingRuleSetSchema struct {
+	// Curated True for a curated set, which an edit can copy but never change.
+	//
+	// Examples: false
+	Curated bool `json:"curated"`
+
+	// Id ID of the rule set (`prs_…`).
+	//
+	// Examples: prs_6968b3987c22b63e87e79f05
+	Id string `json:"id"`
+
+	// Name Name of the rule set.
+	//
+	// Examples: Stripe read-only
+	Name string `json:"name"`
+
+	// Rules The set's rules, in evaluation order. They apply instead of `data`.
+	//
+	// Examples: [{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	Rules []PermissionRuleReadSchema `json:"rules"`
+}
 
 // BodyConsentAgentCreate Examples: {"agent_name":"invoice-reconciler","consent_token":"dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk","create_state":"eyJfcHVycG9zZSI6ICJleGFtcGxlIn0=.5d41402abc4b2a76b9719d911017c592"}
 type BodyConsentAgentCreate struct {
@@ -2675,11 +2824,11 @@ type ConnectRequestBody struct {
 
 // ConnectSessionListResponse Cursor-paginated envelope of connect-session summaries.
 //
-// Examples: {"data":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","connected_as":"octocat","created_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","error_code":"access_denied","reason":"Needs read access to triage issues in the platform repo.","requested_by_actor_id":"agnt_6968b3984d1c238dbe7e2e29","session_id":"cs_6968b3983b8b91c75627bee5","state":"connected","vendor_display_name":"GitHub","vendor_key":"github"}],"has_more":true,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
+// Examples: {"data":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","connected_as":"octocat","created_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","error_code":"access_denied","intent":"create","reason":"Needs read access to triage issues in the platform repo.","requested_by_actor_id":"agnt_6968b3984d1c238dbe7e2e29","session_id":"cs_6968b3983b8b91c75627bee5","state":"connected","vendor_display_name":"GitHub","vendor_key":"github"}],"has_more":true,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
 type ConnectSessionListResponse struct {
 	// Data The page of connect sessions.
 	//
-	// Examples: [{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","connected_as":"octocat","created_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","error_code":"access_denied","reason":"Needs read access to triage issues in the platform repo.","requested_by_actor_id":"agnt_6968b3984d1c238dbe7e2e29","session_id":"cs_6968b3983b8b91c75627bee5","state":"connected","vendor_display_name":"GitHub","vendor_key":"github"}]
+	// Examples: [{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","connected_as":"octocat","created_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","error_code":"access_denied","intent":"create","reason":"Needs read access to triage issues in the platform repo.","requested_by_actor_id":"agnt_6968b3984d1c238dbe7e2e29","session_id":"cs_6968b3983b8b91c75627bee5","state":"connected","vendor_display_name":"GitHub","vendor_key":"github"}]
 	Data []ConnectSessionSummaryResponse `json:"data"`
 
 	// HasMore Whether more results exist after this page.
@@ -2695,7 +2844,7 @@ type ConnectSessionListResponse struct {
 
 // ConnectSessionSummaryResponse Slim list row for the console — deliberately excludes “poll_token“.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","connected_as":"octocat","created_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","error_code":"access_denied","reason":"Needs read access to triage issues in the platform repo.","requested_by_actor_id":"agnt_6968b3984d1c238dbe7e2e29","session_id":"cs_6968b3983b8b91c75627bee5","state":"connected","vendor_display_name":"GitHub","vendor_key":"github"}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","connected_as":"octocat","created_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","error_code":"access_denied","intent":"create","reason":"Needs read access to triage issues in the platform repo.","requested_by_actor_id":"agnt_6968b3984d1c238dbe7e2e29","session_id":"cs_6968b3983b8b91c75627bee5","state":"connected","vendor_display_name":"GitHub","vendor_key":"github"}
 type ConnectSessionSummaryResponse struct {
 	// AgentId ID of the agent the credential is bound to on confirm; null when unbound.
 	//
@@ -2712,7 +2861,7 @@ type ConnectSessionSummaryResponse struct {
 	// Examples: 2026-01-15T09:30:00Z
 	CreatedAt time.Time `json:"created_at"`
 
-	// CredentialId ID of the session's credential (pending until the session connects).
+	// CredentialId ID of the session's credential: pending until a create session connects; an edit session's is the live credential it changes.
 	//
 	// Examples: cred_6968b39855d91a3561684b32
 	CredentialId string `json:"credential_id"`
@@ -2721,6 +2870,11 @@ type ConnectSessionSummaryResponse struct {
 	//
 	// Examples: access_denied
 	ErrorCode *string `json:"error_code,omitempty"`
+
+	// Intent `create` connects a new credential; `edit` changes an existing binding.
+	//
+	// Examples: create
+	Intent *ConnectSessionSummaryResponseIntent `json:"intent,omitempty"`
 
 	// Reason Free-text reason given when the session was started.
 	//
@@ -2752,6 +2906,11 @@ type ConnectSessionSummaryResponse struct {
 	// Examples: github
 	VendorKey string `json:"vendor_key"`
 }
+
+// ConnectSessionSummaryResponseIntent `create` connects a new credential; `edit` changes an existing binding.
+//
+// Examples: create
+type ConnectSessionSummaryResponseIntent string
 
 // ConnectSessionSummaryResponseState Current lifecycle state of the session.
 //
@@ -3252,6 +3411,147 @@ type DeviceAuthorizationRegistrationCreateRequest struct {
 // Examples: device_authorization
 type DeviceAuthorizationRegistrationCreateRequestFlowKind string
 
+// EditConfirmSessionRequest Approve an edit session's change with the final rules the reviewer chose.
+//
+// Examples: {"confirmed_scopes":["gmail.readonly","gmail.send"],"kind":"edit","permission_rules":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"resolve_conflicts":false,"resume":false,"revision_id":"csr_6968b3983b8b91c75627bee6"}
+type EditConfirmSessionRequest struct {
+	// ConfirmedScopes The final scope set (at most 100). Scopes beyond the credential's grant start a vendor consent; the rules and scopes land together when it completes. Omit to keep the grant as it is.
+	//
+	// Examples: ["gmail.readonly","gmail.send"]
+	ConfirmedScopes *[]string `json:"confirmed_scopes,omitempty"`
+
+	// Kind Confirm variant; always `edit`.
+	//
+	// Examples: edit
+	Kind EditConfirmSessionRequestKind `json:"kind"`
+
+	// PermissionRules The final rule list to apply, in order (at most 100). Replaces the binding's own rules, or its shared rule set's rules while one is attached.
+	//
+	// Examples: [{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
+
+	// ResolveConflicts Approve a revision that lists `conflicts`: the reviewer's `permission_rules` settle them. Without it, such a confirm is 409 edit_conflicted.
+	//
+	// Examples: false
+	ResolveConflicts *bool `json:"resolve_conflicts,omitempty"`
+
+	// Resume Switch the binding back on if it is suspended.
+	//
+	// Examples: false
+	Resume *bool `json:"resume,omitempty"`
+
+	// RevisionId The revision the reviewer saw (`edit.revision.id`); a newer one is 409 revision_changed.
+	//
+	// Examples: csr_6968b3983b8b91c75627bee6
+	RevisionId string `json:"revision_id"`
+}
+
+// EditConfirmSessionRequestKind Confirm variant; always `edit`.
+//
+// Examples: edit
+type EditConfirmSessionRequestKind string
+
+// EditConnectionRequest Ask to change an existing credential binding; a human approves the change.
+//
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","apply":true,"credential_id":"cred_6968b39855d91a3561684b32","reason":"Needs to send replies, not just read","rules":{"add":[{"before":"apr_6968b3987c22b63e87e79f06","rule":{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}}],"remove":["apr_6968b3987c22b63e87e79f06"],"set":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]},"scopes":{"add":["gmail.send"],"comments":{"gmail.send":"To send the replies I draft"},"remove":["gmail.modify"],"set":["gmail.readonly","gmail.send"]}}
+type EditConnectionRequest struct {
+	// AgentId The binding's agent. Required for humans; agent callers must omit it.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
+	AgentId *string `json:"agent_id,omitempty"`
+
+	// Apply A human approving their own change as they make it: it is written at once, with no review. A change that adds scopes starts the vendor consent instead (`challenge`). Agent callers are 403.
+	//
+	// Examples: true
+	Apply *bool `json:"apply,omitempty"`
+
+	// CredentialId The binding's credential; it must already be bound to the agent.
+	//
+	// Examples: cred_6968b39855d91a3561684b32
+	CredentialId string `json:"credential_id"`
+
+	// Reason Why the change is needed, shown to the reviewer.
+	//
+	// Examples: Needs to send replies, not just read
+	Reason *string `json:"reason,omitempty"`
+
+	// Resume Switch a suspended binding back on; a no-op if it is already active.
+	Resume *bool `json:"resume,omitempty"`
+
+	// Rules The rule change. While the binding points at a shared rule set, it changes that set's rules.
+	//
+	// Examples: {"add":[{"before":"apr_6968b3987c22b63e87e79f06","rule":{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}}],"remove":["apr_6968b3987c22b63e87e79f06"],"set":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+	Rules *EditRulesRequest `json:"rules,omitempty"`
+
+	// Scopes The scope change. OAuth credentials connected through an authorization-code or device-authorization app only; others are 422 scopes_not_supported.
+	//
+	// Examples: {"add":["gmail.send"],"comments":{"gmail.send":"To send the replies I draft"},"remove":["gmail.modify"],"set":["gmail.readonly","gmail.send"]}
+	Scopes *EditScopesRequest `json:"scopes,omitempty"`
+}
+
+// EditRuleAdd One rule to add to the binding.
+//
+// Examples: {"before":"apr_6968b3987c22b63e87e79f06","rule":{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}}
+type EditRuleAdd struct {
+	// Before ID of the rule to insert this one before (first match wins); appended when omitted.
+	//
+	// Examples: apr_6968b3987c22b63e87e79f06
+	Before *string `json:"before,omitempty"`
+
+	// Rule The rule to add.
+	//
+	// Examples: {"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}
+	Rule PermissionRuleSchema `json:"rule"`
+}
+
+// EditRulesRequest A change to the binding's rules: `add`/`remove`, or the full list in `set`.
+//
+// Examples: {"add":[{"before":"apr_6968b3987c22b63e87e79f06","rule":{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}}],"remove":["apr_6968b3987c22b63e87e79f06"],"set":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+type EditRulesRequest struct {
+	// Add Rules to add (at most 100).
+	//
+	// Examples: [{"before":"apr_6968b3987c22b63e87e79f06","rule":{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}}]
+	Add *[]EditRuleAdd `json:"add,omitempty"`
+
+	// Remove IDs of rules to remove (at most 100).
+	//
+	// Examples: ["apr_6968b3987c22b63e87e79f06"]
+	Remove *[]string `json:"remove,omitempty"`
+
+	// Set The full rule list to replace the current one with, in order (at most 100). Not combined with add or remove.
+	//
+	// Examples: [{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	Set *[]PermissionRuleSchema `json:"set,omitempty"`
+}
+
+// EditScopesRequest A change to the binding's OAuth credential scopes: `add`/`remove`, or the full list in `set`.
+//
+// Confirming a change runs a vendor sign-in for exactly the resulting scopes;
+// other agents bound to the credential get the change too.
+//
+// Examples: {"add":["gmail.send"],"comments":{"gmail.send":"To send the replies I draft"},"remove":["gmail.modify"],"set":["gmail.readonly","gmail.send"]}
+type EditScopesRequest struct {
+	// Add Scopes to add (at most 100).
+	//
+	// Examples: ["gmail.send"]
+	Add *[]string `json:"add,omitempty"`
+
+	// Comments Why each scope is asked for (added or removed), by scope name. Shown to the reviewer.
+	//
+	// Examples: {"gmail.send":"To send the replies I draft"}
+	Comments *map[string]string `json:"comments,omitempty"`
+
+	// Remove Scopes to remove (at most 100).
+	//
+	// Examples: ["gmail.modify"]
+	Remove *[]string `json:"remove,omitempty"`
+
+	// Set The full scope list to replace the grant's with. Not combined with add or remove.
+	//
+	// Examples: ["gmail.readonly","gmail.send"]
+	Set *[]string `json:"set,omitempty"`
+}
+
 // EffectivePermission A single effective permission with provenance.
 //
 // Examples: {"implied_by":"users:write","name":"users:read"}
@@ -3577,9 +3877,12 @@ type ExecutionStatsResponse struct {
 	TotalExecutions int `json:"total_executions"`
 }
 
-// ExistingCredentialConfirmSessionRequest Bind a credential the approver already holds (OAuth only if its grant covers the ask).
+// ExistingCredentialConfirmSessionRequest Bind a credential the approver already holds.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"existing_credential","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+// When its OAuth grant lacks scopes the session asks for, the response is
+// the vendor challenge for them and the bind lands with the grant.
+//
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"existing_credential","permission_rules":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"revision_id":"csr_6968b3983b8b91c75627bee6"}
 type ExistingCredentialConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
 	//
@@ -3608,8 +3911,13 @@ type ExistingCredentialConfirmSessionRequest struct {
 
 	// PermissionRules Permission rules to bind for the agent (at most 100).
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
+
+	// RevisionId The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.
+	//
+	// Examples: csr_6968b3983b8b91c75627bee6
+	RevisionId *string `json:"revision_id,omitempty"`
 }
 
 // ExistingCredentialConfirmSessionRequestKind Confirm variant; always `existing_credential`.
@@ -4043,7 +4351,7 @@ type InstanceIdentityResponseBackend string
 
 // IntegrationsConnectRequest Start connecting a credential for a vendor or a registry API.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","api":{"name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"auth_type":"oauth2","name":"GitHub (work)","oauth_app_registration_id":"oar_6968b39821e5f89a6975f501","preferred_flow":"authorization_code","reason":"Needs read access to triage issues in the platform repo.","requested_permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"requested_scopes":["repo","read:user"],"vendor":"github"}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","api":{"name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"auth_type":"oauth2","name":"GitHub (work)","oauth_app_registration_id":"oar_6968b39821e5f89a6975f501","preferred_flow":"authorization_code","reason":"Needs read access to triage issues in the platform repo.","requested_permission_rules":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"requested_scopes":["repo","read:user"],"vendor":"github"}
 type IntegrationsConnectRequest struct {
 	// AgentId ID of the agent to bind the credential to on confirm; it must be an active agent the caller owns and may approve for (`agents:write`), or any agent for `org:admin`. Agent callers must omit it, and when omitted by a user the credential connects unbound.
 	//
@@ -4082,7 +4390,7 @@ type IntegrationsConnectRequest struct {
 
 	// RequestedPermissionRules Permission rules proposed for the agent, shown pre-filled on the review page; nothing is bound until confirm.
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	RequestedPermissionRules *[]PermissionRuleSchema `json:"requested_permission_rules,omitempty"`
 
 	// RequestedScopes Upstream scopes to request (at most 100).
@@ -5405,7 +5713,7 @@ type OAuthClientUpdateRequest struct {
 //
 // The default variant — a body without “kind“ is this one.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","confirmed_scopes":["repo","read:user"],"digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"oauth","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","confirmed_scopes":["repo","read:user"],"digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"oauth","permission_rules":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"revision_id":"csr_6968b3983b8b91c75627bee6"}
 type OAuthConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
 	//
@@ -5434,8 +5742,13 @@ type OAuthConfirmSessionRequest struct {
 
 	// PermissionRules Permission rules to bind for the agent (at most 100).
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules *[]PermissionRuleSchema `json:"permission_rules,omitempty"`
+
+	// RevisionId The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.
+	//
+	// Examples: csr_6968b3983b8b91c75627bee6
+	RevisionId *string `json:"revision_id,omitempty"`
 }
 
 // OAuthConfirmSessionRequestKind Confirm variant; `oauth` (the default when omitted).
@@ -6026,7 +6339,7 @@ type OverlayUpdateRequest struct {
 // the spec may be agent-submitted and the token endpoint receives the
 // client secret.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","authorize_url":"https://github.com/login/oauth/authorize","client_id":"Iv1.a1b2c3d4","client_secret":"example-secret","confirmed_scopes":["repo","read:user"],"digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"own_oauth_client","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"token_url":"https://github.com/login/oauth/access_token"}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","authorize_url":"https://github.com/login/oauth/authorize","client_id":"Iv1.a1b2c3d4","client_secret":"example-secret","confirmed_scopes":["repo","read:user"],"digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"own_oauth_client","permission_rules":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"revision_id":"csr_6968b3983b8b91c75627bee6","token_url":"https://github.com/login/oauth/access_token"}
 type OwnOAuthClientConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
 	//
@@ -6070,8 +6383,13 @@ type OwnOAuthClientConfirmSessionRequest struct {
 
 	// PermissionRules Permission rules to bind for the agent (at most 100).
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
+
+	// RevisionId The revision the approver reviewed (`revision.id`); required. Missing is 422 revision_required, a newer one 409 revision_changed.
+	//
+	// Examples: csr_6968b3983b8b91c75627bee6
+	RevisionId *string `json:"revision_id,omitempty"`
 
 	// TokenUrl Token endpoint URL of the OAuth app.
 	//
@@ -6121,17 +6439,17 @@ type PermissionResponse struct {
 
 // PermissionRuleListResponse List of permission rules.
 //
-// Examples: {"data":[{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+// Examples: {"data":[{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
 type PermissionRuleListResponse struct {
 	// Data The binding's permission rules, in evaluation order.
 	//
-	// Examples: [{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	Data []PermissionRuleReadSchema `json:"data"`
 }
 
 // PermissionRuleReadSchema Permission rule response (includes system fields).
 //
-// Examples: {"_comment":"Read-only access to charges.","_system":false,"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}
+// Examples: {"_comment":"Read-only access to charges.","_system":false,"effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}
 type PermissionRuleReadSchema struct {
 	// UnderscoreComment Optional note attached to the rule.
 	//
@@ -6147,6 +6465,11 @@ type PermissionRuleReadSchema struct {
 	//
 	// Examples: allow
 	Effect PermissionRuleReadSchemaEffect `json:"effect"`
+
+	// Id ID of the rule (`apr_…` on a binding, `prr_…` in a rule set), so a connect-session edit can name it in `remove` or `before`.
+	//
+	// Examples: apr_6968b3987c22b63e87e79f06
+	Id *string `json:"id,omitempty"`
 
 	// MatchMode How `path` is interpreted: `regex` (full-match), `prefix` or `exact`.
 	//
@@ -6185,8 +6508,13 @@ type PermissionRuleReadSchemaMatchMode string
 // denied (default-deny). A binding with zero rules therefore blocks all
 // operations — users must explicitly add at least one allow rule.
 //
-// Examples: {"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}
+// Examples: {"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}
 type PermissionRuleSchema struct {
+	// Comment Why the rule is there, in words. Shown wherever the rule is listed.
+	//
+	// Examples: Lets the agent draft replies, never send them.
+	Comment *string `json:"comment,omitempty"`
+
 	// Effect Whether this rule allows the matched request, denies it, or holds it for human approval before the broker executes it.
 	//
 	// Examples: allow
@@ -6295,11 +6623,11 @@ type Permissions struct {
 
 // PermissionsPatchRequest Patch permission rules — add and/or remove.
 //
-// Examples: {"add":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"remove":[0,2]}
+// Examples: {"add":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"remove":[0,2]}
 type PermissionsPatchRequest struct {
 	// Add Rules to append after the existing user rules.
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	Add *[]PermissionRuleSchema `json:"add,omitempty"`
 
 	// Remove Zero-based indexes of user rules (excluding system rules) to delete; applied before `add`.
@@ -6536,48 +6864,6 @@ type ProviderDiscoveryResponse struct {
 	Providers []ProviderDiscoveryEntryResponse `json:"providers"`
 }
 
-// ReauthorizeConfirmSessionRequest Bind the approver's OAuth credential and re-consent it with the requested scopes.
-//
-// Refused when another agent is bound to the credential.
-//
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"reauthorize","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
-type ReauthorizeConfirmSessionRequest struct {
-	// AgentId Agent to bind when the session has none; ignored if the session already has one.
-	//
-	// Examples: agnt_6968b3984d1c238dbe7e2e29
-	AgentId *string `json:"agent_id,omitempty"`
-
-	// CredentialId ID of the approver's OAuth credential to bind and re-consent.
-	//
-	// Examples: cred_6968b39855d91a3561684b32
-	CredentialId string `json:"credential_id"`
-
-	// Digest Review digest echoed from the review data; a mismatch is 409 review_stale.
-	//
-	// Examples: 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
-	Digest string `json:"digest"`
-
-	// ExpectedAgentId Agent ID from the review the approver saw; a mismatch is 409 review_stale.
-	//
-	// Examples: agnt_6968b3984d1c238dbe7e2e29
-	ExpectedAgentId *string `json:"expected_agent_id,omitempty"`
-
-	// Kind Confirm variant; always `reauthorize`.
-	//
-	// Examples: reauthorize
-	Kind ReauthorizeConfirmSessionRequestKind `json:"kind"`
-
-	// PermissionRules Permission rules to bind for the agent (at most 100).
-	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
-	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
-}
-
-// ReauthorizeConfirmSessionRequestKind Confirm variant; always `reauthorize`.
-//
-// Examples: reauthorize
-type ReauthorizeConfirmSessionRequestKind string
-
 // RedeemInviteRequest Payload for redeeming an invite token.
 //
 // Examples: {"invite_token":"dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk","password":"example-password"}
@@ -6758,7 +7044,7 @@ type RuleSetAttachRequest struct {
 
 // RuleSetCreateRequest Create a shared permission rule set (theme 5 phase 1, Q-04).
 //
-// Examples: {"description":"Allows GET requests to the Stripe API; denies everything else.","name":"Stripe read-only","rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+// Examples: {"description":"Allows GET requests to the Stripe API; denies everything else.","name":"Stripe read-only","rules":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
 type RuleSetCreateRequest struct {
 	// Description Optional free-text description of the set.
 	//
@@ -6772,7 +7058,7 @@ type RuleSetCreateRequest struct {
 
 	// Rules Initial ordered rule list (first-match-wins, default-deny).
 	//
-	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	Rules *[]PermissionRuleSchema `json:"rules,omitempty"`
 }
 
@@ -6798,7 +7084,7 @@ type RuleSetListResponse struct {
 
 // RuleSetResponse Rule set detail — the ordered rules plus its referencing-binding count.
 //
-// Examples: {"binding_count":3,"created_at":"2026-01-15T09:30:00Z","created_by":"usr_6968b3987ee4c3ec0b4ee3b9","curated":true,"description":"Allows GET requests to the Stripe API; denies everything else.","name":"Stripe read-only","rule_set_id":"prs_6968b3987c22b63e87e79f05","rules":[{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+// Examples: {"binding_count":3,"created_at":"2026-01-15T09:30:00Z","created_by":"usr_6968b3987ee4c3ec0b4ee3b9","curated":true,"description":"Allows GET requests to the Stripe API; denies everything else.","name":"Stripe read-only","rule_set_id":"prs_6968b3987c22b63e87e79f05","rules":[{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
 type RuleSetResponse struct {
 	// BindingCount How many agent-credential bindings currently point at this set.
 	//
@@ -6837,7 +7123,7 @@ type RuleSetResponse struct {
 
 	// Rules Ordered rule list (first-match-wins, default-deny).
 	//
-	// Examples: [{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	Rules []PermissionRuleReadSchema `json:"rules"`
 }
 
@@ -6910,6 +7196,31 @@ type RuntimeConfig struct {
 	// Examples: {"locale":"en-GB"}
 	QueryParams *map[string]string `json:"query_params,omitempty"`
 }
+
+// ScopeOptionSchema One scope the credential's vendor offers, which an edit can add or remove.
+//
+// Examples: {"classification":"write","description":"Send email as the user.","name":"gmail.send"}
+type ScopeOptionSchema struct {
+	// Classification What the scope lets a holder do.
+	//
+	// Examples: write
+	Classification ScopeOptionSchemaClassification `json:"classification"`
+
+	// Description What the scope grants, in words.
+	//
+	// Examples: Send email as the user.
+	Description string `json:"description"`
+
+	// Name The scope as the vendor names it.
+	//
+	// Examples: gmail.send
+	Name string `json:"name"`
+}
+
+// ScopeOptionSchemaClassification What the scope lets a holder do.
+//
+// Examples: write
+type ScopeOptionSchemaClassification string
 
 // SearchLinksResponse Hypermedia links for a search result row.
 //
@@ -7779,7 +8090,7 @@ type ListAgentOauthGrantsParamsStatus string
 
 // ListApisParams defines parameters for ListApis.
 type ListApisParams struct {
-	// Vendor Only return APIs from this vendor.
+	// Vendor Only return APIs from this vendor. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
 	Vendor *string `form:"vendor,omitempty" json:"vendor,omitempty"`
 
 	// Cursor Opaque cursor from a previous page's `next_cursor`; omit for the first page.
@@ -7932,6 +8243,12 @@ type ListConnectSessionsParamsState string
 
 // GetConnectSessionParams defines parameters for GetConnectSession.
 type GetConnectSessionParams struct {
+	// PollToken Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
+	PollToken *string `form:"poll_token,omitempty" json:"poll_token,omitempty"`
+}
+
+// ListConnectSessionRevisionsParams defines parameters for ListConnectSessionRevisions.
+type ListConnectSessionRevisionsParams struct {
 	// PollToken Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
 	PollToken *string `form:"poll_token,omitempty" json:"poll_token,omitempty"`
 }
@@ -8127,6 +8444,12 @@ type InspectOperationParams struct {
 
 // InspectOperationParamsDetail defines parameters for InspectOperation.
 type InspectOperationParamsDetail string
+
+// IntegrationsConnectOptionsParams defines parameters for IntegrationsConnectOptions.
+type IntegrationsConnectOptionsParams struct {
+	// RegistrationId Pin a shared OAuth app, as `oauth_app_registration_id` on `:connect`.
+	RegistrationId *string `form:"registration_id,omitempty" json:"registration_id,omitempty"`
+}
 
 // ListJobsParams defines parameters for ListJobs.
 type ListJobsParams struct {
@@ -8378,6 +8701,9 @@ type LoginJSONRequestBody = LoginRequest
 // SnoozeCatalogEntryJSONRequestBody defines body for SnoozeCatalogEntry for application/json ContentType.
 type SnoozeCatalogEntryJSONRequestBody = SnoozeCatalogEntryJSONBody
 
+// AmendConnectSessionJSONRequestBody defines body for AmendConnectSession for application/json ContentType.
+type AmendConnectSessionJSONRequestBody = AmendSessionRequest
+
 // ConfirmConnectSessionJSONRequestBody defines body for ConfirmConnectSession for application/json ContentType.
 type ConfirmConnectSessionJSONRequestBody ConfirmConnectSessionJSONBody
 
@@ -8407,6 +8733,9 @@ type DecideHeldExecutionJSONRequestBody = DecideHeldExecutionRequest
 
 // IntegrationsConnectJSONRequestBody defines body for IntegrationsConnect for application/json ContentType.
 type IntegrationsConnectJSONRequestBody = IntegrationsConnectRequest
+
+// IntegrationsEditConnectionJSONRequestBody defines body for IntegrationsEditConnection for application/json ContentType.
+type IntegrationsEditConnectionJSONRequestBody = EditConnectionRequest
 
 // ReportMcpConfigRegistrationJSONRequestBody defines body for ReportMcpConfigRegistration for application/json ContentType.
 type ReportMcpConfigRegistrationJSONRequestBody = McpConfigRegistrationRequest
@@ -8791,31 +9120,31 @@ func (t *ConfirmConnectSessionJSONBody) MergeExistingCredentialConfirmSessionReq
 	return err
 }
 
-// AsReauthorizeConfirmSessionRequest returns the union data inside the ConfirmConnectSessionJSONBody as a ReauthorizeConfirmSessionRequest
-func (t ConfirmConnectSessionJSONBody) AsReauthorizeConfirmSessionRequest() (ReauthorizeConfirmSessionRequest, error) {
-	var body ReauthorizeConfirmSessionRequest
+// AsEditConfirmSessionRequest returns the union data inside the ConfirmConnectSessionJSONBody as a EditConfirmSessionRequest
+func (t ConfirmConnectSessionJSONBody) AsEditConfirmSessionRequest() (EditConfirmSessionRequest, error) {
+	var body EditConfirmSessionRequest
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromReauthorizeConfirmSessionRequest overwrites any union data inside the ConfirmConnectSessionJSONBody as the provided ReauthorizeConfirmSessionRequest
-func (t *ConfirmConnectSessionJSONBody) FromReauthorizeConfirmSessionRequest(v ReauthorizeConfirmSessionRequest) error {
+// FromEditConfirmSessionRequest overwrites any union data inside the ConfirmConnectSessionJSONBody as the provided EditConfirmSessionRequest
+func (t *ConfirmConnectSessionJSONBody) FromEditConfirmSessionRequest(v EditConfirmSessionRequest) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
-	b, err = runtime.JSONMerge(b, []byte(`{"kind":"reauthorize"}`))
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"edit"}`))
 	t.union = b
 	return err
 }
 
-// MergeReauthorizeConfirmSessionRequest performs a merge with any union data inside the ConfirmConnectSessionJSONBody, using the provided ReauthorizeConfirmSessionRequest
-func (t *ConfirmConnectSessionJSONBody) MergeReauthorizeConfirmSessionRequest(v ReauthorizeConfirmSessionRequest) error {
+// MergeEditConfirmSessionRequest performs a merge with any union data inside the ConfirmConnectSessionJSONBody, using the provided EditConfirmSessionRequest
+func (t *ConfirmConnectSessionJSONBody) MergeEditConfirmSessionRequest(v EditConfirmSessionRequest) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
-	b, err = runtime.JSONMerge(b, []byte(`{"kind":"reauthorize"}`))
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"edit"}`))
 	if err != nil {
 		return err
 	}
@@ -8845,14 +9174,14 @@ func (t ConfirmConnectSessionJSONBody) ValueByDiscriminator() (interface{}, erro
 		return t.AsBasicConfirmSessionRequest()
 	case "bearer":
 		return t.AsBearerConfirmSessionRequest()
+	case "edit":
+		return t.AsEditConfirmSessionRequest()
 	case "existing_credential":
 		return t.AsExistingCredentialConfirmSessionRequest()
 	case "oauth":
 		return t.AsOAuthConfirmSessionRequest()
 	case "own_oauth_client":
 		return t.AsOwnOAuthClientConfirmSessionRequest()
-	case "reauthorize":
-		return t.AsReauthorizeConfirmSessionRequest()
 	default:
 		return nil, errors.New("unknown discriminator value: " + discriminator)
 	}
@@ -9941,8 +10270,9 @@ type ClientInterface interface {
 	//
 	// Returns the agent's name, description, owner, `status`, approval or
 	// denial details, and whether it currently has an API key (`has_api_key`).
-	// Readable by the agent itself, its owner, and `org:admin`; an agent outside
-	// the caller's visibility answers 404.
+	// Readable by the agent itself, its owner, `org:admin`, and a caller holding
+	// `agents:read` (implied by `agents:write`); an agent outside the caller's
+	// visibility answers 404.
 	//
 	// Corresponds with GET /agents/{agent_id} (the `GetAgent` operationId).
 	GetAgent(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -10015,9 +10345,10 @@ type ClientInterface interface {
 	//
 	// Each binding names the credential, the API it serves, when it was bound,
 	// whether it is `suspended` (and why), and any attached permission
-	// `rule_set_id`. Credential secrets are never returned. Readable by the
-	// agent itself, its owner, and `org:admin` (404 otherwise). The list is not
-	// paginated.
+	// `rule_set_id`. Credential secrets are never returned. Readable like
+	// `GET /agents/{agent_id}`: by the agent itself, its owner, `org:admin`, and a
+	// caller holding `agents:read` (implied by `agents:write`); 404 otherwise.
+	// The list is not paginated.
 	//
 	// Corresponds with GET /agents/{agent_id}/credentials (the `ListAgentCredentials` operationId).
 	ListAgentCredentials(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -10282,6 +10613,11 @@ type ClientInterface interface {
 	//
 	// Import OpenAPI/Arazzo content as new API revisions (async).
 	//
+	// The whole request body is capped at `ingest.max_import_request_bytes`
+	// (twice `ingest.max_spec_bytes` unless configured) and each inline source's
+	// content at `ingest.max_spec_bytes` (UTF-8 bytes); over either limit the
+	// request is refused with 413 before any job is queued.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /apis (the `ImportApis` operationId).
@@ -10290,6 +10626,11 @@ type ClientInterface interface {
 	// ImportApis Import Apis
 	//
 	// Import OpenAPI/Arazzo content as new API revisions (async).
+	//
+	// The whole request body is capped at `ingest.max_import_request_bytes`
+	// (twice `ingest.max_spec_bytes` unless configured) and each inline source's
+	// content at `ingest.max_spec_bytes` (UTF-8 bytes); over either limit the
+	// request is refused with 413 before any job is queued.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -10785,6 +11126,17 @@ type ClientInterface interface {
 	// Corresponds with GET /connect-sessions/{session_id} (the `GetConnectSession` operationId).
 	GetConnectSession(ctx context.Context, sessionId string, params *GetConnectSessionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListConnectSessionRevisions List a connect session's revisions
+	//
+	// Every version of what the session asks for, oldest first.
+	//
+	// The review shows the current revision against today's access; this is the
+	// history behind it, one entry per ask and amend. Gated like the review
+	// read.
+	//
+	// Corresponds with GET /connect-sessions/{session_id}/revisions (the `ListConnectSessionRevisions` operationId).
+	ListConnectSessionRevisions(ctx context.Context, sessionId string, params *ListConnectSessionRevisionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// PollConnectSessionStatus Poll a connect session's status
 	//
 	// Poll the lifecycle status of a connect session.
@@ -10805,12 +11157,51 @@ type ClientInterface interface {
 	// Corresponds with GET /connect-sessions/{session_id}/status (the `PollConnectSessionStatus` operationId).
 	PollConnectSessionStatus(ctx context.Context, sessionId string, params *PollConnectSessionStatusParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// AmendConnectSessionWithBody Amend an open connect session's request
+	//
+	// Change what an open session asks for; the reviewer sees the new revision.
+	//
+	// The session's initiator, or a human who may confirm it (a reviewer
+	// editing the request; the revision records who made it), while it is open
+	// (not yet confirmed or ended); a closed session is 409 `session_closed`.
+	// The fields sent replace those parts of the ask and the rest stay. Edit sessions take `rules` and
+	// `resume`, relative to the binding as it was when the edit opened; create
+	// sessions take `requested_permission_rules` and `requested_scopes`, which
+	// replace the ask outright; both take `reason`. The session id, approval
+	// URL and poll token stay the same, and any confirm must name the new
+	// `revision_id`.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /connect-sessions/{session_id}:amend (the `AmendConnectSession` operationId).
+	AmendConnectSessionWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AmendConnectSession Amend an open connect session's request
+	//
+	// Change what an open session asks for; the reviewer sees the new revision.
+	//
+	// The session's initiator, or a human who may confirm it (a reviewer
+	// editing the request; the revision records who made it), while it is open
+	// (not yet confirmed or ended); a closed session is 409 `session_closed`.
+	// The fields sent replace those parts of the ask and the rest stay. Edit sessions take `rules` and
+	// `resume`, relative to the binding as it was when the edit opened; create
+	// sessions take `requested_permission_rules` and `requested_scopes`, which
+	// replace the ask outright; both take `reason`. The session id, approval
+	// URL and poll token stay the same, and any confirm must name the new
+	// `revision_id`.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /connect-sessions/{session_id}:amend (the `AmendConnectSession` operationId).
+	AmendConnectSession(ctx context.Context, sessionId string, body AmendConnectSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// CancelConnectSession Cancel an in-flight connect session
 	//
 	// Terminate a still-active session at the user's request.
 	//
 	// Gated like ``/status`` — the ``poll_token`` the SPA already holds, or
-	// the target agent's owner / ``org:admin`` without it.
+	// the target agent's owner / ``org:admin`` without it. The audit entry
+	// for the cancel names the caller, with the session's initiator alongside.
 	//
 	// A still-existing but already-terminal session is a 204 no-op — a
 	// "Cancel" click racing the poll scanner doesn't error. A session
@@ -10832,14 +11223,18 @@ type ClientInterface interface {
 	// variant): OAuth scopes, a secret for a ``manual_*`` session
 	// (``api_key`` / ``bearer`` / ``basic``), the approver's own OAuth client
 	// for an ``awaiting_app`` session, or a credential the approver already
-	// holds (``existing_credential``, ``reauthorize``). Secrets are write-only:
+	// holds (``existing_credential``), or an edit session's
+	// final rules (``edit``, naming the reviewed ``revision_id``). Secrets are write-only:
 	// they never appear in a response, audit entry or log.
 	//
 	// Shares the ``:connect`` per-actor rate bucket — this is the endpoint
 	// that actually fires the vendor's device-authorization call, and a
 	// failed ``begin`` leaves the session retryable, so it must not be
 	// free to hammer during a vendor incident. Gated like the review read
-	// (``poll_token`` or owner / ``org:admin``; 403 otherwise).
+	// (``poll_token`` or owner / ``org:admin``; 403 otherwise). An agent
+	// whose binding to a credential covering the session's API is suspended
+	// (including one picked at confirm) is refused with 409
+	// ``connect_session_binding_suspended``.
 	//
 	// A response carrying an ``authorize_url`` also sets a short-lived
 	// ``HttpOnly`` cookie scoped to the OAuth callback path: the vendor
@@ -10859,14 +11254,18 @@ type ClientInterface interface {
 	// variant): OAuth scopes, a secret for a ``manual_*`` session
 	// (``api_key`` / ``bearer`` / ``basic``), the approver's own OAuth client
 	// for an ``awaiting_app`` session, or a credential the approver already
-	// holds (``existing_credential``, ``reauthorize``). Secrets are write-only:
+	// holds (``existing_credential``), or an edit session's
+	// final rules (``edit``, naming the reviewed ``revision_id``). Secrets are write-only:
 	// they never appear in a response, audit entry or log.
 	//
 	// Shares the ``:connect`` per-actor rate bucket — this is the endpoint
 	// that actually fires the vendor's device-authorization call, and a
 	// failed ``begin`` leaves the session retryable, so it must not be
 	// free to hammer during a vendor incident. Gated like the review read
-	// (``poll_token`` or owner / ``org:admin``; 403 otherwise).
+	// (``poll_token`` or owner / ``org:admin``; 403 otherwise). An agent
+	// whose binding to a credential covering the session's API is suspended
+	// (including one picked at confirm) is refused with 409
+	// ``connect_session_binding_suspended``.
 	//
 	// A response carrying an ``authorize_url`` also sets a short-lived
 	// ``HttpOnly`` cookie scoped to the OAuth callback path: the vendor
@@ -10885,9 +11284,9 @@ type ClientInterface interface {
 	// Only the target agent's owner (holding ``credentials:write`` and
 	// ``agents:write``) or ``org:admin``; there is no poll-token path and an
 	// agent can never reject. Everyone else gets the uniform 403. The agent's
-	// ``/status`` then reports ``failed`` with ``error_code: rejected``, and
-	// its repeat ``:connect`` for the same target answers 429
-	// ``recently_rejected`` for the rejection cooldown. Closing the dialog
+	// ``/status`` then reports ``failed`` with ``error_code: rejected``. With a
+	// rejection cooldown set (off by default), its repeat ``:connect`` for the
+	// same target answers 429 ``recently_rejected`` until it lapses. Closing the dialog
 	// without rejecting makes no call; an unmount cancel stays ``cancelled``.
 	//
 	// Corresponds with POST /connect-sessions/{session_id}:reject (the `RejectConnectSession` operationId).
@@ -10973,6 +11372,11 @@ type ClientInterface interface {
 	// ListAgentCredentialPermissions List binding permission rules
 	//
 	// List the ordered PBAC rules for a direct `(agent, credential)` binding.
+	//
+	// Also returns the rest of what the binding grants: the shared rule set it
+	// points at (whose rules apply instead of `data`), the credential's granted
+	// OAuth scopes and the ones an edit can add, and whether the binding is
+	// suspended. The bound agent can read its own binding.
 	//
 	// Corresponds with GET /credentials/{credential_id}/agents/{agent_id}/permissions (the `ListAgentCredentialPermissions` operationId).
 	ListAgentCredentialPermissions(ctx context.Context, credentialId string, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -11138,8 +11542,23 @@ type ClientInterface interface {
 	//
 	// Stream events as Server-Sent Events.
 	//
-	// The stream ends once the caller's credential stops verifying (expired,
-	// revoked, or its user disabled or deleted); reconnecting then returns 401.
+	// The open stream re-verifies the caller at the first poll or page after each
+	// `admin.events.stream_recheck_seconds` interval (default 5 s) elapses. Each
+	// page is scoped by the caller's current permissions, so a narrower
+	// permission set narrows the stream. Permissions are those the credential
+	// carries: API keys and `at_` access tokens resolve them live (an ephemeral
+	// agent `at_` keeps the subset it was minted with). A login session JWT
+	// carries the set it was issued with, but removing any of a user's effective
+	// permissions revokes their login sessions, so a stream opened with one ends
+	// (`refused`) at the next check. The stream keeps re-verifying the token it
+	// was opened with, so a permission added to a user reaches a login-session
+	// stream once the client reconnects with a newer login JWT. The stream ends
+	// with a `stream_closed` frame (`{"type": "stream_closed", "reason": ...}`)
+	// once the credential stops verifying (`refused`: expired, revoked, or its
+	// user or agent disabled or deleted), the caller no longer holds
+	// `events:read` or `org:admin` or must rotate their password (`forbidden`),
+	// or the check or the event store cannot be answered (`unavailable`).
+	// A reconnect is authenticated afresh.
 	//
 	// Corresponds with GET /events/stream (the `StreamEvents` operationId).
 	StreamEvents(ctx context.Context, params *StreamEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -11299,6 +11718,19 @@ type ClientInterface interface {
 	// Corresponds with GET /instance (the `GetInstance` operationId).
 	GetInstance(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// IntegrationsConnectOptions How a connection to an API would be made
+	//
+	// List the API's declared security schemes and how `:connect` would collect each.
+	//
+	// Resolved as `:connect` resolves an API target, so a scope marked
+	// `requestable` is one `requested_scopes` may name: for OAuth, the
+	// connecting app's scope catalog (the spec's other scopes are listed but
+	// not requestable); with no app, the spec's scopes. An API the registry
+	// doesn't hold is 404 `unknown_api`: import it first.
+	//
+	// Corresponds with GET /integrations/{vendor}/{name}/{version}/connect-options (the `IntegrationsConnectOptions` operationId).
+	IntegrationsConnectOptions(ctx context.Context, vendor string, name string, version string, params *IntegrationsConnectOptionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// IntegrationsConnectWithBody Start an integration connect session
 	//
 	// Both entrypoints (agent + UI) use this endpoint.
@@ -11311,7 +11743,10 @@ type ClientInterface interface {
 	// `connect_session_agent_not_found`, the same as an unknown agent. Naming
 	// an owned agent also takes `agents:write`, which confirming for it needs
 	// (403 `connect_session_confirmation_forbidden` otherwise), and an active
-	// agent (409 `connect_session_agent_inactive` otherwise). When
+	// agent (409 `connect_session_agent_inactive` otherwise). An agent whose
+	// binding to a credential covering the requested API is suspended gets
+	// 409 `connect_session_binding_suspended`: only the operator can resume
+	// that binding, so a new connect for the same API is refused. When
 	// named, confirm creates the direct agent-credential binding + permission
 	// rules; when omitted, the credential connects unbound and an agent can
 	// be bound later through the credentials API.
@@ -11333,7 +11768,10 @@ type ClientInterface interface {
 	// `connect_session_agent_not_found`, the same as an unknown agent. Naming
 	// an owned agent also takes `agents:write`, which confirming for it needs
 	// (403 `connect_session_confirmation_forbidden` otherwise), and an active
-	// agent (409 `connect_session_agent_inactive` otherwise). When
+	// agent (409 `connect_session_agent_inactive` otherwise). An agent whose
+	// binding to a credential covering the requested API is suspended gets
+	// 409 `connect_session_binding_suspended`: only the operator can resume
+	// that binding, so a new connect for the same API is refused. When
 	// named, confirm creates the direct agent-credential binding + permission
 	// rules; when omitted, the credential connects unbound and an agent can
 	// be bound later through the credentials API.
@@ -11342,6 +11780,44 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /integrations:connect (the `IntegrationsConnect` operationId).
 	IntegrationsConnect(ctx context.Context, body IntegrationsConnectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// IntegrationsEditConnectionWithBody Ask to change a credential binding
+	//
+	// Open a connect session that edits an existing binding instead of creating one.
+	//
+	// The change (rules to add, remove or replace, and resuming a suspended
+	// binding) is resolved against the binding as it is now, and a human
+	// approves it on the review page; nothing changes until then. An agent
+	// edits its own binding and must omit `agent_id`; a human names the agent
+	// and must be its owner or an org admin. A change that is already in place
+	// is 422 `nothing_to_change`, and a rule id the binding does not hold is 422
+	// `unknown_rule`. A binding can have several open edits, each rebased as
+	// others land; an agent asking again while its own is open is 409
+	// `edit_open` with that session's `session_id`, to amend instead.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /integrations:edit-connection (the `IntegrationsEditConnection` operationId).
+	IntegrationsEditConnectionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// IntegrationsEditConnection Ask to change a credential binding
+	//
+	// Open a connect session that edits an existing binding instead of creating one.
+	//
+	// The change (rules to add, remove or replace, and resuming a suspended
+	// binding) is resolved against the binding as it is now, and a human
+	// approves it on the review page; nothing changes until then. An agent
+	// edits its own binding and must omit `agent_id`; a human names the agent
+	// and must be its owner or an org admin. A change that is already in place
+	// is 422 `nothing_to_change`, and a rule id the binding does not hold is 422
+	// `unknown_rule`. A binding can have several open edits, each rebased as
+	// others land; an agent asking again while its own is open is 409
+	// `edit_open` with that session's `session_id`, to amend instead.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /integrations:edit-connection (the `IntegrationsEditConnection` operationId).
+	IntegrationsEditConnection(ctx context.Context, body IntegrationsEditConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListJobs List Jobs
 	//
@@ -12346,7 +12822,11 @@ type ClientInterface interface {
 	//
 	// Set the assigned permissions for a user.
 	//
-	// A deleted user's permissions cannot be changed (409).
+	// A deleted user's permissions cannot be changed (409). When the new set
+	// removes any of the user's effective permissions, their login sessions
+	// end: every login JWT issued before the change is refused (401), and the
+	// user signs in again for a token with the narrower set. This includes a
+	// caller narrowing their own permissions.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -12357,7 +12837,11 @@ type ClientInterface interface {
 	//
 	// Set the assigned permissions for a user.
 	//
-	// A deleted user's permissions cannot be changed (409).
+	// A deleted user's permissions cannot be changed (409). When the new set
+	// removes any of the user's effective permissions, their login sessions
+	// end: every login JWT issued before the change is refused (401), and the
+	// user signs in again for a token with the narrower set. This includes a
+	// caller narrowing their own permissions.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -13012,8 +13496,9 @@ func (c *Client) ArchiveAgent(ctx context.Context, agentId string, params *Archi
 //
 // Returns the agent's name, description, owner, `status`, approval or
 // denial details, and whether it currently has an API key (`has_api_key`).
-// Readable by the agent itself, its owner, and `org:admin`; an agent outside
-// the caller's visibility answers 404.
+// Readable by the agent itself, its owner, `org:admin`, and a caller holding
+// `agents:read` (implied by `agents:write`); an agent outside the caller's
+// visibility answers 404.
 //
 // Corresponds with GET /agents/{agent_id} (the `GetAgent` operationId).
 func (c *Client) GetAgent(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -13136,9 +13621,10 @@ func (c *Client) GetAgentApiKeyHistory(ctx context.Context, agentId string, reqE
 //
 // Each binding names the credential, the API it serves, when it was bound,
 // whether it is `suspended` (and why), and any attached permission
-// `rule_set_id`. Credential secrets are never returned. Readable by the
-// agent itself, its owner, and `org:admin` (404 otherwise). The list is not
-// paginated.
+// `rule_set_id`. Credential secrets are never returned. Readable like
+// `GET /agents/{agent_id}`: by the agent itself, its owner, `org:admin`, and a
+// caller holding `agents:read` (implied by `agents:write`); 404 otherwise.
+// The list is not paginated.
 //
 // Corresponds with GET /agents/{agent_id}/credentials (the `ListAgentCredentials` operationId).
 func (c *Client) ListAgentCredentials(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -13613,6 +14099,11 @@ func (c *Client) ListApis(ctx context.Context, params *ListApisParams, reqEditor
 //
 // Import OpenAPI/Arazzo content as new API revisions (async).
 //
+// The whole request body is capped at `ingest.max_import_request_bytes`
+// (twice `ingest.max_spec_bytes` unless configured) and each inline source's
+// content at `ingest.max_spec_bytes` (UTF-8 bytes); over either limit the
+// request is refused with 413 before any job is queued.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /apis (the `ImportApis` operationId).
@@ -13631,6 +14122,11 @@ func (c *Client) ImportApisWithBody(ctx context.Context, contentType string, bod
 // ImportApis Import Apis
 //
 // Import OpenAPI/Arazzo content as new API revisions (async).
+//
+// The whole request body is capped at `ingest.max_import_request_bytes`
+// (twice `ingest.max_spec_bytes` unless configured) and each inline source's
+// content at `ingest.max_spec_bytes` (UTF-8 bytes); over either limit the
+// request is refused with 413 before any job is queued.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -14536,6 +15032,27 @@ func (c *Client) GetConnectSession(ctx context.Context, sessionId string, params
 	return c.Client.Do(req)
 }
 
+// ListConnectSessionRevisions List a connect session's revisions
+//
+// Every version of what the session asks for, oldest first.
+//
+// The review shows the current revision against today's access; this is the
+// history behind it, one entry per ask and amend. Gated like the review
+// read.
+//
+// Corresponds with GET /connect-sessions/{session_id}/revisions (the `ListConnectSessionRevisions` operationId).
+func (c *Client) ListConnectSessionRevisions(ctx context.Context, sessionId string, params *ListConnectSessionRevisionsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListConnectSessionRevisionsRequest(c.Server, sessionId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // PollConnectSessionStatus Poll a connect session's status
 //
 // Poll the lifecycle status of a connect session.
@@ -14566,12 +15083,71 @@ func (c *Client) PollConnectSessionStatus(ctx context.Context, sessionId string,
 	return c.Client.Do(req)
 }
 
+// AmendConnectSessionWithBody Amend an open connect session's request
+//
+// Change what an open session asks for; the reviewer sees the new revision.
+//
+// The session's initiator, or a human who may confirm it (a reviewer
+// editing the request; the revision records who made it), while it is open
+// (not yet confirmed or ended); a closed session is 409 `session_closed`.
+// The fields sent replace those parts of the ask and the rest stay. Edit sessions take `rules` and
+// `resume`, relative to the binding as it was when the edit opened; create
+// sessions take `requested_permission_rules` and `requested_scopes`, which
+// replace the ask outright; both take `reason`. The session id, approval
+// URL and poll token stay the same, and any confirm must name the new
+// `revision_id`.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /connect-sessions/{session_id}:amend (the `AmendConnectSession` operationId).
+func (c *Client) AmendConnectSessionWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAmendConnectSessionRequestWithBody(c.Server, sessionId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AmendConnectSession Amend an open connect session's request
+//
+// Change what an open session asks for; the reviewer sees the new revision.
+//
+// The session's initiator, or a human who may confirm it (a reviewer
+// editing the request; the revision records who made it), while it is open
+// (not yet confirmed or ended); a closed session is 409 `session_closed`.
+// The fields sent replace those parts of the ask and the rest stay. Edit sessions take `rules` and
+// `resume`, relative to the binding as it was when the edit opened; create
+// sessions take `requested_permission_rules` and `requested_scopes`, which
+// replace the ask outright; both take `reason`. The session id, approval
+// URL and poll token stay the same, and any confirm must name the new
+// `revision_id`.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /connect-sessions/{session_id}:amend (the `AmendConnectSession` operationId).
+func (c *Client) AmendConnectSession(ctx context.Context, sessionId string, body AmendConnectSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAmendConnectSessionRequest(c.Server, sessionId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // CancelConnectSession Cancel an in-flight connect session
 //
 // Terminate a still-active session at the user's request.
 //
 // Gated like “/status“ — the “poll_token“ the SPA already holds, or
-// the target agent's owner / “org:admin“ without it.
+// the target agent's owner / “org:admin“ without it. The audit entry
+// for the cancel names the caller, with the session's initiator alongside.
 //
 // A still-existing but already-terminal session is a 204 no-op — a
 // "Cancel" click racing the poll scanner doesn't error. A session
@@ -14603,14 +15179,18 @@ func (c *Client) CancelConnectSession(ctx context.Context, sessionId string, par
 // variant): OAuth scopes, a secret for a “manual_*“ session
 // (“api_key“ / “bearer“ / “basic“), the approver's own OAuth client
 // for an “awaiting_app“ session, or a credential the approver already
-// holds (“existing_credential“, “reauthorize“). Secrets are write-only:
+// holds (“existing_credential“), or an edit session's
+// final rules (“edit“, naming the reviewed “revision_id“). Secrets are write-only:
 // they never appear in a response, audit entry or log.
 //
 // Shares the “:connect“ per-actor rate bucket — this is the endpoint
 // that actually fires the vendor's device-authorization call, and a
 // failed “begin“ leaves the session retryable, so it must not be
 // free to hammer during a vendor incident. Gated like the review read
-// (“poll_token“ or owner / “org:admin“; 403 otherwise).
+// (“poll_token“ or owner / “org:admin“; 403 otherwise). An agent
+// whose binding to a credential covering the session's API is suspended
+// (including one picked at confirm) is refused with 409
+// “connect_session_binding_suspended“.
 //
 // A response carrying an “authorize_url“ also sets a short-lived
 // “HttpOnly“ cookie scoped to the OAuth callback path: the vendor
@@ -14640,14 +15220,18 @@ func (c *Client) ConfirmConnectSessionWithBody(ctx context.Context, sessionId st
 // variant): OAuth scopes, a secret for a “manual_*“ session
 // (“api_key“ / “bearer“ / “basic“), the approver's own OAuth client
 // for an “awaiting_app“ session, or a credential the approver already
-// holds (“existing_credential“, “reauthorize“). Secrets are write-only:
+// holds (“existing_credential“), or an edit session's
+// final rules (“edit“, naming the reviewed “revision_id“). Secrets are write-only:
 // they never appear in a response, audit entry or log.
 //
 // Shares the “:connect“ per-actor rate bucket — this is the endpoint
 // that actually fires the vendor's device-authorization call, and a
 // failed “begin“ leaves the session retryable, so it must not be
 // free to hammer during a vendor incident. Gated like the review read
-// (“poll_token“ or owner / “org:admin“; 403 otherwise).
+// (“poll_token“ or owner / “org:admin“; 403 otherwise). An agent
+// whose binding to a credential covering the session's API is suspended
+// (including one picked at confirm) is refused with 409
+// “connect_session_binding_suspended“.
 //
 // A response carrying an “authorize_url“ also sets a short-lived
 // “HttpOnly“ cookie scoped to the OAuth callback path: the vendor
@@ -14676,9 +15260,9 @@ func (c *Client) ConfirmConnectSession(ctx context.Context, sessionId string, pa
 // Only the target agent's owner (holding “credentials:write“ and
 // “agents:write“) or “org:admin“; there is no poll-token path and an
 // agent can never reject. Everyone else gets the uniform 403. The agent's
-// “/status“ then reports “failed“ with “error_code: rejected“, and
-// its repeat “:connect“ for the same target answers 429
-// “recently_rejected“ for the rejection cooldown. Closing the dialog
+// “/status“ then reports “failed“ with “error_code: rejected“. With a
+// rejection cooldown set (off by default), its repeat “:connect“ for the
+// same target answers 429 “recently_rejected“ until it lapses. Closing the dialog
 // without rejecting makes no call; an unmount cancel stays “cancelled“.
 //
 // Corresponds with POST /connect-sessions/{session_id}:reject (the `RejectConnectSession` operationId).
@@ -14864,6 +15448,11 @@ func (c *Client) ListCredentialAgents(ctx context.Context, credentialId string, 
 // ListAgentCredentialPermissions List binding permission rules
 //
 // List the ordered PBAC rules for a direct `(agent, credential)` binding.
+//
+// Also returns the rest of what the binding grants: the shared rule set it
+// points at (whose rules apply instead of `data`), the credential's granted
+// OAuth scopes and the ones an edit can add, and whether the binding is
+// suspended. The bound agent can read its own binding.
 //
 // Corresponds with GET /credentials/{credential_id}/agents/{agent_id}/permissions (the `ListAgentCredentialPermissions` operationId).
 func (c *Client) ListAgentCredentialPermissions(ctx context.Context, credentialId string, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -15169,8 +15758,23 @@ func (c *Client) ListEvents(ctx context.Context, params *ListEventsParams, reqEd
 //
 // Stream events as Server-Sent Events.
 //
-// The stream ends once the caller's credential stops verifying (expired,
-// revoked, or its user disabled or deleted); reconnecting then returns 401.
+// The open stream re-verifies the caller at the first poll or page after each
+// `admin.events.stream_recheck_seconds` interval (default 5 s) elapses. Each
+// page is scoped by the caller's current permissions, so a narrower
+// permission set narrows the stream. Permissions are those the credential
+// carries: API keys and `at_` access tokens resolve them live (an ephemeral
+// agent `at_` keeps the subset it was minted with). A login session JWT
+// carries the set it was issued with, but removing any of a user's effective
+// permissions revokes their login sessions, so a stream opened with one ends
+// (`refused`) at the next check. The stream keeps re-verifying the token it
+// was opened with, so a permission added to a user reaches a login-session
+// stream once the client reconnects with a newer login JWT. The stream ends
+// with a `stream_closed` frame (`{"type": "stream_closed", "reason": ...}`)
+// once the credential stops verifying (`refused`: expired, revoked, or its
+// user or agent disabled or deleted), the caller no longer holds
+// `events:read` or `org:admin` or must rotate their password (`forbidden`),
+// or the check or the event store cannot be answered (`unavailable`).
+// A reconnect is authenticated afresh.
 //
 // Corresponds with GET /events/stream (the `StreamEvents` operationId).
 func (c *Client) StreamEvents(ctx context.Context, params *StreamEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -15470,6 +16074,29 @@ func (c *Client) GetInstance(ctx context.Context, reqEditors ...RequestEditorFn)
 	return c.Client.Do(req)
 }
 
+// IntegrationsConnectOptions How a connection to an API would be made
+//
+// List the API's declared security schemes and how `:connect` would collect each.
+//
+// Resolved as `:connect` resolves an API target, so a scope marked
+// `requestable` is one `requested_scopes` may name: for OAuth, the
+// connecting app's scope catalog (the spec's other scopes are listed but
+// not requestable); with no app, the spec's scopes. An API the registry
+// doesn't hold is 404 `unknown_api`: import it first.
+//
+// Corresponds with GET /integrations/{vendor}/{name}/{version}/connect-options (the `IntegrationsConnectOptions` operationId).
+func (c *Client) IntegrationsConnectOptions(ctx context.Context, vendor string, name string, version string, params *IntegrationsConnectOptionsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIntegrationsConnectOptionsRequest(c.Server, vendor, name, version, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // IntegrationsConnectWithBody Start an integration connect session
 //
 // Both entrypoints (agent + UI) use this endpoint.
@@ -15482,7 +16109,10 @@ func (c *Client) GetInstance(ctx context.Context, reqEditors ...RequestEditorFn)
 // `connect_session_agent_not_found`, the same as an unknown agent. Naming
 // an owned agent also takes `agents:write`, which confirming for it needs
 // (403 `connect_session_confirmation_forbidden` otherwise), and an active
-// agent (409 `connect_session_agent_inactive` otherwise). When
+// agent (409 `connect_session_agent_inactive` otherwise). An agent whose
+// binding to a credential covering the requested API is suspended gets
+// 409 `connect_session_binding_suspended`: only the operator can resume
+// that binding, so a new connect for the same API is refused. When
 // named, confirm creates the direct agent-credential binding + permission
 // rules; when omitted, the credential connects unbound and an agent can
 // be bound later through the credentials API.
@@ -15514,7 +16144,10 @@ func (c *Client) IntegrationsConnectWithBody(ctx context.Context, contentType st
 // `connect_session_agent_not_found`, the same as an unknown agent. Naming
 // an owned agent also takes `agents:write`, which confirming for it needs
 // (403 `connect_session_confirmation_forbidden` otherwise), and an active
-// agent (409 `connect_session_agent_inactive` otherwise). When
+// agent (409 `connect_session_agent_inactive` otherwise). An agent whose
+// binding to a credential covering the requested API is suspended gets
+// 409 `connect_session_binding_suspended`: only the operator can resume
+// that binding, so a new connect for the same API is refused. When
 // named, confirm creates the direct agent-credential binding + permission
 // rules; when omitted, the credential connects unbound and an agent can
 // be bound later through the credentials API.
@@ -15524,6 +16157,64 @@ func (c *Client) IntegrationsConnectWithBody(ctx context.Context, contentType st
 // Corresponds with POST /integrations:connect (the `IntegrationsConnect` operationId).
 func (c *Client) IntegrationsConnect(ctx context.Context, body IntegrationsConnectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewIntegrationsConnectRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// IntegrationsEditConnectionWithBody Ask to change a credential binding
+//
+// Open a connect session that edits an existing binding instead of creating one.
+//
+// The change (rules to add, remove or replace, and resuming a suspended
+// binding) is resolved against the binding as it is now, and a human
+// approves it on the review page; nothing changes until then. An agent
+// edits its own binding and must omit `agent_id`; a human names the agent
+// and must be its owner or an org admin. A change that is already in place
+// is 422 `nothing_to_change`, and a rule id the binding does not hold is 422
+// `unknown_rule`. A binding can have several open edits, each rebased as
+// others land; an agent asking again while its own is open is 409
+// `edit_open` with that session's `session_id`, to amend instead.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /integrations:edit-connection (the `IntegrationsEditConnection` operationId).
+func (c *Client) IntegrationsEditConnectionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIntegrationsEditConnectionRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// IntegrationsEditConnection Ask to change a credential binding
+//
+// Open a connect session that edits an existing binding instead of creating one.
+//
+// The change (rules to add, remove or replace, and resuming a suspended
+// binding) is resolved against the binding as it is now, and a human
+// approves it on the review page; nothing changes until then. An agent
+// edits its own binding and must omit `agent_id`; a human names the agent
+// and must be its owner or an org admin. A change that is already in place
+// is 422 `nothing_to_change`, and a rule id the binding does not hold is 422
+// `unknown_rule`. A binding can have several open edits, each rebased as
+// others land; an agent asking again while its own is open is 409
+// `edit_open` with that session's `session_id`, to amend instead.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /integrations:edit-connection (the `IntegrationsEditConnection` operationId).
+func (c *Client) IntegrationsEditConnection(ctx context.Context, body IntegrationsEditConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIntegrationsEditConnectionRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -17247,7 +17938,11 @@ func (c *Client) UpdateUser(ctx context.Context, userId string, body UpdateUserJ
 //
 // Set the assigned permissions for a user.
 //
-// A deleted user's permissions cannot be changed (409).
+// A deleted user's permissions cannot be changed (409). When the new set
+// removes any of the user's effective permissions, their login sessions
+// end: every login JWT issued before the change is refused (401), and the
+// user signs in again for a token with the narrower set. This includes a
+// caller narrowing their own permissions.
 //
 // Takes any type of body and a specified content type.
 //
@@ -17268,7 +17963,11 @@ func (c *Client) SetUserPermissionsWithBody(ctx context.Context, userId string, 
 //
 // Set the assigned permissions for a user.
 //
-// A deleted user's permissions cannot be changed (409).
+// A deleted user's permissions cannot be changed (409). When the new set
+// removes any of the user's effective permissions, their login sessions
+// end: every login JWT issued before the change is refused (401), and the
+// user signs in again for a token with the narrower set. This includes a
+// caller narrowing their own permissions.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -21466,6 +22165,67 @@ func NewGetConnectSessionRequest(server string, sessionId string, params *GetCon
 	return req, nil
 }
 
+// NewListConnectSessionRevisionsRequest constructs an http.Request for the ListConnectSessionRevisions method
+func NewListConnectSessionRevisionsRequest(server string, sessionId string, params *ListConnectSessionRevisionsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "session_id", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/connect-sessions/%s/revisions", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.PollToken != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "poll_token", *params.PollToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewPollConnectSessionStatusRequest constructs an http.Request for the PollConnectSessionStatus method
 func NewPollConnectSessionStatusRequest(server string, sessionId string, params *PollConnectSessionStatusParams) (*http.Request, error) {
 	var err error
@@ -21523,6 +22283,53 @@ func NewPollConnectSessionStatusRequest(server string, sessionId string, params 
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewAmendConnectSessionRequest calls the generic AmendConnectSession builder with application/json body
+func NewAmendConnectSessionRequest(server string, sessionId string, body AmendConnectSessionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAmendConnectSessionRequestWithBody(server, sessionId, "application/json", bodyReader)
+}
+
+// NewAmendConnectSessionRequestWithBody constructs an http.Request for the AmendConnectSession method, with any body, and a specified content type
+func NewAmendConnectSessionRequestWithBody(server string, sessionId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "session_id", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/connect-sessions/%s:amend", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -23374,6 +24181,81 @@ func NewGetInstanceRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewIntegrationsConnectOptionsRequest constructs an http.Request for the IntegrationsConnectOptions method
+func NewIntegrationsConnectOptionsRequest(server string, vendor string, name string, version string, params *IntegrationsConnectOptionsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "vendor", vendor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "version", version, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/integrations/%s/%s/%s/connect-options", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.RegistrationId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "registration_id", *params.RegistrationId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewIntegrationsConnectRequest calls the generic IntegrationsConnect builder with application/json body
 func NewIntegrationsConnectRequest(server string, body IntegrationsConnectJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -23395,6 +24277,46 @@ func NewIntegrationsConnectRequestWithBody(server string, contentType string, bo
 	}
 
 	operationPath := fmt.Sprintf("/integrations:connect")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewIntegrationsEditConnectionRequest calls the generic IntegrationsEditConnection builder with application/json body
+func NewIntegrationsEditConnectionRequest(server string, body IntegrationsEditConnectionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewIntegrationsEditConnectionRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewIntegrationsEditConnectionRequestWithBody constructs an http.Request for the IntegrationsEditConnection method, with any body, and a specified content type
+func NewIntegrationsEditConnectionRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/integrations:edit-connection")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -26411,8 +27333,9 @@ type ClientWithResponsesInterface interface {
 	//
 	// Returns the agent's name, description, owner, `status`, approval or
 	// denial details, and whether it currently has an API key (`has_api_key`).
-	// Readable by the agent itself, its owner, and `org:admin`; an agent outside
-	// the caller's visibility answers 404.
+	// Readable by the agent itself, its owner, `org:admin`, and a caller holding
+	// `agents:read` (implied by `agents:write`); an agent outside the caller's
+	// visibility answers 404.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -26491,9 +27414,10 @@ type ClientWithResponsesInterface interface {
 	//
 	// Each binding names the credential, the API it serves, when it was bound,
 	// whether it is `suspended` (and why), and any attached permission
-	// `rule_set_id`. Credential secrets are never returned. Readable by the
-	// agent itself, its owner, and `org:admin` (404 otherwise). The list is not
-	// paginated.
+	// `rule_set_id`. Credential secrets are never returned. Readable like
+	// `GET /agents/{agent_id}`: by the agent itself, its owner, `org:admin`, and a
+	// caller holding `agents:read` (implied by `agents:write`); 404 otherwise.
+	// The list is not paginated.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -26780,6 +27704,11 @@ type ClientWithResponsesInterface interface {
 	//
 	// Import OpenAPI/Arazzo content as new API revisions (async).
 	//
+	// The whole request body is capped at `ingest.max_import_request_bytes`
+	// (twice `ingest.max_spec_bytes` unless configured) and each inline source's
+	// content at `ingest.max_spec_bytes` (UTF-8 bytes); over either limit the
+	// request is refused with 413 before any job is queued.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /apis (the `ImportApis` operationId).
@@ -26788,6 +27717,11 @@ type ClientWithResponsesInterface interface {
 	// ImportApisWithResponse Import Apis
 	//
 	// Import OpenAPI/Arazzo content as new API revisions (async).
+	//
+	// The whole request body is capped at `ingest.max_import_request_bytes`
+	// (twice `ingest.max_spec_bytes` unless configured) and each inline source's
+	// content at `ingest.max_spec_bytes` (UTF-8 bytes); over either limit the
+	// request is refused with 413 before any job is queued.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -27339,6 +28273,19 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /connect-sessions/{session_id} (the `GetConnectSession` operationId).
 	GetConnectSessionWithResponse(ctx context.Context, sessionId string, params *GetConnectSessionParams, reqEditors ...RequestEditorFn) (*GetConnectSessionHTTPResp, error)
 
+	// ListConnectSessionRevisionsWithResponse List a connect session's revisions
+	//
+	// Every version of what the session asks for, oldest first.
+	//
+	// The review shows the current revision against today's access; this is the
+	// history behind it, one entry per ask and amend. Gated like the review
+	// read.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /connect-sessions/{session_id}/revisions (the `ListConnectSessionRevisions` operationId).
+	ListConnectSessionRevisionsWithResponse(ctx context.Context, sessionId string, params *ListConnectSessionRevisionsParams, reqEditors ...RequestEditorFn) (*ListConnectSessionRevisionsHTTPResp, error)
+
 	// PollConnectSessionStatusWithResponse Poll a connect session's status
 	//
 	// Poll the lifecycle status of a connect session.
@@ -27361,12 +28308,51 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /connect-sessions/{session_id}/status (the `PollConnectSessionStatus` operationId).
 	PollConnectSessionStatusWithResponse(ctx context.Context, sessionId string, params *PollConnectSessionStatusParams, reqEditors ...RequestEditorFn) (*PollConnectSessionStatusHTTPResp, error)
 
+	// AmendConnectSessionWithBodyWithResponse Amend an open connect session's request
+	//
+	// Change what an open session asks for; the reviewer sees the new revision.
+	//
+	// The session's initiator, or a human who may confirm it (a reviewer
+	// editing the request; the revision records who made it), while it is open
+	// (not yet confirmed or ended); a closed session is 409 `session_closed`.
+	// The fields sent replace those parts of the ask and the rest stay. Edit sessions take `rules` and
+	// `resume`, relative to the binding as it was when the edit opened; create
+	// sessions take `requested_permission_rules` and `requested_scopes`, which
+	// replace the ask outright; both take `reason`. The session id, approval
+	// URL and poll token stay the same, and any confirm must name the new
+	// `revision_id`.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /connect-sessions/{session_id}:amend (the `AmendConnectSession` operationId).
+	AmendConnectSessionWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AmendConnectSessionHTTPResp, error)
+
+	// AmendConnectSessionWithResponse Amend an open connect session's request
+	//
+	// Change what an open session asks for; the reviewer sees the new revision.
+	//
+	// The session's initiator, or a human who may confirm it (a reviewer
+	// editing the request; the revision records who made it), while it is open
+	// (not yet confirmed or ended); a closed session is 409 `session_closed`.
+	// The fields sent replace those parts of the ask and the rest stay. Edit sessions take `rules` and
+	// `resume`, relative to the binding as it was when the edit opened; create
+	// sessions take `requested_permission_rules` and `requested_scopes`, which
+	// replace the ask outright; both take `reason`. The session id, approval
+	// URL and poll token stay the same, and any confirm must name the new
+	// `revision_id`.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /connect-sessions/{session_id}:amend (the `AmendConnectSession` operationId).
+	AmendConnectSessionWithResponse(ctx context.Context, sessionId string, body AmendConnectSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*AmendConnectSessionHTTPResp, error)
+
 	// CancelConnectSessionWithResponse Cancel an in-flight connect session
 	//
 	// Terminate a still-active session at the user's request.
 	//
 	// Gated like ``/status`` — the ``poll_token`` the SPA already holds, or
-	// the target agent's owner / ``org:admin`` without it.
+	// the target agent's owner / ``org:admin`` without it. The audit entry
+	// for the cancel names the caller, with the session's initiator alongside.
 	//
 	// A still-existing but already-terminal session is a 204 no-op — a
 	// "Cancel" click racing the poll scanner doesn't error. A session
@@ -27390,14 +28376,18 @@ type ClientWithResponsesInterface interface {
 	// variant): OAuth scopes, a secret for a ``manual_*`` session
 	// (``api_key`` / ``bearer`` / ``basic``), the approver's own OAuth client
 	// for an ``awaiting_app`` session, or a credential the approver already
-	// holds (``existing_credential``, ``reauthorize``). Secrets are write-only:
+	// holds (``existing_credential``), or an edit session's
+	// final rules (``edit``, naming the reviewed ``revision_id``). Secrets are write-only:
 	// they never appear in a response, audit entry or log.
 	//
 	// Shares the ``:connect`` per-actor rate bucket — this is the endpoint
 	// that actually fires the vendor's device-authorization call, and a
 	// failed ``begin`` leaves the session retryable, so it must not be
 	// free to hammer during a vendor incident. Gated like the review read
-	// (``poll_token`` or owner / ``org:admin``; 403 otherwise).
+	// (``poll_token`` or owner / ``org:admin``; 403 otherwise). An agent
+	// whose binding to a credential covering the session's API is suspended
+	// (including one picked at confirm) is refused with 409
+	// ``connect_session_binding_suspended``.
 	//
 	// A response carrying an ``authorize_url`` also sets a short-lived
 	// ``HttpOnly`` cookie scoped to the OAuth callback path: the vendor
@@ -27417,14 +28407,18 @@ type ClientWithResponsesInterface interface {
 	// variant): OAuth scopes, a secret for a ``manual_*`` session
 	// (``api_key`` / ``bearer`` / ``basic``), the approver's own OAuth client
 	// for an ``awaiting_app`` session, or a credential the approver already
-	// holds (``existing_credential``, ``reauthorize``). Secrets are write-only:
+	// holds (``existing_credential``), or an edit session's
+	// final rules (``edit``, naming the reviewed ``revision_id``). Secrets are write-only:
 	// they never appear in a response, audit entry or log.
 	//
 	// Shares the ``:connect`` per-actor rate bucket — this is the endpoint
 	// that actually fires the vendor's device-authorization call, and a
 	// failed ``begin`` leaves the session retryable, so it must not be
 	// free to hammer during a vendor incident. Gated like the review read
-	// (``poll_token`` or owner / ``org:admin``; 403 otherwise).
+	// (``poll_token`` or owner / ``org:admin``; 403 otherwise). An agent
+	// whose binding to a credential covering the session's API is suspended
+	// (including one picked at confirm) is refused with 409
+	// ``connect_session_binding_suspended``.
 	//
 	// A response carrying an ``authorize_url`` also sets a short-lived
 	// ``HttpOnly`` cookie scoped to the OAuth callback path: the vendor
@@ -27443,9 +28437,9 @@ type ClientWithResponsesInterface interface {
 	// Only the target agent's owner (holding ``credentials:write`` and
 	// ``agents:write``) or ``org:admin``; there is no poll-token path and an
 	// agent can never reject. Everyone else gets the uniform 403. The agent's
-	// ``/status`` then reports ``failed`` with ``error_code: rejected``, and
-	// its repeat ``:connect`` for the same target answers 429
-	// ``recently_rejected`` for the rejection cooldown. Closing the dialog
+	// ``/status`` then reports ``failed`` with ``error_code: rejected``. With a
+	// rejection cooldown set (off by default), its repeat ``:connect`` for the
+	// same target answers 429 ``recently_rejected`` until it lapses. Closing the dialog
 	// without rejecting makes no call; an unmount cancel stays ``cancelled``.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -27543,6 +28537,11 @@ type ClientWithResponsesInterface interface {
 	// ListAgentCredentialPermissionsWithResponse List binding permission rules
 	//
 	// List the ordered PBAC rules for a direct `(agent, credential)` binding.
+	//
+	// Also returns the rest of what the binding grants: the shared rule set it
+	// points at (whose rules apply instead of `data`), the credential's granted
+	// OAuth scopes and the ones an edit can add, and whether the binding is
+	// suspended. The bound agent can read its own binding.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -27716,8 +28715,23 @@ type ClientWithResponsesInterface interface {
 	//
 	// Stream events as Server-Sent Events.
 	//
-	// The stream ends once the caller's credential stops verifying (expired,
-	// revoked, or its user disabled or deleted); reconnecting then returns 401.
+	// The open stream re-verifies the caller at the first poll or page after each
+	// `admin.events.stream_recheck_seconds` interval (default 5 s) elapses. Each
+	// page is scoped by the caller's current permissions, so a narrower
+	// permission set narrows the stream. Permissions are those the credential
+	// carries: API keys and `at_` access tokens resolve them live (an ephemeral
+	// agent `at_` keeps the subset it was minted with). A login session JWT
+	// carries the set it was issued with, but removing any of a user's effective
+	// permissions revokes their login sessions, so a stream opened with one ends
+	// (`refused`) at the next check. The stream keeps re-verifying the token it
+	// was opened with, so a permission added to a user reaches a login-session
+	// stream once the client reconnects with a newer login JWT. The stream ends
+	// with a `stream_closed` frame (`{"type": "stream_closed", "reason": ...}`)
+	// once the credential stops verifying (`refused`: expired, revoked, or its
+	// user or agent disabled or deleted), the caller no longer holds
+	// `events:read` or `org:admin` or must rotate their password (`forbidden`),
+	// or the check or the event store cannot be answered (`unavailable`).
+	// A reconnect is authenticated afresh.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -27901,6 +28915,21 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /instance (the `GetInstance` operationId).
 	GetInstanceWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetInstanceHTTPResp, error)
 
+	// IntegrationsConnectOptionsWithResponse How a connection to an API would be made
+	//
+	// List the API's declared security schemes and how `:connect` would collect each.
+	//
+	// Resolved as `:connect` resolves an API target, so a scope marked
+	// `requestable` is one `requested_scopes` may name: for OAuth, the
+	// connecting app's scope catalog (the spec's other scopes are listed but
+	// not requestable); with no app, the spec's scopes. An API the registry
+	// doesn't hold is 404 `unknown_api`: import it first.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /integrations/{vendor}/{name}/{version}/connect-options (the `IntegrationsConnectOptions` operationId).
+	IntegrationsConnectOptionsWithResponse(ctx context.Context, vendor string, name string, version string, params *IntegrationsConnectOptionsParams, reqEditors ...RequestEditorFn) (*IntegrationsConnectOptionsHTTPResp, error)
+
 	// IntegrationsConnectWithBodyWithResponse Start an integration connect session
 	//
 	// Both entrypoints (agent + UI) use this endpoint.
@@ -27913,7 +28942,10 @@ type ClientWithResponsesInterface interface {
 	// `connect_session_agent_not_found`, the same as an unknown agent. Naming
 	// an owned agent also takes `agents:write`, which confirming for it needs
 	// (403 `connect_session_confirmation_forbidden` otherwise), and an active
-	// agent (409 `connect_session_agent_inactive` otherwise). When
+	// agent (409 `connect_session_agent_inactive` otherwise). An agent whose
+	// binding to a credential covering the requested API is suspended gets
+	// 409 `connect_session_binding_suspended`: only the operator can resume
+	// that binding, so a new connect for the same API is refused. When
 	// named, confirm creates the direct agent-credential binding + permission
 	// rules; when omitted, the credential connects unbound and an agent can
 	// be bound later through the credentials API.
@@ -27935,7 +28967,10 @@ type ClientWithResponsesInterface interface {
 	// `connect_session_agent_not_found`, the same as an unknown agent. Naming
 	// an owned agent also takes `agents:write`, which confirming for it needs
 	// (403 `connect_session_confirmation_forbidden` otherwise), and an active
-	// agent (409 `connect_session_agent_inactive` otherwise). When
+	// agent (409 `connect_session_agent_inactive` otherwise). An agent whose
+	// binding to a credential covering the requested API is suspended gets
+	// 409 `connect_session_binding_suspended`: only the operator can resume
+	// that binding, so a new connect for the same API is refused. When
 	// named, confirm creates the direct agent-credential binding + permission
 	// rules; when omitted, the credential connects unbound and an agent can
 	// be bound later through the credentials API.
@@ -27944,6 +28979,44 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /integrations:connect (the `IntegrationsConnect` operationId).
 	IntegrationsConnectWithResponse(ctx context.Context, body IntegrationsConnectJSONRequestBody, reqEditors ...RequestEditorFn) (*IntegrationsConnectHTTPResp, error)
+
+	// IntegrationsEditConnectionWithBodyWithResponse Ask to change a credential binding
+	//
+	// Open a connect session that edits an existing binding instead of creating one.
+	//
+	// The change (rules to add, remove or replace, and resuming a suspended
+	// binding) is resolved against the binding as it is now, and a human
+	// approves it on the review page; nothing changes until then. An agent
+	// edits its own binding and must omit `agent_id`; a human names the agent
+	// and must be its owner or an org admin. A change that is already in place
+	// is 422 `nothing_to_change`, and a rule id the binding does not hold is 422
+	// `unknown_rule`. A binding can have several open edits, each rebased as
+	// others land; an agent asking again while its own is open is 409
+	// `edit_open` with that session's `session_id`, to amend instead.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /integrations:edit-connection (the `IntegrationsEditConnection` operationId).
+	IntegrationsEditConnectionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IntegrationsEditConnectionHTTPResp, error)
+
+	// IntegrationsEditConnectionWithResponse Ask to change a credential binding
+	//
+	// Open a connect session that edits an existing binding instead of creating one.
+	//
+	// The change (rules to add, remove or replace, and resuming a suspended
+	// binding) is resolved against the binding as it is now, and a human
+	// approves it on the review page; nothing changes until then. An agent
+	// edits its own binding and must omit `agent_id`; a human names the agent
+	// and must be its owner or an org admin. A change that is already in place
+	// is 422 `nothing_to_change`, and a rule id the binding does not hold is 422
+	// `unknown_rule`. A binding can have several open edits, each rebased as
+	// others land; an agent asking again while its own is open is 409
+	// `edit_open` with that session's `session_id`, to amend instead.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /integrations:edit-connection (the `IntegrationsEditConnection` operationId).
+	IntegrationsEditConnectionWithResponse(ctx context.Context, body IntegrationsEditConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*IntegrationsEditConnectionHTTPResp, error)
 
 	// ListJobsWithResponse List Jobs
 	//
@@ -29004,7 +30077,11 @@ type ClientWithResponsesInterface interface {
 	//
 	// Set the assigned permissions for a user.
 	//
-	// A deleted user's permissions cannot be changed (409).
+	// A deleted user's permissions cannot be changed (409). When the new set
+	// removes any of the user's effective permissions, their login sessions
+	// end: every login JWT issued before the change is refused (401), and the
+	// user signs in again for a token with the narrower set. This includes a
+	// caller narrowing their own permissions.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -29015,7 +30092,11 @@ type ClientWithResponsesInterface interface {
 	//
 	// Set the assigned permissions for a user.
 	//
-	// A deleted user's permissions cannot be changed (409).
+	// A deleted user's permissions cannot be changed (409). When the new set
+	// removes any of the user's effective permissions, their login sessions
+	// end: every login JWT issued before the change is refused (401), and the
+	// user signs in again for a token with the narrower set. This includes a
+	// caller narrowing their own permissions.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -32654,6 +33735,8 @@ type ImportApisHTTPResp struct {
 	ApplicationproblemJSON401 *ProblemDetail
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
+	ApplicationproblemJSON413 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -32682,6 +33765,11 @@ func (r ImportApisHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r ImportApisHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON413 returns the response for an HTTP 413 `application/problem+json` response
+func (r ImportApisHTTPResp) GetApplicationproblemJSON413() *ProblemDetail {
+	return r.ApplicationproblemJSON413
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -35758,6 +36846,96 @@ func (r GetConnectSessionHTTPResp) ContentType() string {
 	return ""
 }
 
+type ListConnectSessionRevisionsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *interface{}
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListConnectSessionRevisionsHTTPResp) GetJSON200() *interface{} {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListConnectSessionRevisionsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListConnectSessionRevisionsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListConnectSessionRevisionsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ListConnectSessionRevisionsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ListConnectSessionRevisionsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListConnectSessionRevisionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListConnectSessionRevisionsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListConnectSessionRevisionsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListConnectSessionRevisionsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListConnectSessionRevisionsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListConnectSessionRevisionsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type PollConnectSessionStatusHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -35842,6 +37020,103 @@ func (r PollConnectSessionStatusHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r PollConnectSessionStatusHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AmendConnectSessionHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *interface{}
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AmendConnectSessionHTTPResp) GetJSON200() *interface{} {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r AmendConnectSessionHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r AmendConnectSessionHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r AmendConnectSessionHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r AmendConnectSessionHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r AmendConnectSessionHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r AmendConnectSessionHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r AmendConnectSessionHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AmendConnectSessionHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r AmendConnectSessionHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AmendConnectSessionHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AmendConnectSessionHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AmendConnectSessionHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -36773,7 +38048,7 @@ type ListAgentCredentialPermissionsHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PermissionRuleListResponse
+	JSON200 *BindingAccessResponse
 	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
 	ApplicationproblemJSON400 *ProblemDetail
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
@@ -36793,7 +38068,7 @@ type ListAgentCredentialPermissionsHTTPResp struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListAgentCredentialPermissionsHTTPResp) GetJSON200() *PermissionRuleListResponse {
+func (r ListAgentCredentialPermissionsHTTPResp) GetJSON200() *BindingAccessResponse {
 	return r.JSON200
 }
 
@@ -38756,6 +40031,103 @@ func (r GetInstanceHTTPResp) ContentType() string {
 	return ""
 }
 
+type IntegrationsConnectOptionsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *interface{}
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r IntegrationsConnectOptionsHTTPResp) GetJSON200() *interface{} {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r IntegrationsConnectOptionsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r IntegrationsConnectOptionsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r IntegrationsConnectOptionsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r IntegrationsConnectOptionsHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r IntegrationsConnectOptionsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r IntegrationsConnectOptionsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r IntegrationsConnectOptionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r IntegrationsConnectOptionsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r IntegrationsConnectOptionsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r IntegrationsConnectOptionsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r IntegrationsConnectOptionsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r IntegrationsConnectOptionsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type IntegrationsConnectHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -38861,6 +40233,117 @@ func (r IntegrationsConnectHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r IntegrationsConnectHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type IntegrationsEditConnectionHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *interface{}
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON429 the response for an HTTP 429 `application/problem+json` response
+	ApplicationproblemJSON429 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r IntegrationsEditConnectionHTTPResp) GetJSON201() *interface{} {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r IntegrationsEditConnectionHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r IntegrationsEditConnectionHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r IntegrationsEditConnectionHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r IntegrationsEditConnectionHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r IntegrationsEditConnectionHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r IntegrationsEditConnectionHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
+func (r IntegrationsEditConnectionHTTPResp) GetApplicationproblemJSON429() *ProblemDetail {
+	return r.ApplicationproblemJSON429
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r IntegrationsEditConnectionHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r IntegrationsEditConnectionHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r IntegrationsEditConnectionHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r IntegrationsEditConnectionHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r IntegrationsEditConnectionHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r IntegrationsEditConnectionHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r IntegrationsEditConnectionHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -44386,8 +45869,9 @@ func (c *ClientWithResponses) ArchiveAgentWithResponse(ctx context.Context, agen
 //
 // Returns the agent's name, description, owner, `status`, approval or
 // denial details, and whether it currently has an API key (`has_api_key`).
-// Readable by the agent itself, its owner, and `org:admin`; an agent outside
-// the caller's visibility answers 404.
+// Readable by the agent itself, its owner, `org:admin`, and a caller holding
+// `agents:read` (implied by `agents:write`); an agent outside the caller's
+// visibility answers 404.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -44496,9 +45980,10 @@ func (c *ClientWithResponses) GetAgentApiKeyHistoryWithResponse(ctx context.Cont
 //
 // Each binding names the credential, the API it serves, when it was bound,
 // whether it is `suspended` (and why), and any attached permission
-// `rule_set_id`. Credential secrets are never returned. Readable by the
-// agent itself, its owner, and `org:admin` (404 otherwise). The list is not
-// paginated.
+// `rule_set_id`. Credential secrets are never returned. Readable like
+// `GET /agents/{agent_id}`: by the agent itself, its owner, `org:admin`, and a
+// caller holding `agents:read` (implied by `agents:write`); 404 otherwise.
+// The list is not paginated.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -44911,6 +46396,11 @@ func (c *ClientWithResponses) ListApisWithResponse(ctx context.Context, params *
 //
 // Import OpenAPI/Arazzo content as new API revisions (async).
 //
+// The whole request body is capped at `ingest.max_import_request_bytes`
+// (twice `ingest.max_spec_bytes` unless configured) and each inline source's
+// content at `ingest.max_spec_bytes` (UTF-8 bytes); over either limit the
+// request is refused with 413 before any job is queued.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /apis (the `ImportApis` operationId).
@@ -44925,6 +46415,11 @@ func (c *ClientWithResponses) ImportApisWithBodyWithResponse(ctx context.Context
 // ImportApisWithResponse Import Apis
 //
 // Import OpenAPI/Arazzo content as new API revisions (async).
+//
+// The whole request body is capped at `ingest.max_import_request_bytes`
+// (twice `ingest.max_spec_bytes` unless configured) and each inline source's
+// content at `ingest.max_spec_bytes` (UTF-8 bytes); over either limit the
+// request is refused with 413 before any job is queued.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -45722,6 +47217,25 @@ func (c *ClientWithResponses) GetConnectSessionWithResponse(ctx context.Context,
 	return ParseGetConnectSessionHTTPResp(rsp)
 }
 
+// ListConnectSessionRevisionsWithResponse List a connect session's revisions
+//
+// Every version of what the session asks for, oldest first.
+//
+// The review shows the current revision against today's access; this is the
+// history behind it, one entry per ask and amend. Gated like the review
+// read.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /connect-sessions/{session_id}/revisions (the `ListConnectSessionRevisions` operationId).
+func (c *ClientWithResponses) ListConnectSessionRevisionsWithResponse(ctx context.Context, sessionId string, params *ListConnectSessionRevisionsParams, reqEditors ...RequestEditorFn) (*ListConnectSessionRevisionsHTTPResp, error) {
+	rsp, err := c.ListConnectSessionRevisions(ctx, sessionId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListConnectSessionRevisionsHTTPResp(rsp)
+}
+
 // PollConnectSessionStatusWithResponse Poll a connect session's status
 //
 // Poll the lifecycle status of a connect session.
@@ -45750,12 +47264,63 @@ func (c *ClientWithResponses) PollConnectSessionStatusWithResponse(ctx context.C
 	return ParsePollConnectSessionStatusHTTPResp(rsp)
 }
 
+// AmendConnectSessionWithBodyWithResponse Amend an open connect session's request
+//
+// Change what an open session asks for; the reviewer sees the new revision.
+//
+// The session's initiator, or a human who may confirm it (a reviewer
+// editing the request; the revision records who made it), while it is open
+// (not yet confirmed or ended); a closed session is 409 `session_closed`.
+// The fields sent replace those parts of the ask and the rest stay. Edit sessions take `rules` and
+// `resume`, relative to the binding as it was when the edit opened; create
+// sessions take `requested_permission_rules` and `requested_scopes`, which
+// replace the ask outright; both take `reason`. The session id, approval
+// URL and poll token stay the same, and any confirm must name the new
+// `revision_id`.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /connect-sessions/{session_id}:amend (the `AmendConnectSession` operationId).
+func (c *ClientWithResponses) AmendConnectSessionWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AmendConnectSessionHTTPResp, error) {
+	rsp, err := c.AmendConnectSessionWithBody(ctx, sessionId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAmendConnectSessionHTTPResp(rsp)
+}
+
+// AmendConnectSessionWithResponse Amend an open connect session's request
+//
+// Change what an open session asks for; the reviewer sees the new revision.
+//
+// The session's initiator, or a human who may confirm it (a reviewer
+// editing the request; the revision records who made it), while it is open
+// (not yet confirmed or ended); a closed session is 409 `session_closed`.
+// The fields sent replace those parts of the ask and the rest stay. Edit sessions take `rules` and
+// `resume`, relative to the binding as it was when the edit opened; create
+// sessions take `requested_permission_rules` and `requested_scopes`, which
+// replace the ask outright; both take `reason`. The session id, approval
+// URL and poll token stay the same, and any confirm must name the new
+// `revision_id`.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /connect-sessions/{session_id}:amend (the `AmendConnectSession` operationId).
+func (c *ClientWithResponses) AmendConnectSessionWithResponse(ctx context.Context, sessionId string, body AmendConnectSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*AmendConnectSessionHTTPResp, error) {
+	rsp, err := c.AmendConnectSession(ctx, sessionId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAmendConnectSessionHTTPResp(rsp)
+}
+
 // CancelConnectSessionWithResponse Cancel an in-flight connect session
 //
 // Terminate a still-active session at the user's request.
 //
 // Gated like “/status“ — the “poll_token“ the SPA already holds, or
-// the target agent's owner / “org:admin“ without it.
+// the target agent's owner / “org:admin“ without it. The audit entry
+// for the cancel names the caller, with the session's initiator alongside.
 //
 // A still-existing but already-terminal session is a 204 no-op — a
 // "Cancel" click racing the poll scanner doesn't error. A session
@@ -45785,14 +47350,18 @@ func (c *ClientWithResponses) CancelConnectSessionWithResponse(ctx context.Conte
 // variant): OAuth scopes, a secret for a “manual_*“ session
 // (“api_key“ / “bearer“ / “basic“), the approver's own OAuth client
 // for an “awaiting_app“ session, or a credential the approver already
-// holds (“existing_credential“, “reauthorize“). Secrets are write-only:
+// holds (“existing_credential“), or an edit session's
+// final rules (“edit“, naming the reviewed “revision_id“). Secrets are write-only:
 // they never appear in a response, audit entry or log.
 //
 // Shares the “:connect“ per-actor rate bucket — this is the endpoint
 // that actually fires the vendor's device-authorization call, and a
 // failed “begin“ leaves the session retryable, so it must not be
 // free to hammer during a vendor incident. Gated like the review read
-// (“poll_token“ or owner / “org:admin“; 403 otherwise).
+// (“poll_token“ or owner / “org:admin“; 403 otherwise). An agent
+// whose binding to a credential covering the session's API is suspended
+// (including one picked at confirm) is refused with 409
+// “connect_session_binding_suspended“.
 //
 // A response carrying an “authorize_url“ also sets a short-lived
 // “HttpOnly“ cookie scoped to the OAuth callback path: the vendor
@@ -45818,14 +47387,18 @@ func (c *ClientWithResponses) ConfirmConnectSessionWithBodyWithResponse(ctx cont
 // variant): OAuth scopes, a secret for a “manual_*“ session
 // (“api_key“ / “bearer“ / “basic“), the approver's own OAuth client
 // for an “awaiting_app“ session, or a credential the approver already
-// holds (“existing_credential“, “reauthorize“). Secrets are write-only:
+// holds (“existing_credential“), or an edit session's
+// final rules (“edit“, naming the reviewed “revision_id“). Secrets are write-only:
 // they never appear in a response, audit entry or log.
 //
 // Shares the “:connect“ per-actor rate bucket — this is the endpoint
 // that actually fires the vendor's device-authorization call, and a
 // failed “begin“ leaves the session retryable, so it must not be
 // free to hammer during a vendor incident. Gated like the review read
-// (“poll_token“ or owner / “org:admin“; 403 otherwise).
+// (“poll_token“ or owner / “org:admin“; 403 otherwise). An agent
+// whose binding to a credential covering the session's API is suspended
+// (including one picked at confirm) is refused with 409
+// “connect_session_binding_suspended“.
 //
 // A response carrying an “authorize_url“ also sets a short-lived
 // “HttpOnly“ cookie scoped to the OAuth callback path: the vendor
@@ -45850,9 +47423,9 @@ func (c *ClientWithResponses) ConfirmConnectSessionWithResponse(ctx context.Cont
 // Only the target agent's owner (holding “credentials:write“ and
 // “agents:write“) or “org:admin“; there is no poll-token path and an
 // agent can never reject. Everyone else gets the uniform 403. The agent's
-// “/status“ then reports “failed“ with “error_code: rejected“, and
-// its repeat “:connect“ for the same target answers 429
-// “recently_rejected“ for the rejection cooldown. Closing the dialog
+// “/status“ then reports “failed“ with “error_code: rejected“. With a
+// rejection cooldown set (off by default), its repeat “:connect“ for the
+// same target answers 429 “recently_rejected“ until it lapses. Closing the dialog
 // without rejecting makes no call; an unmount cancel stays “cancelled“.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -46010,6 +47583,11 @@ func (c *ClientWithResponses) ListCredentialAgentsWithResponse(ctx context.Conte
 // ListAgentCredentialPermissionsWithResponse List binding permission rules
 //
 // List the ordered PBAC rules for a direct `(agent, credential)` binding.
+//
+// Also returns the rest of what the binding grants: the shared rule set it
+// points at (whose rules apply instead of `data`), the credential's granted
+// OAuth scopes and the ones an edit can add, and whether the binding is
+// suspended. The bound agent can read its own binding.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -46267,8 +47845,23 @@ func (c *ClientWithResponses) ListEventsWithResponse(ctx context.Context, params
 //
 // Stream events as Server-Sent Events.
 //
-// The stream ends once the caller's credential stops verifying (expired,
-// revoked, or its user disabled or deleted); reconnecting then returns 401.
+// The open stream re-verifies the caller at the first poll or page after each
+// `admin.events.stream_recheck_seconds` interval (default 5 s) elapses. Each
+// page is scoped by the caller's current permissions, so a narrower
+// permission set narrows the stream. Permissions are those the credential
+// carries: API keys and `at_` access tokens resolve them live (an ephemeral
+// agent `at_` keeps the subset it was minted with). A login session JWT
+// carries the set it was issued with, but removing any of a user's effective
+// permissions revokes their login sessions, so a stream opened with one ends
+// (`refused`) at the next check. The stream keeps re-verifying the token it
+// was opened with, so a permission added to a user reaches a login-session
+// stream once the client reconnects with a newer login JWT. The stream ends
+// with a `stream_closed` frame (`{"type": "stream_closed", "reason": ...}`)
+// once the credential stops verifying (`refused`: expired, revoked, or its
+// user or agent disabled or deleted), the caller no longer holds
+// `events:read` or `org:admin` or must rotate their password (`forbidden`),
+// or the check or the event store cannot be answered (`unavailable`).
+// A reconnect is authenticated afresh.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -46536,6 +48129,27 @@ func (c *ClientWithResponses) GetInstanceWithResponse(ctx context.Context, reqEd
 	return ParseGetInstanceHTTPResp(rsp)
 }
 
+// IntegrationsConnectOptionsWithResponse How a connection to an API would be made
+//
+// List the API's declared security schemes and how `:connect` would collect each.
+//
+// Resolved as `:connect` resolves an API target, so a scope marked
+// `requestable` is one `requested_scopes` may name: for OAuth, the
+// connecting app's scope catalog (the spec's other scopes are listed but
+// not requestable); with no app, the spec's scopes. An API the registry
+// doesn't hold is 404 `unknown_api`: import it first.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /integrations/{vendor}/{name}/{version}/connect-options (the `IntegrationsConnectOptions` operationId).
+func (c *ClientWithResponses) IntegrationsConnectOptionsWithResponse(ctx context.Context, vendor string, name string, version string, params *IntegrationsConnectOptionsParams, reqEditors ...RequestEditorFn) (*IntegrationsConnectOptionsHTTPResp, error) {
+	rsp, err := c.IntegrationsConnectOptions(ctx, vendor, name, version, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIntegrationsConnectOptionsHTTPResp(rsp)
+}
+
 // IntegrationsConnectWithBodyWithResponse Start an integration connect session
 //
 // Both entrypoints (agent + UI) use this endpoint.
@@ -46548,7 +48162,10 @@ func (c *ClientWithResponses) GetInstanceWithResponse(ctx context.Context, reqEd
 // `connect_session_agent_not_found`, the same as an unknown agent. Naming
 // an owned agent also takes `agents:write`, which confirming for it needs
 // (403 `connect_session_confirmation_forbidden` otherwise), and an active
-// agent (409 `connect_session_agent_inactive` otherwise). When
+// agent (409 `connect_session_agent_inactive` otherwise). An agent whose
+// binding to a credential covering the requested API is suspended gets
+// 409 `connect_session_binding_suspended`: only the operator can resume
+// that binding, so a new connect for the same API is refused. When
 // named, confirm creates the direct agent-credential binding + permission
 // rules; when omitted, the credential connects unbound and an agent can
 // be bound later through the credentials API.
@@ -46576,7 +48193,10 @@ func (c *ClientWithResponses) IntegrationsConnectWithBodyWithResponse(ctx contex
 // `connect_session_agent_not_found`, the same as an unknown agent. Naming
 // an owned agent also takes `agents:write`, which confirming for it needs
 // (403 `connect_session_confirmation_forbidden` otherwise), and an active
-// agent (409 `connect_session_agent_inactive` otherwise). When
+// agent (409 `connect_session_agent_inactive` otherwise). An agent whose
+// binding to a credential covering the requested API is suspended gets
+// 409 `connect_session_binding_suspended`: only the operator can resume
+// that binding, so a new connect for the same API is refused. When
 // named, confirm creates the direct agent-credential binding + permission
 // rules; when omitted, the credential connects unbound and an agent can
 // be bound later through the credentials API.
@@ -46590,6 +48210,56 @@ func (c *ClientWithResponses) IntegrationsConnectWithResponse(ctx context.Contex
 		return nil, err
 	}
 	return ParseIntegrationsConnectHTTPResp(rsp)
+}
+
+// IntegrationsEditConnectionWithBodyWithResponse Ask to change a credential binding
+//
+// Open a connect session that edits an existing binding instead of creating one.
+//
+// The change (rules to add, remove or replace, and resuming a suspended
+// binding) is resolved against the binding as it is now, and a human
+// approves it on the review page; nothing changes until then. An agent
+// edits its own binding and must omit `agent_id`; a human names the agent
+// and must be its owner or an org admin. A change that is already in place
+// is 422 `nothing_to_change`, and a rule id the binding does not hold is 422
+// `unknown_rule`. A binding can have several open edits, each rebased as
+// others land; an agent asking again while its own is open is 409
+// `edit_open` with that session's `session_id`, to amend instead.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /integrations:edit-connection (the `IntegrationsEditConnection` operationId).
+func (c *ClientWithResponses) IntegrationsEditConnectionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IntegrationsEditConnectionHTTPResp, error) {
+	rsp, err := c.IntegrationsEditConnectionWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIntegrationsEditConnectionHTTPResp(rsp)
+}
+
+// IntegrationsEditConnectionWithResponse Ask to change a credential binding
+//
+// Open a connect session that edits an existing binding instead of creating one.
+//
+// The change (rules to add, remove or replace, and resuming a suspended
+// binding) is resolved against the binding as it is now, and a human
+// approves it on the review page; nothing changes until then. An agent
+// edits its own binding and must omit `agent_id`; a human names the agent
+// and must be its owner or an org admin. A change that is already in place
+// is 422 `nothing_to_change`, and a rule id the binding does not hold is 422
+// `unknown_rule`. A binding can have several open edits, each rebased as
+// others land; an agent asking again while its own is open is 409
+// `edit_open` with that session's `session_id`, to amend instead.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /integrations:edit-connection (the `IntegrationsEditConnection` operationId).
+func (c *ClientWithResponses) IntegrationsEditConnectionWithResponse(ctx context.Context, body IntegrationsEditConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*IntegrationsEditConnectionHTTPResp, error) {
+	rsp, err := c.IntegrationsEditConnection(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIntegrationsEditConnectionHTTPResp(rsp)
 }
 
 // ListJobsWithResponse List Jobs
@@ -48077,7 +49747,11 @@ func (c *ClientWithResponses) UpdateUserWithResponse(ctx context.Context, userId
 //
 // Set the assigned permissions for a user.
 //
-// A deleted user's permissions cannot be changed (409).
+// A deleted user's permissions cannot be changed (409). When the new set
+// removes any of the user's effective permissions, their login sessions
+// end: every login JWT issued before the change is refused (401), and the
+// user signs in again for a token with the narrower set. This includes a
+// caller narrowing their own permissions.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -48094,7 +49768,11 @@ func (c *ClientWithResponses) SetUserPermissionsWithBodyWithResponse(ctx context
 //
 // Set the assigned permissions for a user.
 //
-// A deleted user's permissions cannot be changed (409).
+// A deleted user's permissions cannot be changed (409). When the new set
+// removes any of the user's effective permissions, their login sessions
+// end: every login JWT issued before the change is refused (401), and the
+// user signs in again for a token with the narrower set. This includes a
+// caller narrowing their own permissions.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -51259,6 +52937,13 @@ func ParseImportApisHTTPResp(rsp *http.Response) (*ImportApisHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON413 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -53825,6 +55510,81 @@ func ParseGetConnectSessionHTTPResp(rsp *http.Response) (*GetConnectSessionHTTPR
 	return response, nil
 }
 
+// ParseListConnectSessionRevisionsHTTPResp parses an HTTP response from a ListConnectSessionRevisionsWithResponse call
+func ParseListConnectSessionRevisionsHTTPResp(rsp *http.Response) (*ListConnectSessionRevisionsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListConnectSessionRevisionsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParsePollConnectSessionStatusHTTPResp parses an HTTP response from a PollConnectSessionStatusWithResponse call
 func ParsePollConnectSessionStatusHTTPResp(rsp *http.Response) (*PollConnectSessionStatusHTTPResp, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -53866,6 +55626,88 @@ func ParsePollConnectSessionStatusHTTPResp(rsp *http.Response) (*PollConnectSess
 			return nil, err
 		}
 		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAmendConnectSessionHTTPResp parses an HTTP response from a AmendConnectSessionWithResponse call
+func ParseAmendConnectSessionHTTPResp(rsp *http.Response) (*AmendConnectSessionHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AmendConnectSessionHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
@@ -54695,7 +56537,7 @@ func ParseListAgentCredentialPermissionsHTTPResp(rsp *http.Response) (*ListAgent
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PermissionRuleListResponse
+		var dest BindingAccessResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -56355,6 +58197,88 @@ func ParseGetInstanceHTTPResp(rsp *http.Response) (*GetInstanceHTTPResp, error) 
 	return response, nil
 }
 
+// ParseIntegrationsConnectOptionsHTTPResp parses an HTTP response from a IntegrationsConnectOptionsWithResponse call
+func ParseIntegrationsConnectOptionsHTTPResp(rsp *http.Response) (*IntegrationsConnectOptionsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &IntegrationsConnectOptionsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseIntegrationsConnectHTTPResp parses an HTTP response from a IntegrationsConnectWithResponse call
 func ParseIntegrationsConnectHTTPResp(rsp *http.Response) (*IntegrationsConnectHTTPResp, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -56364,6 +58288,102 @@ func ParseIntegrationsConnectHTTPResp(rsp *http.Response) (*IntegrationsConnectH
 	}
 
 	response := &IntegrationsConnectHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseIntegrationsEditConnectionHTTPResp parses an HTTP response from a IntegrationsEditConnectionWithResponse call
+func ParseIntegrationsEditConnectionHTTPResp(rsp *http.Response) (*IntegrationsEditConnectionHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &IntegrationsEditConnectionHTTPResp{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}

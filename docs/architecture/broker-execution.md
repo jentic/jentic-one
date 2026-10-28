@@ -182,7 +182,8 @@ credentials the caller may use for the call — a single cross-DB lookup
 intersecting the agent's credential bindings (admin DB) with the active
 credentials covering the API (control DB); none → `403
 no_credential_binding` (or `403 credential_identity_mismatch` when a bound
-credential is a near-miss), several → resolution disambiguates (or asks for
+credential is a near-miss, `403 credential_binding_suspended` when the
+agent's binding covering the API is suspended), several → resolution disambiguates (or asks for
 `Jentic-Credential-Id` with a `409`) — and the winning binding's permission
 rules are evaluated **default-deny**: no matching rule, no call
 ([`broker/repos/agent_rule_evaluator.py`](../../src/jentic_one/broker/repos/agent_rule_evaluator.py)).

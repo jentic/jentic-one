@@ -17,7 +17,7 @@ import pytest
 import yaml
 from starlette.requests import Request
 
-from jentic_one.broker.core.exceptions import ApprovalHoldUnavailableError
+from jentic_one.broker.core.errors import ApprovalHoldUnavailableError
 from jentic_one.broker.core.problem import status_for_broker_error
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.services.credentials.resolver import ResolvedCredential

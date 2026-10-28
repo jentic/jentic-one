@@ -14,7 +14,9 @@ from sqlalchemy import Boolean, bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import BindParameter
 
+from jentic_one.shared.db.locks import lock_credential_bindings
 from jentic_one.shared.db.types import UTCDateTime
+from jentic_one.shared.pagination import Cursor
 
 
 class CredentialBoundAgentRow(NamedTuple):
@@ -140,11 +142,21 @@ class PrerequisiteRepository:
         return [str(row[0]) for row in result.fetchall()]
 
     @staticmethod
+    async def lock_bindings_for_credential(session: AsyncSession, *, credential_id: str) -> None:
+        """Hold the credential's binding lock until the admin transaction ends.
+
+        No binding to the credential can be created meanwhile, so a
+        :meth:`list_agents_for_credential` read in the same transaction stays
+        accurate until it commits or rolls back.
+        """
+        await lock_credential_bindings(session, credential_id)
+
+    @staticmethod
     async def list_agents_for_credential(
         session: AsyncSession,
         *,
         credential_id: str,
-        cursor: tuple[datetime, str] | None = None,
+        cursor: Cursor | None = None,
         limit: int = 50,
         visible_to: AgentVisibility | None = None,
     ) -> list[CredentialBoundAgentRow]:
@@ -162,11 +174,10 @@ class PrerequisiteRepository:
         params: dict[str, object] = {"credential_id": credential_id, "limit": limit}
         bind_params: list[BindParameter[Any]] = []
         if cursor is not None:
-            cursor_ts, cursor_id = cursor
             conditions.append(
                 "(b.bound_at < :cursor_ts OR (b.bound_at = :cursor_ts AND b.id < :cursor_id))"
             )
-            params.update(cursor_ts=cursor_ts, cursor_id=cursor_id)
+            params.update(cursor_ts=cursor.timestamp, cursor_id=cursor.id)
             # Typed so SQLite compares against the stored timestamp format.
             bind_params.append(bindparam("cursor_ts", type_=UTCDateTime()))
         if visible_to is not None:
@@ -257,6 +268,22 @@ class PrerequisiteRepository:
                 "WHERE agent_id = :agent_id AND credential_id = :credential_id"
             ),
             {"rule_set_id": rule_set_id, "agent_id": agent_id, "credential_id": credential_id},
+        )
+        return bool(result.rowcount)  # type: ignore[attr-defined]
+
+    @staticmethod
+    async def resume_binding(session: AsyncSession, *, agent_id: str, credential_id: str) -> bool:
+        """Switch a suspended direct binding back on (admin DB, raw SQL).
+
+        Clears ``suspended_reason`` like the admin repository's resume.
+        Returns ``False`` when no such binding exists.
+        """
+        result = await session.execute(
+            text(
+                "UPDATE agent_credential_bindings SET suspended = :off, suspended_reason = NULL "
+                "WHERE agent_id = :agent_id AND credential_id = :credential_id"
+            ),
+            {"off": False, "agent_id": agent_id, "credential_id": credential_id},
         )
         return bool(result.rowcount)  # type: ignore[attr-defined]
 

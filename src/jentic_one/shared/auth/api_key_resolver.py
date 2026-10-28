@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import enum
 import hashlib
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -69,13 +70,25 @@ class _InactiveAgent:
     owner_inactive: bool = False
 
 
+_AGENT_CREDENTIAL_LOOKUP = text(
+    "SELECT a.id AS agent_id, a.name, a.status, a.owner_id,"
+    " CASE WHEN u.deleted_at IS NULL THEN u.active ELSE FALSE END AS owner_active,"
+    " g.permission"
+    " FROM agent_credentials ac"
+    " JOIN agents a ON a.id = ac.agent_id"
+    " LEFT JOIN users u ON u.id = a.owner_id"
+    " LEFT JOIN actor_permission_grants g ON g.actor_id = a.id AND g.actor_type = 'agent'"
+    " WHERE ac.api_key_hash = :key_hash"
+).columns(owner_active=Boolean)
+
+
 class ApiKeyResolver:
     """Resolves API keys to an Identity by digest lookup in ``agent_credentials``.
 
-    - ``jak_`` keys query ``agent_credentials`` joined to ``agents`` and the
-      owner's ``users`` row: an owned agent authenticates only while both it
-      and its owner are active (an ownerless agent depends on its own status
-      alone).
+    - ``jak_`` keys query ``agent_credentials`` joined to ``agents``, the
+      owner's ``users`` row, and ``actor_permission_grants`` in one statement:
+      an owned agent authenticates only while both it and its owner are active
+      (an ownerless agent depends on its own status alone).
     - ``jntc_live_`` keys (retired, deprecated) go through the same lookup:
       the theme-5 migration copied each retired key's digest onto its
       successor agent, so the key resolves as that agent. A digest miss, or a
@@ -189,47 +202,45 @@ class ApiKeyResolver:
         return arm if isinstance(arm, Identity) else None
 
     async def _credential_row(self, raw_key: str) -> Any:
-        """The agent holding ``raw_key``'s digest, read in its own admin session."""
-        async with self._admin_db.session() as session:
-            return await self._fetch_credential_row(session, raw_key)
+        """The agent holding ``raw_key``'s digest, read in its own admin read session."""
+        async with self._admin_db.read_session() as session:
+            rows = await self._fetch_credential_rows(session, raw_key)
+        return rows[0] if rows else None
 
-    async def _fetch_credential_row(self, session: AsyncSession, raw_key: str) -> Any:
-        """The agent holding ``raw_key``'s digest.
+    async def _fetch_credential_rows(self, session: AsyncSession, raw_key: str) -> Sequence[Any]:
+        """The agent holding ``raw_key``'s digest and its granted permissions.
 
-        Columns: ``agent_id, name, status, owner_id, owner_active``.
+        Columns: ``agent_id, name, status, owner_id, owner_active, permission``.
         ``name`` rides along off the already-joined ``agents`` row (no extra
         query) so the resolved ``Identity`` can carry a human-readable actor
-        name into audit event summaries (#1543). ``owner_active`` is the
-        owner's ``users.active``, read by the same statement (an outer join):
-        NULL for an ownerless agent or a missing owner row.
+        name into audit event summaries (#1543). ``owner_active`` is
+        ``u.active AND u.deleted_at IS NULL``, read by the same statement (an
+        outer join): NULL for an ownerless agent or a missing owner row, and
+        FALSE when the owner is disabled or deleted. ``permission`` comes from
+        an outer join to ``actor_permission_grants`` (NULL when the agent holds
+        no grants), so the credential lookup and grant read complete in one
+        statement (#1944).
         """
         key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
-        stmt = text(
-            "SELECT a.id AS agent_id, a.name, a.status, a.owner_id, u.active AS owner_active"
-            " FROM agent_credentials ac"
-            " JOIN agents a ON a.id = ac.agent_id"
-            " LEFT JOIN users u ON u.id = a.owner_id"
-            " WHERE ac.api_key_hash = :key_hash"
-        ).columns(owner_active=Boolean)
-        return (await session.execute(stmt, {"key_hash": key_hash})).one_or_none()
+        return (await session.execute(_AGENT_CREDENTIAL_LOOKUP, {"key_hash": key_hash})).all()
 
     async def _lookup_agent(self, raw_key: str) -> Identity | _AgentArm | _InactiveAgent:
-        # One admin session per lookup: the credential row and the active
-        # agent's grants are read on the same pooled connection (#1703), as the
-        # ``at_`` path does. Grants are only read for an agent that may act.
-        async with self._admin_db.session() as session:
-            row = await self._fetch_credential_row(session, raw_key)
-            if row is None:
-                return _AgentArm.MISS
-            if row.status != "active":
-                return _InactiveAgent(agent_id=row.agent_id)
-            if row.owner_id is not None and not row.owner_active:
-                # The owner is disabled or deleted, or its row is missing:
-                # fail closed. A soft-deleted user has ``active`` false, so
-                # this covers delete too.
-                log_agent_owner_inactive(row.agent_id, row.owner_id)
-                return _InactiveAgent(agent_id=row.agent_id, owner_inactive=True)
-            permissions = await self._load_permissions(session, row.agent_id, ActorType.AGENT)
+        # One autocommit read session and one statement per lookup (#1703, #1944):
+        # the credential row, owner liveness, and active agent's grants are read
+        # in a single round-trip without BEGIN/ROLLBACK overhead.
+        async with self._admin_db.read_session() as session:
+            rows = await self._fetch_credential_rows(session, raw_key)
+        if not rows:
+            return _AgentArm.MISS
+        row = rows[0]
+        if row.status != "active":
+            return _InactiveAgent(agent_id=row.agent_id)
+        if row.owner_id is not None and not row.owner_active:
+            # The owner is disabled or deleted, or its row is missing:
+            # fail closed.
+            log_agent_owner_inactive(row.agent_id, row.owner_id)
+            return _InactiveAgent(agent_id=row.agent_id, owner_inactive=True)
+        permissions = [r.permission for r in rows if r.permission is not None]
         return Identity(
             sub=row.agent_id,
             actor_name=row.name or "",
@@ -238,14 +249,3 @@ class ApiKeyResolver:
             parent_actor_id=row.owner_id,
             active=True,
         )
-
-    async def _load_permissions(
-        self, session: AsyncSession, actor_id: str, actor_type: ActorType
-    ) -> list[str]:
-        """The actor's granted permissions, read on the caller's ``session``."""
-        stmt = text(
-            "SELECT permission FROM actor_permission_grants"
-            " WHERE actor_id = :actor_id AND actor_type = :actor_type"
-        )
-        result = await session.execute(stmt, {"actor_id": actor_id, "actor_type": actor_type.value})
-        return [row.permission for row in result.all()]

@@ -526,7 +526,8 @@ func classifyTransportErr(err error) error {
 // provisioning-shaped denials (no_credential_binding /
 // credential_not_provisioned) point at request_connection — the agent can
 // start the credential-provisioning leg itself — while everything else
-// (action_denied, credential_identity_mismatch, unknown types) keeps whoami
+// (action_denied, credential_identity_mismatch, credential_binding_suspended,
+// unknown types) keeps whoami
 // ("check your bindings, never execute to probe access", §3.2). Binding an
 // existing credential and scope grants stay operator actions; the hints keep
 // saying so.
@@ -558,7 +559,8 @@ func (s *mcpServer) executeDenialError(ctx context.Context, denial *agentops.Den
 // action_denied (a permission rule forbids the op; connecting a fresh
 // credential must NOT be taught as a way around it),
 // credential_identity_mismatch and credential_undecryptable (operator fixes
-// the credential), and any unknown type — keeps whoami.
+// the credential), credential_binding_suspended (only the operator resumes
+// the binding; a new connect is refused), and any unknown type — keeps whoami.
 var provisioningProblemTypes = map[string]bool{
 	"no_credential_binding":      true,
 	"credential_not_provisioned": true,

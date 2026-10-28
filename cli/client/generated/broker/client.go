@@ -239,6 +239,14 @@ type BrokerProblem struct {
 	// Examples: {"human_readable_instruction":"Multiple bound credentials cover this API. Resend the same request with the Jentic-Credential-Id header set to one of the ids in parameters.candidates (Jentic-Credential-Name also works when names are unique).","parameters":{"candidates":["cred_01HXAMPLE7Q2","cred_01HXAMPLE9K4"],"headers":{"Jentic-Credential-Id":"cred_01HXAMPLE7Q2"}},"strategy":"modify_headers"}
 	AgentDirective *AgentDirective `json:"agent_directive,omitempty"`
 
+	// AllowedMethods The HTTP methods the upstream URL is registered for, on a
+	// `method_not_allowed` 405. Mirrored in the `Allow` response
+	// header.
+	//
+	//
+	// Examples: ["GET","PUT"]
+	AllowedMethods *[]string `json:"allowed_methods,omitempty"`
+
 	// Candidates The caller's own credentials that matched ambiguously
 	// (`ambiguous_credential_binding`, `ambiguous_credential`) or
 	// that a credential-selection header failed to match
@@ -352,7 +360,7 @@ type CredentialCandidate struct {
 // serving requests. Intentionally minimal — clients treat `200` +
 // `status: ok` as the green signal; the body is informational.
 //
-// Examples: {"status":"ok","surface":"broker","version":"0.43.0"}
+// Examples: {"status":"ok","surface":"broker","version":"0.44.0"}
 type HealthResponse struct {
 	// Reason Why the deployment is not entitled. Present only on the `not_entitled` body.
 	//
@@ -377,7 +385,7 @@ type HealthResponse struct {
 	// in this spec). Absent on the `not_entitled` body.
 	//
 	//
-	// Examples: 0.43.0
+	// Examples: 0.44.0
 	Version *string `json:"version,omitempty"`
 }
 
@@ -558,6 +566,16 @@ type ExecuteAsync struct {
 //
 // Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
 type Forbidden = BrokerProblem
+
+// MethodNotAllowed RFC 9457 Problem Details body for every Broker error. Extends the
+// shared Jentic `ProblemDetails` schema with the Broker's
+// agent-recovery members: `error_origin` says *who* failed, and
+// `agent_directive` (when present) is a machine-actionable recovery
+// instruction an agent can follow without parsing prose. `title`
+// repeats `detail` on Broker-originated errors.
+//
+// Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
+type MethodNotAllowed = BrokerProblem
 
 // NotFound RFC 9457 Problem Details body for every Broker error. Extends the
 // shared Jentic `ProblemDetails` schema with the Broker's
@@ -2615,6 +2633,7 @@ type ExecuteDeleteHTTPResp200Headers struct {
 	JenticOperation      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
+	ServerTiming         *string
 	Traceparent          *string
 	Tracestate           *string
 }
@@ -2626,8 +2645,14 @@ type ExecuteDeleteHTTPResp202Headers struct {
 	JenticExecutionId  *string
 	JenticOperation    *string
 	PreferenceApplied  *string
+	ServerTiming       *string
 	Traceparent        *string
 	Tracestate         *string
+}
+
+// ExecuteDeleteHTTPResp405Headers the declared response headers of an HTTP 405 response for ExecuteDelete
+type ExecuteDeleteHTTPResp405Headers struct {
+	Allow *string
 }
 
 // ExecuteDeleteHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecuteDelete
@@ -2655,6 +2680,8 @@ type ExecuteDeleteHTTPResp struct {
 	ApplicationproblemJSON403 *Forbidden
 	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
 	ApplicationproblemJSON404 *NotFound
+	// ApplicationproblemJSON405 the response for an HTTP 405 `application/problem+json` response
+	ApplicationproblemJSON405 *MethodNotAllowed
 	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
 	ApplicationproblemJSON409 *Conflict
 	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
@@ -2675,6 +2702,8 @@ type ExecuteDeleteHTTPResp struct {
 	Headers200 *ExecuteDeleteHTTPResp200Headers
 	// Headers202 the parsed response headers for an HTTP 202 response
 	Headers202 *ExecuteDeleteHTTPResp202Headers
+	// Headers405 the parsed response headers for an HTTP 405 response
+	Headers405 *ExecuteDeleteHTTPResp405Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *ExecuteDeleteHTTPResp429Headers
 	// Headers503 the parsed response headers for an HTTP 503 response
@@ -2704,6 +2733,11 @@ func (r ExecuteDeleteHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 // GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
 func (r ExecuteDeleteHTTPResp) GetApplicationproblemJSON404() *NotFound {
 	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON405 returns the response for an HTTP 405 `application/problem+json` response
+func (r ExecuteDeleteHTTPResp) GetApplicationproblemJSON405() *MethodNotAllowed {
+	return r.ApplicationproblemJSON405
 }
 
 // GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
@@ -2785,6 +2819,7 @@ type ExecuteGetHTTPResp200Headers struct {
 	JenticOperation      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
+	ServerTiming         *string
 	Traceparent          *string
 	Tracestate           *string
 }
@@ -2796,8 +2831,14 @@ type ExecuteGetHTTPResp202Headers struct {
 	JenticExecutionId  *string
 	JenticOperation    *string
 	PreferenceApplied  *string
+	ServerTiming       *string
 	Traceparent        *string
 	Tracestate         *string
+}
+
+// ExecuteGetHTTPResp405Headers the declared response headers of an HTTP 405 response for ExecuteGet
+type ExecuteGetHTTPResp405Headers struct {
+	Allow *string
 }
 
 // ExecuteGetHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecuteGet
@@ -2825,6 +2866,8 @@ type ExecuteGetHTTPResp struct {
 	ApplicationproblemJSON403 *Forbidden
 	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
 	ApplicationproblemJSON404 *NotFound
+	// ApplicationproblemJSON405 the response for an HTTP 405 `application/problem+json` response
+	ApplicationproblemJSON405 *MethodNotAllowed
 	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
 	ApplicationproblemJSON409 *Conflict
 	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
@@ -2845,6 +2888,8 @@ type ExecuteGetHTTPResp struct {
 	Headers200 *ExecuteGetHTTPResp200Headers
 	// Headers202 the parsed response headers for an HTTP 202 response
 	Headers202 *ExecuteGetHTTPResp202Headers
+	// Headers405 the parsed response headers for an HTTP 405 response
+	Headers405 *ExecuteGetHTTPResp405Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *ExecuteGetHTTPResp429Headers
 	// Headers503 the parsed response headers for an HTTP 503 response
@@ -2874,6 +2919,11 @@ func (r ExecuteGetHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 // GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
 func (r ExecuteGetHTTPResp) GetApplicationproblemJSON404() *NotFound {
 	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON405 returns the response for an HTTP 405 `application/problem+json` response
+func (r ExecuteGetHTTPResp) GetApplicationproblemJSON405() *MethodNotAllowed {
+	return r.ApplicationproblemJSON405
 }
 
 // GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
@@ -2955,6 +3005,7 @@ type ExecuteHeadHTTPResp200Headers struct {
 	JenticOperation      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
+	ServerTiming         *string
 	Traceparent          *string
 	Tracestate           *string
 }
@@ -2966,8 +3017,14 @@ type ExecuteHeadHTTPResp202Headers struct {
 	JenticExecutionId  *string
 	JenticOperation    *string
 	PreferenceApplied  *string
+	ServerTiming       *string
 	Traceparent        *string
 	Tracestate         *string
+}
+
+// ExecuteHeadHTTPResp405Headers the declared response headers of an HTTP 405 response for ExecuteHead
+type ExecuteHeadHTTPResp405Headers struct {
+	Allow *string
 }
 
 // ExecuteHeadHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecuteHead
@@ -2995,6 +3052,8 @@ type ExecuteHeadHTTPResp struct {
 	ApplicationproblemJSON403 *Forbidden
 	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
 	ApplicationproblemJSON404 *NotFound
+	// ApplicationproblemJSON405 the response for an HTTP 405 `application/problem+json` response
+	ApplicationproblemJSON405 *MethodNotAllowed
 	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
 	ApplicationproblemJSON409 *Conflict
 	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
@@ -3015,6 +3074,8 @@ type ExecuteHeadHTTPResp struct {
 	Headers200 *ExecuteHeadHTTPResp200Headers
 	// Headers202 the parsed response headers for an HTTP 202 response
 	Headers202 *ExecuteHeadHTTPResp202Headers
+	// Headers405 the parsed response headers for an HTTP 405 response
+	Headers405 *ExecuteHeadHTTPResp405Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *ExecuteHeadHTTPResp429Headers
 	// Headers503 the parsed response headers for an HTTP 503 response
@@ -3044,6 +3105,11 @@ func (r ExecuteHeadHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 // GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
 func (r ExecuteHeadHTTPResp) GetApplicationproblemJSON404() *NotFound {
 	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON405 returns the response for an HTTP 405 `application/problem+json` response
+func (r ExecuteHeadHTTPResp) GetApplicationproblemJSON405() *MethodNotAllowed {
+	return r.ApplicationproblemJSON405
 }
 
 // GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
@@ -3125,6 +3191,7 @@ type ExecuteOptionsHTTPResp200Headers struct {
 	JenticOperation      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
+	ServerTiming         *string
 	Traceparent          *string
 	Tracestate           *string
 }
@@ -3136,8 +3203,14 @@ type ExecuteOptionsHTTPResp202Headers struct {
 	JenticExecutionId  *string
 	JenticOperation    *string
 	PreferenceApplied  *string
+	ServerTiming       *string
 	Traceparent        *string
 	Tracestate         *string
+}
+
+// ExecuteOptionsHTTPResp405Headers the declared response headers of an HTTP 405 response for ExecuteOptions
+type ExecuteOptionsHTTPResp405Headers struct {
+	Allow *string
 }
 
 // ExecuteOptionsHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecuteOptions
@@ -3165,6 +3238,8 @@ type ExecuteOptionsHTTPResp struct {
 	ApplicationproblemJSON403 *Forbidden
 	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
 	ApplicationproblemJSON404 *NotFound
+	// ApplicationproblemJSON405 the response for an HTTP 405 `application/problem+json` response
+	ApplicationproblemJSON405 *MethodNotAllowed
 	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
 	ApplicationproblemJSON409 *Conflict
 	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
@@ -3185,6 +3260,8 @@ type ExecuteOptionsHTTPResp struct {
 	Headers200 *ExecuteOptionsHTTPResp200Headers
 	// Headers202 the parsed response headers for an HTTP 202 response
 	Headers202 *ExecuteOptionsHTTPResp202Headers
+	// Headers405 the parsed response headers for an HTTP 405 response
+	Headers405 *ExecuteOptionsHTTPResp405Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *ExecuteOptionsHTTPResp429Headers
 	// Headers503 the parsed response headers for an HTTP 503 response
@@ -3214,6 +3291,11 @@ func (r ExecuteOptionsHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 // GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
 func (r ExecuteOptionsHTTPResp) GetApplicationproblemJSON404() *NotFound {
 	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON405 returns the response for an HTTP 405 `application/problem+json` response
+func (r ExecuteOptionsHTTPResp) GetApplicationproblemJSON405() *MethodNotAllowed {
+	return r.ApplicationproblemJSON405
 }
 
 // GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
@@ -3295,6 +3377,7 @@ type ExecutePatchHTTPResp200Headers struct {
 	JenticOperation      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
+	ServerTiming         *string
 	Traceparent          *string
 	Tracestate           *string
 }
@@ -3306,8 +3389,14 @@ type ExecutePatchHTTPResp202Headers struct {
 	JenticExecutionId  *string
 	JenticOperation    *string
 	PreferenceApplied  *string
+	ServerTiming       *string
 	Traceparent        *string
 	Tracestate         *string
+}
+
+// ExecutePatchHTTPResp405Headers the declared response headers of an HTTP 405 response for ExecutePatch
+type ExecutePatchHTTPResp405Headers struct {
+	Allow *string
 }
 
 // ExecutePatchHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecutePatch
@@ -3335,6 +3424,8 @@ type ExecutePatchHTTPResp struct {
 	ApplicationproblemJSON403 *Forbidden
 	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
 	ApplicationproblemJSON404 *NotFound
+	// ApplicationproblemJSON405 the response for an HTTP 405 `application/problem+json` response
+	ApplicationproblemJSON405 *MethodNotAllowed
 	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
 	ApplicationproblemJSON409 *Conflict
 	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
@@ -3355,6 +3446,8 @@ type ExecutePatchHTTPResp struct {
 	Headers200 *ExecutePatchHTTPResp200Headers
 	// Headers202 the parsed response headers for an HTTP 202 response
 	Headers202 *ExecutePatchHTTPResp202Headers
+	// Headers405 the parsed response headers for an HTTP 405 response
+	Headers405 *ExecutePatchHTTPResp405Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *ExecutePatchHTTPResp429Headers
 	// Headers503 the parsed response headers for an HTTP 503 response
@@ -3384,6 +3477,11 @@ func (r ExecutePatchHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 // GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
 func (r ExecutePatchHTTPResp) GetApplicationproblemJSON404() *NotFound {
 	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON405 returns the response for an HTTP 405 `application/problem+json` response
+func (r ExecutePatchHTTPResp) GetApplicationproblemJSON405() *MethodNotAllowed {
+	return r.ApplicationproblemJSON405
 }
 
 // GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
@@ -3465,6 +3563,7 @@ type ExecutePostHTTPResp200Headers struct {
 	JenticOperation      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
+	ServerTiming         *string
 	Traceparent          *string
 	Tracestate           *string
 }
@@ -3476,8 +3575,14 @@ type ExecutePostHTTPResp202Headers struct {
 	JenticExecutionId  *string
 	JenticOperation    *string
 	PreferenceApplied  *string
+	ServerTiming       *string
 	Traceparent        *string
 	Tracestate         *string
+}
+
+// ExecutePostHTTPResp405Headers the declared response headers of an HTTP 405 response for ExecutePost
+type ExecutePostHTTPResp405Headers struct {
+	Allow *string
 }
 
 // ExecutePostHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecutePost
@@ -3505,6 +3610,8 @@ type ExecutePostHTTPResp struct {
 	ApplicationproblemJSON403 *Forbidden
 	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
 	ApplicationproblemJSON404 *NotFound
+	// ApplicationproblemJSON405 the response for an HTTP 405 `application/problem+json` response
+	ApplicationproblemJSON405 *MethodNotAllowed
 	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
 	ApplicationproblemJSON409 *Conflict
 	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
@@ -3525,6 +3632,8 @@ type ExecutePostHTTPResp struct {
 	Headers200 *ExecutePostHTTPResp200Headers
 	// Headers202 the parsed response headers for an HTTP 202 response
 	Headers202 *ExecutePostHTTPResp202Headers
+	// Headers405 the parsed response headers for an HTTP 405 response
+	Headers405 *ExecutePostHTTPResp405Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *ExecutePostHTTPResp429Headers
 	// Headers503 the parsed response headers for an HTTP 503 response
@@ -3554,6 +3663,11 @@ func (r ExecutePostHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 // GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
 func (r ExecutePostHTTPResp) GetApplicationproblemJSON404() *NotFound {
 	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON405 returns the response for an HTTP 405 `application/problem+json` response
+func (r ExecutePostHTTPResp) GetApplicationproblemJSON405() *MethodNotAllowed {
+	return r.ApplicationproblemJSON405
 }
 
 // GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
@@ -3635,6 +3749,7 @@ type ExecutePutHTTPResp200Headers struct {
 	JenticOperation      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
+	ServerTiming         *string
 	Traceparent          *string
 	Tracestate           *string
 }
@@ -3646,8 +3761,14 @@ type ExecutePutHTTPResp202Headers struct {
 	JenticExecutionId  *string
 	JenticOperation    *string
 	PreferenceApplied  *string
+	ServerTiming       *string
 	Traceparent        *string
 	Tracestate         *string
+}
+
+// ExecutePutHTTPResp405Headers the declared response headers of an HTTP 405 response for ExecutePut
+type ExecutePutHTTPResp405Headers struct {
+	Allow *string
 }
 
 // ExecutePutHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecutePut
@@ -3675,6 +3796,8 @@ type ExecutePutHTTPResp struct {
 	ApplicationproblemJSON403 *Forbidden
 	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
 	ApplicationproblemJSON404 *NotFound
+	// ApplicationproblemJSON405 the response for an HTTP 405 `application/problem+json` response
+	ApplicationproblemJSON405 *MethodNotAllowed
 	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
 	ApplicationproblemJSON409 *Conflict
 	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
@@ -3695,6 +3818,8 @@ type ExecutePutHTTPResp struct {
 	Headers200 *ExecutePutHTTPResp200Headers
 	// Headers202 the parsed response headers for an HTTP 202 response
 	Headers202 *ExecutePutHTTPResp202Headers
+	// Headers405 the parsed response headers for an HTTP 405 response
+	Headers405 *ExecutePutHTTPResp405Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *ExecutePutHTTPResp429Headers
 	// Headers503 the parsed response headers for an HTTP 503 response
@@ -3724,6 +3849,11 @@ func (r ExecutePutHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 // GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
 func (r ExecutePutHTTPResp) GetApplicationproblemJSON404() *NotFound {
 	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON405 returns the response for an HTTP 405 `application/problem+json` response
+func (r ExecutePutHTTPResp) GetApplicationproblemJSON405() *MethodNotAllowed {
+	return r.ApplicationproblemJSON405
 }
 
 // GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
@@ -4143,6 +4273,13 @@ func ParseExecuteDeleteHTTPResp(rsp *http.Response) (*ExecuteDeleteHTTPResp, err
 		}
 		response.ApplicationproblemJSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 405:
+		var dest MethodNotAllowed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON405 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest Conflict
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -4260,6 +4397,13 @@ func ParseExecuteDeleteHTTPResp(rsp *http.Response) (*ExecuteDeleteHTTPResp, err
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -4312,6 +4456,13 @@ func ParseExecuteDeleteHTTPResp(rsp *http.Response) (*ExecuteDeleteHTTPResp, err
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -4327,6 +4478,16 @@ func ParseExecuteDeleteHTTPResp(rsp *http.Response) (*ExecuteDeleteHTTPResp, err
 			headers.Tracestate = &value
 		}
 		response.Headers202 = &headers
+	case rsp.StatusCode == 405:
+		var headers ExecuteDeleteHTTPResp405Headers
+		if values := rsp.Header.Values("Allow"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Allow", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.Allow = &value
+		}
+		response.Headers405 = &headers
 	case rsp.StatusCode == 429:
 		var headers ExecuteDeleteHTTPResp429Headers
 		if values := rsp.Header.Values("RateLimit-Limit"); len(values) > 0 {
@@ -4414,6 +4575,13 @@ func ParseExecuteGetHTTPResp(rsp *http.Response) (*ExecuteGetHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 405:
+		var dest MethodNotAllowed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON405 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest Conflict
@@ -4532,6 +4700,13 @@ func ParseExecuteGetHTTPResp(rsp *http.Response) (*ExecuteGetHTTPResp, error) {
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -4584,6 +4759,13 @@ func ParseExecuteGetHTTPResp(rsp *http.Response) (*ExecuteGetHTTPResp, error) {
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -4599,6 +4781,16 @@ func ParseExecuteGetHTTPResp(rsp *http.Response) (*ExecuteGetHTTPResp, error) {
 			headers.Tracestate = &value
 		}
 		response.Headers202 = &headers
+	case rsp.StatusCode == 405:
+		var headers ExecuteGetHTTPResp405Headers
+		if values := rsp.Header.Values("Allow"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Allow", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.Allow = &value
+		}
+		response.Headers405 = &headers
 	case rsp.StatusCode == 429:
 		var headers ExecuteGetHTTPResp429Headers
 		if values := rsp.Header.Values("RateLimit-Limit"); len(values) > 0 {
@@ -4686,6 +4878,13 @@ func ParseExecuteHeadHTTPResp(rsp *http.Response) (*ExecuteHeadHTTPResp, error) 
 			return nil, err
 		}
 		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 405:
+		var dest MethodNotAllowed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON405 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest Conflict
@@ -4804,6 +5003,13 @@ func ParseExecuteHeadHTTPResp(rsp *http.Response) (*ExecuteHeadHTTPResp, error) 
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -4856,6 +5062,13 @@ func ParseExecuteHeadHTTPResp(rsp *http.Response) (*ExecuteHeadHTTPResp, error) 
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -4871,6 +5084,16 @@ func ParseExecuteHeadHTTPResp(rsp *http.Response) (*ExecuteHeadHTTPResp, error) 
 			headers.Tracestate = &value
 		}
 		response.Headers202 = &headers
+	case rsp.StatusCode == 405:
+		var headers ExecuteHeadHTTPResp405Headers
+		if values := rsp.Header.Values("Allow"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Allow", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.Allow = &value
+		}
+		response.Headers405 = &headers
 	case rsp.StatusCode == 429:
 		var headers ExecuteHeadHTTPResp429Headers
 		if values := rsp.Header.Values("RateLimit-Limit"); len(values) > 0 {
@@ -4958,6 +5181,13 @@ func ParseExecuteOptionsHTTPResp(rsp *http.Response) (*ExecuteOptionsHTTPResp, e
 			return nil, err
 		}
 		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 405:
+		var dest MethodNotAllowed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON405 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest Conflict
@@ -5076,6 +5306,13 @@ func ParseExecuteOptionsHTTPResp(rsp *http.Response) (*ExecuteOptionsHTTPResp, e
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -5128,6 +5365,13 @@ func ParseExecuteOptionsHTTPResp(rsp *http.Response) (*ExecuteOptionsHTTPResp, e
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -5143,6 +5387,16 @@ func ParseExecuteOptionsHTTPResp(rsp *http.Response) (*ExecuteOptionsHTTPResp, e
 			headers.Tracestate = &value
 		}
 		response.Headers202 = &headers
+	case rsp.StatusCode == 405:
+		var headers ExecuteOptionsHTTPResp405Headers
+		if values := rsp.Header.Values("Allow"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Allow", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.Allow = &value
+		}
+		response.Headers405 = &headers
 	case rsp.StatusCode == 429:
 		var headers ExecuteOptionsHTTPResp429Headers
 		if values := rsp.Header.Values("RateLimit-Limit"); len(values) > 0 {
@@ -5230,6 +5484,13 @@ func ParseExecutePatchHTTPResp(rsp *http.Response) (*ExecutePatchHTTPResp, error
 			return nil, err
 		}
 		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 405:
+		var dest MethodNotAllowed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON405 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest Conflict
@@ -5348,6 +5609,13 @@ func ParseExecutePatchHTTPResp(rsp *http.Response) (*ExecutePatchHTTPResp, error
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -5400,6 +5668,13 @@ func ParseExecutePatchHTTPResp(rsp *http.Response) (*ExecutePatchHTTPResp, error
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -5415,6 +5690,16 @@ func ParseExecutePatchHTTPResp(rsp *http.Response) (*ExecutePatchHTTPResp, error
 			headers.Tracestate = &value
 		}
 		response.Headers202 = &headers
+	case rsp.StatusCode == 405:
+		var headers ExecutePatchHTTPResp405Headers
+		if values := rsp.Header.Values("Allow"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Allow", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.Allow = &value
+		}
+		response.Headers405 = &headers
 	case rsp.StatusCode == 429:
 		var headers ExecutePatchHTTPResp429Headers
 		if values := rsp.Header.Values("RateLimit-Limit"); len(values) > 0 {
@@ -5502,6 +5787,13 @@ func ParseExecutePostHTTPResp(rsp *http.Response) (*ExecutePostHTTPResp, error) 
 			return nil, err
 		}
 		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 405:
+		var dest MethodNotAllowed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON405 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest Conflict
@@ -5620,6 +5912,13 @@ func ParseExecutePostHTTPResp(rsp *http.Response) (*ExecutePostHTTPResp, error) 
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -5672,6 +5971,13 @@ func ParseExecutePostHTTPResp(rsp *http.Response) (*ExecutePostHTTPResp, error) 
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -5687,6 +5993,16 @@ func ParseExecutePostHTTPResp(rsp *http.Response) (*ExecutePostHTTPResp, error) 
 			headers.Tracestate = &value
 		}
 		response.Headers202 = &headers
+	case rsp.StatusCode == 405:
+		var headers ExecutePostHTTPResp405Headers
+		if values := rsp.Header.Values("Allow"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Allow", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.Allow = &value
+		}
+		response.Headers405 = &headers
 	case rsp.StatusCode == 429:
 		var headers ExecutePostHTTPResp429Headers
 		if values := rsp.Header.Values("RateLimit-Limit"); len(values) > 0 {
@@ -5774,6 +6090,13 @@ func ParseExecutePutHTTPResp(rsp *http.Response) (*ExecutePutHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 405:
+		var dest MethodNotAllowed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON405 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest Conflict
@@ -5892,6 +6215,13 @@ func ParseExecutePutHTTPResp(rsp *http.Response) (*ExecutePutHTTPResp, error) {
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -5944,6 +6274,13 @@ func ParseExecutePutHTTPResp(rsp *http.Response) (*ExecutePutHTTPResp, error) {
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -5959,6 +6296,16 @@ func ParseExecutePutHTTPResp(rsp *http.Response) (*ExecutePutHTTPResp, error) {
 			headers.Tracestate = &value
 		}
 		response.Headers202 = &headers
+	case rsp.StatusCode == 405:
+		var headers ExecutePutHTTPResp405Headers
+		if values := rsp.Header.Values("Allow"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Allow", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.Allow = &value
+		}
+		response.Headers405 = &headers
 	case rsp.StatusCode == 429:
 		var headers ExecutePutHTTPResp429Headers
 		if values := rsp.Header.Values("RateLimit-Limit"); len(values) > 0 {

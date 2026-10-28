@@ -6,7 +6,7 @@ import pytest
 
 from jentic_one.broker.adapters.runners.base import RunnerRequest, RunnerResult
 from jentic_one.broker.adapters.runners.registry import RunnerRegistry
-from jentic_one.broker.core.exceptions import (
+from jentic_one.broker.core.errors import (
     RunnerSchemeUnsupportedError,
     RunnerUnavailableError,
 )

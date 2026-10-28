@@ -77,7 +77,7 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseDataError
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
-from jentic_one.shared.models.credentials import CredentialType
+from jentic_one.shared.models.credentials import CredentialType, StoredCredentialType
 from jentic_one.shared.url_validation import validate_upstream_url_async
 
 _ADMIN_IDENTITY = Identity(sub="admin_user", email="admin@test.com", permissions=["org:admin"])
@@ -1643,7 +1643,7 @@ async def _seed_oauth2_row(ctx: Context, *, token_url: str) -> str:
     async with ctx.control_db.transaction() as session:
         credential = await CredentialRepository.create(
             session,
-            type=CredentialType.OAUTH2,
+            type=StoredCredentialType.OAUTH2_AUTHORIZATION_CODE.value,
             name="Seeded OAuth2",
             api_vendor="test-vendor",
             api_name="test-api",
@@ -2034,3 +2034,160 @@ async def test_update_oauth2_reports_not_found_or_type_before_token_url(
         with _lookups_seeing([0]) as seen, pytest.raises(expected):
             await svc.update(credential_id, update, identity=_ADMIN_IDENTITY)
     assert seen == []
+
+
+@pytest.mark.parametrize("grant_type", ["client_credentials", "authorization_code", "device_code"])
+@pytest.mark.parametrize(
+    ("field", "bad_url"),
+    [
+        ("token_url", f"http://{_INTERNAL_HOST}/oauth/token"),
+        ("token_url", f"{_INTERNAL_HOST}/oauth/token"),
+        ("authorize_url", f"http://{_INTERNAL_HOST}/oauth/authorize"),
+        ("authorize_url", f"{_INTERNAL_HOST}/oauth/authorize"),
+    ],
+)
+async def test_create_oauth2_rejects_non_https_urls_even_when_allowlisted(
+    integration_config: AppConfig,
+    clean_credentials: None,
+    grant_type: str,
+    field: str,
+    bad_url: str,
+) -> None:
+    """Pins #1779: OAuth2 credential create requires https for token_url and authorize_url.
+
+    Even when the host is allowlisted under ``control.egress``, a plain-http or
+    scheme-less endpoint is refused before any DNS lookup or DB write.
+    """
+    config = _egress_config(integration_config, control=_ALLOWLIST)
+    token_url = bad_url if field == "token_url" else _INTERNAL_TOKEN_URL
+    authorize_url = (
+        bad_url if field == "authorize_url" else f"https://{_INTERNAL_HOST}/oauth/authorize"
+    )
+    payload = CredentialCreate(
+        type=CredentialType.OAUTH2,
+        name=f"Non-https {grant_type}",
+        api=_api(),
+        grant_type=grant_type,
+        client_id="client-123",
+        client_secret=None if grant_type == "device_code" else "secret-456",
+        token_url=token_url,
+        authorize_url=authorize_url,
+    )
+    async with _context(config) as ctx:
+        svc = CredentialService(ctx)
+        with (
+            _lookups_seeing([0]) as seen,
+            pytest.raises(InvalidCredentialInputError, match=rf"^Invalid {field}: must use https$"),
+        ):
+            await svc.create(payload, identity=_ADMIN_IDENTITY)
+        page = await svc.list_all(identity=_ADMIN_IDENTITY)
+    assert seen == []
+    assert page.data == []
+
+
+@pytest.mark.parametrize("grant_type", ["client_credentials", "authorization_code", "device_code"])
+@pytest.mark.parametrize("bad_url", [f"http://{_INTERNAL_HOST}/oauth/token", f"{_INTERNAL_HOST}/t"])
+async def test_update_oauth2_rejects_non_https_token_url_even_when_allowlisted(
+    integration_config: AppConfig,
+    clean_credentials: None,
+    grant_type: str,
+    bad_url: str,
+) -> None:
+    """Pins #1779: OAuth2 credential update requires https for token_url."""
+    config = _egress_config(integration_config, control=_ALLOWLIST)
+    async with _context(config) as ctx:
+        svc = CredentialService(ctx)
+        with _internal_dns(_INTERNAL_IP):
+            created = await svc.create(
+                CredentialCreate(
+                    type=CredentialType.OAUTH2,
+                    name=f"Update {grant_type}",
+                    api=_api(),
+                    grant_type=grant_type,
+                    token_url=_INTERNAL_TOKEN_URL,
+                    authorize_url=f"https://{_INTERNAL_HOST}/oauth/authorize",
+                    client_id="client-123",
+                    client_secret=None if grant_type == "device_code" else "secret-456",
+                ),
+                identity=_ADMIN_IDENTITY,
+            )
+        with (
+            _lookups_seeing([0]) as seen,
+            pytest.raises(
+                InvalidCredentialInputError, match=r"^Invalid token_url: must use https$"
+            ),
+        ):
+            await svc.update(
+                created.credential_id,
+                CredentialUpdate(type=CredentialType.OAUTH2, token_url=bad_url),
+                identity=_ADMIN_IDENTITY,
+            )
+        redacted = await svc.get(created.credential_id, identity=_ADMIN_IDENTITY)
+    assert seen == []
+    assert isinstance(redacted.details, OAuth2Redacted)
+    assert redacted.details.token_url == _INTERNAL_TOKEN_URL
+
+
+async def test_stored_http_oauth2_credential_unaffected_until_token_url_edited(
+    integration_config: AppConfig, clean_credentials: None
+) -> None:
+    """Pins #1779: a stored row with an http token_url remains readable, refreshable,
+    and editable on other fields until token_url itself is edited."""
+    http_token_url = f"http://{_INTERNAL_HOST}/oauth/token"
+    config = _egress_config(integration_config, control=_ALLOWLIST)
+    async with _context(config) as ctx:
+        svc = CredentialService(ctx)
+        credential_id = await _seed_oauth2_row(ctx, token_url=http_token_url)
+
+        redacted = await svc.get(credential_id, identity=_ADMIN_IDENTITY)
+        assert isinstance(redacted.details, OAuth2Redacted)
+        assert redacted.details.token_url == http_token_url
+
+        # Non-token_url edits (name, scopes, client_secret) succeed without touching token_url.
+        updated = await svc.update(
+            credential_id,
+            CredentialUpdate(
+                type=CredentialType.OAUTH2,
+                name="Renamed stored http",
+                scopes=["read"],
+                client_secret=_ROTATED_SECRET,
+            ),
+            identity=_ADMIN_IDENTITY,
+        )
+        assert updated.name == "Renamed stored http"
+        assert isinstance(updated.details, OAuth2Redacted)
+        assert updated.details.token_url == http_token_url
+        assert updated.details.scopes == ["read"]
+
+        # Refresh against the stored http URL still works when allowlisted.
+        with _internal_dns(_INTERNAL_IP), _token_endpoint() as sent:
+            result = await _refresh(ctx, credential_id)
+        assert result.access_token == "at-fresh"
+        assert len(sent) == 1
+
+        # Editing token_url to another http URL is rejected.
+        with pytest.raises(
+            InvalidCredentialInputError, match=r"^Invalid token_url: must use https$"
+        ):
+            await svc.update(
+                credential_id,
+                CredentialUpdate(
+                    type=CredentialType.OAUTH2,
+                    token_url=f"http://{_INTERNAL_HOST}/oauth/v2/token",
+                ),
+                identity=_ADMIN_IDENTITY,
+            )
+
+        # Editing token_url to https (cross-origin scheme upgrade with client_secret) succeeds.
+        with _internal_dns(_INTERNAL_IP):
+            upgraded = await svc.update(
+                credential_id,
+                CredentialUpdate(
+                    type=CredentialType.OAUTH2,
+                    token_url=_INTERNAL_TOKEN_URL,
+                    client_secret=_ROTATED_SECRET,
+                ),
+                identity=_ADMIN_IDENTITY,
+            )
+        assert isinstance(upgraded.details, OAuth2Redacted)
+        assert upgraded.details.token_url == _INTERNAL_TOKEN_URL

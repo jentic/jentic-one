@@ -1,9 +1,9 @@
-"""Limits: an agent cannot flood its owner's inbox or nag past a rejection.
+"""Limits: an agent cannot flood its owner's inbox, or nag past a rejection when set.
 
 Extends ``test_connect_session_api_targets.py`` (the caps at 1, the cooldown
-and its zero setting) with the shipped defaults (10 per agent, 50 per owner)
-over HTTP, the cap holding under concurrent asks, and the cooldown resisting
-the obvious ways around it.
+and its default off) with the shipped defaults (10 per agent, 50 per owner,
+no cooldown) over HTTP, the cap holding under concurrent asks, and the
+cooldown, once set, resisting the obvious ways around it.
 """
 
 from __future__ import annotations
@@ -63,7 +63,7 @@ def test_the_shipped_defaults() -> None:
         defaults.max_open_sessions_per_agent,
         defaults.max_open_sessions_per_owner,
         defaults.rejection_cooldown_hours,
-    ) == (10, 50, 24)
+    ) == (10, 50, 0)
 
 
 async def test_per_agent_cap_of_ten_is_429_over_http(env: Context) -> None:
@@ -129,8 +129,9 @@ async def _reject_first_ask(ctx: Context) -> str:
     ids=["same", "case", "whitespace"],
 )
 async def test_rejection_cooldown_resists_respelling_the_target(
-    env: Context, target: ApiTarget
+    env: Context, target: ApiTarget, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(env.config.control.connect, "rejection_cooldown_hours", 24)
     await import_spec(env, {**KEY_SCHEME, "bearer": {"type": "http", "scheme": "bearer"}})
     created = await connect(env, auth_type="key")
     await svc(env).reject_session(created.session_id, identity=OWNER)
@@ -139,7 +140,10 @@ async def test_rejection_cooldown_resists_respelling_the_target(
             await connect(env, target=target, auth_type=auth_type)
 
 
-async def test_rejection_cooldown_holds_and_lapses_on_time(env: Context) -> None:
+async def test_rejection_cooldown_holds_and_lapses_on_time(
+    env: Context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(env.config.control.connect, "rejection_cooldown_hours", 24)
     await import_spec(env, KEY_SCHEME)
     await _reject_first_ask(env)
     async with client(env, AGENT) as agent:

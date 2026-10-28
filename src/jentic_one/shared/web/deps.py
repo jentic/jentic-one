@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Sequence
+from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any
+from typing import Any, Protocol
 
 from fastapi import Depends, Request
 from jentic.problem_details import Forbidden, Unauthorized
@@ -73,7 +74,7 @@ async def resolve_identity(request: Request) -> Identity:
     # (fire-and-forget; two header checks on the non-MCP fast path). This is the
     # control-plane half of the two-plane emit — the broker's identity
     # dependency mirrors it for execute-only sessions.
-    schedule_mcp_session_emit(
+    await schedule_mcp_session_emit(
         getattr(request.app.state, "ctx", None),
         user_agent=request.headers.get("user-agent"),
         session_id=request.headers.get(SESSION_ID_HEADER),
@@ -86,15 +87,31 @@ async def resolve_identity(request: Request) -> Identity:
 class CredentialRecheckResult(StrEnum):
     """The outcome of re-verifying a request's credential mid-response."""
 
-    #: The credential still verifies.
+    #: The credential still verifies and its identity still meets the requirements.
     VALID = "valid"
     #: The verifier refused it: expired, revoked, or its actor disabled or deleted.
     REFUSED = "refused"
+    #: The credential verifies, but its identity no longer meets the requirements
+    #: (a required permission was revoked, or a password rotation is required).
+    FORBIDDEN = "forbidden"
     #: The verifier could not answer (the database is unavailable).
     UNAVAILABLE = "unavailable"
 
 
-CredentialRecheck = Callable[[], Coroutine[Any, Any, CredentialRecheckResult]]
+@dataclass(frozen=True)
+class CredentialRecheckOutcome:
+    """A recheck's result plus, when ``VALID``, the freshly verified identity."""
+
+    result: CredentialRecheckResult
+    identity: Identity | None = None
+
+
+class CredentialRecheck(Protocol):
+    """Re-verify the request's credential against the same requirements as its route."""
+
+    async def __call__(
+        self, *, required_permissions: Sequence[str] | None = None
+    ) -> CredentialRecheckOutcome: ...
 
 
 def get_credential_recheck(request: Request) -> CredentialRecheck:
@@ -102,28 +119,90 @@ def get_credential_recheck(request: Request) -> CredentialRecheck:
 
     A streaming response (``/events/stream``) authenticates once, then stays
     open far longer than any single verification. The returned callable runs
-    the presented credential back through the app's verifier and reports
-    whether it still verifies (#1139). A database that cannot answer reads as
-    ``UNAVAILABLE`` and any other failure as ``REFUSED``; the caller treats
-    both as not valid (fail closed), and a reconnect gets the precise 401/503.
+    the presented credential back through the app's verifier (#1139) and then
+    applies :func:`enforce_identity_requirements` to the identity the verifier
+    returns, so a revoked permission is seen as well as a dead credential
+    (#1836). The identity carries whatever permissions the verifier resolves:
+    live grants for API keys and user access tokens, the issued set for a
+    login JWT or an agent access token (the presented token is the one
+    re-verified, so a refresh elsewhere does not update it).
+
+    A database that cannot answer reads as ``UNAVAILABLE``, a requirement the
+    identity no longer meets as ``FORBIDDEN``, and any other failure as
+    ``REFUSED``. The caller treats all three as not valid (fail closed).
     """
 
-    async def _recheck() -> CredentialRecheckResult:
+    async def _recheck(
+        *, required_permissions: Sequence[str] | None = None
+    ) -> CredentialRecheckOutcome:
         verify_token: TokenVerifier = request.app.state.verify_token
         try:
-            await verify_token(extract_credential(request), request)
+            identity = await verify_token(extract_credential(request), request)
         except DatabaseUnavailableError:
-            return CredentialRecheckResult.UNAVAILABLE
+            return CredentialRecheckOutcome(CredentialRecheckResult.UNAVAILABLE)
         except Exception:
-            return CredentialRecheckResult.REFUSED
-        return CredentialRecheckResult.VALID
+            return CredentialRecheckOutcome(CredentialRecheckResult.REFUSED)
+        try:
+            enforce_identity_requirements(
+                identity,
+                instance=request.url.path,
+                required_permissions=required_permissions,
+            )
+        except Forbidden:
+            return CredentialRecheckOutcome(CredentialRecheckResult.FORBIDDEN)
+        return CredentialRecheckOutcome(CredentialRecheckResult.VALID, identity)
 
     return _recheck
 
 
+def enforce_identity_requirements(
+    identity: Identity,
+    *,
+    instance: str,
+    required_permissions: Sequence[str] | None = None,
+    allow_expired_password: bool = False,
+    require_actor_type: ActorType | None = None,
+) -> None:
+    """Raise ``Forbidden`` unless ``identity`` meets a route's requirements.
+
+    The one place the checks behind :func:`get_current_identity` live, so a
+    response that re-verifies mid-flight (:func:`get_credential_recheck`)
+    applies exactly what admitted the request.
+    """
+    if not allow_expired_password and identity.must_change_password:
+        raise Forbidden(
+            detail="Password rotation required before accessing this resource",
+            instance=instance,
+            type="password_rotation_required",
+        )
+
+    if require_actor_type and identity.actor_type != require_actor_type:
+        raise Forbidden(
+            detail=f"This endpoint is restricted to {require_actor_type}s",
+            instance=instance,
+            type="forbidden",
+        )
+
+    if required_permissions:
+        # Expand the caller's grants through the static implication map so the
+        # advertised semantics hold uniformly at enforcement (e.g. `*:write`
+        # implies `*:read`). Without this, callers whose permissions arrive
+        # unexpanded — API keys resolved straight from `actor_permission_grants`
+        # (see shared/auth/api_key_resolver.py) — would be 403'd on a read
+        # route they hold the write permission for, while the same actor admitted
+        # via an access token (expanded by PermissionService) would pass.
+        caller_perms = compute_effective(set(identity.permissions))
+        if "org:admin" not in caller_perms and not caller_perms.intersection(required_permissions):
+            raise Forbidden(
+                detail=f"This action requires one of: {', '.join(required_permissions)}",
+                instance=instance,
+                type="forbidden",
+            )
+
+
 def get_current_identity(
     *,
-    required_permissions: list[str] | None = None,
+    required_permissions: Sequence[str] | None = None,
     allow_expired_password: bool = False,
     require_actor_type: ActorType | None = None,
 ) -> Any:
@@ -143,38 +222,15 @@ def get_current_identity(
         request: Request,
         identity: Identity = Depends(resolve_identity),
     ) -> Identity:
-        if not allow_expired_password and identity.must_change_password:
-            raise Forbidden(
-                detail="Password rotation required before accessing this resource",
-                instance=request.url.path,
-                type="password_rotation_required",
-            )
-
-        if require_actor_type and identity.actor_type != require_actor_type:
-            raise Forbidden(
-                detail=f"This endpoint is restricted to {require_actor_type}s",
-                instance=request.url.path,
-                type="forbidden",
-            )
-
-        if required_permissions:
-            # Expand the caller's grants through the static implication map so the
-            # advertised semantics hold uniformly at enforcement (e.g. `*:write`
-            # implies `*:read`). Without this, callers whose permissions arrive
-            # unexpanded — API keys resolved straight from `actor_permission_grants`
-            # (see shared/auth/api_key_resolver.py) — would be 403'd on a read
-            # route they hold the write permission for, while the same actor admitted
-            # via an access token (expanded by PermissionService) would pass.
-            caller_perms = compute_effective(set(identity.permissions))
-            if "org:admin" not in caller_perms and not caller_perms.intersection(
-                required_permissions
-            ):
-                raise Forbidden(
-                    detail=f"This action requires one of: {', '.join(required_permissions)}",
-                    instance=request.url.path,
-                    type="forbidden",
-                )
-
+        # The endpoint reference reads ``required_permissions`` and
+        # ``require_actor_type`` off this closure, so both stay free variables here.
+        enforce_identity_requirements(
+            identity,
+            instance=request.url.path,
+            required_permissions=required_permissions,
+            allow_expired_password=allow_expired_password,
+            require_actor_type=require_actor_type,
+        )
         return identity
 
     return Depends(_dependency)

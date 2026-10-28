@@ -14,7 +14,7 @@ from collections.abc import AsyncGenerator
 import pytest
 from sqlalchemy import delete
 
-from jentic_one.broker.core.exceptions import CredentialNotProvisionedError
+from jentic_one.broker.core.errors import CredentialNotProvisionedError
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.customer_api_keys import CustomerAPIKey

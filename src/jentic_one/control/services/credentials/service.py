@@ -31,6 +31,7 @@ from jentic_one.control.repos import (
 from jentic_one.control.repos.device_authorization_credential_repo import (
     DeviceAuthorizationCredentialRepository,
 )
+from jentic_one.control.repos.effects_repo import EffectsRepository
 from jentic_one.control.repos.oauth_client_credential_repo import UNSET as SCOPE_UNSET
 from jentic_one.control.repos.pending_import_lookup_repo import PendingImportLookupRepository
 from jentic_one.control.repos.prerequisite_repo import (
@@ -84,7 +85,12 @@ from jentic_one.control.services.credentials.typed_secrets import (
     write_bearer_token_secret,
     write_sigv4_secret,
 )
-from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
+from jentic_one.shared.audit import (
+    AuditAction,
+    AuditTargetType,
+    record_audit,
+    record_audit_best_effort,
+)
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import ORG_ADMIN, OWNER_AGENTS_READ
 from jentic_one.shared.config import DirectOAuth2ProviderConfig, resolved_control_egress
@@ -99,7 +105,7 @@ from jentic_one.shared.models.api_identity import (
 )
 from jentic_one.shared.models.credentials import CredentialType, StoredCredentialType
 from jentic_one.shared.models.events import EventSeverity, EventType
-from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
+from jentic_one.shared.pagination import decode_cursor, encode_cursor
 from jentic_one.shared.permissions.evaluation import (
     PermissionRule,
     first_matching_rule,
@@ -108,6 +114,17 @@ from jentic_one.shared.permissions.evaluation import (
 from jentic_one.shared.permissions.matching import compile_matcher
 from jentic_one.shared.url_path import has_ambiguous_traversal, normalize_path
 from jentic_one.shared.url_validation import validate_upstream_url_async
+
+
+class BindingAccess(NamedTuple):
+    """What a direct ``(agent, credential)`` binding grants (``get_binding_access``)."""
+
+    rules: list[AgentPermissionRule]
+    rule_set: PermissionRuleSet | None
+    rule_set_rules: list[PermissionRuleSetRule]
+    granted_scopes: list[str] | None
+    suspended: bool
+
 
 logger = structlog.get_logger()
 
@@ -171,6 +188,12 @@ def _no_client_config_error() -> InvalidCredentialInputError:
     # A managed-provider credential can exist without stored client config; a
     # 200 that persisted nothing would hide the dropped edit.
     return InvalidCredentialInputError("This oauth2 credential has no client configuration to edit")
+
+
+def _require_https_oauth2_url(field: str, url: str | None) -> None:
+    """Reject a non-empty OAuth2 endpoint URL that does not use ``https://`` (#1779)."""
+    if url and not url.strip().lower().startswith("https://"):
+        raise InvalidCredentialInputError(f"Invalid {field}: must use https")
 
 
 class _UnmatchedScopeWarning(NamedTuple):
@@ -288,19 +311,22 @@ class CredentialService:
         api_scope = self._canonical_api_scope(payload.api)
         api_scope = await self._catalog_registered_scope(api_scope, payload.catalog_api_id)
 
-        stored_type = to_stored(payload.type, grant_type=payload.grant_type)
-        encryption = self._ctx.encryption
-
-        # Resolve the OAuth2 endpoints before the write transaction opens: on
-        # SQLite ``transaction()`` holds the process-wide writer lock, so a slow
-        # resolver inside it would fail concurrent writers on ``busy_timeout``.
+        # Resolve the OAuth2 endpoints before touching encryption or opening the
+        # write transaction: on SQLite ``transaction()`` holds the process-wide
+        # writer lock, so a slow resolver inside it would fail concurrent writers
+        # on ``busy_timeout``.
         validated_token_url: str | None = None
         validated_authorize_url: str | None = None
         if payload.type == CredentialType.OAUTH2:
+            _require_https_oauth2_url("token_url", payload.token_url)
+            _require_https_oauth2_url("authorize_url", payload.authorize_url)
             validated_token_url = await self._validated_oauth2_url("token_url", payload.token_url)
             validated_authorize_url = await self._validated_oauth2_url(
                 "authorize_url", payload.authorize_url
             )
+
+        stored_type = to_stored(payload.type, grant_type=payload.grant_type)
+        encryption = self._ctx.encryption
 
         async with self._ctx.control_db.transaction() as session:
             credential = await CredentialRepository.create(
@@ -383,7 +409,7 @@ class CredentialService:
                     secret = OAuth2Full(
                         client_id=payload.client_id or "",
                         client_secret="",
-                        token_url=payload.token_url or "",
+                        token_url=validated_token_url or "",
                         grant_type=grant,
                         scopes=payload.scopes,
                     )
@@ -408,7 +434,7 @@ class CredentialService:
                     secret = OAuth2Full(
                         client_id=payload.client_id or "",
                         client_secret=payload.client_secret or "",
-                        token_url=payload.token_url or "",
+                        token_url=validated_token_url or "",
                         grant_type=grant,
                         scopes=payload.scopes,
                     )
@@ -618,10 +644,7 @@ class CredentialService:
             if credential is None:
                 raise CredentialNotFoundError(credential_id)
 
-        decoded_cursor = None
-        if cursor is not None:
-            ts, cid = decode_cursor_str(cursor)
-            decoded_cursor = (ts, cid)
+        decoded_cursor = decode_cursor(cursor, id_kind="str") if cursor is not None else None
 
         async with self._ctx.admin_db.session() as session:
             rows = await PrerequisiteRepository.list_agents_for_credential(
@@ -801,6 +824,35 @@ class CredentialService:
         await self._require_visible_binding(credential_id, agent_id, identity=identity)
         async with self._ctx.control_db.session() as session:
             return await AgentPermissionRuleRepository.list_rules(session, agent_id, credential_id)
+
+    async def get_binding_access(
+        self, credential_id: str, agent_id: str, *, identity: Identity
+    ) -> BindingAccess:
+        """Everything a direct binding grants: its rules, rule set, scopes and suspension.
+
+        Same visibility as :meth:`list_agent_permissions`, so the bound agent
+        reads its own binding. ``rules`` are the inline rules, dormant while a
+        shared ``rule_set`` is attached. ``granted_scopes`` is the credential's
+        OAuth grant; ``None`` when it has no platform-visible scopes.
+        """
+        binding = await self._require_visible_binding(credential_id, agent_id, identity=identity)
+        async with self._ctx.control_db.session() as session:
+            rules = await AgentPermissionRuleRepository.list_rules(session, agent_id, credential_id)
+            rule_set = None
+            rule_set_rules: list[PermissionRuleSetRule] = []
+            if binding.rule_set_id is not None:
+                rule_set = await PermissionRuleSetRepository.get_by_id(session, binding.rule_set_id)
+                rule_set_rules = await PermissionRuleSetRepository.list_rules(
+                    session, binding.rule_set_id
+                )
+            token = await OAuthTokenRepository.get_by_credential(session, credential_id)
+        return BindingAccess(
+            rules=rules,
+            rule_set=rule_set,
+            rule_set_rules=rule_set_rules,
+            granted_scopes=token.scope.split() if token is not None and token.scope else None,
+            suspended=binding.suspended,
+        )
 
     async def replace_agent_permissions(
         self,
@@ -1137,10 +1189,7 @@ class CredentialService:
         self, *, cursor: str | None = None, limit: int = 50, identity: Identity
     ) -> tuple[list[tuple[PermissionRuleSet, int]], bool, str | None]:
         """List rule sets with per-set rule counts. Returns (data, has_more, next_cursor)."""
-        decoded_cursor = None
-        if cursor is not None:
-            ts, cid = decode_cursor_str(cursor)
-            decoded_cursor = (ts, cid)
+        decoded_cursor = decode_cursor(cursor, id_kind="str") if cursor is not None else None
         async with self._ctx.control_db.session() as session:
             rows = await PermissionRuleSetRepository.list_page(
                 session, cursor=decoded_cursor, limit=limit + 1
@@ -1274,10 +1323,7 @@ class CredentialService:
         identity: Identity,
     ) -> CredentialPage:
         """List credentials with cursor pagination."""
-        decoded_cursor = None
-        if cursor is not None:
-            ts, cid = decode_cursor_str(cursor)
-            decoded_cursor = (ts, cid)
+        decoded_cursor = decode_cursor(cursor, id_kind="str") if cursor is not None else None
 
         access_filters = build_access_filters(
             identity,
@@ -1308,12 +1354,17 @@ class CredentialService:
         return CredentialPage(data=data, has_more=has_more, next_cursor=next_cursor)
 
     async def _validated_oauth2_url(self, field: str, url: str | None) -> str | None:
-        """Check an OAuth2 endpoint against ``control.egress``; ``None``/empty passes through.
+        """Require an https OAuth2 endpoint that passes ``control.egress``.
 
-        Resolves DNS, so callers run it before opening a write transaction.
+        ``None``/empty passes through. These endpoints receive client
+        credentials and authorization codes, so plain http and private/metadata
+        targets the control-plane egress policy does not allowlist are refused
+        at write time (#1779). Resolves DNS, so callers run it before opening a
+        write transaction.
         """
         if not url:
             return None
+        _require_https_oauth2_url(field, url)
         try:
             return await validate_upstream_url_async(url, resolved_control_egress(self._ctx.config))
         except ValueError as exc:
@@ -1543,7 +1594,7 @@ class CredentialService:
         return view
 
     async def delete(self, credential_id: str, *, identity: Identity) -> None:
-        """Delete a credential by ID (cascade removes siblings)."""
+        """Delete a credential by ID (cascade removes siblings) and its agent bindings."""
         access_filters = build_access_filters(identity, Credential, for_write=True)
         async with self._ctx.control_db.transaction() as session:
             existing = await CredentialRepository.get_by_id(
@@ -1551,11 +1602,17 @@ class CredentialService:
             )
             if existing is None:
                 raise CredentialNotFoundError(credential_id)
+            credential_name = existing.name
+            before_state = {"name": existing.name, "active": existing.active}
             deleted = await CredentialRepository.delete(session, credential_id)
             if not deleted:
                 raise CredentialNotFoundError(credential_id)
 
+        removed_bindings = await self._remove_agent_bindings(
+            credential_id, credential_name=credential_name, identity=identity
+        )
         self._ctx.invalidate_broker_caches(credential_id=credential_id)
+
         await record_audit_best_effort(
             self._ctx,
             action=AuditAction.DELETE,
@@ -1563,9 +1620,78 @@ class CredentialService:
             target_id=credential_id,
             actor_type=identity.actor_type,
             actor_id=identity.sub,
-            before={"name": existing.name, "active": existing.active},
+            before=before_state,
+            after={"removed_bindings": removed_bindings},
             origin=identity.origin.value,
         )
+
+    async def _remove_agent_bindings(
+        self,
+        credential_id: str,
+        *,
+        credential_name: str,
+        identity: Identity,
+    ) -> int:
+        """Purge admin-DB agent bindings to a deleted credential (#1426).
+
+        The ``agent_credential_bindings`` table lives in the admin DB without a
+        cross-DB foreign key to ``control.credentials``, so deleting a
+        credential control-side must sweep its bindings explicitly or orphan
+        bindings stay active and keep any attached ``rule_set_id`` undeletable.
+        Best-effort after the control delete commits (no 2PC across databases).
+        """
+        if not self._ctx.is_db_allowed("admin"):
+            logger.warning(
+                "credential_delete_binding_cleanup_skipped",
+                reason="admin_db_not_allowed",
+                credential_id=credential_id,
+            )
+            return 0
+        try:
+            async with self._ctx.admin_db.transaction() as session:
+                removed = await EffectsRepository.delete_bindings_for_credential(
+                    session, credential_id=credential_id
+                )
+                cred_label = summary_label(credential_name, credential_id)
+                for binding in removed:
+                    await record_audit(
+                        session,
+                        action=AuditAction.REVOKE,
+                        target_type=AuditTargetType.CREDENTIAL_BINDING,
+                        target_id=credential_id,
+                        actor_type=identity.actor_type,
+                        actor_id=identity.sub,
+                        target_parent_id=binding.agent_id,
+                        reason="credential_deleted",
+                        origin=identity.origin.value,
+                    )
+                    agent_label = summary_label(binding.agent_name, binding.agent_id)
+                    async with session.begin_nested():
+                        await emit_event_best_effort(
+                            session,
+                            type=EventType.CREDENTIAL_UNBOUND_FROM_AGENT,
+                            severity=EventSeverity.INFO,
+                            summary=(
+                                f"Credential {cred_label} unbound from agent {agent_label} "
+                                "because the credential was deleted"
+                            ),
+                            data={
+                                "agent_id": binding.agent_id,
+                                "credential_id": credential_id,
+                            },
+                            # Subject is the agent, so its owner sees the removal.
+                            created_by=binding.agent_id,
+                            actor_id=identity.sub,
+                            actor_type=identity.actor_type.value,
+                        )
+                return len(removed)
+        except Exception:
+            logger.warning(
+                "credential_delete_binding_cleanup_failed",
+                credential_id=credential_id,
+                exc_info=True,
+            )
+            return 0
 
     def _to_redacted(
         self, credential: Any, *, registration_names: dict[str, str]
@@ -1836,20 +1962,16 @@ class CredentialService:
         )
 
     async def _validate_update_token_url(self, payload: CredentialUpdate) -> str | None:
-        """SSRF-validate an OAuth2 ``token_url`` edit; ``None`` when none is sent.
+        """Require an https OAuth2 ``token_url`` edit that passes ``control.egress``.
 
-        The single update-path call site for upstream-URL validation, under
-        the control-plane egress allowlist. It resolves DNS off the event
-        loop, so callers run it before opening the write transaction.
+        ``None`` when none is sent. The single update-path call site for
+        upstream-URL validation, under the control-plane egress allowlist. It
+        resolves DNS off the event loop, so callers run it before opening the
+        write transaction.
         """
         if payload.type != CredentialType.OAUTH2 or payload.token_url is None:
             return None
-        try:
-            return await validate_upstream_url_async(
-                payload.token_url, resolved_control_egress(self._ctx.config)
-            )
-        except ValueError as exc:
-            raise InvalidCredentialInputError(f"Invalid token_url: {exc}") from exc
+        return await self._validated_oauth2_url("token_url", payload.token_url)
 
     @staticmethod
     def _audit_snapshot(credential: Credential) -> dict[str, Any]:

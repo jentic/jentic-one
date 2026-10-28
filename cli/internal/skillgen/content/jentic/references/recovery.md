@@ -95,14 +95,32 @@ step 5. **Approval is always your operator's** — but for the
 credential-*provisioning* denials below you can start the fix yourself
 whenever the directive names a connect target: run its `suggested_command`
 (`jentic connect <vendor>` or `jentic connect --api <vendor/name/version>`,
-CLI) or call `request_connection` with `parameters.connect` (MCP), relay
+CLI) or call `request_connection` with `parameters.connect` (MCP), naming
+only scopes `inspect_api` (`jentic apis auth`) marks requestable, relay
 the returned `approval_url` to your operator, confirm with `whoami` once
 they approve, then retry. When a human must enter the credential (a
 `manual_*` or `awaiting_app` flow), end your turn after relaying the URL
 and retry later; after a rejection, don't ask again — tell your user.
-Everything else (binding an existing credential, permission grants, rule
-changes) is performed by your operator in the Jentic One dashboard — relay
-the right ask, then retry once they confirm.
+For a **rules** denial (`action_denied`) you can likewise ask for the rule
+change yourself; a human approves it. Everything else (binding an existing
+credential, permission grants) is performed by your operator in the Jentic
+One dashboard — relay the right ask, then retry once they confirm.
+
+**Asking for an access change.** Read your access first (`jentic access show
+<credential_id>` / `show_access`): the rules with their ids, the shared rule
+set, the granted scopes and the scopes the vendor offers (`scope_catalog`; add
+only those). Then put **every** change you need in one request
+(`jentic access edit` / `request_access_change`) and relay its
+`approval_url`. To change an open request — yours, for a new connection or an
+access change — amend it (`jentic access amend <session_id>` /
+`amend_request`) instead of asking again: asking again while one is open
+returns that open request (`already_open`). When a request is refused with an
+`agent_directive` whose strategy is `check_access`, your picture of your
+access is wrong: check it, then retry. Your human can change your access while
+a request is open; it follows their change unless it no longer fits (a rule it
+names is gone), and then it waits on you: `jentic access edit --wait` says it
+conflicts. Read your access again and amend the request to fit. After the human replies, check once
+(`jentic access show` / `show_access`) before retrying the blocked call.
 
 - **`no_credential_binding` (403)** — no credential binding of yours covers
   this API. If the directive carries a `provisioning_url`, a connect
@@ -141,11 +159,25 @@ the right ask, then retry once they confirm.
   denied call). Read the target from `connect` rather than parsing
   `suggested_command`. A denial that carries a `provisioning_url` omits
   `connect` and `suggested_command`.
+- **`action_denied` (403)** — you are bound to a credential for this API,
+  but its permission rules deny this call. `parameters.edit` names the
+  binding and the minimal rule to ask for (`{credential_id,
+  suggested_rules}`, an allow rule for the exact denied method and path):
+  ask for the change with `jentic access edit <credential_id> --add
+  '<suggested_rules>'` / `request_access_change` (widen the rule if the task
+  needs more, and include every other change you need), and relay the
+  `approval_url`. If the directive carries a `provisioning_url` instead, a
+  change you asked for is still waiting: relay that link, or amend that
+  request if it doesn't cover this call.
 - **`credential_undecryptable` (424)** — a credential *is* connected, but
   its stored secret can no longer be decrypted (typically the deployment's
   encryption key rotated underneath it, e.g. a reinstall over existing
   data). This is not agent-recoverable and retrying will not fix it — ask
   your operator to remove and re-add the credential, then retry.
+- **`credential_binding_suspended` (403)** — your operator suspended your
+  binding to the credential that serves this API. Only they can resume it.
+  Do not start a new connect for the same API (it is refused while the
+  suspension stands); ask your operator, then retry once they resume it.
 - **`credential_identity_mismatch` (403)** — a binding exists and a
   credential *is* connected, but that credential's stored identity doesn't
   cover this API (e.g. it targets a different name/version, or was stored
@@ -178,6 +210,16 @@ the right ask, then retry once they confirm.
   or `jentic connect --api <vendor/name/version>`) or report the gap to
   your operator — approval, binding, and permission grants happen in the
   dashboard.
+- `jentic access show <credential_id>` — what your binding to the credential
+  lets you do: rules with their ids, the shared rule set (whose rules apply
+  instead), granted scopes, the scopes the vendor offers, suspension.
+- `jentic access edit <credential_id>` — ask for a change to that binding
+  (`--add` rules, optionally `--before <rule id>`; `--remove <rule id>`;
+  `--set` the whole list; scopes the same way with `--add-scopes`,
+  `--remove-scopes` or `--set-scopes`, and `--scope-comment scope=reason` to
+  say why; `--resume`); give a rule a `comment` to say why you need it; prints the
+  `approval_url` a human approves. `jentic access amend <session_id>` changes
+  an open request instead of asking again.
 - `jentic connect <vendor>` / `jentic connect --api <vendor/name/version>`
   — start a connect session for a registry vendor or any registry API:
   prints the `approval_url` a human approves in the browser (`--reason`,
@@ -236,14 +278,15 @@ the right ask, then retry once they confirm.
 
 ## Quick Reference — MCP session
 
-The mount serves exactly nine tools; the stdio server adds `get_started`.
+The mount serves exactly twelve tools; the stdio server adds `get_started`.
 Each maps onto the loop — the one-line whens and the structural facts (the
 `instance` stamp; the CLI verbs that do **not** exist on the mount) are in
 `references/mcp.md`, which is the authoritative lane reference. In short:
 `whoami` (identity + bindings; decide access from it) → when a credential
 is missing, `request_connection` by `vendor` or `api` (relay the
 `approval_url` to your operator; where that isn't available, report the
-gap) → `search_catalog`
+gap); when a rule denies a call, `show_access` → `request_access_change`
+(and `amend_request` to change an open request) → `search_catalog`
 → `import_api`
 → `search_apis` → `inspect_operation` → `execute` / `execute_read` (prefer
 `execute_read` for reads) → `get_execution_result` (poll jobs; never

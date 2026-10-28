@@ -32,6 +32,7 @@ from jentic_one.control.services.integrations.connect_session_service import (
 )
 from jentic_one.control.services.integrations.flow_handlers.manual import ApiKeySecret
 from jentic_one.control.web.app import get_exception_handlers
+from jentic_one.control.web.connect_limits import install_connect_limiters
 from jentic_one.control.web.routers import integrations as integrations_router
 from jentic_one.registry.services.api_security_lookup_service import ApiSecurityLookupService
 from jentic_one.registry.services.import_service import ImportHandler
@@ -197,9 +198,18 @@ async def digest(ctx: Context, session_id: str, identity: Identity = OWNER) -> s
     return review.digest
 
 
+async def revision(ctx: Context, session_id: str) -> str:
+    """The session's current revision id, which every confirm names."""
+    async with ctx.control_db.session() as session:
+        row = await ConnectSessionRepository.get_by_id(session, session_id)
+    assert row is not None and row.current_revision_id is not None
+    return row.current_revision_id
+
+
 def checks(
     review_digest: str,
     *,
+    revision_id: str,
     expected_agent_id: str | None = AGENT_ID,
     rules: list[dict[str, object]] | None = None,
 ) -> ConfirmChecks:
@@ -207,12 +217,15 @@ def checks(
         permission_rules=RULES if rules is None else rules,
         expected_agent_id=expected_agent_id,
         digest=review_digest,
+        revision_id=revision_id,
     )
 
 
-def key_variant(secret: str, review_digest: str) -> SecretConfirm:
+def key_variant(secret: str, review_digest: str, revision_id: str) -> SecretConfirm:
     return SecretConfirm(
-        kind="api_key", secret=ApiKeySecret(key=SecretStr(secret)), checks=checks(review_digest)
+        kind="api_key",
+        secret=ApiKeySecret(key=SecretStr(secret)),
+        checks=checks(review_digest, revision_id=revision_id),
     )
 
 
@@ -222,7 +235,7 @@ async def confirm_key(
     return await svc(ctx).confirm_variant(
         session_id,
         poll_token=None,
-        variant=key_variant(secret, await digest(ctx, session_id)),
+        variant=key_variant(secret, await digest(ctx, session_id), await revision(ctx, session_id)),
         identity=identity,
     )
 
@@ -236,6 +249,7 @@ def build_app(ctx: Context, identity: Identity) -> FastAPI:
         app.add_exception_handler(exc_class, handler)
     app.add_exception_handler(RequestValidationError, request_validation_error_handler)  # type: ignore[arg-type]
     app.state.ctx = ctx
+    install_connect_limiters(app, ctx)
     app.state.security_schemes_lookup = ApiSecurityLookupService(ctx)
     app.dependency_overrides[resolve_identity] = lambda: identity
     return app

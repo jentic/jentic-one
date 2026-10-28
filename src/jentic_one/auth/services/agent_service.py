@@ -62,6 +62,7 @@ from jentic_one.shared.auth.permission_catalog import (
     DEFAULT_AGENT_PERMISSIONS,
     ORG_ADMIN,
     OWNER_CREDENTIALS_READ,
+    compute_effective,
 )
 from jentic_one.shared.context import Context
 from jentic_one.shared.db import DatabaseIntegrityError
@@ -72,7 +73,7 @@ from jentic_one.shared.events import (
 from jentic_one.shared.jobs.hold import withdraw_pending_for_agent
 from jentic_one.shared.models import ActorStatus, ActorType, ActorVerb
 from jentic_one.shared.models.events import EventSeverity, EventType
-from jentic_one.shared.pagination import Page, decode_cursor_str, encode_cursor
+from jentic_one.shared.pagination import Page, decode_cursor, encode_cursor
 from jentic_one.shared.schemas import ServedApiRef
 
 logger = structlog.get_logger(__name__)
@@ -204,23 +205,21 @@ class AgentService:
         cursor: str | None = None,
         identity: Identity,
     ) -> Page[AgentView]:
-        cursor_dt = None
-        if cursor is not None:
-            cursor_dt, _ = decode_cursor_str(cursor)
+        cursor_key = decode_cursor(cursor, id_kind="str") if cursor is not None else None
 
         access_filters = build_access_filters(identity, Agent)
 
         async with self._ctx.admin_db.session() as session:
             if owner_id is not None:
                 agents = await AgentRepository.list_by_owner(
-                    session, owner_id, limit=limit + 1, cursor=cursor_dt, filters=access_filters
+                    session, owner_id, limit=limit + 1, cursor=cursor_key, filters=access_filters
                 )
             else:
                 agents = await AgentRepository.list_all(
                     session,
                     limit=limit + 1,
                     status=status,
-                    cursor=cursor_dt,
+                    cursor=cursor_key,
                     filters=access_filters,
                 )
             has_more = len(agents) > limit
@@ -257,9 +256,14 @@ class AgentService:
         listing agents). Any other caller gets the same ``ActorNotFoundError``
         as an id that does not exist, so the response does not reveal that the
         agent exists.
+
+        The check runs on the implication-expanded permission set, like the
+        route gate: an API key carries its direct grants only, so a caller
+        holding ``agents:write`` (which implies ``agents:read``) gets the same
+        answer whichever channel it authenticates through.
         """
         view = await self.get_agent(agent_id, identity=identity)
-        permissions = set(identity.permissions)
+        permissions = compute_effective(set(identity.permissions))
         if ORG_ADMIN in permissions or AGENTS_READ in permissions:
             return view
         if identity.sub in (view.id, view.owner_id):

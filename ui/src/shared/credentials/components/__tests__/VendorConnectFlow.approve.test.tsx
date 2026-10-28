@@ -97,9 +97,9 @@ function candidate(overrides: Partial<ExistingCredential> = {}): ExistingCredent
 		type: 'oauth2_authorization_code',
 		granted_scopes: ['repo'],
 		missing_scopes: [],
-		other_bound_agent_ids: [],
+		other_bound_agents: [],
 		can_bind: true,
-		can_reauthorize: false,
+		needs_vendor_consent: false,
 		...overrides,
 	};
 }
@@ -218,6 +218,7 @@ describe('VendorConnectFlow approve — manual_* sessions', () => {
 			permission_rules: [SUGGESTED_RULE],
 			expected_agent_id: 'agnt_1',
 			digest: 'dig_manual',
+			revision_id: expect.stringMatching(/^csr_/),
 		});
 		// Not persisted client-side anywhere the browser keeps across loads.
 		const persisted =
@@ -282,6 +283,52 @@ describe('VendorConnectFlow approve — manual_* sessions', () => {
 			username: 'svc-report',
 			password: 'hunter2',
 		});
+	});
+
+	it('saves the approver’s rule changes as a revision and confirms that revision', async () => {
+		const seeded = seedManualSession();
+		renderApprove(seeded.session_id);
+		const user = userEvent.setup();
+
+		await continueFromReview(user);
+		await user.click(screen.getByRole('button', { name: /add rule/i }));
+		await user.type(screen.getByLabelText('Path pattern'), '/v1/refunds');
+		await user.click(screen.getByRole('button', { name: /^add$/i }));
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+
+		await user.type(await screen.findByLabelText(/^API key/), 'sk_1');
+		const amends = mutatingRequests().filter((r) => r.url.endsWith(':amend'));
+		expect(amends).toHaveLength(1);
+		await user.click(screen.getByRole('button', { name: 'Connect' }));
+		expect(await screen.findByText('Connected to acme-com')).toBeInTheDocument();
+
+		const [body] = getMockConnectSessions()[0].confirmBodies;
+		expect(body).toMatchObject({
+			digest: `dig_${seeded.session_id}_2`,
+			revision_id: `csr_${seeded.session_id}_2`,
+			permission_rules: [SUGGESTED_RULE, expect.objectContaining({ path: '/v1/refunds' })],
+		});
+	});
+
+	it('confirms the agent’s own revision when the approver keeps its rules', async () => {
+		const seeded = seedManualSession();
+		renderApprove(seeded.session_id);
+		const user = userEvent.setup();
+
+		await continueFromReview(user);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		await screen.findByLabelText(/^API key/);
+		expect(mutatingRequests().filter((r) => r.url.endsWith(':amend'))).toEqual([]);
+	});
+
+	it('says when this agent’s ask for the API was rejected before', async () => {
+		const seeded = seedManualSession({ last_rejected_at: '2026-10-20T09:00:00Z' });
+		renderApprove(seeded.session_id);
+		expect(
+			await screen.findByText(
+				/This agent asked for this before, and the request was rejected/,
+			),
+		).toBeInTheDocument();
 	});
 
 	it('requires at least one rule and adds no fallback rule', async () => {
@@ -505,6 +552,7 @@ describe('VendorConnectFlow approve — awaiting_app', () => {
 			permission_rules: [SUGGESTED_RULE],
 			expected_agent_id: 'agnt_1',
 			digest: 'dig_awaiting',
+			revision_id: expect.stringMatching(/^csr_/),
 		});
 	});
 
@@ -589,19 +637,20 @@ describe('VendorConnectFlow approve — awaiting_app', () => {
 			permission_rules: [SUGGESTED_RULE],
 			expected_agent_id: 'agnt_1',
 			digest: 'dig_awaiting',
+			revision_id: expect.stringMatching(/^csr_/),
 		});
 	});
 
-	it('refuses a narrower credential shared with other agents and explains why', async () => {
+	it('refuses a narrower credential it may not widen and explains why', async () => {
 		const seeded = seedAwaitingAppSession({
 			requested_scopes: ['repo', 'admin:org'],
 			existing_credentials: [
 				candidate({
 					granted_scopes: ['repo'],
 					missing_scopes: ['admin:org'],
-					other_bound_agent_ids: ['agnt_2'],
+					other_bound_agents: [{ agent_id: 'agnt_2', name: 'Helper' }],
 					can_bind: false,
-					can_reauthorize: false,
+					needs_vendor_consent: true,
 				}),
 			],
 		});
@@ -610,9 +659,8 @@ describe('VendorConnectFlow approve — awaiting_app', () => {
 		const option = await screen.findByRole('radio', { name: /Use Personal GitHub/ });
 		expect(option).toBeDisabled();
 		expect(option).toHaveAccessibleDescription(/Missing admin:org/);
-		expect(option).toHaveAccessibleDescription(/Used by 1 other agent/);
-		expect(option).toHaveAccessibleDescription(/Connect a new credential instead/);
-		expect(screen.queryByRole('radio', { name: /Re-authorize/ })).not.toBeInTheDocument();
+		expect(option).toHaveAccessibleDescription(/used by 1 other agent/);
+		expect(option).toHaveAccessibleDescription(/only its owner or an admin can widen it/);
 		// The way forward is a new credential: the session's own flow.
 		expect(screen.getByRole('radio', { name: /Bring your own OAuth client/ })).toHaveAttribute(
 			'aria-checked',
@@ -620,35 +668,39 @@ describe('VendorConnectFlow approve — awaiting_app', () => {
 		);
 	});
 
-	it('re-authorizes a narrower credential no other agent uses', async () => {
+	it('uses a narrower credential in one step, naming the other agents it reaches', async () => {
 		const seeded = seedAwaitingAppSession({
 			requested_scopes: ['repo', 'admin:org'],
 			existing_credentials: [
 				candidate({
 					granted_scopes: ['repo'],
 					missing_scopes: ['admin:org'],
-					can_bind: false,
-					can_reauthorize: true,
+					other_bound_agents: [{ agent_id: 'agnt_2', name: 'Helper' }],
+					can_bind: true,
+					needs_vendor_consent: true,
 				}),
 			],
 		});
 		renderApprove(seeded.session_id);
 		const user = userEvent.setup();
 
-		expect(await screen.findByRole('radio', { name: /Use Personal GitHub/ })).toBeDisabled();
-		await user.click(
-			screen.getByRole('radio', { name: /Re-authorize Personal GitHub with more scopes/ }),
-		);
+		const option = await screen.findByRole('radio', {
+			name: /Use Personal GitHub and add the missing scopes/,
+		});
+		expect(option).toHaveAccessibleDescription(/sign in again to add admin:org/);
+		expect(option).toHaveAccessibleDescription(/also gives admin:org to 1 other agent/);
+		await user.click(option);
 		await continueFromReview(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 
-		expect(await screen.findByText(/Finish granting the extra scopes/)).toBeInTheDocument();
-		expect(getEndedMockConnectSessions()[0].confirmBodies[0]).toMatchObject({
-			kind: 'reauthorize',
-			credential_id: 'cred_gh_personal',
-		});
+		await waitFor(() =>
+			expect(getMockConnectSessions()[0].confirmBodies[0]).toMatchObject({
+				kind: 'existing_credential',
+				credential_id: 'cred_gh_personal',
+			}),
+		);
 		expect(window.open).toHaveBeenCalledWith(
-			'https://vendor.example.test/oauth/authorize?reauthorize=cred_gh_personal',
+			'https://vendor.example.test/oauth/authorize?consent=cred_gh_personal',
 			'_blank',
 			'noopener,noreferrer',
 		);
@@ -713,7 +765,8 @@ describe('VendorConnectFlow approve — existing credential on a vendor session'
 		expect(getEndedMockConnectSessions()[0].confirmBodies[0]).toMatchObject({
 			kind: 'existing_credential',
 			credential_id: 'cred_gh_personal',
-			digest: `dig_${seeded.session_id}`,
+			// The fallback rule is the approver's, so it is confirmed as their revision.
+			digest: `dig_${seeded.session_id}_2`,
 		});
 	});
 });

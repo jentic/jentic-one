@@ -13,7 +13,9 @@ from sqlalchemy.sql.elements import ColumnElement
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.services.errors import AgentNotFoundError
+from jentic_one.shared.db.keyset import apply_desc_keyset
 from jentic_one.shared.models import ActorStatus
+from jentic_one.shared.pagination import Cursor
 
 
 class AgentRepository:
@@ -75,22 +77,37 @@ class AgentRepository:
         return {row[0]: row[1] for row in result.all()}
 
     @staticmethod
+    async def list_ids_by_owner(session: AsyncSession, owner_id: str) -> list[str]:
+        """Ids of every agent ``owner_id`` owns, whatever the agent's status.
+
+        An owned agent's effective status follows its owner's account, so a
+        change to the owner's account changes what the broker must answer for
+        each of these agents.
+
+        Unscoped: for internal fan-out (such as broker cache eviction) after
+        the caller has authorized access to ``owner_id``. Never use it to build
+        a response payload.
+        """
+        stmt = select(Agent.id).where(Agent.owner_id == owner_id)
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
+
+    @staticmethod
     async def list_by_owner(
         session: AsyncSession,
         owner_id: str,
         *,
         limit: int = 50,
-        cursor: datetime | None = None,
+        cursor: Cursor | None = None,
         filters: Sequence[ColumnElement[bool]] | None = None,
     ) -> list[Agent]:
         stmt = (
             select(Agent)
             .where(Agent.owner_id == owner_id)
-            .order_by(Agent.created_at.desc())
+            .order_by(Agent.created_at.desc(), Agent.id.desc())
             .limit(limit)
         )
-        if cursor is not None:
-            stmt = stmt.where(Agent.created_at < cursor)
+        stmt = apply_desc_keyset(stmt, Agent.created_at, Agent.id, cursor)
         if filters is not None:
             for f in filters:
                 stmt = stmt.where(f)
@@ -102,13 +119,12 @@ class AgentRepository:
         session: AsyncSession,
         *,
         limit: int = 50,
-        cursor: datetime | None = None,
+        cursor: Cursor | None = None,
         status: str | None = None,
         filters: Sequence[ColumnElement[bool]] | None = None,
     ) -> list[Agent]:
-        stmt = select(Agent).order_by(Agent.created_at.desc()).limit(limit)
-        if cursor is not None:
-            stmt = stmt.where(Agent.created_at < cursor)
+        stmt = select(Agent).order_by(Agent.created_at.desc(), Agent.id.desc()).limit(limit)
+        stmt = apply_desc_keyset(stmt, Agent.created_at, Agent.id, cursor)
         if status is not None:
             stmt = stmt.where(Agent.status == status)
         if filters is not None:
@@ -243,8 +259,8 @@ class AgentRepository:
         The owner flag is:
 
         - ``True`` for an ownerless agent;
-        - the owner's ``users.active`` for an owned agent (a soft-deleted user
-          has ``active`` false, so delete reads ``False``);
+        - ``users.active and users.deleted_at is None`` for an owned agent (a
+          deleted row is refused even if ``active`` still reads true);
         - ``False`` when the owner row is missing, so callers that gate on the
           flag fail closed.
 
@@ -252,7 +268,7 @@ class AgentRepository:
         only the agent row, never the owner's.
         """
         stmt = (
-            select(Agent, User.active)
+            select(Agent, User.active, User.deleted_at)
             .outerjoin(User, User.id == Agent.owner_id)
             .where(Agent.id == agent_id)
         )
@@ -261,8 +277,8 @@ class AgentRepository:
         row = (await session.execute(stmt)).one_or_none()
         if row is None:
             return None
-        agent, owner_active = row
-        return agent, agent.owner_id is None or bool(owner_active)
+        agent, owner_active, owner_deleted_at = row
+        return agent, agent.owner_id is None or (bool(owner_active) and owner_deleted_at is None)
 
     @staticmethod
     async def set_owner_from_claim(session: AsyncSession, agent: Agent, *, owner_id: str) -> Agent:
