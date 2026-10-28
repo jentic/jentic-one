@@ -123,6 +123,8 @@ class HoldOutcome:
     expires_at: datetime
     execution_id: str | None
     joined: bool
+    #: The agent's reason the hold carries after this filing (see ``file_hold``).
+    agent_reason: str | None = None
 
 
 def canonical_body(body: bytes | None) -> bytes:
@@ -219,7 +221,15 @@ async def _lock_agent_holds(session: AsyncSession, agent_id: str) -> None:
     )
 
 
-async def _joined(session: AsyncSession, row: HeldExecution) -> HoldOutcome:
+async def _joined(
+    session: AsyncSession, row: HeldExecution, agent_reason: str | None = None
+) -> HoldOutcome:
+    # A hold filed without a reason takes the first one a retry brings: there
+    # is nothing a reviewer could already be reading. A reason already on the
+    # row stands.
+    if row.agent_reason is None and agent_reason is not None:
+        row.agent_reason = agent_reason
+        await session.flush()
     job = await session.get(Job, row.job_id)
     return HoldOutcome(
         job_id=str(row.job_id),
@@ -227,6 +237,7 @@ async def _joined(session: AsyncSession, row: HeldExecution) -> HoldOutcome:
         expires_at=row.expires_at,
         execution_id=job.execution_id if job is not None else None,
         joined=True,
+        agent_reason=row.agent_reason,
     )
 
 
@@ -264,10 +275,11 @@ async def file_hold(
     run under a per-agent lock held to the end of the transaction, so
     concurrent filings cannot together exceed the cap.
 
-    ``agent_reason`` (the agent's own words) is stored on a new hold only. It
-    is not part of the fingerprint, so a retry that rewords it joins the
-    existing hold and the first reason stands — a reviewer may already be
-    reading it.
+    ``agent_reason`` (the agent's own words) is not part of the fingerprint:
+    a retry that rewords it joins the existing hold, and the reason already on
+    that hold stands — a reviewer may be reading it. A hold filed without one
+    takes the first reason a retry brings. The outcome's ``agent_reason`` is
+    what the hold carries afterwards.
     """
     fingerprint = compute_execution_fingerprint(
         agent_id=agent_id,
@@ -280,7 +292,7 @@ async def file_hold(
     await _lock_agent_holds(session, agent_id)
     existing = await _pending_by_fingerprint(session, fingerprint)
     if existing is not None:
-        return await _joined(session, existing)
+        return await _joined(session, existing, agent_reason)
 
     pending = await count_pending_by_agent(session, agent_id)
     if pending >= max_pending:
@@ -325,13 +337,14 @@ async def file_hold(
         raced = await _pending_by_fingerprint(session, fingerprint)
         if raced is None:
             raise
-        return await _joined(session, raced)
+        return await _joined(session, raced, agent_reason)
     return HoldOutcome(
         job_id=str(job.id),
         approval_id=str(approval.id),
         expires_at=expires_at,
         execution_id=execution_id,
         joined=False,
+        agent_reason=agent_reason,
     )
 
 

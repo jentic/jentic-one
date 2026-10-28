@@ -42,6 +42,28 @@ def test_controls_dropped_newlines_and_tabs_kept() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        # Bidi overrides and zero-width marks (Cf) can reorder or hide text: dropped.
+        ("approve%20%E2%80%AE0005%20evoments", "approve 0005 evoments"),
+        ("zero%E2%80%8Bwidth%EF%BB%BF", "zerowidth"),
+        # Line and paragraph separators read as line breaks.
+        ("one%E2%80%A8two%E2%80%A9three", "one\ntwo\nthree"),
+        # Private-use and unassigned code points carry nothing a reviewer can read.
+        ("x%EE%80%80y%CD%B8z", "xyz"),
+    ],
+)
+def test_format_separator_private_and_unassigned_characters(raw: str, expected: str) -> None:
+    assert parse_agent_reason(raw) == expected
+
+
+def test_a_lone_surrogate_is_dropped_so_the_result_always_encodes() -> None:
+    out = parse_agent_reason("\ud800x")
+    assert out == "x"
+    assert out.encode("utf-8") == b"x"
+
+
 def test_capped_at_max_length() -> None:
     out = parse_agent_reason("x" * (MAX_AGENT_REASON_LEN + 50))
     assert out is not None

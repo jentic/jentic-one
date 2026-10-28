@@ -11,6 +11,7 @@ from jentic_one.broker.core.proxy_headers import (
     forward_headers,
     passthrough_response_headers,
     passthrough_streaming_headers,
+    replay_headers,
 )
 from jentic_one.shared.web.cache_control import PRIVATE_NO_STORE
 
@@ -52,6 +53,12 @@ def test_agent_reason_header_not_forwarded_upstream() -> None:
     out = forward_headers({"Jentic-Reason": "Customer asked for a refund", "X-Keep": "1"}, {})
     assert "jentic-reason" not in {k.lower() for k in out}
     assert out["X-Keep"] == "1"
+
+
+def test_agent_reason_header_not_kept_for_a_held_or_queued_run() -> None:
+    """Nor does it ride in the payload an approved call replays when it finally runs."""
+    kept = replay_headers({"Jentic-Reason": "Customer asked", "Content-Type": "application/json"})
+    assert kept == {"content-type": "application/json"}
 
 
 def test_spoofable_forwarding_headers_stripped() -> None:

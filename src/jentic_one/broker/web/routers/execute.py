@@ -1286,7 +1286,7 @@ async def _handle_hold(
         job_id=hold.job_id,
         joined=hold.joined,
         method=ctx_req.method,
-        has_agent_reason=agent_reason is not None,
+        has_agent_reason=hold.agent_reason is not None,
     )
     base = ctx.config.broker.jobs_api_base_url or ""
     held = f"{base}/executions/holds/{hold.approval_id}"
