@@ -19,9 +19,15 @@ credentials are sent. That step needs an organisation admin (``org:admin``).
 The API catalog is shared by the whole organisation and the bound credentials
 belong to many users, so where they are sent is an organisation-level
 decision: no narrower scope (``credentials:write`` included) lets one user
-approve sending another user's credential to new hosts. The 403 detail states
-the rule, never whether anyone has a bound credential or an open session on
-the API.
+approve sending another user's credential to new hosts.
+
+The 403 detail text names no credential, binding or session, and never counts
+them. The guard engages only on a credential-bound API, though, so *whether it
+engages at all* is observable to a caller holding ``apis:write``: a held
+promote (403) against a successful one distinguishes an API that has a bound
+credential or an open connect session from one that has neither. Holding every
+host change regardless of bindings would close that, at the cost of requiring
+an organisation admin for host changes that put no stored credential at risk.
 """
 
 from __future__ import annotations
@@ -38,6 +44,7 @@ from jentic_one.registry.repos.credential_binding_presence_repo import (
 from jentic_one.registry.repos.revision_repo import ApiRevisionRepository
 from jentic_one.registry.repos.server_repo import ServerRepository
 from jentic_one.shared.auth.permission_catalog import ORG_ADMIN
+from jentic_one.shared.auth.permissions import has_effective_permission
 from jentic_one.shared.context import Context
 
 logger = structlog.get_logger(__name__)
@@ -46,9 +53,16 @@ logger = structlog.get_logger(__name__)
 HOST_CHANGE_APPROVER_PERMISSION = ORG_ADMIN
 
 
-def may_approve_host_change(permissions: list[str] | None) -> bool:
-    """True when the caller may make a server-host change current (an organisation admin)."""
-    return HOST_CHANGE_APPROVER_PERMISSION in (permissions or [])
+def may_approve_host_change(permissions: list[str]) -> bool:
+    """True when the caller may make a server-host change current (an organisation admin).
+
+    Expands ``permissions`` through the implication map before the membership
+    test, so a grant that implies ``org:admin`` counts. Grants reach a service
+    unexpanded (an API key's come straight from ``actor_permission_grants``),
+    so a literal membership test here would refuse an admin whose grant only
+    implies the permission.
+    """
+    return has_effective_permission(permissions, HOST_CHANGE_APPROVER_PERMISSION)
 
 
 async def api_has_bound_credentials(ctx: Context, *, vendor: str, name: str, version: str) -> bool:

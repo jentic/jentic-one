@@ -50,6 +50,7 @@ from jentic_one.registry.web.schemas.apis import (
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import ORG_ADMIN
+from jentic_one.shared.auth.permissions import has_effective_permission
 from jentic_one.shared.context import Context
 from jentic_one.shared.jobs.enqueue import enqueue_job
 from jentic_one.shared.models import ApiRevisionSourceType, ApiRevisionState
@@ -282,7 +283,12 @@ async def import_apis(
     # value is replaced with the caller. The job row's `created_by` records the
     # caller either way; this carries the principal through the ingest pipeline
     # onto ApiRevision.submitted_by.
-    may_attribute = ORG_ADMIN in identity.permissions
+    # A gate on the same permission as the server-host guard's
+    # `may_approve_host_change`, but a deliberately separate one: this governs who
+    # a revision is attributed to, not who may move an API's hosts. Relaxing one
+    # does not imply relaxing the other. Both expand the implication map, so a
+    # grant that only implies `org:admin` counts here too.
+    may_attribute = has_effective_permission(identity.permissions, ORG_ADMIN)
     sources = [s.model_dump(mode="json") for s in body.sources]
     for source in sources:
         if not may_attribute or source.get("submitted_by") is None:
