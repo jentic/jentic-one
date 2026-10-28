@@ -91,11 +91,14 @@ class AdminEventsConfig(BaseModel):
             "as that interval. A disabled caller, a revoked or expired token, or "
             "a revoked permission ends the stream at that check; a narrower "
             "permission set narrows it. Permissions are those the credential "
-            "carries: API keys and user ``at_`` access tokens resolve them live, "
-            "while a login session JWT and an agent ``at_`` access token carry "
-            "the set they were issued with; the stream re-verifies the token it "
-            "was opened with, so for those a change applies once that token "
-            "expires and the client reconnects."
+            "carries: API keys and ``at_`` access tokens resolve them live (an "
+            "ephemeral agent ``at_`` keeps the subset it was minted with). A login "
+            "session JWT carries the set it was issued with, but removing any of "
+            "a user's effective permissions revokes their login sessions, so a "
+            "stream opened with one ends at that check. The stream re-verifies "
+            "the token it was opened with, so a permission added to a user "
+            "reaches a login-session stream once the client reconnects with a "
+            "newer login JWT."
         ),
     )
 

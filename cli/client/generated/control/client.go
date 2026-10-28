@@ -8090,7 +8090,7 @@ type ListAgentOauthGrantsParamsStatus string
 
 // ListApisParams defines parameters for ListApis.
 type ListApisParams struct {
-	// Vendor Only return APIs from this vendor.
+	// Vendor Only return APIs from this vendor. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
 	Vendor *string `form:"vendor,omitempty" json:"vendor,omitempty"`
 
 	// Cursor Opaque cursor from a previous page's `next_cursor`; omit for the first page.
@@ -11546,11 +11546,13 @@ type ClientInterface interface {
 	// `admin.events.stream_recheck_seconds` interval (default 5 s) elapses. Each
 	// page is scoped by the caller's current permissions, so a narrower
 	// permission set narrows the stream. Permissions are those the credential
-	// carries: API keys and user `at_` access tokens resolve them live, while a
-	// login session JWT and an agent `at_` access token carry the set they were
-	// issued with. The stream keeps re-verifying the token it was opened with,
-	// so for those a permission change applies once that token expires and the
-	// client reconnects. The stream ends
+	// carries: API keys and `at_` access tokens resolve them live (an ephemeral
+	// agent `at_` keeps the subset it was minted with). A login session JWT
+	// carries the set it was issued with, but removing any of a user's effective
+	// permissions revokes their login sessions, so a stream opened with one ends
+	// (`refused`) at the next check. The stream keeps re-verifying the token it
+	// was opened with, so a permission added to a user reaches a login-session
+	// stream once the client reconnects with a newer login JWT. The stream ends
 	// with a `stream_closed` frame (`{"type": "stream_closed", "reason": ...}`)
 	// once the credential stops verifying (`refused`: expired, revoked, or its
 	// user or agent disabled or deleted), the caller no longer holds
@@ -12820,7 +12822,11 @@ type ClientInterface interface {
 	//
 	// Set the assigned permissions for a user.
 	//
-	// A deleted user's permissions cannot be changed (409).
+	// A deleted user's permissions cannot be changed (409). When the new set
+	// removes any of the user's effective permissions, their login sessions
+	// end: every login JWT issued before the change is refused (401), and the
+	// user signs in again for a token with the narrower set. This includes a
+	// caller narrowing their own permissions.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -12831,7 +12837,11 @@ type ClientInterface interface {
 	//
 	// Set the assigned permissions for a user.
 	//
-	// A deleted user's permissions cannot be changed (409).
+	// A deleted user's permissions cannot be changed (409). When the new set
+	// removes any of the user's effective permissions, their login sessions
+	// end: every login JWT issued before the change is refused (401), and the
+	// user signs in again for a token with the narrower set. This includes a
+	// caller narrowing their own permissions.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -15752,11 +15762,13 @@ func (c *Client) ListEvents(ctx context.Context, params *ListEventsParams, reqEd
 // `admin.events.stream_recheck_seconds` interval (default 5 s) elapses. Each
 // page is scoped by the caller's current permissions, so a narrower
 // permission set narrows the stream. Permissions are those the credential
-// carries: API keys and user `at_` access tokens resolve them live, while a
-// login session JWT and an agent `at_` access token carry the set they were
-// issued with. The stream keeps re-verifying the token it was opened with,
-// so for those a permission change applies once that token expires and the
-// client reconnects. The stream ends
+// carries: API keys and `at_` access tokens resolve them live (an ephemeral
+// agent `at_` keeps the subset it was minted with). A login session JWT
+// carries the set it was issued with, but removing any of a user's effective
+// permissions revokes their login sessions, so a stream opened with one ends
+// (`refused`) at the next check. The stream keeps re-verifying the token it
+// was opened with, so a permission added to a user reaches a login-session
+// stream once the client reconnects with a newer login JWT. The stream ends
 // with a `stream_closed` frame (`{"type": "stream_closed", "reason": ...}`)
 // once the credential stops verifying (`refused`: expired, revoked, or its
 // user or agent disabled or deleted), the caller no longer holds
@@ -17926,7 +17938,11 @@ func (c *Client) UpdateUser(ctx context.Context, userId string, body UpdateUserJ
 //
 // Set the assigned permissions for a user.
 //
-// A deleted user's permissions cannot be changed (409).
+// A deleted user's permissions cannot be changed (409). When the new set
+// removes any of the user's effective permissions, their login sessions
+// end: every login JWT issued before the change is refused (401), and the
+// user signs in again for a token with the narrower set. This includes a
+// caller narrowing their own permissions.
 //
 // Takes any type of body and a specified content type.
 //
@@ -17947,7 +17963,11 @@ func (c *Client) SetUserPermissionsWithBody(ctx context.Context, userId string, 
 //
 // Set the assigned permissions for a user.
 //
-// A deleted user's permissions cannot be changed (409).
+// A deleted user's permissions cannot be changed (409). When the new set
+// removes any of the user's effective permissions, their login sessions
+// end: every login JWT issued before the change is refused (401), and the
+// user signs in again for a token with the narrower set. This includes a
+// caller narrowing their own permissions.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -28699,11 +28719,13 @@ type ClientWithResponsesInterface interface {
 	// `admin.events.stream_recheck_seconds` interval (default 5 s) elapses. Each
 	// page is scoped by the caller's current permissions, so a narrower
 	// permission set narrows the stream. Permissions are those the credential
-	// carries: API keys and user `at_` access tokens resolve them live, while a
-	// login session JWT and an agent `at_` access token carry the set they were
-	// issued with. The stream keeps re-verifying the token it was opened with,
-	// so for those a permission change applies once that token expires and the
-	// client reconnects. The stream ends
+	// carries: API keys and `at_` access tokens resolve them live (an ephemeral
+	// agent `at_` keeps the subset it was minted with). A login session JWT
+	// carries the set it was issued with, but removing any of a user's effective
+	// permissions revokes their login sessions, so a stream opened with one ends
+	// (`refused`) at the next check. The stream keeps re-verifying the token it
+	// was opened with, so a permission added to a user reaches a login-session
+	// stream once the client reconnects with a newer login JWT. The stream ends
 	// with a `stream_closed` frame (`{"type": "stream_closed", "reason": ...}`)
 	// once the credential stops verifying (`refused`: expired, revoked, or its
 	// user or agent disabled or deleted), the caller no longer holds
@@ -30055,7 +30077,11 @@ type ClientWithResponsesInterface interface {
 	//
 	// Set the assigned permissions for a user.
 	//
-	// A deleted user's permissions cannot be changed (409).
+	// A deleted user's permissions cannot be changed (409). When the new set
+	// removes any of the user's effective permissions, their login sessions
+	// end: every login JWT issued before the change is refused (401), and the
+	// user signs in again for a token with the narrower set. This includes a
+	// caller narrowing their own permissions.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -30066,7 +30092,11 @@ type ClientWithResponsesInterface interface {
 	//
 	// Set the assigned permissions for a user.
 	//
-	// A deleted user's permissions cannot be changed (409).
+	// A deleted user's permissions cannot be changed (409). When the new set
+	// removes any of the user's effective permissions, their login sessions
+	// end: every login JWT issued before the change is refused (401), and the
+	// user signs in again for a token with the narrower set. This includes a
+	// caller narrowing their own permissions.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -47819,11 +47849,13 @@ func (c *ClientWithResponses) ListEventsWithResponse(ctx context.Context, params
 // `admin.events.stream_recheck_seconds` interval (default 5 s) elapses. Each
 // page is scoped by the caller's current permissions, so a narrower
 // permission set narrows the stream. Permissions are those the credential
-// carries: API keys and user `at_` access tokens resolve them live, while a
-// login session JWT and an agent `at_` access token carry the set they were
-// issued with. The stream keeps re-verifying the token it was opened with,
-// so for those a permission change applies once that token expires and the
-// client reconnects. The stream ends
+// carries: API keys and `at_` access tokens resolve them live (an ephemeral
+// agent `at_` keeps the subset it was minted with). A login session JWT
+// carries the set it was issued with, but removing any of a user's effective
+// permissions revokes their login sessions, so a stream opened with one ends
+// (`refused`) at the next check. The stream keeps re-verifying the token it
+// was opened with, so a permission added to a user reaches a login-session
+// stream once the client reconnects with a newer login JWT. The stream ends
 // with a `stream_closed` frame (`{"type": "stream_closed", "reason": ...}`)
 // once the credential stops verifying (`refused`: expired, revoked, or its
 // user or agent disabled or deleted), the caller no longer holds
@@ -49715,7 +49747,11 @@ func (c *ClientWithResponses) UpdateUserWithResponse(ctx context.Context, userId
 //
 // Set the assigned permissions for a user.
 //
-// A deleted user's permissions cannot be changed (409).
+// A deleted user's permissions cannot be changed (409). When the new set
+// removes any of the user's effective permissions, their login sessions
+// end: every login JWT issued before the change is refused (401), and the
+// user signs in again for a token with the narrower set. This includes a
+// caller narrowing their own permissions.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -49732,7 +49768,11 @@ func (c *ClientWithResponses) SetUserPermissionsWithBodyWithResponse(ctx context
 //
 // Set the assigned permissions for a user.
 //
-// A deleted user's permissions cannot be changed (409).
+// A deleted user's permissions cannot be changed (409). When the new set
+// removes any of the user's effective permissions, their login sessions
+// end: every login JWT issued before the change is refused (401), and the
+// user signs in again for a token with the narrower set. This includes a
+// caller narrowing their own permissions.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

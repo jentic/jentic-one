@@ -15,7 +15,9 @@ import {
 	replaceBindingRules,
 	setUserPermissions,
 	signInPageAs,
+	submitLogin,
 	uniqueSuffix,
+	type MemberIdentity,
 } from './helpers';
 import { provisionAdminOwnedAgent } from './agent-flow';
 
@@ -37,6 +39,23 @@ async function pageAs(browser: Browser, baseURL: string, token: string): Promise
 	});
 	const page = await context.newPage();
 	await signInPageAs(page, token);
+	return page;
+}
+
+/** A browser page signed in through the login form as `member`, in a fresh context. */
+async function pageViaLogin(
+	browser: Browser,
+	baseURL: string,
+	member: MemberIdentity,
+): Promise<Page> {
+	const context = await browser.newContext({
+		baseURL,
+		storageState: { cookies: [], origins: [] },
+	});
+	const page = await context.newPage();
+	await page.goto('/app/login');
+	await submitLogin(page, member.email, member.password);
+	await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
 	return page;
 }
 
@@ -281,7 +300,7 @@ test('OAuth Connect and "Finish setup" are offered only with credentials:write',
 	});
 	expect(created.status(), await created.text()).toBe(201);
 
-	const memberPage = await pageAs(browser, baseUrlOf(info), member.token);
+	let memberPage = await pageAs(browser, baseUrlOf(info), member.token);
 	const bellRow = async () => {
 		await memberPage.getByRole('button', { name: /^Notifications/ }).click();
 		const dialog = memberPage.getByRole('dialog', { name: /Notifications/ });
@@ -300,7 +319,13 @@ test('OAuth Connect and "Finish setup" are offered only with credentials:write',
 	await expect((await bellRow()).getByRole('link', { name: 'Finish setup' })).toBeVisible();
 
 	// The same member as a reader: the row stays, the verbs go.
+	// Removing credentials:write ends the member's login sessions, so the reader
+	// signs in again before looking.
 	await setUserPermissions(request, member.id, ['agents:read', 'credentials:read']);
+	const stale = await request.get('/users/me', { headers: bearer(member.token) });
+	expect(stale.status(), await stale.text()).toBe(401);
+	await memberPage.context().close();
+	memberPage = await pageViaLogin(browser, baseUrlOf(info), member);
 	await memberPage.goto('/app/agents?credentials=1');
 	await expect(memberPage.getByText(name).first()).toBeVisible();
 	await expect(memberPage.getByRole('button', { name: `Connect ${name}` })).toHaveCount(0);

@@ -88,11 +88,13 @@ type AdminEventsConfig struct {
 	// polls every few seconds, so a value below its poll interval behaves as that
 	// interval. A disabled caller, a revoked or expired token, or a revoked
 	// permission ends the stream at that check; a narrower permission set narrows it.
-	// Permissions are those the credential carries: API keys and user ``at_`` access
-	// tokens resolve them live, while a login session JWT and an agent ``at_`` access
-	// token carry the set they were issued with; the stream re-verifies the token it
-	// was opened with, so for those a change applies once that token expires and the
-	// client reconnects.
+	// Permissions are those the credential carries: API keys and ``at_`` access
+	// tokens resolve them live (an ephemeral agent ``at_`` keeps the subset it was
+	// minted with). A login session JWT carries the set it was issued with, but
+	// removing any of a user's effective permissions revokes their login sessions, so
+	// a stream opened with one ends at that check. The stream re-verifies the token
+	// it was opened with, so a permission added to a user reaches a login-session
+	// stream once the client reconnects with a newer login JWT.
 	StreamRecheckSeconds float64 `json:"stream_recheck_seconds" yaml:"stream_recheck_seconds" mapstructure:"stream_recheck_seconds"`
 }
 
@@ -257,6 +259,19 @@ type BrokerConfig struct {
 	// RuleCacheTtlS corresponds to the JSON schema field "rule_cache_ttl_s".
 	RuleCacheTtlS float64 `json:"rule_cache_ttl_s" yaml:"rule_cache_ttl_s" mapstructure:"rule_cache_ttl_s"`
 
+	// Emit a W3C ``Server-Timing`` header on execute responses with per-stage
+	// durations (``jentic-auth``, ``jentic-egress``, ``jentic-discover``,
+	// ``jentic-rules``, ``jentic-body``, ``jentic-idempotency``, ``jentic-cred``,
+	// ``jentic-upstream``, ``jentic-persist``, ``jentic-total``) for authenticated
+	// callers. A broker-generated error raised before the upstream call lists the
+	// stages that ran without durations. ``jentic-upstream`` includes the
+	// circuit-breaker check, so a circuit-open ``503`` carries durations even though
+	// no upstream request was sent. Off by default: timing data aids side-channel
+	// probing and fingerprinting, so enable it only where callers are trusted with it
+	// (e.g. while diagnosing latency). Streaming responses carry only the stages
+	// known before the headers are sent (no ``jentic-persist``).
+	ServerTiming bool `json:"server_timing,omitempty,omitzero" yaml:"server_timing,omitempty" mapstructure:"server_timing,omitempty"`
+
 	// How long (seconds) a streaming execution persist waits for one of the
 	// ``broker.streaming_persist_max_concurrency`` slots. Past it the record is
 	// abandoned: logged as ``streaming_execution_persist_abandoned`` and counted on
@@ -320,6 +335,9 @@ func (j *BrokerConfig) UnmarshalJSON(value []byte) error {
 	if v, ok := raw["rule_cache_ttl_s"]; !ok || v == nil {
 		plain.RuleCacheTtlS = 3.0
 	}
+	if v, ok := raw["server_timing"]; !ok || v == nil {
+		plain.ServerTiming = false
+	}
 	if v, ok := raw["streaming_persist_acquire_timeout_s"]; !ok || v == nil {
 		plain.StreamingPersistAcquireTimeoutS = 5.0
 	}
@@ -358,7 +376,7 @@ type BrokerResilienceConfig struct {
 	CircuitBreaker *CircuitBreakerConfig `json:"circuit_breaker,omitempty,omitzero" yaml:"circuit_breaker,omitempty" mapstructure:"circuit_breaker,omitempty"`
 
 	// Hard admission cap on concurrently executing brokered calls, **per broker
-	// process** — replicas multiply it. At the cap, new requests are shed with 429 +
+	// process** — replicas multiply it. At the cap, new requests are shed with 503 +
 	// ``Retry-After: shed_retry_after_s``.
 	MaxInFlight int `json:"max_in_flight" yaml:"max_in_flight" mapstructure:"max_in_flight"`
 
@@ -381,7 +399,7 @@ type BrokerResilienceConfig struct {
 	// Retry corresponds to the JSON schema field "retry".
 	Retry *RetryConfig `json:"retry,omitempty,omitzero" yaml:"retry,omitempty" mapstructure:"retry,omitempty"`
 
-	// ``Retry-After`` (seconds) returned with the 429 when admission sheds at
+	// ``Retry-After`` (seconds) returned with the 503 when admission sheds at
 	// ``max_in_flight``.
 	ShedRetryAfterS int `json:"shed_retry_after_s" yaml:"shed_retry_after_s" mapstructure:"shed_retry_after_s"`
 
@@ -1880,11 +1898,17 @@ func (j *McpOAuthConfig) UnmarshalJSON(value []byte) error {
 // Every key belongs to a namespace, its prefix up to the first “:“
 // (“idem“ for Idempotency-Key records, “idem-body“ for their stored
 // response bodies, “auth“ for the auth surface's single-use markers,
-// “login-csrf“ for login CSRF nonces, “cb“ for circuit-breaker counters,
-// and so on). Each namespace has its own budget, so one key kind filling up
+// “login-csrf“ for login CSRF nonces, “cb“ for circuit-breaker counters
+// and their open-circuit report claims, “broker-authfail“ and
+// “broker-authfail-emit“ for the broker's auth-failure counters,
+// “mcp-session“ and “mcp-session-cap“ for the MCP session-event dedupe,
+// “repeated_failure“ for the broker's repeated-failure counters, and so
+// on). Each namespace has its own budget, so one key kind filling up
 // never starves another. A namespace that is full of live entries refuses
 // new writes (the request that needed it gets a 503) rather than evicting a
-// live entry. Ignored by every other backend.
+// live entry; the telemetry namespaces (“broker-authfail*“, the “cb“
+// report claims, “mcp-session*“) only skip the count or fall back to the
+// database dedupe instead. Ignored by every other backend.
 type MemoryBackendConfig struct {
 	// Default most approximate bytes (key + value + about 750 bytes of per-entry
 	// overhead) one key namespace may hold before its writes are refused.
@@ -1909,14 +1933,18 @@ type MemoryBackendConfig struct {
 	// max_bytes_per_namespace with a 0.02 per-client share, about 370 live nonces per
 	// IPv4 address or IPv6 /64 at the defaults (about 900 bytes each, 5-minute TTL),
 	// twice what the default authorize rate limit lets one client network request in
-	// that time; every other namespace uses max_entries_per_namespace /
-	// max_bytes_per_namespace. The sustained idempotent request rate idem can hold is
-	// min(max_entries, max_bytes / record_bytes) / broker.idempotency.ttl_s, where
-	// record_bytes is about 1000 bytes plus the response headers (capped at 512
-	// bytes): about 30 req/s at the defaults and a 1 h TTL, and a tenth of that per
-	// caller. Above it, Idempotency-Key requests get 503 idempotency_unavailable;
-	// bodies (about 830 bytes + body length each) stop being stored for replay
-	// sooner, about 5 req/s of 1 KiB bodies, without refusing requests.
+	// that time; repeated_failure (the broker's repeated-failure counters, which gate
+	// the execution.repeated_failure database scan) is 10000 entries / 8780000 bytes
+	// (about 8.4 MiB), about 2500 concurrently failing actor + credential + operation
+	// keys, and fails open when full (every failure runs the scan); every other
+	// namespace uses max_entries_per_namespace / max_bytes_per_namespace. The
+	// sustained idempotent request rate idem can hold is min(max_entries, max_bytes /
+	// record_bytes) / broker.idempotency.ttl_s, where record_bytes is about 1000
+	// bytes plus the response headers (capped at 512 bytes): about 30 req/s at the
+	// defaults and a 1 h TTL, and a tenth of that per caller. Above it,
+	// Idempotency-Key requests get 503 idempotency_unavailable; bodies (about 830
+	// bytes + body length each) stop being stored for replay sooner, about 5 req/s of
+	// 1 KiB bodies, without refusing requests.
 	Namespaces MemoryBackendConfigNamespaces `json:"namespaces,omitempty,omitzero" yaml:"namespaces,omitempty" mapstructure:"namespaces,omitempty"`
 }
 
@@ -1928,14 +1956,18 @@ type MemoryBackendConfig struct {
 // max_bytes_per_namespace with a 0.02 per-client share, about 370 live nonces per
 // IPv4 address or IPv6 /64 at the defaults (about 900 bytes each, 5-minute TTL),
 // twice what the default authorize rate limit lets one client network request in
-// that time; every other namespace uses max_entries_per_namespace /
-// max_bytes_per_namespace. The sustained idempotent request rate idem can hold is
-// min(max_entries, max_bytes / record_bytes) / broker.idempotency.ttl_s, where
-// record_bytes is about 1000 bytes plus the response headers (capped at 512
-// bytes): about 30 req/s at the defaults and a 1 h TTL, and a tenth of that per
-// caller. Above it, Idempotency-Key requests get 503 idempotency_unavailable;
-// bodies (about 830 bytes + body length each) stop being stored for replay sooner,
-// about 5 req/s of 1 KiB bodies, without refusing requests.
+// that time; repeated_failure (the broker's repeated-failure counters, which gate
+// the execution.repeated_failure database scan) is 10000 entries / 8780000 bytes
+// (about 8.4 MiB), about 2500 concurrently failing actor + credential + operation
+// keys, and fails open when full (every failure runs the scan); every other
+// namespace uses max_entries_per_namespace / max_bytes_per_namespace. The
+// sustained idempotent request rate idem can hold is min(max_entries, max_bytes /
+// record_bytes) / broker.idempotency.ttl_s, where record_bytes is about 1000 bytes
+// plus the response headers (capped at 512 bytes): about 30 req/s at the defaults
+// and a 1 h TTL, and a tenth of that per caller. Above it, Idempotency-Key
+// requests get 503 idempotency_unavailable; bodies (about 830 bytes + body length
+// each) stop being stored for replay sooner, about 5 req/s of 1 KiB bodies,
+// without refusing requests.
 type MemoryBackendConfigNamespaces map[string]MemoryNamespaceBudgetConfig
 
 // UnmarshalJSON implements json.Unmarshaler.
@@ -2776,8 +2808,9 @@ func (j *SigningKeyConfig) UnmarshalJSON(value []byte) error {
 // The process's shared-state backend (top-level “state:“ section).
 //
 // One backend per process holds the rate-limit buckets, circuit-breaker
-// counters, “Idempotency-Key“ records and the auth surface's single-use
-// markers of every surface the process serves.
+// counters, “Idempotency-Key“ records, the auth surface's single-use
+// markers, the broker's auth-failure counters and the MCP session-event
+// dedupe of every surface the process serves.
 type StateBackendConfig struct {
 	// Name of the shared-state backend to build: ``memory`` (in-process, the
 	// default), ``redis`` (deprecated), or a name an extension registered with

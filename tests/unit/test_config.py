@@ -2518,6 +2518,23 @@ def test_worker_reconnect_backoff_out_of_bounds_rejected(config_file: Path, key:
         load_config(config_file)
 
 
+def test_broker_server_timing_defaults_off(config_file: Path) -> None:
+    """Server-Timing exposes stage latencies, so it is opt-in (#1717)."""
+    assert load_config(config_file).broker.server_timing is False
+
+
+def test_broker_server_timing_from_yaml_and_env(
+    tmp_path: Path, sample_config_dict: dict[str, Any]
+) -> None:
+    sample_config_dict["broker"] = {"server_timing": True}
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.dump(sample_config_dict))
+    assert load_config(path).broker.server_timing is True
+
+    with patch.dict(os.environ, {"JENTIC__BROKER__SERVER_TIMING": "false"}, clear=False):
+        assert load_config(path).broker.server_timing is False
+
+
 # --- trusted-issuer jwks_url scheme (#1723) -----------------------------------
 
 _HTTP_JWKS_EVENT = "trusted_issuer_jwks_url_plain_http"
@@ -2786,6 +2803,12 @@ def test_memory_backend_total_cap_defaults_and_is_configurable(config_file: Path
     assert default.max_bytes_per_namespace == 16 * 1024 * 1024
     assert default.budgets()["idem"].max_bytes == 128 * 1024 * 1024
     assert default.budgets()["idem-body"].max_bytes == 32 * 1024 * 1024
+    # The broker's repeated-failure counter is budgeted by entry count: every
+    # key is a short fixed-shape bucket or marker.
+    repeated_failure = default.budgets()["repeated_failure"]
+    assert repeated_failure.max_entries == 10_000
+    assert repeated_failure.max_bytes == 10_000 * (750 + 128)
+    assert repeated_failure.max_owner_share is None
     env = {"JENTIC__STATE__MEMORY__MAX_TOTAL_BYTES": "5000"}
     with patch.dict(os.environ, env, clear=False):
         memory = load_config(config_file).state.memory

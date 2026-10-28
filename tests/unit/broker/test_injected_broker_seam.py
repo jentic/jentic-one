@@ -41,7 +41,6 @@ from jentic_one.broker.adapters.runners.base import (
 from jentic_one.broker.adapters.runners.registry import RunnerRegistry
 from jentic_one.broker.core.errors import CircuitOpenError
 from jentic_one.broker.services.execution.executor import PipelineExecutor, _ctx_from_metadata
-from jentic_one.broker.services.execution.service import _circuit_event_last_emitted
 from jentic_one.broker.web.routers.execute import _resolve_broker
 from jentic_one.shared.broker.broker import Broker
 from jentic_one.shared.broker.execution import (
@@ -561,7 +560,6 @@ async def test_async_execution_emits_lifecycle_event_once(
     ``execution.failed`` event (carrying ``job_id``), never a second one from
     ``run_execution``."""
     broker.calls.clear()
-    _circuit_event_last_emitted.clear()
     registry = RunnerRegistry()
     registry.register(["http", "https"], _NoopRunner(), required=True)
     handler = ExecutionHandler(
@@ -582,25 +580,22 @@ async def test_async_execution_emits_lifecycle_event_once(
         "jentic_one.shared.jobs.execution_handler.maybe_emit_repeated_failure", AsyncMock()
     )
 
-    try:
-        await handler.execute(
-            "job_once",
-            db,
-            payload={
-                "execution_id": "exec_once0000000000000000",
-                "upstream_url": "https://api.example.com/v1/things",
-                "method": "GET",
-                "trace_id": "d" * 32,
-                "api_vendor": api_vendor,
-                "api_name": "api",
-                "api_version": "1.0.0",
-                "origin": "mcp",
-            },
-            created_by="agt_abc123",
-            actor_type="agent",
-        )
-    finally:
-        _circuit_event_last_emitted.clear()
+    await handler.execute(
+        "job_once",
+        db,
+        payload={
+            "execution_id": "exec_once0000000000000000",
+            "upstream_url": "https://api.example.com/v1/things",
+            "method": "GET",
+            "trace_id": "d" * 32,
+            "api_vendor": api_vendor,
+            "api_name": "api",
+            "api_version": "1.0.0",
+            "origin": "mcp",
+        },
+        created_by="agt_abc123",
+        actor_type="agent",
+    )
 
     assert [c.kwargs.get("type") for c in service_emit.call_args_list] == expected_service_types
     handler_emit.assert_awaited_once()

@@ -21,6 +21,7 @@ from jentic_one.broker.adapters.runners.base import RunnerRequest, UpstreamRunne
 from jentic_one.broker.core.errors import BrokerError, CircuitOpenError
 from jentic_one.broker.core.execution import mint_execution_id
 from jentic_one.broker.core.schemas import ExecuteRequestContext
+from jentic_one.broker.core.server_timing import ServerTimingStage, stage
 from jentic_one.broker.default_broker import DefaultBroker
 from jentic_one.broker.services.execution.pipeline import (
     BrokerExecutionPipeline,
@@ -36,7 +37,10 @@ from jentic_one.shared.events import (
     emit_event,
     valid_trace_id_or_none,
 )
-from jentic_one.shared.events.repeated_failure import maybe_emit_repeated_failure
+from jentic_one.shared.events.repeated_failure import (
+    RepeatedFailureCounter,
+    maybe_emit_repeated_failure,
+)
 from jentic_one.shared.executions import record_execution
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ExecutionStatus
@@ -63,25 +67,6 @@ _execution_duration = _meter.create_histogram(
     unit="ms",
     description="Duration of broker executions in milliseconds",
 )
-
-_circuit_event_last_emitted: dict[str, datetime] = {}
-
-
-def _should_emit_circuit_event(host: str, cooldown_s: int = 15) -> bool:
-    """Return True if no circuit-open event was emitted for this host within the cooldown."""
-    now = datetime.now(UTC)
-    last = _circuit_event_last_emitted.get(host)
-    if last is not None and (now - last).total_seconds() < cooldown_s:
-        return False
-    _circuit_event_last_emitted[host] = now
-    stale = [
-        h
-        for h, ts in _circuit_event_last_emitted.items()
-        if (now - ts).total_seconds() > cooldown_s
-    ]
-    for h in stale:
-        _circuit_event_last_emitted.pop(h, None)
-    return True
 
 
 def default_pipeline(runner: UpstreamRunner) -> BrokerExecutionPipeline:
@@ -128,6 +113,7 @@ async def run_execution(
     actor_type: str,
     origin: str | None = None,
     security_config: SecurityConfig | None = None,
+    repeated_failure_counter: RepeatedFailureCounter | None = None,
     signing: SigV4Material | None = None,
     has_idempotency_key: bool = False,
     emit_lifecycle: bool = True,
@@ -202,12 +188,13 @@ async def run_execution(
             span.set_attribute("operation_id", operation_id or "")
             span.set_attribute("toolkit_id", ctx_req.toolkit_id or "")
             span.set_attribute("api_vendor", ctx_req.api_vendor or "")
-            with jentic_tracestate(tracestate_member):
+            with jentic_tracestate(tracestate_member), stage(ServerTimingStage.UPSTREAM):
                 outcome = await broker.execute(runner_request, exec_context)
     except BrokerError as exc:
         logger.error("execution_failed", execution_id=execution_id, error=exc.detail[:128])
         # Committed before the re-raise that maps the BrokerError to HTTP.
-        async with admin_db.transaction() as session:
+        # ``jentic-persist`` is timed here too, so a failed call reports it.
+        async with stage(ServerTimingStage.PERSIST), admin_db.transaction() as session:
             await _persist(
                 ctx_req,
                 session=session,
@@ -233,24 +220,26 @@ async def run_execution(
                     credential_id=ctx_req.credential_id,
                     operation=ctx_req.operation,
                     security_config=security_config,
+                    repeated_failure_counter=repeated_failure_counter,
                     origin=origin,
                 )
-            if isinstance(exc, CircuitOpenError):
+            # The breaker marks one refusal per host per open period as the one
+            # that reports it, across every process sharing the state backend.
+            if isinstance(exc, CircuitOpenError) and exc.report:
                 host = urlparse(ctx_req.upstream_url).netloc or "<unknown>"
-                if _should_emit_circuit_event(host):
-                    try:
-                        await emit_event(
-                            session,
-                            type=EventType.UPSTREAM_CIRCUIT_OPEN,
-                            severity=EventSeverity.WARNING,
-                            summary=f"Circuit breaker opened for upstream {host}",
-                            created_by=actor_id,
-                            actor_id=actor_id,
-                            actor_type=actor_type,
-                            data={"host": host},
-                        )
-                    except Exception:
-                        logger.warning("emit_circuit_event_failed", host=host)
+                try:
+                    await emit_event(
+                        session,
+                        type=EventType.UPSTREAM_CIRCUIT_OPEN,
+                        severity=EventSeverity.WARNING,
+                        summary=f"Circuit breaker opened for upstream {host}",
+                        created_by=actor_id,
+                        actor_id=actor_id,
+                        actor_type=actor_type,
+                        data={"host": host},
+                    )
+                except Exception:
+                    logger.warning("emit_circuit_event_failed", host=host)
         raise
 
     result = outcome.result
@@ -270,7 +259,7 @@ async def run_execution(
     _executions_total.add(1, {"operation": operation_id or "", "status": status})
     _execution_duration.record(result.duration_ms, {"operation": operation_id or ""})
 
-    async with admin_db.transaction() as session:
+    async with stage(ServerTimingStage.PERSIST), admin_db.transaction() as session:
         await _persist(
             ctx_req,
             session=session,
@@ -311,6 +300,7 @@ async def run_execution(
                 credential_id=ctx_req.credential_id,
                 operation=ctx_req.operation,
                 security_config=security_config,
+                repeated_failure_counter=repeated_failure_counter,
                 error_tags=error_tags,
                 origin=origin,
             )
@@ -332,6 +322,7 @@ async def persist_streaming_execution(
     actor_type: str,
     origin: str | None = None,
     security_config: SecurityConfig | None = None,
+    repeated_failure_counter: RepeatedFailureCounter | None = None,
 ) -> None:
     """Persist an execution record for a streaming-path execution.
 
@@ -393,6 +384,7 @@ async def persist_streaming_execution(
         credential_id=ctx_req.credential_id,
         operation=ctx_req.operation,
         security_config=security_config,
+        repeated_failure_counter=repeated_failure_counter,
         error_tags=error_tags,
         origin=origin,
     )
@@ -447,6 +439,7 @@ async def _emit_execution_lifecycle(
     credential_id: str | None = None,
     operation: OperationInfo | None = None,
     security_config: SecurityConfig | None = None,
+    repeated_failure_counter: RepeatedFailureCounter | None = None,
     error_tags: set[EventTag] | None = None,
     origin: str | None = None,
 ) -> None:
@@ -513,4 +506,5 @@ async def _emit_execution_lifecycle(
             operation=operation,
             trace_id=event_trace_id,
             config=security_config,
+            failure_counter=repeated_failure_counter,
         )

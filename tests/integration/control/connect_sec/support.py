@@ -32,6 +32,7 @@ from jentic_one.control.services.integrations.connect_session_service import (
 )
 from jentic_one.control.services.integrations.flow_handlers.manual import ApiKeySecret
 from jentic_one.control.web.app import get_exception_handlers
+from jentic_one.control.web.connect_limits import install_connect_limiters
 from jentic_one.control.web.routers import integrations as integrations_router
 from jentic_one.registry.services.api_security_lookup_service import ApiSecurityLookupService
 from jentic_one.registry.services.import_service import ImportHandler
@@ -248,6 +249,7 @@ def build_app(ctx: Context, identity: Identity) -> FastAPI:
         app.add_exception_handler(exc_class, handler)
     app.add_exception_handler(RequestValidationError, request_validation_error_handler)  # type: ignore[arg-type]
     app.state.ctx = ctx
+    install_connect_limiters(app, ctx)
     app.state.security_schemes_lookup = ApiSecurityLookupService(ctx)
     app.dependency_overrides[resolve_identity] = lambda: identity
     return app

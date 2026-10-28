@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 from fastapi import FastAPI
 from starlette.routing import Route
 
+from jentic_one.control.web.connect_limits import MCP_LIMITER_ATTR, connect_limiter
 from jentic_one.mcp.app import McpChallengePlaceholder, McpMount
 from jentic_one.shared.context import Context
 
@@ -70,12 +71,18 @@ def install_mcp_challenge_placeholder(app: FastAPI, ctx: Context) -> None:
 
 @asynccontextmanager
 async def mcp_lifespan(app: FastAPI, ctx: Context) -> AsyncIterator[None]:
-    """Run the stateless session manager's task group for the app's lifetime."""
+    """Run the stateless session manager's task group for the app's lifetime.
+
+    Startup fails, before the process serves, when the app carries the mount
+    but not the control connect limiters its ``request_connection`` tool
+    draws from (see :func:`connect_limiter`).
+    """
     mount: McpMount | None = getattr(app.state, _STATE_ATTR, None)
     if mount is None:
         # A shape whose container carries the lifespan but not the installer
         # (never wired by build_default_container; tolerated for test apps).
         yield
         return
+    connect_limiter(app, MCP_LIMITER_ATTR)
     async with mount.session_manager.run():
         yield

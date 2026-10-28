@@ -20,14 +20,11 @@ shared backend.
 
 from __future__ import annotations
 
-import structlog
 from fastapi import FastAPI
 
 from jentic_one.shared.context import Context
 from jentic_one.shared.resilience import RateLimiter
-from jentic_one.shared.state import MemoryStateBackend, RateLimitStore
-
-_logger = structlog.get_logger(__name__)
+from jentic_one.shared.state import RateLimitStore
 
 CONNECT_RPM = 30
 CONNECT_BURST = 10
@@ -65,10 +62,13 @@ def connect_limiter(app: FastAPI, attr: str) -> RateLimiter:
     ``ROUTE_LIMITER_ATTR`` is the authoritative attribute for the shared
     per-actor connect bucket; ``MCP_LIMITER_ATTR`` mirrors it (unless a test
     explicitly installed a limiter on ``MCP_LIMITER_ATTR`` without setting
-    ``ROUTE_LIMITER_ATTR``). An app assembled without
-    :func:`install_connect_limiters` (a bare test app) gets an in-process
-    limiter cached on ``app.state`` across both attributes so HTTP and MCP
-    share the same per-actor bucket.
+    ``ROUTE_LIMITER_ATTR``).
+
+    Raises:
+        RuntimeError: The app was assembled without
+            :func:`install_connect_limiters`. A private in-process limiter
+            would silently not share its buckets with the process's
+            shared-state backend, so a missing one is a wiring error.
     """
     route_limiter: RateLimiter | None = getattr(app.state, ROUTE_LIMITER_ATTR, None)
     if route_limiter is not None:
@@ -78,11 +78,11 @@ def connect_limiter(app: FastAPI, attr: str) -> RateLimiter:
         existing: RateLimiter | None = getattr(app.state, attr, None)
         if existing is not None:
             return existing
-    _logger.warning("control_connect_limiter_missing_using_in_memory_fallback", limiter=attr)
-    limiter = _limiter(MemoryStateBackend(), _NAMESPACES[attr])
-    for target_attr in _NAMESPACES:
-        setattr(app.state, target_attr, limiter)
-    return limiter
+    raise RuntimeError(
+        f"the control connect limiter {attr!r} is not installed on this app; "
+        "assemble it with install_connect_limiters(app, ctx), which builds it on "
+        "the process's shared-state backend (Context.state_backend)"
+    )
 
 
 __all__ = [

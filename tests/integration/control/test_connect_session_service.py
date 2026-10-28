@@ -99,6 +99,7 @@ from jentic_one.control.services.integrations.flow_handlers.device_authorization
 )
 from jentic_one.control.services.integrations.revisions import revision_digest
 from jentic_one.control.web.app import get_exception_handlers
+from jentic_one.control.web.connect_limits import install_connect_limiters
 from jentic_one.control.web.routers import integrations as integrations_router
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
@@ -1752,6 +1753,7 @@ def _session_app(ctx: Context, identity: Identity) -> FastAPI:
     for exc_class, handler in get_exception_handlers():
         app.add_exception_handler(exc_class, handler)
     app.state.ctx = ctx
+    install_connect_limiters(app, ctx)
     app.dependency_overrides[resolve_identity] = lambda: identity
     return app
 
@@ -1958,12 +1960,15 @@ async def test_confirm_attributes_agent_started_credential_to_the_approver(
     assert await _credential_created_by(ctx, created.session_id) == expected_creator
 
 
-async def test_confirm_attributes_user_started_credential_to_the_approver(
+async def test_confirm_attributes_user_started_credential_to_the_target_agents_owner(
     integration_context: Context,
     seed_test_vendors: None,
     seed_agent: None,
     clean_session_tables: None,
 ) -> None:
+    # When an org:admin confirms a session for another user's agent, the
+    # credential is owned by the target agent's owner while the audit entry
+    # records the confirming admin (#1838).
     ctx = integration_context
     svc = ConnectSessionService(ctx)
     created = await svc.create_session(
@@ -1978,7 +1983,7 @@ async def test_confirm_attributes_user_started_credential_to_the_approver(
         identity=_ADMIN_IDENTITY,
         browser_binding=_BINDING.claim,
     )
-    assert await _credential_created_by(ctx, created.session_id) == _ADMIN_IDENTITY.sub
+    assert await _credential_created_by(ctx, created.session_id) == _USER_ID
 
 
 @pytest.mark.parametrize("status", ["archived", "disabled", "rejected"])

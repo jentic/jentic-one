@@ -124,7 +124,31 @@ section (`Context.state_backend`) while its app is assembled, so an unknown
 names. Every surface the process serves shares it — in the combined app the
 auth limiters and single-use markers and the control connect limiters; in a
 broker process the rate limiter, circuit breaker and idempotency store. The
-app lifespan closes it once, after every surface teardown.
+broker's auth-failure counters, the circuit-open event dedupe and the MCP
+session-event dedupe and per-client caps live on it too, so no surface keeps
+cross-request state in a module global. A surface whose limiter or backend
+was not wired at assembly fails with a `RuntimeError` naming the missing
+wiring rather than building a private in-memory one. The app lifespan closes
+it once, after every surface teardown.
+
+The JWT-bearer `jti` replay records are the exception: they live in the
+admin database (`assertion_jtis`), so a replayed assertion is refused by
+every auth process sharing it, whatever the state backend.
+
+The same backend carries the repeated-failure counters that gate the
+`execution.repeated_failure` database scan, in the `repeated_failure` key
+namespace. On the `memory` backend that namespace has its own built-in budget
+(10,000 entries, about 8.4 MiB; override it under
+`state.memory.namespaces.repeated_failure`), so a failure storm cannot crowd
+out idempotency or other shared state; when it is full the counter fails open
+and every failure runs the scan. On a shared backend the count is
+cluster-wide, so failures spread across replicas still reach the threshold.
+Several worker processes serving one broker count as several instances on the
+`memory` backend: each process keeps its own counters, so the event fires late
+— or, for a thin spread, not at all — and the counter is therefore not built
+when the broker is told it runs in more than one process. A shared store that
+evicts live keys (every counter key carries a TTL) makes the gate undercount
+without raising, so size it to hold them.
 
 ## The memory shared-state backend is bounded
 

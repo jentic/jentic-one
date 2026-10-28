@@ -27506,7 +27506,7 @@
         "operationId": "listApis",
         "parameters": [
           {
-            "description": "Only return APIs from this vendor.",
+            "description": "Only return APIs from this vendor. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API vendor domain",
@@ -27528,7 +27528,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Only return APIs from this vendor.",
+              "description": "Only return APIs from this vendor. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe.com"
               ],
@@ -27938,7 +27938,7 @@
         "operationId": "deleteApi",
         "parameters": [
           {
-            "description": "Vendor of the API.",
+            "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API vendor domain",
@@ -27949,7 +27949,7 @@
             "name": "vendor",
             "required": true,
             "schema": {
-              "description": "Vendor of the API.",
+              "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe.com"
               ],
@@ -27958,7 +27958,7 @@
             }
           },
           {
-            "description": "Name of the API.",
+            "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API name",
@@ -27969,7 +27969,7 @@
             "name": "name",
             "required": true,
             "schema": {
-              "description": "Name of the API.",
+              "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe"
               ],
@@ -27978,7 +27978,7 @@
             }
           },
           {
-            "description": "Version of the API.",
+            "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
             "examples": {
               "example": {
                 "summary": "API version",
@@ -27989,7 +27989,7 @@
             "name": "version",
             "required": true,
             "schema": {
-              "description": "Version of the API.",
+              "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
               "examples": [
                 "2024-04-10"
               ],
@@ -28164,7 +28164,7 @@
         "operationId": "getApi",
         "parameters": [
           {
-            "description": "Vendor of the API.",
+            "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API vendor domain",
@@ -28175,7 +28175,7 @@
             "name": "vendor",
             "required": true,
             "schema": {
-              "description": "Vendor of the API.",
+              "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe.com"
               ],
@@ -28184,7 +28184,7 @@
             }
           },
           {
-            "description": "Name of the API.",
+            "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API name",
@@ -28195,7 +28195,7 @@
             "name": "name",
             "required": true,
             "schema": {
-              "description": "Name of the API.",
+              "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe"
               ],
@@ -28204,7 +28204,7 @@
             }
           },
           {
-            "description": "Version of the API.",
+            "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
             "examples": {
               "example": {
                 "summary": "API version",
@@ -28215,7 +28215,7 @@
             "name": "version",
             "required": true,
             "schema": {
-              "description": "Version of the API.",
+              "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
               "examples": [
                 "2024-04-10"
               ],
@@ -28390,7 +28390,7 @@
         "operationId": "updateApi",
         "parameters": [
           {
-            "description": "Vendor of the API.",
+            "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API vendor domain",
@@ -28401,7 +28401,7 @@
             "name": "vendor",
             "required": true,
             "schema": {
-              "description": "Vendor of the API.",
+              "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe.com"
               ],
@@ -28410,7 +28410,7 @@
             }
           },
           {
-            "description": "Name of the API.",
+            "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API name",
@@ -28421,7 +28421,7 @@
             "name": "name",
             "required": true,
             "schema": {
-              "description": "Name of the API.",
+              "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe"
               ],
@@ -28430,7 +28430,7 @@
             }
           },
           {
-            "description": "Version of the API.",
+            "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
             "examples": {
               "example": {
                 "summary": "API version",
@@ -28441,7 +28441,7 @@
             "name": "version",
             "required": true,
             "schema": {
-              "description": "Version of the API.",
+              "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
               "examples": [
                 "2024-04-10"
               ],
@@ -28606,7 +28606,7 @@
         "operationId": "getApiSpec",
         "parameters": [
           {
-            "description": "Vendor of the API.",
+            "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API vendor domain",
@@ -28617,7 +28617,7 @@
             "name": "vendor",
             "required": true,
             "schema": {
-              "description": "Vendor of the API.",
+              "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe.com"
               ],
@@ -28626,7 +28626,7 @@
             }
           },
           {
-            "description": "Name of the API.",
+            "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API name",
@@ -28637,7 +28637,7 @@
             "name": "name",
             "required": true,
             "schema": {
-              "description": "Name of the API.",
+              "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe"
               ],
@@ -28646,7 +28646,7 @@
             }
           },
           {
-            "description": "Version of the API.",
+            "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
             "examples": {
               "example": {
                 "summary": "API version",
@@ -28657,7 +28657,7 @@
             "name": "version",
             "required": true,
             "schema": {
-              "description": "Version of the API.",
+              "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
               "examples": [
                 "2024-04-10"
               ],
@@ -28827,7 +28827,7 @@
         "operationId": "listApiOperations",
         "parameters": [
           {
-            "description": "Vendor of the API.",
+            "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API vendor domain",
@@ -28838,7 +28838,7 @@
             "name": "vendor",
             "required": true,
             "schema": {
-              "description": "Vendor of the API.",
+              "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe.com"
               ],
@@ -28847,7 +28847,7 @@
             }
           },
           {
-            "description": "Name of the API.",
+            "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API name",
@@ -28858,7 +28858,7 @@
             "name": "name",
             "required": true,
             "schema": {
-              "description": "Name of the API.",
+              "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe"
               ],
@@ -28867,7 +28867,7 @@
             }
           },
           {
-            "description": "Version of the API.",
+            "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
             "examples": {
               "example": {
                 "summary": "API version",
@@ -28878,7 +28878,7 @@
             "name": "version",
             "required": true,
             "schema": {
-              "description": "Version of the API.",
+              "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
               "examples": [
                 "2024-04-10"
               ],
@@ -29109,7 +29109,7 @@
         "operationId": "listOverlays",
         "parameters": [
           {
-            "description": "Vendor of the API.",
+            "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API vendor domain",
@@ -29120,7 +29120,7 @@
             "name": "vendor",
             "required": true,
             "schema": {
-              "description": "Vendor of the API.",
+              "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe.com"
               ],
@@ -29129,7 +29129,7 @@
             }
           },
           {
-            "description": "Name of the API.",
+            "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API name",
@@ -29140,7 +29140,7 @@
             "name": "name",
             "required": true,
             "schema": {
-              "description": "Name of the API.",
+              "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe"
               ],
@@ -29149,7 +29149,7 @@
             }
           },
           {
-            "description": "Version of the API.",
+            "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
             "examples": {
               "example": {
                 "summary": "API version",
@@ -29160,7 +29160,7 @@
             "name": "version",
             "required": true,
             "schema": {
-              "description": "Version of the API.",
+              "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
               "examples": [
                 "2024-04-10"
               ],
@@ -29434,7 +29434,7 @@
         "operationId": "submitOverlay",
         "parameters": [
           {
-            "description": "Vendor of the API.",
+            "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API vendor domain",
@@ -29445,7 +29445,7 @@
             "name": "vendor",
             "required": true,
             "schema": {
-              "description": "Vendor of the API.",
+              "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe.com"
               ],
@@ -29454,7 +29454,7 @@
             }
           },
           {
-            "description": "Name of the API.",
+            "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API name",
@@ -29465,7 +29465,7 @@
             "name": "name",
             "required": true,
             "schema": {
-              "description": "Name of the API.",
+              "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe"
               ],
@@ -29474,7 +29474,7 @@
             }
           },
           {
-            "description": "Version of the API.",
+            "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
             "examples": {
               "example": {
                 "summary": "API version",
@@ -29485,7 +29485,7 @@
             "name": "version",
             "required": true,
             "schema": {
-              "description": "Version of the API.",
+              "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
               "examples": [
                 "2024-04-10"
               ],
@@ -29703,7 +29703,7 @@
         "operationId": "deprecateOverlay",
         "parameters": [
           {
-            "description": "Vendor of the API.",
+            "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API vendor domain",
@@ -29714,7 +29714,7 @@
             "name": "vendor",
             "required": true,
             "schema": {
-              "description": "Vendor of the API.",
+              "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe.com"
               ],
@@ -29723,7 +29723,7 @@
             }
           },
           {
-            "description": "Name of the API.",
+            "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API name",
@@ -29734,7 +29734,7 @@
             "name": "name",
             "required": true,
             "schema": {
-              "description": "Name of the API.",
+              "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe"
               ],
@@ -29743,7 +29743,7 @@
             }
           },
           {
-            "description": "Version of the API.",
+            "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
             "examples": {
               "example": {
                 "summary": "API version",
@@ -29754,7 +29754,7 @@
             "name": "version",
             "required": true,
             "schema": {
-              "description": "Version of the API.",
+              "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
               "examples": [
                 "2024-04-10"
               ],
@@ -29915,7 +29915,7 @@
         "operationId": "getOverlay",
         "parameters": [
           {
-            "description": "Vendor of the API.",
+            "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API vendor domain",
@@ -29926,7 +29926,7 @@
             "name": "vendor",
             "required": true,
             "schema": {
-              "description": "Vendor of the API.",
+              "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe.com"
               ],
@@ -29935,7 +29935,7 @@
             }
           },
           {
-            "description": "Name of the API.",
+            "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API name",
@@ -29946,7 +29946,7 @@
             "name": "name",
             "required": true,
             "schema": {
-              "description": "Name of the API.",
+              "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe"
               ],
@@ -29955,7 +29955,7 @@
             }
           },
           {
-            "description": "Version of the API.",
+            "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
             "examples": {
               "example": {
                 "summary": "API version",
@@ -29966,7 +29966,7 @@
             "name": "version",
             "required": true,
             "schema": {
-              "description": "Version of the API.",
+              "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
               "examples": [
                 "2024-04-10"
               ],
@@ -30171,7 +30171,7 @@
         "operationId": "updateOverlay",
         "parameters": [
           {
-            "description": "Vendor of the API.",
+            "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API vendor domain",
@@ -30182,7 +30182,7 @@
             "name": "vendor",
             "required": true,
             "schema": {
-              "description": "Vendor of the API.",
+              "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe.com"
               ],
@@ -30191,7 +30191,7 @@
             }
           },
           {
-            "description": "Name of the API.",
+            "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API name",
@@ -30202,7 +30202,7 @@
             "name": "name",
             "required": true,
             "schema": {
-              "description": "Name of the API.",
+              "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe"
               ],
@@ -30211,7 +30211,7 @@
             }
           },
           {
-            "description": "Version of the API.",
+            "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
             "examples": {
               "example": {
                 "summary": "API version",
@@ -30222,7 +30222,7 @@
             "name": "version",
             "required": true,
             "schema": {
-              "description": "Version of the API.",
+              "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
               "examples": [
                 "2024-04-10"
               ],
@@ -30460,7 +30460,7 @@
         "operationId": "confirmOverlay",
         "parameters": [
           {
-            "description": "Vendor of the API.",
+            "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API vendor domain",
@@ -30471,7 +30471,7 @@
             "name": "vendor",
             "required": true,
             "schema": {
-              "description": "Vendor of the API.",
+              "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe.com"
               ],
@@ -30480,7 +30480,7 @@
             }
           },
           {
-            "description": "Name of the API.",
+            "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API name",
@@ -30491,7 +30491,7 @@
             "name": "name",
             "required": true,
             "schema": {
-              "description": "Name of the API.",
+              "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe"
               ],
@@ -30500,7 +30500,7 @@
             }
           },
           {
-            "description": "Version of the API.",
+            "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
             "examples": {
               "example": {
                 "summary": "API version",
@@ -30511,7 +30511,7 @@
             "name": "version",
             "required": true,
             "schema": {
-              "description": "Version of the API.",
+              "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
               "examples": [
                 "2024-04-10"
               ],
@@ -30734,7 +30734,7 @@
         "operationId": "rollbackOverlay",
         "parameters": [
           {
-            "description": "Vendor of the API.",
+            "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API vendor domain",
@@ -30745,7 +30745,7 @@
             "name": "vendor",
             "required": true,
             "schema": {
-              "description": "Vendor of the API.",
+              "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe.com"
               ],
@@ -30754,7 +30754,7 @@
             }
           },
           {
-            "description": "Name of the API.",
+            "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API name",
@@ -30765,7 +30765,7 @@
             "name": "name",
             "required": true,
             "schema": {
-              "description": "Name of the API.",
+              "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe"
               ],
@@ -30774,7 +30774,7 @@
             }
           },
           {
-            "description": "Version of the API.",
+            "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
             "examples": {
               "example": {
                 "summary": "API version",
@@ -30785,7 +30785,7 @@
             "name": "version",
             "required": true,
             "schema": {
-              "description": "Version of the API.",
+              "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
               "examples": [
                 "2024-04-10"
               ],
@@ -30949,7 +30949,7 @@
         "operationId": "listApiRevisions",
         "parameters": [
           {
-            "description": "Vendor of the API.",
+            "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API vendor domain",
@@ -30960,7 +30960,7 @@
             "name": "vendor",
             "required": true,
             "schema": {
-              "description": "Vendor of the API.",
+              "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe.com"
               ],
@@ -30969,7 +30969,7 @@
             }
           },
           {
-            "description": "Name of the API.",
+            "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API name",
@@ -30980,7 +30980,7 @@
             "name": "name",
             "required": true,
             "schema": {
-              "description": "Name of the API.",
+              "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe"
               ],
@@ -30989,7 +30989,7 @@
             }
           },
           {
-            "description": "Version of the API.",
+            "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
             "examples": {
               "example": {
                 "summary": "API version",
@@ -31000,7 +31000,7 @@
             "name": "version",
             "required": true,
             "schema": {
-              "description": "Version of the API.",
+              "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
               "examples": [
                 "2024-04-10"
               ],
@@ -31243,7 +31243,7 @@
         "operationId": "deleteRevision",
         "parameters": [
           {
-            "description": "Vendor of the API.",
+            "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API vendor domain",
@@ -31254,7 +31254,7 @@
             "name": "vendor",
             "required": true,
             "schema": {
-              "description": "Vendor of the API.",
+              "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe.com"
               ],
@@ -31263,7 +31263,7 @@
             }
           },
           {
-            "description": "Name of the API.",
+            "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API name",
@@ -31274,7 +31274,7 @@
             "name": "name",
             "required": true,
             "schema": {
-              "description": "Name of the API.",
+              "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe"
               ],
@@ -31283,7 +31283,7 @@
             }
           },
           {
-            "description": "Version of the API.",
+            "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
             "examples": {
               "example": {
                 "summary": "API version",
@@ -31294,7 +31294,7 @@
             "name": "version",
             "required": true,
             "schema": {
-              "description": "Version of the API.",
+              "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
               "examples": [
                 "2024-04-10"
               ],
@@ -31455,7 +31455,7 @@
         "operationId": "getApiRevision",
         "parameters": [
           {
-            "description": "Vendor of the API.",
+            "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API vendor domain",
@@ -31466,7 +31466,7 @@
             "name": "vendor",
             "required": true,
             "schema": {
-              "description": "Vendor of the API.",
+              "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe.com"
               ],
@@ -31475,7 +31475,7 @@
             }
           },
           {
-            "description": "Name of the API.",
+            "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API name",
@@ -31486,7 +31486,7 @@
             "name": "name",
             "required": true,
             "schema": {
-              "description": "Name of the API.",
+              "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe"
               ],
@@ -31495,7 +31495,7 @@
             }
           },
           {
-            "description": "Version of the API.",
+            "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
             "examples": {
               "example": {
                 "summary": "API version",
@@ -31506,7 +31506,7 @@
             "name": "version",
             "required": true,
             "schema": {
-              "description": "Version of the API.",
+              "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
               "examples": [
                 "2024-04-10"
               ],
@@ -31675,7 +31675,7 @@
         "operationId": "getApiRevisionSpec",
         "parameters": [
           {
-            "description": "Vendor of the API.",
+            "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API vendor domain",
@@ -31686,7 +31686,7 @@
             "name": "vendor",
             "required": true,
             "schema": {
-              "description": "Vendor of the API.",
+              "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe.com"
               ],
@@ -31695,7 +31695,7 @@
             }
           },
           {
-            "description": "Name of the API.",
+            "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API name",
@@ -31706,7 +31706,7 @@
             "name": "name",
             "required": true,
             "schema": {
-              "description": "Name of the API.",
+              "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe"
               ],
@@ -31715,7 +31715,7 @@
             }
           },
           {
-            "description": "Version of the API.",
+            "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
             "examples": {
               "example": {
                 "summary": "API version",
@@ -31726,7 +31726,7 @@
             "name": "version",
             "required": true,
             "schema": {
-              "description": "Version of the API.",
+              "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
               "examples": [
                 "2024-04-10"
               ],
@@ -31916,7 +31916,7 @@
         "operationId": "listApiRevisionOperations",
         "parameters": [
           {
-            "description": "Vendor of the API.",
+            "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API vendor domain",
@@ -31927,7 +31927,7 @@
             "name": "vendor",
             "required": true,
             "schema": {
-              "description": "Vendor of the API.",
+              "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe.com"
               ],
@@ -31936,7 +31936,7 @@
             }
           },
           {
-            "description": "Name of the API.",
+            "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API name",
@@ -31947,7 +31947,7 @@
             "name": "name",
             "required": true,
             "schema": {
-              "description": "Name of the API.",
+              "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe"
               ],
@@ -31956,7 +31956,7 @@
             }
           },
           {
-            "description": "Version of the API.",
+            "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
             "examples": {
               "example": {
                 "summary": "API version",
@@ -31967,7 +31967,7 @@
             "name": "version",
             "required": true,
             "schema": {
-              "description": "Version of the API.",
+              "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
               "examples": [
                 "2024-04-10"
               ],
@@ -32189,7 +32189,7 @@
         "operationId": "archiveRevision",
         "parameters": [
           {
-            "description": "Vendor of the API.",
+            "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API vendor domain",
@@ -32200,7 +32200,7 @@
             "name": "vendor",
             "required": true,
             "schema": {
-              "description": "Vendor of the API.",
+              "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe.com"
               ],
@@ -32209,7 +32209,7 @@
             }
           },
           {
-            "description": "Name of the API.",
+            "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API name",
@@ -32220,7 +32220,7 @@
             "name": "name",
             "required": true,
             "schema": {
-              "description": "Name of the API.",
+              "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe"
               ],
@@ -32229,7 +32229,7 @@
             }
           },
           {
-            "description": "Version of the API.",
+            "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
             "examples": {
               "example": {
                 "summary": "API version",
@@ -32240,7 +32240,7 @@
             "name": "version",
             "required": true,
             "schema": {
-              "description": "Version of the API.",
+              "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
               "examples": [
                 "2024-04-10"
               ],
@@ -32409,7 +32409,7 @@
         "operationId": "promoteRevision",
         "parameters": [
           {
-            "description": "Vendor of the API.",
+            "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API vendor domain",
@@ -32420,7 +32420,7 @@
             "name": "vendor",
             "required": true,
             "schema": {
-              "description": "Vendor of the API.",
+              "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe.com"
               ],
@@ -32429,7 +32429,7 @@
             }
           },
           {
-            "description": "Name of the API.",
+            "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API name",
@@ -32440,7 +32440,7 @@
             "name": "name",
             "required": true,
             "schema": {
-              "description": "Name of the API.",
+              "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe"
               ],
@@ -32449,7 +32449,7 @@
             }
           },
           {
-            "description": "Version of the API.",
+            "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
             "examples": {
               "example": {
                 "summary": "API version",
@@ -32460,7 +32460,7 @@
             "name": "version",
             "required": true,
             "schema": {
-              "description": "Version of the API.",
+              "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
               "examples": [
                 "2024-04-10"
               ],
@@ -32629,7 +32629,7 @@
         "operationId": "listApiSecuritySchemes",
         "parameters": [
           {
-            "description": "Vendor of the API.",
+            "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API vendor domain",
@@ -32640,7 +32640,7 @@
             "name": "vendor",
             "required": true,
             "schema": {
-              "description": "Vendor of the API.",
+              "description": "Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe.com"
               ],
@@ -32649,7 +32649,7 @@
             }
           },
           {
-            "description": "Name of the API.",
+            "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
             "examples": {
               "example": {
                 "summary": "API name",
@@ -32660,7 +32660,7 @@
             "name": "name",
             "required": true,
             "schema": {
-              "description": "Name of the API.",
+              "description": "Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.",
               "examples": [
                 "stripe"
               ],
@@ -32669,7 +32669,7 @@
             }
           },
           {
-            "description": "Version of the API.",
+            "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
             "examples": {
               "example": {
                 "summary": "API version",
@@ -32680,7 +32680,7 @@
             "name": "version",
             "required": true,
             "schema": {
-              "description": "Version of the API.",
+              "description": "Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.",
               "examples": [
                 "2024-04-10"
               ],
@@ -40639,7 +40639,7 @@
     "/events/stream": {
       "description": "`GET`: Stream Events.",
       "get": {
-        "description": "Stream events as Server-Sent Events.\n\nThe open stream re-verifies the caller at the first poll or page after each\n`admin.events.stream_recheck_seconds` interval (default 5 s) elapses. Each\npage is scoped by the caller's current permissions, so a narrower\npermission set narrows the stream. Permissions are those the credential\ncarries: API keys and user `at_` access tokens resolve them live, while a\nlogin session JWT and an agent `at_` access token carry the set they were\nissued with. The stream keeps re-verifying the token it was opened with,\nso for those a permission change applies once that token expires and the\nclient reconnects. The stream ends\nwith a `stream_closed` frame (`{\"type\": \"stream_closed\", \"reason\": ...}`)\nonce the credential stops verifying (`refused`: expired, revoked, or its\nuser or agent disabled or deleted), the caller no longer holds\n`events:read` or `org:admin` or must rotate their password (`forbidden`),\nor the check or the event store cannot be answered (`unavailable`).\nA reconnect is authenticated afresh.",
+        "description": "Stream events as Server-Sent Events.\n\nThe open stream re-verifies the caller at the first poll or page after each\n`admin.events.stream_recheck_seconds` interval (default 5 s) elapses. Each\npage is scoped by the caller's current permissions, so a narrower\npermission set narrows the stream. Permissions are those the credential\ncarries: API keys and `at_` access tokens resolve them live (an ephemeral\nagent `at_` keeps the subset it was minted with). A login session JWT\ncarries the set it was issued with, but removing any of a user's effective\npermissions revokes their login sessions, so a stream opened with one ends\n(`refused`) at the next check. The stream keeps re-verifying the token it\nwas opened with, so a permission added to a user reaches a login-session\nstream once the client reconnects with a newer login JWT. The stream ends\nwith a `stream_closed` frame (`{\"type\": \"stream_closed\", \"reason\": ...}`)\nonce the credential stops verifying (`refused`: expired, revoked, or its\nuser or agent disabled or deleted), the caller no longer holds\n`events:read` or `org:admin` or must rotate their password (`forbidden`),\nor the check or the event store cannot be answered (`unavailable`).\nA reconnect is authenticated afresh.",
         "operationId": "streamEvents",
         "parameters": [
           {
@@ -53568,7 +53568,7 @@
     "/users/{user_id}/permissions": {
       "description": "`PUT`: Set User Permissions.",
       "put": {
-        "description": "Set the assigned permissions for a user.\n\nA deleted user's permissions cannot be changed (409).",
+        "description": "Set the assigned permissions for a user.\n\nA deleted user's permissions cannot be changed (409). When the new set\nremoves any of the user's effective permissions, their login sessions\nend: every login JWT issued before the change is refused (401), and the\nuser signs in again for a token with the narrower set. This includes a\ncaller narrowing their own permissions.",
         "operationId": "setUserPermissions",
         "parameters": [
           {

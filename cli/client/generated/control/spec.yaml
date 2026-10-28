@@ -16353,7 +16353,7 @@ paths:
         (``GET /catalog``); the two are not blended.
       operationId: listApis
       parameters:
-      - description: Only return APIs from this vendor.
+      - description: Only return APIs from this vendor. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API vendor domain
@@ -16367,7 +16367,7 @@ paths:
             - stripe.com
             type: string
           - type: 'null'
-          description: Only return APIs from this vendor.
+          description: Only return APIs from this vendor. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe.com
           title: Vendor
@@ -16565,7 +16565,7 @@ paths:
       description: Delete an API and all its revisions.
       operationId: deleteApi
       parameters:
-      - description: Vendor of the API.
+      - description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API vendor domain
@@ -16574,12 +16574,12 @@ paths:
         name: vendor
         required: true
         schema:
-          description: Vendor of the API.
+          description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe.com
           title: Vendor
           type: string
-      - description: Name of the API.
+      - description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API name
@@ -16588,12 +16588,12 @@ paths:
         name: name
         required: true
         schema:
-          description: Name of the API.
+          description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe
           title: Name
           type: string
-      - description: Version of the API.
+      - description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
         examples:
           example:
             summary: API version
@@ -16602,7 +16602,7 @@ paths:
         name: version
         required: true
         schema:
-          description: Version of the API.
+          description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
           examples:
           - '2024-04-10'
           title: Version
@@ -16689,7 +16689,7 @@ paths:
       description: Retrieve a single API by its (vendor, name, version) identity.
       operationId: getApi
       parameters:
-      - description: Vendor of the API.
+      - description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API vendor domain
@@ -16698,12 +16698,12 @@ paths:
         name: vendor
         required: true
         schema:
-          description: Vendor of the API.
+          description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe.com
           title: Vendor
           type: string
-      - description: Name of the API.
+      - description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API name
@@ -16712,12 +16712,12 @@ paths:
         name: name
         required: true
         schema:
-          description: Name of the API.
+          description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe
           title: Name
           type: string
-      - description: Version of the API.
+      - description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
         examples:
           example:
             summary: API version
@@ -16726,7 +16726,7 @@ paths:
         name: version
         required: true
         schema:
-          description: Version of the API.
+          description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
           examples:
           - '2024-04-10'
           title: Version
@@ -16798,7 +16798,7 @@ paths:
       description: Partially update an API's presentation fields.
       operationId: updateApi
       parameters:
-      - description: Vendor of the API.
+      - description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API vendor domain
@@ -16807,12 +16807,12 @@ paths:
         name: vendor
         required: true
         schema:
-          description: Vendor of the API.
+          description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe.com
           title: Vendor
           type: string
-      - description: Name of the API.
+      - description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API name
@@ -16821,12 +16821,12 @@ paths:
         name: name
         required: true
         schema:
-          description: Name of the API.
+          description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe
           title: Name
           type: string
-      - description: Version of the API.
+      - description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
         examples:
           example:
             summary: API version
@@ -16835,7 +16835,7 @@ paths:
         name: version
         required: true
         schema:
-          description: Version of the API.
+          description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
           examples:
           - '2024-04-10'
           title: Version
@@ -16916,7 +16916,7 @@ paths:
       description: Download the OpenAPI spec for the API's current (live) revision.
       operationId: getApiSpec
       parameters:
-      - description: Vendor of the API.
+      - description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API vendor domain
@@ -16925,12 +16925,12 @@ paths:
         name: vendor
         required: true
         schema:
-          description: Vendor of the API.
+          description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe.com
           title: Vendor
           type: string
-      - description: Name of the API.
+      - description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API name
@@ -16939,12 +16939,12 @@ paths:
         name: name
         required: true
         schema:
-          description: Name of the API.
+          description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe
           title: Name
           type: string
-      - description: Version of the API.
+      - description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
         examples:
           example:
             summary: API version
@@ -16953,7 +16953,7 @@ paths:
         name: version
         required: true
         schema:
-          description: Version of the API.
+          description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
           examples:
           - '2024-04-10'
           title: Version
@@ -17049,7 +17049,7 @@ paths:
         revision.
       operationId: listApiOperations
       parameters:
-      - description: Vendor of the API.
+      - description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API vendor domain
@@ -17058,12 +17058,12 @@ paths:
         name: vendor
         required: true
         schema:
-          description: Vendor of the API.
+          description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe.com
           title: Vendor
           type: string
-      - description: Name of the API.
+      - description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API name
@@ -17072,12 +17072,12 @@ paths:
         name: name
         required: true
         schema:
-          description: Name of the API.
+          description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe
           title: Name
           type: string
-      - description: Version of the API.
+      - description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
         examples:
           example:
             summary: API version
@@ -17086,7 +17086,7 @@ paths:
         name: version
         required: true
         schema:
-          description: Version of the API.
+          description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
           examples:
           - '2024-04-10'
           title: Version
@@ -17203,7 +17203,7 @@ paths:
         true.
       operationId: listOverlays
       parameters:
-      - description: Vendor of the API.
+      - description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API vendor domain
@@ -17212,12 +17212,12 @@ paths:
         name: vendor
         required: true
         schema:
-          description: Vendor of the API.
+          description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe.com
           title: Vendor
           type: string
-      - description: Name of the API.
+      - description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API name
@@ -17226,12 +17226,12 @@ paths:
         name: name
         required: true
         schema:
-          description: Name of the API.
+          description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe
           title: Name
           type: string
-      - description: Version of the API.
+      - description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
         examples:
           example:
             summary: API version
@@ -17240,7 +17240,7 @@ paths:
         name: version
         required: true
         schema:
-          description: Version of the API.
+          description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
           examples:
           - '2024-04-10'
           title: Version
@@ -17374,7 +17374,7 @@ paths:
         (`invalid_overlay_document`). Requires `apis:write`. Returns the overlay.
       operationId: submitOverlay
       parameters:
-      - description: Vendor of the API.
+      - description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API vendor domain
@@ -17383,12 +17383,12 @@ paths:
         name: vendor
         required: true
         schema:
-          description: Vendor of the API.
+          description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe.com
           title: Vendor
           type: string
-      - description: Name of the API.
+      - description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API name
@@ -17397,12 +17397,12 @@ paths:
         name: name
         required: true
         schema:
-          description: Name of the API.
+          description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe
           title: Name
           type: string
-      - description: Version of the API.
+      - description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
         examples:
           example:
             summary: API version
@@ -17411,7 +17411,7 @@ paths:
         name: version
         required: true
         schema:
-          description: Version of the API.
+          description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
           examples:
           - '2024-04-10'
           title: Version
@@ -17499,7 +17499,7 @@ paths:
         `apis:write`. Returns 204.
       operationId: deprecateOverlay
       parameters:
-      - description: Vendor of the API.
+      - description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API vendor domain
@@ -17508,12 +17508,12 @@ paths:
         name: vendor
         required: true
         schema:
-          description: Vendor of the API.
+          description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe.com
           title: Vendor
           type: string
-      - description: Name of the API.
+      - description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API name
@@ -17522,12 +17522,12 @@ paths:
         name: name
         required: true
         schema:
-          description: Name of the API.
+          description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe
           title: Name
           type: string
-      - description: Version of the API.
+      - description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
         examples:
           example:
             summary: API version
@@ -17536,7 +17536,7 @@ paths:
         name: version
         required: true
         schema:
-          description: Version of the API.
+          description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
           examples:
           - '2024-04-10'
           title: Version
@@ -17618,7 +17618,7 @@ paths:
       description: Retrieve a single overlay by ID.
       operationId: getOverlay
       parameters:
-      - description: Vendor of the API.
+      - description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API vendor domain
@@ -17627,12 +17627,12 @@ paths:
         name: vendor
         required: true
         schema:
-          description: Vendor of the API.
+          description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe.com
           title: Vendor
           type: string
-      - description: Name of the API.
+      - description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API name
@@ -17641,12 +17641,12 @@ paths:
         name: name
         required: true
         schema:
-          description: Name of the API.
+          description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe
           title: Name
           type: string
-      - description: Version of the API.
+      - description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
         examples:
           example:
             summary: API version
@@ -17655,7 +17655,7 @@ paths:
         name: version
         required: true
         schema:
-          description: Version of the API.
+          description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
           examples:
           - '2024-04-10'
           title: Version
@@ -17755,7 +17755,7 @@ paths:
         Returns the updated overlay.
       operationId: updateOverlay
       parameters:
-      - description: Vendor of the API.
+      - description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API vendor domain
@@ -17764,12 +17764,12 @@ paths:
         name: vendor
         required: true
         schema:
-          description: Vendor of the API.
+          description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe.com
           title: Vendor
           type: string
-      - description: Name of the API.
+      - description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API name
@@ -17778,12 +17778,12 @@ paths:
         name: name
         required: true
         schema:
-          description: Name of the API.
+          description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe
           title: Name
           type: string
-      - description: Version of the API.
+      - description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
         examples:
           example:
             summary: API version
@@ -17792,7 +17792,7 @@ paths:
         name: version
         required: true
         schema:
-          description: Version of the API.
+          description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
           examples:
           - '2024-04-10'
           title: Version
@@ -17901,7 +17901,7 @@ paths:
         Agents cannot grant themselves this permission. Returns the overlay.
       operationId: confirmOverlay
       parameters:
-      - description: Vendor of the API.
+      - description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API vendor domain
@@ -17910,12 +17910,12 @@ paths:
         name: vendor
         required: true
         schema:
-          description: Vendor of the API.
+          description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe.com
           title: Vendor
           type: string
-      - description: Name of the API.
+      - description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API name
@@ -17924,12 +17924,12 @@ paths:
         name: name
         required: true
         schema:
-          description: Name of the API.
+          description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe
           title: Name
           type: string
-      - description: Version of the API.
+      - description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
         examples:
           example:
             summary: API version
@@ -17938,7 +17938,7 @@ paths:
         name: version
         required: true
         schema:
-          description: Version of the API.
+          description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
           examples:
           - '2024-04-10'
           title: Version
@@ -18048,7 +18048,7 @@ paths:
         hosts. Returns 204.
       operationId: rollbackOverlay
       parameters:
-      - description: Vendor of the API.
+      - description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API vendor domain
@@ -18057,12 +18057,12 @@ paths:
         name: vendor
         required: true
         schema:
-          description: Vendor of the API.
+          description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe.com
           title: Vendor
           type: string
-      - description: Name of the API.
+      - description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API name
@@ -18071,12 +18071,12 @@ paths:
         name: name
         required: true
         schema:
-          description: Name of the API.
+          description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe
           title: Name
           type: string
-      - description: Version of the API.
+      - description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
         examples:
           example:
             summary: API version
@@ -18085,7 +18085,7 @@ paths:
         name: version
         required: true
         schema:
-          description: Version of the API.
+          description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
           examples:
           - '2024-04-10'
           title: Version
@@ -18178,7 +18178,7 @@ paths:
         `GET /apis/{vendor}/{name}/{version}/revisions/{revision_id}`.
       operationId: listApiRevisions
       parameters:
-      - description: Vendor of the API.
+      - description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API vendor domain
@@ -18187,12 +18187,12 @@ paths:
         name: vendor
         required: true
         schema:
-          description: Vendor of the API.
+          description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe.com
           title: Vendor
           type: string
-      - description: Name of the API.
+      - description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API name
@@ -18201,12 +18201,12 @@ paths:
         name: name
         required: true
         schema:
-          description: Name of the API.
+          description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe
           title: Name
           type: string
-      - description: Version of the API.
+      - description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
         examples:
           example:
             summary: API version
@@ -18215,7 +18215,7 @@ paths:
         name: version
         required: true
         schema:
-          description: Version of the API.
+          description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
           examples:
           - '2024-04-10'
           title: Version
@@ -18350,7 +18350,7 @@ paths:
         be undone. Requires `apis:write`. Returns 204.
       operationId: deleteRevision
       parameters:
-      - description: Vendor of the API.
+      - description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API vendor domain
@@ -18359,12 +18359,12 @@ paths:
         name: vendor
         required: true
         schema:
-          description: Vendor of the API.
+          description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe.com
           title: Vendor
           type: string
-      - description: Name of the API.
+      - description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API name
@@ -18373,12 +18373,12 @@ paths:
         name: name
         required: true
         schema:
-          description: Name of the API.
+          description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe
           title: Name
           type: string
-      - description: Version of the API.
+      - description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
         examples:
           example:
             summary: API version
@@ -18387,7 +18387,7 @@ paths:
         name: version
         required: true
         schema:
-          description: Version of the API.
+          description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
           examples:
           - '2024-04-10'
           title: Version
@@ -18476,7 +18476,7 @@ paths:
         revision does not exist.
       operationId: getApiRevision
       parameters:
-      - description: Vendor of the API.
+      - description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API vendor domain
@@ -18485,12 +18485,12 @@ paths:
         name: vendor
         required: true
         schema:
-          description: Vendor of the API.
+          description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe.com
           title: Vendor
           type: string
-      - description: Name of the API.
+      - description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API name
@@ -18499,12 +18499,12 @@ paths:
         name: name
         required: true
         schema:
-          description: Name of the API.
+          description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe
           title: Name
           type: string
-      - description: Version of the API.
+      - description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
         examples:
           example:
             summary: API version
@@ -18513,7 +18513,7 @@ paths:
         name: version
         required: true
         schema:
-          description: Version of the API.
+          description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
           examples:
           - '2024-04-10'
           title: Version
@@ -18608,7 +18608,7 @@ paths:
         `overlays` flag currently has no effect.
       operationId: getApiRevisionSpec
       parameters:
-      - description: Vendor of the API.
+      - description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API vendor domain
@@ -18617,12 +18617,12 @@ paths:
         name: vendor
         required: true
         schema:
-          description: Vendor of the API.
+          description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe.com
           title: Vendor
           type: string
-      - description: Name of the API.
+      - description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API name
@@ -18631,12 +18631,12 @@ paths:
         name: name
         required: true
         schema:
-          description: Name of the API.
+          description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe
           title: Name
           type: string
-      - description: Version of the API.
+      - description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
         examples:
           example:
             summary: API version
@@ -18645,7 +18645,7 @@ paths:
         name: version
         required: true
         schema:
-          description: Version of the API.
+          description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
           examples:
           - '2024-04-10'
           title: Version
@@ -18753,7 +18753,7 @@ paths:
         for full detail. 404 if the API or revision does not exist.
       operationId: listApiRevisionOperations
       parameters:
-      - description: Vendor of the API.
+      - description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API vendor domain
@@ -18762,12 +18762,12 @@ paths:
         name: vendor
         required: true
         schema:
-          description: Vendor of the API.
+          description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe.com
           title: Vendor
           type: string
-      - description: Name of the API.
+      - description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API name
@@ -18776,12 +18776,12 @@ paths:
         name: name
         required: true
         schema:
-          description: Name of the API.
+          description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe
           title: Name
           type: string
-      - description: Version of the API.
+      - description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
         examples:
           example:
             summary: API version
@@ -18790,7 +18790,7 @@ paths:
         name: version
         required: true
         schema:
-          description: Version of the API.
+          description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
           examples:
           - '2024-04-10'
           title: Version
@@ -18919,7 +18919,7 @@ paths:
         `apis:write`. Returns the archived revision.
       operationId: archiveRevision
       parameters:
-      - description: Vendor of the API.
+      - description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API vendor domain
@@ -18928,12 +18928,12 @@ paths:
         name: vendor
         required: true
         schema:
-          description: Vendor of the API.
+          description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe.com
           title: Vendor
           type: string
-      - description: Name of the API.
+      - description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API name
@@ -18942,12 +18942,12 @@ paths:
         name: name
         required: true
         schema:
-          description: Name of the API.
+          description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe
           title: Name
           type: string
-      - description: Version of the API.
+      - description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
         examples:
           example:
             summary: API version
@@ -18956,7 +18956,7 @@ paths:
         name: version
         required: true
         schema:
-          description: Version of the API.
+          description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
           examples:
           - '2024-04-10'
           title: Version
@@ -19050,7 +19050,7 @@ paths:
         ``host_change_requires_operator``.
       operationId: promoteRevision
       parameters:
-      - description: Vendor of the API.
+      - description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API vendor domain
@@ -19059,12 +19059,12 @@ paths:
         name: vendor
         required: true
         schema:
-          description: Vendor of the API.
+          description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe.com
           title: Vendor
           type: string
-      - description: Name of the API.
+      - description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API name
@@ -19073,12 +19073,12 @@ paths:
         name: name
         required: true
         schema:
-          description: Name of the API.
+          description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe
           title: Name
           type: string
-      - description: Version of the API.
+      - description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
         examples:
           example:
             summary: API version
@@ -19087,7 +19087,7 @@ paths:
         name: version
         required: true
         schema:
-          description: Version of the API.
+          description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
           examples:
           - '2024-04-10'
           title: Version
@@ -19174,7 +19174,7 @@ paths:
       description: List security schemes (with OAuth2 flow URLs) for the API's current revision.
       operationId: listApiSecuritySchemes
       parameters:
-      - description: Vendor of the API.
+      - description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API vendor domain
@@ -19183,12 +19183,12 @@ paths:
         name: vendor
         required: true
         schema:
-          description: Vendor of the API.
+          description: Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe.com
           title: Vendor
           type: string
-      - description: Name of the API.
+      - description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
         examples:
           example:
             summary: API name
@@ -19197,12 +19197,12 @@ paths:
         name: name
         required: true
         schema:
-          description: Name of the API.
+          description: Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
           examples:
           - stripe
           title: Name
           type: string
-      - description: Version of the API.
+      - description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
         examples:
           example:
             summary: API version
@@ -19211,7 +19211,7 @@ paths:
         name: version
         required: true
         schema:
-          description: Version of the API.
+          description: Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
           examples:
           - '2024-04-10'
           title: Version
@@ -23336,11 +23336,13 @@ paths:
         `admin.events.stream_recheck_seconds` interval (default 5 s) elapses. Each
         page is scoped by the caller's current permissions, so a narrower
         permission set narrows the stream. Permissions are those the credential
-        carries: API keys and user `at_` access tokens resolve them live, while a
-        login session JWT and an agent `at_` access token carry the set they were
-        issued with. The stream keeps re-verifying the token it was opened with,
-        so for those a permission change applies once that token expires and the
-        client reconnects. The stream ends
+        carries: API keys and `at_` access tokens resolve them live (an ephemeral
+        agent `at_` keeps the subset it was minted with). A login session JWT
+        carries the set it was issued with, but removing any of a user's effective
+        permissions revokes their login sessions, so a stream opened with one ends
+        (`refused`) at the next check. The stream keeps re-verifying the token it
+        was opened with, so a permission added to a user reaches a login-session
+        stream once the client reconnects with a newer login JWT. The stream ends
         with a `stream_closed` frame (`{"type": "stream_closed", "reason": ...}`)
         once the credential stops verifying (`refused`: expired, revoked, or its
         user or agent disabled or deleted), the caller no longer holds
@@ -30002,7 +30004,11 @@ paths:
       description: |-
         Set the assigned permissions for a user.
 
-        A deleted user's permissions cannot be changed (409).
+        A deleted user's permissions cannot be changed (409). When the new set
+        removes any of the user's effective permissions, their login sessions
+        end: every login JWT issued before the change is refused (401), and the
+        user signs in again for a token with the narrower set. This includes a
+        caller narrowing their own permissions.
       operationId: setUserPermissions
       parameters:
       - description: ID of the user.

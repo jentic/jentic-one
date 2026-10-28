@@ -3336,7 +3336,9 @@ class ConnectSessionService:
             pinned_hosts=list(row.pinned_hosts) if row.pinned_hosts is not None else None,
             digest=_review_digest(row, agent, view),
             can_confirm=await self._can_confirm(row, identity, agent),
-            existing_credentials=await self._existing_candidates(row, identity, credential),
+            existing_credentials=await self._existing_candidates(
+                row, identity, credential, agent=agent
+            ),
             revision_id=revision.id if revision is not None else None,
             revision_number=revision.number if revision is not None else None,
             last_rejected_at=await self._review_last_rejected_at(row),
@@ -3400,9 +3402,19 @@ class ConnectSessionService:
         )
 
     async def _existing_candidates(
-        self, row: ConnectSession, identity: Identity, pending: Credential | None
+        self,
+        row: ConnectSession,
+        identity: Identity,
+        pending: Credential | None,
+        *,
+        agent: AgentView | AgentOwnerRow | None = None,
     ) -> list[ExistingCredentialView]:
         """The viewer's connected credentials covering the session's target.
+
+        For ``org:admin`` (whose access filter is unrestricted), candidates are
+        scoped to credentials owned by the target agent's owner or by the
+        confirming admin (#1838), so a third user's credential is never listed
+        or bindable through the review page.
 
         For OAuth credentials the granted scopes (``oauth_tokens.scope``) are
         compared with the session's requested scopes: a narrower grant cannot
@@ -3416,6 +3428,12 @@ class ConnectSessionService:
         else:
             name, version = pending.api_name, pending.api_version
         filters = build_access_filters(identity, Credential)
+        created_by_in: list[str] | None = None
+        if _is_org_admin(identity):
+            allowed_owners = {identity.sub}
+            if agent is not None and agent.owner_id is not None:
+                allowed_owners.add(agent.owner_id)
+            created_by_in = sorted(allowed_owners)
         async with self._ctx.control_db.session() as session:
             candidates = await CredentialRepository.list_connected_covering(
                 session,
@@ -3423,6 +3441,7 @@ class ConnectSessionService:
                 name=name,
                 version=version,
                 exclude_ids=[row.credential_id],
+                created_by_in=created_by_in,
                 filters=filters,
                 account_ref_providers=self._ctx.providers.account_ref_provider_names(),
             )
@@ -3714,9 +3733,9 @@ class ConnectSessionService:
         approval URLs) and bind an arbitrary agent. Missing session, token
         mismatch and a caller who is neither surface identically.
 
-        The credential is attributed to the approver (``created_by``),
-        whoever initiated the session; the initiator stays recorded on the
-        session and in the audit entry.
+        The credential is attributed to the target agent's owner when the
+        session binds an owned agent, or to the approver otherwise (#1838);
+        the approver and the initiator stay recorded in the audit entry.
         """
         async with self._ctx.control_db.session() as read_session:
             row = await ConnectSessionRepository.get_by_id(read_session, session_id)
@@ -3775,13 +3794,19 @@ class ConnectSessionService:
         # payload (late-bind) has never been validated — it must exist
         # and be governable by the confirming caller before any binding
         # or rule write happens in its name.
+        target_agent: AgentOwnerRow | None = None
         if effective_agent_id is not None:
-            await self._require_agent_binding_allowed(
+            target_agent = await self._require_agent_binding_allowed(
                 effective_agent_id, identity, late_bound=late_bound
             )
             # A late-bound agent was never checked at create, and a binding
             # may have been suspended since the session opened.
             await self._refuse_suspended_binding_for_session(row, effective_agent_id)
+        credential_owner_id = (
+            target_agent.owner_id
+            if target_agent is not None and target_agent.owner_id is not None
+            else identity.sub
+        )
         api_target = row.target_kind == TARGET_KIND_API
         await self._verify_review(
             row,
@@ -3842,7 +3867,7 @@ class ConnectSessionService:
 
         async with self._ctx.control_db.transaction() as session:
             await CredentialRepository.set_created_by(
-                session, row.credential_id, created_by=identity.sub
+                session, row.credential_id, created_by=credential_owner_id
             )
             # Persist the approved rules as direct agent-credential binding
             # rules (theme 5): ``agent_permission_rules`` is the list the
@@ -3912,7 +3937,7 @@ class ConnectSessionService:
                 "agent_id": effective_agent_id,
                 "confirmed_scopes": list(confirmed_scopes),
                 "rules_count": len(permission_rules),
-                "credential_created_by": identity.sub,
+                "credential_created_by": credential_owner_id,
             },
         )
         if challenge.kind == "device_authorization":
@@ -3975,13 +4000,19 @@ class ConnectSessionService:
         if isinstance(variant, ExistingCredentialConfirm) and effective_agent_id is None:
             # Binding an existing credential needs an agent to bind it to.
             raise ConfirmKindMismatchError(kind, [_allowed_confirm_kinds(row)[0]])
+        target_agent: AgentOwnerRow | None = None
         if effective_agent_id is not None:
-            await self._require_agent_binding_allowed(
+            target_agent = await self._require_agent_binding_allowed(
                 effective_agent_id, identity, late_bound=late_bound
             )
             # A late-bound agent was never checked at create, and a binding
             # may have been suspended since the session opened.
             await self._refuse_suspended_binding_for_session(row, effective_agent_id)
+        credential_owner_id = (
+            target_agent.owner_id
+            if target_agent is not None and target_agent.owner_id is not None
+            else identity.sub
+        )
         await self._verify_review(
             row,
             effective_agent_id=effective_agent_id,
@@ -3994,7 +4025,12 @@ class ConnectSessionService:
 
         if isinstance(variant, SecretConfirm):
             result: ConfirmResult = await self._confirm_secret(
-                row, variant, effective_agent_id, late_bound=late_bound, identity=identity
+                row,
+                variant,
+                effective_agent_id,
+                late_bound=late_bound,
+                identity=identity,
+                credential_owner_id=credential_owner_id,
             )
         elif isinstance(variant, ExistingCredentialConfirm):
             assert effective_agent_id is not None
@@ -4005,6 +4041,7 @@ class ConnectSessionService:
                 late_bound=late_bound,
                 identity=identity,
                 browser_binding=browser_binding,
+                agent=target_agent,
             )
         else:
             result = await self._confirm_own_client(
@@ -4014,6 +4051,7 @@ class ConnectSessionService:
                 late_bound=late_bound,
                 identity=identity,
                 browser_binding=browser_binding,
+                credential_owner_id=credential_owner_id,
             )
 
         await record_audit_best_effort(
@@ -4035,6 +4073,11 @@ class ConnectSessionService:
                 "credential_id": getattr(result, "credential_id", row.credential_id),
                 "agent_id": effective_agent_id,
                 "rules_count": len(checks.permission_rules),
+                **(
+                    {}
+                    if isinstance(variant, ExistingCredentialConfirm)
+                    else {"credential_created_by": credential_owner_id}
+                ),
             },
         )
         return result
@@ -4175,6 +4218,7 @@ class ConnectSessionService:
         *,
         late_bound: bool,
         identity: Identity,
+        credential_owner_id: str,
     ) -> ConnectedConfirmResult:
         handler = manual_handler_for(row.resolved_flow)
         assert handler is not None
@@ -4200,11 +4244,11 @@ class ConnectSessionService:
                         self._ctx.encryption,
                         row=row,
                         secret=variant.secret,
-                        created_by=identity.sub,
+                        created_by=credential_owner_id,
                     )
                     await CredentialRepository.set_state(session, row.credential_id, "connected")
                     await CredentialRepository.set_created_by(
-                        session, row.credential_id, created_by=identity.sub
+                        session, row.credential_id, created_by=credential_owner_id
                     )
                     if agent_id is not None:
                         await AgentPermissionRuleRepository.replace_user_rules(
@@ -4244,10 +4288,11 @@ class ConnectSessionService:
         late_bound: bool,
         identity: Identity,
         browser_binding: BrowserBindingClaim | None,
+        agent: AgentOwnerRow | None = None,
     ) -> ConfirmResult:
         async with self._ctx.control_db.session() as session:
             pending = await CredentialRepository.get_by_id(session, row.credential_id)
-        candidates = await self._existing_candidates(row, identity, pending)
+        candidates = await self._existing_candidates(row, identity, pending, agent=agent)
         chosen = next((c for c in candidates if c.credential_id == variant.credential_id), None)
         if chosen is None:
             raise ExistingCredentialNotFoundError(variant.credential_id)
@@ -4394,6 +4439,7 @@ class ConnectSessionService:
         late_bound: bool,
         identity: Identity,
         browser_binding: BrowserBindingClaim | None,
+        credential_owner_id: str,
     ) -> AuthCodeConfirmResult:
         if not variant.authorize_url.strip() or not variant.token_url.strip():
             raise OwnClientInvalidError("authorize_url and token_url are required")
@@ -4437,7 +4483,7 @@ class ConnectSessionService:
                     ),
                     authorize_url=authorize_url,
                     scope=" ".join(variant.confirmed_scopes) if variant.confirmed_scopes else None,
-                    created_by=identity.sub,
+                    created_by=credential_owner_id,
                 )
             current = await ConnectSessionRepository.get_by_id(session, row.id)
         if not won or current is None:
@@ -4487,7 +4533,7 @@ class ConnectSessionService:
 
         async with self._ctx.control_db.transaction() as session:
             await CredentialRepository.set_created_by(
-                session, row.credential_id, created_by=identity.sub
+                session, row.credential_id, created_by=credential_owner_id
             )
             if agent_id is not None:
                 await AgentPermissionRuleRepository.replace_user_rules(
@@ -4559,7 +4605,7 @@ class ConnectSessionService:
 
     async def _require_agent_binding_allowed(
         self, agent_id: str, identity: Identity, *, late_bound: bool
-    ) -> None:
+    ) -> AgentOwnerRow:
         """The target agent must exist, be governable by the caller, and be usable.
 
         Cross-DB read (agents live in the admin DB) through the
@@ -4569,7 +4615,8 @@ class ConnectSessionService:
         holding both ``credentials:write`` and ``agents:write`` (the bind
         route's own gate). An archived, disabled or rejected agent is
         refused — it can no longer use the credential, and archive revokes
-        its bindings.
+        its bindings. Returns the loaded agent row so callers can attribute
+        the confirmed credential to the agent's owner (#1838).
 
         A missing agent raises :class:`AgentNotFoundError`. When the agent is
         ``late_bound`` (the session had none and the confirm names it), one
@@ -4597,6 +4644,7 @@ class ConnectSessionService:
                 )
         if agent.status in _UNUSABLE_AGENT_STATUSES:
             raise AgentInactiveError(agent_id, agent.status)
+        return agent
 
     async def _require_session_access(
         self,
@@ -4982,6 +5030,11 @@ class ConnectSessionService:
         pinned_registration_id = (
             credential.oauth_app_registration_id if credential is not None else None
         )
+        token_creator = (
+            credential.created_by
+            if credential is not None and credential.created_by is not None
+            else row.initiator_actor_id
+        )
         try:
             source = await self._vendors.resolve_session_source(
                 key, registration_id=pinned_registration_id, flow_kind=row.resolved_flow
@@ -5031,7 +5084,7 @@ class ConnectSessionService:
                 handler=handler,
                 tokens=tokens,
                 connected_as=connected_as,
-                created_by=row.initiator_actor_id,
+                created_by=token_creator,
                 close_session_id=row.id,
             )
         except TokenEndpointMovedError as exc:
@@ -5400,6 +5453,11 @@ class ConnectSessionService:
             # ``revoked_at``, so a re-connect over a revoked row yields
             # a live token (the derived ``connected`` flag reads that
             # column).
+            token_created_by = (
+                credential_for_stamp.created_by
+                if credential_for_stamp is not None and credential_for_stamp.created_by is not None
+                else created_by
+            )
             existing = await OAuthTokenRepository.get_by_credential(session, credential_id)
             if existing is None:
                 await OAuthTokenRepository.create(
@@ -5410,7 +5468,7 @@ class ConnectSessionService:
                     expires_at=expires_at,
                     scope=scope_to_persist,
                     app_registration_id=registration_id_stamp,
-                    created_by=created_by,
+                    created_by=token_created_by,
                 )
             else:
                 await OAuthTokenRepository.update_tokens(

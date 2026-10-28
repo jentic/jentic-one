@@ -32,6 +32,7 @@ from jentic_one.admin.services._support.tokens import issue_jwt
 from jentic_one.admin.services.user_service import UserService
 from jentic_one.auth.services.token_service import TokenService
 from jentic_one.auth.web.app import create_app, make_superset_verifier
+from jentic_one.control.web.connect_limits import install_connect_limiters
 from jentic_one.mcp.installer import install_mcp_mount
 from jentic_one.shared.auth.actor_status import SESSION_GENERATION_CLAIM
 from jentic_one.shared.auth.identity import Identity
@@ -228,6 +229,7 @@ def _mcp_status(ctx: Context, credential: str) -> int:
     app = FastAPI()
     app.state.ctx = ctx
     app.state.verify_token = make_superset_verifier(ctx)
+    install_connect_limiters(app, ctx)
     install_mcp_mount(app, ctx)
     with TestClient(app, headers={"Authorization": f"Bearer {credential}"}) as client:
         return client.get("/mcp").status_code

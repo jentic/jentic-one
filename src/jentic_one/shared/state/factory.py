@@ -45,6 +45,7 @@ from jentic_one.shared.state.backend import (
     DEFAULT_MEMORY_MAX_BYTES,
     DEFAULT_MEMORY_MAX_ENTRIES,
     DEFAULT_MEMORY_MAX_TOTAL_BYTES,
+    ENTRY_OVERHEAD_BYTES,
     MemoryStateBackend,
     NamespaceBudget,
     SharedStateBackend,
@@ -73,12 +74,31 @@ _BACKEND_NAME_RE = re.compile(BACKEND_NAME_PATTERN)
 # every other namespace they fit the 192 MiB backend-wide cap, which the
 # broker chart's 512Mi memory limit holds with the process baseline.
 IDEM_OWNER_SHARE = 0.1
+
+# Built-in budget for the broker's repeated-failure counter (the pre-filter in
+# front of the ``execution.repeated_failure`` database scan). Each actor +
+# toolkit/credential + operation key failing within two windows uses up to 4
+# entries (6 when a toolkit call also carries a credential), so 10,000 entries
+# hold about 2,500 concurrently failing keys. Every key is a short, fixed-shape
+# bucket or marker (``repeated_failure:<window>:seen:<severity>:<32-hex digest>``
+# and a short integer or marker: at most 128 bytes with its value), so the byte
+# budget follows the entry bound and ``max_entries`` stays the binding limit.
+# A full namespace never hides an emission: the counter fails open and every
+# failure runs the scan until two windows after the last refused write. The
+# owner segment is the window length, shared by every key, so no owner share.
+REPEATED_FAILURE_MAX_ENTRIES = 10_000
+_REPEATED_FAILURE_MAX_KEY_AND_VALUE_BYTES = 128
 _BUILTIN_NAMESPACE_BUDGETS: dict[str, NamespaceBudget] = {
     "idem": NamespaceBudget(
         max_entries=250_000, max_bytes=128 * 1024 * 1024, max_owner_share=IDEM_OWNER_SHARE
     ),
     "idem-body": NamespaceBudget(
         max_entries=1_000_000, max_bytes=32 * 1024 * 1024, max_owner_share=IDEM_OWNER_SHARE
+    ),
+    "repeated_failure": NamespaceBudget(
+        max_entries=REPEATED_FAILURE_MAX_ENTRIES,
+        max_bytes=REPEATED_FAILURE_MAX_ENTRIES
+        * (ENTRY_OVERHEAD_BYTES + _REPEATED_FAILURE_MAX_KEY_AND_VALUE_BYTES),
     ),
 }
 
@@ -132,11 +152,17 @@ class MemoryBackendConfig(BaseModel):
     Every key belongs to a namespace, its prefix up to the first ``:``
     (``idem`` for Idempotency-Key records, ``idem-body`` for their stored
     response bodies, ``auth`` for the auth surface's single-use markers,
-    ``login-csrf`` for login CSRF nonces, ``cb`` for circuit-breaker counters,
-    and so on). Each namespace has its own budget, so one key kind filling up
+    ``login-csrf`` for login CSRF nonces, ``cb`` for circuit-breaker counters
+    and their open-circuit report claims, ``broker-authfail`` and
+    ``broker-authfail-emit`` for the broker's auth-failure counters,
+    ``mcp-session`` and ``mcp-session-cap`` for the MCP session-event dedupe,
+    ``repeated_failure`` for the broker's repeated-failure counters, and so
+    on). Each namespace has its own budget, so one key kind filling up
     never starves another. A namespace that is full of live entries refuses
     new writes (the request that needed it gets a 503) rather than evicting a
-    live entry. Ignored by every other backend.
+    live entry; the telemetry namespaces (``broker-authfail*``, the ``cb``
+    report claims, ``mcp-session*``) only skip the count or fall back to the
+    database dedupe instead. Ignored by every other backend.
     """
 
     max_entries_per_namespace: int = Field(
@@ -178,7 +204,11 @@ class MemoryBackendConfig(BaseModel):
             "with a 0.02 per-client share, about 370 live nonces per IPv4 address "
             "or IPv6 /64 at the defaults (about 900 bytes each, 5-minute TTL), "
             "twice what the default authorize rate limit lets one client network "
-            "request in that time; every other namespace "
+            "request in that time; repeated_failure (the broker's repeated-failure "
+            "counters, which gate the execution.repeated_failure database scan) "
+            "is 10000 entries / 8780000 bytes (about 8.4 MiB), about 2500 "
+            "concurrently failing actor + credential + operation keys, and fails "
+            "open when full (every failure runs the scan); every other namespace "
             "uses max_entries_per_namespace / max_bytes_per_namespace. The "
             "sustained idempotent request rate idem can hold is min(max_entries, "
             "max_bytes / record_bytes) / broker.idempotency.ttl_s, where "
@@ -214,8 +244,9 @@ class StateBackendConfig(BaseModel):
     """The process's shared-state backend (top-level ``state:`` section).
 
     One backend per process holds the rate-limit buckets, circuit-breaker
-    counters, ``Idempotency-Key`` records and the auth surface's single-use
-    markers of every surface the process serves.
+    counters, ``Idempotency-Key`` records, the auth surface's single-use
+    markers, the broker's auth-failure counters and the MCP session-event
+    dedupe of every surface the process serves.
     """
 
     backend: str = Field(

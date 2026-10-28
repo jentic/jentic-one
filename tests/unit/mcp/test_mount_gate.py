@@ -39,12 +39,14 @@ from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from jentic_one.auth.web.routers.discovery import _MCP_PRM_PATH
+from jentic_one.control.web.connect_limits import install_connect_limiters
 from jentic_one.mcp.app import CLIENT_INFO_META_KEY, MCP_PRM_PATH, request_client_info
 from jentic_one.mcp.installer import install_mcp_mount, mcp_lifespan
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import AuthConfig, ServerConfig
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.actors import Origin
+from jentic_one.shared.state import MemoryStateBackend
 
 _BASE = "https://auth.example.com"
 _CHALLENGE = f'Bearer resource_metadata="{_BASE}/.well-known/oauth-protected-resource/mcp"'
@@ -87,6 +89,7 @@ def make_client(
     server.mcp.oauth.enabled = oauth_enabled
     ctx.config.server = server
     ctx.instance_id = None
+    ctx.state_backend = MemoryStateBackend()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -95,6 +98,7 @@ def make_client(
 
     app = FastAPI(lifespan=lifespan)
     app.state.ctx = ctx
+    install_connect_limiters(app, ctx)
     install_mcp_mount(app, ctx)
 
     async def verify_token(credential: str, request: Request) -> Identity:
@@ -606,6 +610,15 @@ def test_batch_with_non_preauth_method_requires_credential() -> None:
 # --- windowed session telemetry (phase-3 item 6) -------------------------------
 
 
+def _recording_emit(calls: list[dict[str, Any]]) -> Any:
+    """A stand-in for the (async) emit scheduler that records its arguments."""
+
+    async def _emit(ctx: Any, **kwargs: Any) -> None:
+        calls.append(kwargs)
+
+    return _emit
+
+
 _CLIENT_INFO_PARAMS = {"_meta": {CLIENT_INFO_META_KEY: {"name": "cursor", "version": "0.42"}}}
 
 
@@ -617,7 +630,7 @@ def test_authenticated_post_schedules_the_windowed_session_emit(
     calls: list[dict[str, Any]] = []
     monkeypatch.setattr(
         "jentic_one.mcp.app.schedule_mcp_http_session_emit",
-        lambda ctx, **kwargs: calls.append(kwargs),
+        _recording_emit(calls),
     )
     with make_client() as client:
         resp = client.post(
@@ -643,7 +656,7 @@ def test_authenticated_post_without_client_info_schedules_unknown_client(
     calls: list[dict[str, Any]] = []
     monkeypatch.setattr(
         "jentic_one.mcp.app.schedule_mcp_http_session_emit",
-        lambda ctx, **kwargs: calls.append(kwargs),
+        _recording_emit(calls),
     )
     with make_client() as client:
         client.post(
@@ -663,7 +676,7 @@ def test_credential_less_and_rejected_requests_never_schedule_the_emit(
     calls: list[dict[str, Any]] = []
     monkeypatch.setattr(
         "jentic_one.mcp.app.schedule_mcp_http_session_emit",
-        lambda ctx, **kwargs: calls.append(kwargs),
+        _recording_emit(calls),
     )
     with make_client() as client:
         anon = client.post("/mcp", json=_rpc("tools/list", _CLIENT_INFO_PARAMS), headers=_ACCEPT)
@@ -737,3 +750,21 @@ def test_otel_route_details_resolve_the_mcp_route() -> None:
         details = get_details(scope)
         route = details[0] if isinstance(details, tuple) else details
         assert route == "/mcp"
+
+
+def test_a_mount_without_the_connect_limiters_fails_at_startup() -> None:
+    """The mount draws ``request_connection``'s limiter from the shared backend;
+    an app assembled without it fails before serving, never with a private one."""
+    ctx = MagicMock()
+    ctx.config.auth = AuthConfig(canonical_base_url=_BASE)
+    ctx.config.server = ServerConfig()
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        async with mcp_lifespan(app, ctx):
+            yield
+
+    app = FastAPI(lifespan=lifespan)
+    install_mcp_mount(app, ctx)
+    with pytest.raises(RuntimeError, match="install_connect_limiters"), TestClient(app):
+        pass
