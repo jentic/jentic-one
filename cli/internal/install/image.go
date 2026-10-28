@@ -1,7 +1,6 @@
 package install
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -142,7 +141,7 @@ func SwapImageTag(ref, version string) (string, error) {
 	if tag == "" {
 		return "", fmt.Errorf("%q is not a published release version", version)
 	}
-	repo, current, digest := SplitImageRef(ref)
+	repo, _, digest := SplitImageRef(ref)
 	if digest != "" {
 		return "", fmt.Errorf(
 			"the stack image %s is pinned to a digest, which cannot be moved to %s automatically; "+
@@ -151,42 +150,23 @@ func SwapImageTag(ref, version string) (string, error) {
 	if repo == "" {
 		return "", fmt.Errorf("%q names no image repository", ref)
 	}
-	// Only a tag this tool chose is moved. A release tag is one it wrote for a
-	// release install, and "latest" is the fallback it writes for a non-release
-	// one; anything else ("canary", a date, a feature tag) is a deliberate pin
-	// an operator set with --image-tag, and moving it off would discard that
-	// decision as silently as re-deriving the registry would.
-	if current != "" && current != "latest" && releaseTag(current) == "" {
-		return "", fmt.Errorf(
-			"the stack image %s is pinned to the tag %q, which cannot be moved to %s automatically; "+
-				"reinstall with --image-tag to choose the new tag yourself", ref, current, tag)
-	}
 	return repo + ":" + tag, nil
 }
 
-// ApplyImageOverride resolves an operator's explicit `--image-tag` against the
-// reference a stack already runs.
+// IsOperatorTagPin reports whether ref carries a tag this tool did not choose
+// itself — not a release version, and not the "latest" fallback it writes for a
+// non-release install.
 //
-// A full reference ("registry/repo:tag", or one with an @digest) is taken
-// verbatim — the operator named the whole image. A bare tag or "@sha256:…" is
-// applied to the repository `current` already names, so choosing a new tag does
-// not also move a mirrored install onto the published default. That is the same
-// registry-preserving rule as SwapImageTag; the difference is that the tag comes
-// from the operator rather than from the target release, which is what makes
-// this the way past a pin SwapImageTag refuses to move on its own.
-func ApplyImageOverride(current, override string) (string, error) {
-	override = strings.TrimSpace(override)
-	if override == "" {
-		return "", errors.New("no image override given")
+// Such a tag is an operator's own `install --image-tag` choice. An update still
+// moves it to the target release, because refusing would leave that stack with
+// no way to update at all, but the caller says so rather than moving it
+// silently.
+func IsOperatorTagPin(ref string) bool {
+	_, tag, digest := SplitImageRef(ref)
+	if digest != "" || tag == "" || tag == "latest" {
+		return false
 	}
-	if isFullImageRef(override) {
-		return override, nil
-	}
-	repo, _, _ := SplitImageRef(current)
-	if repo == "" {
-		return "", fmt.Errorf("%q names no image repository to apply %q to", current, override)
-	}
-	return applyRef(repo, override), nil
+	return releaseTag(tag) == ""
 }
 
 // SplitImageRef splits an image reference into its repository and whichever of

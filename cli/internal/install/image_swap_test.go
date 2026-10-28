@@ -34,38 +34,6 @@ func TestSwapImageTagKeepsTheRegistryAndRepository(t *testing.T) {
 	}
 }
 
-// An explicit --image-tag is the way past a pin SwapImageTag will not move on
-// its own, and it keeps the registry rule: a bare tag applies to the repository
-// the stack already runs, a full reference is taken as given.
-func TestApplyImageOverride(t *testing.T) {
-	t.Setenv(AppImageTagEnv, "")
-	t.Setenv(AppImageRepoEnv, "")
-
-	for _, tc := range []struct{ name, current, override, want string }{
-		{"bare tag keeps the mirror", "registry.corp/jentic-one-app:0.43.0", "0.44.0", "registry.corp/jentic-one-app:0.44.0"},
-		{"bare tag keeps the default repo", "ghcr.io/jentic/jentic-one-app:canary", "0.44.0", "ghcr.io/jentic/jentic-one-app:0.44.0"},
-		{"non-version tag is honoured", "ghcr.io/jentic/jentic-one-app:0.43.0", "canary", "ghcr.io/jentic/jentic-one-app:canary"},
-		{"digest applies to the same repo", "ghcr.io/jentic/jentic-one-app:0.43.0", "@sha256:abc", "ghcr.io/jentic/jentic-one-app@sha256:abc"},
-		{"full reference wins", "registry.corp/jentic-one-app:0.43.0", "other.io/team/app:1.2.3", "other.io/team/app:1.2.3"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := ApplyImageOverride(tc.current, tc.override)
-			if err != nil {
-				t.Fatalf("ApplyImageOverride(%q, %q): %v", tc.current, tc.override, err)
-			}
-			if got != tc.want {
-				t.Errorf("ApplyImageOverride(%q, %q) = %q, want %q", tc.current, tc.override, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestApplyImageOverrideRejectsAnEmptyOverride(t *testing.T) {
-	if _, err := ApplyImageOverride("ghcr.io/jentic/jentic-one-app:0.43.0", "  "); err == nil {
-		t.Error("ApplyImageOverride = nil error, want a refusal")
-	}
-}
-
 // A digest pin names an exact image and there is no way to learn the new
 // digest, so it is refused rather than quietly downgraded to a mutable tag.
 func TestSwapImageTagRefusesADigestPin(t *testing.T) {
@@ -90,19 +58,35 @@ func TestSwapImageTagRefusesANonReleaseVersion(t *testing.T) {
 	}
 }
 
-// A tag an operator chose with --image-tag is as explicit as a digest pin, so
-// it gets the same refusal rather than being silently moved to the new release.
-func TestSwapImageTagRefusesAnOperatorsTagPin(t *testing.T) {
-	for _, pinned := range []string{"canary", "nightly", "2026-10-28"} {
-		ref := "ghcr.io/jentic/jentic-one-app:" + pinned
-		_, err := SwapImageTag(ref, "v0.44.0")
-		if err == nil {
-			t.Errorf("SwapImageTag(%q, _) = nil error, want a refusal", ref)
-			continue
+// A tag the operator chose themselves is still moved to the target release —
+// refusing would leave such a stack unable to update at all — but it is
+// reported as a pin so the caller can warn.
+func TestIsOperatorTagPin(t *testing.T) {
+	for _, tc := range []struct {
+		ref  string
+		want bool
+	}{
+		{"ghcr.io/jentic/jentic-one-app:canary", true},
+		{"ghcr.io/jentic/jentic-one-app:2026-10-28", true},
+		{"ghcr.io/jentic/jentic-one-app:0.43.0", false},
+		{"ghcr.io/jentic/jentic-one-app:latest", false},
+		{"localhost:5000/jentic-one-app:canary", true},
+		{"ghcr.io/jentic/jentic-one-app@sha256:abc", false},
+	} {
+		if got := IsOperatorTagPin(tc.ref); got != tc.want {
+			t.Errorf("IsOperatorTagPin(%q) = %v, want %v", tc.ref, got, tc.want)
 		}
-		if !strings.Contains(err.Error(), pinned) {
-			t.Errorf("error does not name the pinned tag %q: %v", pinned, err)
-		}
+	}
+}
+
+// Every tag the tool can read moves, including an operator's own.
+func TestSwapImageTagMovesAnOperatorsTagPin(t *testing.T) {
+	got, err := SwapImageTag("ghcr.io/jentic/jentic-one-app:canary", "v0.44.0")
+	if err != nil {
+		t.Fatalf("SwapImageTag: %v", err)
+	}
+	if got != "ghcr.io/jentic/jentic-one-app:0.44.0" {
+		t.Errorf("SwapImageTag = %q", got)
 	}
 }
 

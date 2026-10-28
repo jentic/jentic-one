@@ -51,12 +51,51 @@ func mappingValue(node *yaml.Node, key string) *yaml.Node {
 	if node.Kind != yaml.MappingNode {
 		return nil
 	}
+	// The LAST match, because that is the one compose uses when a mapping
+	// carries the same key twice. Taking the first would rewrite a line the
+	// running stack ignores and leave the effective one behind.
+	var found *yaml.Node
 	for i := 0; i+1 < len(node.Content); i += 2 {
 		if node.Content[i].Value == key {
-			return node.Content[i+1]
+			found = node.Content[i+1]
 		}
 	}
-	return nil
+	return found
+}
+
+// imageScalar returns the scalar node holding a service's image, or an error
+// when its shape cannot be rewritten in place.
+//
+// The repoint replaces the value on the single line the parser reports, so
+// anything whose value does not live plainly on that line has to be refused
+// rather than half-written: an alias (the value is at the anchor), a block
+// scalar (the line holds only the `>-`/`|` indicator), and a service that
+// inherits its image through a merge key (there is no own `image` line at all).
+//
+// A service that exists but whose image cannot be read is an error, never an
+// empty string: reporting "" would make the caller treat the stack as built
+// from source, build, and leave the compose file naming the published image it
+// already ran — the exact failure #2011 is about.
+func imageScalar(service *yaml.Node, name string) (*yaml.Node, error) {
+	img := mappingValue(service, "image")
+	if img == nil {
+		return nil, fmt.Errorf(
+			"the %q service names no image of its own; this tool cannot follow a merge key or an "+
+				"inherited image — set the image on the service, or edit it by hand", name)
+	}
+	if img.Kind == yaml.AliasNode {
+		return nil, fmt.Errorf(
+			"the %q service's image is a YAML alias (*%s), whose value lives at the anchor; "+
+				"inline the image or edit it by hand", name, img.Value)
+	}
+	switch img.Style {
+	case 0, yaml.SingleQuotedStyle, yaml.DoubleQuotedStyle:
+		return img, nil
+	default:
+		return nil, fmt.Errorf(
+			"the %q service's image is not a plain scalar, so its value is not on one line; "+
+				"write it as `image: <reference>`, or edit it by hand", name)
+	}
 }
 
 // appImageServices are the services the compose template renders the app image
@@ -92,14 +131,14 @@ func ComposeAppImage(composePath string) (string, error) {
 // a rewrite scoped to the line cannot move it.
 func (d *composeDoc) imageOf(service string) (string, error) {
 	node := mappingValue(mappingValue(&d.root, "services"), service)
-	img := mappingValue(node, "image")
-	if img == nil {
+	if node == nil {
+		// No such service: a single-surface stack may not run the broker, and a
+		// file with no services at all has nothing to identify.
 		return "", nil
 	}
-	if img.Kind == yaml.AliasNode {
-		return "", fmt.Errorf(
-			"the %q service's image is a YAML alias (*%s), which this tool cannot rewrite; "+
-				"inline the image or edit it by hand", service, img.Value)
+	img, err := imageScalar(node, service)
+	if err != nil {
+		return "", err
 	}
 	return strings.TrimSpace(img.Value), nil
 }
@@ -121,6 +160,23 @@ var imageLine = regexp.MustCompile(`^(\s*image:[ \t]*)("[^"]*"|'[^']*'|[^\s#]*)(
 // from a Draft, which an update has no way to reconstruct faithfully, so an
 // operator's own edits to ports, volumes and apps are kept.
 func SetComposeAppImage(composePath, image string) (bool, error) {
+	return setComposeAppImage(composePath, image, false)
+}
+
+// CheckComposeAppImageWritable reports whether a repoint of this compose file
+// would succeed, without writing anything.
+//
+// It exists so a caller can refuse up front rather than after pulling or
+// building an image: every reason the rewrite can fail is a static property of
+// the file (a shape it cannot rewrite, a line it cannot match), so discovering
+// them afterwards leaves an image fetched, the compose file untouched, and no
+// retry that can behave differently.
+func CheckComposeAppImageWritable(composePath, image string) error {
+	_, err := setComposeAppImage(composePath, image, true)
+	return err
+}
+
+func setComposeAppImage(composePath, image string, dryRun bool) (bool, error) {
 	doc, err := readComposeDoc(composePath)
 	if err != nil {
 		return false, err
@@ -137,14 +193,9 @@ func SetComposeAppImage(composePath, image string) (bool, error) {
 			// A single-surface stack may not run the broker at all.
 			continue
 		}
-		img := mappingValue(node, "image")
-		if img == nil {
-			return false, fmt.Errorf("the %q service in %s names no image", service, composePath)
-		}
-		if img.Kind == yaml.AliasNode {
-			return false, fmt.Errorf(
-				"the %q service's image is a YAML alias (*%s), which this tool cannot rewrite; "+
-					"inline the image or edit it by hand", service, img.Value)
+		img, err := imageScalar(node, service)
+		if err != nil {
+			return false, err
 		}
 		if strings.TrimSpace(img.Value) == image {
 			continue
@@ -154,7 +205,7 @@ func SetComposeAppImage(composePath, image string) (bool, error) {
 		}
 		changed = true
 	}
-	if !changed {
+	if !changed || dryRun {
 		return false, nil
 	}
 	if err := atomicWriteFile(composePath, []byte(strings.Join(lines, "\n"))); err != nil {

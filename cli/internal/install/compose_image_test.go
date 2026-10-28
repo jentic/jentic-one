@@ -225,6 +225,113 @@ func TestSetComposeAppImageLeavesNonServiceBlocksAlone(t *testing.T) {
 	}
 }
 
+// A service that inherits its image through a merge key has no `image` line of
+// its own. Reporting that as "no image" made the caller treat the stack as
+// built from source: it would build, never touch the compose file, and leave
+// the stack running the old published image the anchor still resolves to —
+// which is #2011 itself. It must be an error, not an empty string.
+func TestComposeAppImageErrorsOnAMergeKeyService(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "docker-compose.yaml")
+	body := "x-base: &base\n  image: ghcr.io/jentic/jentic-one-app:0.43.0\n" +
+		"services:\n  app:\n    <<: *base\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write compose: %v", err)
+	}
+	got, err := ComposeAppImage(path)
+	if err == nil {
+		t.Fatalf("ComposeAppImage = (%q, nil), want an error — \"\" makes the caller build and skip the repoint", got)
+	}
+	if !strings.Contains(err.Error(), "merge key") {
+		t.Errorf("error does not explain the shape: %v", err)
+	}
+}
+
+// A block scalar puts the value on the next line, so rewriting the line the
+// parser reports would replace the `>-` indicator and orphan the value — which
+// corrupted the file while reporting success. Refuse instead.
+func TestComposeAppImageErrorsOnABlockScalar(t *testing.T) {
+	for _, indicator := range []string{">-", "|", ">"} {
+		path := filepath.Join(t.TempDir(), "docker-compose.yaml")
+		body := "services:\n  app:\n    image: " + indicator + "\n      ghcr.io/jentic/jentic-one-app:0.43.0\n"
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatalf("write compose: %v", err)
+		}
+		if _, err := ComposeAppImage(path); err == nil {
+			t.Errorf("indicator %q: ComposeAppImage = nil error, want a refusal", indicator)
+		}
+	}
+}
+
+// An anchor DEFINITION on the service is a plain scalar the parser reads fine,
+// but its line carries the `&name` too, so the rewrite cannot match it. The
+// dry run has to catch that, or it fails after the image is pulled.
+func TestCheckComposeAppImageWritableCatchesAnAnchorDefinition(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "docker-compose.yaml")
+	body := "services:\n" +
+		"  app:\n    image: &appimg ghcr.io/jentic/jentic-one-app:0.43.0\n" +
+		"  broker:\n    image: *appimg\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write compose: %v", err)
+	}
+	if err := CheckComposeAppImageWritable(path, "ghcr.io/jentic/jentic-one-app:0.44.0"); err == nil {
+		t.Error("CheckComposeAppImageWritable = nil error, want the anchor/alias shape refused up front")
+	}
+}
+
+// The dry run reports a workable file as writable and changes nothing on disk.
+func TestCheckComposeAppImageWritableWritesNothing(t *testing.T) {
+	path := writeCompose(t, "ghcr.io/jentic/jentic-one-app:0.43.0")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+
+	if err := CheckComposeAppImageWritable(path, "ghcr.io/jentic/jentic-one-app:0.44.0"); err != nil {
+		t.Fatalf("CheckComposeAppImageWritable: %v", err)
+	}
+
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Error("the dry run wrote to the file")
+	}
+}
+
+// Compose uses the LAST of a duplicated key, so that is the line that must move
+// — rewriting the first leaves the effective one behind.
+func TestSetComposeAppImageMovesTheEffectiveDuplicateKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "docker-compose.yaml")
+	body := "services:\n  app:\n" +
+		"    image: ghcr.io/jentic/jentic-one-app:0.40.0\n" +
+		"    image: ghcr.io/jentic/jentic-one-app:0.43.0\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write compose: %v", err)
+	}
+
+	current, err := ComposeAppImage(path)
+	if err != nil {
+		t.Fatalf("ComposeAppImage: %v", err)
+	}
+	if current != "ghcr.io/jentic/jentic-one-app:0.43.0" {
+		t.Fatalf("ComposeAppImage = %q, want the last (effective) value", current)
+	}
+	if _, err := SetComposeAppImage(path, "ghcr.io/jentic/jentic-one-app:0.44.0"); err != nil {
+		t.Fatalf("SetComposeAppImage: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if !strings.Contains(string(raw), "image: ghcr.io/jentic/jentic-one-app:0.44.0") {
+		t.Errorf("the effective line was not moved:\n%s", raw)
+	}
+	if strings.Contains(string(raw), ":0.43.0") {
+		t.Errorf("the effective line was left behind:\n%s", raw)
+	}
+}
+
 // An operator who widened the compose file's mode (a shared ops group) keeps
 // it: a repoint must not quietly narrow the file back to 0600.
 func TestSetComposeAppImageKeepsAWidenedMode(t *testing.T) {
