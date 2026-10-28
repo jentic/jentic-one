@@ -93,11 +93,15 @@ async def test_host_change_requires_operator_maps_to_403() -> None:
     assert response.status_code == 403
     body: dict[str, object] = json.loads(bytes(response.body))
     assert body["type"] == "host_change_requires_operator"
-    detail = str(body["detail"])
-    assert "new.example.com" in detail
-    assert "org:admin" in detail
-    # The rule, not whether anyone has bound the API's credentials.
-    assert "bound" not in detail
+    # Pinned whole: the detail names the origins and states the rule, and carries
+    # nothing about who has bound the API's credentials. Matched against the
+    # template rather than by substring — the message interpolates host names, so
+    # a bare ``"bound" not in detail`` would also trip on a host such as
+    # ``outbound.example.com``.
+    assert str(body["detail"]) == (
+        "Revision 'rev-1' changes the API's server origins from [old.example.com] "
+        "to [new.example.com]; making it current requires 'org:admin'"
+    )
 
 
 @pytest.mark.asyncio

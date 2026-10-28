@@ -57,8 +57,8 @@ MIRROR_URL = (
     "petstore3.swagger.io/main/1.0.27/openapi.json"
 )
 _WRITER = Identity(sub="usr_writer", actor_type=ActorType.USER, permissions=["apis:write"])
-_OPERATOR = Identity(
-    sub="usr_operator",
+_CREDENTIALS_WRITER = Identity(
+    sub="usr_credentials_writer",
     actor_type=ActorType.USER,
     permissions=["apis:write", "credentials:write"],
 )
@@ -369,7 +369,7 @@ async def test_overlay_over_a_legacy_host_less_url_api_never_gives_it_a_host(
         monkeypatch,
         _petstore(source_type=ApiRevisionSourceType.URL, source_url=PETSTORE_URL),
     )
-    await _promote(ingest_context, legacy, _OPERATOR)
+    await _promote(ingest_context, legacy, _CREDENTIALS_WRITER)
     overlay = _petstore(
         source_type=ApiRevisionSourceType.INLINE, origin="overlay", source_url=PETSTORE_URL
     )
@@ -420,7 +420,7 @@ async def test_promoting_a_reimport_of_a_credential_bound_host_less_api_needs_or
         monkeypatch,
         _petstore(source_type=ApiRevisionSourceType.URL, source_url=PETSTORE_URL),
     )
-    await _promote(ingest_context, legacy, _OPERATOR)
+    await _promote(ingest_context, legacy, _CREDENTIALS_WRITER)
 
     reimport = await Ingestor(ingest_context).ingest(
         _petstore(
@@ -434,7 +434,7 @@ async def test_promoting_a_reimport_of_a_credential_bound_host_less_api_needs_or
     assert reimport.server_url_changes is not None
     assert reimport.server_url_changes.resolved == ["https://cdn.petstore.example/api/v3"]
 
-    for refused in (_WRITER, _OPERATOR):
+    for refused in (_WRITER, _CREDENTIALS_WRITER):
         with pytest.raises(HostChangeRequiresOperatorError):
             await _promote(ingest_context, reimport, refused)
     assert await _state(ingest_context, reimport) == ApiRevisionState.DRAFT

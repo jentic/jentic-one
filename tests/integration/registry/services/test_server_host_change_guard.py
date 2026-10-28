@@ -56,12 +56,26 @@ _VERSION = "1.0.0"
 _AGENT_PREFIX = "hostguard-agent"
 
 _WRITER = Identity(sub="usr_writer", actor_type=ActorType.USER, permissions=["apis:write"])
-_OPERATOR = Identity(
-    sub="usr_operator",
+#: Holds ``credentials:write``, which does *not* approve a host change. Every
+#: assertion below expects this identity to be refused; ``_ADMIN`` is the one
+#: that may promote or pin.
+_CREDENTIALS_WRITER = Identity(
+    sub="usr_credentials_writer",
     actor_type=ActorType.USER,
     permissions=["apis:write", "credentials:write"],
 )
 _ADMIN = Identity(sub="usr_admin", actor_type=ActorType.USER, permissions=["org:admin"])
+
+#: Phrases that would reveal whether the API has a bound credential or an open
+#: connect session. Matched as phrases, never as bare words: the refusal detail
+#: interpolates host names, so "bound" alone matches ``outbound.example.com``.
+_BINDING_PHRASES = ("bound credential", "open session", "credential binding", "connect session")
+
+
+def _leaks_binding(detail: str) -> bool:
+    """True when ``detail`` names a credential binding or connect session."""
+    lowered = detail.lower()
+    return any(phrase in lowered for phrase in _BINDING_PHRASES)
 
 
 def _spec(host: str, *, marker: str, scheme: str = "https") -> str:
@@ -324,7 +338,9 @@ async def test_promote_held_draft_requires_org_admin(
     assert str((await _api(registry_db)).current_revision_id) == base_id
     # ``credentials:write`` does not approve sending other users' credentials elsewhere.
     with pytest.raises(HostChangeRequiresOperatorError):
-        await svc.promote(_VENDOR, _NAME, _VERSION, held["revision_id"], identity=_OPERATOR)
+        await svc.promote(
+            _VENDOR, _NAME, _VERSION, held["revision_id"], identity=_CREDENTIALS_WRITER
+        )
     assert str((await _api(registry_db)).current_revision_id) == base_id
 
     view = await svc.promote(_VENDOR, _NAME, _VERSION, held["revision_id"], identity=_ADMIN)
@@ -355,21 +371,23 @@ async def test_promote_manual_draft_host_change_requires_org_admin(
     assert draft["state"] == ApiRevisionState.DRAFT
     svc = RevisionService(integration_context)
 
-    for identity in (_WRITER, _OPERATOR):
+    for identity in (_WRITER, _CREDENTIALS_WRITER):
         with pytest.raises(HostChangeRequiresOperatorError) as refused:
             await svc.promote(_VENDOR, _NAME, _VERSION, draft["revision_id"], identity=identity)
-        # The detail states the rule, not whether anyone has bound the API's credentials.
+        # The detail states the rule, not whether anyone has bound the API's
+        # credentials. Phrase-level, not bare "bound"/"session": the message
+        # interpolates host names, so a host such as ``outbound.example.com``
+        # would trip a substring check.
         detail = str(refused.value)
         assert "org:admin" in detail
-        assert "bound" not in detail
-        assert "session" not in detail
+        assert not _leaks_binding(detail)
     assert await _state(registry_db, draft["revision_id"]) == ApiRevisionState.DRAFT
 
     await svc.promote(_VENDOR, _NAME, _VERSION, draft["revision_id"], identity=_ADMIN)
     assert await _state(registry_db, draft["revision_id"]) == ApiRevisionState.PUBLISHED
 
 
-async def test_promote_without_host_change_needs_no_operator(
+async def test_promote_without_host_change_needs_no_admin(
     integration_context: Context,
     registry_db: DatabaseSession,
     control_db: DatabaseSession,
@@ -491,10 +509,14 @@ async def test_held_draft_is_not_routable_or_pinnable_until_promoted(
             vendor=_VENDOR, name=_NAME, version=_VERSION, rev_label=rev_label, identity=_WRITER
         )
         assert pin.outcome == RevisionPinOutcome.FORBIDDEN
-        operator_pin = await resolver.resolve_revision_pin(
-            vendor=_VENDOR, name=_NAME, version=_VERSION, rev_label=rev_label, identity=_OPERATOR
+        credentials_writer_pin = await resolver.resolve_revision_pin(
+            vendor=_VENDOR,
+            name=_NAME,
+            version=_VERSION,
+            rev_label=rev_label,
+            identity=_CREDENTIALS_WRITER,
         )
-        assert operator_pin.outcome == RevisionPinOutcome.FORBIDDEN
+        assert credentials_writer_pin.outcome == RevisionPinOutcome.FORBIDDEN
         admin_pin = await resolver.resolve_revision_pin(
             vendor=_VENDOR, name=_NAME, version=_VERSION, rev_label=rev_label, identity=_ADMIN
         )
@@ -527,8 +549,8 @@ async def test_own_draft_with_new_hosts_is_not_pinnable_on_a_bound_api(
     """
     handler, _ = await _base_then_bind(integration_context, control_db, admin_db)
     # The submitter itself, also holding ``credentials:write`` or ``org:admin``.
-    writer_operator = Identity(
-        sub=_WRITER.sub, actor_type=ActorType.USER, permissions=_OPERATOR.permissions
+    writer_credentials = Identity(
+        sub=_WRITER.sub, actor_type=ActorType.USER, permissions=_CREDENTIALS_WRITER.permissions
     )
     writer_admin = Identity(
         sub=_WRITER.sub, actor_type=ActorType.USER, permissions=_ADMIN.permissions
@@ -555,7 +577,7 @@ async def test_own_draft_with_new_hosts_is_not_pinnable_on_a_bound_api(
     assert held.outcome is RevisionPinOutcome.HOST_CHANGE_HELD
     assert held.revision_id == uuid.UUID(moved["revision_id"])
     assert (
-        await _pin(moved["revision_id"], writer_operator)
+        await _pin(moved["revision_id"], writer_credentials)
     ).outcome is RevisionPinOutcome.HOST_CHANGE_HELD
     assert (await _pin(moved["revision_id"], writer_admin)).outcome is RevisionPinOutcome.RESOLVED
     assert (await _pin(same["revision_id"], _WRITER)).outcome is RevisionPinOutcome.RESOLVED
@@ -563,7 +585,7 @@ async def test_own_draft_with_new_hosts_is_not_pinnable_on_a_bound_api(
     # The broker refuses the held draft when it is the one serving the URL.
     resolver = InProcessRegistryResolver(registry_db, ctx=integration_context)
     pins = {(_VENDOR, _NAME, _VERSION): f"rev_{uuid.UUID(moved['revision_id']).hex}"}
-    for identity in (_WRITER, writer_operator):
+    for identity in (_WRITER, writer_credentials):
         with pytest.raises(UnauthorizedRevisionPinError) as refused:
             await discover_via_pins(
                 resolver,
@@ -573,7 +595,7 @@ async def test_own_draft_with_new_hosts_is_not_pinnable_on_a_bound_api(
                 identity=identity,
             )
         assert refused.value.type == "host_change_requires_operator"
-        assert "bound" not in refused.value.detail
+        assert not _leaks_binding(refused.value.detail)
     routed = await discover_via_pins(
         resolver,
         method="GET",
