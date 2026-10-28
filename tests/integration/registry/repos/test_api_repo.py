@@ -14,6 +14,7 @@ from jentic_one.registry.core.schema.security_schemes import SecurityScheme
 from jentic_one.registry.core.schema.servers import Server
 from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.shared.db.session import DatabaseSession
+from jentic_one.shared.pagination import Cursor
 
 pytestmark = pytest.mark.integration
 
@@ -219,8 +220,7 @@ async def test_list_page_cursor_pagination(
         page2 = await ApiRepository.list_page(
             session,
             limit=2,
-            cursor_created_at=last.created_at,
-            cursor_id=str(last.id),
+            cursor=Cursor(timestamp=last.created_at, id=str(last.id)),
         )
 
     assert len(page2) == 1

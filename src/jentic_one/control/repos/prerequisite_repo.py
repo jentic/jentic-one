@@ -16,6 +16,7 @@ from sqlalchemy.sql.elements import BindParameter
 
 from jentic_one.shared.db.locks import lock_credential_bindings
 from jentic_one.shared.db.types import UTCDateTime
+from jentic_one.shared.pagination import Cursor
 
 
 class CredentialBoundAgentRow(NamedTuple):
@@ -155,7 +156,7 @@ class PrerequisiteRepository:
         session: AsyncSession,
         *,
         credential_id: str,
-        cursor: tuple[datetime, str] | None = None,
+        cursor: Cursor | None = None,
         limit: int = 50,
         visible_to: AgentVisibility | None = None,
     ) -> list[CredentialBoundAgentRow]:
@@ -173,11 +174,10 @@ class PrerequisiteRepository:
         params: dict[str, object] = {"credential_id": credential_id, "limit": limit}
         bind_params: list[BindParameter[Any]] = []
         if cursor is not None:
-            cursor_ts, cursor_id = cursor
             conditions.append(
                 "(b.bound_at < :cursor_ts OR (b.bound_at = :cursor_ts AND b.id < :cursor_id))"
             )
-            params.update(cursor_ts=cursor_ts, cursor_id=cursor_id)
+            params.update(cursor_ts=cursor.timestamp, cursor_id=cursor.id)
             # Typed so SQLite compares against the stored timestamp format.
             bind_params.append(bindparam("cursor_ts", type_=UTCDateTime()))
         if visible_to is not None:

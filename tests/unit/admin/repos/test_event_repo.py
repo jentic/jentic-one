@@ -1,6 +1,6 @@
 """Unit tests for EventRepository.list_after_cursor.
 
-Verifies that the two-tuple cursor correctly paginates events created within
+Verifies that the ``(created_at, id)`` cursor correctly paginates events created within
 the same second whose KSUIDs have out-of-order random payloads.
 """
 
@@ -14,6 +14,7 @@ from sqlalchemy import Result
 
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.repos.event_repo import EventRepository
+from jentic_one.shared.pagination import Cursor
 
 
 def _make_event(id: str, created_at: datetime) -> Event:
@@ -46,7 +47,7 @@ async def test_list_after_cursor_returns_same_second_events() -> None:
     result_mock.scalars.return_value.all.return_value = [event_b]
     session.execute.return_value = result_mock
 
-    cursor = (same_ts, event_a.id)
+    cursor = Cursor(timestamp=same_ts, id=event_a.id)
     events = await EventRepository.list_after_cursor(session, cursor)
 
     assert len(events) == 0 or events == [event_b]
@@ -65,7 +66,7 @@ async def test_list_after_cursor_returns_later_second_events() -> None:
     result_mock.scalars.return_value.all.return_value = [event_later]
     session.execute.return_value = result_mock
 
-    cursor = (t1, "evt_ZZZZZZZZZZZZZZZZZZZZZZZZZZ")
+    cursor = Cursor(timestamp=t1, id="evt_ZZZZZZZZZZZZZZZZZZZZZZZZZZ")
     events = await EventRepository.list_after_cursor(session, cursor)
 
     assert events == [event_later]
@@ -80,7 +81,7 @@ async def test_list_after_cursor_applies_filters() -> None:
     result_mock.scalars.return_value.all.return_value = []
     session.execute.return_value = result_mock
 
-    cursor = (same_ts, "evt_cursor0000000000000000000")
+    cursor = Cursor(timestamp=same_ts, id="evt_cursor0000000000000000000")
     await EventRepository.list_after_cursor(
         session,
         cursor,

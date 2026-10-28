@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from sqlalchemy import and_, case, delete, or_, select, update
+from sqlalchemy import case, delete, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,7 +16,9 @@ from sqlalchemy.orm import selectinload
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.shared.db.errors import DatabaseIntegrityError
+from jentic_one.shared.db.keyset import apply_desc_keyset
 from jentic_one.shared.models import ApiRevisionSourceType, ApiRevisionState
+from jentic_one.shared.pagination import Cursor
 
 # The unique constraints whose violation means "this revision already exists".
 #   - uq_api_revisions_api_id_spec_digest: identical content re-imported.
@@ -461,8 +463,7 @@ class ApiRevisionRepository:
         *,
         api_id: uuid.UUID,
         limit: int = 50,
-        cursor_created_at: datetime | None = None,
-        cursor_id: str | None = None,
+        cursor: Cursor | None = None,
         states: list[str] | None = None,
     ) -> list[ApiRevision]:
         stmt = (
@@ -471,16 +472,7 @@ class ApiRevisionRepository:
             .order_by(ApiRevision.created_at.desc(), ApiRevision.id.desc())
             .limit(limit)
         )
-        if cursor_created_at is not None and cursor_id is not None:
-            stmt = stmt.where(
-                or_(
-                    ApiRevision.created_at < cursor_created_at,
-                    and_(
-                        ApiRevision.created_at == cursor_created_at,
-                        ApiRevision.id < cursor_id,
-                    ),
-                )
-            )
+        stmt = apply_desc_keyset(stmt, ApiRevision.created_at, ApiRevision.id, cursor)
         if states:
             stmt = stmt.where(ApiRevision.state.in_(states))
         result = await session.execute(stmt)

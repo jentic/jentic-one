@@ -40,6 +40,7 @@ from jentic_one.shared.discovery.errors import (
     OperationNotFoundError,
     TooManyCandidatesError,
 )
+from jentic_one.shared.pagination import InvalidCursorError
 from jentic_one.shared.web.errors import DB_UNAVAILABLE_SAFE_DETAILS, make_service_error_handler
 
 _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
@@ -134,3 +135,13 @@ def _add_allow_header(
 service_error_handler = make_service_error_handler(
     _ERROR_MAP, response_hook=_add_allow_header, safe_details=_SAFE_DETAILS
 )
+
+# A tampered or wrong-shaped pagination cursor (list routes and the search
+# keyset cursor alike) is a client fault: 400 ``invalid_cursor``, matching the
+# admin, auth and control surfaces. Registered as its own handler because
+# `InvalidCursorError` lives outside the `RegistryServiceError` hierarchy.
+_CURSOR_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
+    InvalidCursorError: (400, "invalid_cursor"),
+}
+
+cursor_error_handler = make_service_error_handler(_CURSOR_ERROR_MAP)

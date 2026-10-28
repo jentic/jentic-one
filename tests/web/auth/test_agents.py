@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from collections.abc import AsyncGenerator, Iterator
@@ -1173,3 +1174,18 @@ def test_claim_agent_non_user_actor_forbidden(
 def test_claim_agent_unauthenticated(unauthed_client: TestClient, claimable_agent_id: str) -> None:
     resp = unauthed_client.post(f"/agents/{claimable_agent_id}:claim", json={"token": _CLAIM_TOKEN})
     assert resp.status_code == 401
+
+
+#: Cursors that base64-decode to JSON of the wrong shape (#1956).
+_WRONG_SHAPE_CURSORS = [
+    base64.b64encode(raw.encode()).decode()
+    for raw in ("null", "[1]", '{"t": 1, "id": "x"}', '{"t": "2024-01-01", "id": 1}')
+]
+
+
+@pytest.mark.parametrize("cursor", _WRONG_SHAPE_CURSORS)
+def test_list_agents_wrong_shape_cursor_returns_400(admin_client: TestClient, cursor: str) -> None:
+    """A tampered cursor on the auth surface is a 400 ``invalid_cursor``, never a 500."""
+    resp = admin_client.get("/agents", params={"cursor": cursor})
+    assert resp.status_code == 400
+    assert resp.json()["type"] == "invalid_cursor"

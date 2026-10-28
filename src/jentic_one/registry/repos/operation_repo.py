@@ -5,18 +5,19 @@ from __future__ import annotations
 import hashlib
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
 from typing import cast
 
 import structlog
-from sqlalchemy import String, TableClause, and_, bindparam, delete, or_, select, update
+from sqlalchemy import String, TableClause, bindparam, delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.operations import Operation
+from jentic_one.shared.db.keyset import apply_asc_keyset
 from jentic_one.shared.models import ApiRevisionState
+from jentic_one.shared.pagination import Cursor
 
 logger = structlog.get_logger()
 
@@ -180,8 +181,7 @@ class OperationRepository:
         *,
         revision_id: uuid.UUID,
         limit: int = 50,
-        cursor_created_at: datetime | None = None,
-        cursor_id: str | None = None,
+        cursor: Cursor | None = None,
     ) -> list[Operation]:
         stmt = (
             select(Operation)
@@ -189,16 +189,7 @@ class OperationRepository:
             .order_by(Operation.created_at.asc(), Operation.id.asc())
             .limit(limit)
         )
-        if cursor_created_at is not None and cursor_id is not None:
-            stmt = stmt.where(
-                or_(
-                    Operation.created_at > cursor_created_at,
-                    and_(
-                        Operation.created_at == cursor_created_at,
-                        Operation.id > cursor_id,
-                    ),
-                )
-            )
+        stmt = apply_asc_keyset(stmt, Operation.created_at, Operation.id, cursor)
         result = await session.execute(stmt)
         return list(result.unique().scalars().all())
 

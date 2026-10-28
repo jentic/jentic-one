@@ -105,7 +105,7 @@ from jentic_one.shared.models.api_identity import (
 )
 from jentic_one.shared.models.credentials import CredentialType, StoredCredentialType
 from jentic_one.shared.models.events import EventSeverity, EventType
-from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
+from jentic_one.shared.pagination import decode_cursor, encode_cursor
 from jentic_one.shared.permissions.evaluation import (
     PermissionRule,
     first_matching_rule,
@@ -644,10 +644,7 @@ class CredentialService:
             if credential is None:
                 raise CredentialNotFoundError(credential_id)
 
-        decoded_cursor = None
-        if cursor is not None:
-            ts, cid = decode_cursor_str(cursor)
-            decoded_cursor = (ts, cid)
+        decoded_cursor = decode_cursor(cursor, id_kind="str") if cursor is not None else None
 
         async with self._ctx.admin_db.session() as session:
             rows = await PrerequisiteRepository.list_agents_for_credential(
@@ -1192,10 +1189,7 @@ class CredentialService:
         self, *, cursor: str | None = None, limit: int = 50, identity: Identity
     ) -> tuple[list[tuple[PermissionRuleSet, int]], bool, str | None]:
         """List rule sets with per-set rule counts. Returns (data, has_more, next_cursor)."""
-        decoded_cursor = None
-        if cursor is not None:
-            ts, cid = decode_cursor_str(cursor)
-            decoded_cursor = (ts, cid)
+        decoded_cursor = decode_cursor(cursor, id_kind="str") if cursor is not None else None
         async with self._ctx.control_db.session() as session:
             rows = await PermissionRuleSetRepository.list_page(
                 session, cursor=decoded_cursor, limit=limit + 1
@@ -1329,10 +1323,7 @@ class CredentialService:
         identity: Identity,
     ) -> CredentialPage:
         """List credentials with cursor pagination."""
-        decoded_cursor = None
-        if cursor is not None:
-            ts, cid = decode_cursor_str(cursor)
-            decoded_cursor = (ts, cid)
+        decoded_cursor = decode_cursor(cursor, id_kind="str") if cursor is not None else None
 
         access_filters = build_access_filters(
             identity,

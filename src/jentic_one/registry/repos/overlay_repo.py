@@ -7,14 +7,16 @@ from datetime import datetime
 from enum import Enum, auto
 from typing import Any, cast
 
-from sqlalchemy import and_, case, or_, select, update
+from sqlalchemy import case, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.overlays import Overlay
+from jentic_one.shared.db.keyset import apply_desc_keyset
 from jentic_one.shared.models import OverlayStatus
+from jentic_one.shared.pagination import Cursor
 
 
 class _Unset(Enum):
@@ -178,8 +180,7 @@ class OverlayRepository:
         *,
         api_id: uuid.UUID,
         limit: int = 50,
-        cursor_created_at: datetime | None = None,
-        cursor_id: str | None = None,
+        cursor: Cursor | None = None,
         status: str | None = None,
     ) -> list[Overlay]:
         stmt = (
@@ -188,13 +189,7 @@ class OverlayRepository:
             .order_by(Overlay.created_at.desc(), Overlay.id.desc())
             .limit(limit)
         )
-        if cursor_created_at is not None and cursor_id is not None:
-            stmt = stmt.where(
-                or_(
-                    Overlay.created_at < cursor_created_at,
-                    and_(Overlay.created_at == cursor_created_at, Overlay.id < cursor_id),
-                )
-            )
+        stmt = apply_desc_keyset(stmt, Overlay.created_at, Overlay.id, cursor)
         if status is not None:
             stmt = stmt.where(Overlay.status == status)
         result = await session.execute(stmt)

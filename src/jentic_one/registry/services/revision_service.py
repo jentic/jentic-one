@@ -103,10 +103,7 @@ class RevisionService:
         cursor: str | None = None,
         limit: int = 50,
     ) -> RevisionPage:
-        cursor_created_at = None
-        cursor_id: str | None = None
-        if cursor is not None:
-            cursor_created_at, cursor_id = decode_cursor(cursor)
+        cursor_key = decode_cursor(cursor, id_kind="uuid") if cursor is not None else None
 
         async with self._ctx.registry_db.session() as session:
             api = await ApiRepository.get_by_identifier(session, vendor, name, version)
@@ -117,8 +114,7 @@ class RevisionService:
                 session,
                 api_id=api.id,
                 limit=limit + 1,
-                cursor_created_at=cursor_created_at,
-                cursor_id=cursor_id,
+                cursor=cursor_key,
                 states=states,
             )
 

@@ -207,7 +207,7 @@ from jentic_one.shared.models.api_identity import (
 )
 from jentic_one.shared.models.credentials import StoredCredentialType
 from jentic_one.shared.models.events import EventSeverity, EventType
-from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
+from jentic_one.shared.pagination import decode_cursor, encode_cursor
 from jentic_one.shared.url_validation import validate_upstream_url_async
 from jentic_one.shared.vendor_domain import vendor_from_api_id
 
@@ -3626,10 +3626,7 @@ class ConnectSessionService:
         own. Rows are slim summaries — the ``poll_token``
         capability never leaves the service on this path.
         """
-        decoded_cursor = None
-        if cursor is not None:
-            ts, sid = decode_cursor_str(cursor)
-            decoded_cursor = (ts, sid)
+        decoded_cursor = decode_cursor(cursor, id_kind="str") if cursor is not None else None
 
         access_filters = build_access_filters(
             identity,

@@ -26,7 +26,6 @@ from jentic_one.registry.web.schemas.overlays import (
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import OverlayStatus
-from jentic_one.shared.pagination import InvalidCursorError
 from jentic_one.shared.web import get_ctx, get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.links import build_link
@@ -206,13 +205,7 @@ async def list_overlays(
     true.
     """
     svc = OverlayService(ctx)
-    try:
-        page = await svc.list_page(vendor, name, version, limit=limit, cursor=cursor, status=status)
-    except InvalidCursorError:
-        raise BadRequest(
-            detail="Invalid pagination cursor",
-            instance=request.url.path,
-        ) from None
+    page = await svc.list_page(vendor, name, version, limit=limit, cursor=cursor, status=status)
 
     data = [_build_overlay_list_item(item, request, vendor, name, version) for item in page.data]
 
