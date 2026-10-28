@@ -132,6 +132,71 @@ func TestMCPRequestAccessChange_ACheckAccessRefusalPointsAtShowAccess(t *testing
 	}
 }
 
+func TestControlProblemDetail_ReadsAStringOrAFieldErrorList(t *testing.T) {
+	// A control refusal carries a string detail. A body whose detail is a list
+	// of field errors (FastAPI's validation shape) is rendered field by field
+	// rather than discarded, so the reason survives to the agent.
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			"string", `{"type":"unknown_rule","detail":"rule 'apr_x' is not on this binding"}`,
+			"rule 'apr_x' is not on this binding",
+		},
+		{
+			"field list", `{"detail":[{"loc":["body","rules","set",0,"effect"],
+			"msg":"Input should be 'allow', 'deny' or 'require-approval'"}]}`,
+			"rules.set.0.effect: Input should be 'allow', 'deny' or 'require-approval'",
+		},
+		{
+			"two fields", `{"detail":[{"loc":["body","reason"],"msg":"too long"},
+			{"loc":["query","poll_token"],"msg":"required"}]}`,
+			"reason: too long; query.poll_token: required",
+		},
+		{"no detail", `{"type":"x"}`, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p, ok := parseControlProblem(&HTTPError{StatusCode: 422, Body: tc.body})
+			if !ok {
+				t.Fatalf("parseControlProblem(%s) refused the body", tc.body)
+			}
+			if got := p.detailText(); got != tc.want {
+				t.Errorf("detailText() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestMCPAmendRequest_AForeignSessionIsNotAnIdentityProblem(t *testing.T) {
+	// The uniform 403 says the session is not the caller's, which says nothing
+	// about the agent's credentials: it must not read as a revoked identity.
+	cp := &editControlPlane{status: http.StatusForbidden, body: `{"type":"invalid_poll_token","status":403,
+		"detail":"Connect session not found or not accessible to the caller"}`}
+	srv := cp.server(t)
+	defer srv.Close()
+
+	s := stampedTestMCPServer(t)
+	res, err := s.handleAmendRequest(activeCtx(srv.URL), callToolRequest("amend_request",
+		`{"session_id":"cs_someone_else","reason":"please"}`))
+	if err != nil {
+		t.Fatalf("handleAmendRequest: %v", err)
+	}
+	payload := decodeToolJSON(t, res)
+	if payload["error_code"] != ux.CodeResolveFailed {
+		t.Errorf("error_code = %v, want %v", payload["error_code"], ux.CodeResolveFailed)
+	}
+	step, _ := payload["actionable_step"].(string)
+	if !strings.Contains(step, "session id") {
+		t.Errorf("actionable_step = %q, want the session id to be checked", step)
+	}
+	if strings.Contains(step, "get_started") || strings.Contains(step, "revoked") {
+		t.Errorf("actionable_step = %q, must not read as a revoked identity", step)
+	}
+}
+
 func TestMCPRequestAccessChange_SetWithAddIsInvalidParams(t *testing.T) {
 	s := stampedTestMCPServer(t)
 	_, err := s.handleRequestAccessChange(activeCtx("http://127.0.0.1:0"), callToolRequest("request_access_change",

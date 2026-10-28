@@ -14,6 +14,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -183,8 +185,10 @@ type editCreated struct {
 // controlProblem is the slice of a control-plane problem+json body the edit
 // surfaces act on.
 type controlProblem struct {
-	Type           string          `json:"type"`
-	Detail         string          `json:"detail"`
+	Type string `json:"type"`
+	// A control refusal carries a string; a schema-level 422 carries the
+	// field errors as a list, so it is decoded on demand (detailText).
+	Detail         json.RawMessage `json:"detail"`
 	SessionID      string          `json:"session_id"`
 	AgentDirective json.RawMessage `json:"agent_directive"`
 	Directive      struct {
@@ -195,6 +199,52 @@ type controlProblem struct {
 			SuggestedCommand string `json:"suggested_command"`
 		} `json:"parameters"`
 	} `json:"-"`
+}
+
+// detailText renders a problem's detail: the string a control refusal carries,
+// or "field: reason" per entry for a schema-level 422, whose detail is a list.
+func (p *controlProblem) detailText() string {
+	if len(p.Detail) == 0 {
+		return ""
+	}
+	var text string
+	if json.Unmarshal(p.Detail, &text) == nil {
+		return text
+	}
+	var fields []struct {
+		Loc []any  `json:"loc"`
+		Msg string `json:"msg"`
+	}
+	if json.Unmarshal(p.Detail, &fields) != nil || len(fields) == 0 {
+		return string(p.Detail)
+	}
+	parts := make([]string, 0, len(fields))
+	for _, field := range fields {
+		if where := joinLoc(field.Loc); where != "" {
+			parts = append(parts, where+": "+field.Msg)
+			continue
+		}
+		parts = append(parts, field.Msg)
+	}
+	return strings.Join(parts, "; ")
+}
+
+// joinLoc renders a validation error's location as a dotted field path, with
+// the leading "body" dropped: ["body","rules","set",0] -> "rules.set.0".
+func joinLoc(loc []any) string {
+	parts := make([]string, 0, len(loc))
+	for i, part := range loc {
+		switch value := part.(type) {
+		case string:
+			if i == 0 && value == "body" {
+				continue
+			}
+			parts = append(parts, value)
+		case float64:
+			parts = append(parts, strconv.Itoa(int(value)))
+		}
+	}
+	return strings.Join(parts, ".")
 }
 
 func parseControlProblem(err error) (*controlProblem, bool) {
@@ -220,7 +270,10 @@ func editRequestCoded(err error, what string) *ux.CodedError {
 	if !ok {
 		return asCoded(err)
 	}
-	coded := &ux.CodedError{Code: ux.CodeResolveFailed, Msg: fmt.Sprintf("%s was refused (%s): %s", what, p.Type, p.Detail)}
+	coded := &ux.CodedError{
+		Code: ux.CodeResolveFailed,
+		Msg:  fmt.Sprintf("%s was refused (%s): %s", what, p.Type, p.detailText()),
+	}
 	if p.Directive.Strategy == "check_access" {
 		coded.Actionable = p.Directive.Instruction
 		if cmd := p.Directive.Parameters.SuggestedCommand; cmd != "" {
@@ -230,6 +283,13 @@ func editRequestCoded(err error, what string) *ux.CodedError {
 	}
 	var he *HTTPError
 	if errors.As(err, &he) && (he.StatusCode == http.StatusUnauthorized || he.StatusCode == http.StatusForbidden) {
+		if p.Type == "invalid_poll_token" {
+			// The session is not this caller's (or has ended). That says nothing
+			// about the identity, so it is not the revoked-credentials copy.
+			coded.Actionable = "Check the session id: use the one request_access_change " +
+				"returned, and ask again if the request has ended."
+			return coded
+		}
 		return mcpCoded(err)
 	}
 	coded.Actionable = "Fix the request the error names, then retry."
