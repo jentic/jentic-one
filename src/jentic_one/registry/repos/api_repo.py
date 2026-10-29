@@ -17,6 +17,7 @@ from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.security_schemes import SecurityScheme
 from jentic_one.registry.core.schema.servers import Server
+from jentic_one.shared.broker.route_generation import mark_routes_changed
 from jentic_one.shared.db.keyset import apply_desc_keyset
 from jentic_one.shared.pagination import Cursor
 
@@ -202,10 +203,12 @@ class ApiRepository:
             msg = f"Api {api_id} not found"
             raise ValueError(msg)
         api.current_revision_id = revision_id
+        mark_routes_changed(session)
         await session.flush()
 
     @staticmethod
     async def clear_current_revision(session: AsyncSession, api_id: uuid.UUID) -> None:
+        mark_routes_changed(session)
         await session.execute(update(Api).where(Api.id == api_id).values(current_revision_id=None))
         await session.flush()
 
@@ -226,6 +229,7 @@ class ApiRepository:
         backs off instead of clobbering. ``expected_revision_id`` may be ``None`` to assert
         the API currently has no served revision.
         """
+        mark_routes_changed(session)
         result = cast(
             "CursorResult[Any]",
             await session.execute(
@@ -360,6 +364,7 @@ class ApiRepository:
         revision -> table cascade has removed the referencing rows, so the
         delete is refused even though nothing would be left dangling.
         """
+        mark_routes_changed(session)
         await session.execute(update(Api).where(Api.id == api_id).values(current_revision_id=None))
         await session.flush()
         await session.execute(delete(ApiRevision).where(ApiRevision.api_id == api_id))
