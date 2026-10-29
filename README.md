@@ -73,8 +73,9 @@ without the key stored credentials are unreadable
 docker pull ghcr.io/jentic/jentic-one-app:latest
 docker volume create jentic-data
 
-# Grab the quickstart config (SQLite on the volume; fetched from main) — tweak it, or use as is
-curl -fsSLO https://raw.githubusercontent.com/jentic/jentic-one/main/config/quickstart.env
+# Grab the quickstart config (SQLite on the volume; fetched from main) — tweak it, or use as is.
+# Skipped if you already have one, so re-running this block keeps your key.
+[ -f quickstart.env ] || curl -fsSLO https://raw.githubusercontent.com/jentic/jentic-one/main/config/quickstart.env
 
 # Generate this install's credential-encryption key into it (once — a new key
 # makes credentials stored under the old one unreadable)
