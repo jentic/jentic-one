@@ -41,6 +41,7 @@ from jentic_one.registry.services.revision_service import RevisionService
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
+from jentic_one.shared.discovery.errors import AmbiguousMatchError
 from jentic_one.shared.models import ORIGIN_CATALOG, ApiRevisionSourceType, ApiRevisionState
 
 pytestmark = pytest.mark.integration
@@ -313,9 +314,15 @@ async def test_same_vendor_apis_may_share_a_host(
         VENDOR, "widgets-admin", VERSION, str(second), identity=_IDENTITY
     )
 
+    # The admin API owns /admin alone, so sharing the host resolves normally:
+    # a gateway host serving several APIs on distinct paths keeps working.
     assert await _resolved_revision(registry_db, f"https://{HOST}/admin") == second
-    # Both live revisions serve /widgets; the most recently promoted one wins.
-    assert await _resolved_revision(registry_db) == second
+    # Both live APIs serve /widgets. That tie is not a version choice — the
+    # winner would decide which API identity credential coverage is evaluated
+    # against — so the lookup refuses it instead of picking by promotion order.
+    with pytest.raises(AmbiguousMatchError) as caught:
+        await _resolved_revision(registry_db)
+    assert caught.value.apis == [f"{VENDOR}/widgets", f"{VENDOR}/widgets-admin"]
 
 
 async def test_templated_hosts_do_not_claim_ownership(

@@ -321,19 +321,32 @@ class URLLookupService:
 
         # ``sort`` is stable, so equally specific matches keep the candidate order.
         # Unpinned candidates arrive most-recently-live revision first (see
-        # ``UrlIndexRepository.lookup_by_host_live``): when two live revisions
-        # (e.g. two versions of one vendor's API) serve the same URL, the newest
-        # wins, as it did before the index was scoped per revision. Ambiguity is
-        # only an error *within* the winning revision — its own spec is at fault.
+        # ``UrlIndexRepository.lookup_by_host_live``).
         matches.sort(key=lambda m: m.specificity_key)
         best = matches[0]
-        tied = [
-            m
-            for m in matches
-            if m.specificity_key == best.specificity_key and m.revision_id == best.revision_id
-        ]
+        equally_specific = [m for m in matches if m.specificity_key == best.specificity_key]
+
+        # Within one revision the tie is that spec's own fault: two templates it
+        # declares both match, and no ordering outside the spec can break it.
+        tied = [m for m in equally_specific if m.revision_id == best.revision_id]
         if len(tied) > 1:
             raise AmbiguousMatchError(len(tied))
+
+        # Across revisions of *one* API — its versions, or a promotion that left
+        # another version live — the newest wins: the request names a URL, not a
+        # version, so the API's own latest is the defensible answer.
+        #
+        # Two *different* APIs serving one URL is not a version choice. The
+        # winner's identity is what credential coverage is evaluated against
+        # (``credential_covers``), so resolving by promotion order silently
+        # decides which credential the broker injects, and promoting an
+        # unrelated API moves a working request onto a credential that does not
+        # cover it. Fail closed with the ambiguity the caller can act on.
+        # APIs that share a host but no path never tie, so a gateway host
+        # serving several APIs on distinct paths is unaffected.
+        apis = sorted({f"{m.candidate.vendor}/{m.candidate.name}" for m in equally_specific})
+        if len(apis) > 1:
+            raise AmbiguousMatchError(len(equally_specific), apis=apis)
 
         return best
 
