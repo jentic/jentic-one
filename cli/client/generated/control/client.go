@@ -11837,6 +11837,11 @@ type ClientInterface interface {
 	//
 	// Get the result of a completed job — polymorphic by kind.
 	//
+	// Answers ``409`` unless the job's ``status`` is ``completed`` (pending,
+	// running, failed or cancelled), and ``410`` once an
+	// approved execution's result is past
+	// ``held_executions.result_retention_seconds``.
+	//
 	// Corresponds with GET /jobs/{job_id}/result (the `GetJobResult` operationId).
 	GetJobResult(ctx context.Context, jobId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -16262,6 +16267,11 @@ func (c *Client) GetJob(ctx context.Context, jobId string, reqEditors ...Request
 // GetJobResult Get Job Result
 //
 // Get the result of a completed job — polymorphic by kind.
+//
+// Answers “409“ unless the job's “status“ is “completed“ (pending,
+// running, failed or cancelled), and “410“ once an
+// approved execution's result is past
+// “held_executions.result_retention_seconds“.
 //
 // Corresponds with GET /jobs/{job_id}/result (the `GetJobResult` operationId).
 func (c *Client) GetJobResult(ctx context.Context, jobId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -29040,6 +29050,11 @@ type ClientWithResponsesInterface interface {
 	//
 	// Get the result of a completed job — polymorphic by kind.
 	//
+	// Answers ``409`` unless the job's ``status`` is ``completed`` (pending,
+	// running, failed or cancelled), and ``410`` once an
+	// approved execution's result is past
+	// ``held_executions.result_retention_seconds``.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /jobs/{job_id}/result (the `GetJobResult` operationId).
@@ -40451,6 +40466,8 @@ type GetJobHTTPResp struct {
 	ApplicationproblemJSON401 *ProblemDetail
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -40479,6 +40496,11 @@ func (r GetJobHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r GetJobHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetJobHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -40541,6 +40563,12 @@ type GetJobResultHTTPResp struct {
 	ApplicationproblemJSON401 *ProblemDetail
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
+	// ApplicationproblemJSON410 the response for an HTTP 410 `application/problem+json` response
+	ApplicationproblemJSON410 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -40569,6 +40597,21 @@ func (r GetJobResultHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r GetJobResultHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetJobResultHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r GetJobResultHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON410 returns the response for an HTTP 410 `application/problem+json` response
+func (r GetJobResultHTTPResp) GetApplicationproblemJSON410() *ProblemDetail {
+	return r.ApplicationproblemJSON410
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -48295,6 +48338,11 @@ func (c *ClientWithResponses) GetJobWithResponse(ctx context.Context, jobId stri
 // GetJobResultWithResponse Get Job Result
 //
 // Get the result of a completed job — polymorphic by kind.
+//
+// Answers “409“ unless the job's “status“ is “completed“ (pending,
+// running, failed or cancelled), and “410“ once an
+// approved execution's result is past
+// “held_executions.result_retention_seconds“.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -58588,6 +58636,13 @@ func ParseGetJobHTTPResp(rsp *http.Response) (*GetJobHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -58662,6 +58717,27 @@ func ParseGetJobResultHTTPResp(rsp *http.Response) (*GetJobResultHTTPResp, error
 			return nil, err
 		}
 		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON410 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
