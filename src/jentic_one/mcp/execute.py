@@ -715,6 +715,13 @@ def _denial_next_tool(problem_type: str, directive: dict[str, Any] | None) -> st
         parameters = directive.get("parameters")
         if isinstance(parameters, dict) and parameters.get("suggested_command"):
             return "request_connection"
+    # A rules denial is change-shaped: its directive carries the edit to ask
+    # for (``parameters.edit``), so the pointer names the tool that asks
+    # rather than sending the agent to re-read an identity it already knows.
+    if directive is not None:
+        parameters = directive.get("parameters")
+        if isinstance(parameters, dict) and isinstance(parameters.get("edit"), dict):
+            return "request_access_change"
     return "whoami"
 
 
@@ -977,8 +984,8 @@ async def send_to_broker(
     # Protected headers merge LAST so a model-supplied ``headers`` tool-arg
     # can never override the caller's bearer or the ``jentic-mcp/`` UA the
     # broker derives ``Origin.MCP`` from (case-insensitive duplicates are
-    # dropped first — two spellings must not ride the wire). NOTE: the Go twin
-    # (``agentops/execute.go``) still merges the other way — follow-up filed.
+    # dropped first — two spellings must not ride the wire). The Go twin
+    # (``agentops/execute.go``) merges the same way round.
     for protected in ("authorization", "user-agent"):
         for key in [k for k in request_headers if k.lower() == protected]:
             del request_headers[key]

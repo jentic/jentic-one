@@ -36,11 +36,14 @@ _OPEN_SESSION_FOR_API = text(
 )
 
 
-# An agent's open edit of one binding (at most one: the open-edit index).
+# An open edit of one binding, whoever opened it: a human opening a
+# reviewable edit for the agent is exactly the review the denial should
+# relay, so the directive points at it rather than telling the agent to file
+# a second request for the same change. The API-target query carries no
+# initiator clause either.
 _OPEN_EDIT_FOR_BINDING = text(
     "SELECT cs.id FROM connect_sessions cs "
     "WHERE cs.agent_id = :agent_id AND cs.credential_id = :credential_id "
-    "AND cs.initiator_actor_id = :agent_id "
     "AND cs.intent = 'edit' AND cs.state IN ('created', 'awaiting_app', 'polling') "
     "ORDER BY cs.created_at DESC LIMIT 1"
 )
