@@ -512,6 +512,46 @@ async def test_model_supplied_headers_cannot_override_protected_headers(broker) 
     assert seen["x_custom"] == "rides"
 
 
+async def test_reason_rides_as_a_percent_encoded_jentic_reason_header(broker) -> None:
+    """``reason`` is the agent's own words for the reviewer: UTF-8, percent-
+    encoded so the header stays ASCII, with ``+`` and ``%`` escaped so the
+    broker's ``unquote`` reads them back as text. A caller-supplied header wins."""
+    seen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["reason"] = request.headers.get("Jentic-Reason")
+        return httpx.Response(200, headers={"Content-Type": "application/json"}, content=b"{}")
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(
+        env,
+        "execute",
+        {
+            "operation_id": "POST:/v1/pets",
+            "body": {"name": "Bob"},
+            "reason": "Customer 4821 asked: 50% off + a refund (café)",
+        },
+    )
+    assert not result.is_error, result.content
+    assert (
+        seen["reason"]
+        == "Customer%204821%20asked%3A%2050%25%20off%20%2B%20a%20refund%20%28caf%C3%A9%29"
+    )
+
+    result = await dispatch_tool_call(
+        env,
+        "execute_read",
+        {"operation_id": "GET:/v1/pets", "reason": "ignored", "headers": {"Jentic-Reason": "mine"}},
+    )
+    assert not result.is_error, result.content
+    assert seen["reason"] == "mine"
+
+    result = await dispatch_tool_call(env, "execute_read", {"operation_id": "GET:/v1/pets"})
+    assert not result.is_error, result.content
+    assert seen["reason"] is None
+
+
 async def test_loopback_prefixed_broker_hostname_is_refused(broker) -> None:
     """MINOR-1 regression: ``127.0.0.1.evil.example`` is a resolvable public
     DNS name — SEC-1 parses the host as an IP (Go ``net.ParseIP`` semantics),

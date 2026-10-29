@@ -255,6 +255,12 @@ func BuildRequest(ctx context.Context, r ExecuteRequest) (*http.Request, error) 
 	if r.IdempotencyKey != "" && req.Header.Get("Idempotency-Key") == "" {
 		req.Header.Set("Idempotency-Key", r.IdempotencyKey)
 	}
+	// The agent's reason rides percent-encoded (a header carries ASCII only);
+	// PathEscape keeps "+" literal, which is how the broker reads it. A caller
+	// that set the header itself wins.
+	if r.Reason != "" && req.Header.Get("Jentic-Reason") == "" {
+		req.Header.Set("Jentic-Reason", url.PathEscape(r.Reason))
+	}
 
 	return req, nil
 }
