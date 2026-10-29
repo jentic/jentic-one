@@ -2199,6 +2199,19 @@ class ConnectSessionService:
         self._require_scope_change(consent, baseline, result)
         if apply:
             await self._require_agent_binding_allowed(agent_id, identity, late_bound=False)
+            if new_scopes:
+                # Everything this apply can still be refused for, before the
+                # session exists: a refusal used to leave an open session
+                # against the agent's quota, so a handful of them denied the
+                # agent any further request at all.
+                self._require_rule_set_change_allowed(baseline, identity)
+                await self._require_consent_allowed(
+                    credential,
+                    agent_id,
+                    identity,
+                    scopes=result["scopes"],
+                    granted=set(baseline.get("granted_scopes") or []),
+                )
             if not new_scopes:
                 return await self._apply_edit_now(
                     credential=credential,
@@ -2469,21 +2482,15 @@ class ConnectSessionService:
         assert row.agent_id is not None
         async with self._ctx.control_db.session() as session:
             credential = await CredentialRepository.get_by_id(session, row.credential_id)
-        consent = await self._consent_source(credential) if credential is not None else None
-        if credential is None or consent is None:
-            raise ScopesNotSupportedError()
-        handler_cls = consent.handler_cls
         granted = set((row.baseline or {}).get("granted_scopes") or [])
-        if consent.entry is not None:
-            # What the change adds, as the open path validates: a scope the
-            # grant already holds is not re-checked, so a credential carrying
-            # one the catalog dropped stays editable instead of wedging.
-            unknown = self._vendors.validate_scopes(
-                consent.entry, sorted(set(change["scopes"]) - granted)
-            )
-            if unknown:
-                raise ScopeValidationError(unknown)
-        await self._require_scope_change_allowed(credential, row.agent_id, identity)
+        # Only what the change adds is validated, as the open path does: a
+        # scope the grant already holds is not re-checked, so a credential
+        # carrying one the catalog dropped stays editable instead of wedging.
+        consent = await self._require_consent_allowed(
+            credential, row.agent_id, identity, scopes=change["scopes"], granted=granted
+        )
+        assert credential is not None  # _require_consent_allowed refuses a missing one
+        handler_cls = consent.handler_cls
         # The agents the approver saw the widening reach: one that binds while
         # the grant is out does not get it without another review.
         change = {
@@ -2911,6 +2918,40 @@ class ConnectSessionService:
         )
         await self._emit_edit_applied(row, approver, bound=change["bind"] or change["resume"])
 
+    @staticmethod
+    def _require_rule_set_change_allowed(baseline: Mapping[str, Any], identity: Identity) -> None:
+        """A shared set is its owner's (or an admin's) to change; a curated one is copied."""
+        rule_set = baseline.get("rule_set")
+        if rule_set is None or bool(rule_set["curated"]):
+            return
+        owner = rule_set.get("created_by")
+        if ORG_ADMIN not in identity.permissions and owner != identity.sub:
+            raise RuleSetConfirmForbiddenError(rule_set["id"])
+
+    async def _require_consent_allowed(
+        self,
+        credential: Credential | None,
+        agent_id: str,
+        identity: Identity,
+        *,
+        scopes: list[str],
+        granted: set[str],
+    ) -> ConsentSource:
+        """Everything a scope change can be refused for, before anything is written.
+
+        Shared by the consent itself and by the apply path's pre-check, so a
+        refused request never leaves an open session behind.
+        """
+        consent = await self._consent_source(credential) if credential is not None else None
+        if credential is None or consent is None:
+            raise ScopesNotSupportedError()
+        if consent.entry is not None:
+            unknown = self._vendors.validate_scopes(consent.entry, sorted(set(scopes) - granted))
+            if unknown:
+                raise ScopeValidationError(unknown)
+        await self._require_scope_change_allowed(credential, agent_id, identity)
+        return consent
+
     def _edit_change(
         self,
         baseline: Mapping[str, Any],
@@ -2928,10 +2969,7 @@ class ConnectSessionService:
         """
         rule_set = baseline.get("rule_set")
         copy_curated = rule_set is not None and bool(rule_set["curated"])
-        if rule_set is not None and not copy_curated:
-            owner = rule_set.get("created_by")
-            if ORG_ADMIN not in identity.permissions and owner != identity.sub:
-                raise RuleSetConfirmForbiddenError(rule_set["id"])
+        self._require_rule_set_change_allowed(baseline, identity)
         rules = [rule_to_write(r) for r in permission_rules]
         _, before = target_rules(baseline)
         # Stripping every rule is default deny: the agent could call nothing.
@@ -3304,7 +3342,7 @@ class ConnectSessionService:
         async with self._ctx.control_db.session() as session:
             row = await ConnectSessionRepository.get_by_id(session, session_id)
         row = await self._require_session_access(row, poll_token=poll_token, identity=identity)
-        if row.intent == INTENT_EDIT:
+        if row.intent == INTENT_EDIT and row.baseline is not None:
             return await self._edit_review_data(row, identity)
         if row.state == AWAITING_APP:
             row = await self._try_leave_awaiting_app(row)
@@ -4531,6 +4569,12 @@ class ConnectSessionService:
             "revision_id": variant.checks.revision_id,
         }
         cas_fields: dict[str, Any] = {"agent_id": agent_id} if late_bound else {}
+        # Taking the edit intent means the review reads this session as an
+        # edit, which is derived from a baseline. Without one the read raised
+        # out of the app for the whole window the session awaits its vendor
+        # callback, so the binding-to-be is snapshot here: no rules and no
+        # rule set yet, with the chosen credential's grant as it stands.
+        baseline = await self._binding_snapshot(agent_id, credential.id, None)
         async with self._ctx.control_db.transaction() as session:
             won = await ConnectSessionRepository.transition_state(
                 session,
@@ -4539,6 +4583,7 @@ class ConnectSessionService:
                 from_states=(row.state,),
                 revision_id=variant.checks.revision_id,
                 intent=INTENT_EDIT,
+                baseline=baseline,
                 credential_id=credential.id,
                 target_kind=TARGET_KIND_VENDOR,
                 vendor=consent.key or credential.api_vendor,

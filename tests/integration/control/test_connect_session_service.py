@@ -58,6 +58,7 @@ from jentic_one.control.repos.connect_session_revision_repo import (
     ConnectSessionRevisionRepository,
 )
 from jentic_one.control.repos.effects_repo import EffectsRepository
+from jentic_one.control.repos.prerequisite_repo import PrerequisiteRepository
 from jentic_one.control.services.credentials.errors import CredentialNotFoundError
 from jentic_one.control.services.credentials.schemas.credentials import CredentialCreate
 from jentic_one.control.services.credentials.schemas.provision import APIReference
@@ -90,6 +91,7 @@ from jentic_one.control.services.integrations.errors import (
     OAuthAppChangedError,
     RevisionChangedError,
     RevisionRequiredError,
+    RuleSetConfirmForbiddenError,
     ScopesNotSupportedError,
     ScopeValidationError,
     SecuritySchemesLookupUnavailableError,
@@ -3048,6 +3050,49 @@ async def test_rules_changed_while_a_grant_is_out_are_kept_and_the_rest_reopens(
         identity=Identity(sub=_USER_ID, permissions=["events:read"]),
     )
     assert [e.data.get("credential_id") for e in applied.data].count(credential_id) >= 1
+
+
+async def test_a_refused_apply_leaves_no_open_session_behind(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    """A refusal must not spend the agent's open-session quota.
+
+    The session was written before the checks that refuse it, so each refused
+    request left one open: a handful of them and the agent could open no
+    further request at all.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    credential_id = await _connected_device_credential(ctx, svc)
+    # The binding is governed by a shared rule set someone else owns, so a
+    # change to it is refused — after the scope check, late in the apply.
+    rule_set, _ = await CredentialService(ctx).create_rule_set(
+        name=f"quota shared set {uuid.uuid4().hex[:8]}",
+        description=None,
+        rules=[_READ_RULE],
+        identity=Identity(sub=_OTHER_USER_ID, permissions=["credentials:write"]),
+    )
+    async with ctx.admin_db.transaction() as session:
+        await PrerequisiteRepository.set_binding_rule_set(
+            session, agent_id=_AGENT_ID, credential_id=credential_id, rule_set_id=rule_set.id
+        )
+
+    with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)):
+        for _ in range(3):
+            with pytest.raises(RuleSetConfirmForbiddenError):
+                await svc.create_edit_session(
+                    credential_id=credential_id,
+                    agent_id=_AGENT_ID,
+                    identity=_USER_IDENTITY,
+                    request=EditRequest(add_scopes=["repo"]),
+                    apply=True,
+                )
+    async with ctx.control_db.session() as session:
+        assert await ConnectSessionRepository.count_open(session, agent_ids=[_AGENT_ID]) == 0
 
 
 async def test_a_grant_that_moved_under_an_open_edit_reads_as_stale(
