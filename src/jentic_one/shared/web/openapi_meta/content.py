@@ -171,9 +171,12 @@ JWKS, then RFC 7523 JWT-bearer assertions exchanged at
   response belongs to the upstream API. Standard headers
   (`Authorization`, `Prefer`, `Idempotency-Key`, `Accept`,
   `traceparent`, `tracestate`) keep their RFC names.
-- **Append-only audit.** Admin / Audit records are never mutated
-  after the fact; retention is enforced via purge policy, not
-  edit.
+- **Append-only audit.** Audit entries, execution records and events
+  are never mutated after the fact. They — and finished jobs and their
+  results — are kept indefinitely: there is no API or setting to prune
+  them yet, so trim them at the database level. Approved-execution
+  results are the exception: they expire after
+  `held_executions.result_retention_seconds`.
 - **Trace correlation.** Every Broker call records a W3C
   `trace_id` on its `ExecutionRecord` and on any `Event` derived
   from it. To walk the executions you can see under one logical request, use
