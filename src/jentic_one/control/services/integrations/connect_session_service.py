@@ -2857,6 +2857,15 @@ class ConnectSessionService:
             if change.get("keep_rules")
             else [rule_content(r) for r in change["rules"]]
         )
+        # The broker caches the binding, its rules and the token. An edit that
+        # narrows access must take effect at once, not when a TTL lapses, so
+        # every landing path evicts here (this is the one sink for all of
+        # them: apply, confirm, the vendor grant and the reopen).
+        self._ctx.invalidate_broker_caches(
+            agent_id=row.agent_id,
+            credential_id=row.credential_id,
+            rule_set_id=change["rule_set_id"],
+        )
         _logger.info(
             "connect_session.edit_applied",
             session_id=row.id,
