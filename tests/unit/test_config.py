@@ -22,6 +22,7 @@ from pydantic import SecretStr, ValidationError
 from jentic_one.shared import config as config_module
 from jentic_one.shared.config import (
     _ONESHOT_CONFIG_CACHE,
+    DEFAULT_LATENCY_BUCKETS_MS,
     AdminAuthConfig,
     AdminInviteConfig,
     AppConfig,
@@ -40,6 +41,7 @@ from jentic_one.shared.config import (
     HeldExecutionsConfig,
     IdempotencyConfig,
     IngestConfig,
+    MetricsConfig,
     OAuthRateLimitConfig,
     RuntimeConfig,
     SigningKeyConfig,
@@ -157,6 +159,49 @@ def test_events_stream_recheck_seconds_default_env_and_bounds(config_file: Path,
         pytest.raises(ConfigError, match="stream_recheck_seconds"),
     ):
         load_config(config_file)
+
+
+def test_latency_buckets_default_yaml_and_env(
+    config_file: Path, sample_config_dict: dict[str, Any], tmp_path: Path
+):
+    """Default, YAML override, and comma-separated env override of latency_buckets_ms."""
+    assert load_config(config_file).observability.metrics.latency_buckets_ms == list(
+        DEFAULT_LATENCY_BUCKETS_MS
+    )
+
+    path = tmp_path / "buckets.yaml"
+    path.write_text(
+        yaml.dump(
+            {
+                **sample_config_dict,
+                "observability": {"metrics": {"latency_buckets_ms": [0.5, 3, 40]}},
+            }
+        )
+    )
+    assert load_config(path).observability.metrics.latency_buckets_ms == [0.5, 3.0, 40.0]
+
+    env = {"JENTIC__OBSERVABILITY__METRICS__LATENCY_BUCKETS_MS": "2, 4.5,90"}
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.observability.metrics.latency_buckets_ms == [2.0, 4.5, 90.0]
+
+
+@pytest.mark.parametrize(
+    ("buckets", "match"),
+    [
+        ([], "at least 1 item"),
+        ([5, 2, 10], "strictly increasing"),
+        ([1, 1, 2], "strictly increasing"),
+        ([0, 1, 2], "greater than 0"),
+        ([-1, 1], "greater than 0"),
+        ([1, float("inf")], "finite number"),
+        ([1, float("nan")], "finite number"),
+        ([float(i) for i in range(1, 66)], "at most 64 items"),
+    ],
+)
+def test_latency_buckets_validation(buckets: list[float], match: str):
+    with pytest.raises(ValidationError, match=match):
+        MetricsConfig(latency_buckets_ms=buckets)
 
 
 def test_http_wire_trace_defaults_off_and_env_enables(config_file: Path):
