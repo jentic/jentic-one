@@ -55,6 +55,12 @@ PROBLEM_CONTENT_TYPE = "application/problem+json"
 #: the JSON payload>}``; the execution handler decrypts it on claim.
 ENCRYPTED_PAYLOAD_KEY = "_enc"
 
+#: An async or held execution payload carries the caller's ``Cookie`` under this
+#: key as platform-key ciphertext, so the worker sends the caller's cookies
+#: upstream exactly as the sync route does without the payload ever holding
+#: them in plaintext.
+INBOUND_COOKIE_PAYLOAD_KEY = "inbound_cookie_enc"
+
 #: What the agent is told to do with a held 202.
 HELD_AGENT_DIRECTIVE = (
     "This call needs human approval. Most important: show the user the review_url, "

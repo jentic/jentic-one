@@ -4,7 +4,8 @@ Drives the router's async branch (``_handle_async``) with a real Context and
 admin DB, then runs the stored job through the worker's ``ExecutionHandler``
 and the broker's ``PipelineExecutor`` against a real local HTTP upstream. The
 JSON body must arrive with its ``Content-Type`` and the vendor version header,
-while the caller's ``Authorization`` and ``Cookie`` never reach the job payload.
+and the caller's ``Cookie`` with it (#1957), while the caller's ``Authorization``
+never reaches the job payload and the cookie is stored only as ciphertext.
 """
 
 from __future__ import annotations
@@ -157,6 +158,7 @@ async def test_async_post_reaches_upstream_with_content_and_version_headers(
             executor=PipelineExecutor(registry),
             # The test upstream listens on loopback, which the default policy blocks.
             egress=EgressConfig(allowed_private_subnets=["127.0.0.0/8"]),
+            encryption=ctx.encryption,
         )
         result = await handler.execute(
             job_id,
@@ -173,5 +175,5 @@ async def test_async_post_reaches_upstream_with_content_and_version_headers(
     assert head["content-type"] == "application/json"
     assert head["notion-version"] == "2022-06-28"
     assert "authorization" not in head
-    assert "cookie" not in head
+    assert head["cookie"] == "sid=agent-session"
     assert upstream.bodies[0] == _BODY
