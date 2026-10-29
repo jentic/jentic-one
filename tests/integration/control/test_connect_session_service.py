@@ -63,8 +63,8 @@ from jentic_one.control.services.credentials.schemas.credentials import Credenti
 from jentic_one.control.services.credentials.schemas.provision import APIReference
 from jentic_one.control.services.credentials.service import CredentialService
 from jentic_one.control.services.credentials.state import StateReplayedError, new_browser_binding
+from jentic_one.control.services.integrations import connect_session_service, identity_echo
 from jentic_one.control.services.integrations import device_authorization as df
-from jentic_one.control.services.integrations import identity_echo
 from jentic_one.control.services.integrations.connect_session_service import (
     ApiTarget,
     AuthCodeConfirmResult,
@@ -93,6 +93,7 @@ from jentic_one.control.services.integrations.errors import (
     ScopesNotSupportedError,
     ScopeValidationError,
     SecuritySchemesLookupUnavailableError,
+    TooManyRevisionsError,
 )
 from jentic_one.control.services.integrations.flow_handlers.base import StatusReport, SuccessTokens
 from jentic_one.control.services.integrations.flow_handlers.device_authorization import (
@@ -2603,6 +2604,35 @@ async def test_amending_a_create_session_replaces_its_ask(
             identity=_AGENT_IDENTITY,
             amend=SessionAmend(fields=frozenset({"resume"}), resume=True),
         )
+
+
+async def test_a_session_holds_only_so_many_revisions(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nothing capped the chain, and every accepted amend also writes an audit row."""
+    monkeypatch.setattr(connect_session_service, "_MAX_SESSION_REVISIONS", 3)
+    svc = ConnectSessionService(integration_context)
+    created = await svc.create_session(
+        vendor_key="testdev", agent_id=_AGENT_ID, identity=_AGENT_IDENTITY
+    )
+    for number in (2, 3):
+        amended = await svc.amend_session(
+            created.session_id,
+            identity=_AGENT_IDENTITY,
+            amend=SessionAmend(fields=frozenset({"reason"}), reason=f"take {number}"),
+        )
+        assert amended.revision_number == number
+    with pytest.raises(TooManyRevisionsError) as capped:
+        await svc.amend_session(
+            created.session_id,
+            identity=_AGENT_IDENTITY,
+            amend=SessionAmend(fields=frozenset({"reason"}), reason="once more"),
+        )
+    assert capped.value.limit == 3
 
 
 async def test_only_the_initiator_or_an_approver_amends_a_users_own_session(

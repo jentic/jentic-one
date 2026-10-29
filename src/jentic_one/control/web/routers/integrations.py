@@ -848,6 +848,7 @@ async def amend_connect_session(
         ),
     ],
     body: AmendSessionRequest,
+    request: Request,
     identity: Identity = get_current_identity(
         required_permissions=["credentials:connect", "credentials:write"]
     ),
@@ -865,6 +866,7 @@ async def amend_connect_session(
     URL and poll token stay the same, and any confirm must name the new
     `revision_id`.
     """
+    await _enforce_connect_rate_limit(request, identity)
     fields = frozenset(body.model_fields_set)
     rules = body.rules
     amended = await svc.amend_session(

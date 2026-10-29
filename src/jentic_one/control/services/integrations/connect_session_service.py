@@ -140,6 +140,7 @@ from jentic_one.control.services.integrations.errors import (
     SessionNotFoundError,
     TokenEndpointMovedError,
     TooManyOpenSessionsError,
+    TooManyRevisionsError,
     UnknownApiError,
     UnknownRuleError,
     UnsupportedTargetKindError,
@@ -668,6 +669,10 @@ _OAUTH_FLOWS: tuple[str, ...] = (DeviceAuthorizationHandler.kind, AuthCodeFlowHa
 
 # How long a session's terminal outcome is kept once the session has ended.
 _OUTCOME_RETENTION = timedelta(days=30)
+
+#: Revisions one session may hold. An ask that has been rewritten this often
+#: is better restated than amended again, and the chain is read whole.
+_MAX_SESSION_REVISIONS = 50
 
 #: ``resolved_flow`` / ``state`` of an OAuth API target with no OAuth app yet.
 AWAITING_APP = "awaiting_app"
@@ -1930,6 +1935,8 @@ class ConnectSessionService:
         current = await self._current_revision(row)
         if current is None:
             raise _session_closed(row)
+        if current.number >= _MAX_SESSION_REVISIONS:
+            raise TooManyRevisionsError(row.id, _MAX_SESSION_REVISIONS)
 
         fields: dict[str, Any]
         if row.intent == INTENT_EDIT:

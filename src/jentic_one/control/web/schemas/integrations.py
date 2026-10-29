@@ -525,6 +525,10 @@ class AmendSessionRequest(BaseModel):
     def _changes_something(self) -> AmendSessionRequest:
         if not self.model_fields_set:
             raise ValueError("an amend must carry at least one field")
+        if all(getattr(self, field) is None for field in self.model_fields_set):
+            # ``{"reason": null}`` carried a field but asked for nothing, and
+            # every such call appended a revision.
+            raise ValueError("an amend must carry at least one field with a value")
         return self
 
 

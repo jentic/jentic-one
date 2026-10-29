@@ -66,6 +66,7 @@ from jentic_one.control.services.integrations.errors import (
     SessionClosedError,
     SessionNotFoundError,
     TooManyOpenSessionsError,
+    TooManyRevisionsError,
     UnknownApiError,
     UnknownRuleError,
     UnpinnedServerHostError,
@@ -158,6 +159,7 @@ _CONNECT_SESSION_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     RulesRequiredError: (422, "rules_required"),
     ConfirmKindMismatchError: (400, "confirm_kind_mismatch"),
     TooManyOpenSessionsError: (429, "too_many_open_sessions"),
+    TooManyRevisionsError: (409, "too_many_revisions"),
     RecentlyRejectedError: (429, "recently_rejected"),
     ExistingCredentialNotFoundError: (404, "existing_credential_not_found"),
     InsufficientGrantedScopesError: (409, "insufficient_granted_scopes"),
@@ -272,6 +274,8 @@ def _connect_session_response_hook(
         extra["variables"] = exc.variables
     elif isinstance(exc, TooManyOpenSessionsError):
         extra.update(scope=exc.scope, limit=exc.limit)
+    elif isinstance(exc, TooManyRevisionsError):
+        extra["limit"] = exc.limit
     elif isinstance(exc, ConfirmKindMismatchError):
         extra["allowed_kinds"] = exc.allowed
     elif isinstance(exc, RecentlyRejectedError):
