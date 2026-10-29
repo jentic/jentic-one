@@ -21,7 +21,7 @@ Secret values are never logged — only which source matched (redaction rule).
 
 from __future__ import annotations
 
-import asyncio
+import math
 import os
 import time
 from dataclasses import dataclass
@@ -34,6 +34,7 @@ import httpx
 import structlog
 
 from jentic_one.shared.aws.sigv4 import SigV4Material
+from jentic_one.shared.cache import AsyncTTLCache
 
 _log = structlog.get_logger(__name__)
 
@@ -58,6 +59,13 @@ class _CachedMaterial:
     refresh_at: float | None
 
 
+def _remaining_lifetime(cached: _CachedMaterial) -> float:
+    """Seconds until ``cached`` must be re-resolved (``inf`` for static keys)."""
+    if cached.refresh_at is None:
+        return math.inf
+    return cached.refresh_at - time.monotonic()
+
+
 def _expiry_to_monotonic_deadline(expiration_iso: str | None) -> float | None:
     """Convert an ISO-8601 ``Expiration`` to a monotonic refresh deadline."""
     if not expiration_iso:
@@ -70,8 +78,8 @@ def _expiry_to_monotonic_deadline(expiration_iso: str | None) -> float | None:
 class CredentialProvider:
     """Resolves and caches SigV4 material for one (region, service) pair.
 
-    One instance is owned by the license client so the cache and its
-    single-flight lock are shared across the checker's refresh calls. The
+    One instance is owned by the license client so the cache and its in-flight
+    resolution are shared across the checker's refresh calls. The
     ``httpx.AsyncClient`` is injected (not owned) so tests stub the metadata /
     STS endpoints with ``httpx.MockTransport`` and production shares the
     client the license client already holds.
@@ -81,8 +89,13 @@ class CredentialProvider:
         self._http = http
         self._region = region
         self._service = service
-        self._cached: _CachedMaterial | None = None
-        self._lock = asyncio.Lock()
+        # A size-1 cache whose entry lives no longer than the material's own
+        # refresh deadline (the resolution's own duration is charged against it,
+        # so it can only expire early); a failed resolution is not cached, so
+        # the next call retries.
+        self._cache: AsyncTTLCache[None, _CachedMaterial] = AsyncTTLCache(
+            ttl_for=_remaining_lifetime, max_entries=1
+        )
 
     async def resolve(self) -> SigV4Material:
         """Return valid signing material, re-resolving expired temporaries.
@@ -91,19 +104,8 @@ class CredentialProvider:
         or the matching source fails — the checker maps that to an ``UNKNOWN``
         verdict, never a crash.
         """
-        cached = self._cached
-        now = time.monotonic()
-        if cached is not None and (cached.refresh_at is None or now < cached.refresh_at):
-            return cached.material
-
-        async with self._lock:
-            cached = self._cached
-            now = time.monotonic()
-            if cached is not None and (cached.refresh_at is None or now < cached.refresh_at):
-                return cached.material
-            resolved = await self._resolve_uncached()
-            self._cached = resolved
-            return resolved.material
+        cached = await self._cache.get_or_load(None, self._resolve_uncached)
+        return cached.material
 
     async def _resolve_uncached(self) -> _CachedMaterial:
         env = os.environ

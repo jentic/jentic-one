@@ -12,7 +12,6 @@ from jentic_one.admin.services.monitoring_service import (
     ExecutionStats,
     MonitoringService,
     TopOp,
-    _CacheEntry,
 )
 
 
@@ -38,7 +37,7 @@ async def test_cache_returns_cached_result_within_ttl() -> None:
     ctx = _make_ctx()
     svc = MonitoringService(ctx)
     cached = _sample_result()
-    svc._cache[7] = _CacheEntry(result=cached, cached_at=time.monotonic())
+    svc._cache.put(7, cached, stamped_at=time.monotonic())
 
     result = await svc.get_execution_stats(7)
     assert result is cached
@@ -61,7 +60,7 @@ async def test_stale_cache_triggers_refresh() -> None:
     ctx = _make_ctx()
     svc = MonitoringService(ctx)
     stale = _sample_result()
-    svc._cache[7] = _CacheEntry(result=stale, cached_at=time.monotonic() - 300)
+    svc._cache.put(7, stale, stamped_at=time.monotonic() - 300)
 
     fresh = ExecutionStats(
         total_executions=200,
@@ -85,8 +84,8 @@ async def test_different_days_use_separate_cache_keys() -> None:
         daily_buckets=[],
         top_operations=[],
     )
-    svc._cache[7] = _CacheEntry(result=result_7, cached_at=time.monotonic())
-    svc._cache[14] = _CacheEntry(result=result_14, cached_at=time.monotonic())
+    svc._cache.put(7, result_7, stamped_at=time.monotonic())
+    svc._cache.put(14, result_14, stamped_at=time.monotonic())
 
     assert await svc.get_execution_stats(7) is result_7
     assert await svc.get_execution_stats(14) is result_14

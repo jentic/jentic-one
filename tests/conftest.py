@@ -13,6 +13,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
+from jentic_one.auth.core.idp import clear_idp_adapters
 from jentic_one.shared import dns_cache
 from jentic_one.shared import metrics as shared_metrics
 from jentic_one.shared.dns_cache import ResolutionCache, clear_resolution_cache
@@ -48,6 +49,18 @@ def _isolated_resolution_cache() -> Iterator[None]:
     clear_resolution_cache()
     yield
     clear_resolution_cache()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_idp_adapters() -> Iterator[None]:
+    """Start and end every test with no memoised IdP adapter.
+
+    Each test stubs its own upstream IdP; a discovery document or JWKS cached by
+    one test's adapter must never satisfy the next test's login.
+    """
+    clear_idp_adapters()
+    yield
+    clear_idp_adapters()
 
 
 @pytest.fixture()

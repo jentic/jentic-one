@@ -330,6 +330,31 @@ def test_full_oidc_login_flow(client: TestClient, _cleanup: None) -> None:
     assert claims["email"] == "ada@example.com"
 
 
+def _upstream_calls(path_suffix: str) -> int:
+    return sum(1 for call in respx.calls if call.request.url.path.endswith(path_suffix))
+
+
+@respx.mock
+def test_second_login_reuses_the_idp_adapter(client: TestClient, _cleanup: None) -> None:
+    """Pins #1960: the IdP adapter outlives a request, so its discovery/JWKS caches work.
+
+    The second authorize for the same config must not refetch the upstream
+    discovery document or JWKS; only the per-login token and userinfo calls repeat.
+    """
+    _stub_idp(sub="google-sub-reuse", email="reuse@example.com", email_verified=True)
+
+    for attempt in range(2):
+        nonce = f"n-{attempt}"
+        start = _begin_authorize(client, state=f"s-{attempt}", nonce=nonce)
+        code = _callback(client, signed_state=start.signed_state)
+        resp = _exchange(client, code=code, code_verifier=start.code_verifier)
+        assert resp.status_code == 200, resp.text
+
+    assert _upstream_calls("/.well-known/openid-configuration") == 1
+    assert _upstream_calls("/.well-known/jwks.json") == 1
+    assert _upstream_calls("/userinfo") == 2
+
+
 @respx.mock
 def test_unverified_email_does_not_link_existing_account(
     client: TestClient, existing_local_user: str, _cleanup: None
