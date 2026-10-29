@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import math
 import secrets
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -5257,25 +5258,41 @@ class ConnectSessionService:
                 reopen = change["rules"] != [rule_to_write(r) for r in before]
                 change = {**change, "keep_rules": True, "detach_rule_set": False}
 
-        if not scopes_kept:
-            await self._write_finalise(
-                credential_id=row.credential_id,
-                handler=handler,
-                tokens=tokens,
-                connected_as=connected_as,
-                created_by=change["approved_by"],
-                close_session_id=None,
-            )
-        if reopen:
-            return await self._reopen_edit(row, change)
-        async with self._ctx.control_db.transaction() as session:
-            won = await ConnectSessionRepository.transition_state(
-                session, row.id, to_state=change["outcome"], from_states=("polling",)
-            )
-            if won:
-                await self._write_change(session, row, change)
+        # The grant, the state swap and the rules commit together. Written
+        # before the swap, a grant outlived a session cancelled or expired
+        # while the exchange was in flight: the callback reported failure and
+        # the wider token stayed, reaching every agent bound to the credential.
+        reopen_fields: dict[str, Any] = (
+            {"approved_change": None, "resolved_flow": EDIT_FLOW} if reopen else {}
+        )
+        try:
+            async with self._ctx.control_db.transaction() as session:
+                won = await ConnectSessionRepository.transition_state(
+                    session,
+                    row.id,
+                    to_state="created" if reopen else change["outcome"],
+                    from_states=("polling",),
+                    **reopen_fields,
+                )
+                if won:
+                    if not scopes_kept:
+                        await self._write_finalise(
+                            credential_id=row.credential_id,
+                            handler=handler,
+                            tokens=tokens,
+                            connected_as=connected_as,
+                            created_by=change["approved_by"],
+                            close_session_id=None,
+                            in_session=session,
+                        )
+                    if not reopen:
+                        await self._write_change(session, row, change)
+        except TokenEndpointMovedError as exc:
+            return await self._fail_token_endpoint_moved(row, exc)
         if not won:
             return StatusResult(status="failed", error_code="session_closed")
+        if reopen:
+            return await self._after_reopen(row, change)
         await self._apply_admin_change(row, change)
         await self._record_change_applied(row, change, origin=Origin.SYSTEM.value)
         return StatusResult(
@@ -5286,25 +5303,15 @@ class ConnectSessionService:
             error_code=change.get("error_code"),
         )
 
-    async def _reopen_edit(self, row: ConnectSession, change: dict[str, Any]) -> StatusResult:
+    async def _after_reopen(self, row: ConnectSession, change: dict[str, Any]) -> StatusResult:
         """The grant landed but the rules moved since approval: reopen the rule change.
 
         The scopes are in (unless the vendor kept one the change removes), and
-        so is a resume. The request is rebased onto the
-        binding as it is now and waits on its review again, without a vendor
-        step this time.
+        so is a resume; the caller has already reopened the session in the
+        same commit as the grant. The request is rebased onto the binding as
+        it is now and waits on its review again, without a vendor step this
+        time.
         """
-        async with self._ctx.control_db.transaction() as session:
-            won = await ConnectSessionRepository.transition_state(
-                session,
-                row.id,
-                to_state="created",
-                from_states=("polling",),
-                approved_change=None,
-                resolved_flow=EDIT_FLOW,
-            )
-        if not won:
-            return StatusResult(status="failed", error_code="session_closed")
         await self._apply_admin_change(row, change)
         # The grant (and a resume) landed, so it is audited like any applied
         # change; ``keep_rules`` keeps the rules out of it, as none were written.
@@ -5340,6 +5347,15 @@ class ConnectSessionService:
         attrs = {"vendor": row.vendor, "flow": row.resolved_flow}
         _sessions_terminal.add(1, {**attrs, "outcome": "connected"})
         _time_to_connected.record((datetime.now(UTC) - row.created_at).total_seconds(), attrs)
+
+    @asynccontextmanager
+    async def _write_transaction(self, in_session: Any | None) -> AsyncIterator[Any]:
+        """The caller's transaction when it supplied one, else a new one."""
+        if in_session is not None:
+            yield in_session
+            return
+        async with self._ctx.control_db.transaction() as owned:
+            yield owned
 
     async def _fail_token_endpoint_moved(
         self, row: ConnectSession, exc: TokenEndpointMovedError
@@ -5406,6 +5422,7 @@ class ConnectSessionService:
         connected_as: str | None,
         created_by: str,
         close_session_id: str | None,
+        in_session: Any | None = None,
     ) -> None:
         """Shared finalise write — vault token, cleanup aux, flip credential.
 
@@ -5420,6 +5437,10 @@ class ConnectSessionService:
         ``close_session_id`` is no longer live, and ``TokenEndpointMovedError``
         (nothing written) when the credential's token endpoint no longer has
         the origin ``tokens.token_url`` was exchanged at.
+
+        ``in_session`` runs the writes in the caller's transaction instead of
+        a new one, so a caller that compare-and-swaps the session itself keeps
+        the grant and that swap in one commit.
         """
         expires_at = (
             datetime.now(UTC) + timedelta(seconds=tokens.expires_in) if tokens.expires_in else None
@@ -5438,7 +5459,7 @@ class ConnectSessionService:
             " ".join(tokens.granted_scopes) if tokens.granted_scopes else tokens.scope
         )
 
-        async with self._ctx.control_db.transaction() as session:
+        async with self._write_transaction(in_session) as session:
             # Same lock as the broker refresh and a token_url edit. A
             # cross-origin edit that committed while the code was being
             # exchanged has moved the credential off the origin this grant

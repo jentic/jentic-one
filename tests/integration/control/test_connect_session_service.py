@@ -3020,6 +3020,50 @@ async def test_rules_changed_while_a_grant_is_out_are_kept_and_the_rest_reopens(
     assert [e.data.get("credential_id") for e in applied.data].count(credential_id) >= 1
 
 
+async def test_a_session_cancelled_mid_exchange_does_not_keep_the_widened_grant(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    """The grant and the session's state swap commit together.
+
+    Written first, a grant outlived the cancellation: the callback reported
+    failure while the wider token stayed on the credential, reaching every
+    agent bound to it.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    credential_id = await _connected_device_credential(ctx, svc)
+    with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)):
+        edit = await svc.create_edit_session(
+            credential_id=credential_id,
+            agent_id=_AGENT_ID,
+            identity=_USER_IDENTITY,
+            request=EditRequest(add_scopes=["repo"]),
+            apply=True,
+        )
+
+    # The approver gives up while the vendor exchange is in flight: the
+    # session ends between the exchange starting and the grant coming back.
+    async def cancel_then_succeed(*args: object, **kwargs: object) -> StatusReport:
+        await svc.cancel_session(
+            edit.session_id, poll_token=edit.poll_token, identity=_USER_IDENTITY
+        )
+        return _success(["read:user", "repo"])
+
+    echo = identity_echo.IdentityEchoResult(display="octo", raw={"login": "octo"})
+    with (
+        patch.object(DeviceAuthorizationHandler, "advance", new=cancel_then_succeed),
+        patch.object(identity_echo, "echo_identity", new=AsyncMock(return_value=echo)),
+    ):
+        await svc.advance_polling_session(edit.session_id)
+
+    # The cancellation stands: the credential keeps the grant it had.
+    assert await _token_scope(ctx, credential_id) == "read:user"
+
+
 async def test_scopes_the_vendor_adds_of_its_own_are_not_a_kept_removal(
     integration_context: Context,
     seed_test_vendors: None,
