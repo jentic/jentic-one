@@ -254,40 +254,133 @@ def reconcile_declared_path_params(path_template: str, declared_names: list[str]
     return [name for name in declared_names if name in token_names]
 
 
-def build_path_regex(path_template: str) -> re.Pattern[str]:
+def build_path_regex(path_template: str, *, operation_path: str | None = None) -> re.Pattern[str]:
     """Build a regex for matching a path template with parameters.
 
     ``{param}`` matches a single path segment; ``{+param}`` is a catch-all that
-    matches across segments.
+    matches across segments. Group names come from :func:`path_param_group_names`;
+    pass ``operation_path`` when ``path_template`` is a server base path joined
+    with it, so the operation's own parameters keep the names
+    :func:`expand_path_template` looks them up by.
     """
+    templates = (*((operation_path,) if operation_path is not None else ()), path_template)
+    names = path_param_group_names(*templates)
+    catch_all = path_param_catch_all(*templates)
     parts = PATH_PARAM_RE.split(path_template)
     regex_parts: list[str] = []
+    seen_groups: set[str] = set()
     for i, part in enumerate(parts):
         if i % 2 == 0:
             regex_parts.append(re.escape(part))
         else:
-            name, is_catch_all = _split_param_token(part)
-            safe_name = _safe_param_name(name)
-            matcher = ".+" if is_catch_all else "[^/]+"
-            regex_parts.append(f"(?P<{safe_name}>{matcher})")
+            regex_parts.append(_path_param_group(part, names, seen_groups, catch_all))
     return re.compile("^" + "".join(regex_parts) + "$")
+
+
+def path_param_group_names(*templates: str) -> dict[str, str]:
+    """Map each path-parameter name in ``templates`` to its regex group name.
+
+    A name is allocated the first time it appears, scanning ``templates`` in
+    order. Its group is :func:`_safe_param_name` of the name unless a different
+    name already holds that group (``{a.b}`` and ``{a_b}`` both sanitize to
+    ``a_b``); the later name then takes the first free ``<group>__<n>``
+    (``n`` from 2), so two distinct parameters never share a capture. Server
+    variable tokens are not path parameters and are skipped.
+    """
+    groups: dict[str, str] = {}
+    taken: set[str] = set()
+    for template in templates:
+        for token in PATH_PARAM_RE.findall(template):
+            if token.startswith(_SV_TOKEN_PREFIX):
+                continue
+            name, _is_catch_all = _split_param_token(token)
+            if name in groups:
+                continue
+            base = _safe_param_name(name)
+            group = base
+            suffix = 2
+            while group in taken:
+                group = f"{base}__{suffix}"
+                suffix += 1
+            groups[name] = group
+            taken.add(group)
+    return groups
+
+
+def path_param_catch_all(*templates: str) -> dict[str, bool]:
+    """Map each path-parameter name in ``templates`` to whether it is catch-all.
+
+    A name is catch-all only when **every** occurrence of it is: a repeat is
+    rendered once, as a named group plus back-references, so the one matcher has
+    to satisfy all of them. ``{+rest}`` matches across ``/`` and ``{rest}`` does
+    not, so a template carrying both can only be matched by the narrower of the
+    two — widening on the strength of one occurrence would let the single-segment
+    position span a separator it was never meant to.
+    """
+    catch_all: dict[str, bool] = {}
+    for template in templates:
+        for token in PATH_PARAM_RE.findall(template):
+            if token.startswith(_SV_TOKEN_PREFIX):
+                continue
+            name, is_catch_all = _split_param_token(token)
+            catch_all[name] = catch_all.get(name, True) and is_catch_all
+    return catch_all
+
+
+def _path_param_group(
+    token: str,
+    names: Mapping[str, str],
+    seen_groups: set[str],
+    catch_all: Mapping[str, bool],
+) -> str:
+    """Regex for one ``{token}`` path parameter, recording its group in ``seen_groups``.
+
+    The first occurrence of a parameter is a named capture group. A repeat of
+    the same name (e.g. ``/accounts/{account_id}/.../accounts/{account_id}``)
+    is a ``(?P=group)`` back-reference: Python's ``re`` refuses a second group
+    of the same name, and a request only instantiates the template when every
+    occurrence carries the same value, which the back-reference enforces. The
+    parameter therefore appears once in ``groupdict()``, and
+    :func:`expand_path_template` writes that single value back into every
+    occurrence.
+    """
+    name, is_catch_all = _split_param_token(token)
+    # Reconciled across every occurrence of this name, not taken from whichever
+    # one happens to be rendered first.
+    is_catch_all = catch_all.get(name, is_catch_all)
+    body = ".+" if is_catch_all else "[^/]+"
+    group = names.get(name)
+    if group is None:
+        # A server-variable token (``{~svN}``) that reached here is not a path
+        # parameter, so path_param_group_names allocated it no group. Match it
+        # without capturing rather than failing: the callers that resolve such a
+        # token against a real server variable handle it before this point, and
+        # one that does not is still a position in the path.
+        return f"(?:{body})"
+    if group in seen_groups:
+        return f"(?P={group})"
+    seen_groups.add(group)
+    return f"(?P<{group}>{body})"
 
 
 def expand_path_template(path_template: str, path_params: Mapping[str, str]) -> str | None:
     """Rebuild the concrete, server-relative request path an operation matched.
 
-    ``path_params`` are the groups a URL-index row captured (keyed by the
-    regex-safe names :func:`build_path_regex` gives them), so substituting them
-    into the normalized template reproduces exactly the operation part of the
-    normalized request path — the server base path (``/v3``, ``/{region}``) is
-    not part of the template and so never part of the result. This is the path
-    binding permission rules are authored and enforced against (#1424).
+    ``path_params`` are the groups a URL-index row captured (keyed by the group
+    names :func:`path_param_group_names` gives the operation path's parameters,
+    which the index builders allocate before any server base-path placeholder),
+    so substituting them into the normalized template reproduces exactly the
+    operation part of the normalized request path — the server base path
+    (``/v3``, ``/{region}``) is not part of the template and so never part of
+    the result. This is the path binding permission rules are authored and
+    enforced against (#1424).
 
     Returns ``None`` when a template token has no captured value (e.g. a row
     whose groups could not be recovered), so the caller can fall back
     explicitly instead of matching a half-substituted path.
     """
     normalized = normalize_path_template(path_template)
+    names = path_param_group_names(normalized)
     parts = PATH_PARAM_RE.split(normalized)
     out: list[str] = []
     for i, part in enumerate(parts):
@@ -295,7 +388,13 @@ def expand_path_template(path_template: str, path_params: Mapping[str, str]) -> 
             out.append(part)
             continue
         name, _is_catch_all = _split_param_token(part)
-        value = path_params.get(_safe_param_name(name))
+        group = names.get(name)
+        if group is None:
+            # Not a path parameter (a ``{~svN}`` server-variable token), so no
+            # captured value can name it — the same "cannot rebuild this path"
+            # answer as a group whose value is missing.
+            return None
+        value = path_params.get(group)
         if value is None:
             return None
         out.append(value)
@@ -339,8 +438,13 @@ def build_index_entry(
     host: str,
     path_template: str,
     scheme: str = "https",
+    *,
+    operation_path: str | None = None,
 ) -> URLIndexEntry:
     """Build a complete URL index entry for an operation.
+
+    ``operation_path`` is the operation's own path when ``path_template`` is a
+    server base path joined with it (see :func:`build_path_regex`).
 
     The template is canonicalized through ``normalize_path_template`` first and
     every derived field (regex, params, segment count, stored pattern) comes
@@ -353,7 +457,12 @@ def build_index_entry(
     normalized_host = normalise_host(host, scheme)
     host_regex = build_host_regex(normalized_host)
     normalized_template = normalize_path_template(path_template)
-    path_regex = build_path_regex(normalized_template)
+    path_regex = build_path_regex(
+        normalized_template,
+        operation_path=(
+            normalize_path_template(operation_path) if operation_path is not None else None
+        ),
+    )
     param_names = extract_param_names(normalized_template)
     segment_count = count_segments(normalized_template)
 
@@ -622,8 +731,20 @@ def _render_server_template(
     bindings: Mapping[str, _Binding],
     *,
     in_host: bool,
+    param_groups: Mapping[str, str],
+    param_catch_all: Mapping[str, bool],
 ) -> tuple[str, str]:
-    """Render a tokenized host/path into ``(stored pattern, regex body)``."""
+    """Render a tokenized host/path into ``(stored pattern, regex body)``.
+
+    ``param_groups`` and ``param_catch_all`` describe the path's undeclared
+    placeholders (see :func:`path_param_group_names` and
+    :func:`path_param_catch_all`). Both are required: the caller allocates them
+    over the operation path FIRST so the operation keeps the names
+    :func:`expand_path_template` resolves, and defaulting them here would
+    allocate over the merged path instead — giving a server base-path
+    placeholder an operation parameter's group. The ``in_host`` render consults
+    neither, and passes empty maps.
+    """
     display: list[str] = []
     regex: list[str] = []
     seen_groups: set[str] = set()
@@ -660,8 +781,7 @@ def _render_server_template(
         if in_host:
             regex.append(r"[^:/]+")
         else:
-            name, is_catch_all = _split_param_token(part)
-            regex.append(f"(?P<{_safe_param_name(name)}>{'.+' if is_catch_all else '[^/]+'})")
+            regex.append(_path_param_group(part, param_groups, seen_groups, param_catch_all))
     return "".join(display), "".join(regex)
 
 
@@ -689,9 +809,19 @@ def _entry_for_bindings(
     parsed = parse_server_url(tokenized)
     full_path = normalize_path_template(merge_paths(parsed.path, operation_path))
     host_display, host_regex = _render_server_template(
-        parsed.host, captured, bindings, in_host=True
+        parsed.host, captured, bindings, in_host=True, param_groups={}, param_catch_all={}
     )
-    path_display, path_regex = _render_server_template(full_path, captured, bindings, in_host=False)
+    # The operation's own parameters are named first, so a server base-path
+    # placeholder that sanitizes onto one of them takes the suffixed group and
+    # the operation keeps the names ``expand_path_template`` resolves.
+    path_display, path_regex = _render_server_template(
+        full_path,
+        captured,
+        bindings,
+        in_host=False,
+        param_groups=path_param_group_names(normalize_path_template(operation_path), full_path),
+        param_catch_all=path_param_catch_all(normalize_path_template(operation_path), full_path),
+    )
     return URLIndexEntry(
         host_pattern=host_display,
         host_regex=re.compile("^" + host_regex + "$", re.IGNORECASE),
@@ -753,7 +883,10 @@ def build_server_index_entries(
                 fixed.append(_fixed_value_group(spec.name, spec.default))
         parsed = parse_server_url(expanded)
         entry = build_index_entry(
-            parsed.host, merge_paths(parsed.path, operation_path), parsed.scheme
+            parsed.host,
+            merge_paths(parsed.path, operation_path),
+            parsed.scheme,
+            operation_path=operation_path,
         )
         entry.path_regex = re.compile(
             entry.path_regex.pattern.replace("^", "^" + "".join(fixed), 1)

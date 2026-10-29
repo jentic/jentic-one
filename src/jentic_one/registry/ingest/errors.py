@@ -2,6 +2,8 @@
 
 from enum import StrEnum
 
+from jentic_one.shared.jobs.handlers import NonRetryableJobError
+
 
 class BaseIngestError(Exception):
     """Base for all ingest errors."""
@@ -20,7 +22,35 @@ class IngestStageError(BaseIngestError):
 
 
 class IngestJobError(BaseIngestError):
-    """Raised when an ingest job fails."""
+    """Raised when an ingest job fails; the worker retries it with backoff."""
+
+
+class NonRetryableIngestJobError(IngestJobError, NonRetryableJobError):
+    """Raised when an ingest job fails for a reason no retry can change.
+
+    The worker fails the job on the attempt that raised it instead of
+    requeueing it (see :class:`~jentic_one.shared.jobs.handlers.NonRetryableJobError`).
+    """
+
+
+class UnexpectedStageError(IngestStageError):
+    """Raised when a pipeline stage hits an exception it did not anticipate.
+
+    The stage chains the original exception as ``__cause__`` and keeps its text
+    out of the message (it may carry database or driver internals). The import
+    job is retried: the cause may be transient.
+    """
+
+
+class RetryableFetchError(IngestStageError):
+    """Raised when fetching a URL source fails in a way a later attempt may not repeat.
+
+    Covers a network error or timeout reaching the URL and an upstream status
+    that signals a temporary condition (5xx, 408, 425, 429). Every other fetch
+    refusal (an unsafe URL, too many redirects, another 4xx, an oversized
+    response) and every failure to parse or identify fetched content is a plain
+    :class:`IngestStageError`, which fails the import job without a retry.
+    """
 
 
 class CatalogIdentityConflictError(IngestStageError):
@@ -132,7 +162,17 @@ class RelativeServerUrlError(IngestStageError):
         super().__init__(message)
 
 
-class MissingRequiredKeysError(IngestStageError):
+class PipelineContractError(IngestStageError):
+    """A stage violated the pipeline's own key/type contract.
+
+    Distinct from the refusals a bad document produces: the document is
+    irrelevant here, a stage did not supply or consume what it declared. That is
+    a fault in this codebase, so it is logged as one — with a traceback, at
+    ERROR, so it is alertable — rather than as a caller-fixable outcome.
+    """
+
+
+class MissingRequiredKeysError(PipelineContractError):
     """Raised when required keys are missing from stage context."""
 
     def __init__(self, missing_keys: set[str], stage: object | None = None) -> None:
@@ -143,7 +183,7 @@ class MissingRequiredKeysError(IngestStageError):
         self.stage = stage
 
 
-class MissingProducedKeyError(IngestStageError):
+class MissingProducedKeyError(PipelineContractError):
     """Raised when a stage fails to produce an expected key."""
 
     def __init__(self, missing_key: str, stage: object | None = None) -> None:
@@ -154,7 +194,7 @@ class MissingProducedKeyError(IngestStageError):
         self.stage = stage
 
 
-class BaseWrongTypeError(IngestStageError):
+class BaseWrongTypeError(PipelineContractError):
     """Base for type-mismatch errors in stage context."""
 
     error_string: str = "wrong type"
