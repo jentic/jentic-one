@@ -27,15 +27,12 @@ hit across requests.
 from __future__ import annotations
 
 import json
-import time
-from collections import OrderedDict
-from dataclasses import dataclass
 
 import structlog
 from sqlalchemy import text
 
-from jentic_one.broker.core.singleflight import SingleFlight
 from jentic_one.shared.broker.protocols import RuleEvaluation, RuleVerdict
+from jentic_one.shared.cache import AsyncTTLCache
 from jentic_one.shared.db import DatabaseSession
 from jentic_one.shared.permissions.evaluation import (
     PermissionRule,
@@ -124,23 +121,16 @@ def _compile_path(raw: str | None, mode: str, *, binding: str) -> PathMatcher | 
     return matcher
 
 
-@dataclass(slots=True)
-class _CacheEntry:
-    """A cached rule list with its insertion time (monotonic)."""
-
-    rules: list[PermissionRule]
-    cached_at: float
-
-
 class AgentRuleEvaluator:
-    """Evaluates direct-binding permission rules with TTL-LRU caching.
+    """Evaluates direct-binding permission rules with a TTL-LRU rule cache.
 
     Implements ``AgentRuleEvaluatorProtocol``. Cache keys are per binding
     (``agent_id, credential_id``) for inline rules and per ``rule_set_id`` for
     shared sets — a set attached to N bindings is fetched once, not N times.
     A cache hit within ``cache_ttl_seconds`` returns the cached rule list
     without touching the DB; concurrent misses for the same key are coalesced
-    via single-flight.
+    via single-flight, and an ``invalidate_*`` call that lands mid-load is not
+    undone by that load (:class:`~jentic_one.shared.cache.AsyncTTLCache`).
     """
 
     def __init__(
@@ -150,13 +140,13 @@ class AgentRuleEvaluator:
         cache_ttl_seconds: float = DEFAULT_RULE_CACHE_TTL_SECONDS,
         max_entries: int = DEFAULT_MAX_CACHE_ENTRIES,
     ) -> None:
-        if max_entries < 1:
-            raise ValueError("max_entries must be >= 1")
         self._control_db = control_db
-        self._cache_ttl_seconds = cache_ttl_seconds
-        self._max_entries = max_entries
-        self._cache: OrderedDict[str, _CacheEntry] = OrderedDict()
-        self._single_flight: SingleFlight[list[PermissionRule]] = SingleFlight()
+        self._cache: AsyncTTLCache[str, list[PermissionRule]] = AsyncTTLCache(
+            ttl_seconds=cache_ttl_seconds,
+            max_entries=max_entries,
+            metrics_scope="broker",
+            metrics_prefix="broker.rule_cache",
+        )
 
     async def evaluate(
         self,
@@ -222,20 +212,12 @@ class AgentRuleEvaluator:
             if rule_set_id is not None
             else f"binding\x00{agent_id}\x00{credential_id}"
         )
-        now = time.monotonic()
-        cached = self._cache.get(cache_key)
-        if cached is not None and (now - cached.cached_at) < self._cache_ttl_seconds:
-            self._cache.move_to_end(cache_key)
-            return cached.rules
-
-        async def _load() -> list[PermissionRule]:
-            rules = await self._fetch_rules(
+        return await self._cache.get_or_load(
+            cache_key,
+            lambda: self._fetch_rules(
                 agent_id=agent_id, credential_id=credential_id, rule_set_id=rule_set_id
-            )
-            self._store(cache_key, _CacheEntry(rules=rules, cached_at=time.monotonic()))
-            return rules
-
-        return await self._single_flight.do(cache_key, _load)
+            ),
+        )
 
     async def _fetch_rules(
         self, *, agent_id: str, credential_id: str, rule_set_id: str | None
@@ -264,33 +246,24 @@ class AgentRuleEvaluator:
             for row in rows
         ]
 
-    def _store(self, key: str, entry: _CacheEntry) -> None:
-        self._cache[key] = entry
-        self._cache.move_to_end(key)
-        while len(self._cache) > self._max_entries:
-            self._cache.popitem(last=False)
-
     def invalidate_binding(self, *, agent_id: str, credential_id: str) -> None:
         """Evict cached inline rules for ``(agent_id, credential_id)`` (#1837)."""
-        self._cache.pop(f"binding\x00{agent_id}\x00{credential_id}", None)
+        self._cache.invalidate(f"binding\x00{agent_id}\x00{credential_id}")
 
     def invalidate_agent(self, agent_id: str) -> None:
         """Evict all cached inline rules for ``agent_id`` (#1837)."""
-        prefix = f"binding\x00{agent_id}\x00"
-        stale = [k for k in self._cache if k.startswith(prefix)]
-        for k in stale:
-            self._cache.pop(k, None)
+        self._cache.invalidate_prefix(f"binding\x00{agent_id}\x00")
 
     def invalidate_credential(self, credential_id: str) -> None:
         """Evict all cached inline rules for ``credential_id`` (#1837)."""
         suffix = f"\x00{credential_id}"
-        stale = [k for k in self._cache if k.startswith("binding\x00") and k.endswith(suffix)]
-        for k in stale:
-            self._cache.pop(k, None)
+        self._cache.invalidate_where(
+            lambda key, _rules: key.startswith("binding\x00") and key.endswith(suffix)
+        )
 
     def invalidate_rule_set(self, rule_set_id: str) -> None:
         """Evict cached shared rule-set rules for ``rule_set_id`` (#1837)."""
-        self._cache.pop(f"set\x00{rule_set_id}", None)
+        self._cache.invalidate(f"set\x00{rule_set_id}")
 
     def clear(self) -> None:
         """Drop all cached entries."""

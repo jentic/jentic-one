@@ -165,12 +165,12 @@ async def test_cancelling_a_waiter_does_not_disturb_the_others() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cancelling_the_leader_hands_the_lookup_to_a_waiter() -> None:
-    """Cancelling the caller running the lookup does not fail the callers waiting on it.
+async def test_cancelling_the_first_caller_does_not_re_issue_the_lookup() -> None:
+    """Cancelling the caller that started the lookup does not disturb the others.
 
-    The leader's lookup is aborted with its own cancellation; one surviving
-    waiter takes over and re-issues it, so the remaining callers still get a
-    verdict from exactly one further lookup.
+    The lookup runs in its own task, so it outlives the caller that started it:
+    the remaining callers get their verdict from that same lookup rather than
+    re-issuing it against the admin DB.
     """
     resolver = _GatedResolver(resolved=_identity())
     validator = CachedTokenValidator(resolver=resolver, cache_ttl_seconds=300.0)
@@ -178,12 +178,12 @@ async def test_cancelling_the_leader_hands_the_lookup_to_a_waiter() -> None:
     tasks = [asyncio.create_task(validator.validate("at_hot")) for _ in range(_CONCURRENCY)]
     await resolver.started.wait()
     await _settle()
-    leader = tasks[0]
-    leader.cancel()
+    first = tasks[0]
+    first.cancel()
     await _settle()
     resolver.release.set()
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    assert leader.cancelled()
+    assert first.cancelled()
     assert all(isinstance(r, Identity) and r.sub == "agnt_hot" for r in results[1:])
-    assert resolver.calls == {"at_hot": 2}
+    assert resolver.calls == {"at_hot": 1}

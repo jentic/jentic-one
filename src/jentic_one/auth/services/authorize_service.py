@@ -34,9 +34,9 @@ from jentic_one.auth.core.idp import (
     AdmissionDecision,
     IdpAdapter,
     IdpClaims,
-    build_idp_adapter,
     get_admission_policy,
     get_default_idp_grants,
+    get_idp_adapter,
 )
 from jentic_one.auth.services.errors import InvalidGrantError, UserNotAdmittedError
 from jentic_one.auth.services.token_service import (
@@ -124,7 +124,7 @@ class AuthorizeService:
         return self._ctx.config.auth
 
     def _get_idp_adapter(self) -> IdpAdapter | None:
-        return build_idp_adapter(self._auth_config.idp)
+        return get_idp_adapter(self._auth_config.idp)
 
     def _effective_idp_issuer(self, claims: IdpClaims) -> str:
         """Resolve the canonical IdP issuer for external-identity keying."""
