@@ -186,7 +186,7 @@ components:
     BadRequest:
       content:
         application/problem+json:
-          example: &id361
+          example: &id362
             detail: The request was malformed or failed a precondition.
             instance: /example/path
             status: 400
@@ -210,7 +210,7 @@ components:
     Forbidden:
       content:
         application/problem+json:
-          example: &id373
+          example: &id374
             detail: The authenticated principal lacks the required permission.
             instance: /example/path
             status: 403
@@ -3396,7 +3396,7 @@ components:
     ChangePasswordRequest:
       description: Payload for changing own password.
       examples:
-      - &id382
+      - &id383
         current_password: example-password
         new_password: example-new-password
       properties:
@@ -3803,7 +3803,7 @@ components:
         vanished row) all read as ``pending`` so the endpoint is not a lifecycle
         oracle either.
       examples:
-      - &id362
+      - &id363
         status: pending
       properties:
         status:
@@ -3821,7 +3821,7 @@ components:
     CreateAdminRequest:
       description: Payload for first-run admin creation (one-time setup).
       examples:
-      - &id387
+      - &id388
         email: admin@example.com
         first_name: Ada
         last_name: Lovelace
@@ -4384,7 +4384,7 @@ components:
     CurrentUserResponse:
       description: Current user profile.
       examples:
-      - &id381
+      - &id382
         active: true
         created_at: '2026-01-15T09:30:00Z'
         email: ada@example.com
@@ -5856,7 +5856,7 @@ components:
     ExecutionStatsResponse:
       description: Aggregated execution statistics for the dashboard.
       examples:
-      - &id347
+      - &id348
         daily_buckets: &id098
         - *id097
         success_rate_percent: 93.75
@@ -6939,7 +6939,7 @@ components:
     IntrospectResponse:
       description: RFC 7662 introspection response.
       examples:
-      - &id363
+      - &id364
         active: true
         exp: 1769903999
         scope: apis:read capabilities:execute
@@ -6985,7 +6985,7 @@ components:
     InviteIssuedResponse:
       description: Response when an invite token is issued.
       examples:
-      - &id386
+      - &id387
         expires_at: '2026-01-22T09:30:00Z'
         token: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
       properties:
@@ -7251,7 +7251,7 @@ components:
     McpConfigRegistrationRequest:
       description: Report that an MCP config entry was written for one agent runtime.
       examples:
-      - &id345
+      - &id346
         runtime: cursor
       properties:
         runtime:
@@ -7265,7 +7265,7 @@ components:
     McpConfigRegistrationResponse:
       description: Acknowledgement of a config-registration report.
       examples:
-      - &id346
+      - &id347
         recorded: true
         runtime: cursor
       properties:
@@ -7601,7 +7601,7 @@ components:
       additionalProperties: false
       description: Payload for creating a new note.
       examples:
-      - &id350
+      - &id351
         body: Stripe returns 401 unless the secret key is sent as a Bearer token; Basic auth with an empty password also works.
         confidence: observed
         related_execution_id: exec_6968b3982706c619fe73f0cf
@@ -7678,7 +7678,7 @@ components:
     NoteListResponse:
       description: Cursor-paginated list of notes.
       examples:
-      - &id349
+      - &id350
         data: &id129
         - _links: *id128
           body: Stripe returns 401 unless the secret key is sent as a Bearer token; Basic auth with an empty password also works.
@@ -7761,7 +7761,7 @@ components:
     NoteResponse:
       description: Full note resource response.
       examples:
-      - &id351
+      - &id352
         _links: *id128
         body: Stripe returns 401 unless the secret key is sent as a Bearer token; Basic auth with an empty password also works.
         confidence: observed
@@ -7872,7 +7872,7 @@ components:
       additionalProperties: false
       description: Payload for updating an existing note (partial).
       examples:
-      - &id352
+      - &id353
         body: Stripe returns 401 unless the secret key is sent as a Bearer token; Basic auth with an empty password also works.
         confidence: verified
         related_execution_id: exec_6968b3982706c619fe73f0cf
@@ -8117,7 +8117,7 @@ components:
     OAuthAppRegistrationListResponse:
       description: Paginated list of OAuth app registrations.
       examples:
-      - &id353
+      - &id354
         data: &id137
         - api_vendor: github
           authorization_endpoint: https://github.com/login/device/code
@@ -8174,7 +8174,7 @@ components:
         ``secret_last_rotated_at`` so an admin can see rotation history without
         being able to read the material.
       examples:
-      - &id354
+      - &id355
         api_vendor: github
         authorization_endpoint: https://github.com/login/device/code
         authorize_url: https://github.com/login/oauth/authorize
@@ -8328,7 +8328,7 @@ components:
       additionalProperties: false
       description: Rotate the client secret on an auth-code registration.
       examples:
-      - &id356
+      - &id357
         client_secret: example-secret
       properties:
         client_secret:
@@ -8346,7 +8346,7 @@ components:
       additionalProperties: false
       description: Partial update — fields not present are left untouched.
       examples:
-      - &id355
+      - &id356
         authorization_endpoint: https://github.com/login/device/code
         authorize_url: https://github.com/login/oauth/authorize
         default_scopes: &id139
@@ -8449,7 +8449,7 @@ components:
         ``oauth-clients:write`` — so global redaction buys nothing worth that
         collision.
       examples:
-      - &id359
+      - &id360
         action: approve
         state: eyJfcHVycG9zZSI6ICJleGFtcGxlIn0=.5d41402abc4b2a76b9719d911017c592
       properties:
@@ -8478,7 +8478,7 @@ components:
         metadata — so the anonymous poll endpoint cannot be used to read client
         details out of the registry.
       examples:
-      - &id360
+      - &id361
         status: approved
       properties:
         status:
@@ -8754,7 +8754,7 @@ components:
     OAuthClientRegistrationRequest:
       description: POST /oauth-clients request body (RFC 7591 client metadata subset).
       examples:
-      - &id357
+      - &id358
         application_type: native
         client_name: Cursor
         grant_types: &id142
@@ -8855,7 +8855,7 @@ components:
         ``registration_access_token`` (D12 — no RFC 7592 self-management surface;
         clients retry ``/authorize``, they don't poll).
       examples:
-      - &id358
+      - &id359
         application_type: native
         client_id: oc_Xk3vQ9mT2pLw8RzN5bYc1HdF7gJs4AeU
         client_id_issued_at: 1767225600
@@ -10517,7 +10517,7 @@ components:
     PermissionListResponse:
       description: List of available permissions.
       examples:
-      - &id370
+      - &id371
         data: &id176
         - description: Create, update, and disable users
           grantable_by_caller: true
@@ -11289,7 +11289,7 @@ components:
     RegisterRequest:
       description: POST /register request body.
       examples:
-      - &id371
+      - &id372
         client_name: invoice-reconciler
         grant_types: &id194
         - urn:ietf:params:oauth:grant-type:jwt-bearer
@@ -11345,7 +11345,7 @@ components:
     RegisterResponse:
       description: POST /register 201 response.
       examples:
-      - &id372
+      - &id373
         claim_token: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
         client_id: agnt_6968b3984d1c238dbe7e2e29
         grant_types: &id196
@@ -11408,7 +11408,7 @@ components:
     RegistrationStatusResponse:
       description: GET /register/{agent_id} response.
       examples:
-      - &id374
+      - &id375
         client_id: agnt_6968b3984d1c238dbe7e2e29
         grant_types: &id197
         - urn:ietf:params:oauth:grant-type:jwt-bearer
@@ -11888,7 +11888,7 @@ components:
         secret-less client's lineage binding; ignored on the bearer-authenticated
         JSON arm, where the platform identity scopes the revocation instead.
       examples:
-      - &id364
+      - &id365
         client_id: oc_Xk3vQ9mT2pLw8RzN5bYc1HdF7gJs4AeU
         token: rt_example-refresh-token
         token_type_hint: refresh_token
@@ -11979,7 +11979,7 @@ components:
     RuleSetCreateRequest:
       description: Create a shared permission rule set (theme 5 phase 1, Q-04).
       examples:
-      - &id367
+      - &id368
         description: Allows GET requests to the Stripe API; denies everything else.
         name: Stripe read-only
         rules: &id218
@@ -12013,7 +12013,7 @@ components:
     RuleSetListResponse:
       description: Paginated list of rule sets.
       examples:
-      - &id366
+      - &id367
         data: &id219
         - created_at: '2026-01-15T09:30:00Z'
           created_by: usr_6968b3987ee4c3ec0b4ee3b9
@@ -12051,7 +12051,7 @@ components:
     RuleSetResponse:
       description: Rule set detail — the ordered rules plus its referencing-binding count.
       examples:
-      - &id368
+      - &id369
         binding_count: 3
         created_at: '2026-01-15T09:30:00Z'
         created_by: usr_6968b3987ee4c3ec0b4ee3b9
@@ -12178,7 +12178,7 @@ components:
     RuleSetUpdateRequest:
       description: Rename or re-describe a rule set.
       examples:
-      - &id369
+      - &id370
         description: Allows GET requests to the Stripe API; denies everything else.
         name: Stripe read-only
       properties:
@@ -12273,7 +12273,7 @@ components:
       additionalProperties: false
       description: POST /search request body.
       examples:
-      - &id375
+      - &id376
         apis: &id222
         - stripe.com/stripe
         cursor: eyJkIjogMC4yODE2LCAiaWQiOiAib3BfZjkyZDY5ZjE2MjFmMzgxYmNlOGFhZmY0NzA1M2M2MWIwNjlmZmUzNCJ9
@@ -12327,7 +12327,7 @@ components:
     SearchResponse:
       description: Cursor-paginated search results page.
       examples:
-      - &id376
+      - &id377
         data: &id225
         - *id224
         has_more: true
@@ -12687,7 +12687,7 @@ components:
     SetPermissionsRequest:
       description: Request body for setting user permissions.
       examples:
-      - &id385
+      - &id386
         permissions: &id233
         - users:write
         - agents:read
@@ -12973,7 +12973,7 @@ components:
     TokenResponse:
       description: Token endpoint success response.
       examples:
-      - &id365
+      - &id366
         access_token: at_example-access-token
         expires_in: 3600
         id_token: example-id-token
@@ -13111,7 +13111,7 @@ components:
     UsageResponse:
       description: Full usage statistics response.
       examples:
-      - &id348
+      - &id349
         bucket_seconds: 86400
         buckets: &id239
         - *id238
@@ -13315,7 +13315,7 @@ components:
     UserCreateRequest:
       description: Request body for creating a new user.
       examples:
-      - &id379
+      - &id380
         email: ada@example.com
         first_name: Ada
         last_name: Lovelace
@@ -13360,7 +13360,7 @@ components:
     UserCreatedResponse:
       description: Response after user creation including invite token.
       examples:
-      - &id380
+      - &id381
         invite_expires_at: '2026-01-22T09:30:00Z'
         invite_token: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
         user: &id245
@@ -13402,7 +13402,7 @@ components:
     UserListResponse:
       description: Paginated list of users.
       examples:
-      - &id378
+      - &id379
         data: &id246
         - active: true
           auth_provider: external
@@ -13446,7 +13446,7 @@ components:
     UserResponse:
       description: User representation in API responses.
       examples:
-      - &id383
+      - &id384
         active: true
         auth_provider: external
         created_at: '2026-01-15T09:30:00Z'
@@ -13547,7 +13547,7 @@ components:
     UserUpdateRequest:
       description: Request body for updating a user.
       examples:
-      - &id384
+      - &id385
         email: ada.lovelace@example.com
         first_name: Ada
         last_name: Lovelace
@@ -13775,7 +13775,7 @@ components:
     VersionResponse:
       description: The running app version and the latest release known to this backend.
       examples:
-      - &id377
+      - &id378
         current: 0.42.2
         latest: 0.43.0
         update_available: true
@@ -13990,9 +13990,12 @@ info:
       response belongs to the upstream API. Standard headers
       (`Authorization`, `Prefer`, `Idempotency-Key`, `Accept`,
       `traceparent`, `tracestate`) keep their RFC names.
-    - **Append-only audit.** Admin / Audit records are never mutated
-      after the fact; retention is enforced via purge policy, not
-      edit.
+    - **Append-only audit.** Audit entries, execution records and events
+      are never mutated after the fact. They — and finished jobs and their
+      results — are kept indefinitely: there is no API or setting to prune
+      them yet, so trim them at the database level. Approved-execution
+      results are the exception: they expire after
+      `held_executions.result_retention_seconds`.
     - **Trace correlation.** Every Broker call records a W3C
       `trace_id` on its `ExecutionRecord` and on any `Event` derived
       from it. To walk the executions you can see under one logical request, use
@@ -20760,7 +20763,7 @@ paths:
         '410':
           content:
             application/problem+json:
-              example: &id388
+              example: &id345
                 detail: The resource is no longer available and the operation has self-closed.
                 instance: /example/path
                 status: 410
@@ -21639,7 +21642,7 @@ paths:
               example: *id266
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
-          description: No job with this id is visible to the caller. A job belonging to another actor, or one whose retention window has expired, is indistinguishable from one that never existed.
+          description: No job with this id is visible to the caller. A job belonging to another actor is indistinguishable from one that never existed.
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '500':
@@ -21658,7 +21661,13 @@ paths:
   /jobs/{job_id}/result:
     description: '`GET`: Get a job''s result.'
     get:
-      description: Get the result of a completed job — polymorphic by kind.
+      description: |-
+        Get the result of a completed job — polymorphic by kind.
+
+        Answers ``409`` unless the job's ``status`` is ``completed`` (pending,
+        running, failed or cancelled), and ``410`` once an
+        approved execution's result is past
+        ``held_executions.result_retention_seconds``.
       operationId: getJobResult
       parameters:
       - description: ID of the job.
@@ -21753,7 +21762,16 @@ paths:
               example: *id266
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
-          description: No job with this id is visible to the caller, or its retention window has expired and the result is gone. Both are indistinguishable from a job that never existed.
+          description: No job with this id is visible to the caller. A job belonging to another actor is indistinguishable from one that never existed.
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          content:
+            application/problem+json:
+              example: *id345
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Gone
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '500':
@@ -21844,7 +21862,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id345
+            example: *id346
             schema:
               $ref: '#/components/schemas/McpConfigRegistrationRequest'
         description: Report that an MCP config entry was written for one agent runtime.
@@ -21853,7 +21871,7 @@ paths:
         '202':
           content:
             application/json:
-              example: *id346
+              example: *id347
               schema:
                 $ref: '#/components/schemas/McpConfigRegistrationResponse'
           description: Successful Response
@@ -21946,7 +21964,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id347
+              example: *id348
               schema:
                 $ref: '#/components/schemas/ExecutionStatsResponse'
           description: Successful Response
@@ -22094,7 +22112,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id348
+              example: *id349
               schema:
                 $ref: '#/components/schemas/UsageResponse'
           description: Successful Response
@@ -22261,7 +22279,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id349
+              example: *id350
               schema:
                 $ref: '#/components/schemas/NoteListResponse'
           description: Successful Response
@@ -22291,7 +22309,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id350
+            example: *id351
             schema:
               $ref: '#/components/schemas/NoteCreateRequest'
         description: Payload for creating a new note.
@@ -22300,7 +22318,7 @@ paths:
         '201':
           content:
             application/json:
-              example: *id351
+              example: *id352
               schema:
                 $ref: '#/components/schemas/NoteResponse'
           description: Successful Response
@@ -22410,7 +22428,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id351
+              example: *id352
               schema:
                 $ref: '#/components/schemas/NoteResponse'
           description: Successful Response
@@ -22471,7 +22489,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id352
+            example: *id353
             schema:
               $ref: '#/components/schemas/NoteUpdateRequest'
         description: Payload for updating an existing note (partial).
@@ -22480,7 +22498,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id351
+              example: *id352
               schema:
                 $ref: '#/components/schemas/NoteResponse'
           description: Successful Response
@@ -22600,7 +22618,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id353
+              example: *id354
               schema:
                 $ref: '#/components/schemas/OAuthAppRegistrationListResponse'
           description: Successful Response
@@ -22652,7 +22670,7 @@ paths:
         '201':
           content:
             application/json:
-              example: *id354
+              example: *id355
               schema:
                 $ref: '#/components/schemas/OAuthAppRegistrationResponse'
           description: Successful Response
@@ -22750,7 +22768,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id354
+              example: *id355
               schema:
                 $ref: '#/components/schemas/OAuthAppRegistrationResponse'
           description: Successful Response
@@ -22801,7 +22819,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id355
+            example: *id356
             schema:
               $ref: '#/components/schemas/OAuthAppRegistrationUpdateRequest'
         description: Partial update — fields not present are left untouched.
@@ -22810,7 +22828,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id354
+              example: *id355
               schema:
                 $ref: '#/components/schemas/OAuthAppRegistrationResponse'
           description: Successful Response
@@ -22862,7 +22880,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id356
+            example: *id357
             schema:
               $ref: '#/components/schemas/OAuthAppRegistrationRotateSecretRequest'
         description: Rotate the client secret on an auth-code registration.
@@ -22871,7 +22889,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id354
+              example: *id355
               schema:
                 $ref: '#/components/schemas/OAuthAppRegistrationResponse'
           description: Successful Response
@@ -22923,7 +22941,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id357
+            example: *id358
             schema:
               $ref: '#/components/schemas/OAuthClientRegistrationRequest'
         description: POST /oauth-clients request body (RFC 7591 client metadata subset).
@@ -22932,7 +22950,7 @@ paths:
         '201':
           content:
             application/json:
-              example: *id358
+              example: *id359
               schema:
                 $ref: '#/components/schemas/OAuthClientRegistrationResponse'
           description: Successful Response
@@ -23030,7 +23048,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id359
+            example: *id360
             schema:
               $ref: '#/components/schemas/OAuthApprovalDecisionRequest'
         description: |-
@@ -23053,14 +23071,14 @@ paths:
         '200':
           content:
             application/json:
-              example: *id360
+              example: *id361
               schema:
                 $ref: '#/components/schemas/OAuthApprovalStatusResponse'
           description: Successful Response
         '400':
           content:
             application/problem+json:
-              example: *id361
+              example: *id362
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Malformed, tampered, or expired approval-state blob.
@@ -23115,14 +23133,14 @@ paths:
         '200':
           content:
             application/json:
-              example: *id360
+              example: *id361
               schema:
                 $ref: '#/components/schemas/OAuthApprovalStatusResponse'
           description: Successful Response
         '400':
           content:
             application/problem+json:
-              example: *id361
+              example: *id362
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Malformed, tampered, or expired approval-state blob.
@@ -23244,14 +23262,14 @@ paths:
         '200':
           content:
             application/json:
-              example: *id362
+              example: *id363
               schema:
                 $ref: '#/components/schemas/ConsentAgentStatusResponse'
           description: Successful Response
         '400':
           content:
             application/problem+json:
-              example: *id361
+              example: *id362
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Malformed, tampered, or expired agent-status blob.
@@ -23320,14 +23338,14 @@ paths:
         '200':
           content:
             application/json:
-              example: *id363
+              example: *id364
               schema:
                 $ref: '#/components/schemas/IntrospectResponse'
           description: Successful Response
         '400':
           content:
             application/problem+json:
-              example: *id361
+              example: *id362
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: 'Malformed request body (missing `token`). JSON requests get platform Problem Details (`type: invalid_request`); form-encoded (RFC 7662 §2.1) requests get the RFC 6749 §5.2 dialect: `{"error": "invalid_request", "error_description": "..."}`. An unknown, invalid, or expired token value is never an error — it is 200 `{"active": false}` (RFC 7662 §2.2).'
@@ -23387,7 +23405,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id364
+            example: *id365
             schema:
               $ref: '#/components/schemas/RevokeRequest'
           application/x-www-form-urlencoded:
@@ -23561,7 +23579,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id365
+              example: *id366
               schema:
                 $ref: '#/components/schemas/TokenResponse'
           description: Successful Response
@@ -23646,7 +23664,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id366
+              example: *id367
               schema:
                 $ref: '#/components/schemas/RuleSetListResponse'
           description: Successful Response
@@ -23687,7 +23705,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id367
+            example: *id368
             schema:
               $ref: '#/components/schemas/RuleSetCreateRequest'
         description: Create a shared permission rule set (theme 5 phase 1, Q-04).
@@ -23696,7 +23714,7 @@ paths:
         '201':
           content:
             application/json:
-              example: *id368
+              example: *id369
               schema:
                 $ref: '#/components/schemas/RuleSetResponse'
           description: Successful Response
@@ -23772,7 +23790,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id368
+              example: *id369
               schema:
                 $ref: '#/components/schemas/RuleSetResponse'
           description: Successful Response
@@ -23814,7 +23832,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id369
+            example: *id370
             schema:
               $ref: '#/components/schemas/RuleSetUpdateRequest'
         description: Rename or re-describe a rule set.
@@ -23823,7 +23841,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id368
+              example: *id369
               schema:
                 $ref: '#/components/schemas/RuleSetResponse'
           description: Successful Response
@@ -23930,7 +23948,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id370
+              example: *id371
               schema:
                 $ref: '#/components/schemas/PermissionListResponse'
           description: Successful Response
@@ -23963,7 +23981,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id371
+            example: *id372
             schema:
               $ref: '#/components/schemas/RegisterRequest'
         description: POST /register request body.
@@ -23972,7 +23990,7 @@ paths:
         '201':
           content:
             application/json:
-              example: *id372
+              example: *id373
               schema:
                 $ref: '#/components/schemas/RegisterResponse'
           description: Successful Response
@@ -24018,7 +24036,7 @@ paths:
         '403':
           content:
             application/problem+json:
-              example: *id373
+              example: *id374
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: 'Client deletion is not supported. This endpoint exists to refuse the RFC 7592 delete call, so it has no success response: every request answers 403 and the registration remains. Archive the agent instead.'
@@ -24059,7 +24077,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id374
+              example: *id375
               schema:
                 $ref: '#/components/schemas/RegistrationStatusResponse'
           description: Successful Response
@@ -24105,7 +24123,7 @@ paths:
         '403':
           content:
             application/problem+json:
-              example: *id373
+              example: *id374
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: 'Client update is not supported. This endpoint exists to refuse the RFC 7592 update call, so it has no success response: every request answers 403 and nothing is changed. Re-register instead.'
@@ -24132,7 +24150,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id375
+            example: *id376
             schema:
               $ref: '#/components/schemas/SearchRequest'
         description: POST /search request body.
@@ -24141,7 +24159,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id376
+              example: *id377
               schema:
                 $ref: '#/components/schemas/SearchResponse'
           description: Successful Response
@@ -24182,7 +24200,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id377
+              example: *id378
               schema:
                 $ref: '#/components/schemas/VersionResponse'
           description: Successful Response
@@ -24257,7 +24275,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id378
+              example: *id379
               schema:
                 $ref: '#/components/schemas/UserListResponse'
           description: Successful Response
@@ -24287,7 +24305,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id379
+            example: *id380
             schema:
               $ref: '#/components/schemas/UserCreateRequest'
         description: Request body for creating a new user.
@@ -24296,7 +24314,7 @@ paths:
         '201':
           content:
             application/json:
-              example: *id380
+              example: *id381
               schema:
                 $ref: '#/components/schemas/UserCreatedResponse'
           description: Successful Response
@@ -24330,7 +24348,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id381
+              example: *id382
               schema:
                 $ref: '#/components/schemas/CurrentUserResponse'
           description: Successful Response
@@ -24368,7 +24386,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id382
+            example: *id383
             schema:
               $ref: '#/components/schemas/ChangePasswordRequest'
         description: Payload for changing own password.
@@ -24459,7 +24477,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id383
+              example: *id384
               schema:
                 $ref: '#/components/schemas/UserResponse'
           description: Successful Response
@@ -24498,7 +24516,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id384
+            example: *id385
             schema:
               $ref: '#/components/schemas/UserUpdateRequest'
         description: Request body for updating a user.
@@ -24507,7 +24525,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id383
+              example: *id384
               schema:
                 $ref: '#/components/schemas/UserResponse'
           description: Successful Response
@@ -24558,7 +24576,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id385
+            example: *id386
             schema:
               $ref: '#/components/schemas/SetPermissionsRequest'
         description: Request body for setting user permissions.
@@ -24567,7 +24585,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id383
+              example: *id384
               schema:
                 $ref: '#/components/schemas/UserResponse'
           description: Successful Response
@@ -24699,7 +24717,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id386
+              example: *id387
               schema:
                 $ref: '#/components/schemas/InviteIssuedResponse'
           description: Successful Response
@@ -24746,7 +24764,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id387
+            example: *id388
             schema:
               $ref: '#/components/schemas/CreateAdminRequest'
         description: Payload for first-run admin creation (one-time setup).
@@ -24759,7 +24777,7 @@ paths:
         '410':
           content:
             application/problem+json:
-              example: *id388
+              example: *id345
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Setup already complete — the first admin exists and this endpoint is closed.
@@ -25019,7 +25037,7 @@ tags:
   name: Overlays
 - description: Append-only audit log of every Broker call (sync or async) — timing, status, trace IDs, and the upstream API reference (`vendor:name:version`). Bodies are not stored. Records are written by the Broker; this surface is read-only. To walk the history of a single logical request that fanned out into multiple upstream calls, list with `?trace_id={trace_id}`. An execution is visible only to the actor that ran it, the owner of the agent that ran it, and `org:admin`; to any other caller it is indistinguishable from a missing execution (`404`).
   name: Executions
-- description: In-flight async-job tracker for both Registry import jobs and Broker async-execution jobs — one uniform `Job` shape keyed by `kind`. Lifecycle only — type-specific result payloads (the imported revisions for `import`, upstream response body for `execution`) live under `/jobs/{job_id}/result`. Result availability follows the organisation-level retention policy (one-shot or TTL); once that expires, both `/jobs/{job_id}` and `/jobs/{job_id}/result` `404`. A job is visible only to the actor that created it, the owner of the agent that created it, and `org:admin`; to any other caller it is indistinguishable from a missing job (`404`), including on `:cancel`.
+- description: In-flight async-job tracker for both Registry import jobs and Broker async-execution jobs — one uniform `Job` shape keyed by `kind`. Lifecycle only — type-specific result payloads (the imported revisions for `import`, upstream response body for `execution`) live under `/jobs/{job_id}/result`. Results stay readable indefinitely; only an approved execution's result expires (after `held_executions.result_retention_seconds`), after which `/jobs/{job_id}/result` answers `410 job_result_expired` while the job itself remains. A job is visible only to the actor that created it, the owner of the agent that created it, and `org:admin`; to any other caller it is indistinguishable from a missing job (`404`), including on `:cancel`.
   name: Jobs
 - description: |-
     Executions held for human approval. When a call matches a permission rule with `effect: require-approval`, the broker does not run it: it answers `202` with a held execution (`held_…`) and a review link. A reviewer, the agent's owner or any `org:admin`, calls `POST /executions/holds/{id}:decide` to approve or deny it.
