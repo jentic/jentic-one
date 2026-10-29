@@ -363,3 +363,32 @@ func TestResolveOperationRejectsHostRelativeUpstream(t *testing.T) {
 		t.Fatalf("absolute url: op=%+v err=%v, want resolved", op, err)
 	}
 }
+
+func TestBuildRequest_CallerHeadersNeverReplaceTheBearer(t *testing.T) {
+	// Over stdio these headers are model-supplied, so a prompt-injected
+	// model could otherwise swap the agent's token on the broker leg.
+	req, err := BuildRequest(context.Background(), ExecuteRequest{
+		Method:       http.MethodGet,
+		Path:         "/v1/pets",
+		BrokerScheme: "https",
+		BrokerHost:   "broker.example.test",
+		Token:        "tok_real",
+		Headers: []KV{
+			{Key: "authorization", Value: "Bearer tok_attacker"},
+			{Key: "Authorization", Value: "Bearer tok_attacker_2"},
+			{Key: "X-Custom", Value: "kept"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildRequest: %v", err)
+	}
+	if got := req.Header.Get("Authorization"); got != "Bearer tok_real" {
+		t.Errorf("Authorization = %q, want the agent's own bearer", got)
+	}
+	if values := req.Header.Values("Authorization"); len(values) != 1 {
+		t.Errorf("Authorization carries %d values, want exactly one", len(values))
+	}
+	if got := req.Header.Get("X-Custom"); got != "kept" {
+		t.Errorf("X-Custom = %q, want the caller's other headers kept", got)
+	}
+}
