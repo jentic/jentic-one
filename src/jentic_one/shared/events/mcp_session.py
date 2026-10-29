@@ -340,10 +340,18 @@ async def schedule_mcp_session_emit(
     ua = parse_mcp_user_agent(user_agent)
     if ua is None:
         return
-    sid = valid_session_id_or_none(session_id)
-    if sid is None or ctx is None:
+    raw = valid_session_id_or_none(session_id)
+    if raw is None or ctx is None:
         return
+    sid = mcp_stdio_session_key(actor_id, raw)
     if not _in_flight_has_room() or not await _claim(ctx, sid):
+        return
+    # The same per-agent window the HTTP path admits on: the unique index
+    # dedupes identical keys only, never distinct ones, so a rotating header
+    # value would otherwise mint a row per request.
+    if not await _admit_agent_window_key(
+        ctx, actor_id, int(time.time() // MCP_HTTP_WINDOW_SECONDS)
+    ):
         return
 
     _spawn_emit(
@@ -380,6 +388,20 @@ def mcp_http_window_key(
     ).hexdigest()[:12]
     window = int((time.time() if now is None else now) // MCP_HTTP_WINDOW_SECONDS)
     return f"http:{actor_id}:{fingerprint}:{window}"
+
+
+def mcp_stdio_session_key(actor_id: str, session_id: str) -> str:
+    """The stdio emit's stored session id: the client's, namespaced by actor.
+
+    The id is an untrusted client header, and the dedupe — the shared-state
+    claim, the table lookup and the partial unique index behind it — keys on
+    the stored value alone. Unnamespaced, whichever actor emitted first for a
+    given id claimed it for everyone, so another owner's agent using the same
+    id (a shared orchestrator makes that ordinary) silently got no event and
+    that owner lost the visibility. The HTTP sibling is actor-scoped by
+    construction for the same reason.
+    """
+    return f"stdio:{actor_id}:{session_id}"
 
 
 def _digest_component(value: str | None) -> str:
