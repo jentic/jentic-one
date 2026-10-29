@@ -8251,6 +8251,9 @@ type GetConnectSessionParams struct {
 type ListConnectSessionRevisionsParams struct {
 	// PollToken Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
 	PollToken *string `form:"poll_token,omitempty" json:"poll_token,omitempty"`
+
+	// Limit Maximum number of revisions to return (1-200, default 50).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // PollConnectSessionStatusParams defines parameters for PollConnectSessionStatus.
@@ -8272,6 +8275,12 @@ type ConfirmConnectSessionJSONBody struct {
 
 // ConfirmConnectSessionParams defines parameters for ConfirmConnectSession.
 type ConfirmConnectSessionParams struct {
+	// PollToken Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
+	PollToken *string `form:"poll_token,omitempty" json:"poll_token,omitempty"`
+}
+
+// RebaseConnectSessionParams defines parameters for RebaseConnectSession.
+type RebaseConnectSessionParams struct {
 	// PollToken Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
 	PollToken *string `form:"poll_token,omitempty" json:"poll_token,omitempty"`
 }
@@ -11128,11 +11137,11 @@ type ClientInterface interface {
 
 	// ListConnectSessionRevisions List a connect session's revisions
 	//
-	// Every version of what the session asks for, oldest first.
+	// One page of what the session has asked for, oldest first.
 	//
 	// The review shows the current revision against today's access; this is the
 	// history behind it, one entry per ask and amend. Gated like the review
-	// read.
+	// read, and bounded like the session list.
 	//
 	// Corresponds with GET /connect-sessions/{session_id}/revisions (the `ListConnectSessionRevisions` operationId).
 	ListConnectSessionRevisions(ctx context.Context, sessionId string, params *ListConnectSessionRevisionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -11276,6 +11285,22 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /connect-sessions/{session_id}:confirm (the `ConfirmConnectSession` operationId).
 	ConfirmConnectSession(ctx context.Context, sessionId string, params *ConfirmConnectSessionParams, body ConfirmConnectSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RebaseConnectSession Resolve an open edit against the binding as it is now
+	//
+	// Bring an open edit up to date with its binding, as a new revision.
+	//
+	// What a reader asks for when the review or the status reports the session
+	// `stale`: the ask is re-resolved against the binding as it is now, and any
+	// part of it the binding no longer fits comes back as a conflict on that
+	// revision. Reads never do this themselves, so a GET appends nothing.
+	//
+	// Idempotent: a session already current answers with the revision it
+	// already had. Its initiator, or a human who may confirm it, as an amend
+	// takes; a closed session is 409 `session_closed`.
+	//
+	// Corresponds with POST /connect-sessions/{session_id}:rebase (the `RebaseConnectSession` operationId).
+	RebaseConnectSession(ctx context.Context, sessionId string, params *RebaseConnectSessionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RejectConnectSession Reject an agent's connect request
 	//
@@ -15034,11 +15059,11 @@ func (c *Client) GetConnectSession(ctx context.Context, sessionId string, params
 
 // ListConnectSessionRevisions List a connect session's revisions
 //
-// Every version of what the session asks for, oldest first.
+// One page of what the session has asked for, oldest first.
 //
 // The review shows the current revision against today's access; this is the
 // history behind it, one entry per ask and amend. Gated like the review
-// read.
+// read, and bounded like the session list.
 //
 // Corresponds with GET /connect-sessions/{session_id}/revisions (the `ListConnectSessionRevisions` operationId).
 func (c *Client) ListConnectSessionRevisions(ctx context.Context, sessionId string, params *ListConnectSessionRevisionsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -15243,6 +15268,32 @@ func (c *Client) ConfirmConnectSessionWithBody(ctx context.Context, sessionId st
 // Corresponds with POST /connect-sessions/{session_id}:confirm (the `ConfirmConnectSession` operationId).
 func (c *Client) ConfirmConnectSession(ctx context.Context, sessionId string, params *ConfirmConnectSessionParams, body ConfirmConnectSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewConfirmConnectSessionRequest(c.Server, sessionId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RebaseConnectSession Resolve an open edit against the binding as it is now
+//
+// Bring an open edit up to date with its binding, as a new revision.
+//
+// What a reader asks for when the review or the status reports the session
+// `stale`: the ask is re-resolved against the binding as it is now, and any
+// part of it the binding no longer fits comes back as a conflict on that
+// revision. Reads never do this themselves, so a GET appends nothing.
+//
+// Idempotent: a session already current answers with the revision it
+// already had. Its initiator, or a human who may confirm it, as an amend
+// takes; a closed session is 409 `session_closed`.
+//
+// Corresponds with POST /connect-sessions/{session_id}:rebase (the `RebaseConnectSession` operationId).
+func (c *Client) RebaseConnectSession(ctx context.Context, sessionId string, params *RebaseConnectSessionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRebaseConnectSessionRequest(c.Server, sessionId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -22212,6 +22263,18 @@ func NewListConnectSessionRevisionsRequest(server string, sessionId string, para
 
 		}
 
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
 		if encoded := queryValues.Encode(); encoded != "" {
 			rawQueryFragments = append(rawQueryFragments, encoded)
 		}
@@ -22465,6 +22528,67 @@ func NewConfirmConnectSessionRequestWithBody(server string, sessionId string, pa
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRebaseConnectSessionRequest constructs an http.Request for the RebaseConnectSession method
+func NewRebaseConnectSessionRequest(server string, sessionId string, params *RebaseConnectSessionParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "session_id", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/connect-sessions/%s:rebase", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.PollToken != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "poll_token", *params.PollToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -28275,11 +28399,11 @@ type ClientWithResponsesInterface interface {
 
 	// ListConnectSessionRevisionsWithResponse List a connect session's revisions
 	//
-	// Every version of what the session asks for, oldest first.
+	// One page of what the session has asked for, oldest first.
 	//
 	// The review shows the current revision against today's access; this is the
 	// history behind it, one entry per ask and amend. Gated like the review
-	// read.
+	// read, and bounded like the session list.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -28429,6 +28553,24 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /connect-sessions/{session_id}:confirm (the `ConfirmConnectSession` operationId).
 	ConfirmConnectSessionWithResponse(ctx context.Context, sessionId string, params *ConfirmConnectSessionParams, body ConfirmConnectSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*ConfirmConnectSessionHTTPResp, error)
+
+	// RebaseConnectSessionWithResponse Resolve an open edit against the binding as it is now
+	//
+	// Bring an open edit up to date with its binding, as a new revision.
+	//
+	// What a reader asks for when the review or the status reports the session
+	// `stale`: the ask is re-resolved against the binding as it is now, and any
+	// part of it the binding no longer fits comes back as a conflict on that
+	// revision. Reads never do this themselves, so a GET appends nothing.
+	//
+	// Idempotent: a session already current answers with the revision it
+	// already had. Its initiator, or a human who may confirm it, as an amend
+	// takes; a closed session is 409 `session_closed`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /connect-sessions/{session_id}:rebase (the `RebaseConnectSession` operationId).
+	RebaseConnectSessionWithResponse(ctx context.Context, sessionId string, params *RebaseConnectSessionParams, reqEditors ...RequestEditorFn) (*RebaseConnectSessionHTTPResp, error)
 
 	// RejectConnectSessionWithResponse Reject an agent's connect request
 	//
@@ -37304,6 +37446,103 @@ func (r ConfirmConnectSessionHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ConfirmConnectSessionHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RebaseConnectSessionHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *interface{}
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RebaseConnectSessionHTTPResp) GetJSON200() *interface{} {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r RebaseConnectSessionHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r RebaseConnectSessionHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r RebaseConnectSessionHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r RebaseConnectSessionHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r RebaseConnectSessionHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r RebaseConnectSessionHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r RebaseConnectSessionHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RebaseConnectSessionHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RebaseConnectSessionHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RebaseConnectSessionHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RebaseConnectSessionHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RebaseConnectSessionHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -47219,11 +47458,11 @@ func (c *ClientWithResponses) GetConnectSessionWithResponse(ctx context.Context,
 
 // ListConnectSessionRevisionsWithResponse List a connect session's revisions
 //
-// Every version of what the session asks for, oldest first.
+// One page of what the session has asked for, oldest first.
 //
 // The review shows the current revision against today's access; this is the
 // history behind it, one entry per ask and amend. Gated like the review
-// read.
+// read, and bounded like the session list.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -47414,6 +47653,30 @@ func (c *ClientWithResponses) ConfirmConnectSessionWithResponse(ctx context.Cont
 		return nil, err
 	}
 	return ParseConfirmConnectSessionHTTPResp(rsp)
+}
+
+// RebaseConnectSessionWithResponse Resolve an open edit against the binding as it is now
+//
+// Bring an open edit up to date with its binding, as a new revision.
+//
+// What a reader asks for when the review or the status reports the session
+// `stale`: the ask is re-resolved against the binding as it is now, and any
+// part of it the binding no longer fits comes back as a conflict on that
+// revision. Reads never do this themselves, so a GET appends nothing.
+//
+// Idempotent: a session already current answers with the revision it
+// already had. Its initiator, or a human who may confirm it, as an amend
+// takes; a closed session is 409 `session_closed`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /connect-sessions/{session_id}:rebase (the `RebaseConnectSession` operationId).
+func (c *ClientWithResponses) RebaseConnectSessionWithResponse(ctx context.Context, sessionId string, params *RebaseConnectSessionParams, reqEditors ...RequestEditorFn) (*RebaseConnectSessionHTTPResp, error) {
+	rsp, err := c.RebaseConnectSession(ctx, sessionId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRebaseConnectSessionHTTPResp(rsp)
 }
 
 // RejectConnectSessionWithResponse Reject an agent's connect request
@@ -55861,6 +56124,88 @@ func ParseConfirmConnectSessionHTTPResp(rsp *http.Response) (*ConfirmConnectSess
 			return nil, err
 		}
 		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRebaseConnectSessionHTTPResp parses an HTTP response from a RebaseConnectSessionWithResponse call
+func ParseRebaseConnectSessionHTTPResp(rsp *http.Response) (*RebaseConnectSessionHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RebaseConnectSessionHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest ProblemDetail

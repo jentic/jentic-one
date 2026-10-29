@@ -533,6 +533,7 @@ def _review_response(data: ReviewData) -> ReviewSessionResponse:
             else None
         ),
         last_rejected_at=data.last_rejected_at,
+        stale=data.stale,
         api_reference=ApiReferenceResponse(
             vendor=data.api_vendor,
             name=data.api_name,
@@ -638,17 +639,28 @@ async def list_connect_session_revisions(
         description=_POLL_TOKEN_DESCRIPTION,
         openapi_examples=ex.example(ex.OPAQUE_TOKEN),
     ),
+    limit: int = Query(
+        default=50,
+        ge=1,
+        le=200,
+        description="Maximum number of revisions to return (1-200, default 50).",
+        openapi_examples=ex.example(25),
+    ),
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: ConnectSessionService = Depends(get_connect_session_service),
 ) -> SessionRevisionListResponse:
-    """Every version of what the session asks for, oldest first.
+    """One page of what the session has asked for, oldest first.
 
     The review shows the current revision against today's access; this is the
     history behind it, one entry per ask and amend. Gated like the review
-    read.
+    read, and bounded like the session list.
     """
-    revisions = await svc.list_revisions(session_id, poll_token=poll_token, identity=identity)
+    revisions, has_more = await svc.list_revisions(
+        session_id, poll_token=poll_token, identity=identity, limit=limit
+    )
     return SessionRevisionListResponse(
+        limit=limit,
+        has_more=has_more,
         data=[
             SessionRevisionResponse(
                 id=r.id,
@@ -659,7 +671,7 @@ async def list_connect_session_revisions(
                 result=dict(r.result),
             )
             for r in revisions
-        ]
+        ],
     )
 
 
@@ -966,12 +978,58 @@ async def poll_connect_session_status(
         credential_id=result.credential_id,
         bound_scopes=result.bound_scopes,
         error_code=result.error_code,
+        stale=result.stale,
     )
 
 
 # ---------------------------------------------------------------------------
 # POST /connect-sessions/{id}:cancel — user aborts before terminal
 # ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/connect-sessions/{session_id}:rebase",
+    summary="Resolve an open edit against the binding as it is now",
+    response_model=None,
+    responses=with_responses(conflict("The session is closed: confirmed or ended")),
+)
+async def rebase_connect_session(
+    session_id: Annotated[
+        str,
+        Path(
+            description="ID of the connect session.",
+            openapi_examples=ex.example(ex.CONNECT_SESSION_ID),
+        ),
+    ],
+    request: Request,
+    poll_token: str | None = Query(
+        default=None,
+        description=_POLL_TOKEN_DESCRIPTION,
+        openapi_examples=ex.example(ex.OPAQUE_TOKEN),
+    ),
+    identity: Identity = get_current_identity(
+        required_permissions=["credentials:connect", "credentials:write"]
+    ),
+    svc: ConnectSessionService = Depends(get_connect_session_service),
+) -> AmendSessionResponse:
+    """Bring an open edit up to date with its binding, as a new revision.
+
+    What a reader asks for when the review or the status reports the session
+    `stale`: the ask is re-resolved against the binding as it is now, and any
+    part of it the binding no longer fits comes back as a conflict on that
+    revision. Reads never do this themselves, so a GET appends nothing.
+
+    Idempotent: a session already current answers with the revision it
+    already had. Its initiator, or a human who may confirm it, as an amend
+    takes; a closed session is 409 `session_closed`.
+    """
+    await _enforce_connect_rate_limit(request, identity)
+    rebased = await svc.rebase_session(session_id, poll_token=poll_token, identity=identity)
+    return AmendSessionResponse(
+        session_id=rebased.session_id,
+        revision_id=rebased.revision_id,
+        revision_number=rebased.revision_number,
+    )
 
 
 @router.post(

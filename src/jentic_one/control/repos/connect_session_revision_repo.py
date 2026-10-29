@@ -68,13 +68,19 @@ class ConnectSessionRevisionRepository:
 
     @staticmethod
     async def list_for_session(
-        session: AsyncSession, session_id: str
+        session: AsyncSession, session_id: str, *, limit: int | None = None
     ) -> list[ConnectSessionRevision]:
-        """Every revision of the session, oldest first."""
+        """The session's revisions, oldest first.
+
+        ``limit`` bounds the page; the caller asks for one more than the page
+        size to learn whether more remain.
+        """
         stmt = (
             select(ConnectSessionRevision)
             .where(ConnectSessionRevision.session_id == session_id)
             .order_by(ConnectSessionRevision.number.asc())
         )
+        if limit is not None:
+            stmt = stmt.limit(limit)
         result = await session.execute(stmt)
         return list(result.scalars().all())

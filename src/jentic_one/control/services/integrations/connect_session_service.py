@@ -457,6 +457,8 @@ class ReviewData:
     edit: EditReview | None = None
     # When a human last rejected this agent's ask for the same target (or binding).
     last_rejected_at: datetime | None = None
+    # An open edit whose binding moved since: ``:rebase`` brings it current.
+    stale: bool = False
 
 
 @dataclass(slots=True, frozen=True)
@@ -643,6 +645,9 @@ class StatusResult:
     credential_id: str | None = None
     bound_scopes: list[str] | None = None
     error_code: str | None = None
+    # An open edit whose binding moved since it was opened: it is resolved
+    # against the binding as it is now by ``:rebase``, or by acting on it.
+    stale: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -2956,11 +2961,49 @@ class ConnectSessionService:
             )
         return list((current.proposal.get("conflicts") or []) if current is not None else [])
 
+    async def _edit_is_stale(self, row: ConnectSession) -> bool:
+        """Whether an open edit's binding has moved since the edit was opened.
+
+        A comparison only: reads report it and write nothing, so a GET never
+        appends a revision. ``:rebase`` (or acting on the session) resolves
+        the ask against the binding as it is now.
+        """
+        if row.intent != INTENT_EDIT or row.state != "created" or row.baseline is None:
+            return False
+        live = await self._live_binding_snapshot(row)
+        return live is not None and not baseline_matches(row.baseline, live)
+
+    async def rebase_session(
+        self, session_id: str, *, poll_token: str | None, identity: Identity
+    ) -> AmendedSession:
+        """Resolve an open edit against its binding as it is now.
+
+        What a reader asks for once a read reports the session stale: the
+        request is re-resolved onto the live binding as a new revision, which
+        carries any part of the ask the binding no longer fits as a conflict.
+        Idempotent — a session already current comes back unchanged. Its
+        initiator or a human who may confirm it, as an amend takes.
+        """
+        async with self._ctx.control_db.session() as read_session:
+            row = await ConnectSessionRepository.get_by_id(read_session, session_id)
+        row = await self._require_session_access(row, poll_token=poll_token, identity=identity)
+        _require_confirm_kind(row, CONFIRM_KIND_EDIT)
+        if row.state != "created":
+            raise _session_closed(row)
+        row = await self._refresh_edit(row)
+        current = await self._current_revision(row)
+        if current is None:
+            raise _session_closed(row)
+        return AmendedSession(
+            session_id=row.id, revision_id=current.id, revision_number=current.number
+        )
+
     async def _refresh_edit(self, row: ConnectSession) -> ConnectSession:
         """An open edit rebased onto its binding when the binding moved since.
 
-        Reading the session (its review, its status, an amend) follows the
-        binding as it is now, like a branch kept up to date with its base.
+        Called where the caller acts on the session (an amend, a rebase it
+        asked for), never from a read: a GET reports ``stale`` instead, so it
+        appends nothing.
         """
         if row.intent != INTENT_EDIT or row.state != "created" or row.baseline is None:
             return row
@@ -3185,6 +3228,7 @@ class ConnectSessionService:
             revision_number=revision.number,
             edit=edit,
             last_rejected_at=await self._review_last_rejected_at(row),
+            stale=await self._edit_is_stale(row),
         )
 
     async def _emit_edit_requested(self, row: ConnectSession, *, credential_name: str) -> None:
@@ -3260,7 +3304,7 @@ class ConnectSessionService:
             row = await ConnectSessionRepository.get_by_id(session, session_id)
         row = await self._require_session_access(row, poll_token=poll_token, identity=identity)
         if row.intent == INTENT_EDIT:
-            return await self._edit_review_data(await self._refresh_edit(row), identity)
+            return await self._edit_review_data(row, identity)
         if row.state == AWAITING_APP:
             row = await self._try_leave_awaiting_app(row)
         async with self._ctx.control_db.session() as session:
@@ -3385,14 +3429,21 @@ class ConnectSessionService:
             )
 
     async def list_revisions(
-        self, session_id: str, *, poll_token: str | None, identity: Identity
-    ) -> list[ConnectSessionRevision]:
-        """Every revision of a session, oldest first; gated like the review read."""
+        self, session_id: str, *, poll_token: str | None, identity: Identity, limit: int
+    ) -> tuple[list[ConnectSessionRevision], bool]:
+        """One page of a session's revisions, oldest first, and whether more remain.
+
+        Gated like the review read. Bounded like the session list in the same
+        router: a chain is read a page at a time, never whole.
+        """
         async with self._ctx.control_db.session() as session:
             row = await ConnectSessionRepository.get_by_id(session, session_id)
         row = await self._require_session_access(row, poll_token=poll_token, identity=identity)
         async with self._ctx.control_db.session() as session:
-            return await ConnectSessionRevisionRepository.list_for_session(session, row.id)
+            page = await ConnectSessionRevisionRepository.list_for_session(
+                session, row.id, limit=limit + 1
+            )
+        return page[:limit], len(page) > limit
 
     async def _agent_view(self, agent_id: str | None) -> AgentView | None:
         if agent_id is None:
@@ -4789,9 +4840,10 @@ class ConnectSessionService:
         # callback route). All surface as pending; an edit its binding moved
         # under in a way it can't follow says so, for its initiator to amend.
         if row.intent == INTENT_EDIT:
-            row = await self._refresh_edit(row)
             if await self._revision_conflicts(row):
                 return StatusResult(status="pending", error_code="conflicted")
+            if await self._edit_is_stale(row):
+                return StatusResult(status="pending", stale=True)
         return StatusResult(status="pending")
 
     async def _outcome_status(

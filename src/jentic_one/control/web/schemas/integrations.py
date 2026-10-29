@@ -909,6 +909,15 @@ class ReviewSessionResponse(BaseModel):
     revision: SessionRevisionRef | None = None
     # Edit sessions only.
     edit: ReviewEditResponse | None = None
+    stale: bool = Field(
+        default=False,
+        examples=[False],
+        description=(
+            "The binding moved since this edit was opened, so the diff below is "
+            "against the access as it was. `POST /connect-sessions/{id}:rebase` "
+            "resolves the ask against the binding as it is now."
+        ),
+    )
     last_rejected_at: datetime | None = Field(
         default=None,
         description=(
@@ -935,9 +944,13 @@ class SessionRevisionResponse(BaseModel):
 
 
 class SessionRevisionListResponse(BaseModel):
-    """A session's revisions, oldest first."""
+    """A session's revisions, oldest first, one page at a time."""
 
     data: list[SessionRevisionResponse]
+    limit: int = Field(description="The page size the request was served at.", examples=[50])
+    has_more: bool = Field(
+        description="Whether the session holds revisions beyond this page.", examples=[False]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1284,3 +1297,12 @@ class StatusResponse(BaseModel):
     credential_id: str | None = None
     bound_scopes: list[str] | None = None
     error_code: str | None = None
+    stale: bool = Field(
+        default=False,
+        examples=[False],
+        description=(
+            "An open edit whose binding moved since it was opened. Its ask is "
+            "resolved against the binding as it is now by `POST "
+            "/connect-sessions/{id}:rebase`, or by amending it."
+        ),
+    )

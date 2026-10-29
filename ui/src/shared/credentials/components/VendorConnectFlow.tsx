@@ -41,6 +41,7 @@ import {
 	useConfirmConnectSession,
 	useConnectSession,
 	useAmendConnectSession,
+	useRebaseConnectSession,
 	useBindingAccess,
 	useConnectSessionRevisions,
 	usePollConnectSessionStatus,
@@ -1655,6 +1656,7 @@ function EditApproveFlow({
 	const [resume, setResume] = useState<boolean>(() => resumes(latest));
 	// The reviewer's own edit, saved as a revision: shown once it's read back.
 	const amendMutation = useAmendConnectSession(sessionId);
+	const rebaseMutation = useRebaseConnectSession(sessionId, pollToken);
 	const [ownRevision, setOwnRevision] = useState<string | null>(null);
 	// The rules while the reviewer edits them, before they're saved.
 	const [draftRules, setDraftRules] = useState<PermissionRule[]>([]);
@@ -1695,6 +1697,26 @@ function EditApproveFlow({
 			setOwnRevision(null);
 		}
 	}, [latest, ownRevision]);
+	// The binding moved since the request was opened. A read says so and
+	// writes nothing, so bring it up to date before the reviewer studies the
+	// diff; once they are reading, the changed-request banner offers it
+	// instead, so the diff never moves under them unasked.
+	// Adopted like the reviewer's own change, not bannered as one someone else
+	// made: they asked for this revision, so it is the one they review.
+	const rebase = useCallback(async (): Promise<void> => {
+		const rebased = await rebaseMutation.mutateAsync();
+		setOwnRevision(rebased.revision_id);
+	}, [rebaseMutation]);
+	// Only what the first read said: going stale later belongs to the banner,
+	// so the diff never moves while they are reading it.
+	const openedStale = useRef(session.stale === true);
+	const askedToRebase = useRef(false);
+	useEffect(() => {
+		if (!openedStale.current || askedToRebase.current) return;
+		askedToRebase.current = true;
+		void rebase();
+	}, [rebase]);
+
 	const changed = latest.revision.id !== shown.revision.id && latest.revision.id !== ownRevision;
 	const conflicts = shown.conflicts ?? [];
 	const changes = useMemo(() => ruleChanges(shown), [shown]);
@@ -1921,11 +1943,14 @@ function EditApproveFlow({
 				}
 			/>
 
-			{(changed || staleApprove) && (
+			{(changed || staleApprove || session.stale) && (
 				<RequestChangedBanner
 					change={changed ? latestChange : undefined}
 					agentId={byAgent ? shown.binding.agent_id : undefined}
 					afterApprove={staleApprove}
+					stale={session.stale === true}
+					onUpdate={session.stale ? (): void => void rebase() : undefined}
+					updating={rebaseMutation.isPending}
 					onReview={changed ? showLatest : undefined}
 					onHistory={(): void => setHistoryOpen(true)}
 				/>
@@ -2682,6 +2707,9 @@ function RequestChangedBanner({
 	change,
 	agentId,
 	afterApprove,
+	stale = false,
+	onUpdate,
+	updating = false,
 	onReview,
 	onHistory,
 }: {
@@ -2689,6 +2717,10 @@ function RequestChangedBanner({
 	change?: RevisionChange;
 	agentId?: string;
 	afterApprove: boolean;
+	/** The access moved since the request was opened, so the diff is behind it. */
+	stale?: boolean;
+	onUpdate?: () => void;
+	updating?: boolean;
 	/** Absent until the new version is read. */
 	onReview?: () => void;
 	onHistory: () => void;
@@ -2703,8 +2735,16 @@ function RequestChangedBanner({
 				<p className="font-medium">
 					{afterApprove
 						? 'Not approved: this request changed while you were reviewing it.'
-						: 'This request changed while you were reviewing it.'}
+						: stale
+							? 'The access this request was opened against has changed since.'
+							: 'This request changed while you were reviewing it.'}
 				</p>
+				{stale && (
+					<p className="text-xs">
+						The changes below are against the access as it was. Bring the request up to
+						date to review it against the access as it is now.
+					</p>
+				)}
 				{change && (
 					<p className="text-xs">
 						Revision {change.revision.number}:{' '}
@@ -2725,6 +2765,17 @@ function RequestChangedBanner({
 				{reason && <p className="text-foreground-sub text-[11px] italic">“{reason}”</p>}
 			</div>
 			<div className="flex shrink-0 gap-2">
+				{onUpdate && (
+					<Button
+						type="button"
+						size="sm"
+						variant="secondary"
+						onClick={onUpdate}
+						disabled={updating}
+					>
+						{updating ? 'Updating…' : 'Update to current access'}
+					</Button>
+				)}
 				{onReview && (
 					<Button type="button" size="sm" variant="secondary" onClick={onReview}>
 						Review the new version

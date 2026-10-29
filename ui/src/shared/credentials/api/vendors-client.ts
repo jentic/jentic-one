@@ -219,6 +219,14 @@ export async function listConnectSessionRevisions(
 	return body.data;
 }
 
+/** Resolve an open edit onto the binding as it is now (``POST …:rebase``). */
+export function rebaseConnectSession(
+	sessionId: string,
+	pollToken?: string,
+): Promise<AmendedSession> {
+	return request(sessionUrl(sessionId, ':rebase', pollToken), { method: 'POST' });
+}
+
 /** Change an open session's ask as a new revision (``POST …:amend``). */
 export function amendConnectSession(
 	sessionId: string,

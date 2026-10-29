@@ -439,6 +439,8 @@ export interface MockConnectSession {
 	revision?: { id: string; number: number };
 	/** When a human last rejected this agent's ask for the same target (the review shows it). */
 	last_rejected_at?: string | null;
+	/** The binding moved since an edit was opened; `:rebase` clears it. */
+	stale?: boolean;
 }
 
 type MockSessionOutcome = 'rejected' | 'cancelled' | 'connected' | 'applied';
@@ -741,6 +743,7 @@ const connectSessionsHandlers = [
 			revision: gated.edit?.revision ?? createRevision(gated),
 			edit: gated.edit ?? null,
 			last_rejected_at: gated.last_rejected_at ?? null,
+			stale: gated.stale ?? false,
 			can_confirm: gated.can_confirm ?? true,
 			existing_credentials: gated.existing_credentials ?? [],
 			requested_by_actor_id: gated.requested_by_actor_id,
@@ -758,6 +761,22 @@ const connectSessionsHandlers = [
 	}),
 
 	// An edit's reviewer changing the request: a new revision recorded as theirs.
+	// Bringing a stale edit up to date: a new revision, and no longer stale.
+	http.post('/connect-sessions/:sessionId\\:rebase', ({ params, request }) => {
+		const gated = gateSession(params.sessionId, request.url);
+		if (!isMockSession(gated)) return gated;
+		const edit = gated.edit;
+		if (!edit) return new HttpResponse(null, { status: 400 });
+		const number = edit.revision.number + 1;
+		gated.stale = false;
+		gated.edit = { ...edit, revision: { id: `csr_${gated.session_id}_${number}`, number } };
+		return HttpResponse.json({
+			session_id: gated.session_id,
+			revision_id: gated.edit.revision.id,
+			revision_number: number,
+		});
+	}),
+
 	http.post('/connect-sessions/:sessionId\\:amend', async ({ params, request }) => {
 		const gated = gateSession(params.sessionId, request.url);
 		if (!isMockSession(gated)) return gated;

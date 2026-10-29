@@ -363,6 +363,48 @@ describe('VendorConnectFlow approve — edit sessions', () => {
 		expect(screen.getByText('Revision 2')).toBeInTheDocument();
 	});
 
+	it('brings a stale request up to date on opening the review', async () => {
+		// The read says the access moved and writes nothing, so the client asks
+		// for the rebase before the reviewer studies a diff against old access.
+		const seeded = seedEdit(editBlock());
+		seeded.stale = true;
+		const rebases: Request[] = [];
+		const record = ({ request }: { request: Request }): void => {
+			if (request.url.endsWith(':rebase')) rebases.push(request);
+		};
+		worker.events.on('request:start', record);
+		try {
+			renderApprove(seeded.session_id);
+			await screen.findByRole('region', { name: 'Rule changes' });
+			await waitFor(() => expect(rebases).toHaveLength(1));
+			// Asked once, not once per poll.
+			expect(await screen.findByText('Revision 2')).toBeInTheDocument();
+			expect(rebases).toHaveLength(1);
+		} finally {
+			worker.events.removeListener('request:start', record);
+		}
+	});
+
+	it('offers the update when the access moves while the reviewer is reading', async () => {
+		const seeded = seedEdit(editBlock());
+		renderApprove(seeded.session_id);
+		const user = userEvent.setup();
+		await screen.findByRole('region', { name: 'Rule changes' });
+		// It goes stale under them: the diff must not move unasked, so the
+		// banner offers the update rather than taking it.
+		seeded.stale = true;
+		await waitFor(
+			() =>
+				expect(
+					screen.getByText(/The access this request was opened against has changed/),
+				).toBeInTheDocument(),
+			{ timeout: 15_000 },
+		);
+		expect(screen.getByText('Revision 1')).toBeInTheDocument();
+		await user.click(screen.getByRole('button', { name: 'Update to current access' }));
+		expect(await screen.findByText('Revision 2')).toBeInTheDocument();
+	}, 30_000);
+
 	it('says when this agent’s ask was rejected before', async () => {
 		const seeded = seedEdit(editBlock());
 		seeded.last_rejected_at = '2026-10-20T09:00:00Z';
