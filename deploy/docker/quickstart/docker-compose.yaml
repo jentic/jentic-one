@@ -42,8 +42,8 @@ x-env: &env
   JENTIC__DATABASES__CONTROL__PATH: /data/control.db
   JENTIC__DATABASES__ADMIN__BACKEND: sqlite
   JENTIC__DATABASES__ADMIN__PATH: /data/admin.db
-  # Credential-encryption keyset; the key itself comes from .env.
-  JENTIC__CREDENTIALS__ENCRYPTION__ACTIVE_ID: v1
+  # Credential-encryption key (the keyset's one entry, active by default); the
+  # value comes from .env.
   JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__0__ID: v1
   JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__0__MATERIAL: ${JENTIC_ENCRYPTION_KEY:?set JENTIC_ENCRYPTION_KEY in .env - see the header of this file}
   # Anonymous product telemetry (docs/reference/config.md#telemetry).

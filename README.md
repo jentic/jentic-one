@@ -79,7 +79,6 @@ curl -fsSLO https://raw.githubusercontent.com/jentic/jentic-one/main/config/quic
 # Generate this install's credential-encryption key into it (once — a new key
 # makes credentials stored under the old one unreadable)
 grep -q '^JENTIC__CREDENTIALS__ENCRYPTION__' quickstart.env || cat >> quickstart.env <<EOF
-JENTIC__CREDENTIALS__ENCRYPTION__ACTIVE_ID=v1
 JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__0__ID=v1
 JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__0__MATERIAL=$(openssl rand -base64 32)
 EOF
