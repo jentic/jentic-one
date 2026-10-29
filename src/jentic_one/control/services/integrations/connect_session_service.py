@@ -1010,7 +1010,9 @@ async def _revision_changed(
 ) -> RevisionChangedError:
     """:class:`RevisionChangedError` naming the current revision by its number too."""
     current = (
-        await ConnectSessionRevisionRepository.get_by_id(session, current_revision_id)
+        await ConnectSessionRevisionRepository.get_by_id(
+            session, current_revision_id, session_id=session_id
+        )
         if current_revision_id is not None
         else None
     )
@@ -2088,9 +2090,12 @@ class ConnectSessionService:
         )
 
     async def _emit_amended(self, row: ConnectSession, revision: ConnectSessionRevision) -> None:
-        """Emit ``connect_session.amended`` so the reviewer knows the ask changed."""
-        if row.agent_id is None:
-            return
+        """Emit ``connect_session.amended`` so the reviewer knows the ask changed.
+
+        A session with no agent is a person's own request, and it emits too:
+        the change belongs on their rail rather than nowhere. The same
+        condition used to drop the event entirely.
+        """
         try:
             async with self._ctx.admin_db.transaction() as session:
                 await emit_event_best_effort(
@@ -2100,6 +2105,8 @@ class ConnectSessionService:
                     summary=(
                         f"A connect request for agent {row.agent_id} changed "
                         f"(revision {revision.number})"
+                        if row.agent_id is not None
+                        else f"A connect request changed (revision {revision.number})"
                     ),
                     requires_action=False,
                     data={
@@ -2108,7 +2115,7 @@ class ConnectSessionService:
                         "revision_id": revision.id,
                         "number": revision.number,
                     },
-                    created_by=row.agent_id,
+                    created_by=row.agent_id or row.initiator_actor_id,
                     actor_id=revision.created_by or row.initiator_actor_id,
                     actor_type=actor_type_label_from_id(
                         revision.created_by or row.initiator_actor_id
@@ -2434,7 +2441,9 @@ class ConnectSessionService:
         if not baseline_matches(row.baseline, live):
             rebased = await self._rebase_edit(row, live)
             async with self._ctx.control_db.session() as session:
-                revision = await ConnectSessionRevisionRepository.get_by_id(session, rebased)
+                revision = await ConnectSessionRevisionRepository.get_by_id(
+                    session, rebased, session_id=row.id
+                )
             raise BaselineChangedError(
                 row.id, rebased, revision.number if revision is not None else None
             )
@@ -2919,13 +2928,20 @@ class ConnectSessionService:
         await self._emit_edit_applied(row, approver, bound=change["bind"] or change["resume"])
 
     @staticmethod
+    def _may_change_rule_set(baseline: Mapping[str, Any], identity: Identity) -> bool:
+        """Whether the caller may change the shared set the baseline points at, if any."""
+        rule_set = baseline.get("rule_set")
+        if rule_set is None or bool(rule_set["curated"]):
+            return True
+        return ORG_ADMIN in identity.permissions or rule_set.get("created_by") == identity.sub
+
+    @staticmethod
     def _require_rule_set_change_allowed(baseline: Mapping[str, Any], identity: Identity) -> None:
         """A shared set is its owner's (or an admin's) to change; a curated one is copied."""
         rule_set = baseline.get("rule_set")
-        if rule_set is None or bool(rule_set["curated"]):
-            return
-        owner = rule_set.get("created_by")
-        if ORG_ADMIN not in identity.permissions and owner != identity.sub:
+        if rule_set is not None and not ConnectSessionService._may_change_rule_set(
+            baseline, identity
+        ):
             raise RuleSetConfirmForbiddenError(rule_set["id"])
 
     async def _require_consent_allowed(
@@ -2996,7 +3012,7 @@ class ConnectSessionService:
         """The conflicts the session's current revision carries (none for a clean one)."""
         async with self._ctx.control_db.session() as session:
             current = await ConnectSessionRevisionRepository.get_by_id(
-                session, row.current_revision_id or ""
+                session, row.current_revision_id or "", session_id=row.id
             )
         return list((current.proposal.get("conflicts") or []) if current is not None else [])
 
@@ -3066,7 +3082,7 @@ class ConnectSessionService:
         try:
             async with self._ctx.control_db.transaction() as session:
                 current = await ConnectSessionRevisionRepository.get_by_id(
-                    session, row.current_revision_id or ""
+                    session, row.current_revision_id or "", session_id=row.id
                 )
                 if current is None:
                     raise SessionNotFoundError(row.id)
@@ -3220,7 +3236,9 @@ class ConnectSessionService:
         assert row.agent_id is not None and row.baseline is not None
         async with self._ctx.control_db.session() as session:
             revision = (
-                await ConnectSessionRevisionRepository.get_by_id(session, row.current_revision_id)
+                await ConnectSessionRevisionRepository.get_by_id(
+                    session, row.current_revision_id, session_id=row.id
+                )
                 if row.current_revision_id is not None
                 else None
             )
@@ -3498,10 +3516,20 @@ class ConnectSessionService:
     async def _can_confirm(
         self, row: ConnectSession, identity: Identity, agent: AgentView | None
     ) -> bool:
-        """Whether ``identity`` may confirm the session as it stands (no side effects)."""
+        """Whether ``identity`` may confirm the session as it stands (no side effects).
+
+        Every refusal the confirm itself applies, or the review offers an
+        approval that then 403s: an edit needs the credential and, when the
+        change rewrites a shared rule set, that set as well.
+        """
         if row.state not in ("created", AWAITING_APP):
             return False
         if identity.actor_type == ActorType.AGENT:
+            return False
+        if row.intent == INTENT_EDIT and not (
+            await self._owns_credential(row.credential_id, identity)
+            and self._may_change_rule_set(row.baseline or {}, identity)
+        ):
             return False
         if row.agent_id is None:
             return True

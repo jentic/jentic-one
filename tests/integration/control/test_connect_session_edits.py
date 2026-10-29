@@ -590,6 +590,38 @@ async def test_the_review_names_no_agent_the_reader_may_not_see(
             await session.execute(text("DELETE FROM users WHERE id = 'usr_cse_stranger'"))
 
 
+async def test_can_confirm_says_what_the_confirm_will_do(
+    integration_context: Context, binding: str
+) -> None:
+    """The review must not offer an approval the confirm then refuses.
+
+    ``can_confirm`` answered on the agent and the state alone, so a reviewer
+    was shown an Approve that 403s on a rule set, or on a credential that is
+    not theirs.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    await _attach_rule_set(ctx, binding, curated=False)
+    created = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+
+    # The set belongs to someone else, so this reviewer cannot confirm.
+    review = await svc.get_review_data(created.session_id, poll_token=None, identity=_OWNER)
+    assert review.can_confirm is False
+    with pytest.raises(RuleSetConfirmForbiddenError):
+        await svc.confirm_edit(
+            created.session_id,
+            poll_token=None,
+            identity=_OWNER,
+            revision_id=review.revision_id or "",
+            permission_rules=[_READ, _SEND],
+            resume=False,
+        )
+    # An org admin may change any set, and is offered the approval.
+    admin = Identity(sub="usr_cse_admin", email="admin@test.local", permissions=["org:admin"])
+    as_admin = await svc.get_review_data(created.session_id, poll_token=None, identity=admin)
+    assert as_admin.can_confirm is True
+
+
 async def test_a_shared_rule_set_edit_needs_the_sets_owner(
     integration_context: Context, binding: str
 ) -> None:

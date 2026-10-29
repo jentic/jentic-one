@@ -61,8 +61,18 @@ class ConnectSessionRevisionRepository:
         await session.flush()
 
     @staticmethod
-    async def get_by_id(session: AsyncSession, revision_id: str) -> ConnectSessionRevision | None:
+    async def get_by_id(
+        session: AsyncSession, revision_id: str, *, session_id: str | None = None
+    ) -> ConnectSessionRevision | None:
+        """One revision, scoped to its session when the caller knows it.
+
+        A caller-supplied id resolved without the session would let a revision
+        of one session answer for another; every caller here has the session in
+        hand, so it names it.
+        """
         stmt = select(ConnectSessionRevision).where(ConnectSessionRevision.id == revision_id)
+        if session_id is not None:
+            stmt = stmt.where(ConnectSessionRevision.session_id == session_id)
         result = await session.execute(stmt)
         return result.scalar_one_or_none()
 
