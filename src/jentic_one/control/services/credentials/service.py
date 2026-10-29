@@ -41,7 +41,7 @@ from jentic_one.control.repos.prerequisite_repo import (
     PrerequisiteRepository,
 )
 from jentic_one.control.repos.registry_api_lookup_repo import RegistryApiLookupRepository
-from jentic_one.control.scoping.filters import build_access_filters
+from jentic_one.control.scoping.filters import bound_agent_visibility, build_access_filters
 from jentic_one.control.services.credentials.errors import (
     AgentBindingNotFoundError,
     CredentialNotFoundError,
@@ -678,18 +678,8 @@ class CredentialService:
     def _bound_agent_visibility(
         credential: Credential, identity: Identity
     ) -> AgentVisibility | None:
-        """Bound agents the caller may enumerate; ``None`` means all of them.
-
-        ``org:admin`` and the credential's creator see every bound agent.
-        Anyone else sees the agents it owns and itself (when the caller is an
-        agent), plus its owner's agents when it holds ``owner:agents:read`` —
-        the same agent visibility the admin surface applies.
-        """
-        if ORG_ADMIN in identity.permissions:
-            return None
-        if credential.created_by is not None and credential.created_by == identity.sub:
-            return None
-        return CredentialService._agent_visibility_for(identity)
+        """Bound agents the caller may enumerate; ``None`` means all of them."""
+        return bound_agent_visibility(credential.created_by, identity)
 
     # --- Per-binding permission rules (theme 5 phase 1) ---
 

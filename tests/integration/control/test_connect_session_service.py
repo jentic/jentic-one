@@ -3050,6 +3050,52 @@ async def test_rules_changed_while_a_grant_is_out_are_kept_and_the_rest_reopens(
     assert [e.data.get("credential_id") for e in applied.data].count(credential_id) >= 1
 
 
+async def test_a_grant_that_moved_under_an_open_edit_reads_as_stale(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    """A confirm must not silently drop a scope the reviewer was never shown.
+
+    The sign-in asks the vendor for the scopes the session holds, so resolved
+    against a grant that has moved it would drop whatever widened it since,
+    for every agent bound to the credential.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    credential_id = await _connected_device_credential(ctx, svc)
+    edit = await svc.create_edit_session(
+        credential_id=credential_id,
+        agent_id=_AGENT_ID,
+        identity=_AGENT_IDENTITY,
+        request=EditRequest(add=[RuleAdd(_WRITE_RULE)]),
+    )
+    review = await svc.get_review_data(edit.session_id, poll_token=None, identity=_USER_IDENTITY)
+    assert review.stale is False
+    assert review.edit is not None and review.edit.current["granted_scopes"] == ["read:user"]
+
+    # Someone else widens the shared grant while this edit waits.
+    with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)):
+        await svc.create_edit_session(
+            credential_id=credential_id,
+            agent_id=_AGENT_ID,
+            identity=_USER_IDENTITY,
+            request=EditRequest(add_scopes=["repo"]),
+            apply=True,
+        )
+    await _land_grant(svc, credential_id)
+
+    stale = await svc.get_review_data(edit.session_id, poll_token=None, identity=_USER_IDENTITY)
+    assert stale.stale is True
+    await svc.rebase_session(edit.session_id, poll_token=None, identity=_USER_IDENTITY)
+    current = await svc.get_review_data(edit.session_id, poll_token=None, identity=_USER_IDENTITY)
+    assert current.edit is not None
+    assert current.edit.current["granted_scopes"] == ["read:user", "repo"]
+    assert current.edit.result["scopes"] == ["read:user", "repo"]
+
+
 async def test_a_session_cancelled_mid_exchange_does_not_keep_the_widened_grant(
     integration_context: Context,
     seed_test_vendors: None,

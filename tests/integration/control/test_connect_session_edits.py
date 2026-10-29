@@ -483,6 +483,113 @@ async def _attach_rule_set(ctx: Context, credential_id: str, *, curated: bool) -
     return rule_set.id
 
 
+async def test_a_shared_rule_set_edit_names_every_agent_it_reaches(
+    integration_context: Context, binding: str
+) -> None:
+    """One write to a shared set reaches every binding that points at it.
+
+    The affected-agent list was computed from the credential, so a reviewer
+    was shown nobody while approving a change to other agents' policy on
+    other credentials.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    rule_set_id = await _attach_rule_set(ctx, binding, curated=False)
+    # A second agent, on its own credential, governed by the same set.
+    other_credential = await CredentialService(ctx).create(
+        CredentialCreate(
+            type=CredentialType.BEARER_TOKEN,
+            name="cse second credential",
+            api=APIReference(vendor="acme-com", name="widgets", version="v1"),
+            token="sk-second",
+        ),
+        identity=_OWNER,
+    )
+    async with ctx.admin_db.transaction() as session:
+        await session.execute(
+            text(
+                "INSERT INTO agents (id, name, registered_by, owner_id, status) "
+                "VALUES ('agnt_cse_shared', 'shared', :u, :u, 'approved')"
+            ),
+            {"u": _OWNER_SUB},
+        )
+        await AgentCredentialBindingRepository.bind(
+            session,
+            agent_id="agnt_cse_shared",
+            credential_id=other_credential.credential_id,
+            created_by=_OWNER_SUB,
+        )
+        await PrerequisiteRepository.set_binding_rule_set(
+            session,
+            agent_id="agnt_cse_shared",
+            credential_id=other_credential.credential_id,
+            rule_set_id=rule_set_id,
+        )
+
+    created = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+    review = await svc.get_review_data(created.session_id, poll_token=None, identity=_OWNER)
+    assert review.edit is not None and review.edit.result["target"] == "rule_set"
+    assert [a.agent_id for a in review.edit.other_bound_agents] == ["agnt_cse_shared"]
+
+    async with ctx.admin_db.transaction() as session:
+        await session.execute(
+            text("DELETE FROM agent_credential_bindings WHERE agent_id = 'agnt_cse_shared'")
+        )
+        await session.execute(text("DELETE FROM agents WHERE id = 'agnt_cse_shared'"))
+
+
+async def test_the_review_names_no_agent_the_reader_may_not_see(
+    integration_context: Context, binding: str
+) -> None:
+    """A review never introduces a stranger's agent.
+
+    An admin may bind one user's credential to another's agent; the second
+    user then read the first's agent id and name off the review, where the
+    credential's own bound-agent list refuses them.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    async with ctx.admin_db.transaction() as session:
+        await session.execute(
+            text(
+                "INSERT INTO users (id, email, first_name, last_name) "
+                "VALUES (:id, :email, 'Mallory', 'Test')"
+            ),
+            {"id": "usr_cse_stranger", "email": "stranger@cse.test"},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO agents (id, name, registered_by, owner_id, status) "
+                "VALUES ('agnt_cse_foreign', 'Foreign', :u, :u, 'approved')"
+            ),
+            {"u": "usr_cse_stranger"},
+        )
+        await AgentCredentialBindingRepository.bind(
+            session,
+            agent_id="agnt_cse_foreign",
+            credential_id=binding,
+            created_by=_OWNER_SUB,
+        )
+    created = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+    try:
+        # The credential's creator sees every agent it reaches.
+        mine = await svc.get_review_data(created.session_id, poll_token=None, identity=_OWNER)
+        assert mine.edit is not None
+        assert [a.agent_id for a in mine.edit.other_bound_agents] == ["agnt_cse_foreign"]
+        # The agent's own poll token does not widen what the review names.
+        theirs = await svc.get_review_data(
+            created.session_id, poll_token=created.poll_token, identity=_AGENT_IDENTITY
+        )
+        assert theirs.edit is not None and theirs.edit.other_bound_agents == []
+    finally:
+        async with ctx.admin_db.transaction() as session:
+            await session.execute(
+                text("DELETE FROM agent_credential_bindings WHERE agent_id = 'agnt_cse_foreign'")
+            )
+            await session.execute(text("DELETE FROM agents WHERE id = 'agnt_cse_foreign'"))
+            await session.execute(text("DELETE FROM users WHERE id = 'usr_cse_stranger'"))
+
+
 async def test_a_shared_rule_set_edit_needs_the_sets_owner(
     integration_context: Context, binding: str
 ) -> None:

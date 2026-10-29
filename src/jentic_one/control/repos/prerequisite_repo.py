@@ -202,6 +202,44 @@ class PrerequisiteRepository:
         return [CredentialBoundAgentRow(*row) for row in result.fetchall()]
 
     @staticmethod
+    async def list_agents_for_rule_set(
+        session: AsyncSession,
+        *,
+        rule_set_id: str,
+        limit: int = 50,
+        visible_to: AgentVisibility | None = None,
+    ) -> list[CredentialBoundAgentRow]:
+        """Agents whose binding points at a shared rule set, on any credential.
+
+        Changing the set is one write to rows every one of those bindings
+        reads, so a review of such a change names them — the credential the
+        edit was opened on is only part of its reach. ``visible_to`` narrows
+        the rows exactly as :meth:`list_agents_for_credential` does.
+        """
+        conditions = ["b.rule_set_id = :rule_set_id"]
+        params: dict[str, object] = {"rule_set_id": rule_set_id, "limit": limit}
+        bind_params: list[BindParameter[Any]] = []
+        if visible_to is not None:
+            conditions.append("(a.id = :self_id OR a.owner_id IN :owner_ids)")
+            params.update(self_id=visible_to.self_id, owner_ids=list(visible_to.owner_ids))
+            bind_params.append(bindparam("owner_ids", expanding=True))
+
+        stmt = text(
+            "SELECT b.id, a.id, a.name, a.status, b.bound_at, b.suspended, b.rule_set_id, "
+            "b.suspended_reason "
+            "FROM agent_credential_bindings b "
+            "JOIN agents a ON a.id = b.agent_id "
+            f"WHERE {' AND '.join(conditions)} "
+            "ORDER BY b.bound_at DESC, b.id DESC "
+            "LIMIT :limit"
+        )
+        if bind_params:
+            stmt = stmt.bindparams(*bind_params)
+        typed = stmt.columns(bound_at=UTCDateTime(), suspended=Boolean())
+        result = await session.execute(typed, params)
+        return [CredentialBoundAgentRow(*row) for row in result.fetchall()]
+
+    @staticmethod
     async def get_agent_credential_binding(
         session: AsyncSession,
         *,

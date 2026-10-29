@@ -65,9 +65,10 @@ from jentic_one.control.repos.oauth_client_credential_repo import (
 )
 from jentic_one.control.repos.prerequisite_repo import (
     AgentCredentialBindingRow,
+    AgentVisibility,
     PrerequisiteRepository,
 )
-from jentic_one.control.scoping.filters import build_access_filters
+from jentic_one.control.scoping.filters import bound_agent_visibility, build_access_filters
 from jentic_one.control.services.credentials.mapping import to_wire
 from jentic_one.control.services.credentials.state import (
     BrowserBindingClaim,
@@ -3171,7 +3172,7 @@ class ConnectSessionService:
         return snapshot
 
     async def _edit_review(
-        self, row: ConnectSession
+        self, row: ConnectSession, identity: Identity
     ) -> tuple[EditReview, Credential | None, ConnectSessionRevision]:
         """The review block of an edit session: baseline, current revision and reach.
 
@@ -3188,7 +3189,7 @@ class ConnectSessionService:
             credential = await CredentialRepository.get_by_id(session, row.credential_id)
         if revision is None:
             raise SessionNotFoundError(row.id)
-        others = await self._other_bound_agents(row.credential_id, row.agent_id)
+        others = await self._affected_agents(row, row.baseline, credential, identity)
         review = EditReview(
             agent_id=row.agent_id,
             credential_id=row.credential_id,
@@ -3206,7 +3207,7 @@ class ConnectSessionService:
 
     async def _edit_review_data(self, row: ConnectSession, identity: Identity) -> ReviewData:
         """``get_review_data`` for an edit session."""
-        edit, credential, revision = await self._edit_review(row)
+        edit, credential, revision = await self._edit_review(row, identity)
         agent = await self._agent_view(row.agent_id)
         return ReviewData(
             session_id=row.id,
@@ -3528,7 +3529,11 @@ class ConnectSessionService:
         requested = list(row.requested_scopes or [])
         views: list[ExistingCredentialView] = []
         for credential in candidates:
-            others = await self._other_bound_agents(credential.id, row.agent_id)
+            others = await self._other_bound_agents(
+                credential.id,
+                row.agent_id,
+                visible_to=bound_agent_visibility(credential.created_by, identity),
+            )
             wire_type = to_wire(StoredCredentialType(credential.type)).value
             if not _is_oauth_type(credential.type):
                 views.append(
@@ -3567,20 +3572,74 @@ class ConnectSessionService:
             )
         return views
 
-    async def _other_bound_agents(
-        self, credential_id: str, agent_id: str | None
+    async def _affected_agents(
+        self,
+        row: ConnectSession,
+        baseline: Mapping[str, Any],
+        credential: Credential | None,
+        identity: Identity,
     ) -> list[AgentView]:
-        """The agents other than ``agent_id`` bound to the credential, with their names."""
+        """Every agent the change reaches besides the session's own, named.
+
+        The credential's other bound agents, plus — when the change rewrites a
+        shared rule set rather than copying it — every agent bound through
+        that set on any credential: one write reaches all of them. Narrowed to
+        the agents the caller may enumerate, as the credential's own bound-agent
+        list is, so a review never names a stranger's agent.
+        """
+        visible_to = bound_agent_visibility(
+            credential.created_by if credential is not None else None, identity
+        )
+        ids = set(
+            await self._other_bound_agent_ids(
+                row.credential_id, row.agent_id, visible_to=visible_to
+            )
+        )
+        rule_set = baseline.get("rule_set")
+        if rule_set is not None and not rule_set.get("curated"):
+            async with self._ctx.admin_db.session() as admin_session:
+                rows = await PrerequisiteRepository.list_agents_for_rule_set(
+                    admin_session,
+                    rule_set_id=rule_set["id"],
+                    limit=_BOUND_AGENTS_LIMIT,
+                    visible_to=visible_to,
+                )
+            ids |= {r.agent_id for r in rows if r.agent_id != row.agent_id}
         views: list[AgentView] = []
-        for other_id in await self._other_bound_agent_ids(credential_id, agent_id):
+        for other_id in sorted(ids):
             view = await self._agent_view(other_id)
             views.append(view or AgentView(agent_id=other_id, name=None, owner_id=None, status=""))
         return views
 
-    async def _other_bound_agent_ids(self, credential_id: str, agent_id: str | None) -> list[str]:
+    async def _other_bound_agents(
+        self,
+        credential_id: str,
+        agent_id: str | None,
+        *,
+        visible_to: AgentVisibility | None = None,
+    ) -> list[AgentView]:
+        """The agents other than ``agent_id`` bound to the credential, with their names."""
+        views: list[AgentView] = []
+        for other_id in await self._other_bound_agent_ids(
+            credential_id, agent_id, visible_to=visible_to
+        ):
+            view = await self._agent_view(other_id)
+            views.append(view or AgentView(agent_id=other_id, name=None, owner_id=None, status=""))
+        return views
+
+    async def _other_bound_agent_ids(
+        self,
+        credential_id: str,
+        agent_id: str | None,
+        *,
+        visible_to: AgentVisibility | None = None,
+    ) -> list[str]:
         async with self._ctx.admin_db.session() as admin_session:
             rows = await PrerequisiteRepository.list_agents_for_credential(
-                admin_session, credential_id=credential_id, limit=_BOUND_AGENTS_LIMIT
+                admin_session,
+                credential_id=credential_id,
+                limit=_BOUND_AGENTS_LIMIT,
+                visible_to=visible_to,
             )
         return sorted({r.agent_id for r in rows if r.agent_id != agent_id})
 
