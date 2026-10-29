@@ -719,8 +719,7 @@ func (a *app) installDocker(ctx context.Context, draft *install.Draft, configPat
 	} else {
 		appImage = install.ResolveAppImage(cmdcore.Version(), opts.imageTag)
 		fmt.Fprintln(a.Out)
-		fmt.Fprintln(a.Out, theme.Headingf("Pull app image"))
-		fmt.Fprintln(a.Out, theme.Dimf("  image: %s", appImage))
+		fmt.Fprint(a.Out, install.RenderPullHeader(appImage))
 		if err := install.PullAppImage(a.Out, appImage); err != nil {
 			return err
 		}
