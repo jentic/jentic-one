@@ -218,6 +218,13 @@ search step. The broker authenticates you and injects the stored
 upstream credential server-side; credentials never pass through your
 session.
 
+**Say why.** On every call that changes something (POST, PUT, PATCH,
+DELETE), give your reason in one plain sentence — CLI `--reason "…"`, MCP
+`"reason": "…"` — e.g. `Customer 4821 asked for a replacement order`. If the
+call is held for human approval, the reviewer reads it next to the request;
+a call with no reason is harder to approve. It is never sent to the upstream
+API.
+
 An async execution does not answer inline: it returns a **job envelope**
 (`{job_id, status, …}`) to poll. A call held for human approval answers
 `status: "held"` with a `held_execution_id` and a `review_url`: **show the

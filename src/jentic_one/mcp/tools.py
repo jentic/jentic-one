@@ -1043,6 +1043,7 @@ _EXECUTE_PARAMS = [
     ParamSpec("body", "json", ("data",)),
     ParamSpec("revision", "string"),
     ParamSpec("idempotency_key", "string"),
+    ParamSpec("reason", "string"),
 ]
 
 
@@ -1136,6 +1137,7 @@ async def _execute_tool(
         body_bytes = json.dumps(body_value, ensure_ascii=False).encode("utf-8")
 
     idempotency_key = args.get("idempotency_key", "")
+    reason = args.get("reason", "")
     # Both failure paths judge retry safety on the key that actually rides the
     # wire, so a key passed via ``headers`` counts the same as idempotency_key.
     retry_safe = ex.retry_safe(method, ex.effective_idempotency_key(headers, idempotency_key))
@@ -1148,6 +1150,7 @@ async def _execute_tool(
             body=body_bytes,
             session_id=env.session_id,
             idempotency_key=idempotency_key or None,
+            reason=reason or None,
         )
     except Exception as exc:
         # ``from None``: the raw transport message stays out of any rendered

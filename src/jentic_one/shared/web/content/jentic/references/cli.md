@@ -252,9 +252,14 @@ held when `--timeout` lapses (default 30s, up to 5m), it exits 3 again and
 prints the review link and id: show the user the link again and end your turn.
 
 ```
-jentic execute POST:https://api.example.com/v1/orders -d '{"n":1}'   # exit 3: held, prints review_url
+jentic execute POST:https://api.example.com/v1/orders -d '{"n":1}' --reason "Customer 4821 asked for a replacement order"   # exit 3: held, prints review_url
 jentic executions poll <held_execution_id> --timeout 2m               # after the user decides
 ```
+
+Pass `--reason "…"` on every call that changes something: one plain
+sentence on why. If the call is held, the reviewer reads it next to the
+request. The CLI sends it as the `Jentic-Reason` header (percent-encoded; the
+broker keeps at most 1024 characters) and it is never forwarded upstream.
 
 **Diagnose an `execute` failure by its symptom, not the exit code alone.** A
 broker **denial** prints an `agent_directive` on stderr (exit **2**). An

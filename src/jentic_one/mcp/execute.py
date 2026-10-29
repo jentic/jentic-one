@@ -952,13 +952,16 @@ async def send_to_broker(
     body: bytes | None,
     session_id: str | None,
     idempotency_key: str | None,
+    reason: str | None = None,
 ) -> tuple[int, httpx.Headers, bytes, str]:
     """Send one built broker request and read the bounded response.
 
     The caller's own credential rides as the bearer (the broker authenticates
     the AGENT, not this mount); correlation headers mirror the Go path —
     ``X-Jentic-Session-Id`` when the inbound request carried one, a fresh
-    ``traceparent`` unless the caller supplied its own. The response is
+    ``traceparent`` unless the caller supplied its own, and the agent's
+    ``reason`` as a percent-encoded ``Jentic-Reason`` (the broker reads it when
+    the call is held; a caller-supplied header wins). The response is
     STREAMED and the read stops at ``_MAX_BODY_BYTES`` (Go:
     ``ReadAllBounded``) — the full body is never buffered first.
     """
@@ -974,6 +977,9 @@ async def send_to_broker(
         request_headers["traceparent"] = f"00-{uuid_mod.uuid4().hex}-{uuid_mod.uuid4().hex[:16]}-01"
     if idempotency_key and "idempotency-key" not in lower_keys:
         request_headers["Idempotency-Key"] = idempotency_key
+    if reason and "jentic-reason" not in lower_keys:
+        # ``quote`` (not ``quote_plus``): the broker reads a literal "+" as text.
+        request_headers["Jentic-Reason"] = quote(reason, safe="")
     # Protected headers merge LAST so a model-supplied ``headers`` tool-arg
     # can never override the caller's bearer or the ``jentic-mcp/`` UA the
     # broker derives ``Origin.MCP`` from (case-insensitive duplicates are

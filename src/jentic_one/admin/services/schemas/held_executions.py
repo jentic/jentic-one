@@ -30,6 +30,7 @@ class HeldExecutionView(BaseModel):
     decided_at: datetime | None = None
     decided_by: str | None = None
     decision_reason: str | None = None
+    agent_reason: str | None = None
     trace_id: str | None = None
     execution_id: str | None = None
     created_at: datetime

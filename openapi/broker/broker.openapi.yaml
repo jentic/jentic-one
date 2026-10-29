@@ -285,6 +285,7 @@ paths:
       - $ref: "#/components/parameters/JenticRevision"
       - $ref: "#/components/parameters/JenticCredentialName"
       - $ref: "#/components/parameters/JenticCredentialId"
+      - $ref: "#/components/parameters/JenticReason"
     get:
       operationId: executeGet
       summary: Execute a `GET` against an upstream API
@@ -808,6 +809,23 @@ components:
         type: string
         examples:
           - Stripe prod key
+    JenticReason:
+      name: Jentic-Reason
+      in: header
+      required: false
+      description: |
+        Why the agent is making this call, in its own words. Send it on
+        any call that changes something: when the call is held for human
+        approval, the reviewer sees it next to the request. Percent-encode
+        it as UTF-8 (a header carries ASCII only); at most 1024 characters
+        after decoding (longer text is cut, control characters other than
+        newline and tab are dropped). Consumed by the broker — never
+        forwarded upstream, and dropped when the call runs straight away.
+      example: Customer%204821%20asked%20for%20a%20replacement%20order
+      schema:
+        type: string
+        examples:
+          - Customer%204821%20asked%20for%20a%20replacement%20order
     JenticCredentialId:
       name: Jentic-Credential-Id
       in: header

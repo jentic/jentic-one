@@ -82,6 +82,11 @@ TRACESTATE_HEADER = "tracestate"
 # ``BROKER_CONSUMED_HEADERS``), so it lives as a module-level constant.
 JENTIC_REVISION_HEADER = "jentic-revision"
 
+# The inbound free-text reason an agent attaches to a call (percent-encoded
+# UTF-8). Read only when the call is held for approval, where the reviewer sees
+# it; stripped from outbound forwarding via ``BROKER_CONSUMED_HEADERS``.
+JENTIC_REASON_HEADER = "jentic-reason"
+
 
 # Security-bearing response headers scrubbed before a response is serialized into
 # any broker-side store (idempotency replay cache here; the async jobs store
@@ -131,6 +136,7 @@ BROKER_CONSUMED_HEADERS: frozenset[str] = frozenset(
         "x-jentic-api-key",
         "jentic-credential-name",
         "jentic-credential-id",
+        "jentic-reason",
     }
 )
 

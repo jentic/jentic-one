@@ -47,6 +47,7 @@ from jentic_one.broker.core.errors import (
 )
 from jentic_one.broker.core.execution import mint_execution_id
 from jentic_one.broker.core.headers import (
+    JENTIC_REASON_HEADER,
     JENTIC_REVISION_HEADER,
     REGION_MISMATCH_HINT,
     TRACESTATE_HEADER,
@@ -61,6 +62,7 @@ from jentic_one.broker.core.proxy_headers import (
     reconstruct_upstream_url,
     replay_headers,
 )
+from jentic_one.broker.core.reason import parse_agent_reason
 from jentic_one.broker.core.revisions import parse_revisions
 from jentic_one.broker.core.schemas import (
     AsyncQueuedResponse,
@@ -1200,6 +1202,7 @@ async def _handle_hold(
     execution_id = mint_execution_id()
     with stage(ServerTimingStage.BODY):
         body = await _read_request_body(request, ctx_req.method, ctx)
+    agent_reason = parse_agent_reason(request.headers.get(JENTIC_REASON_HEADER))
     raw_payload = _async_job_payload(
         ctx_req,
         execution_id=execution_id,
@@ -1234,6 +1237,7 @@ async def _handle_hold(
                 payload=payload,
                 ttl_seconds=cfg.ttl_seconds,
                 max_pending=cfg.max_pending_per_agent,
+                agent_reason=agent_reason,
             )
         except PendingApprovalLimitError as exc:
             raise ApprovalPendingLimitError(
@@ -1272,6 +1276,7 @@ async def _handle_hold(
                     "api_version": ctx_req.api_version,
                     "review_url": review_url,
                     "expires_at": hold.expires_at.isoformat(),
+                    "agent_reason": agent_reason,
                 },
             )
 
@@ -1281,6 +1286,7 @@ async def _handle_hold(
         job_id=hold.job_id,
         joined=hold.joined,
         method=ctx_req.method,
+        has_agent_reason=hold.agent_reason is not None,
     )
     base = ctx.config.broker.jobs_api_base_url or ""
     held = f"{base}/executions/holds/{hold.approval_id}"

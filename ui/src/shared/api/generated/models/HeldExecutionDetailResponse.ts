@@ -23,6 +23,10 @@ export type HeldExecutionDetailResponse = {
      */
     agent_owner_id?: (string | null);
     /**
+     * Why the agent says it made the call, in its own words (its Jentic-Reason request header). Unverified; null when the agent gave no reason.
+     */
+    agent_reason?: (string | null);
+    /**
      * Name of the API called.
      */
     api_name: string;
