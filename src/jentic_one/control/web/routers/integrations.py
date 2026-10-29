@@ -639,6 +639,11 @@ async def list_connect_session_revisions(
         description=_POLL_TOKEN_DESCRIPTION,
         openapi_examples=ex.example(ex.OPAQUE_TOKEN),
     ),
+    cursor: str | None = Query(
+        default=None,
+        description="Opaque cursor from a previous page's `next_cursor`.",
+        openapi_examples=ex.example(ex.CURSOR),
+    ),
     limit: int = Query(
         default=50,
         ge=1,
@@ -655,12 +660,13 @@ async def list_connect_session_revisions(
     history behind it, one entry per ask and amend. Gated like the review
     read, and bounded like the session list.
     """
-    revisions, has_more = await svc.list_revisions(
-        session_id, poll_token=poll_token, identity=identity, limit=limit
+    revisions, has_more, next_cursor = await svc.list_revisions(
+        session_id, poll_token=poll_token, identity=identity, limit=limit, cursor=cursor
     )
     return SessionRevisionListResponse(
         limit=limit,
         has_more=has_more,
+        next_cursor=next_cursor,
         data=[
             SessionRevisionResponse(
                 id=r.id,

@@ -2608,6 +2608,88 @@ async def test_amending_a_create_session_replaces_its_ask(
         )
 
 
+async def test_a_revision_chain_is_read_page_by_page(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+) -> None:
+    """A chain longer than one page is read whole by following the cursor."""
+    svc = ConnectSessionService(integration_context)
+    created = await svc.create_session(
+        vendor_key="testdev", agent_id=_AGENT_ID, identity=_AGENT_IDENTITY
+    )
+    for number in range(2, 6):
+        await svc.amend_session(
+            created.session_id,
+            identity=_AGENT_IDENTITY,
+            amend=SessionAmend(fields=frozenset({"reason"}), reason=f"take {number}"),
+        )
+
+    seen: list[int] = []
+    cursor: str | None = None
+    while True:
+        page, has_more, cursor = await svc.list_revisions(
+            created.session_id,
+            poll_token=created.poll_token,
+            identity=_AGENT_IDENTITY,
+            limit=2,
+            cursor=cursor,
+        )
+        seen.extend(r.number for r in page)
+        assert len(page) <= 2
+        if not has_more:
+            break
+        assert cursor is not None
+    assert seen == [1, 2, 3, 4, 5]
+
+
+async def test_an_amend_losing_to_a_concurrent_writer_is_a_conflict(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    """A revision index collision is the conflict it is, not an internal error.
+
+    The integrity handler asserted a dedupe key that an edit's write never
+    sets, so any collision there raised out of the app instead of telling the
+    caller its ask had moved.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    credential_id = await _connected_device_credential(ctx, svc)
+    created = await svc.create_edit_session(
+        credential_id=credential_id,
+        agent_id=_AGENT_ID,
+        identity=_AGENT_IDENTITY,
+        request=EditRequest(add=[RuleAdd(_WRITE_RULE)]),
+    )
+    # A revision already holds the number this amend would take.
+    async with ctx.control_db.transaction() as session:
+        await ConnectSessionRevisionRepository.append(
+            session,
+            session_id=created.session_id,
+            proposal={"rules": {"add": [], "remove": []}, "scopes": {}, "resume": False},
+            result={"rules": [], "scopes": [], "target": "binding", "suspended": False},
+            digest="d" * 64,
+            created_by=None,
+        )
+    async with ctx.control_db.transaction() as session:
+        await session.execute(
+            text("UPDATE connect_sessions SET current_revision_id = :rid WHERE id = :sid"),
+            {"rid": created.revision_id, "sid": created.session_id},
+        )
+
+    with pytest.raises(RevisionChangedError):
+        await svc.amend_session(
+            created.session_id,
+            identity=_AGENT_IDENTITY,
+            amend=SessionAmend(fields=frozenset({"reason"}), reason="mine"),
+        )
+
+
 async def test_a_session_holds_only_so_many_revisions(
     integration_context: Context,
     seed_test_vendors: None,

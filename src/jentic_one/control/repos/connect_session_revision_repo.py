@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.control.core.schema.connect_session_revisions import ConnectSessionRevision
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
+from jentic_one.shared.db.keyset import asc_keyset_predicate
+from jentic_one.shared.pagination import Cursor
 
 
 class ConnectSessionRevisionRepository:
@@ -78,17 +80,31 @@ class ConnectSessionRevisionRepository:
 
     @staticmethod
     async def list_for_session(
-        session: AsyncSession, session_id: str, *, limit: int | None = None
+        session: AsyncSession,
+        session_id: str,
+        *,
+        limit: int | None = None,
+        cursor: Cursor | None = None,
     ) -> list[ConnectSessionRevision]:
         """The session's revisions, oldest first.
 
         ``limit`` bounds the page; the caller asks for one more than the page
-        size to learn whether more remain.
+        size to learn whether more remain. ``cursor`` continues after a
+        position, keyed on ``(created_at, id)`` ascending like the chain
+        itself, so a chain longer than one page is read whole page by page.
         """
-        stmt = (
-            select(ConnectSessionRevision)
-            .where(ConnectSessionRevision.session_id == session_id)
-            .order_by(ConnectSessionRevision.number.asc())
+        stmt = select(ConnectSessionRevision).where(ConnectSessionRevision.session_id == session_id)
+        if cursor is not None:
+            stmt = stmt.where(
+                asc_keyset_predicate(
+                    ConnectSessionRevision.created_at,
+                    ConnectSessionRevision.id,
+                    cursor.timestamp,
+                    cursor.id,
+                )
+            )
+        stmt = stmt.order_by(
+            ConnectSessionRevision.created_at.asc(), ConnectSessionRevision.id.asc()
         )
         if limit is not None:
             stmt = stmt.limit(limit)

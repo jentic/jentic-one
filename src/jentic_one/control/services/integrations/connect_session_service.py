@@ -2030,6 +2030,7 @@ class ConnectSessionService:
         )
         try:
             async with self._ctx.control_db.transaction() as session:
+                await ConnectSessionRepository.acquire_revision_lock(session, row.id)
                 won = await ConnectSessionRepository.advance_revision(
                     session,
                     row.id,
@@ -2045,8 +2046,16 @@ class ConnectSessionService:
                     raise await _revision_changed(session, row.id, latest.current_revision_id)
                 await ConnectSessionRevisionRepository.insert(session, revision)
         except DatabaseIntegrityError:
+            if row.agent_id is None or "dedupe_key" not in fields:
+                # An edit's ``fields`` never carries a dedupe key, so this is
+                # the revision index: another writer appended first and the ask
+                # has moved. Asserting the key here made that a 500.
+                async with self._ctx.control_db.session() as session:
+                    latest = await ConnectSessionRepository.get_by_id(session, row.id)
+                    raise await _revision_changed(
+                        session, row.id, latest.current_revision_id if latest else None
+                    ) from None
             # The amended scopes now match another open session of the agent's.
-            assert row.agent_id is not None and "dedupe_key" in fields
             agent_id, dedupe_key = row.agent_id, fields["dedupe_key"]
 
             async def _find_open(db: Any) -> ConnectSession | None:
@@ -3081,6 +3090,7 @@ class ConnectSessionService:
         """
         try:
             async with self._ctx.control_db.transaction() as session:
+                await ConnectSessionRepository.acquire_revision_lock(session, row.id)
                 current = await ConnectSessionRevisionRepository.get_by_id(
                     session, row.current_revision_id or "", session_id=row.id
                 )
@@ -3486,21 +3496,32 @@ class ConnectSessionService:
             )
 
     async def list_revisions(
-        self, session_id: str, *, poll_token: str | None, identity: Identity, limit: int
-    ) -> tuple[list[ConnectSessionRevision], bool]:
-        """One page of a session's revisions, oldest first, and whether more remain.
+        self,
+        session_id: str,
+        *,
+        poll_token: str | None,
+        identity: Identity,
+        limit: int,
+        cursor: str | None = None,
+    ) -> tuple[list[ConnectSessionRevision], bool, str | None]:
+        """One page of a session's revisions, oldest first, and how to continue.
 
-        Gated like the review read. Bounded like the session list in the same
-        router: a chain is read a page at a time, never whole.
+        Gated like the review read, and paginated like the session list in the
+        same router: a chain longer than one page is read page by page rather
+        than whole.
         """
         async with self._ctx.control_db.session() as session:
             row = await ConnectSessionRepository.get_by_id(session, session_id)
         row = await self._require_session_access(row, poll_token=poll_token, identity=identity)
+        decoded = decode_cursor(cursor, id_kind="str") if cursor is not None else None
         async with self._ctx.control_db.session() as session:
             page = await ConnectSessionRevisionRepository.list_for_session(
-                session, row.id, limit=limit + 1
+                session, row.id, limit=limit + 1, cursor=decoded
             )
-        return page[:limit], len(page) > limit
+        has_more = len(page) > limit
+        page = page[:limit]
+        next_cursor = encode_cursor(page[-1].created_at, page[-1].id) if has_more and page else None
+        return page, has_more, next_cursor
 
     async def _agent_view(self, agent_id: str | None) -> AgentView | None:
         if agent_id is None:

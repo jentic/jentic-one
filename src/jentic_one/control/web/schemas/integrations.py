@@ -951,6 +951,11 @@ class SessionRevisionListResponse(BaseModel):
     has_more: bool = Field(
         description="Whether the session holds revisions beyond this page.", examples=[False]
     )
+    next_cursor: str | None = Field(
+        default=None,
+        description="Opaque cursor for the next page; null when this is the last one.",
+        examples=[ex.CURSOR],
+    )
 
 
 # ---------------------------------------------------------------------------

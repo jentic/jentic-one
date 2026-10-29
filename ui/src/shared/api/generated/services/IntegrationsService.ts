@@ -130,6 +130,7 @@ export class IntegrationsService {
     public static listConnectSessionRevisions({
         sessionId,
         pollToken,
+        cursor,
         limit = 50,
     }: {
         /**
@@ -140,6 +141,10 @@ export class IntegrationsService {
          * Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
          */
         pollToken?: (string | null),
+        /**
+         * Opaque cursor from a previous page's `next_cursor`.
+         */
+        cursor?: (string | null),
         /**
          * Maximum number of revisions to return (1-200, default 50).
          */
@@ -153,6 +158,7 @@ export class IntegrationsService {
             },
             query: {
                 'poll_token': pollToken,
+                'cursor': cursor,
                 'limit': limit,
             },
             errors: {

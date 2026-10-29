@@ -8252,6 +8252,9 @@ type ListConnectSessionRevisionsParams struct {
 	// PollToken Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
 	PollToken *string `form:"poll_token,omitempty" json:"poll_token,omitempty"`
 
+	// Cursor Opaque cursor from a previous page's `next_cursor`.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+
 	// Limit Maximum number of revisions to return (1-200, default 50).
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
@@ -22254,6 +22257,18 @@ func NewListConnectSessionRevisionsRequest(server string, sessionId string, para
 		if params.PollToken != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "poll_token", *params.PollToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
