@@ -1916,8 +1916,8 @@ class ConnectSessionService:
                 closed.point_at(outcome.credential_id, outcome.agent_id)
                 raise closed
             raise InvalidPollTokenError("invalid poll_token")
-        if row.initiator_actor_id != identity.sub and not await self._can_confirm(
-            row, identity, await self._agent_view(row.agent_id)
+        if row.initiator_actor_id != identity.sub and not await self._is_session_approver(
+            row, identity
         ):
             raise InvalidPollTokenError("invalid poll_token")
         open_states: tuple[str, ...] = (
@@ -2392,6 +2392,8 @@ class ConnectSessionService:
         _require_state(row, expected="created", action="confirm")
         assert row.agent_id is not None and row.baseline is not None
         await self._require_agent_binding_allowed(row.agent_id, identity, late_bound=False)
+        if not await self._owns_credential(row.credential_id, identity):
+            raise EditBindingNotFoundError(row.credential_id)
         if row.current_revision_id != revision_id:
             async with self._ctx.control_db.session() as session:
                 raise await _revision_changed(session, row.id, row.current_revision_id)
@@ -3044,12 +3046,17 @@ class ConnectSessionService:
         """The binding an edit opens on, refusing callers who may not edit it.
 
         An agent may edit only its own active binding. A human must be the
-        agent's approver. Every refusal is the same not-found error.
+        agent's approver *and* the credential's owner, as the direct rule
+        write and the direct resume both require: the rules bound what the
+        agent does with someone else's secret, and a suspension is that
+        owner's cut-off. Every refusal is the same not-found error.
         """
         if identity.actor_type == ActorType.AGENT:
             if agent_id != identity.sub:
                 raise EditBindingNotFoundError(credential_id)
-        elif not await self._is_approver_for_agent(agent_id, identity):
+        elif not await self._is_approver_for_agent(
+            agent_id, identity
+        ) or not await self._owns_credential(credential_id, identity):
             raise EditBindingNotFoundError(credential_id)
         async with self._ctx.admin_db.session() as admin_session:
             binding = await PrerequisiteRepository.get_agent_credential_binding(
@@ -4667,6 +4674,25 @@ class ConnectSessionService:
         if await self._is_session_approver(row, identity):
             return row
         raise InvalidPollTokenError("invalid poll_token")
+
+    async def _owns_credential(self, credential_id: str, identity: Identity) -> bool:
+        """``org:admin``, or the identity that created the credential.
+
+        The owner axis the direct binding writes take
+        (``CredentialService._may_write_binding_rules``,
+        ``AgentService.resume_credential``): read visibility is deliberately
+        not enough, so an agent's approver who does not own the secret cannot
+        widen what the agent does with it.
+        """
+        if _is_org_admin(identity):
+            return True
+        async with self._ctx.control_db.session() as session:
+            credential = await CredentialRepository.get_by_id(session, credential_id)
+        return (
+            credential is not None
+            and credential.created_by is not None
+            and credential.created_by == identity.sub
+        )
 
     async def _is_session_approver(self, row: ConnectSession, identity: Identity) -> bool:
         """Whether a human may act on the session without its ``poll_token``."""

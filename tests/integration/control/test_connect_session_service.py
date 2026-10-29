@@ -32,6 +32,7 @@ from sqlalchemy import delete, select, text, update
 
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.events import Event
+from jentic_one.admin.repos import AgentCredentialBindingRepository
 from jentic_one.admin.services.event_service import EventService
 from jentic_one.admin.services.schemas.events import EventFilter
 from jentic_one.broker.repos.credential_binding_resolver import CredentialBindingResolver
@@ -81,6 +82,7 @@ from jentic_one.control.services.integrations.errors import (
     ConfirmationForbiddenError,
     ConfirmKindMismatchError,
     ConnectOpenError,
+    EditBindingNotFoundError,
     EditOpenError,
     InvalidPollTokenError,
     InvalidStateTransitionError,
@@ -88,7 +90,6 @@ from jentic_one.control.services.integrations.errors import (
     OAuthAppChangedError,
     RevisionChangedError,
     RevisionRequiredError,
-    ScopeChangeForbiddenError,
     ScopesNotSupportedError,
     ScopeValidationError,
     SecuritySchemesLookupUnavailableError,
@@ -2604,6 +2605,81 @@ async def test_amending_a_create_session_replaces_its_ask(
         )
 
 
+async def test_only_the_initiator_or_an_approver_amends_a_users_own_session(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+) -> None:
+    """A session with no agent has no approver but its initiator.
+
+    Any other human would otherwise rewrite the ask a reviewer then approves,
+    so the amend takes the approver gate, not the ``can_confirm`` view helper
+    (which answers True for every human once a session names no agent).
+    """
+    svc = ConnectSessionService(integration_context)
+    mine = await svc.create_session(
+        vendor_key="testdev", agent_id=None, identity=_USER_IDENTITY, requested_scopes=["repo"]
+    )
+    rewrite = SessionAmend(
+        fields=frozenset({"requested_scopes"}), requested_scopes=["repo", "read:user"]
+    )
+    for stranger in (_OTHER_USER_IDENTITY, _AGENT_IDENTITY):
+        with pytest.raises(InvalidPollTokenError):
+            await svc.amend_session(mine.session_id, identity=stranger, amend=rewrite)
+    # Bidirectional: the other user's own session is just as closed to this one.
+    theirs = await svc.create_session(
+        vendor_key="testdev", agent_id=None, identity=_OTHER_USER_IDENTITY
+    )
+    with pytest.raises(InvalidPollTokenError):
+        await svc.amend_session(theirs.session_id, identity=_USER_IDENTITY, amend=rewrite)
+
+    # The initiator still amends, and an org admin may act on any session.
+    amended = await svc.amend_session(mine.session_id, identity=_USER_IDENTITY, amend=rewrite)
+    assert amended.revision_number == 2
+    by_admin = await svc.amend_session(
+        mine.session_id,
+        identity=_ADMIN_IDENTITY,
+        amend=SessionAmend(fields=frozenset({"reason"}), reason="admin note"),
+    )
+    assert by_admin.revision_number == 3
+
+
+async def test_a_human_who_does_not_own_the_credential_cannot_resume_a_binding(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    """An agent transferred to a new owner keeps the first owner's cut-off.
+
+    The direct resume route requires credential ownership for this reason, so
+    the edit path requires it too: otherwise the new owner lifts a suspension
+    on someone else's secret.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    credential_id = await _connected_device_credential(ctx, svc)
+    async with ctx.admin_db.transaction() as session:
+        await AgentCredentialBindingRepository.set_suspended(
+            session, agent_id=_AGENT_ID, credential_id=credential_id, suspended=True
+        )
+    # The agent's owner did not create the credential.
+    async with ctx.control_db.transaction() as session:
+        await CredentialRepository.set_created_by(session, credential_id, created_by="usr_else")
+
+    for request in (EditRequest(resume=True), EditRequest(add=[RuleAdd(_WRITE_RULE)])):
+        with pytest.raises(EditBindingNotFoundError):
+            await svc.create_edit_session(
+                credential_id=credential_id,
+                agent_id=_AGENT_ID,
+                identity=_USER_IDENTITY,
+                request=request,
+                apply=True,
+            )
+
+
 async def test_the_reviewer_edits_a_new_connection_request_as_a_revision_of_their_own(
     integration_context: Context,
     seed_test_vendors: None,
@@ -3274,7 +3350,7 @@ async def test_a_failed_consent_leaves_the_credential_as_it_was(
     assert bound.scalars().first() is not None
 
 
-async def test_adding_scopes_to_a_credential_other_agents_use_needs_its_owner(
+async def test_editing_a_credential_someone_else_owns_is_refused(
     integration_context: Context,
     seed_test_vendors: None,
     seed_agent: None,
@@ -3311,7 +3387,10 @@ async def test_adding_scopes_to_a_credential_other_agents_use_needs_its_owner(
     review = await svc.get_review_data(edit.session_id, poll_token=None, identity=_USER_IDENTITY)
     assert review.edit is not None
     assert [a.agent_id for a in review.edit.other_bound_agents] == ["agnt_other_bound"]
-    with pytest.raises(ScopeChangeForbiddenError):
+    # The agent's owner does not own the credential, so the rules and scopes
+    # it is bound by are not theirs to change: the same not-found refusal the
+    # direct rule write and the direct resume give.
+    with pytest.raises(EditBindingNotFoundError):
         await svc.confirm_edit(
             edit.session_id,
             poll_token=None,
