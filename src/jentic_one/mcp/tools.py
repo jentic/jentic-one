@@ -80,10 +80,13 @@ from jentic_one.control.services.integrations.errors import (
     PointsAtAccessError,
     RecentlyRejectedError,
     ReservedAuthFieldError,
+    RevisionChangedError,
     ScopesNotSupportedError,
     ScopeValidationError,
     SecuritySchemesLookupUnavailableError,
+    SessionClosedError,
     TooManyOpenSessionsError,
+    TooManyRevisionsError,
     UnknownApiError,
     UnpinnedServerHostError,
 )
@@ -1510,6 +1513,8 @@ _REQUEST_CONNECTION_REASON_MAX = 1024
 #: Upper bound on ``requested_scopes`` — the Go mount's ``connectScopesMax``
 #: twin, so neither mount forwards an unbounded list to the vendor authorize URL.
 _REQUEST_CONNECTION_SCOPES_MAX = 100
+#: Characters in one scope's reason, as the route's schema bounds it.
+_SCOPE_COMMENT_MAX = 500
 
 #: The route's ``oauth_app_registration_id`` bound (``max_length=30``) — the
 #: Go mount's ``connectRegistrationMax`` twin.
@@ -1816,23 +1821,7 @@ async def handle_request_connection(
             "request_connection once they confirm.",
         ) from None
 
-    # The route's per-actor policy, on its own bucket: the mount calls the
-    # connect-session service in-process, bypassing the route's limiter.
-    if env.connect_limiter is None:
-        raise ToolError(
-            CODE_TRANSPORT_ERROR,
-            "connect sessions are unavailable: this process has no connect rate limiter",
-            actionable="Tell your human operator the MCP mount is misconfigured.",
-            extra={"retryable": False},
-        )
-    outcome = await env.connect_limiter.acquire(env.identity.sub)
-    if not outcome.allowed:
-        raise ToolError(
-            CODE_TRANSPORT_ERROR,
-            "connect sessions are rate limited (http 429: rate limit exceeded)",
-            actionable="Wait briefly and retry request_connection; do not loop on it.",
-            extra={"retryable": True, "retry_after_s": outcome.retry_after_s},
-        )
+    await _spend_connect_bucket(env, "request_connection")
 
     # Mirror the route's identity injection: an agent caller connects for
     # itself; a user caller over this mount connects an
@@ -2023,12 +2012,18 @@ async def handle_inspect_api(env: CallEnv, arguments: dict[str, Any]) -> mcp_typ
     if "api" not in args:
         raise invalid_params('inspect_api requires "api", e.g. {"api": "vendor/name/version"}')
     target = _connect_api_target(args["api"])
+    registration_id = args.get("oauth_app_registration_id") or None
+    if registration_id is not None and len(registration_id) > _REQUEST_CONNECTION_REGISTRATION_MAX:
+        raise invalid_params(
+            "oauth_app_registration_id must be at most "
+            f"{_REQUEST_CONNECTION_REGISTRATION_MAX} characters"
+        )
     label = f"{target.vendor}/{target.name}/{target.version}"
     require_permissions(env.identity, ["credentials:connect", "credentials:write"])
     try:
         options = await ConnectSessionService(
             env.ctx, security_schemes_lookup=env.security_schemes_lookup
-        ).connect_options(target, registration_id=args.get("oauth_app_registration_id") or None)
+        ).connect_options(target, registration_id=registration_id)
     except UnknownApiError:
         raise ToolError(
             CODE_RESOLVE_FAILED,
@@ -2036,6 +2031,24 @@ async def handle_inspect_api(env: CallEnv, arguments: dict[str, Any]) -> mcp_typ
             actionable="find it with search_catalog (`jentic catalog search`) and import it "
             "(import_api / `jentic catalog import`), then ask again",
             next_tool="import_api",
+        ) from None
+    except InvalidOAuthAppRegistrationError as exc:
+        # Same refusal request_connection codes: a pin naming no active app.
+        raise ToolError(
+            CODE_RESOLVE_FAILED,
+            f"cannot read the connect options for {label}: {exc}",
+            actionable="The registration_id does not name an active shared OAuth app for this "
+            "API. Check the id with your human user, or call inspect_api again without "
+            "oauth_app_registration_id to see the shared apps that serve it.",
+            next_tool="inspect_api",
+        ) from None
+    except SecuritySchemesLookupUnavailableError as exc:
+        raise ToolError(
+            CODE_BROKER_DENIED,
+            f"this instance cannot read the registry to inspect {label}: {exc}",
+            actionable="Report it to your human user: the connect service cannot reach the "
+            "registry on this deployment.",
+            extra={"retryable": False},
         ) from None
     payload = ConnectOptionsResponse.model_validate(asdict(options)).model_dump(mode="json")
     payload["next_step"] = _CONNECT_OPTIONS_NEXT_STEP
@@ -2071,6 +2084,32 @@ _REQUEST_ACCESS_CHANGE_INSTRUCTION = (
 )
 
 
+async def _spend_connect_bucket(env: CallEnv, tool: str) -> None:
+    """The route's per-actor policy, on the bucket the routes share.
+
+    The mount calls the connect-session service in-process, so it bypasses
+    the route's limiter: every tool that opens or changes a session spends
+    this, or an actor doubles its rate by splitting calls across HTTP and
+    MCP. The bucket exists because these calls reach a vendor, and being
+    throttled there fails every caller on the install.
+    """
+    if env.connect_limiter is None:
+        raise ToolError(
+            CODE_TRANSPORT_ERROR,
+            "connect sessions are unavailable: this process has no connect rate limiter",
+            actionable="Tell your human operator the MCP mount is misconfigured.",
+            extra={"retryable": False},
+        )
+    outcome = await env.connect_limiter.acquire(env.identity.sub)
+    if not outcome.allowed:
+        raise ToolError(
+            CODE_TRANSPORT_ERROR,
+            "connect sessions are rate limited (http 429: rate limit exceeded)",
+            actionable=f"Wait briefly and retry {tool}; do not loop on it.",
+            extra={"retryable": True, "retry_after_s": outcome.retry_after_s},
+        )
+
+
 def _edit_rule_list(raw: Any, field: str) -> list[dict[str, object]]:
     """Validate a rule list with the route's schema; the route's wire shape back."""
     if not isinstance(raw, list):
@@ -2096,8 +2135,15 @@ def _edit_request(args: dict[str, Any]) -> EditRequest:
         raise invalid_params('rules must be an object {"add": […], "remove": […]} or {"set": […]}')
     if rules.get("set") is not None and (rules.get("add") or rules.get("remove")):
         raise invalid_params("pass either add/remove or set, not both")
+    add_raw = rules.get("add") or []
+    if not isinstance(add_raw, list):
+        raise invalid_params('rules.add must be a list of rule objects or {"rule": …} entries')
+    if len(add_raw) > _REQUEST_CONNECTION_RULES_MAX:
+        raise invalid_params(
+            f"rules.add must list at most {_REQUEST_CONNECTION_RULES_MAX} rules, got {len(add_raw)}"
+        )
     adds: list[RuleAdd] = []
-    for idx, item in enumerate(rules.get("add") or []):
+    for idx, item in enumerate(add_raw):
         wrapped = isinstance(item, dict) and isinstance(item.get("rule"), dict)
         rule = item["rule"] if wrapped else item
         before = item.get("before") if wrapped else None
@@ -2106,6 +2152,10 @@ def _edit_request(args: dict[str, Any]) -> EditRequest:
     remove = rules.get("remove") or []
     if not isinstance(remove, list) or not all(isinstance(r, str) for r in remove):
         raise invalid_params("rules.remove must be a list of rule ids")
+    if len(remove) > _REQUEST_CONNECTION_RULES_MAX:
+        raise invalid_params(
+            f"rules.remove must list at most {_REQUEST_CONNECTION_RULES_MAX} ids, got {len(remove)}"
+        )
     resume = args.get("resume", False)
     if not isinstance(resume, bool):
         raise invalid_params("resume must be true or false")
@@ -2137,12 +2187,26 @@ def _edit_scopes(raw: Any) -> dict[str, Any]:
         isinstance(k, str) and isinstance(v, str) for k, v in comments.items()
     ):
         raise invalid_params("scopes.comments must map scope names to reasons")
+    if len(comments) > _REQUEST_CONNECTION_SCOPES_MAX:
+        raise invalid_params(
+            f"scopes.comments must carry at most {_REQUEST_CONNECTION_SCOPES_MAX} reasons, "
+            f"got {len(comments)}"
+        )
+    if any(len(reason) > _SCOPE_COMMENT_MAX for reason in comments.values()):
+        raise invalid_params(
+            f"each scopes.comments reason must be at most {_SCOPE_COMMENT_MAX} characters"
+        )
     for key in ("add", "remove", "set"):
         value = raw.get(key)
         if value is not None and (
             not isinstance(value, list) or not all(isinstance(s, str) for s in value)
         ):
             raise invalid_params(f"scopes.{key} must be a list of scope names")
+        if value is not None and len(value) > _REQUEST_CONNECTION_SCOPES_MAX:
+            raise invalid_params(
+                f"scopes.{key} must list at most {_REQUEST_CONNECTION_SCOPES_MAX} scopes, "
+                f"got {len(value)}"
+            )
     if raw.get("set") is not None and (raw.get("add") or raw.get("remove")):
         raise invalid_params("pass either add/remove or set, not both")
     return {
@@ -2188,12 +2252,16 @@ def _edit_refusal(env: CallEnv, exc: Exception, what: str) -> ToolError:
 _EDIT_REFUSALS = (
     PointsAtAccessError,
     RecentlyRejectedError,
+    ConnectOpenError,
     EditBindingNotFoundError,
     ScopesNotSupportedError,
     ScopeValidationError,
     AmendFieldsMismatchError,
     InvalidPollTokenError,
+    RevisionChangedError,
+    SessionClosedError,
     TooManyOpenSessionsError,
+    TooManyRevisionsError,
 )
 
 
@@ -2213,6 +2281,7 @@ async def handle_request_access_change(
         raise invalid_params('request_access_change requires "credential_id"')
     request = _edit_request(args)
     require_permissions(env.identity, ["credentials:connect", "credentials:write"])
+    await _spend_connect_bucket(env, "request_access_change")
     try:
         created = await ConnectSessionService(env.ctx).create_edit_session(
             credential_id=credential_id,
@@ -2258,6 +2327,13 @@ async def handle_amend_request(env: CallEnv, arguments: dict[str, Any]) -> mcp_t
         raise invalid_params("an amend must change something")
     request = _edit_request(args)
     require_permissions(env.identity, ["credentials:connect", "credentials:write"])
+    await _spend_connect_bucket(env, "amend_request")
+    requested_scopes = args.get("requested_scopes")
+    if requested_scopes is not None and len(requested_scopes) > _REQUEST_CONNECTION_SCOPES_MAX:
+        raise invalid_params(
+            f"requested_scopes must list at most {_REQUEST_CONNECTION_SCOPES_MAX} scopes, "
+            f"got {len(requested_scopes)}"
+        )
     amend = SessionAmend(
         fields=frozenset(fields),
         rules=request if "rules" in fields else None,

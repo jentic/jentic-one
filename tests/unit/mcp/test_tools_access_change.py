@@ -9,9 +9,10 @@ directive with ``next_tool: show_access``.
 
 from __future__ import annotations
 
+import contextlib
 import json
 from typing import Any, ClassVar
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from mcp.shared.exceptions import MCPError
@@ -28,6 +29,8 @@ from jentic_one.mcp.tools import CallEnv, dispatch_tool_call
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import AuthConfig, ServerConfig
 from jentic_one.shared.models import ActorType
+from jentic_one.shared.resilience import RateLimiter
+from jentic_one.shared.state import MemoryStateBackend
 
 
 def _env() -> CallEnv:
@@ -43,6 +46,14 @@ def _env() -> CallEnv:
         credential="jak_test",
         base_url="https://one.example.com",
         session_id=None,
+        # The edit tools spend the routes' shared bucket, so the mount carries
+        # one. A fresh limiter per env, as the connect tool's tests use.
+        connect_limiter=RateLimiter(
+            MemoryStateBackend(),
+            default_rpm=60,
+            burst=20,
+            namespace="test_mcp_access_change",
+        ),
     )
 
 
@@ -193,3 +204,50 @@ async def test_a_refused_rule_comes_back_as_a_tool_error_naming_it() -> None:
     assert payload["error_code"] == "MISSING_ARGUMENT"
     assert "rules.add[0]" in payload["error"]
     assert _FakeService.edits == []
+
+
+async def test_the_edit_tools_apply_the_routes_bounds() -> None:
+    """The route's caps, applied to the tool's own coercion.
+
+    Unbounded, one call could store a list of any length verbatim on a
+    revision, which ``resolve_edit`` then re-emits per scope.
+    """
+    rule = {"effect": "allow", "methods": ["GET"], "path": "/v1/x", "match_mode": "exact"}
+    cases: list[dict[str, Any]] = [
+        {"credential_id": "cred_1", "rules": {"add": [rule] * 101}},
+        {"credential_id": "cred_1", "rules": {"remove": [f"apr_{i}" for i in range(101)]}},
+        {"credential_id": "cred_1", "scopes": {"add": [f"s{i}" for i in range(101)]}},
+        {"credential_id": "cred_1", "scopes": {"set": [f"s{i}" for i in range(101)]}},
+        {
+            "credential_id": "cred_1",
+            "scopes": {"add": ["a"], "comments": {f"s{i}": "why" for i in range(101)}},
+        },
+        {"credential_id": "cred_1", "scopes": {"add": ["a"], "comments": {"a": "x" * 501}}},
+        # A scalar where a list belongs was an unhandled TypeError.
+        {"credential_id": "cred_1", "rules": {"add": 5}},
+    ]
+    for arguments in cases:
+        result = await dispatch_tool_call(_env(), "request_access_change", arguments)
+        assert result.is_error, arguments
+        assert _payload(result)["error_code"] == "MISSING_ARGUMENT", arguments
+
+
+async def test_the_edit_tools_spend_the_shared_connect_bucket() -> None:
+    """An actor cannot double its rate by splitting calls across HTTP and MCP."""
+    env = _env()
+    limiter = env.connect_limiter
+    assert limiter is not None
+    spent = []
+
+    async def record(actor: str) -> Any:
+        spent.append(actor)
+        return await RateLimiter.acquire(limiter, actor)
+
+    with patch.object(limiter, "acquire", new=record):
+        for tool, arguments in (
+            ("request_access_change", {"credential_id": "cred_1", "resume": True}),
+            ("amend_request", {"session_id": "cs_1", "reason": "why"}),
+        ):
+            with contextlib.suppress(Exception):
+                await dispatch_tool_call(env, tool, arguments)
+    assert spent == ["agnt_1", "agnt_1"]
