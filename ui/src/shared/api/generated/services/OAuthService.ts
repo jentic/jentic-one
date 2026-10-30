@@ -239,16 +239,17 @@ export class OAuthService {
     }
     /**
      * Create the consenting user's first agent inline (consent page)
-     * Create the consenting user's first agent from the zero-agents consent page (P4).
+     * Create the consenting user's first agent from the zero-agents consent page.
      *
      * The form is rendered only when the consenting user owns zero agents in
-     * any status (the G12(b) first-run dead-end). This submit verifies the signed
-     * single-use ``agent-create`` blob (bound to the consent handle AND the
-     * authenticated subject — no ambient credential is honored, so a cross-site
-     * form cannot drive it: it would need both the unguessable handle and a
-     * blob minted for that very handle), re-validates the handle and the D7
-     * client gate, provisions the user row if deferred provisioning left none
-     * (an affirmative user action, unlike rendering), re-checks the zero-agents
+     * any status — otherwise consent is a first-run dead end. This submit
+     * verifies the signed single-use ``agent-create`` blob (bound to the consent
+     * handle AND the authenticated subject — no ambient credential is honored,
+     * so a cross-site form cannot drive it: it would need both the unguessable
+     * handle and a blob minted for that very handle), re-validates the handle
+     * and the client approval+active gate, provisions the user row if deferred
+     * provisioning left none (an affirmative user action, unlike rendering),
+     * re-checks the zero-agents
      * predicate (an agent appearing in between skips creation — idempotent),
      * creates the agent through the same ``AgentService.create`` path as the
      * SPA (owner = the consenting user, default agent scopes, same audit +
@@ -260,12 +261,11 @@ export class OAuthService {
      * client → ``access_denied``; an invalid agent name → the form re-rendered
      * with the error inline and a fresh blob.
      *
-     * Creation posture (security review — the hybrid): the arm is decided
-     * server-side AFTER the subject is resolved/provisioned, against the same
-     * effective-permission math as POST /agents' ``agents:write`` gate. A
-     * permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
-     * unpermissioned one gets a PENDING agent (the POST /register posture) and
-     * the awaiting-approval page. A per-subject ``set_if_absent`` slot claim
+     * Creation posture: the arm is decided server-side AFTER the subject is
+     * resolved/provisioned, against the same effective-permission math as POST
+     * /agents' ``agents:write`` gate. A permissioned user gets ACTIVE + a 303
+     * re-entry; an unpermissioned one gets a PENDING agent (the POST /register
+     * posture) and the awaiting-approval page. A per-subject ``set_if_absent`` slot claim
      * makes N parallel submits (N distinct blobs from N renders) create exactly
      * one agent — losers re-enter consent, which renders the picker or the
      * awaiting page as appropriate.
@@ -295,7 +295,7 @@ export class OAuthService {
     }
     /**
      * Poll pending-agent approval status (consent awaiting page)
-     * Minimal tri-state poll for the pending-agent awaiting page (P4 hybrid).
+     * Minimal tri-state poll for the pending-agent awaiting page.
      *
      * Anonymous but keyed by the signed ``agent-status`` blob — never a bare
      * agent id, so the endpoint cannot be used to enumerate or probe agents:
@@ -481,6 +481,7 @@ export class OAuthService {
             mediaType: 'application/json',
             errors: {
                 400: `RFC 6749 §5.2 error dialect (NOT platform Problem Details — this is a spec-facing endpoint real OAuth/MCP clients parse): \`{"error": "invalid_request" | "invalid_grant" | "invalid_client" | "unsupported_grant_type", "error_description": "..."}\`. \`invalid_request\` covers malformed/missing parameters; a revoked consent grant surfaces on the refresh arm as \`invalid_grant\` with \`error_description: "consent grant has been revoked"\` — clients should treat it as terminal and restart the authorization flow. A client whose authentication fails after attempting HTTP Basic (\`Authorization\` header, RFC 6749 §2.3.1) gets the same \`invalid_client\` dialect body with status 401 and a \`WWW-Authenticate: Basic\` challenge, per §5.2.`,
+                401: `Client authentication failed after the client attempted HTTP Basic (RFC 6749 §2.3.1): the same \`invalid_client\` dialect body as the 400 arm, plus a \`WWW-Authenticate: Basic\` challenge. A client that did not attempt Basic gets \`invalid_client\` as a 400 instead, so branch on the body's \`error\` member rather than on the status code.`,
                 429: `Per-client_id + client-network rate limit exceeded (\`Retry-After\` header set; RFC 6749 §5.2 dialect body, \`error=slow_down\` per RFC 8628 §3.5).`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

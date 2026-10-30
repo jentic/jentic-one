@@ -136,6 +136,7 @@ export class HeldExecutionsService {
                 403: `Forbidden`,
                 404: `Not Found`,
                 409: `Conflict`,
+                410: `The hold ran, but its recorded result is past the retention window and has been discarded. The outcome is unrecoverable: do not retry, and do not treat this as the call having failed.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

@@ -346,6 +346,7 @@ export class ApIsService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                409: `Only an \`archived\` revision can be deleted; a \`draft\`, \`imported\` or \`published\` revision is refused with type \`revision_state_conflict\`. Nothing was deleted.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -400,6 +401,7 @@ export class ApIsService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                404: `The API (type \`api_not_found\`) or the revision (type \`revision_not_found\`) does not exist.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -454,6 +456,7 @@ export class ApIsService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                409: `Only a \`draft\` or \`imported\` revision can be archived; any other state (\`published\`, \`archived\`) is refused with type \`revision_state_conflict\`. Nothing was archived.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -466,8 +469,8 @@ export class ApIsService {
      *
      * If the draft declares different server hosts than the API's current (or last
      * live) revision, or serves a host over plaintext http that was https-only, and
-     * the API has credentials bound to agents, the caller also needs
-     * ``credentials:write``; otherwise the promote is refused with 403
+     * the API has credentials bound to agents, the caller must be an organisation
+     * admin (``org:admin``); otherwise the promote is refused with 403
      * ``host_change_requires_operator``.
      * @returns ApiResponse Successful Response
      * @throws ApiError

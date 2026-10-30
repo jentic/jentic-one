@@ -54,6 +54,7 @@ export class InspectService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                406: `The \`Accept\` header asked for a media type this endpoint cannot render. It serves \`application/json\`, \`text/markdown\` and \`application/openapi+yaml\` only (plus \`*/*\` and an absent header, which both get JSON). Nothing is resolved: re-request with one of those three.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

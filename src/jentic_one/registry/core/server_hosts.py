@@ -275,7 +275,7 @@ def _plaintext_hosts(origins: frozenset[str]) -> set[str]:
 
 
 def needs_review(current: frozenset[str], new: frozenset[str]) -> bool:
-    """True when moving from ``current`` to ``new`` origins needs an operator.
+    """True when moving from ``current`` to ``new`` origins needs an organisation admin.
 
     That is when the host set changes, or when a host becomes reachable over
     plaintext ``http`` that was only reachable over ``https`` before (a

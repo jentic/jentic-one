@@ -59,7 +59,7 @@ export class AgentRegistrationService {
             errors: {
                 400: `Bad Request`,
                 401: `Unauthorized`,
-                403: `Forbidden`,
+                403: `Client deletion is not supported. This endpoint exists to refuse the RFC 7592 delete call, so it has no success response: every request answers 403 and the registration remains. Archive the agent instead.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -118,7 +118,7 @@ export class AgentRegistrationService {
             errors: {
                 400: `Bad Request`,
                 401: `Unauthorized`,
-                403: `Forbidden`,
+                403: `Client update is not supported. This endpoint exists to refuse the RFC 7592 update call, so it has no success response: every request answers 403 and nothing is changed. Re-register instead.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

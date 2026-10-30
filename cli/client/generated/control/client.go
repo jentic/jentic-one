@@ -2527,7 +2527,7 @@ type ApiSourceInline struct {
 	// Examples: openapi.json
 	Filename string `json:"filename"`
 
-	// SubmittedBy Who the resulting revision is attributed to; defaults to the caller.
+	// SubmittedBy Who the resulting revision is attributed to. Honoured only for an organisation admin (`org:admin`); for anyone else the revision is attributed to the caller.
 	//
 	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	SubmittedBy *string `json:"submitted_by,omitempty"`
@@ -2562,7 +2562,7 @@ type ApiSourceUrl struct {
 	// Examples: stripe
 	ApiName *string `json:"api_name,omitempty"`
 
-	// SubmittedBy Who the resulting revision is attributed to; defaults to the caller.
+	// SubmittedBy Who the resulting revision is attributed to. Honoured only for an organisation admin (`org:admin`); for anyone else the revision is attributed to the caller.
 	//
 	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	SubmittedBy *string `json:"submitted_by,omitempty"`
@@ -13029,8 +13029,8 @@ type ClientInterface interface {
 	//
 	// If the draft declares different server hosts than the API's current (or last
 	// live) revision, or serves a host over plaintext http that was https-only, and
-	// the API has credentials bound to agents, the caller also needs
-	// ``credentials:write``; otherwise the promote is refused with 403
+	// the API has credentials bound to agents, the caller must be an organisation
+	// admin (``org:admin``); otherwise the promote is refused with 403
 	// ``host_change_requires_operator``.
 	//
 	// Corresponds with POST /apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote (the `PromoteRevision` operationId).
@@ -14269,16 +14269,17 @@ type ClientInterface interface {
 
 	// ConsentAgentCreateWithBody Create the consenting user's first agent inline (consent page)
 	//
-	// Create the consenting user's first agent from the zero-agents consent page (P4).
+	// Create the consenting user's first agent from the zero-agents consent page.
 	//
 	// The form is rendered only when the consenting user owns zero agents in
-	// any status (the G12(b) first-run dead-end). This submit verifies the signed
-	// single-use ``agent-create`` blob (bound to the consent handle AND the
-	// authenticated subject — no ambient credential is honored, so a cross-site
-	// form cannot drive it: it would need both the unguessable handle and a
-	// blob minted for that very handle), re-validates the handle and the D7
-	// client gate, provisions the user row if deferred provisioning left none
-	// (an affirmative user action, unlike rendering), re-checks the zero-agents
+	// any status — otherwise consent is a first-run dead end. This submit
+	// verifies the signed single-use ``agent-create`` blob (bound to the consent
+	// handle AND the authenticated subject — no ambient credential is honored,
+	// so a cross-site form cannot drive it: it would need both the unguessable
+	// handle and a blob minted for that very handle), re-validates the handle
+	// and the client approval+active gate, provisions the user row if deferred
+	// provisioning left none (an affirmative user action, unlike rendering),
+	// re-checks the zero-agents
 	// predicate (an agent appearing in between skips creation — idempotent),
 	// creates the agent through the same ``AgentService.create`` path as the
 	// SPA (owner = the consenting user, default agent scopes, same audit +
@@ -14290,12 +14291,11 @@ type ClientInterface interface {
 	// client → ``access_denied``; an invalid agent name → the form re-rendered
 	// with the error inline and a fresh blob.
 	//
-	// Creation posture (security review — the hybrid): the arm is decided
-	// server-side AFTER the subject is resolved/provisioned, against the same
-	// effective-permission math as POST /agents' ``agents:write`` gate. A
-	// permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
-	// unpermissioned one gets a PENDING agent (the POST /register posture) and
-	// the awaiting-approval page. A per-subject ``set_if_absent`` slot claim
+	// Creation posture: the arm is decided server-side AFTER the subject is
+	// resolved/provisioned, against the same effective-permission math as POST
+	// /agents' ``agents:write`` gate. A permissioned user gets ACTIVE + a 303
+	// re-entry; an unpermissioned one gets a PENDING agent (the POST /register
+	// posture) and the awaiting-approval page. A per-subject ``set_if_absent`` slot claim
 	// makes N parallel submits (N distinct blobs from N renders) create exactly
 	// one agent — losers re-enter consent, which renders the picker or the
 	// awaiting page as appropriate.
@@ -14307,16 +14307,17 @@ type ClientInterface interface {
 
 	// ConsentAgentCreateWithFormdataBody Create the consenting user's first agent inline (consent page)
 	//
-	// Create the consenting user's first agent from the zero-agents consent page (P4).
+	// Create the consenting user's first agent from the zero-agents consent page.
 	//
 	// The form is rendered only when the consenting user owns zero agents in
-	// any status (the G12(b) first-run dead-end). This submit verifies the signed
-	// single-use ``agent-create`` blob (bound to the consent handle AND the
-	// authenticated subject — no ambient credential is honored, so a cross-site
-	// form cannot drive it: it would need both the unguessable handle and a
-	// blob minted for that very handle), re-validates the handle and the D7
-	// client gate, provisions the user row if deferred provisioning left none
-	// (an affirmative user action, unlike rendering), re-checks the zero-agents
+	// any status — otherwise consent is a first-run dead end. This submit
+	// verifies the signed single-use ``agent-create`` blob (bound to the consent
+	// handle AND the authenticated subject — no ambient credential is honored,
+	// so a cross-site form cannot drive it: it would need both the unguessable
+	// handle and a blob minted for that very handle), re-validates the handle
+	// and the client approval+active gate, provisions the user row if deferred
+	// provisioning left none (an affirmative user action, unlike rendering),
+	// re-checks the zero-agents
 	// predicate (an agent appearing in between skips creation — idempotent),
 	// creates the agent through the same ``AgentService.create`` path as the
 	// SPA (owner = the consenting user, default agent scopes, same audit +
@@ -14328,12 +14329,11 @@ type ClientInterface interface {
 	// client → ``access_denied``; an invalid agent name → the form re-rendered
 	// with the error inline and a fresh blob.
 	//
-	// Creation posture (security review — the hybrid): the arm is decided
-	// server-side AFTER the subject is resolved/provisioned, against the same
-	// effective-permission math as POST /agents' ``agents:write`` gate. A
-	// permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
-	// unpermissioned one gets a PENDING agent (the POST /register posture) and
-	// the awaiting-approval page. A per-subject ``set_if_absent`` slot claim
+	// Creation posture: the arm is decided server-side AFTER the subject is
+	// resolved/provisioned, against the same effective-permission math as POST
+	// /agents' ``agents:write`` gate. A permissioned user gets ACTIVE + a 303
+	// re-entry; an unpermissioned one gets a PENDING agent (the POST /register
+	// posture) and the awaiting-approval page. A per-subject ``set_if_absent`` slot claim
 	// makes N parallel submits (N distinct blobs from N renders) create exactly
 	// one agent — losers re-enter consent, which renders the picker or the
 	// awaiting page as appropriate.
@@ -14345,7 +14345,7 @@ type ClientInterface interface {
 
 	// ConsentAgentStatus Poll pending-agent approval status (consent awaiting page)
 	//
-	// Minimal tri-state poll for the pending-agent awaiting page (P4 hybrid).
+	// Minimal tri-state poll for the pending-agent awaiting page.
 	//
 	// Anonymous but keyed by the signed ``agent-status`` blob — never a bare
 	// agent id, so the endpoint cannot be used to enumerate or probe agents:
@@ -16755,8 +16755,8 @@ func (c *Client) ArchiveRevision(ctx context.Context, vendor PathVendor, name Pa
 //
 // If the draft declares different server hosts than the API's current (or last
 // live) revision, or serves a host over plaintext http that was https-only, and
-// the API has credentials bound to agents, the caller also needs
-// “credentials:write“; otherwise the promote is refused with 403
+// the API has credentials bound to agents, the caller must be an organisation
+// admin (“org:admin“); otherwise the promote is refused with 403
 // “host_change_requires_operator“.
 //
 // Corresponds with POST /apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote (the `PromoteRevision` operationId).
@@ -18985,16 +18985,17 @@ func (c *Client) ApprovalStatusEndpoint(ctx context.Context, params *ApprovalSta
 
 // ConsentAgentCreateWithBody Create the consenting user's first agent inline (consent page)
 //
-// Create the consenting user's first agent from the zero-agents consent page (P4).
+// Create the consenting user's first agent from the zero-agents consent page.
 //
 // The form is rendered only when the consenting user owns zero agents in
-// any status (the G12(b) first-run dead-end). This submit verifies the signed
-// single-use “agent-create“ blob (bound to the consent handle AND the
-// authenticated subject — no ambient credential is honored, so a cross-site
-// form cannot drive it: it would need both the unguessable handle and a
-// blob minted for that very handle), re-validates the handle and the D7
-// client gate, provisions the user row if deferred provisioning left none
-// (an affirmative user action, unlike rendering), re-checks the zero-agents
+// any status — otherwise consent is a first-run dead end. This submit
+// verifies the signed single-use “agent-create“ blob (bound to the consent
+// handle AND the authenticated subject — no ambient credential is honored,
+// so a cross-site form cannot drive it: it would need both the unguessable
+// handle and a blob minted for that very handle), re-validates the handle
+// and the client approval+active gate, provisions the user row if deferred
+// provisioning left none (an affirmative user action, unlike rendering),
+// re-checks the zero-agents
 // predicate (an agent appearing in between skips creation — idempotent),
 // creates the agent through the same “AgentService.create“ path as the
 // SPA (owner = the consenting user, default agent scopes, same audit +
@@ -19006,12 +19007,11 @@ func (c *Client) ApprovalStatusEndpoint(ctx context.Context, params *ApprovalSta
 // client → “access_denied“; an invalid agent name → the form re-rendered
 // with the error inline and a fresh blob.
 //
-// Creation posture (security review — the hybrid): the arm is decided
-// server-side AFTER the subject is resolved/provisioned, against the same
-// effective-permission math as POST /agents' “agents:write“ gate. A
-// permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
-// unpermissioned one gets a PENDING agent (the POST /register posture) and
-// the awaiting-approval page. A per-subject “set_if_absent“ slot claim
+// Creation posture: the arm is decided server-side AFTER the subject is
+// resolved/provisioned, against the same effective-permission math as POST
+// /agents' “agents:write“ gate. A permissioned user gets ACTIVE + a 303
+// re-entry; an unpermissioned one gets a PENDING agent (the POST /register
+// posture) and the awaiting-approval page. A per-subject “set_if_absent“ slot claim
 // makes N parallel submits (N distinct blobs from N renders) create exactly
 // one agent — losers re-enter consent, which renders the picker or the
 // awaiting page as appropriate.
@@ -19033,16 +19033,17 @@ func (c *Client) ConsentAgentCreateWithBody(ctx context.Context, contentType str
 
 // ConsentAgentCreateWithFormdataBody Create the consenting user's first agent inline (consent page)
 //
-// Create the consenting user's first agent from the zero-agents consent page (P4).
+// Create the consenting user's first agent from the zero-agents consent page.
 //
 // The form is rendered only when the consenting user owns zero agents in
-// any status (the G12(b) first-run dead-end). This submit verifies the signed
-// single-use “agent-create“ blob (bound to the consent handle AND the
-// authenticated subject — no ambient credential is honored, so a cross-site
-// form cannot drive it: it would need both the unguessable handle and a
-// blob minted for that very handle), re-validates the handle and the D7
-// client gate, provisions the user row if deferred provisioning left none
-// (an affirmative user action, unlike rendering), re-checks the zero-agents
+// any status — otherwise consent is a first-run dead end. This submit
+// verifies the signed single-use “agent-create“ blob (bound to the consent
+// handle AND the authenticated subject — no ambient credential is honored,
+// so a cross-site form cannot drive it: it would need both the unguessable
+// handle and a blob minted for that very handle), re-validates the handle
+// and the client approval+active gate, provisions the user row if deferred
+// provisioning left none (an affirmative user action, unlike rendering),
+// re-checks the zero-agents
 // predicate (an agent appearing in between skips creation — idempotent),
 // creates the agent through the same “AgentService.create“ path as the
 // SPA (owner = the consenting user, default agent scopes, same audit +
@@ -19054,12 +19055,11 @@ func (c *Client) ConsentAgentCreateWithBody(ctx context.Context, contentType str
 // client → “access_denied“; an invalid agent name → the form re-rendered
 // with the error inline and a fresh blob.
 //
-// Creation posture (security review — the hybrid): the arm is decided
-// server-side AFTER the subject is resolved/provisioned, against the same
-// effective-permission math as POST /agents' “agents:write“ gate. A
-// permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
-// unpermissioned one gets a PENDING agent (the POST /register posture) and
-// the awaiting-approval page. A per-subject “set_if_absent“ slot claim
+// Creation posture: the arm is decided server-side AFTER the subject is
+// resolved/provisioned, against the same effective-permission math as POST
+// /agents' “agents:write“ gate. A permissioned user gets ACTIVE + a 303
+// re-entry; an unpermissioned one gets a PENDING agent (the POST /register
+// posture) and the awaiting-approval page. A per-subject “set_if_absent“ slot claim
 // makes N parallel submits (N distinct blobs from N renders) create exactly
 // one agent — losers re-enter consent, which renders the picker or the
 // awaiting page as appropriate.
@@ -19081,7 +19081,7 @@ func (c *Client) ConsentAgentCreateWithFormdataBody(ctx context.Context, body Co
 
 // ConsentAgentStatus Poll pending-agent approval status (consent awaiting page)
 //
-// Minimal tri-state poll for the pending-agent awaiting page (P4 hybrid).
+// Minimal tri-state poll for the pending-agent awaiting page.
 //
 // Anonymous but keyed by the signed “agent-status“ blob — never a bare
 // agent id, so the endpoint cannot be used to enumerate or probe agents:
@@ -30148,8 +30148,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// If the draft declares different server hosts than the API's current (or last
 	// live) revision, or serves a host over plaintext http that was https-only, and
-	// the API has credentials bound to agents, the caller also needs
-	// ``credentials:write``; otherwise the promote is refused with 403
+	// the API has credentials bound to agents, the caller must be an organisation
+	// admin (``org:admin``); otherwise the promote is refused with 403
 	// ``host_change_requires_operator``.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -31498,16 +31498,17 @@ type ClientWithResponsesInterface interface {
 
 	// ConsentAgentCreateWithBodyWithResponse Create the consenting user's first agent inline (consent page)
 	//
-	// Create the consenting user's first agent from the zero-agents consent page (P4).
+	// Create the consenting user's first agent from the zero-agents consent page.
 	//
 	// The form is rendered only when the consenting user owns zero agents in
-	// any status (the G12(b) first-run dead-end). This submit verifies the signed
-	// single-use ``agent-create`` blob (bound to the consent handle AND the
-	// authenticated subject — no ambient credential is honored, so a cross-site
-	// form cannot drive it: it would need both the unguessable handle and a
-	// blob minted for that very handle), re-validates the handle and the D7
-	// client gate, provisions the user row if deferred provisioning left none
-	// (an affirmative user action, unlike rendering), re-checks the zero-agents
+	// any status — otherwise consent is a first-run dead end. This submit
+	// verifies the signed single-use ``agent-create`` blob (bound to the consent
+	// handle AND the authenticated subject — no ambient credential is honored,
+	// so a cross-site form cannot drive it: it would need both the unguessable
+	// handle and a blob minted for that very handle), re-validates the handle
+	// and the client approval+active gate, provisions the user row if deferred
+	// provisioning left none (an affirmative user action, unlike rendering),
+	// re-checks the zero-agents
 	// predicate (an agent appearing in between skips creation — idempotent),
 	// creates the agent through the same ``AgentService.create`` path as the
 	// SPA (owner = the consenting user, default agent scopes, same audit +
@@ -31519,12 +31520,11 @@ type ClientWithResponsesInterface interface {
 	// client → ``access_denied``; an invalid agent name → the form re-rendered
 	// with the error inline and a fresh blob.
 	//
-	// Creation posture (security review — the hybrid): the arm is decided
-	// server-side AFTER the subject is resolved/provisioned, against the same
-	// effective-permission math as POST /agents' ``agents:write`` gate. A
-	// permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
-	// unpermissioned one gets a PENDING agent (the POST /register posture) and
-	// the awaiting-approval page. A per-subject ``set_if_absent`` slot claim
+	// Creation posture: the arm is decided server-side AFTER the subject is
+	// resolved/provisioned, against the same effective-permission math as POST
+	// /agents' ``agents:write`` gate. A permissioned user gets ACTIVE + a 303
+	// re-entry; an unpermissioned one gets a PENDING agent (the POST /register
+	// posture) and the awaiting-approval page. A per-subject ``set_if_absent`` slot claim
 	// makes N parallel submits (N distinct blobs from N renders) create exactly
 	// one agent — losers re-enter consent, which renders the picker or the
 	// awaiting page as appropriate.
@@ -31536,16 +31536,17 @@ type ClientWithResponsesInterface interface {
 
 	// ConsentAgentCreateWithFormdataBodyWithResponse Create the consenting user's first agent inline (consent page)
 	//
-	// Create the consenting user's first agent from the zero-agents consent page (P4).
+	// Create the consenting user's first agent from the zero-agents consent page.
 	//
 	// The form is rendered only when the consenting user owns zero agents in
-	// any status (the G12(b) first-run dead-end). This submit verifies the signed
-	// single-use ``agent-create`` blob (bound to the consent handle AND the
-	// authenticated subject — no ambient credential is honored, so a cross-site
-	// form cannot drive it: it would need both the unguessable handle and a
-	// blob minted for that very handle), re-validates the handle and the D7
-	// client gate, provisions the user row if deferred provisioning left none
-	// (an affirmative user action, unlike rendering), re-checks the zero-agents
+	// any status — otherwise consent is a first-run dead end. This submit
+	// verifies the signed single-use ``agent-create`` blob (bound to the consent
+	// handle AND the authenticated subject — no ambient credential is honored,
+	// so a cross-site form cannot drive it: it would need both the unguessable
+	// handle and a blob minted for that very handle), re-validates the handle
+	// and the client approval+active gate, provisions the user row if deferred
+	// provisioning left none (an affirmative user action, unlike rendering),
+	// re-checks the zero-agents
 	// predicate (an agent appearing in between skips creation — idempotent),
 	// creates the agent through the same ``AgentService.create`` path as the
 	// SPA (owner = the consenting user, default agent scopes, same audit +
@@ -31557,12 +31558,11 @@ type ClientWithResponsesInterface interface {
 	// client → ``access_denied``; an invalid agent name → the form re-rendered
 	// with the error inline and a fresh blob.
 	//
-	// Creation posture (security review — the hybrid): the arm is decided
-	// server-side AFTER the subject is resolved/provisioned, against the same
-	// effective-permission math as POST /agents' ``agents:write`` gate. A
-	// permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
-	// unpermissioned one gets a PENDING agent (the POST /register posture) and
-	// the awaiting-approval page. A per-subject ``set_if_absent`` slot claim
+	// Creation posture: the arm is decided server-side AFTER the subject is
+	// resolved/provisioned, against the same effective-permission math as POST
+	// /agents' ``agents:write`` gate. A permissioned user gets ACTIVE + a 303
+	// re-entry; an unpermissioned one gets a PENDING agent (the POST /register
+	// posture) and the awaiting-approval page. A per-subject ``set_if_absent`` slot claim
 	// makes N parallel submits (N distinct blobs from N renders) create exactly
 	// one agent — losers re-enter consent, which renders the picker or the
 	// awaiting page as appropriate.
@@ -31574,7 +31574,7 @@ type ClientWithResponsesInterface interface {
 
 	// ConsentAgentStatusWithResponse Poll pending-agent approval status (consent awaiting page)
 	//
-	// Minimal tri-state poll for the pending-agent awaiting page (P4 hybrid).
+	// Minimal tri-state poll for the pending-agent awaiting page.
 	//
 	// Anonymous but keyed by the signed ``agent-status`` blob — never a bare
 	// agent id, so the endpoint cannot be used to enumerate or probe agents:
@@ -33957,6 +33957,8 @@ type ArchiveAgentHTTPResp struct {
 	ApplicationproblemJSON401 *Unauthorized
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -33980,6 +33982,11 @@ func (r ArchiveAgentHTTPResp) GetApplicationproblemJSON401() *Unauthorized {
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r ArchiveAgentHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r ArchiveAgentHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -34042,6 +34049,8 @@ type GetAgentHTTPResp struct {
 	ApplicationproblemJSON401 *Unauthorized
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -34070,6 +34079,11 @@ func (r GetAgentHTTPResp) GetApplicationproblemJSON401() *Unauthorized {
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r GetAgentHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetAgentHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -34132,6 +34146,10 @@ type UpdateAgentHTTPResp struct {
 	ApplicationproblemJSON401 *Unauthorized
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -34160,6 +34178,16 @@ func (r UpdateAgentHTTPResp) GetApplicationproblemJSON401() *Unauthorized {
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r UpdateAgentHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r UpdateAgentHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r UpdateAgentHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -34402,6 +34430,8 @@ type ListAgentCredentialsHTTPResp struct {
 	ApplicationproblemJSON401 *Unauthorized
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -34430,6 +34460,11 @@ func (r ListAgentCredentialsHTTPResp) GetApplicationproblemJSON401() *Unauthoriz
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r ListAgentCredentialsHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ListAgentCredentialsHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -34492,6 +34527,10 @@ type BindAgentCredentialHTTPResp struct {
 	ApplicationproblemJSON401 *Unauthorized
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -34520,6 +34559,16 @@ func (r BindAgentCredentialHTTPResp) GetApplicationproblemJSON401() *Unauthorize
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r BindAgentCredentialHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r BindAgentCredentialHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r BindAgentCredentialHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -34580,6 +34629,8 @@ type UnbindAgentCredentialHTTPResp struct {
 	ApplicationproblemJSON401 *Unauthorized
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -34603,6 +34654,11 @@ func (r UnbindAgentCredentialHTTPResp) GetApplicationproblemJSON401() *Unauthori
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r UnbindAgentCredentialHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r UnbindAgentCredentialHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -34665,6 +34721,8 @@ type ResumeAgentCredentialBindingHTTPResp struct {
 	ApplicationproblemJSON401 *Unauthorized
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -34693,6 +34751,11 @@ func (r ResumeAgentCredentialBindingHTTPResp) GetApplicationproblemJSON401() *Un
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r ResumeAgentCredentialBindingHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ResumeAgentCredentialBindingHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -35122,6 +35185,8 @@ type ApproveAgentHTTPResp struct {
 	ApplicationproblemJSON401 *Unauthorized
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -35150,6 +35215,11 @@ func (r ApproveAgentHTTPResp) GetApplicationproblemJSON401() *Unauthorized {
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r ApproveAgentHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ApproveAgentHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -35302,6 +35372,8 @@ type DenyAgentHTTPResp struct {
 	ApplicationproblemJSON401 *Unauthorized
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -35330,6 +35402,11 @@ func (r DenyAgentHTTPResp) GetApplicationproblemJSON401() *Unauthorized {
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r DenyAgentHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r DenyAgentHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -36292,6 +36369,8 @@ type ListApiOperationsHTTPResp struct {
 	ApplicationproblemJSON401 *Unauthorized
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -36320,6 +36399,11 @@ func (r ListApiOperationsHTTPResp) GetApplicationproblemJSON401() *Unauthorized 
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r ListApiOperationsHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ListApiOperationsHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -36735,6 +36819,8 @@ type UpdateOverlayHTTPResp struct {
 	ApplicationproblemJSON401 *Unauthorized
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -36763,6 +36849,11 @@ func (r UpdateOverlayHTTPResp) GetApplicationproblemJSON401() *Unauthorized {
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r UpdateOverlayHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r UpdateOverlayHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -36825,6 +36916,8 @@ type ConfirmOverlayHTTPResp struct {
 	ApplicationproblemJSON401 *Unauthorized
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -36853,6 +36946,11 @@ func (r ConfirmOverlayHTTPResp) GetApplicationproblemJSON401() *Unauthorized {
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r ConfirmOverlayHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r ConfirmOverlayHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -36913,6 +37011,8 @@ type RollbackOverlayHTTPResp struct {
 	ApplicationproblemJSON401 *Unauthorized
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -36936,6 +37036,11 @@ func (r RollbackOverlayHTTPResp) GetApplicationproblemJSON401() *Unauthorized {
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r RollbackOverlayHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r RollbackOverlayHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -37086,6 +37191,8 @@ type DeleteRevisionHTTPResp struct {
 	ApplicationproblemJSON401 *Unauthorized
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -37109,6 +37216,11 @@ func (r DeleteRevisionHTTPResp) GetApplicationproblemJSON401() *Unauthorized {
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r DeleteRevisionHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r DeleteRevisionHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -37171,6 +37283,8 @@ type GetApiRevisionHTTPResp struct {
 	ApplicationproblemJSON401 *Unauthorized
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -37199,6 +37313,11 @@ func (r GetApiRevisionHTTPResp) GetApplicationproblemJSON401() *Unauthorized {
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r GetApiRevisionHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetApiRevisionHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -37263,6 +37382,8 @@ type GetApiRevisionSpecHTTPResp struct {
 	ApplicationproblemJSON401 *Unauthorized
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *Forbidden
+	// JSON406 the response for an HTTP 406 `application/json` response
+	JSON406 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -37296,6 +37417,11 @@ func (r GetApiRevisionSpecHTTPResp) GetApplicationproblemJSON401() *Unauthorized
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r GetApiRevisionSpecHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 	return r.ApplicationproblemJSON403
+}
+
+// GetJSON406 returns the response for an HTTP 406 `application/json` response
+func (r GetApiRevisionSpecHTTPResp) GetJSON406() *ProblemDetail {
+	return r.JSON406
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -37358,6 +37484,8 @@ type ListApiRevisionOperationsHTTPResp struct {
 	ApplicationproblemJSON401 *Unauthorized
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -37386,6 +37514,11 @@ func (r ListApiRevisionOperationsHTTPResp) GetApplicationproblemJSON401() *Unaut
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r ListApiRevisionOperationsHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ListApiRevisionOperationsHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -37448,6 +37581,8 @@ type ArchiveRevisionHTTPResp struct {
 	ApplicationproblemJSON401 *Unauthorized
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -37476,6 +37611,11 @@ func (r ArchiveRevisionHTTPResp) GetApplicationproblemJSON401() *Unauthorized {
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r ArchiveRevisionHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r ArchiveRevisionHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -41449,6 +41589,8 @@ type GetHeldExecutionResultHTTPResp struct {
 	ApplicationproblemJSON404 *NotFound
 	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
 	ApplicationproblemJSON409 *Conflict
+	// ApplicationproblemJSON410 the response for an HTTP 410 `application/problem+json` response
+	ApplicationproblemJSON410 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -41492,6 +41634,11 @@ func (r GetHeldExecutionResultHTTPResp) GetApplicationproblemJSON404() *NotFound
 // GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
 func (r GetHeldExecutionResultHTTPResp) GetApplicationproblemJSON409() *Conflict {
 	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON410 returns the response for an HTTP 410 `application/problem+json` response
+func (r GetHeldExecutionResultHTTPResp) GetApplicationproblemJSON410() *ProblemDetail {
+	return r.ApplicationproblemJSON410
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -42004,6 +42151,8 @@ type InspectOperationHTTPResp struct {
 	ApplicationproblemJSON401 *Unauthorized
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *Forbidden
+	// JSON406 the response for an HTTP 406 `application/json` response
+	JSON406 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -42032,6 +42181,11 @@ func (r InspectOperationHTTPResp) GetApplicationproblemJSON401() *Unauthorized {
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r InspectOperationHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 	return r.ApplicationproblemJSON403
+}
+
+// GetJSON406 returns the response for an HTTP 406 `application/json` response
+func (r InspectOperationHTTPResp) GetJSON406() *ProblemDetail {
+	return r.JSON406
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -44873,6 +45027,8 @@ type TokenEndpointHTTPResp struct {
 	JSON200 *TokenResponse
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *OAuthErrorResponse
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *OAuthErrorResponse
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *OAuthErrorResponse
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -44891,6 +45047,11 @@ func (r TokenEndpointHTTPResp) GetJSON200() *TokenResponse {
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
 func (r TokenEndpointHTTPResp) GetJSON400() *OAuthErrorResponse {
 	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r TokenEndpointHTTPResp) GetJSON401() *OAuthErrorResponse {
+	return r.JSON401
 }
 
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
@@ -45336,6 +45497,8 @@ type UpdatePermissionRuleSetHTTPResp struct {
 	ApplicationproblemJSON403 *Forbidden
 	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
 	ApplicationproblemJSON404 *NotFound
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -45369,6 +45532,11 @@ func (r UpdatePermissionRuleSetHTTPResp) GetApplicationproblemJSON403() *Forbidd
 // GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
 func (r UpdatePermissionRuleSetHTTPResp) GetApplicationproblemJSON404() *NotFound {
 	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r UpdatePermissionRuleSetHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -45691,7 +45859,7 @@ type DeleteRegistrationEndpointHTTPResp struct {
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
 	ApplicationproblemJSON401 *Unauthorized
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *Forbidden
+	ApplicationproblemJSON403 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -45713,7 +45881,7 @@ func (r DeleteRegistrationEndpointHTTPResp) GetApplicationproblemJSON401() *Unau
 }
 
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r DeleteRegistrationEndpointHTTPResp) GetApplicationproblemJSON403() *Forbidden {
+func (r DeleteRegistrationEndpointHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
 	return r.ApplicationproblemJSON403
 }
 
@@ -45857,7 +46025,7 @@ type UpdateRegistrationEndpointHTTPResp struct {
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
 	ApplicationproblemJSON401 *Unauthorized
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *Forbidden
+	ApplicationproblemJSON403 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -45879,7 +46047,7 @@ func (r UpdateRegistrationEndpointHTTPResp) GetApplicationproblemJSON401() *Unau
 }
 
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r UpdateRegistrationEndpointHTTPResp) GetApplicationproblemJSON403() *Forbidden {
+func (r UpdateRegistrationEndpointHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
 	return r.ApplicationproblemJSON403
 }
 
@@ -47390,6 +47558,8 @@ type GetAuthCapabilitiesHTTPResp struct {
 	ApplicationproblemJSON401 *Unauthorized
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -47418,6 +47588,11 @@ func (r GetAuthCapabilitiesHTTPResp) GetApplicationproblemJSON401() *Unauthorize
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r GetAuthCapabilitiesHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetAuthCapabilitiesHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -48977,8 +49152,8 @@ func (c *ClientWithResponses) ArchiveRevisionWithResponse(ctx context.Context, v
 //
 // If the draft declares different server hosts than the API's current (or last
 // live) revision, or serves a host over plaintext http that was https-only, and
-// the API has credentials bound to agents, the caller also needs
-// “credentials:write“; otherwise the promote is refused with 403
+// the API has credentials bound to agents, the caller must be an organisation
+// admin (“org:admin“); otherwise the promote is refused with 403
 // “host_change_requires_operator“.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -50921,16 +51096,17 @@ func (c *ClientWithResponses) ApprovalStatusEndpointWithResponse(ctx context.Con
 
 // ConsentAgentCreateWithBodyWithResponse Create the consenting user's first agent inline (consent page)
 //
-// Create the consenting user's first agent from the zero-agents consent page (P4).
+// Create the consenting user's first agent from the zero-agents consent page.
 //
 // The form is rendered only when the consenting user owns zero agents in
-// any status (the G12(b) first-run dead-end). This submit verifies the signed
-// single-use “agent-create“ blob (bound to the consent handle AND the
-// authenticated subject — no ambient credential is honored, so a cross-site
-// form cannot drive it: it would need both the unguessable handle and a
-// blob minted for that very handle), re-validates the handle and the D7
-// client gate, provisions the user row if deferred provisioning left none
-// (an affirmative user action, unlike rendering), re-checks the zero-agents
+// any status — otherwise consent is a first-run dead end. This submit
+// verifies the signed single-use “agent-create“ blob (bound to the consent
+// handle AND the authenticated subject — no ambient credential is honored,
+// so a cross-site form cannot drive it: it would need both the unguessable
+// handle and a blob minted for that very handle), re-validates the handle
+// and the client approval+active gate, provisions the user row if deferred
+// provisioning left none (an affirmative user action, unlike rendering),
+// re-checks the zero-agents
 // predicate (an agent appearing in between skips creation — idempotent),
 // creates the agent through the same “AgentService.create“ path as the
 // SPA (owner = the consenting user, default agent scopes, same audit +
@@ -50942,12 +51118,11 @@ func (c *ClientWithResponses) ApprovalStatusEndpointWithResponse(ctx context.Con
 // client → “access_denied“; an invalid agent name → the form re-rendered
 // with the error inline and a fresh blob.
 //
-// Creation posture (security review — the hybrid): the arm is decided
-// server-side AFTER the subject is resolved/provisioned, against the same
-// effective-permission math as POST /agents' “agents:write“ gate. A
-// permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
-// unpermissioned one gets a PENDING agent (the POST /register posture) and
-// the awaiting-approval page. A per-subject “set_if_absent“ slot claim
+// Creation posture: the arm is decided server-side AFTER the subject is
+// resolved/provisioned, against the same effective-permission math as POST
+// /agents' “agents:write“ gate. A permissioned user gets ACTIVE + a 303
+// re-entry; an unpermissioned one gets a PENDING agent (the POST /register
+// posture) and the awaiting-approval page. A per-subject “set_if_absent“ slot claim
 // makes N parallel submits (N distinct blobs from N renders) create exactly
 // one agent — losers re-enter consent, which renders the picker or the
 // awaiting page as appropriate.
@@ -50965,16 +51140,17 @@ func (c *ClientWithResponses) ConsentAgentCreateWithBodyWithResponse(ctx context
 
 // ConsentAgentCreateWithFormdataBodyWithResponse Create the consenting user's first agent inline (consent page)
 //
-// Create the consenting user's first agent from the zero-agents consent page (P4).
+// Create the consenting user's first agent from the zero-agents consent page.
 //
 // The form is rendered only when the consenting user owns zero agents in
-// any status (the G12(b) first-run dead-end). This submit verifies the signed
-// single-use “agent-create“ blob (bound to the consent handle AND the
-// authenticated subject — no ambient credential is honored, so a cross-site
-// form cannot drive it: it would need both the unguessable handle and a
-// blob minted for that very handle), re-validates the handle and the D7
-// client gate, provisions the user row if deferred provisioning left none
-// (an affirmative user action, unlike rendering), re-checks the zero-agents
+// any status — otherwise consent is a first-run dead end. This submit
+// verifies the signed single-use “agent-create“ blob (bound to the consent
+// handle AND the authenticated subject — no ambient credential is honored,
+// so a cross-site form cannot drive it: it would need both the unguessable
+// handle and a blob minted for that very handle), re-validates the handle
+// and the client approval+active gate, provisions the user row if deferred
+// provisioning left none (an affirmative user action, unlike rendering),
+// re-checks the zero-agents
 // predicate (an agent appearing in between skips creation — idempotent),
 // creates the agent through the same “AgentService.create“ path as the
 // SPA (owner = the consenting user, default agent scopes, same audit +
@@ -50986,12 +51162,11 @@ func (c *ClientWithResponses) ConsentAgentCreateWithBodyWithResponse(ctx context
 // client → “access_denied“; an invalid agent name → the form re-rendered
 // with the error inline and a fresh blob.
 //
-// Creation posture (security review — the hybrid): the arm is decided
-// server-side AFTER the subject is resolved/provisioned, against the same
-// effective-permission math as POST /agents' “agents:write“ gate. A
-// permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
-// unpermissioned one gets a PENDING agent (the POST /register posture) and
-// the awaiting-approval page. A per-subject “set_if_absent“ slot claim
+// Creation posture: the arm is decided server-side AFTER the subject is
+// resolved/provisioned, against the same effective-permission math as POST
+// /agents' “agents:write“ gate. A permissioned user gets ACTIVE + a 303
+// re-entry; an unpermissioned one gets a PENDING agent (the POST /register
+// posture) and the awaiting-approval page. A per-subject “set_if_absent“ slot claim
 // makes N parallel submits (N distinct blobs from N renders) create exactly
 // one agent — losers re-enter consent, which renders the picker or the
 // awaiting page as appropriate.
@@ -51009,7 +51184,7 @@ func (c *ClientWithResponses) ConsentAgentCreateWithFormdataBodyWithResponse(ctx
 
 // ConsentAgentStatusWithResponse Poll pending-agent approval status (consent awaiting page)
 //
-// Minimal tri-state poll for the pending-agent awaiting page (P4 hybrid).
+// Minimal tri-state poll for the pending-agent awaiting page.
 //
 // Anonymous but keyed by the signed “agent-status“ blob — never a bare
 // agent id, so the endpoint cannot be used to enumerate or probe agents:
@@ -53450,6 +53625,13 @@ func ParseArchiveAgentHTTPResp(rsp *http.Response) (*ArchiveAgentHTTPResp, error
 		}
 		response.ApplicationproblemJSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest UnprocessableEntity
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -53525,6 +53707,13 @@ func ParseGetAgentHTTPResp(rsp *http.Response) (*GetAgentHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest UnprocessableEntity
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -53599,6 +53788,20 @@ func ParseUpdateAgentHTTPResp(rsp *http.Response) (*UpdateAgentHTTPResp, error) 
 			return nil, err
 		}
 		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest UnprocessableEntity
@@ -53825,6 +54028,13 @@ func ParseListAgentCredentialsHTTPResp(rsp *http.Response) (*ListAgentCredential
 		}
 		response.ApplicationproblemJSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest UnprocessableEntity
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -53900,6 +54110,20 @@ func ParseBindAgentCredentialHTTPResp(rsp *http.Response) (*BindAgentCredentialH
 		}
 		response.ApplicationproblemJSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest UnprocessableEntity
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -53970,6 +54194,13 @@ func ParseUnbindAgentCredentialHTTPResp(rsp *http.Response) (*UnbindAgentCredent
 			return nil, err
 		}
 		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest UnprocessableEntity
@@ -54045,6 +54276,13 @@ func ParseResumeAgentCredentialBindingHTTPResp(rsp *http.Response) (*ResumeAgent
 			return nil, err
 		}
 		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest UnprocessableEntity
@@ -54428,6 +54666,13 @@ func ParseApproveAgentHTTPResp(rsp *http.Response) (*ApproveAgentHTTPResp, error
 		}
 		response.ApplicationproblemJSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest UnprocessableEntity
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -54577,6 +54822,13 @@ func ParseDenyAgentHTTPResp(rsp *http.Response) (*DenyAgentHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest UnprocessableEntity
@@ -55418,6 +55670,13 @@ func ParseListApiOperationsHTTPResp(rsp *http.Response) (*ListApiOperationsHTTPR
 		}
 		response.ApplicationproblemJSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest UnprocessableEntity
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -55789,6 +56048,13 @@ func ParseUpdateOverlayHTTPResp(rsp *http.Response) (*UpdateOverlayHTTPResp, err
 		}
 		response.ApplicationproblemJSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest UnprocessableEntity
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -55864,6 +56130,13 @@ func ParseConfirmOverlayHTTPResp(rsp *http.Response) (*ConfirmOverlayHTTPResp, e
 		}
 		response.ApplicationproblemJSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest UnprocessableEntity
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -55934,6 +56207,13 @@ func ParseRollbackOverlayHTTPResp(rsp *http.Response) (*RollbackOverlayHTTPResp,
 			return nil, err
 		}
 		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest UnprocessableEntity
@@ -56081,6 +56361,13 @@ func ParseDeleteRevisionHTTPResp(rsp *http.Response) (*DeleteRevisionHTTPResp, e
 		}
 		response.ApplicationproblemJSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest UnprocessableEntity
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -56155,6 +56442,13 @@ func ParseGetApiRevisionHTTPResp(rsp *http.Response) (*GetApiRevisionHTTPResp, e
 			return nil, err
 		}
 		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest UnprocessableEntity
@@ -56238,6 +56532,13 @@ func ParseGetApiRevisionSpecHTTPResp(rsp *http.Response) (*GetApiRevisionSpecHTT
 		}
 		response.ApplicationproblemJSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 406:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON406 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest UnprocessableEntity
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -56316,6 +56617,13 @@ func ParseListApiRevisionOperationsHTTPResp(rsp *http.Response) (*ListApiRevisio
 		}
 		response.ApplicationproblemJSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest UnprocessableEntity
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -56390,6 +56698,13 @@ func ParseArchiveRevisionHTTPResp(rsp *http.Response) (*ArchiveRevisionHTTPResp,
 			return nil, err
 		}
 		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest UnprocessableEntity
@@ -59768,6 +60083,13 @@ func ParseGetHeldExecutionResultHTTPResp(rsp *http.Response) (*GetHeldExecutionR
 		}
 		response.ApplicationproblemJSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON410 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest UnprocessableEntity
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -60229,6 +60551,13 @@ func ParseInspectOperationHTTPResp(rsp *http.Response) (*InspectOperationHTTPRes
 			return nil, err
 		}
 		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 406:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON406 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest UnprocessableEntity
@@ -62624,6 +62953,13 @@ func ParseTokenEndpointHTTPResp(rsp *http.Response) (*TokenEndpointHTTPResp, err
 		}
 		response.JSON400 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest OAuthErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
 		var dest OAuthErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -63030,6 +63366,13 @@ func ParseUpdatePermissionRuleSetHTTPResp(rsp *http.Response) (*UpdatePermission
 		}
 		response.ApplicationproblemJSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest UnprocessableEntity
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -63310,7 +63653,7 @@ func ParseDeleteRegistrationEndpointHTTPResp(rsp *http.Response) (*DeleteRegistr
 		response.ApplicationproblemJSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
+		var dest ProblemDetail
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -63446,7 +63789,7 @@ func ParseUpdateRegistrationEndpointHTTPResp(rsp *http.Response) (*UpdateRegistr
 		response.ApplicationproblemJSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
+		var dest ProblemDetail
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -64742,6 +65085,13 @@ func ParseGetAuthCapabilitiesHTTPResp(rsp *http.Response) (*GetAuthCapabilitiesH
 			return nil, err
 		}
 		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest UnprocessableEntity

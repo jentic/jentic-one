@@ -58,7 +58,7 @@ class RevisionPinOutcome(StrEnum):
     HOST_CHANGE_HELD = "host_change_held"
     """The caller's own ``draft`` serves different server hosts than the API's live
     revision, the API has bound credentials, and the caller lacks
-    ``credentials:write`` (→ 403 ``host_change_requires_operator``).
+    ``org:admin`` (→ 403 ``host_change_requires_operator``).
     ``revision_id`` is set so the broker can tell whether the draft serves the URL."""
 
 

@@ -113,6 +113,7 @@ export class ApiSpecService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                406: `\`Accept\` names none of the supported media types — \`application/json\`, \`application/openapi+yaml\`, \`application/yaml\` (or \`*/*\`) — so the document cannot be served in a format the caller asked for (type \`not_acceptable\`).`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

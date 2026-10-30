@@ -1530,7 +1530,7 @@
                 {
                   "name": "submitted-by",
                   "type": "string",
-                  "usage": "Attribution for who submitted this import (default: server infers from the caller)"
+                  "usage": "Attribute this import to another principal (org:admin only; otherwise the server attributes it to the caller)"
                 },
                 {
                   "name": "theme",

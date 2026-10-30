@@ -76,6 +76,7 @@ export class VendorsService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                404: `No vendor is registered under this \`vendor_key\` (\`unknown_vendor\`). The keys this deployment serves come from \`GET /vendors\`; they are seeded from operator config, so a key valid on another deployment may not exist here.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

@@ -49,6 +49,8 @@ from jentic_one.registry.web.schemas.apis import (
     SecuritySchemeListResponse,
 )
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import ORG_ADMIN
+from jentic_one.shared.auth.permissions import has_effective_permission
 from jentic_one.shared.context import Context
 from jentic_one.shared.jobs.enqueue import enqueue_job
 from jentic_one.shared.models import ApiRevisionSourceType, ApiRevisionState
@@ -272,14 +274,21 @@ async def import_apis(
     request is refused with 413 before any job is queued.
     """
     _check_inline_source_sizes(body, ctx.config.ingest.max_spec_bytes, request.url.path)
-    # Attribute each resulting revision to the authenticated principal unless the
-    # client supplied an explicit `submitted_by` override (e.g. importing on
-    # behalf of someone else). The job row's `created_by` records the caller
-    # either way; this default carries the same principal through the ingest
-    # pipeline onto ApiRevision.submitted_by.
+    # Attribute each resulting revision to the authenticated principal. Only an
+    # organisation admin may name someone else in `submitted_by` (importing on
+    # their behalf): a draft's submitter is who may pin it, so anyone else's
+    # value is replaced with the caller. The job row's `created_by` records the
+    # caller either way; this carries the principal through the ingest pipeline
+    # onto ApiRevision.submitted_by.
+    # A gate on the same permission as the server-host guard's
+    # `may_approve_host_change`, but a deliberately separate one: this governs who
+    # a revision is attributed to, not who may move an API's hosts. Relaxing one
+    # does not imply relaxing the other. Both expand the implication map, so a
+    # grant that only implies `org:admin` counts here too.
+    may_attribute = has_effective_permission(identity.permissions, ORG_ADMIN)
     sources = [s.model_dump(mode="json") for s in body.sources]
     for source in sources:
-        if source.get("submitted_by") is None:
+        if not may_attribute or source.get("submitted_by") is None:
             source["submitted_by"] = identity.sub
     async with ctx.admin_db.transaction() as session:
         job_id = await enqueue_job(
@@ -724,8 +733,8 @@ async def promote_revision(
 
     If the draft declares different server hosts than the API's current (or last
     live) revision, or serves a host over plaintext http that was https-only, and
-    the API has credentials bound to agents, the caller also needs
-    ``credentials:write``; otherwise the promote is refused with 403
+    the API has credentials bound to agents, the caller must be an organisation
+    admin (``org:admin``); otherwise the promote is refused with 403
     ``host_change_requires_operator``.
     """
     svc = RevisionService(ctx)
