@@ -120,7 +120,7 @@
       "path": "/admin/health",
       "public": true,
       "required_permissions": [],
-      "summary": "Health",
+      "summary": "Admin health and first-run status",
       "surface": "admin",
       "typical_caller": null
     },
@@ -2442,7 +2442,7 @@
       "path": "/health",
       "public": true,
       "required_permissions": [],
-      "summary": "Health",
+      "summary": "Liveness probe",
       "surface": "health",
       "typical_caller": null
     },

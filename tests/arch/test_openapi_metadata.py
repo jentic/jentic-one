@@ -20,6 +20,7 @@ spec that wasn't regenerated). The spec is built once per session via the
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import jsonschema
@@ -522,4 +523,114 @@ def test_oneof_discriminator_mappings_match_variant_constants(
     walk(generated_control_spec, "")
     assert not problems, "Discriminator mappings inconsistent with variants:\n" + "\n".join(
         problems
+    )
+
+
+#: Status codes an operation's prose names without the operation returning them.
+#: Keyed by ``(operationId, code)`` with the reason, because
+#: :func:`test_prose_status_codes_are_declared` cannot tell a real promise from a
+#: number that happens to look like one. Add an entry only after checking the
+#: handler: the default assumption is that prose naming a code is a promise, and
+#: an undeclared promise is the defect the test exists to catch.
+_PROSE_CODE_EXEMPTIONS: dict[tuple[str, str], str] = {
+    # "at most 512 actions" — a size limit, not a status.
+    ("submitOverlay", "512"): "overlay action-count limit, not a status code",
+    # Describes the 429 its sibling `:connect` answers, not this operation.
+    ("rejectConnectSession", "429"): "documents the rejection cooldown seen on :connect",
+    # The 403/409 here are the Problem Details body's own `status` member for a
+    # call that never ran; the HTTP status of this response stays 200.
+    ("getJobResult", "409"): "problem document's own status member, HTTP stays 200",
+    ("getJobResult", "403"): "problem document's own status member, HTTP stays 200",
+}
+
+
+@pytest.mark.arch
+def test_prose_status_codes_are_declared(generated_control_spec: dict[str, Any]) -> None:
+    """A status code an operation's prose promises is also declared in ``responses``.
+
+    Telling a caller in English that an operation 404s, while declaring no 404,
+    leaves it unable to generate error handling from the document — the fact is
+    written down but not machine-readable. Declare the code with
+    ``not_found()``/``conflict()``/``problem()`` from ``openapi_responses.py``,
+    reusing the condition the prose already states and naming the problem `type`
+    slug a caller branches on.
+
+    A number that only looks like a status (a byte or item limit), or a code
+    described as belonging to another operation or to a Problem Details body's
+    own ``status`` member, belongs in :data:`_PROSE_CODE_EXEMPTIONS` with a
+    reason — after checking the handler, not to silence the test.
+    """
+    violations: list[str] = []
+    for method, path, operation in _operations(generated_control_spec):
+        op_id = str(operation.get("operationId") or "")
+        declared = set((operation.get("responses") or {}).keys())
+        prose = " ".join(
+            text
+            for text in (
+                operation.get("summary"),
+                operation.get("description"),
+                *(
+                    _resolve(generated_control_spec, response).get("description")
+                    for response in (operation.get("responses") or {}).values()
+                ),
+            )
+            if isinstance(text, str)
+        )
+        for code in sorted(set(re.findall(r"\b([45]\d\d)\b", prose))):
+            if code in declared or (op_id, code) in _PROSE_CODE_EXEMPTIONS:
+                continue
+            violations.append(
+                f"{method} {path} ({op_id}) describes {code} but declares {sorted(declared)}"
+            )
+    if violations:
+        pytest.fail(
+            "Status codes promised in prose but never declared:\n"
+            + "\n".join(violations)
+            + "\n\nFix: declare the code on the route with the openapi_responses.py helpers, "
+            "or exempt it in _PROSE_CODE_EXEMPTIONS with a reason if the handler never "
+            f"returns it. {_GUIDE_HINT}"
+        )
+
+
+@pytest.mark.arch
+def test_tag_catalogue_and_groups_agree(generated_control_spec: dict[str, Any]) -> None:
+    """Every declared tag carries operations and sits in exactly one ``x-tagGroups`` group.
+
+    Three ways this drifts, each of which misleads a reader navigating the
+    document rather than breaking it:
+
+    - a tag declared with a description but carrying no operations promises a
+      surface that is not there;
+    - a tag missing from ``x-tagGroups`` is invisible to a grouped renderer, so
+      its operations cannot be found by browsing;
+    - a group naming a tag that was never declared renders an empty heading.
+
+    Fix all three in ``openapi_meta/tags.py`` (``OPENAPI_TAGS`` and
+    ``X_TAG_GROUPS``), and the path to tag rules in ``openapi_meta/operation_ids.py``.
+    """
+    declared = {tag["name"] for tag in generated_control_spec.get("tags") or []}
+    grouped = [
+        name
+        for group in generated_control_spec.get("x-tagGroups") or []
+        for name in group.get("tags") or []
+    ]
+    used = {
+        (operation.get("tags") or [None])[0]
+        for _, _, operation in _operations(generated_control_spec)
+    }
+
+    problems: list[str] = []
+    for name in sorted(declared - used):
+        problems.append(f"tag {name!r} is declared but no operation carries it")
+    for name in sorted(declared - set(grouped)):
+        problems.append(f"tag {name!r} is declared but in no x-tagGroups group")
+    for name in sorted(set(grouped) - declared):
+        problems.append(f"x-tagGroups names {name!r}, which is not a declared tag")
+    for name in sorted({n for n in grouped if grouped.count(n) > 1}):
+        problems.append(f"tag {name!r} appears in more than one x-tagGroups group")
+
+    assert not problems, (
+        "Tag catalogue and groups disagree:\n"
+        + "\n".join(f"  - {problem}" for problem in problems)
+        + f"\n\n{_GUIDE_HINT}"
     )

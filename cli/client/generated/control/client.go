@@ -12133,9 +12133,15 @@ type ClientInterface interface {
 	// Corresponds with PUT /admin/config/providers/{name} (the `SetProviderConfig` operationId).
 	SetProviderConfig(ctx context.Context, name string, body SetProviderConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// Health Health
+	// Health Admin health and first-run status
 	//
-	// Return admin service health status.
+	// Report admin-surface health, and whether the deployment still needs setup.
+	//
+	// Unlike the dependency-free root `/health` liveness probe, this one reaches the
+	// database to answer `setup_required`: true while no user exists, which is what
+	// the SPA and CLI read before offering a login. A database that cannot be
+	// reached still answers 200 with `setup_required: false`, so treat this as a
+	// readiness hint rather than a database health check.
 	//
 	// Corresponds with GET /admin/health (the `Health` operationId).
 	Health(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -13771,7 +13777,7 @@ type ClientInterface interface {
 	// Corresponds with GET /governed-hosts (the `GetGovernedHosts` operationId).
 	GetGovernedHosts(ctx context.Context, params *GetGovernedHostsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetHealth Health
+	// GetHealth Liveness probe
 	//
 	// Liveness probe for the combined control-plane app.
 	//
@@ -15179,9 +15185,15 @@ func (c *Client) SetProviderConfig(ctx context.Context, name string, body SetPro
 	return c.Client.Do(req)
 }
 
-// Health Health
+// Health Admin health and first-run status
 //
-// Return admin service health status.
+// Report admin-surface health, and whether the deployment still needs setup.
+//
+// Unlike the dependency-free root `/health` liveness probe, this one reaches the
+// database to answer `setup_required`: true while no user exists, which is what
+// the SPA and CLI read before offering a login. A database that cannot be
+// reached still answers 200 with `setup_required: false`, so treat this as a
+// readiness hint rather than a database health check.
 //
 // Corresponds with GET /admin/health (the `Health` operationId).
 func (c *Client) Health(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -18097,7 +18109,7 @@ func (c *Client) GetGovernedHosts(ctx context.Context, params *GetGovernedHostsP
 	return c.Client.Do(req)
 }
 
-// GetHealth Health
+// GetHealth Liveness probe
 //
 // Liveness probe for the combined control-plane app.
 //
@@ -29176,9 +29188,15 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /admin/config/providers/{name} (the `SetProviderConfig` operationId).
 	SetProviderConfigWithResponse(ctx context.Context, name string, body SetProviderConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*SetProviderConfigHTTPResp, error)
 
-	// HealthWithResponse Health
+	// HealthWithResponse Admin health and first-run status
 	//
-	// Return admin service health status.
+	// Report admin-surface health, and whether the deployment still needs setup.
+	//
+	// Unlike the dependency-free root `/health` liveness probe, this one reaches the
+	// database to answer `setup_required`: true while no user exists, which is what
+	// the SPA and CLI read before offering a login. A database that cannot be
+	// reached still answers 200 with `setup_required: false`, so treat this as a
+	// readiness hint rather than a database health check.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -30962,7 +30980,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /governed-hosts (the `GetGovernedHosts` operationId).
 	GetGovernedHostsWithResponse(ctx context.Context, params *GetGovernedHostsParams, reqEditors ...RequestEditorFn) (*GetGovernedHostsHTTPResp, error)
 
-	// GetHealthWithResponse Health
+	// GetHealthWithResponse Liveness probe
 	//
 	// Liveness probe for the combined control-plane app.
 	//
@@ -47772,9 +47790,15 @@ func (c *ClientWithResponses) SetProviderConfigWithResponse(ctx context.Context,
 	return ParseSetProviderConfigHTTPResp(rsp)
 }
 
-// HealthWithResponse Health
+// HealthWithResponse Admin health and first-run status
 //
-// Return admin service health status.
+// Report admin-surface health, and whether the deployment still needs setup.
+//
+// Unlike the dependency-free root `/health` liveness probe, this one reaches the
+// database to answer `setup_required`: true while no user exists, which is what
+// the SPA and CLI read before offering a login. A database that cannot be
+// reached still answers 200 with `setup_required: false`, so treat this as a
+// readiness hint rather than a database health check.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -50326,7 +50350,7 @@ func (c *ClientWithResponses) GetGovernedHostsWithResponse(ctx context.Context, 
 	return ParseGetGovernedHostsHTTPResp(rsp)
 }
 
-// GetHealthWithResponse Health
+// GetHealthWithResponse Liveness probe
 //
 // Liveness probe for the combined control-plane app.
 //

@@ -411,7 +411,7 @@ _Total endpoints: **174**._
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| GET | `/admin/health` | _public — no auth_ | — | Health |
+| GET | `/admin/health` | _public — no auth_ | — | Admin health and first-run status |
 
 ### `auth`
 
@@ -430,7 +430,7 @@ _Total endpoints: **174**._
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| GET | `/health` | _public — no auth_ | — | Health |
+| GET | `/health` | _public — no auth_ | — | Liveness probe |
 
 ### `instance`
 

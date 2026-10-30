@@ -245,7 +245,6 @@ _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/catalog"), "Catalog"),
     (re.compile(r"^/search"), "Search"),
     (re.compile(r"^/inspect"), "Inspect"),
-    (re.compile(r"^/lookup"), "Lookup"),
     (re.compile(r"^/notes"), "Notes"),
     (re.compile(r"^/monitoring"), "Monitoring"),
     (re.compile(r"^/executions/holds"), "Held Executions"),

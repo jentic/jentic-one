@@ -14011,7 +14011,7 @@ info:
       `revision_id` from the revision list). `revision_id` is an unprefixed UUID;
       the header also accepts the equivalent `rev_<revision_id without hyphens>`
       label, a header-only encoding rather than a resource ID. Control-plane
-      reads (`Search`, `Inspect`, `Lookup`) accept matching `revision_id` / `revision_pins`
+      reads (`Search`, `Inspect`) accept matching `revision_id` / `revision_pins`
       parameters so dashboards can preview an unpromoted revision
       before flipping `:promote`.
     - **ID prefixes.** Resource identifiers use a stable short prefix.
@@ -14355,9 +14355,16 @@ paths:
       - Configuration
     summary: Set a credential provider config; Get a credential provider config
   /admin/health:
-    description: '`GET`: Health.'
+    description: '`GET`: Admin health and first-run status.'
     get:
-      description: Return admin service health status.
+      description: |-
+        Report admin-surface health, and whether the deployment still needs setup.
+
+        Unlike the dependency-free root `/health` liveness probe, this one reaches the
+        database to answer `setup_required`: true while no user exists, which is what
+        the SPA and CLI read before offering a login. A database that cannot be
+        reached still answers 200 with `setup_required: false`, so treat this as a
+        readiness hint rather than a database health check.
       operationId: health
       responses:
         '200':
@@ -14378,10 +14385,10 @@ paths:
         default:
           $ref: '#/components/responses/UnexpectedError'
       security: []
-      summary: Health
+      summary: Admin health and first-run status
       tags:
       - System
-    summary: Health
+    summary: Admin health and first-run status
   /admin/oauth-clients:
     description: '`POST`: Register OAuth client. `GET`: List OAuth clients.'
     get:
@@ -21097,7 +21104,7 @@ paths:
       - Governed Hosts
     summary: Get Governed Hosts
   /health:
-    description: '`GET`: Health.'
+    description: '`GET`: Liveness probe.'
     get:
       description: |-
         Liveness probe for the combined control-plane app.
@@ -21116,10 +21123,10 @@ paths:
         default:
           $ref: '#/components/responses/UnexpectedError'
       security: []
-      summary: Health
+      summary: Liveness probe
       tags:
       - System
-    summary: Health
+    summary: Liveness probe
   /inspect:
     description: '`GET`: Inspect operation.'
     get:
@@ -25073,10 +25080,8 @@ tags:
   name: Catalog
 - description: Lexical (full-text) search across registered operations, ranked by relevance. Returns a slim row per operation; each row carries `_links.inspect` pointing into the `Inspect` tag for full structural detail.
   name: Search
-- description: Resolve a single registered operation to its full structural detail — parameters, response schema, security scheme, server URL. Heavier than `Lookup` (which is the Broker hot path) and separate from `Search` (which only returns ranked summaries). Supports JSON, Markdown, and OpenAPI YAML response formats via `Accept`-header content negotiation.
+- description: 'Resolve a single registered operation to its full structural detail — parameters, response schema, security scheme, server URL. Separate from `Search`, which only returns ranked summaries. Response format is negotiated on `Accept`: `application/json` (the default), `text/markdown`, or `application/openapi+yaml`; anything else answers 406.'
   name: Inspect
-- description: The Broker's read interface into Registry — fast, narrow lookup from a real-world URL to a Jentic `operation_id`. Hot path; not for human use. The capability map names this as the Execution → Registry read interface.
-  name: Lookup
 - description: |-
     Free-form annotations attached to registry resources — an `Api`, an `ApiRevision`, a registered `operation_id`, an `ExecutionRecord`, or a `Credential`. Used to capture human or agent observations about quirks: *"this endpoint silently truncates email addresses to 64 chars"*, *"this credential rejects calls outside US business hours"*, *"this operation needs `Accept: application/json` even though the spec doesn't say so"*.
 
@@ -25138,11 +25143,11 @@ tags:
   name: Identity
 - description: Agent actors — autonomous principals that call the Broker. Covers the agent lifecycle (list, read, approve / deny, enable / disable, archive) and the credentials directly bound to each agent.
   name: Agents
-- description: OAuth 2.0 / OIDC endpoints exposed by the platform authorization server — the authorize, token, introspection, and revocation endpoints plus the redirect callback.
+- description: 'OAuth 2.0 / OIDC endpoints exposed by the platform authorization server. Documented here are the programmatic ones: token, introspection and revocation, plus the consent and approval status reads an agent polls. The `/authorize` entry point and the redirect callback are browser-driven pages that answer HTML or a 302, so they are deliberately not operations in this document; start that flow by sending a human to the `authorizationUrl` the `OAuth2` security scheme names.'
   name: OAuth
 - description: Dynamic agent registration (RFC 7591-style) — register a new agent client, poll registration status, update, or delete a registration.
   name: Agent Registration
-- description: Unauthenticated metadata discovery — the JWKS document and OAuth authorization server metadata under `/.well-known/*`.
+- description: 'Unauthenticated metadata discovery. Documented here: `GET /auth/idp`, which names the identity provider this deployment authenticates humans against. The JWKS document and the OAuth authorization-server metadata are also served, under `/.well-known/*`, but are not operations in this document — fetch them directly from the deployment origin rather than looking for them here.'
   name: Discovery
 - description: Unified actor directory — a lightweight read-only view across all actor types (users and agents). Returns ID-to-name mappings for UI cache hydration so dashboards can display friendly names wherever an `actor_id` appears.
   name: Actors
@@ -25165,6 +25170,7 @@ x-tagGroups:
   - Permission Rule Sets
   - Vendors
   - Integrations
+  - Governed Hosts
 - name: Registry
   tags:
   - APIs
@@ -25173,7 +25179,6 @@ x-tagGroups:
   - Catalog
   - Search
   - Inspect
-  - Lookup
   - Notes
   - Overlays
 - name: Admin / Audit
