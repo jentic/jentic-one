@@ -299,7 +299,12 @@ class ApiRevisionRepository:
 
     @staticmethod
     async def current_revision_for_source_url(
-        session: AsyncSession, source_url: str
+        session: AsyncSession,
+        source_url: str,
+        *,
+        api_id: uuid.UUID | None = None,
+        identity: tuple[str, str] | None = None,
+        exclude_origin: str | None = None,
     ) -> tuple[uuid.UUID, uuid.UUID] | None:
         """The (api_id, current_revision_id) of a local API served from ``source_url``.
 
@@ -310,13 +315,26 @@ class ApiRevisionRepository:
         uses — and requires the API to actually have a current revision (a bare draft
         import that was never promoted has none, so there's nothing to supersede).
         Returns ``None`` when no such API is registered.
+
+        Several API rows can serve the same ``source_url`` (e.g. a vendor-doubled row and
+        its clean identity, #1078); the oldest wins, matching
+        ``registered_identity_for_source_url``, so the answer is deterministic on every
+        backend. ``api_id`` scopes the lookup to one API row; ``identity`` scopes it to the
+        rows with that stored ``(vendor, name)`` (any version); ``exclude_origin`` skips
+        rows whose current revision has that ``origin`` (NULL origins are kept).
         """
-        result = await session.execute(
+        stmt = (
             select(Api.id, Api.current_revision_id)
             .join(ApiRevision, ApiRevision.id == Api.current_revision_id)
             .where(ApiRevision.source_url == source_url)
-            .limit(1)
         )
+        if api_id is not None:
+            stmt = stmt.where(Api.id == api_id)
+        if identity is not None:
+            stmt = stmt.where(Api.vendor == identity[0], Api.name == identity[1])
+        if exclude_origin is not None:
+            stmt = stmt.where(ApiRevision.origin.is_distinct_from(exclude_origin))
+        result = await session.execute(stmt.order_by(Api.created_at, Api.id).limit(1))
         row = result.first()
         if row is None or row[1] is None:
             return None
@@ -359,6 +377,19 @@ class ApiRevisionRepository:
             select(ApiRevision.origin).where(ApiRevision.id == revision_id)
         )
         return result.scalar_one_or_none()
+
+    @staticmethod
+    async def state_of(session: AsyncSession, revision_id: uuid.UUID) -> ApiRevisionState | None:
+        """The lifecycle ``state`` of a revision by id, or ``None`` if it doesn't exist.
+
+        A single-column lookup used by the A4b supersede guard to check whether an
+        overlay's confirmed revision is still active (served) before auto-deprecating it.
+        """
+        result = await session.execute(
+            select(ApiRevision.state).where(ApiRevision.id == revision_id)
+        )
+        state = result.scalar_one_or_none()
+        return ApiRevisionState(state) if state is not None else None
 
     @staticmethod
     async def archive_one(session: AsyncSession, revision_id: uuid.UUID) -> int:

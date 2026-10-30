@@ -1,9 +1,11 @@
 """Unit tests for ImportHandler Flow-3 lifecycle attribution (L2, L6).
 
-Covers ``_deprecate_superseded_overlay``: on a successful CAS demote it emits an
-attributed ``overlay.deprecated`` event (author + acting operator) and increments the
-auto-deprecate metric; on a no-op demote (overlay not CONFIRMED) it emits nothing.
-Repos/DB are mocked — this asserts wiring, not persistence (integration covers that).
+Covers the event/metric wiring of ``_deprecate_superseded_overlay``: on a successful
+CAS demote it emits an attributed ``overlay.deprecated`` event (author + acting
+operator) and increments the auto-deprecate metric; on a no-op demote (overlay not
+CONFIRMED) it emits nothing; a failed notification still counts the deprecation. The
+same-API guard (#1078) and its skip path are covered against real rows in
+``tests/integration/registry/services/test_import_handler.py``.
 """
 
 from __future__ import annotations
@@ -27,15 +29,26 @@ def _ctx() -> MagicMock:
     return ctx
 
 
+def _overlay() -> MagicMock:
+    """An unlinked overlay: with no superseding API given, the same-API guard passes."""
+    overlay = MagicMock()
+    overlay.created_by = "usr_author"
+    overlay.api_id = "api-123"
+    overlay.confirmed_revision_id = None
+    return overlay
+
+
 @pytest.mark.asyncio
 async def test_deprecate_superseded_emits_attributed_event_and_metric() -> None:
     """A successful auto-deprecate emits an attributed overlay.deprecated + a metric (L2/L6)."""
     handler = ImportHandler(_ctx())
-    overlay = MagicMock()
-    overlay.created_by = "usr_author"
-    overlay.api_id = "api-123"
+    overlay = _overlay()
     with (
-        patch(f"{_SVC}.OverlayRepository.get_by_id", new_callable=AsyncMock, return_value=overlay),
+        patch(
+            f"{_SVC}.OverlayRepository.get_by_id_for_update",
+            new_callable=AsyncMock,
+            return_value=overlay,
+        ),
         patch(f"{_SVC}.OverlayRepository.set_status", new_callable=AsyncMock, return_value=1),
         patch(f"{_SVC}.emit_event_best_effort", new_callable=AsyncMock) as emit,
         patch(f"{_SVC}.record_overlay_auto_deprecated") as metric,
@@ -61,7 +74,9 @@ async def test_deprecate_superseded_noop_emits_nothing() -> None:
     handler = ImportHandler(_ctx())
     with (
         patch(
-            f"{_SVC}.OverlayRepository.get_by_id", new_callable=AsyncMock, return_value=MagicMock()
+            f"{_SVC}.OverlayRepository.get_by_id_for_update",
+            new_callable=AsyncMock,
+            return_value=_overlay(),
         ),
         patch(f"{_SVC}.OverlayRepository.set_status", new_callable=AsyncMock, return_value=0),
         patch(f"{_SVC}.emit_event_best_effort", new_callable=AsyncMock) as emit,
@@ -85,11 +100,13 @@ async def test_deprecate_superseded_swallows_emit_failure_but_still_records_metr
     notification is lost.
     """
     handler = ImportHandler(_ctx())
-    overlay = MagicMock()
-    overlay.created_by = "usr_author"
-    overlay.api_id = "api-123"
+    overlay = _overlay()
     with (
-        patch(f"{_SVC}.OverlayRepository.get_by_id", new_callable=AsyncMock, return_value=overlay),
+        patch(
+            f"{_SVC}.OverlayRepository.get_by_id_for_update",
+            new_callable=AsyncMock,
+            return_value=overlay,
+        ),
         patch(f"{_SVC}.OverlayRepository.set_status", new_callable=AsyncMock, return_value=1),
         patch(
             f"{_SVC}.emit_event_best_effort",
