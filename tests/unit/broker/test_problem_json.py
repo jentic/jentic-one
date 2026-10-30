@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import typing
+from datetime import UTC, datetime
 from typing import Any, cast
 
 import pytest
@@ -20,6 +21,7 @@ from jentic_one.broker.core.directives import (
     credential_identity_mismatch_directive,
     direct_action_denied_directive,
     direct_credential_identity_mismatch_directive,
+    held_execution_directive,
     no_credential_binding_directive,
     suggested_permission_rules,
     switch_toolkit_directive,
@@ -38,6 +40,10 @@ from jentic_one.broker.core.errors import (
 )
 from jentic_one.broker.core.headers import JenticHeader
 from jentic_one.broker.core.problem import STATUS_BY_ERROR, broker_error_problem
+from jentic_one.broker.core.schemas import (
+    HeldExecutionAcceptedLinks,
+    HeldExecutionAcceptedResponse,
+)
 from jentic_one.broker.web.errors import (
     handle_broker_error,
     handle_discovery_error,
@@ -59,6 +65,7 @@ from jentic_one.shared.discovery.errors import (
     OperationNotFoundError,
     TooManyCandidatesError,
 )
+from jentic_one.shared.jobs.hold import HELD_AGENT_DIRECTIVE
 from jentic_one.shared.web.errors import DB_COMMIT_OUTCOME_UNKNOWN_DETAIL
 
 
@@ -428,7 +435,11 @@ def test_status_table_maps_credential_errors() -> None:
     # BrokerError -> 500.
     assert STATUS_BY_ERROR[CredentialNotProvisionedError] == 424
     assert STATUS_BY_ERROR[CredentialUndecryptableError] == 424
-    assert STATUS_BY_ERROR[CredentialNeedsReconnectError] == 401
+    # A revoked *stored* grant is a failed dependency, not a challenge to the
+    # caller's own bearer token: it shares 424 with its sibling credential
+    # failures. A 401 here would tell an SDK to re-authenticate itself, which
+    # can never clear a revoked upstream grant.
+    assert STATUS_BY_ERROR[CredentialNeedsReconnectError] == 424
     assert STATUS_BY_ERROR[CredentialRefreshTransientError] == 502
 
 
@@ -438,7 +449,7 @@ def test_status_table_maps_credential_errors() -> None:
     [
         (CredentialNotProvisionedError("nope"), 424),
         (CredentialUndecryptableError("undecryptable"), 424),
-        (CredentialNeedsReconnectError("reconnect"), 401),
+        (CredentialNeedsReconnectError("reconnect"), 424),
         (CredentialRefreshTransientError("transient"), 502),
     ],
 )
@@ -641,3 +652,49 @@ def test_installed_handlers_render_a_raised_discovery_error() -> None:
     assert resp.status_code == 503
     assert resp.json()["type"] == "too_many_candidates"
     assert resp.headers[JenticHeader.ERROR_ORIGIN.value] == "broker"
+
+
+def test_held_execution_directive_is_a_structured_object() -> None:
+    """A held 202 carries the same directive object a denial does, not bare prose.
+
+    An agent switching on ``agent_directive.strategy`` must keep working when a
+    human decision is required — the one moment the field matters most. The
+    prose stays reachable as ``human_readable_instruction``.
+    """
+    directive = held_execution_directive(
+        held_execution_id="held_abc",
+        review_url="https://jentic.example/app/agents/approvals/held_abc",
+        instruction=HELD_AGENT_DIRECTIVE,
+    )
+    assert directive.strategy == "prompt_human"
+    assert directive.human_readable_instruction == HELD_AGENT_DIRECTIVE
+    assert directive.parameters == {
+        "held_execution_id": "held_abc",
+        "review_url": "https://jentic.example/app/agents/approvals/held_abc",
+    }
+
+
+def test_held_accepted_response_serializes_the_directive_as_an_object() -> None:
+    """The 202 body's ``agent_directive`` is an object with the directive's three keys."""
+    body = HeldExecutionAcceptedResponse(
+        held_execution_id="held_abc",
+        review_url="https://jentic.example/app/agents/approvals/held_abc",
+        expires_at=datetime(2026, 1, 1, tzinfo=UTC),
+        agent_directive=held_execution_directive(
+            held_execution_id="held_abc",
+            review_url="https://jentic.example/app/agents/approvals/held_abc",
+            instruction=HELD_AGENT_DIRECTIVE,
+        ),
+        links=HeldExecutionAcceptedLinks(
+            self_link="/executions/holds/held_abc",
+            result="/executions/holds/held_abc/result",
+            withdraw="/executions/holds/held_abc:withdraw",
+        ),
+    )
+    dumped = json.loads(body.model_dump_json(by_alias=True))
+    assert set(dumped["agent_directive"]) == {
+        "strategy",
+        "parameters",
+        "human_readable_instruction",
+    }
+    assert dumped["agent_directive"]["strategy"] == "prompt_human"

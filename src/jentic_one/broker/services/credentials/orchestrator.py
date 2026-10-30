@@ -273,7 +273,12 @@ class CredentialService:
                 type="credential_needs_reconnect",
                 directive=AgentDirective(
                     strategy="prompt_human",
-                    human_readable_instruction="The connected credential must be reconnected.",
+                    human_readable_instruction=(
+                        "Your own access token is fine — do not re-authenticate and do not "
+                        "retry this call as is. The stored credential this API uses was "
+                        "revoked at the provider, so ask your operator to reconnect it in "
+                        "the dashboard, then retry."
+                    ),
                 ),
             ) from exc
         except RefreshTransientError as exc:

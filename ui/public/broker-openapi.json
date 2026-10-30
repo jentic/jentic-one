@@ -19,6 +19,19 @@
           "type": "string"
         }
       },
+      "JenticErrorOrigin": {
+        "description": "Who generated this error response — `broker` (the Broker itself\nrejected the request, could not resolve or authorize the call, or\ngave up on the upstream) or `upstream` (the external API answered\nwith this status and the Broker mirrored it). Mirrors the\n`error_origin` member of a `BrokerProblem` body, and is the only\nattribution signal on a mirrored upstream error, whose body is the\nupstream's own. Absent on an authentication failure, which is\nanswered before the Broker's error handler runs, and on `2xx`.\n",
+        "schema": {
+          "enum": [
+            "broker",
+            "upstream"
+          ],
+          "examples": [
+            "upstream"
+          ],
+          "type": "string"
+        }
+      },
       "JenticExecutionId": {
         "description": "Execution ID — unique identifier for this brokered request.",
         "schema": {
@@ -28,11 +41,20 @@
           "type": "string"
         }
       },
-      "ServerTiming": {
-        "description": "W3C Server-Timing. When the upstream sends its own\n`Server-Timing`, it is forwarded. When the deployment\nenables `broker.server_timing` (off by default), the Broker\nappends a second field with per-stage durations in milliseconds\nfor authenticated callers: `jentic-auth`, `jentic-egress`,\n`jentic-discover`, `jentic-rules`, `jentic-body`,\n`jentic-idempotency`, `jentic-cred`, `jentic-upstream`,\n`jentic-persist`, `jentic-total` — fixed names in the reserved\n`jentic-` namespace (an upstream entry claiming that prefix is\ndropped), no identifiers. Only the stages that ran are listed. On\na streamed response the headers precede the body, so\n`jentic-upstream` is the wait for the upstream headers and\n`jentic-persist` is absent. The field also appears on\npost-authentication error responses: with durations once the\nupstream was called (e.g. a `504`), and as stage names only for an\nerror the Broker raises before the upstream call (e.g. `404`,\n`403`, `409`, `424`). `jentic-upstream` includes the circuit-breaker\ncheck, so a circuit-open `503` carries durations even though no\nupstream request was sent. It never appears on `401`, a missing-permission\n`403`, a rate-limit `429` or a load-shed `503`.\n",
+      "JenticUpstreamStatus": {
+        "description": "HTTP status code the upstream API returned. Present only when the\nupstream answered, so its presence is the authoritative signal that\nthe response status is the upstream's and not the Broker's — a\nBroker-raised problem never carries it.\n",
         "schema": {
           "examples": [
-            "jentic-auth;dur=1.4, jentic-egress;dur=0.3, jentic-discover;dur=0.9, jentic-rules;dur=2.1, jentic-body;dur=0.1, jentic-cred;dur=3.0, jentic-upstream;dur=84.2, jentic-persist;dur=4.7, jentic-total;dur=97.6"
+            404
+          ],
+          "type": "integer"
+        }
+      },
+      "ServerTiming": {
+        "description": "W3C Server-Timing. The upstream's own `Server-Timing` is forwarded.\nWhen the deployment enables `broker.server_timing` (off by default),\nthe Broker appends a second field for authenticated callers: a\nlatency breakdown in milliseconds across the stages that ran, with\n`jentic-upstream` the time spent on the upstream call and\n`jentic-total` the whole brokered request. Names are fixed and\ncarry no identifiers and live in the reserved `jentic-` namespace\n(an upstream entry claiming that prefix is dropped). Only the\nstages that ran are listed — the stage set is internal, so read\nthe entries present rather than requiring a fixed list.\n\nThe field also appears on post-authentication error responses: with\ndurations once the upstream call was attempted (e.g. a `504`, or a\ncircuit-open `503` — the breaker check is inside\n`jentic-upstream`), and as stage names only for an error raised\nbefore it (e.g. `404`, `403`, `409`, `424`). It never appears on\n`401`, a missing-permission `403`, a rate-limit `429` or a\nload-shed `503`.\n",
+        "schema": {
+          "examples": [
+            "jentic-auth;dur=1.4, jentic-cred;dur=3.0, jentic-upstream;dur=84.2, jentic-total;dur=97.6"
           ],
           "type": "string"
         }
@@ -58,7 +80,7 @@
     },
     "parameters": {
       "IdempotencyKey": {
-        "description": "Optional caller-supplied key to make this request idempotent.\nIf present, the broker dedupes against the key for 24 hours\nand replays the original response on retry. UUIDv4 recommended.\nSee the `Idempotency` section above for full semantics.\n",
+        "description": "Optional caller-supplied key to make this request idempotent.\nIf present, the broker dedupes against the key for 24 hours\nand replays the original response on retry. UUIDv4 recommended.\nSee **Idempotency** in the API overview for full semantics.\n",
         "example": "5f9c8b2e-7a4d-4e1f-9c3a-1b2d3e4f5a6b",
         "in": "header",
         "name": "Idempotency-Key",
@@ -98,7 +120,7 @@
         }
       },
       "JenticRevision": {
-        "description": "Pin upstream-API resolution to a specific `ApiRevision`\ninstead of the API's `current_revision_id`. Multi-valued —\nrepeat the header (or comma-separate) once per API you\nwant to pin. Each value is `vendor:name:version=<revision_id>`:\n`vendor`, `name` and `version` are the API's `api` reference,\nand `<revision_id>` is the revision's `revision_id` exactly as\nthe control plane returns it (`GET\n/apis/{vendor}/{name}/{version}/revisions`, the revision get,\nan import job's result, or `jentic apis revisions`). The\nequivalent `rev_<revision_id without hyphens>` label is\naccepted too.\n\nUse cases:\n\n- Test a `draft` revision against existing credentials\n  before promoting it.\n- Reproduce a historical execution against an `archived`\n  spec for diagnostic purposes (refused by default;\n  archived revisions are not pinnable from the hot path).\n\nThe Broker forwards the pin into the control-plane\n`POST /lookup/operation` call so URL → `operation_id`\nresolution sees the requested spec. When the header is\nabsent or the URL doesn't match a pinned API, the Broker\nresolves against `current_revision_id` as today.\n\nPinning a `draft` revision the caller doesn't have\naccess to returns `403`. Pinning an unknown or\n`archived` revision returns `422`. Pinning the same API\nto two different revisions in one header returns\n`422 invalid_revision_pin`; repeating the same revision\n(in either form) is allowed. The chosen revisions\nare recorded on the resulting `ExecutionRecord`\n(`pinned_revisions` field on the control plane).\n",
+        "description": "Pin upstream-API resolution to a specific `ApiRevision`\ninstead of the API's `current_revision_id`. Multi-valued —\nrepeat the header (or comma-separate) once per API you\nwant to pin. Each value is `vendor:name:version=<revision_id>`:\n`vendor`, `name` and `version` are the API's `api` reference,\nand `<revision_id>` is the revision's `revision_id` exactly as\nthe control plane returns it (`GET\n/apis/{vendor}/{name}/{version}/revisions`, the revision get,\nan import job's result, or `jentic apis revisions`). The\nequivalent `rev_<revision_id without hyphens>` label is\naccepted too.\n\nUse cases:\n\n- Test a `draft` revision against existing credentials\n  before promoting it.\n- Reproduce a historical execution against an `archived`\n  spec for diagnostic purposes (refused: archived revisions\n  are deliberately not pinnable from the hot path — resurrect\n  them by re-promoting instead).\n\nThe Broker forwards the pin into the control-plane\n`POST /lookup/operation` call so URL → `operation_id`\nresolution sees the requested spec. When the header is\nabsent or the URL doesn't match a pinned API, the Broker\nresolves against `current_revision_id` as today.\n\nPinning a `draft` revision the caller doesn't have\naccess to returns `403`. Pinning an unknown or\n`archived` revision returns `422`. Pinning the same API\nto two different revisions in one header returns\n`422 invalid_revision_pin`; repeating the same revision\n(in either form) is allowed. The chosen revisions\nare recorded on the resulting `ExecutionRecord`\n(`pinned_revisions` field on the control plane), so audit\ncan answer \"did this execution use a pinned revision?\"\nwithout parsing headers.\n",
         "example": [
           "stripe:payments:2023-10-16=3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"
         ],
@@ -125,14 +147,13 @@
         "style": "simple"
       },
       "Prefer": {
-        "description": "RFC 7240 processing preference. `wait={seconds}` — maximum time\nto wait for a synchronous response before falling back to async.\n`respond-async` — always queue and return `202` immediately.\n",
-        "example": "wait=30",
+        "description": "RFC 7240 processing preference. `respond-async` queues the call and\nreturns `202` immediately instead of waiting for the upstream; it is\nthe only token the Broker acts on. The preference it applied is\nechoed in `Preference-Applied`.\n",
+        "example": "respond-async",
         "in": "header",
         "name": "Prefer",
         "required": false,
         "schema": {
           "examples": [
-            "wait=30",
             "respond-async"
           ],
           "type": "string"
@@ -177,7 +198,15 @@
             }
           }
         },
-        "description": "Request rejected before reaching the upstream — malformed JSON,\nmissing required field, or schema-validation failure on the\nbroker side. Body is RFC 9457 `application/problem+json` using\nthe shared `ProblemDetails` schema.\n"
+        "description": "Request rejected before reaching the upstream — malformed JSON,\nmissing required field, or schema-validation failure on the\nbroker side. Body is RFC 9457 `application/problem+json` using\nthe shared `ProblemDetails` schema.\n",
+        "headers": {
+          "Jentic-Error-Origin": {
+            "$ref": "#/components/headers/JenticErrorOrigin"
+          },
+          "Jentic-Upstream-Status": {
+            "$ref": "#/components/headers/JenticUpstreamStatus"
+          }
+        }
       },
       "Conflict": {
         "content": {
@@ -249,7 +278,15 @@
             }
           }
         },
-        "description": "Conflict (RFC 9457 `application/problem+json`), distinguished by\nthe problem `type`:\n\n- `ambiguous_credential_binding` — several credentials the caller\n  is bound to cover the target API at the same specificity. The\n  body lists the candidates (`id`, `name`, `last4`, `created_at`);\n  resend with the `Jentic-Credential-Name` or `Jentic-Credential-Id`\n  request header to pick one.\n- `idempotency_conflict` — the same `Idempotency-Key` was already\n  used with a different request (method, upstream URL, resolved\n  credential, or body). Reusing a key for a different request is\n  rejected; pick a new key.\n- `idempotency_in_progress` — a request with this `Idempotency-Key`\n  is still being processed. The response carries a `Retry-After`\n  header; retry after that delay to obtain the replayed result.\n- `ambiguous_match` — the upstream URL matches more than one\n  registered operation with equal specificity, so the broker cannot\n  tell which API the call is for. Raised before dispatch; the\n  registered specs overlap and need an operator fix (or a\n  `Jentic-Revision` pin that disambiguates).\n"
+        "description": "Conflict (RFC 9457 `application/problem+json`), distinguished by\nthe problem `type`:\n\n- `ambiguous_credential_binding` — several credentials the caller\n  is bound to cover the target API at the same specificity. The\n  body lists the candidates (`id`, `name`, `last4`, `created_at`);\n  resend with the `Jentic-Credential-Name` or `Jentic-Credential-Id`\n  request header to pick one.\n- `idempotency_conflict` — the same `Idempotency-Key` was already\n  used with a different request (method, upstream URL, resolved\n  credential, or body). Reusing a key for a different request is\n  rejected; pick a new key.\n- `idempotency_in_progress` — a request with this `Idempotency-Key`\n  is still being processed. The response carries a `Retry-After`\n  header; retry after that delay to obtain the replayed result.\n- `ambiguous_match` — the upstream URL matches more than one\n  registered operation with equal specificity, so the broker cannot\n  tell which API the call is for. Raised before dispatch; the\n  registered specs overlap and need an operator fix (or a\n  `Jentic-Revision` pin that disambiguates).\n",
+        "headers": {
+          "Jentic-Error-Origin": {
+            "$ref": "#/components/headers/JenticErrorOrigin"
+          },
+          "Jentic-Upstream-Status": {
+            "$ref": "#/components/headers/JenticUpstreamStatus"
+          }
+        }
       },
       "CredentialNotProvisioned": {
         "content": {
@@ -281,7 +318,15 @@
             }
           }
         },
-        "description": "A bound credential is an unusable dependency, so the broker cannot\nsign the upstream call. Body is RFC 9457\n`application/problem+json`; the `type` discriminates two cases with\nopposite recovery paths:\n- `credential_not_provisioned` — no credential is connected for the\n  resolved upstream API. The `agent_directive` is a `prompt_human`\n  instruction carrying an `intent_id` correlation id, so an\n  autonomous agent stops and asks the user to connect the account\n  rather than retrying or guessing the credential. When the agent\n  already has an open connect session for the API, the directive\n  also carries a non-secret `provisioning_url` — that session's\n  owner approval link (`/app/agents?approve=<session_id>`) — for\n  the agent to relay instead of starting another connect.\n- `credential_undecryptable` — a credential is connected but its\n  stored secret can no longer be decrypted (typically the\n  deployment's encryption key rotated underneath it, e.g. a\n  reinstall over existing data). The caller cannot self-provision\n  and retrying will not help; the `prompt_human` directive tells\n  the agent to ask an operator to remove and re-add the credential.\n"
+        "description": "A bound credential is an unusable dependency, so the broker cannot\nsign the upstream call. Body is RFC 9457\n`application/problem+json`; the `type` discriminates three cases with\ndifferent recovery paths:\n- `credential_not_provisioned` — no credential is connected for the\n  resolved upstream API. The `agent_directive` is a `prompt_human`\n  instruction carrying an `intent_id` correlation id, so an\n  autonomous agent stops and asks the user to connect the account\n  rather than retrying or guessing the credential. When the agent\n  already has an open connect session for the API, the directive\n  also carries a non-secret `provisioning_url` — that session's\n  owner approval link (`/app/agents?approve=<session_id>`) — for\n  the agent to relay instead of starting another connect.\n- `credential_undecryptable` — a credential is connected but its\n  stored secret can no longer be decrypted (typically the\n  deployment's encryption key rotated underneath it, e.g. a\n  reinstall over existing data). The caller cannot self-provision\n  and retrying will not help; the `prompt_human` directive tells\n  the agent to ask an operator to remove and re-add the credential.\n- `credential_needs_reconnect` — a credential is connected but the\n  broker's own OAuth refresh against the vendor was rejected\n  (`invalid_grant`): the stored upstream grant was revoked or\n  expired beyond refresh. **The caller's own access token is\n  fine — do not re-authenticate and do not discard it.** Only\n  reconnecting the upstream credential fixes this, so the\n  `prompt_human` directive asks the user to reconnect the account.\n  This answers `424` rather than `401` precisely so a client does\n  not mistake it for its own credential being rejected.\n",
+        "headers": {
+          "Jentic-Error-Origin": {
+            "$ref": "#/components/headers/JenticErrorOrigin"
+          },
+          "Jentic-Upstream-Status": {
+            "$ref": "#/components/headers/JenticUpstreamStatus"
+          }
+        }
       },
       "Default": {
         "content": {
@@ -349,7 +394,15 @@
             }
           }
         },
-        "description": "Catch-all problem+json response for any status not enumerated on\nthis operation. Key recovery on the problem `type`, not the bare\nstatus: one status can carry types with different retry safety\n(a 502 `upstream_connect_failed` is safe to retry for any method;\na 502 `upstream_transport_error` may already have reached the\nupstream), and one type can appear at more than one status\n(`upstream_connect_failed` is 502 when the connection is refused\nor the host does not resolve, 504 when connecting times out).\n"
+        "description": "Catch-all problem+json response for any status not enumerated on\nthis operation. Key recovery on the problem `type`, not the bare\nstatus: one status can carry types with different retry safety\n(a 502 `upstream_connect_failed` is safe to retry for any method;\na 502 `upstream_transport_error` may already have reached the\nupstream), and one type can appear at more than one status\n(`upstream_connect_failed` is 502 when the connection is refused\nor the host does not resolve, 504 when connecting times out).\n",
+        "headers": {
+          "Jentic-Error-Origin": {
+            "$ref": "#/components/headers/JenticErrorOrigin"
+          },
+          "Jentic-Upstream-Status": {
+            "$ref": "#/components/headers/JenticUpstreamStatus"
+          }
+        }
       },
       "ExecuteAsync": {
         "content": {
@@ -363,7 +416,14 @@
                     "self": "https://control.your-instance.example/executions/holds/held_abc123",
                     "withdraw": "https://control.your-instance.example/executions/holds/held_abc123:withdraw"
                   },
-                  "agent_directive": "This call needs human approval. Most important: show the user the review_url, since they cannot approve it without that link, and end your turn so they see it. Do not call get_execution_result until the user replies; then call it once with held_execution_id. It waits up to 30 seconds (timeout, at most 30). If it is still held, show the user the review_url again and end your turn again. Do not re-send the call.",
+                  "agent_directive": {
+                    "human_readable_instruction": "This call needs human approval. Most important: show the user the review_url, since they cannot approve it without that link, and end your turn so they see it. Do not call get_execution_result until the user replies; then call it once with held_execution_id. It waits up to 30 seconds (timeout, at most 30). If it is still held, show the user the review_url again and end your turn again. Do not re-send the call.",
+                    "parameters": {
+                      "held_execution_id": "held_abc123",
+                      "review_url": "https://your-instance.example/app/agents/approvals/held_abc123"
+                    },
+                    "strategy": "prompt_human"
+                  },
                   "expires_at": "2026-10-06T12:00:00Z",
                   "held_execution_id": "held_abc123",
                   "review_url": "https://your-instance.example/app/agents/approvals/held_abc123",
@@ -400,20 +460,8 @@
             }
           }
         },
-        "description": "Execution queued — or held for human approval when a\n`require-approval` permission rule matched (`status: held`; see\n`HeldExecutionAcceptedResponse`). For a queued call, follow\n`_links.self` to the control plane to poll the job and collect the\nupstream response body once `status` is `completed`. The body is\ndelivered once and then evicted from the platform's pickup buffer.\n",
+        "description": "Execution queued — or held for human approval when a\n`require-approval` permission rule matched (`status: held`; see\n`HeldExecutionAcceptedResponse`). For a queued call, follow\n`_links.self` to the control plane to poll the job and collect the\nupstream response body once `status` is `completed`. The body is\ndelivered once and then evicted from the platform's pickup buffer.\n\nA `202` is never an idempotent replay: queueing happens before the\n`Idempotency-Key` is claimed, so re-sending the call with the same\nkey queues a second job under a new `job_id`.\n",
         "headers": {
-          "Idempotent-Replayed": {
-            "description": "Present and `true` when this `202` is a replay of a\npreviously-queued job under the same `Idempotency-Key`.\nThe `job_id` will match the original.\n",
-            "schema": {
-              "enum": [
-                "true"
-              ],
-              "examples": [
-                "true"
-              ],
-              "type": "string"
-            }
-          },
           "Jentic-Api-Vendor": {
             "description": "API vendor hostname that was called.",
             "schema": {
@@ -470,8 +518,7 @@
               }
             },
             "schema": {
-              "description": "Upstream response body, forwarded verbatim. Content type\nvaries by upstream API — may be JSON, XML, binary, or any\nother media type. The `Content-Type` header on the response\nreflects what the upstream returned.\n",
-              "summary": "Upstream response body forwarded by the Broker.",
+              "description": "Upstream response body forwarded by the Broker, verbatim.\nContent type varies by upstream API — may be JSON, XML,\nbinary, or any other media type. The `Content-Type` header on\nthe response reflects what the upstream returned.\n",
               "title": "UpstreamBody"
             }
           }
@@ -518,19 +565,13 @@
             }
           },
           "Jentic-Upstream-Status": {
-            "description": "HTTP status code returned by the upstream API.",
-            "schema": {
-              "examples": [
-                200
-              ],
-              "type": "integer"
-            }
+            "$ref": "#/components/headers/JenticUpstreamStatus"
           },
           "Preference-Applied": {
             "description": "RFC 7240 — confirms which processing preference was applied.",
             "schema": {
               "examples": [
-                "wait=30"
+                "respond-async"
               ],
               "type": "string"
             }
@@ -611,7 +652,15 @@
             }
           }
         },
-        "description": "Caller authenticated but not entitled to execute — most often a\ntoken lacking the required `capabilities:execute` permission\n(`type: insufficient_scope`, the RFC 6750 code), attempting to pin a `draft`\nrevision they don't own, using a credential they aren't bound to\n(`no_credential_binding`), holding only a suspended binding for the\nAPI (`credential_binding_suspended`), or being denied by a binding's\npermission rules. Body is RFC 9457 `application/problem+json`.\n"
+        "description": "Caller authenticated but not entitled to execute — most often a\ntoken lacking the required `capabilities:execute` permission\n(`type: insufficient_scope`, the RFC 6750 code), attempting to pin a `draft`\nrevision they don't own, using a credential they aren't bound to\n(`no_credential_binding`), holding only a suspended binding for the\nAPI (`credential_binding_suspended`), or being denied by a binding's\npermission rules. Body is RFC 9457 `application/problem+json`.\n",
+        "headers": {
+          "Jentic-Error-Origin": {
+            "$ref": "#/components/headers/JenticErrorOrigin"
+          },
+          "Jentic-Upstream-Status": {
+            "$ref": "#/components/headers/JenticUpstreamStatus"
+          }
+        }
       },
       "MethodNotAllowed": {
         "content": {
@@ -638,7 +687,7 @@
             }
           }
         },
-        "description": "The upstream URL matches a registered API operation, but not for\nthe request's HTTP method (`method_not_allowed`). The broker answers\nbefore dispatch, so the upstream never saw the call. The `Allow`\nheader and the `allowed_methods` member name the methods the URL\nis registered for; resend with one of them. Body is RFC 9457\n`application/problem+json`. A 405 the upstream itself returns is\nmirrored with `error_origin: upstream` instead.\n",
+        "description": "The upstream URL matches a registered API operation, but not for\nthe request's HTTP method (`method_not_allowed`). The broker answers\nbefore dispatch, so the upstream never saw the call. The `Allow`\nheader and the `allowed_methods` member name the methods the URL\nis registered for; resend with one of them. Body is RFC 9457\n`application/problem+json` with `Jentic-Error-Origin: broker`. A\n`405` the upstream itself returns is mirrored instead — its body and\n`Content-Type` verbatim, tagged `Jentic-Error-Origin: upstream` with\n`Jentic-Upstream-Status: 405` — so the `Allow` header and\n`allowed_methods` member below describe only the Broker's own `405`.\n",
         "headers": {
           "Allow": {
             "description": "Comma-separated HTTP methods the upstream URL is registered for.",
@@ -648,6 +697,12 @@
               ],
               "type": "string"
             }
+          },
+          "Jentic-Error-Origin": {
+            "$ref": "#/components/headers/JenticErrorOrigin"
+          },
+          "Jentic-Upstream-Status": {
+            "$ref": "#/components/headers/JenticUpstreamStatus"
           }
         }
       },
@@ -672,7 +727,15 @@
             }
           }
         },
-        "description": "Upstream URL doesn't resolve to a registered API operation, or\nthe path component refers to a resource the upstream itself\ndoesn't recognise. Body is RFC 9457\n`application/problem+json`.\n"
+        "description": "The upstream URL doesn't resolve to a registered API operation\n(`operation_not_found`): the Broker answers before dispatch with an\nRFC 9457 `application/problem+json` body and\n`Jentic-Error-Origin: broker`.\n\nA `404` the upstream itself returns — the path refers to a resource\nit doesn't recognise — is mirrored instead: the upstream's status,\nbody and `Content-Type` pass through verbatim, tagged\n`Jentic-Error-Origin: upstream` with `Jentic-Upstream-Status: 404`.\nThat body is the upstream's own shape, not problem+json.\n",
+        "headers": {
+          "Jentic-Error-Origin": {
+            "$ref": "#/components/headers/JenticErrorOrigin"
+          },
+          "Jentic-Upstream-Status": {
+            "$ref": "#/components/headers/JenticUpstreamStatus"
+          }
+        }
       },
       "PayloadTooLarge": {
         "content": {
@@ -695,7 +758,15 @@
             }
           }
         },
-        "description": "Request body exceeded the broker's per-`Content-Type` size cap\n(`max_request_bytes_by_type`, falling back to `max_request_bytes`).\nThe cap is resolved from the request `Content-Type` before the body is\nread, so an over-cap upload fails fast. Body is RFC 9457\n`application/problem+json`.\n"
+        "description": "Request body exceeded the broker's per-`Content-Type` size cap\n(`max_request_bytes_by_type`, falling back to `max_request_bytes`).\nThe cap is resolved from the request `Content-Type` before the body is\nread, so an over-cap upload fails fast. Body is RFC 9457\n`application/problem+json`.\n",
+        "headers": {
+          "Jentic-Error-Origin": {
+            "$ref": "#/components/headers/JenticErrorOrigin"
+          },
+          "Jentic-Upstream-Status": {
+            "$ref": "#/components/headers/JenticUpstreamStatus"
+          }
+        }
       },
       "ServerError": {
         "content": {
@@ -728,7 +799,15 @@
             }
           }
         },
-        "description": "Unexpected broker-side failure — a bug, a panic, or an outbound\nrequest the broker itself built and could not send\n(`upstream_request_invalid`, e.g. an injected credential header\nwith an illegal byte; fix the stored credential rather than\nretrying). Should be rare; report with the `traceparent` header\nfor triage. Body is RFC 9457 `application/problem+json`.\n"
+        "description": "Unexpected broker-side failure — a bug, a panic, or an outbound\nrequest the broker itself built and could not send\n(`upstream_request_invalid`, e.g. an injected credential header\nwith an illegal byte; fix the stored credential rather than\nretrying). Should be rare; report with the `traceparent` header\nfor triage. Body is RFC 9457 `application/problem+json`.\n",
+        "headers": {
+          "Jentic-Error-Origin": {
+            "$ref": "#/components/headers/JenticErrorOrigin"
+          },
+          "Jentic-Upstream-Status": {
+            "$ref": "#/components/headers/JenticUpstreamStatus"
+          }
+        }
       },
       "ServiceUnavailable": {
         "content": {
@@ -783,6 +862,12 @@
         },
         "description": "Broker temporarily unable to serve traffic — startup,\nshutdown, dependency outage, or a deliberate maintenance\nwindow. Retry after the interval indicated by `Retry-After`.\nBody is RFC 9457 `application/problem+json`.\n",
         "headers": {
+          "Jentic-Error-Origin": {
+            "$ref": "#/components/headers/JenticErrorOrigin"
+          },
+          "Jentic-Upstream-Status": {
+            "$ref": "#/components/headers/JenticUpstreamStatus"
+          },
           "Retry-After": {
             "description": "Seconds to wait before retrying, per RFC 7231 §7.1.3.\nMay also be sent as an HTTP-date.\n",
             "schema": {
@@ -816,6 +901,12 @@
         },
         "description": "Caller exceeded their rate-limit window. Retry after the\ninterval indicated by `Retry-After`; the\n`RateLimit-*` headers describe the current quota and\nremaining budget per RFC 6648 / `draft-ietf-httpapi-ratelimit-headers`.\nBody is RFC 9457 `application/problem+json`.\n",
         "headers": {
+          "Jentic-Error-Origin": {
+            "$ref": "#/components/headers/JenticErrorOrigin"
+          },
+          "Jentic-Upstream-Status": {
+            "$ref": "#/components/headers/JenticUpstreamStatus"
+          },
           "RateLimit-Limit": {
             "description": "Total number of requests allowed in the current window.",
             "schema": {
@@ -865,7 +956,15 @@
             }
           }
         },
-        "description": "Authentication missing or invalid — the `Authorization: Bearer\n<token>` credential is absent, malformed, expired, revoked, or\n(for JWTs) signed by an issuer the Broker doesn't trust. Body is\nRFC 9457 `application/problem+json`.\n"
+        "description": "Authentication missing or invalid — the `Authorization: Bearer\n<token>` credential is absent, malformed, expired, revoked, or\n(for JWTs) signed by an issuer the Broker doesn't trust. Body is\nRFC 9457 `application/problem+json`.\n",
+        "headers": {
+          "Jentic-Error-Origin": {
+            "$ref": "#/components/headers/JenticErrorOrigin"
+          },
+          "Jentic-Upstream-Status": {
+            "$ref": "#/components/headers/JenticUpstreamStatus"
+          }
+        }
       },
       "ValidationError": {
         "content": {
@@ -899,7 +998,15 @@
             }
           }
         },
-        "description": "Request well-formed but semantically invalid — e.g. unknown\nrevision pin, archived revision pin, or a request body that\nfails the upstream operation's schema. Field-level details\nlive in the `errors[]` extension of the\n`application/problem+json` body.\n"
+        "description": "Request well-formed but semantically invalid — e.g. unknown\nrevision pin, archived revision pin, or a request body that\nfails the upstream operation's schema. Field-level details\nlive in the `errors[]` extension of the\n`application/problem+json` body.\n",
+        "headers": {
+          "Jentic-Error-Origin": {
+            "$ref": "#/components/headers/JenticErrorOrigin"
+          },
+          "Jentic-Upstream-Status": {
+            "$ref": "#/components/headers/JenticUpstreamStatus"
+          }
+        }
       }
     },
     "schemas": {
@@ -965,7 +1072,7 @@
         "type": "object"
       },
       "AsyncQueuedResponse": {
-        "description": "Returned as the `202` body on async executions. The Broker\ndoes not expose a polling surface of its own; `_links.self`\nis an absolute URL into the platform's control plane, where\nthe queued work surfaces as a `kind: execution` job. Poll\nthat URL for status, and follow its `_links.result` to\ncollect the upstream response body once `status` is\n`completed`.\n",
+        "description": "Handle returned when the Broker queues an upstream call for async\nexecution — the `202` body on an async execution. The Broker\ndoes not expose a polling surface of its own; `_links.self`\nis an absolute URL into the platform's control plane, where\nthe queued work surfaces as a `kind: execution` job. Poll\nthat URL for status, and follow its `_links.result` to\ncollect the upstream response body once `status` is\n`completed`.\n",
         "examples": [
           {
             "_links": {
@@ -977,7 +1084,7 @@
         ],
         "properties": {
           "_links": {
-            "description": "HAL-style link relations for the queued job. `self` always\npoints at the control-plane job record; the broker does\nnot expose its own polling surface.\n",
+            "description": "HAL-style link relations pointing into the control-plane job\nrecord for the queued job. `self` always\npoints at the control-plane job record; the broker does\nnot expose its own polling surface.\n",
             "examples": [
               {
                 "self": "https://control.your-instance.example/jobs/job_abc123"
@@ -996,7 +1103,6 @@
             "required": [
               "self"
             ],
-            "summary": "HAL-style links pointing into the control-plane job record.",
             "title": "AsyncQueuedResponseLinks",
             "type": "object"
           },
@@ -1025,7 +1131,6 @@
           "job_id",
           "_links"
         ],
-        "summary": "Handle returned when the Broker queues an upstream call for async execution.",
         "title": "AsyncQueuedResponse",
         "type": "object"
       },
@@ -1069,6 +1174,13 @@
                 },
                 "type": "array"
               },
+              "detail": {
+                "description": "Occurrence-specific explanation, safe to show a human.\nCarries no secret material and never echoes the submitted\nrequest values.\n",
+                "examples": [
+                  "No credential binding for this API"
+                ],
+                "type": "string"
+              },
               "error_origin": {
                 "description": "Who generated the error response: `broker` (the Broker\nitself — overloaded, misconfigured, rejecting the request\nshape, or giving up on the call: an upstream timeout, a\ndropped or refused upstream connection, the overall\ndeadline, a failed token refresh, an oversized upstream\nresponse) or `upstream` (the external API answered with\nthis error and the Broker mirrored it). Mirrored in the\n`Jentic-Error-Origin` response header. Absent on\nauthentication errors.\n",
                 "enum": [
@@ -1080,18 +1192,59 @@
                 ],
                 "type": "string"
               },
+              "instance": {
+                "description": "The request path that failed — the `/{upstream_url}` path\ncomponent only. The query string is deliberately omitted\nbecause an upstream URL's query can carry secrets. Absent on\nerrors raised with no request context (rate-limit and\nload-shed refusals).\n",
+                "examples": [
+                  "/api.example.com/v1/users"
+                ],
+                "type": "string"
+              },
               "intent_id": {
                 "description": "Correlation id for a `credential_not_provisioned` denial,\nalso carried in `agent_directive.parameters.intent_id`, so\nthe human hand-off can be tied back to this request.\n",
                 "examples": [
                   "intent_3f2a9c0d1b8e4f6a9d7c5b3e1a0f2d4c"
                 ],
                 "type": "string"
+              },
+              "max_response_bytes": {
+                "description": "The response-size cap the upstream body exceeded, on an\n`upstream_response_too_large` 502.\n",
+                "examples": [
+                  10485760
+                ],
+                "type": "integer"
+              },
+              "status": {
+                "description": "HTTP status code of this response, repeated in the body.\nBroker-raised, so it is never a mirrored upstream status —\nthose arrive with the upstream's own body and a\n`Jentic-Upstream-Status` header.\n",
+                "examples": [
+                  403
+                ],
+                "type": "integer"
+              },
+              "title": {
+                "description": "Short summary of the problem type. On Broker-originated\nerrors it repeats `detail` verbatim, so a caller that reads\neither member gets the same message.\n",
+                "examples": [
+                  "No credential binding for this API"
+                ],
+                "type": "string"
+              },
+              "type": {
+                "description": "Problem type — a stable, machine-readable token naming the\nfailure (`no_credential_binding`, `idempotency_conflict`,\n`upstream_timeout`, …), not a dereferenceable URI. Key\nrecovery on this rather than on the bare status. Errors with\nno specific type (an overridden framework `404`/`405`, an\nunhandled failure) carry `about:blank`; a request-validation\nfailure carries `about:blank#validation` with the field\ndetails in `errors[]`.\n",
+                "examples": [
+                  "no_credential_binding"
+                ],
+                "type": "string"
               }
             },
+            "required": [
+              "type",
+              "title",
+              "status",
+              "detail"
+            ],
             "type": "object"
           }
         ],
-        "description": "RFC 9457 Problem Details body for every Broker error. Extends the\nshared Jentic `ProblemDetails` schema with the Broker's\nagent-recovery members: `error_origin` says *who* failed, and\n`agent_directive` (when present) is a machine-actionable recovery\ninstruction an agent can follow without parsing prose. `title`\nrepeats `detail` on Broker-originated errors.\n",
+        "description": "RFC 9457 Problem Details body for every Broker error. Extends the\nshared Jentic `ProblemDetails` schema with the Broker's\nagent-recovery members: `error_origin` says *who* failed, and\n`agent_directive` (when present) is a machine-actionable recovery\ninstruction an agent can follow without parsing prose. `title`\nrepeats `detail` on Broker-originated errors.\n\nThis body is emitted for errors the Broker raises. An error the\nupstream returns is mirrored verbatim in the upstream's own format,\nso a non-2xx carries this shape only when `Jentic-Error-Origin` is\n`broker` (or absent, on an authentication failure) — see **Reading\nthe response** in the API overview.\n",
         "examples": [
           {
             "detail": "No credential binding for this API",
@@ -1157,7 +1310,7 @@
         "type": "object"
       },
       "HealthResponse": {
-        "description": "Body returned by `GET /health` while the Broker process is\nserving requests. Intentionally minimal — clients treat `200` +\n`status: ok` as the green signal; the body is informational.\n",
+        "description": "Service health probe response — the body returned by `GET /health`\nwhile the Broker process is\nserving requests. Intentionally minimal — clients treat `200` +\n`status: ok` as the green signal; the body is informational.\n",
         "examples": [
           {
             "status": "ok",
@@ -1202,12 +1355,11 @@
         "required": [
           "status"
         ],
-        "summary": "Service health probe response.",
         "title": "HealthResponse",
         "type": "object"
       },
       "HeldExecutionAcceptedResponse": {
-        "description": "Returned as the `202` body when the call matches a permission rule\nwith `effect: require-approval`. The call has not run: it waits\nuntil a reviewer (the agent's owner or an `org:admin`) approves or\ndenies it on `review_url`, or it expires. Follow `_links.self`\n(`/executions/holds/{held_execution_id}`) to see where it stands;\nonce it has finished, `_links.result` returns the upstream response,\nor the problem explaining why it never ran (denied, expired, or\nrefused at run time). To abandon the call, `POST` to\n`_links.withdraw`. Never re-send the call: an identical call while\none is pending joins the same held execution.\n",
+        "description": "Handle returned when a permission rule holds the call for human\napproval — the `202` body when the call matches a permission rule\nwith `effect: require-approval`. The call has not run: it waits\nuntil a reviewer (the agent's owner or an `org:admin`) approves or\ndenies it on `review_url`, or it expires. Follow `_links.self`\n(`/executions/holds/{held_execution_id}`) to see where it stands;\nonce it has finished, `_links.result` returns the upstream response,\nor the problem explaining why it never ran (denied, expired, or\nrefused at run time). To abandon the call, `POST` to\n`_links.withdraw`. Never re-send the call: an identical call while\none is pending joins the same held execution.\n",
         "properties": {
           "_links": {
             "properties": {
@@ -1241,8 +1393,12 @@
             "type": "object"
           },
           "agent_directive": {
-            "description": "What the calling agent should do next.",
-            "type": "string"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AgentDirective"
+              }
+            ],
+            "description": "What the calling agent should do next, in the same\n`AgentDirective` shape a problem body carries — so one branch on\n`agent_directive.strategy` covers both the error path and this\none. Always `prompt_human` here: the call cannot proceed without\na reviewer, and `human_readable_instruction` is the message to\nrelay.\n"
           },
           "expires_at": {
             "description": "When the call expires undecided and fails.",
@@ -1280,12 +1436,11 @@
           "agent_directive",
           "_links"
         ],
-        "summary": "Handle returned when a permission rule holds the call for human approval.",
         "title": "HeldExecutionAcceptedResponse",
         "type": "object"
       },
       "ReadinessResponse": {
-        "description": "Body returned by `GET /ready`. `status: ready` (HTTP `200`) means the\ninstance is below the saturation threshold; `status: unready` (HTTP\n`503`) means in-flight load is at/near the admission cap and the load\nbalancer should drain this instance. `saturation` is the current\nin-flight count as a fraction of the configured cap.\n",
+        "description": "Saturation-aware readiness probe response — the body returned by\n`GET /ready`. `status: ready` (HTTP `200`) means the\ninstance is below the saturation threshold; `status: unready` (HTTP\n`503`) means in-flight load is at/near the admission cap and the load\nbalancer should drain this instance. `saturation` is the current\nin-flight count as a fraction of the configured cap.\n",
         "examples": [
           {
             "saturation": 0.12,
@@ -1328,7 +1483,6 @@
         "required": [
           "status"
         ],
-        "summary": "Saturation-aware readiness probe response.",
         "title": "ReadinessResponse",
         "type": "object"
       }
@@ -1361,7 +1515,7 @@
       "name": "Jentic Platform Team",
       "url": "https://jentic.com"
     },
-    "description": "## Overview\n\nThe Broker is the platform's stateless data plane. Send it any\nHTTP request with the upstream URL as the path; it injects the\ncaller's stored credentials, forwards method/headers/body as-is,\nand returns the upstream response.\n\n```\nPOST https://broker.your-instance.example/petstore.swagger.io/v2/pet\n```\n\nSecrets stay off agents and end-user devices, outbound traffic\nhas one auditable choke-point, and credentials rotate centrally\nwithout redeploying callers. Sync responses return `200` with the\nupstream body; long calls fall back to `202` with a polling link\ninto the control plane (see `Prefer` on `/{upstream_url}`).\n\nAuth: every operation expects `Authorization: Bearer <token>` except\n`GET /health`. Broker-added metadata is confined to the `Jentic-*`\nheader namespace — anything else on a response belongs to the\nupstream.\n\nCredential, agent-binding, and API-revision management live on the\n[control plane](https://control.your-instance.example), not here.\n\n## Path format\n\nThe request path **is** the upstream URL. The broker reconstructs the\nfull target from your path, adding `https://` when no scheme is present:\n\n| You send | Broker proxies to |\n|----------|-------------------|\n| `GET /api.example.com/v1/users` | `https://api.example.com/v1/users` |\n| `POST /petstore.swagger.io/v2/pet` | `https://petstore.swagger.io/v2/pet` |\n| `GET /http://127.0.0.1:8080/get` | `http://127.0.0.1:8080/get` |\n| `GET /https://api.example.com/v1/users` | `https://api.example.com/v1/users` |\n\nFor HTTPS upstream targets (the common case), omit the scheme — just use\n`/{host}/{path}`. For plain HTTP targets (e.g. local development), include\nthe full `http://` scheme in the path so the broker doesn't upgrade to HTTPS.\n\nQuery strings pass through as-is: `/api.example.com/search?q=foo` works.\n\n## Tracing and audit\n\nEvery brokered response carries W3C trace context (`traceparent`,\n`tracestate`) and a `Jentic-*` header layer with the execution ID\n(`exec_…`), the credential used (`Jentic-Credential-Id` /\n`Jentic-Credential-Name`), and the upstream API reference\n(`vendor:name:version`). OpenTelemetry clients pick this up\nautomatically; nothing else needs to parse `tracestate`.\n\nTo see what happened, ask the control plane:\n\n- `GET /executions/{exec_id}` — full execution metadata (latency,\n  status, pinned revisions, caller).\n- `GET /executions` — list and filter recent executions.\n- `GET /executions/{exec_id}/steps` — per-step trace for workflow\n  executions.\n- `GET /jobs/{job_id}` and `GET /jobs/{job_id}/result` — async\n  job status and pickup of the upstream body.\n- `GET /events` / `GET /events/stream` — audit event feed.\n\nRequest and response bodies are not persisted by default. Execution\nmetadata is retained for 30 days (configurable). Body capture is\nexplicit opt-in. Async response bodies live in a short-lived\npickup buffer collected via `/jobs/{id}/result`, not in the audit\nstore.\n",
+    "description": "## Overview\n\nThe Broker is the platform's stateless data plane. Send it any\nHTTP request with the upstream URL as the path; it injects the\ncaller's stored credentials, forwards method/headers/body as-is,\nand returns the upstream response.\n\n```\nPOST https://broker.your-instance.example/petstore.swagger.io/v2/pet\n```\n\nSecrets stay off agents and end-user devices, outbound traffic\nhas one auditable choke-point, and credentials rotate centrally\nwithout redeploying callers. Sync responses return `200` with the\nupstream body; a call sent with `Prefer: respond-async` returns\n`202` with a polling link into the control plane.\n\nAuth: every operation expects `Authorization: Bearer <token>` except\n`GET /health`. Broker-added metadata is confined to the `Jentic-*`\nheader namespace — anything else on a response belongs to the\nupstream.\n\nCredential, agent-binding, and API-revision management live on the\n[control plane](https://control.your-instance.example), not here.\n\n## Path format\n\nThe request path **is** the upstream URL. The broker reconstructs the\nfull target from your path, adding `https://` when no scheme is present:\n\n| You send | Broker proxies to |\n|----------|-------------------|\n| `GET /api.example.com/v1/users` | `https://api.example.com/v1/users` |\n| `POST /petstore.swagger.io/v2/pet` | `https://petstore.swagger.io/v2/pet` |\n| `GET /http://127.0.0.1:8080/get` | `http://127.0.0.1:8080/get` |\n| `GET /https://api.example.com/v1/users` | `https://api.example.com/v1/users` |\n\nFor HTTPS upstream targets (the common case), omit the scheme — just use\n`/{host}/{path}`. For plain HTTP targets (e.g. local development), include\nthe full `http://` scheme in the path so the broker doesn't upgrade to HTTPS.\n\nQuery strings pass through as-is: `/api.example.com/search?q=foo` works.\n\n## Executing a request\n\nThe HTTP method you use on `/{upstream_url}` is the method the Broker\nsends to the upstream service — every standard method (`GET`, `POST`,\n`PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS`) is supported. Request\nheaders and body are forwarded as-is; the Broker injects the caller's\nstored credentials for the target API.\n\nThe path, query, and header parameters documented on `/{upstream_url}`\napply to every method. Per-method operations only differ in semantic\nintent and (for methods that conventionally carry a body) in\n`requestBody` shape.\n\n## Sync vs async\n\nBy default the Broker executes the call synchronously, waiting for the\nupstream up to the deployment's upstream timeout (`broker.upstream_timeout_s`,\n30 seconds by default) and answering `200` with the upstream response.\nExceeding that timeout is a failure, not a hand-off: the call answers\n`504 upstream_timeout`.\n\nAsync is opt-in. `Prefer: respond-async` queues the call and returns\n`202` immediately with a polling link into the control plane; the\npreference the Broker acted on comes back in `Preference-Applied`. A\n`202` also arrives unrequested when a `require-approval` permission rule\nholds the call for human approval — the two `202` bodies are told apart\nby `status` (`queued` vs `held`).\n\n## Reading the response\n\nErrors the Broker raises itself (authentication and authorization\nfailures, missing or ambiguous credentials, URL-resolution failures,\nsize caps, policy denials, giving up on the upstream) use an RFC 9457\nProblem Details body (`application/problem+json`) — the `BrokerProblem`\nschema, which is the shared `ProblemDetails` schema from\n[jentic/api-problem-details](https://github.com/jentic/api-problem-details)\nplus the Broker's `error_origin` and `agent_directive` members.\nField-level validation failures populate the `errors[]` extension.\n\nAn error the *upstream* returns is **not** rewritten: its status, body\nand `Content-Type` are forwarded verbatim, exactly as a `200` would be.\nAttribution therefore lives in the response headers, not in the body:\n\n| On a non-2xx response | Who failed | Body shape |\n|---|---|---|\n| `Jentic-Error-Origin: broker` | The Broker — it rejected the request shape, could not resolve or authorize the call, or gave up on the upstream (timeout, dropped or refused connection, deadline, failed token refresh, oversized response). The upstream either was never called or never answered. | `application/problem+json` (`BrokerProblem`), with `error_origin: broker` repeated in the body |\n| `Jentic-Error-Origin: upstream` with `Jentic-Upstream-Status: {status}` | The upstream API answered with this status and the Broker mirrored it. | The upstream's own body and `Content-Type`, verbatim — problem+json only if the upstream itself speaks it |\n| Neither header | The request never reached the Broker's error handler — an absent, malformed, expired or untrusted bearer token (`401`), or an intermediary between caller and Broker. | `application/problem+json` without `error_origin`, or whatever the intermediary emits |\n\n`Jentic-Upstream-Status` is the authoritative signal that a status came\nfrom the upstream: present means the upstream answered, absent means it\ndid not. This matters because most statuses are reachable from both\norigins — a `404` is an unregistered upstream URL from the Broker and a\nmissing resource from the upstream; a `429` is the caller's Broker\nrate-limit window or the upstream's own throttle.\n\nKey recovery on the problem `type` rather than the bare status: one\nstatus carries types with different retry safety, and one type can\nappear at more than one status. When `agent_directive` is present it is\na machine-actionable recovery instruction an agent can switch on via\n`agent_directive.strategy` without parsing prose.\n\n## Idempotency\n\nOptional `Idempotency-Key` request header (IETF\ndraft-ietf-httpapi-idempotency-key). If present, the Broker claims the\nkey before dispatch, records the synchronous response for 24 hours, and\nreplays it for any subsequent request that reuses the key — so a retry\nof a timed-out or dropped call cannot execute the upstream twice. Keys\nare scoped per-caller and should be unique per logical operation\n(UUIDv4 recommended, max 255 chars).\n\nReplays are signalled with `Idempotent-Replayed: true` on the response.\nIf the same key is reused with a different request body, method,\nresolved credential or upstream URL, the Broker returns\n`409 idempotency_conflict`; while the first request is still running, a\nreuse returns `409 idempotency_in_progress` with `Retry-After`. Replay\ncovers synchronous responses only: a `Prefer: respond-async` call is\nqueued before the key is claimed, so re-sending it under the same key\nqueues a second job with a new `job_id`.\n\n## Proxied upstream headers\n\nOn synchronous responses, upstream API response headers are forwarded\nas-is. Hop-by-hop headers (RFC 7230 §6.1) and the Broker's own\ntrace/metadata headers are not proxied — every Broker-added header lives\nunder the `Jentic-*` namespace, so `Jentic-*` is unambiguously the\nBroker's and anything else belongs to the upstream.\n\n## Revision pinning\n\nBy default the Broker resolves the upstream URL against the target\nAPI's `current_revision_id` (the `published` revision registered on the\ncontrol plane). To test a `draft` revision with real credentials before\npromoting it, attach the `Jentic-Revision` request header — its\nparameter documentation on `/{upstream_url}` carries the full syntax,\nthe errors a bad pin returns, and how pins are recorded for audit.\n\n## Security\n\nThe Broker validates every `upstream_url` against the set of registered\nAPIs before forwarding. Arbitrary URLs that do not resolve to a known,\nregistered API endpoint are rejected with `404` — the Broker is **not**\nan open proxy. This allowlist check is the spec's primary SSRF\nmitigation boundary: credentials are never injected into requests\ntargeting unregistered hosts.\n\n## Tracing and audit\n\nEvery brokered response carries W3C trace context (`traceparent`,\n`tracestate`) and a `Jentic-*` header layer with the execution ID\n(`exec_…`), the credential used (`Jentic-Credential-Id` /\n`Jentic-Credential-Name`), and the upstream API reference\n(`vendor:name:version`). OpenTelemetry clients pick this up\nautomatically; nothing else needs to parse `tracestate`.\n\nTo see what happened, ask the control plane: its execution endpoints\nreturn a brokered call's metadata (latency, status, pinned revisions,\ncaller) and per-step trace, its job endpoints carry async status and\nthe upstream-body pickup, and its event feed carries the audit trail.\nThe signatures live in the\n[Control API spec](https://control.your-instance.example/openapi.json),\nnot here; every record is keyed by the `Jentic-Execution-Id` on the\nbrokered response.\n\nRequest and response bodies are not persisted by default. Execution\nmetadata is retained for 30 days (configurable). Body capture is\nexplicit opt-in. Async response bodies live in a short-lived\npickup buffer collected via `/jobs/{id}/result`, not in the audit\nstore.\n",
     "license": {
       "identifier": "Apache-2.0",
       "name": "Apache-2.0"
@@ -1555,9 +1709,8 @@
           "Executions"
         ]
       },
-      "description": "Forward a request to the upstream API URL specified in the path. The\nHTTP method you use on this endpoint is the method the broker sends to\nthe upstream service — every standard method (`GET`, `POST`, `PUT`,\n`PATCH`, `DELETE`, `HEAD`, `OPTIONS`) is supported.\n\nRequest headers and body are forwarded as-is. The broker injects the\ncaller's stored credentials for the target API.\n\nThe path, query, and header parameters listed below apply to every\nmethod. Per-method operations only differ in semantic intent and (for\nmethods that conventionally carry a body) in `requestBody` shape.\n\n### Sync vs async\n\nBy default, the broker waits up to 30 seconds for the upstream\nresponse. Control this with the `Prefer` header:\n\n- `Prefer: wait=30` — wait up to 30 seconds, then fall back to async.\n- `Prefer: respond-async` — always queue and return `202` immediately.\n\nAsync executions return a `202` with a polling link into the control plane.\n\n### Error handling\n\nPlatform-level errors (auth failures, missing credentials) return an\nRFC 9457 Problem Details (`application/problem+json`) body using the\nshared `ProblemDetails` schema from\n[jentic/api-problem-details](https://github.com/jentic/api-problem-details).\nField-level validation failures populate the `errors[]` extension.\n\n### Idempotency\n\nOptional `Idempotency-Key` request header (IETF\ndraft-ietf-httpapi-idempotency-key). If present, the broker\nrecords the key for 24 hours and replays the original response\nfor any subsequent request that reuses it — including `202`\nhandles, so retrying a queued async request returns the *same*\n`job_id` instead of double-queueing the upstream call. Keys are\nscoped per-caller and should be unique per logical operation\n(UUIDv4 recommended, max 255 chars).\n\nReplays are signalled with `Idempotent-Replayed: true` on the\nresponse. If the same key is reused with a different request\nbody or upstream URL, the broker returns `409 Conflict`.\n\n### Proxied upstream headers\n\nOn synchronous `200` responses, upstream API response headers are\nforwarded as-is. Hop-by-hop headers (RFC 7230 §6.1) and the\nbroker's own trace/metadata headers are not proxied — every\nbroker-added header lives under the `Jentic-*` namespace, so\n`Jentic-*` is unambiguously the broker's and anything else\nbelongs to the upstream.\n\n### Security\n\nThe Broker validates every `upstream_url` against the set of\nregistered APIs before forwarding. Arbitrary URLs that do not\nresolve to a known, registered API endpoint are rejected with\n`404` — the Broker is **not** an open proxy. This allowlist\ncheck is the spec's primary SSRF mitigation boundary:\ncredentials are never injected into requests targeting\nunregistered hosts.\n\n### Revision pinning\n\nBy default the Broker resolves the upstream URL against the\ntarget API's `current_revision_id` (the `published` revision\nregistered on the control plane). To test a `draft` revision\nwith real credentials before promoting it, attach the\n`Jentic-Revision` request header. The header is\nmulti-valued — repeat it (or comma-separate) once per API\nyou want to pin, with each value of the form\n`vendor:name:version=<revision_id>` — the `revision_id` exactly\nas the control plane's revision list returns it (the\n`rev_<revision_id without hyphens>` label is equivalent).\n\nThe Broker forwards the pin into the control-plane\n`POST /lookup/operation` call so URL → `operation_id`\nresolution sees the requested spec. When the header is\nabsent or the URL doesn't match a pinned API, the Broker\nresolves against `current_revision_id` as today.\n\nPinning a `draft` revision the caller doesn't have access to\nreturns `403`. Pinning an unknown or `archived` revision\nreturns `422` — `archived` revisions are deliberately not\npinnable from the hot path; resurrect them by re-promoting\ninstead. Pinning the same API to two different revisions in\none header returns `422 invalid_revision_pin`; repeating the\nsame revision (in either form) is allowed. The chosen\nrevisions are recorded on the resulting\n`ExecutionRecord` (`pinned_revisions` field on the control\nplane) so audit can answer \"did this execution use a pinned\nrevision?\" without parsing headers.\n",
       "get": {
-        "description": "Forward a `GET` to the upstream service. No request body. Typically\nused for resource reads and listings; the upstream response is\nreturned verbatim on `200`, or queued and surfaced via `202` when\nthe wait window is exceeded or `Prefer: respond-async` is set.\n",
+        "description": "Forward a `GET` to the upstream service. No request body. Typically\nused for resource reads and listings; the upstream response is\nreturned verbatim on `200`, or queued and surfaced via `202` when\n`Prefer: respond-async` is set (or a `require-approval` rule holds\nthe call). A non-2xx is attributed by `Jentic-Error-Origin` — see\n**Reading the response** in the API overview.\n",
         "operationId": "executeGet",
         "responses": {
           "200": {
@@ -1815,7 +1968,7 @@
         ]
       },
       "post": {
-        "description": "Forward a `POST` to the upstream service. Request body is forwarded\nverbatim — the Broker does not inspect or transform it. The upstream\nresponse is returned on `200`, or queued and surfaced via `202` when\nthe wait window is exceeded or `Prefer: respond-async` is set.\n",
+        "description": "Forward a `POST` to the upstream service. Request body is forwarded\nverbatim — the Broker does not inspect or transform it. The upstream\nresponse is returned on `200`, or queued and surfaced via `202` when\n`Prefer: respond-async` is set (or a `require-approval` rule holds\nthe call). A non-2xx is attributed by `Jentic-Error-Origin` — see\n**Reading the response** in the API overview.\n",
         "operationId": "executePost",
         "requestBody": {
           "content": {
