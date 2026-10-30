@@ -3,6 +3,7 @@
     "headers": {
       "JenticCredentialId": {
         "description": "ID of the stored credential the broker resolved and used to sign\nthis execution. Present only when a stored credential was actually\nused — a missing header unambiguously means no credential (inline\nauth, a credential-less API, or a failure before resolution).\n",
+        "example": "cred_abc123",
         "schema": {
           "examples": [
             "cred_abc123"
@@ -12,6 +13,7 @@
       },
       "JenticCredentialName": {
         "description": "Human-readable label of the credential in `Jentic-Credential-Id`,\nsanitized to printable ASCII (unsafe characters replaced with `?`).\nPresent under the same condition as the id header. The same header\nname is also accepted on requests to disambiguate credential\nresolution.\n",
+        "example": "Stripe prod key",
         "schema": {
           "examples": [
             "Stripe prod key"
@@ -21,6 +23,7 @@
       },
       "JenticErrorOrigin": {
         "description": "Who generated this error response — `broker` (the Broker itself\nrejected the request, could not resolve or authorize the call, or\ngave up on the upstream) or `upstream` (the external API answered\nwith this status and the Broker mirrored it). Mirrors the\n`error_origin` member of a `BrokerProblem` body, and is the only\nattribution signal on a mirrored upstream error, whose body is the\nupstream's own. Absent on an authentication failure, which is\nanswered before the Broker's error handler runs, and on `2xx`.\n",
+        "example": "broker",
         "schema": {
           "enum": [
             "broker",
@@ -34,6 +37,7 @@
       },
       "JenticExecutionId": {
         "description": "Execution ID — unique identifier for this brokered request.",
+        "example": "exec_xyz789",
         "schema": {
           "examples": [
             "exec_xyz789"
@@ -43,6 +47,7 @@
       },
       "JenticUpstreamStatus": {
         "description": "HTTP status code the upstream API returned. Present only when the\nupstream answered, so its presence is the authoritative signal that\nthe response status is the upstream's and not the Broker's — a\nBroker-raised problem never carries it.\n",
+        "example": 404,
         "schema": {
           "examples": [
             404
@@ -52,6 +57,7 @@
       },
       "ServerTiming": {
         "description": "W3C Server-Timing. The upstream's own `Server-Timing` is forwarded.\nWhen the deployment enables `broker.server_timing` (off by default),\nthe Broker appends a second field for authenticated callers: a\nlatency breakdown in milliseconds across the stages that ran, with\n`jentic-upstream` the time spent on the upstream call and\n`jentic-total` the whole brokered request. Names are fixed and\ncarry no identifiers and live in the reserved `jentic-` namespace\n(an upstream entry claiming that prefix is dropped). Only the\nstages that ran are listed — the stage set is internal, so read\nthe entries present rather than requiring a fixed list.\n\nThe field also appears on post-authentication error responses: with\ndurations once the upstream call was attempted (e.g. a `504`, or a\ncircuit-open `503` — the breaker check is inside\n`jentic-upstream`), and as stage names only for an error raised\nbefore it (e.g. `404`, `403`, `409`, `424`). It never appears on\n`401`, a missing-permission `403`, a rate-limit `429` or a\nload-shed `503`.\n",
+        "example": "jentic-auth;dur=1.4, jentic-cred;dur=3.0, jentic-upstream;dur=84.2, jentic-total;dur=97.6",
         "schema": {
           "examples": [
             "jentic-auth;dur=1.4, jentic-cred;dur=3.0, jentic-upstream;dur=84.2, jentic-total;dur=97.6"
@@ -61,6 +67,7 @@
       },
       "Traceparent": {
         "description": "W3C Trace Context — `00-{trace-id}-{parent-id}-01`. The\n`parent-id` is the broker span; downstream services use this to\nlink their own spans into the same distributed trace. Version\n`00` is current; flags `01` = sampled.\n",
+        "example": "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
         "schema": {
           "examples": [
             "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
@@ -70,6 +77,7 @@
       },
       "Tracestate": {
         "description": "W3C Trace Context vendor extensions. Jentic packs a fixed\nfive-field value under the `jentic` vendor key:\n`jentic=<exec_id>:<toolkit_id>:<vendor>:<name>:<version>`, e.g.\n`jentic=exec_xyz789:_:stripe:payments:2023-10-16`. The\nfirst two segments answer *who is calling*; the trailing\nsegments answer *what is being called*. Missing segments are\nemitted as `_` so the shape stays positionally parseable — the\nsecond segment is a legacy slot (toolkit attribution on the\npre-theme-5 path, whose tables were dropped in Phase 6b) and is\nalways `_` on current executions. Composable with other vendors\n(`jentic=...,datadog=...`).\n",
+        "example": "jentic=exec_xyz789:_:stripe:payments:2023-10-16",
         "schema": {
           "examples": [
             "jentic=exec_xyz789:_:stripe:payments:2023-10-16"
@@ -464,6 +472,7 @@
         "headers": {
           "Jentic-Api-Vendor": {
             "description": "API vendor hostname that was called.",
+            "example": "api.spotify.com",
             "schema": {
               "examples": [
                 "api.spotify.com"
@@ -476,6 +485,7 @@
           },
           "Jentic-Operation": {
             "description": "Name of the operation that was executed.",
+            "example": "getTrack",
             "schema": {
               "examples": [
                 "getTrack"
@@ -485,6 +495,7 @@
           },
           "Preference-Applied": {
             "description": "RFC 7240 — confirms which processing preference was applied.",
+            "example": "respond-async",
             "schema": {
               "examples": [
                 "respond-async"
@@ -527,6 +538,7 @@
         "headers": {
           "Idempotent-Replayed": {
             "description": "Present and `true` when this response was replayed from a\nstored `Idempotency-Key` rather than freshly executed.\nAbsent on first execution.\n",
+            "example": "true",
             "schema": {
               "enum": [
                 "true"
@@ -539,6 +551,7 @@
           },
           "Jentic-Api-Vendor": {
             "description": "API vendor hostname that was called.",
+            "example": "api.spotify.com",
             "schema": {
               "examples": [
                 "api.spotify.com"
@@ -557,6 +570,7 @@
           },
           "Jentic-Operation": {
             "description": "Name of the operation that was executed.",
+            "example": "getTrack",
             "schema": {
               "examples": [
                 "getTrack"
@@ -569,6 +583,7 @@
           },
           "Preference-Applied": {
             "description": "RFC 7240 — confirms which processing preference was applied.",
+            "example": "respond-async",
             "schema": {
               "examples": [
                 "respond-async"
@@ -691,6 +706,7 @@
         "headers": {
           "Allow": {
             "description": "Comma-separated HTTP methods the upstream URL is registered for.",
+            "example": "GET, PUT",
             "schema": {
               "examples": [
                 "GET, PUT"
@@ -870,6 +886,7 @@
           },
           "Retry-After": {
             "description": "Seconds to wait before retrying, per RFC 7231 §7.1.3.\nMay also be sent as an HTTP-date.\n",
+            "example": "60",
             "schema": {
               "examples": [
                 "60"
@@ -909,6 +926,7 @@
           },
           "RateLimit-Limit": {
             "description": "Total number of requests allowed in the current window.",
+            "example": 100,
             "schema": {
               "examples": [
                 100
@@ -918,6 +936,7 @@
           },
           "RateLimit-Remaining": {
             "description": "Requests remaining in the current window.",
+            "example": 0,
             "schema": {
               "examples": [
                 0
@@ -927,6 +946,7 @@
           },
           "Retry-After": {
             "description": "Seconds to wait before retrying, per RFC 7231 §7.1.3.\nMay also be sent as an HTTP-date.\n",
+            "example": "30",
             "schema": {
               "examples": [
                 "30"
@@ -1609,7 +1629,14 @@
             "content": {
               "application/json": {
                 "examples": {
-                  "unready": {
+                  "draining": {
+                    "summary": "Shutting down; no saturation is reported.",
+                    "value": {
+                      "reason": "draining",
+                      "status": "unready"
+                    }
+                  },
+                  "saturated": {
                     "summary": "At/above the saturation threshold.",
                     "value": {
                       "reason": "saturated",
@@ -1623,7 +1650,7 @@
                 }
               }
             },
-            "description": "Instance is saturated and should be drained."
+            "description": "Instance should not receive traffic. `reason` says which of the two\ncauses applies: `saturated` (at or above the saturation threshold,\nreported in `saturation`) or `draining` (shutting down, so no\n`saturation` is reported). Both are transient and neither means the\ninstance is unhealthy — liveness stays green.\n"
           },
           "default": {
             "$ref": "#/components/responses/Default"

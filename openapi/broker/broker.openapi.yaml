@@ -271,18 +271,28 @@ paths:
                     status: ready
                     saturation: 0.12
         "503":
-          description: Instance is saturated and should be drained.
+          description: |
+            Instance should not receive traffic. `reason` says which of the two
+            causes applies: `saturated` (at or above the saturation threshold,
+            reported in `saturation`) or `draining` (shutting down, so no
+            `saturation` is reported). Both are transient and neither means the
+            instance is unhealthy — liveness stays green.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ReadinessResponse"
               examples:
-                unready:
+                saturated:
                   summary: At/above the saturation threshold.
                   value:
                     status: unready
                     reason: saturated
                     saturation: 0.95
+                draining:
+                  summary: Shutting down; no saturation is reported.
+                  value:
+                    status: unready
+                    reason: draining
         "500":
           $ref: "#/components/responses/ServerError"
         default:
@@ -634,6 +644,7 @@ components:
         `parent-id` is the broker span; downstream services use this to
         link their own spans into the same distributed trace. Version
         `00` is current; flags `01` = sampled.
+      example: 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01
       schema:
         type: string
         examples:
@@ -651,12 +662,14 @@ components:
         pre-theme-5 path, whose tables were dropped in Phase 6b) and is
         always `_` on current executions. Composable with other vendors
         (`jentic=...,datadog=...`).
+      example: jentic=exec_xyz789:_:stripe:payments:2023-10-16
       schema:
         type: string
         examples:
           - jentic=exec_xyz789:_:stripe:payments:2023-10-16
     JenticExecutionId:
       description: Execution ID — unique identifier for this brokered request.
+      example: exec_xyz789
       schema:
         type: string
         examples:
@@ -667,6 +680,7 @@ components:
         this execution. Present only when a stored credential was actually
         used — a missing header unambiguously means no credential (inline
         auth, a credential-less API, or a failure before resolution).
+      example: cred_abc123
       schema:
         type: string
         examples:
@@ -678,6 +692,7 @@ components:
         Present under the same condition as the id header. The same header
         name is also accepted on requests to disambiguate credential
         resolution.
+      example: Stripe prod key
       schema:
         type: string
         examples:
@@ -692,6 +707,7 @@ components:
         attribution signal on a mirrored upstream error, whose body is the
         upstream's own. Absent on an authentication failure, which is
         answered before the Broker's error handler runs, and on `2xx`.
+      example: broker
       schema:
         type: string
         enum: [broker, upstream]
@@ -703,6 +719,7 @@ components:
         upstream answered, so its presence is the authoritative signal that
         the response status is the upstream's and not the Broker's — a
         Broker-raised problem never carries it.
+      example: 404
       schema:
         type: integer
         examples:
@@ -727,6 +744,7 @@ components:
         before it (e.g. `404`, `403`, `409`, `424`). It never appears on
         `401`, a missing-permission `403`, a rate-limit `429` or a
         load-shed `503`.
+      example: jentic-auth;dur=1.4, jentic-cred;dur=3.0, jentic-upstream;dur=84.2, jentic-total;dur=97.6
       schema:
         type: string
         examples:
@@ -1311,6 +1329,7 @@ components:
       headers:
         Preference-Applied:
           description: RFC 7240 — confirms which processing preference was applied.
+          example: respond-async
           schema:
             type: string
             examples:
@@ -1320,6 +1339,7 @@ components:
             Present and `true` when this response was replayed from a
             stored `Idempotency-Key` rather than freshly executed.
             Absent on first execution.
+          example: "true"
           schema:
             type: string
             enum: ["true"]
@@ -1327,6 +1347,7 @@ components:
               - "true"
         Jentic-Api-Vendor:
           description: API vendor hostname that was called.
+          example: api.spotify.com
           schema:
             type: string
             examples:
@@ -1339,6 +1360,7 @@ components:
           $ref: "#/components/headers/JenticExecutionId"
         Jentic-Operation:
           description: Name of the operation that was executed.
+          example: getTrack
           schema:
             type: string
             examples:
@@ -1383,12 +1405,14 @@ components:
       headers:
         Preference-Applied:
           description: RFC 7240 — confirms which processing preference was applied.
+          example: respond-async
           schema:
             type: string
             examples:
               - respond-async
         Jentic-Api-Vendor:
           description: API vendor hostname that was called.
+          example: api.spotify.com
           schema:
             type: string
             examples:
@@ -1401,6 +1425,7 @@ components:
           $ref: "#/components/headers/JenticExecutionId"
         Jentic-Operation:
           description: Name of the operation that was executed.
+          example: getTrack
           schema:
             type: string
             examples:
@@ -1619,6 +1644,7 @@ components:
           $ref: "#/components/headers/JenticUpstreamStatus"
         Allow:
           description: Comma-separated HTTP methods the upstream URL is registered for.
+          example: GET, PUT
           schema:
             type: string
             examples:
@@ -1824,12 +1850,14 @@ components:
           $ref: "#/components/headers/JenticUpstreamStatus"
         RateLimit-Limit:
           description: Total number of requests allowed in the current window.
+          example: 100
           schema:
             type: integer
             examples:
               - 100
         RateLimit-Remaining:
           description: Requests remaining in the current window.
+          example: 0
           schema:
             type: integer
             examples:
@@ -1838,6 +1866,7 @@ components:
           description: |
             Seconds to wait before retrying, per RFC 7231 §7.1.3.
             May also be sent as an HTTP-date.
+          example: "30"
           schema:
             type: string
             examples:
@@ -1908,6 +1937,7 @@ components:
           description: |
             Seconds to wait before retrying, per RFC 7231 §7.1.3.
             May also be sent as an HTTP-date.
+          example: "60"
           schema:
             type: string
             examples:
