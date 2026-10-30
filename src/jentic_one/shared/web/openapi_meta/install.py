@@ -40,6 +40,7 @@ from jentic_one.shared.web.openapi_meta.operation_ids import (
     ALWAYS_ERROR_OPERATION_IDS,
     NON_BEARER_AUTH_OPERATION_IDS,
     PUBLIC_OPERATION_IDS,
+    PUBLIC_WITH_CLIENT_AUTH_OPERATION_IDS,
     ROUTER_RESHAPED_422_OPERATION_IDS,
     generate_operation_id,
     resolve_tag,
@@ -127,9 +128,16 @@ def install_openapi_metadata(app: FastAPI) -> None:
                 op_id = operation.get("operationId")
                 if op_id in PUBLIC_OPERATION_IDS:
                     operation["security"] = []
-                    # Public endpoints don't authenticate, so 401/403 don't apply.
+                    # Public endpoints don't authenticate, so 401/403 don't apply —
+                    # except where the operation authenticates the *client* and says
+                    # 401 when that fails, in which case its own 401 is real.
                     responses = operation.get("responses", {})
-                    for code in ("401", "403"):
+                    drop = (
+                        ("403",)
+                        if op_id in PUBLIC_WITH_CLIENT_AUTH_OPERATION_IDS
+                        else ("401", "403")
+                    )
+                    for code in drop:
                         responses.pop(code, None)
                 elif op_id in NON_BEARER_AUTH_OPERATION_IDS:
                     # Authenticates by a non-bearer credential (e.g. an RFC 7592

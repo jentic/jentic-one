@@ -18,6 +18,7 @@ from jentic_one.control.web.schemas.integrations import (
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
+from jentic_one.shared.web.openapi_responses import not_found
 
 router = APIRouter(tags=["Vendors"])
 
@@ -62,6 +63,11 @@ async def list_vendors(
 @router.get(
     "/vendors/{vendor_key}/auth-capabilities",
     summary="Get a vendor's OAuth flows and scopes",
+    responses=not_found(
+        "No vendor is registered under this `vendor_key` (`unknown_vendor`). The keys this "
+        "deployment serves come from `GET /vendors`; they are seeded from operator config, so "
+        "a key valid on another deployment may not exist here."
+    ),
 )
 async def get_auth_capabilities(
     vendor_key: Annotated[

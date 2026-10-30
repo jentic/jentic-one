@@ -38,6 +38,7 @@ _ROOT_EXPORTS = {
     "ALWAYS_ERROR_OPERATION_IDS": operation_ids,
     "NON_BEARER_AUTH_OPERATION_IDS": operation_ids,
     "PUBLIC_OPERATION_IDS": operation_ids,
+    "PUBLIC_WITH_CLIENT_AUTH_OPERATION_IDS": operation_ids,
     "ROUTER_RESHAPED_422_OPERATION_IDS": operation_ids,
     "generate_operation_id": operation_ids,
     "resolve_tag": operation_ids,

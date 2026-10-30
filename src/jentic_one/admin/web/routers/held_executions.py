@@ -38,7 +38,7 @@ from jentic_one.shared.models.jobs import JobStatus
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.links import build_link
-from jentic_one.shared.web.openapi_responses import conflict, not_found, with_responses
+from jentic_one.shared.web.openapi_responses import conflict, gone, not_found, with_responses
 
 router = APIRouter()
 
@@ -206,7 +206,16 @@ _RESULT_200: Final[dict[int | str, dict[str, Any]]] = {
 @router.get(
     "/executions/holds/{held_execution_id}/result",
     summary="Get a held execution's result",
-    responses=with_responses(not_found(), conflict(), _RESULT_200),
+    responses=with_responses(
+        not_found(),
+        conflict(),
+        gone(
+            "The hold ran, but its recorded result is past the retention window and has been "
+            "discarded. The outcome is unrecoverable: do not retry, and do not treat this as "
+            "the call having failed."
+        ),
+        _RESULT_200,
+    ),
 )
 async def get_held_execution_result(
     held_execution_id: _HeldExecutionId,

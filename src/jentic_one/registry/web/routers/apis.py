@@ -465,6 +465,9 @@ async def list_api_revisions(
     "/apis/{vendor}/{name}/{version}/revisions/{revision_id}",
     response_model=ApiRevisionResponse,
     summary="Get an API revision",
+    responses=not_found(
+        "The API (type `api_not_found`) or the revision (type `revision_not_found`) does not exist."
+    ),
 )
 async def get_api_revision(
     request: Request,
@@ -558,6 +561,10 @@ def _build_operations_response(
     response_model=OperationSummaryListResponse,
     response_model_by_alias=True,
     summary="List the operations an API currently serves",
+    responses=not_found(
+        "The API does not exist (type `api_not_found`), or it exists but has no live "
+        "revision to list operations from (type `no_current_revision`)."
+    ),
 )
 async def list_api_operations(
     request: Request,
@@ -602,6 +609,9 @@ async def list_api_operations(
     response_model=OperationSummaryListResponse,
     response_model_by_alias=True,
     summary="List the operations in an API revision",
+    responses=not_found(
+        "The API (type `api_not_found`) or the revision (type `revision_not_found`) does not exist."
+    ),
 )
 async def list_api_revision_operations(
     request: Request,
@@ -729,6 +739,11 @@ async def promote_revision(
     "/apis/{vendor}/{name}/{version}/revisions/{revision_id}:archive",
     response_model=ApiRevisionResponse,
     summary="Archive an API revision",
+    responses=conflict(
+        "Only a `draft` or `imported` revision can be archived; any other state "
+        "(`published`, `archived`) is refused with type `revision_state_conflict`. "
+        "Nothing was archived."
+    ),
 )
 async def archive_revision(
     request: Request,
@@ -782,6 +797,11 @@ async def archive_revision(
     "/apis/{vendor}/{name}/{version}/revisions/{revision_id}",
     status_code=204,
     summary="Delete an archived API revision",
+    responses=conflict(
+        "Only an `archived` revision can be deleted; a `draft`, `imported` or "
+        "`published` revision is refused with type `revision_state_conflict`. "
+        "Nothing was deleted."
+    ),
 )
 async def delete_revision(
     vendor: ApiVendorPath,
@@ -902,7 +922,14 @@ async def get_api_spec(
 
 @router.get(
     "/apis/{vendor}/{name}/{version}/revisions/{revision_id}/openapi",
-    responses=_SPEC_DOWNLOAD_RESPONSES,
+    responses={
+        **_SPEC_DOWNLOAD_RESPONSES,
+        406: problem(
+            "`Accept` names none of the supported media types — `application/json`, "
+            "`application/openapi+yaml`, `application/yaml` (or `*/*`) — so the document "
+            "cannot be served in a format the caller asked for (type `not_acceptable`)."
+        ),
+    },
     summary="Download an API revision's OpenAPI document",
 )
 async def get_api_revision_spec(

@@ -20,6 +20,7 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.discovery.errors import OperationNotFoundError
 from jentic_one.shared.web import get_ctx, get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
+from jentic_one.shared.web.openapi_responses import problem
 
 router = APIRouter()
 
@@ -56,7 +57,13 @@ _INSPECT_200: Final[dict[int | str, dict[str, Any]]] = {
                 }
             },
         },
-    }
+    },
+    406: problem(
+        "The `Accept` header asked for a media type this endpoint cannot render. It serves "
+        "`application/json`, `text/markdown` and `application/openapi+yaml` only (plus `*/*` "
+        "and an absent header, which both get JSON). Nothing is resolved: re-request with one "
+        "of those three."
+    ),
 }
 
 

@@ -312,6 +312,13 @@ token_router = APIRouter(route_class=_TokenRoute)
             "RFC 6749 §2.3.1) gets the same `invalid_client` dialect body with status "
             "401 and a `WWW-Authenticate: Basic` challenge, per §5.2."
         ),
+        401: oauth_error(
+            "Client authentication failed after the client attempted HTTP Basic "
+            "(RFC 6749 §2.3.1): the same `invalid_client` dialect body as the 400 arm, "
+            "plus a `WWW-Authenticate: Basic` challenge. A client that did not attempt "
+            "Basic gets `invalid_client` as a 400 instead, so branch on the body's "
+            "`error` member rather than on the status code."
+        ),
         429: oauth_error(
             "Per-client_id + client-network rate limit exceeded (`Retry-After` header set; "
             "RFC 6749 §5.2 dialect body, `error=slow_down` per RFC 8628 §3.5).",

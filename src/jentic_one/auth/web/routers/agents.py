@@ -36,6 +36,7 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
+from jentic_one.shared.web.openapi_responses import conflict, not_found, with_responses
 
 router = APIRouter()
 
@@ -140,7 +141,17 @@ async def list_agents(
     )
 
 
-@router.get("/agents/{agent_id}", summary="Get an agent")
+@router.get(
+    "/agents/{agent_id}",
+    summary="Get an agent",
+    responses=with_responses(
+        not_found(
+            "No such agent, or an agent outside the caller's visibility "
+            "(`actor_not_found`) — a 404 here can mean the agent exists but is not "
+            "visible to you, so retrying will not help"
+        )
+    ),
+)
 async def get_agent(
     agent_id: AgentIdPath,
     identity: Identity = get_current_identity(allow_expired_password=True),
@@ -158,7 +169,19 @@ async def get_agent(
     return _agent_response(view)
 
 
-@router.patch("/agents/{agent_id}", status_code=200, summary="Update an agent")
+@router.patch(
+    "/agents/{agent_id}",
+    status_code=200,
+    summary="Update an agent",
+    responses=with_responses(
+        not_found(
+            "No such agent, or a caller who is neither the agent's owner nor an "
+            "`org:admin` — anyone else gets 404 (`actor_not_found`), so a 404 here "
+            "can mean the agent exists but is not yours to update"
+        ),
+        conflict("An archived agent cannot be updated (`invalid_transition`)"),
+    ),
+)
 async def update_agent(
     agent_id: AgentIdPath,
     body: AgentPatchRequest,
@@ -181,7 +204,18 @@ async def update_agent(
     return _agent_response(view)
 
 
-@router.post("/agents/{agent_id}:approve", status_code=200)
+@router.post(
+    "/agents/{agent_id}:approve",
+    status_code=200,
+    responses=with_responses(
+        not_found(
+            "No such agent, or a caller who is neither the agent's owner nor an "
+            "`org:admin` (and only an `org:admin` for an unowned agent). Returned "
+            "whatever the agent's status (`actor_not_found`), so a 404 here can mean "
+            "the agent exists but is outside the caller's ownership"
+        )
+    ),
+)
 async def approve_agent(
     agent_id: AgentIdPath,
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
@@ -230,7 +264,18 @@ async def claim_agent(
     return _agent_response(view)
 
 
-@router.post("/agents/{agent_id}:deny", status_code=200)
+@router.post(
+    "/agents/{agent_id}:deny",
+    status_code=200,
+    responses=with_responses(
+        not_found(
+            "No such agent, or a caller who is neither the agent's owner nor an "
+            "`org:admin` (and only an `org:admin` for an unowned agent). Returned "
+            "whatever the agent's status (`actor_not_found`), so a 404 here can mean "
+            "the agent exists but is outside the caller's ownership"
+        )
+    ),
+)
 async def deny_agent(
     agent_id: AgentIdPath,
     body: DenyRequest,
@@ -269,7 +314,16 @@ async def enable_agent(
     return Response(status_code=204)
 
 
-@router.delete("/agents/{agent_id}", status_code=204)
+@router.delete(
+    "/agents/{agent_id}",
+    status_code=204,
+    responses=with_responses(
+        conflict(
+            "Archive on an already-archived agent (`invalid_transition`); "
+            "`purge=true` accepts any status"
+        )
+    ),
+)
 async def archive_agent(
     agent_id: AgentIdPath,
     purge: bool = Query(
@@ -348,6 +402,14 @@ def _credential_binding_response(view: CredentialBindingView) -> CredentialBindi
     "/agents/{agent_id}/credentials",
     operation_id="listAgentCredentials",
     summary="List an agent's credential bindings",
+    responses=with_responses(
+        not_found(
+            "No such agent, or an agent the caller may not read — readable by the "
+            "agent itself, its owner, `org:admin`, and a caller holding "
+            "`agents:read`; 404 otherwise (`actor_not_found`), so a 404 here can "
+            "mean the agent exists but is not visible to you"
+        )
+    ),
 )
 async def list_credentials(
     agent_id: AgentIdPath,
@@ -372,6 +434,16 @@ async def list_credentials(
     status_code=201,
     operation_id="bindAgentCredential",
     summary="Bind a credential to an agent",
+    responses=with_responses(
+        not_found(
+            "The agent is not visible to the caller (`actor_not_found`), or a "
+            "credential that does not exist or that the caller does not own "
+            "(`credential_not_found`)"
+        ),
+        conflict(
+            "The same credential is already bound to this agent (`credential_binding_conflict`)"
+        ),
+    ),
 )
 async def bind_credential(
     agent_id: AgentIdPath,
@@ -400,6 +472,13 @@ async def bind_credential(
     status_code=204,
     operation_id="unbindAgentCredential",
     summary="Suspend or remove a credential binding",
+    responses=with_responses(
+        not_found(
+            "The agent is not visible to the caller (`actor_not_found`), or a "
+            "missing binding (`credential_binding_not_found`) — also returned when "
+            "an agent tries to purge its own binding, which it may only suspend"
+        )
+    ),
 )
 async def unbind_credential(
     agent_id: AgentIdPath,
@@ -437,6 +516,14 @@ async def unbind_credential(
     status_code=200,
     operation_id="resumeAgentCredentialBinding",
     summary="Resume a suspended credential binding",
+    responses=with_responses(
+        not_found(
+            "No binding exists (`credential_binding_not_found`), the agent is not "
+            "visible to the caller (`actor_not_found`), or the credential is not "
+            "owned by the caller — including an agent resuming its own binding "
+            "(`credential_not_found`)"
+        )
+    ),
 )
 async def resume_credential_binding(
     agent_id: AgentIdPath,
