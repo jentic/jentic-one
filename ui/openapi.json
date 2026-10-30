@@ -35486,11 +35486,60 @@
                   "type": "approval_denied"
                 },
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetail"
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ProblemDetail"
+                    },
+                    {
+                      "properties": {
+                        "error_origin": {
+                          "description": "Who generated the error — `broker` (the Broker itself) or `upstream` (the external API answered with this error and the Broker mirrored it). A held call that never ran is always `broker`: the upstream was never reached.",
+                          "enum": [
+                            "broker",
+                            "upstream"
+                          ],
+                          "examples": [
+                            "broker"
+                          ],
+                          "type": "string"
+                        },
+                        "held_execution": {
+                          "description": "The hold whose outcome this is. Every problem a hold records carries it (`approval_denied`, `approval_expired`, `approval_resume_failed`); an `approval_required` problem, raised at run time against a job that carries no hold, has none.",
+                          "properties": {
+                            "id": {
+                              "description": "ID of the held execution.",
+                              "examples": [
+                                "held_6968b398a1c4e2d07b5f93c6"
+                              ],
+                              "type": "string"
+                            },
+                            "state": {
+                              "description": "The hold's terminal state, and so why the call never ran: `denied` (a reviewer refused it), `expired` (its approval window lapsed undecided) or `approved` (it was released, but its run was interrupted and is not re-run).",
+                              "enum": [
+                                "approved",
+                                "denied",
+                                "expired"
+                              ],
+                              "examples": [
+                                "denied"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "state"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
                 }
               }
             },
-            "description": "The finished call's outcome, in one of two bodies.\n\n- **The call ran** (approved and released): the execution document as `application/json` — `execution_id`, `status`, `http_status`, `duration_ms` and, when the upstream returned a body, `body_b64` (base64; the upstream payload is never inlined as JSON).\n- **The call never ran** (denied, its approval window lapsed, or its approved run interrupted): the `application/problem+json` body explaining why, with `type` `approval_denied`, `approval_expired`, `approval_required` or `approval_resume_failed`, plus `error_origin` and a `held_execution` object (`id`, `state`). The HTTP status stays `200`; the problem's own `status` member (403, or 409 for an interrupted approved run) says why.\n\nDecide which arm arrived from the response `Content-Type`."
+            "description": "The finished call's outcome, in one of two bodies.\n\n- **The call ran** (approved and released): the execution document as `application/json` — `execution_id`, `status`, `http_status`, `duration_ms` and, when the upstream returned a body, `body_b64` (base64; the upstream payload is never inlined as JSON).\n- **The call never ran** (denied, its approval window lapsed, or its approved run interrupted): the `application/problem+json` body explaining why, with `type` `approval_denied`, `approval_expired`, `approval_required` or `approval_resume_failed`, plus `error_origin`. The first three of those carry a `held_execution` object (`id`, `state`); `approval_required` names no held row, so it has none — read `held_execution` only when it is present. The HTTP status stays `200`; the problem's own `status` member (403, or 409 for an interrupted approved run) says why.\n\nDecide which arm arrived from the response `Content-Type`."
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
@@ -37242,11 +37291,60 @@
                   "type": "approval_denied"
                 },
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetail"
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ProblemDetail"
+                    },
+                    {
+                      "properties": {
+                        "error_origin": {
+                          "description": "Who generated the error — `broker` (the Broker itself) or `upstream` (the external API answered with this error and the Broker mirrored it). A held call that never ran is always `broker`: the upstream was never reached.",
+                          "enum": [
+                            "broker",
+                            "upstream"
+                          ],
+                          "examples": [
+                            "broker"
+                          ],
+                          "type": "string"
+                        },
+                        "held_execution": {
+                          "description": "The hold whose outcome this is. Every problem a hold records carries it (`approval_denied`, `approval_expired`, `approval_resume_failed`); an `approval_required` problem, raised at run time against a job that carries no hold, has none.",
+                          "properties": {
+                            "id": {
+                              "description": "ID of the held execution.",
+                              "examples": [
+                                "held_6968b398a1c4e2d07b5f93c6"
+                              ],
+                              "type": "string"
+                            },
+                            "state": {
+                              "description": "The hold's terminal state, and so why the call never ran: `denied` (a reviewer refused it), `expired` (its approval window lapsed undecided) or `approved` (it was released, but its run was interrupted and is not re-run).",
+                              "enum": [
+                                "approved",
+                                "denied",
+                                "expired"
+                              ],
+                              "examples": [
+                                "denied"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "state"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
                 }
               }
             },
-            "description": "The completed job's result, polymorphic by the job's `kind` (read `kind` from `GET /jobs/{job_id}`). The body is always a JSON object — never an array or a scalar — but its members depend on the kind:\n\n- **`kind=import`**: `revisions`, one entry per API revision the import produced, each with `api` (the API object), `revision_id` and `state`.\n- **`kind=execution`**: the execution document — `execution_id`, `status` (`completed` or `failed`), `http_status` (the upstream status, or null when the call never reached the upstream), `duration_ms`, and `body_b64` when the upstream returned a body. The upstream payload is base64 in `body_b64`; it is never inlined as JSON, so it needs decoding and interpreting against the upstream's own content type. A run-time authorization denial adds `problem`, the RFC 9457 body the synchronous execute route would have returned.\n- **A held execution that never ran** (denied, its approval window lapsed, or its approved run interrupted) carries an `application/problem+json` body in place of the execution document, with `type` `approval_denied`, `approval_expired`, `approval_required` or `approval_resume_failed`, plus `error_origin` and a `held_execution` object (`id`, `state`). The HTTP status stays `200`; the problem's own `status` member (403, or 409 for an interrupted approved run) says why the call never happened.\n\n`Content-Type` caveat: for a `kind=execution` result the header echoes the **upstream** response's content type, while the body is still the JSON execution document above — parse the body as JSON whatever the header says."
+            "description": "The completed job's result, polymorphic by the job's `kind` (read `kind` from `GET /jobs/{job_id}`). The body is always a JSON object — never an array or a scalar — but its members depend on the kind:\n\n- **`kind=import`**: `revisions`, one entry per API revision the import produced, each with `api` (the API object), `revision_id` and `state`.\n- **`kind=execution`**: the execution document — `execution_id`, `status` (`completed` or `failed`), `http_status` (the upstream status, or null when the call never reached the upstream), `duration_ms`, and `body_b64` when the upstream returned a body. The upstream payload is base64 in `body_b64`; it is never inlined as JSON, so it needs decoding and interpreting against the upstream's own content type. A run-time authorization denial adds `problem`, the RFC 9457 body the synchronous execute route would have returned.\n- **A held execution that never ran** (denied, its approval window lapsed, or its approved run interrupted) carries an `application/problem+json` body in place of the execution document, with `type` `approval_denied`, `approval_expired`, `approval_required` or `approval_resume_failed`, plus `error_origin`. The first three of those carry a `held_execution` object (`id`, `state`); `approval_required` names no held row, so it has none — read `held_execution` only when it is present. The HTTP status stays `200`; the problem's own `status` member (403, or 409 for an interrupted approved run) says why the call never happened.\n\n`Content-Type` caveat: for a `kind=execution` result the header echoes the **upstream** response's content type, while the body is still the JSON execution document above — parse the body as JSON whatever the header says."
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"

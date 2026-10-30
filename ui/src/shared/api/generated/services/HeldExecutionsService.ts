@@ -111,7 +111,7 @@ export class HeldExecutionsService {
      * @returns HeldExecutionResultResponse The finished call's outcome, in one of two bodies.
      *
      * - **The call ran** (approved and released): the execution document as `application/json` — `execution_id`, `status`, `http_status`, `duration_ms` and, when the upstream returned a body, `body_b64` (base64; the upstream payload is never inlined as JSON).
-     * - **The call never ran** (denied, its approval window lapsed, or its approved run interrupted): the `application/problem+json` body explaining why, with `type` `approval_denied`, `approval_expired`, `approval_required` or `approval_resume_failed`, plus `error_origin` and a `held_execution` object (`id`, `state`). The HTTP status stays `200`; the problem's own `status` member (403, or 409 for an interrupted approved run) says why.
+     * - **The call never ran** (denied, its approval window lapsed, or its approved run interrupted): the `application/problem+json` body explaining why, with `type` `approval_denied`, `approval_expired`, `approval_required` or `approval_resume_failed`, plus `error_origin`. The first three of those carry a `held_execution` object (`id`, `state`); `approval_required` names no held row, so it has none — read `held_execution` only when it is present. The HTTP status stays `200`; the problem's own `status` member (403, or 409 for an interrupted approved run) says why.
      *
      * Decide which arm arrived from the response `Content-Type`.
      * @throws ApiError

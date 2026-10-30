@@ -1544,6 +1544,45 @@ func (e ListConnectSessionsParamsState) Valid() bool {
 	}
 }
 
+// Defines values for GetHeldExecutionResult200ApplicationProblemPlusJSONResponseBodyErrorOrigin.
+const (
+	GetHeldExecutionResult200ApplicationProblemPlusJSONResponseBodyErrorOriginBroker   GetHeldExecutionResult200ApplicationProblemPlusJSONResponseBodyErrorOrigin = "broker"
+	GetHeldExecutionResult200ApplicationProblemPlusJSONResponseBodyErrorOriginUpstream GetHeldExecutionResult200ApplicationProblemPlusJSONResponseBodyErrorOrigin = "upstream"
+)
+
+// Valid indicates whether the value is a known member of the GetHeldExecutionResult200ApplicationProblemPlusJSONResponseBodyErrorOrigin enum.
+func (e GetHeldExecutionResult200ApplicationProblemPlusJSONResponseBodyErrorOrigin) Valid() bool {
+	switch e {
+	case GetHeldExecutionResult200ApplicationProblemPlusJSONResponseBodyErrorOriginBroker:
+		return true
+	case GetHeldExecutionResult200ApplicationProblemPlusJSONResponseBodyErrorOriginUpstream:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GetHeldExecutionResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionState.
+const (
+	GetHeldExecutionResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionStateApproved GetHeldExecutionResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionState = "approved"
+	GetHeldExecutionResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionStateDenied   GetHeldExecutionResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionState = "denied"
+	GetHeldExecutionResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionStateExpired  GetHeldExecutionResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionState = "expired"
+)
+
+// Valid indicates whether the value is a known member of the GetHeldExecutionResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionState enum.
+func (e GetHeldExecutionResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionState) Valid() bool {
+	switch e {
+	case GetHeldExecutionResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionStateApproved:
+		return true
+	case GetHeldExecutionResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionStateDenied:
+		return true
+	case GetHeldExecutionResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionStateExpired:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for InspectOperationParamsDetail.
 const (
 	Full    InspectOperationParamsDetail = "full"
@@ -1556,6 +1595,45 @@ func (e InspectOperationParamsDetail) Valid() bool {
 	case Full:
 		return true
 	case Summary:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GetJobResult200ApplicationProblemPlusJSONResponseBodyErrorOrigin.
+const (
+	GetJobResult200ApplicationProblemPlusJSONResponseBodyErrorOriginBroker   GetJobResult200ApplicationProblemPlusJSONResponseBodyErrorOrigin = "broker"
+	GetJobResult200ApplicationProblemPlusJSONResponseBodyErrorOriginUpstream GetJobResult200ApplicationProblemPlusJSONResponseBodyErrorOrigin = "upstream"
+)
+
+// Valid indicates whether the value is a known member of the GetJobResult200ApplicationProblemPlusJSONResponseBodyErrorOrigin enum.
+func (e GetJobResult200ApplicationProblemPlusJSONResponseBodyErrorOrigin) Valid() bool {
+	switch e {
+	case GetJobResult200ApplicationProblemPlusJSONResponseBodyErrorOriginBroker:
+		return true
+	case GetJobResult200ApplicationProblemPlusJSONResponseBodyErrorOriginUpstream:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GetJobResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionState.
+const (
+	GetJobResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionStateApproved GetJobResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionState = "approved"
+	GetJobResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionStateDenied   GetJobResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionState = "denied"
+	GetJobResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionStateExpired  GetJobResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionState = "expired"
+)
+
+// Valid indicates whether the value is a known member of the GetJobResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionState enum.
+func (e GetJobResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionState) Valid() bool {
+	switch e {
+	case GetJobResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionStateApproved:
+		return true
+	case GetJobResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionStateDenied:
+		return true
+	case GetJobResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionStateExpired:
 		return true
 	default:
 		return false
@@ -10277,6 +10355,12 @@ type ListHeldExecutionsParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// GetHeldExecutionResult200ApplicationProblemPlusJSONResponseBodyErrorOrigin defines parameters for GetHeldExecutionResult.
+type GetHeldExecutionResult200ApplicationProblemPlusJSONResponseBodyErrorOrigin string
+
+// GetHeldExecutionResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionState defines parameters for GetHeldExecutionResult.
+type GetHeldExecutionResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionState string
+
 // GetGovernedHostsParams defines parameters for GetGovernedHosts.
 type GetGovernedHostsParams struct {
 	// IfNoneMatch Change-poll precondition: the `ETag` from a previous response (quoted, `"<digest>"`; the bare digest is accepted as a compatibility form). When it still matches, the response is an empty `304`.
@@ -10327,6 +10411,12 @@ type ListJobsParams struct {
 	// Limit Maximum number of jobs to return (1-100, default 25).
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
+
+// GetJobResult200ApplicationProblemPlusJSONResponseBodyErrorOrigin defines parameters for GetJobResult.
+type GetJobResult200ApplicationProblemPlusJSONResponseBodyErrorOrigin string
+
+// GetJobResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionState defines parameters for GetJobResult.
+type GetJobResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionState string
 
 // GetMe200JSONResponseBody defines parameters for GetMe.
 type GetMe200JSONResponseBody struct {
@@ -41611,7 +41701,60 @@ type GetHeldExecutionResultHTTPResp struct {
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *HeldExecutionResultResponse
 	// ApplicationproblemJSON200 the response for an HTTP 200 `application/problem+json` response
-	ApplicationproblemJSON200 *ProblemDetail
+	ApplicationproblemJSON200 *struct {
+		// Code An optional provider-specific code for internal error taxonomy and observability correlation.
+		//
+		// Examples: JENTIC-4001
+		Code *string `json:"code,omitempty"`
+
+		// Detail A human-readable explanation specific to this occurrence of the problem. MUST be present. Provide actionable information where possible.
+		//
+		// Examples: The request body is missing required field 'name'.
+		Detail string `json:"detail"`
+
+		// ErrorOrigin Who generated the error — `broker` (the Broker itself) or `upstream` (the external API answered with this error and the Broker mirrored it). A held call that never ran is always `broker`: the upstream was never reached.
+		//
+		// Examples: broker
+		ErrorOrigin *GetHeldExecutionResult200ApplicationProblemPlusJSONResponseBodyErrorOrigin `json:"error_origin,omitempty"`
+
+		// Errors An array of granular error details. Use when multiple validation errors or field-level problems need to be surfaced in a single response.
+		//
+		// Examples: [{"code":"JENTIC-V-001","detail":"Field 'name' must not be blank.","header":"Authorization","parameter":"limit","pointer":"#/name"}]
+		Errors *[]ErrorItem `json:"errors,omitempty"`
+
+		// HeldExecution The hold whose outcome this is. Every problem a hold records carries it (`approval_denied`, `approval_expired`, `approval_resume_failed`); an `approval_required` problem, raised at run time against a job that carries no hold, has none.
+		HeldExecution *struct {
+			// Id ID of the held execution.
+			//
+			// Examples: held_6968b398a1c4e2d07b5f93c6
+			Id string `json:"id"`
+
+			// State The hold's terminal state, and so why the call never ran: `denied` (a reviewer refused it), `expired` (its approval window lapsed undecided) or `approved` (it was released, but its run was interrupted and is not re-run).
+			//
+			// Examples: denied
+			State GetHeldExecutionResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionState `json:"state"`
+		} `json:"held_execution,omitempty"`
+
+		// Instance A URI reference identifying the specific occurrence of the problem. Typically the request path.
+		//
+		// Examples: /v2/capability-sets
+		Instance *string `json:"instance,omitempty"`
+
+		// Status The HTTP status code for this occurrence of the problem.
+		//
+		// Examples: 400
+		Status *int `json:"status,omitempty"`
+
+		// Title A short, human-readable summary of the problem type. Should not change between occurrences except for localisation purposes.
+		//
+		// Examples: Bad Request
+		Title *string `json:"title,omitempty"`
+
+		// Type A URI reference identifying the problem type. When set to 'about:blank', the title SHOULD be the standard HTTP status phrase. Use an IANA-registered type URI where one applies.
+		//
+		// Examples: about:blank
+		Type *string `json:"type,omitempty"`
+	}
 	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
 	ApplicationproblemJSON400 *BadRequest
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
@@ -41640,7 +41783,60 @@ func (r GetHeldExecutionResultHTTPResp) GetJSON200() *HeldExecutionResultRespons
 }
 
 // GetApplicationproblemJSON200 returns the response for an HTTP 200 `application/problem+json` response
-func (r GetHeldExecutionResultHTTPResp) GetApplicationproblemJSON200() *ProblemDetail {
+func (r GetHeldExecutionResultHTTPResp) GetApplicationproblemJSON200() *struct {
+	// Code An optional provider-specific code for internal error taxonomy and observability correlation.
+	//
+	// Examples: JENTIC-4001
+	Code *string `json:"code,omitempty"`
+
+	// Detail A human-readable explanation specific to this occurrence of the problem. MUST be present. Provide actionable information where possible.
+	//
+	// Examples: The request body is missing required field 'name'.
+	Detail string `json:"detail"`
+
+	// ErrorOrigin Who generated the error — `broker` (the Broker itself) or `upstream` (the external API answered with this error and the Broker mirrored it). A held call that never ran is always `broker`: the upstream was never reached.
+	//
+	// Examples: broker
+	ErrorOrigin *GetHeldExecutionResult200ApplicationProblemPlusJSONResponseBodyErrorOrigin `json:"error_origin,omitempty"`
+
+	// Errors An array of granular error details. Use when multiple validation errors or field-level problems need to be surfaced in a single response.
+	//
+	// Examples: [{"code":"JENTIC-V-001","detail":"Field 'name' must not be blank.","header":"Authorization","parameter":"limit","pointer":"#/name"}]
+	Errors *[]ErrorItem `json:"errors,omitempty"`
+
+	// HeldExecution The hold whose outcome this is. Every problem a hold records carries it (`approval_denied`, `approval_expired`, `approval_resume_failed`); an `approval_required` problem, raised at run time against a job that carries no hold, has none.
+	HeldExecution *struct {
+		// Id ID of the held execution.
+		//
+		// Examples: held_6968b398a1c4e2d07b5f93c6
+		Id string `json:"id"`
+
+		// State The hold's terminal state, and so why the call never ran: `denied` (a reviewer refused it), `expired` (its approval window lapsed undecided) or `approved` (it was released, but its run was interrupted and is not re-run).
+		//
+		// Examples: denied
+		State GetHeldExecutionResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionState `json:"state"`
+	} `json:"held_execution,omitempty"`
+
+	// Instance A URI reference identifying the specific occurrence of the problem. Typically the request path.
+	//
+	// Examples: /v2/capability-sets
+	Instance *string `json:"instance,omitempty"`
+
+	// Status The HTTP status code for this occurrence of the problem.
+	//
+	// Examples: 400
+	Status *int `json:"status,omitempty"`
+
+	// Title A short, human-readable summary of the problem type. Should not change between occurrences except for localisation purposes.
+	//
+	// Examples: Bad Request
+	Title *string `json:"title,omitempty"`
+
+	// Type A URI reference identifying the problem type. When set to 'about:blank', the title SHOULD be the standard HTTP status phrase. Use an IANA-registered type URI where one applies.
+	//
+	// Examples: about:blank
+	Type *string `json:"type,omitempty"`
+} {
 	return r.ApplicationproblemJSON200
 }
 
@@ -42837,7 +43033,60 @@ type GetJobResultHTTPResp struct {
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *map[string]interface{}
 	// ApplicationproblemJSON200 the response for an HTTP 200 `application/problem+json` response
-	ApplicationproblemJSON200 *ProblemDetail
+	ApplicationproblemJSON200 *struct {
+		// Code An optional provider-specific code for internal error taxonomy and observability correlation.
+		//
+		// Examples: JENTIC-4001
+		Code *string `json:"code,omitempty"`
+
+		// Detail A human-readable explanation specific to this occurrence of the problem. MUST be present. Provide actionable information where possible.
+		//
+		// Examples: The request body is missing required field 'name'.
+		Detail string `json:"detail"`
+
+		// ErrorOrigin Who generated the error — `broker` (the Broker itself) or `upstream` (the external API answered with this error and the Broker mirrored it). A held call that never ran is always `broker`: the upstream was never reached.
+		//
+		// Examples: broker
+		ErrorOrigin *GetJobResult200ApplicationProblemPlusJSONResponseBodyErrorOrigin `json:"error_origin,omitempty"`
+
+		// Errors An array of granular error details. Use when multiple validation errors or field-level problems need to be surfaced in a single response.
+		//
+		// Examples: [{"code":"JENTIC-V-001","detail":"Field 'name' must not be blank.","header":"Authorization","parameter":"limit","pointer":"#/name"}]
+		Errors *[]ErrorItem `json:"errors,omitempty"`
+
+		// HeldExecution The hold whose outcome this is. Every problem a hold records carries it (`approval_denied`, `approval_expired`, `approval_resume_failed`); an `approval_required` problem, raised at run time against a job that carries no hold, has none.
+		HeldExecution *struct {
+			// Id ID of the held execution.
+			//
+			// Examples: held_6968b398a1c4e2d07b5f93c6
+			Id string `json:"id"`
+
+			// State The hold's terminal state, and so why the call never ran: `denied` (a reviewer refused it), `expired` (its approval window lapsed undecided) or `approved` (it was released, but its run was interrupted and is not re-run).
+			//
+			// Examples: denied
+			State GetJobResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionState `json:"state"`
+		} `json:"held_execution,omitempty"`
+
+		// Instance A URI reference identifying the specific occurrence of the problem. Typically the request path.
+		//
+		// Examples: /v2/capability-sets
+		Instance *string `json:"instance,omitempty"`
+
+		// Status The HTTP status code for this occurrence of the problem.
+		//
+		// Examples: 400
+		Status *int `json:"status,omitempty"`
+
+		// Title A short, human-readable summary of the problem type. Should not change between occurrences except for localisation purposes.
+		//
+		// Examples: Bad Request
+		Title *string `json:"title,omitempty"`
+
+		// Type A URI reference identifying the problem type. When set to 'about:blank', the title SHOULD be the standard HTTP status phrase. Use an IANA-registered type URI where one applies.
+		//
+		// Examples: about:blank
+		Type *string `json:"type,omitempty"`
+	}
 	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
 	ApplicationproblemJSON400 *BadRequest
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
@@ -42862,7 +43111,60 @@ func (r GetJobResultHTTPResp) GetJSON200() *map[string]interface{} {
 }
 
 // GetApplicationproblemJSON200 returns the response for an HTTP 200 `application/problem+json` response
-func (r GetJobResultHTTPResp) GetApplicationproblemJSON200() *ProblemDetail {
+func (r GetJobResultHTTPResp) GetApplicationproblemJSON200() *struct {
+	// Code An optional provider-specific code for internal error taxonomy and observability correlation.
+	//
+	// Examples: JENTIC-4001
+	Code *string `json:"code,omitempty"`
+
+	// Detail A human-readable explanation specific to this occurrence of the problem. MUST be present. Provide actionable information where possible.
+	//
+	// Examples: The request body is missing required field 'name'.
+	Detail string `json:"detail"`
+
+	// ErrorOrigin Who generated the error — `broker` (the Broker itself) or `upstream` (the external API answered with this error and the Broker mirrored it). A held call that never ran is always `broker`: the upstream was never reached.
+	//
+	// Examples: broker
+	ErrorOrigin *GetJobResult200ApplicationProblemPlusJSONResponseBodyErrorOrigin `json:"error_origin,omitempty"`
+
+	// Errors An array of granular error details. Use when multiple validation errors or field-level problems need to be surfaced in a single response.
+	//
+	// Examples: [{"code":"JENTIC-V-001","detail":"Field 'name' must not be blank.","header":"Authorization","parameter":"limit","pointer":"#/name"}]
+	Errors *[]ErrorItem `json:"errors,omitempty"`
+
+	// HeldExecution The hold whose outcome this is. Every problem a hold records carries it (`approval_denied`, `approval_expired`, `approval_resume_failed`); an `approval_required` problem, raised at run time against a job that carries no hold, has none.
+	HeldExecution *struct {
+		// Id ID of the held execution.
+		//
+		// Examples: held_6968b398a1c4e2d07b5f93c6
+		Id string `json:"id"`
+
+		// State The hold's terminal state, and so why the call never ran: `denied` (a reviewer refused it), `expired` (its approval window lapsed undecided) or `approved` (it was released, but its run was interrupted and is not re-run).
+		//
+		// Examples: denied
+		State GetJobResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionState `json:"state"`
+	} `json:"held_execution,omitempty"`
+
+	// Instance A URI reference identifying the specific occurrence of the problem. Typically the request path.
+	//
+	// Examples: /v2/capability-sets
+	Instance *string `json:"instance,omitempty"`
+
+	// Status The HTTP status code for this occurrence of the problem.
+	//
+	// Examples: 400
+	Status *int `json:"status,omitempty"`
+
+	// Title A short, human-readable summary of the problem type. Should not change between occurrences except for localisation purposes.
+	//
+	// Examples: Bad Request
+	Title *string `json:"title,omitempty"`
+
+	// Type A URI reference identifying the problem type. When set to 'about:blank', the title SHOULD be the standard HTTP status phrase. Use an IANA-registered type URI where one applies.
+	//
+	// Examples: about:blank
+	Type *string `json:"type,omitempty"`
+} {
 	return r.ApplicationproblemJSON200
 }
 
@@ -60109,7 +60411,60 @@ func ParseGetHeldExecutionResultHTTPResp(rsp *http.Response) (*GetHeldExecutionR
 		response.JSON200 = &dest
 
 	case rsp.Header.Get("Content-Type") == "application/problem+json" && rsp.StatusCode == 200:
-		var dest ProblemDetail
+		var dest struct {
+			// Code An optional provider-specific code for internal error taxonomy and observability correlation.
+			//
+			// Examples: JENTIC-4001
+			Code *string `json:"code,omitempty"`
+
+			// Detail A human-readable explanation specific to this occurrence of the problem. MUST be present. Provide actionable information where possible.
+			//
+			// Examples: The request body is missing required field 'name'.
+			Detail string `json:"detail"`
+
+			// ErrorOrigin Who generated the error — `broker` (the Broker itself) or `upstream` (the external API answered with this error and the Broker mirrored it). A held call that never ran is always `broker`: the upstream was never reached.
+			//
+			// Examples: broker
+			ErrorOrigin *GetHeldExecutionResult200ApplicationProblemPlusJSONResponseBodyErrorOrigin `json:"error_origin,omitempty"`
+
+			// Errors An array of granular error details. Use when multiple validation errors or field-level problems need to be surfaced in a single response.
+			//
+			// Examples: [{"code":"JENTIC-V-001","detail":"Field 'name' must not be blank.","header":"Authorization","parameter":"limit","pointer":"#/name"}]
+			Errors *[]ErrorItem `json:"errors,omitempty"`
+
+			// HeldExecution The hold whose outcome this is. Every problem a hold records carries it (`approval_denied`, `approval_expired`, `approval_resume_failed`); an `approval_required` problem, raised at run time against a job that carries no hold, has none.
+			HeldExecution *struct {
+				// Id ID of the held execution.
+				//
+				// Examples: held_6968b398a1c4e2d07b5f93c6
+				Id string `json:"id"`
+
+				// State The hold's terminal state, and so why the call never ran: `denied` (a reviewer refused it), `expired` (its approval window lapsed undecided) or `approved` (it was released, but its run was interrupted and is not re-run).
+				//
+				// Examples: denied
+				State GetHeldExecutionResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionState `json:"state"`
+			} `json:"held_execution,omitempty"`
+
+			// Instance A URI reference identifying the specific occurrence of the problem. Typically the request path.
+			//
+			// Examples: /v2/capability-sets
+			Instance *string `json:"instance,omitempty"`
+
+			// Status The HTTP status code for this occurrence of the problem.
+			//
+			// Examples: 400
+			Status *int `json:"status,omitempty"`
+
+			// Title A short, human-readable summary of the problem type. Should not change between occurrences except for localisation purposes.
+			//
+			// Examples: Bad Request
+			Title *string `json:"title,omitempty"`
+
+			// Type A URI reference identifying the problem type. When set to 'about:blank', the title SHOULD be the standard HTTP status phrase. Use an IANA-registered type URI where one applies.
+			//
+			// Examples: about:blank
+			Type *string `json:"type,omitempty"`
+		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -61155,7 +61510,60 @@ func ParseGetJobResultHTTPResp(rsp *http.Response) (*GetJobResultHTTPResp, error
 		response.JSON200 = &dest
 
 	case rsp.Header.Get("Content-Type") == "application/problem+json" && rsp.StatusCode == 200:
-		var dest ProblemDetail
+		var dest struct {
+			// Code An optional provider-specific code for internal error taxonomy and observability correlation.
+			//
+			// Examples: JENTIC-4001
+			Code *string `json:"code,omitempty"`
+
+			// Detail A human-readable explanation specific to this occurrence of the problem. MUST be present. Provide actionable information where possible.
+			//
+			// Examples: The request body is missing required field 'name'.
+			Detail string `json:"detail"`
+
+			// ErrorOrigin Who generated the error — `broker` (the Broker itself) or `upstream` (the external API answered with this error and the Broker mirrored it). A held call that never ran is always `broker`: the upstream was never reached.
+			//
+			// Examples: broker
+			ErrorOrigin *GetJobResult200ApplicationProblemPlusJSONResponseBodyErrorOrigin `json:"error_origin,omitempty"`
+
+			// Errors An array of granular error details. Use when multiple validation errors or field-level problems need to be surfaced in a single response.
+			//
+			// Examples: [{"code":"JENTIC-V-001","detail":"Field 'name' must not be blank.","header":"Authorization","parameter":"limit","pointer":"#/name"}]
+			Errors *[]ErrorItem `json:"errors,omitempty"`
+
+			// HeldExecution The hold whose outcome this is. Every problem a hold records carries it (`approval_denied`, `approval_expired`, `approval_resume_failed`); an `approval_required` problem, raised at run time against a job that carries no hold, has none.
+			HeldExecution *struct {
+				// Id ID of the held execution.
+				//
+				// Examples: held_6968b398a1c4e2d07b5f93c6
+				Id string `json:"id"`
+
+				// State The hold's terminal state, and so why the call never ran: `denied` (a reviewer refused it), `expired` (its approval window lapsed undecided) or `approved` (it was released, but its run was interrupted and is not re-run).
+				//
+				// Examples: denied
+				State GetJobResult200ApplicationProblemPlusJSONResponseBodyHeldExecutionState `json:"state"`
+			} `json:"held_execution,omitempty"`
+
+			// Instance A URI reference identifying the specific occurrence of the problem. Typically the request path.
+			//
+			// Examples: /v2/capability-sets
+			Instance *string `json:"instance,omitempty"`
+
+			// Status The HTTP status code for this occurrence of the problem.
+			//
+			// Examples: 400
+			Status *int `json:"status,omitempty"`
+
+			// Title A short, human-readable summary of the problem type. Should not change between occurrences except for localisation purposes.
+			//
+			// Examples: Bad Request
+			Title *string `json:"title,omitempty"`
+
+			// Type A URI reference identifying the problem type. When set to 'about:blank', the title SHOULD be the standard HTTP status phrase. Use an IANA-registered type URI where one applies.
+			//
+			// Examples: about:blank
+			Type *string `json:"type,omitempty"`
+		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

@@ -38,7 +38,13 @@ from jentic_one.shared.models.jobs import JobStatus
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.links import build_link
-from jentic_one.shared.web.openapi_responses import conflict, gone, not_found, with_responses
+from jentic_one.shared.web.openapi_responses import (
+    HELD_EXECUTION_PROBLEM_CONTENT,
+    conflict,
+    gone,
+    not_found,
+    with_responses,
+)
 
 router = APIRouter()
 
@@ -180,25 +186,15 @@ _RESULT_200: Final[dict[int | str, dict[str, Any]]] = {
             "- **The call never ran** (denied, its approval window lapsed, or its approved "
             "run interrupted): the `application/problem+json` body explaining why, with "
             "`type` `approval_denied`, `approval_expired`, `approval_required` or "
-            "`approval_resume_failed`, plus `error_origin` and a `held_execution` object "
-            "(`id`, `state`). The HTTP status stays `200`; the problem's own `status` member "
-            "(403, or 409 for an interrupted approved run) says why.\n\n"
+            "`approval_resume_failed`, plus `error_origin`. The first three of those carry a "
+            "`held_execution` object (`id`, `state`); `approval_required` names no held row, "
+            "so it has none — read `held_execution` only when it is present. The HTTP status "
+            "stays `200`; the problem's own `status` member (403, or 409 for an interrupted "
+            "approved run) says why.\n\n"
             "Decide which arm arrived from the response `Content-Type`."
         ),
         "model": HeldExecutionResultResponse,
-        "content": {
-            PROBLEM_CONTENT_TYPE: {
-                "schema": {"$ref": "#/components/schemas/ProblemDetail"},
-                "example": {
-                    "type": "approval_denied",
-                    "title": "Execution approval denied",
-                    "status": 403,
-                    "detail": "A reviewer denied this held execution: Not this account",
-                    "error_origin": "broker",
-                    "held_execution": {"id": ex.HELD_EXECUTION_ID, "state": "denied"},
-                },
-            }
-        },
+        "content": {PROBLEM_CONTENT_TYPE: HELD_EXECUTION_PROBLEM_CONTENT},
     }
 }
 

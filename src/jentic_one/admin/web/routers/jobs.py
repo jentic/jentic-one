@@ -26,6 +26,7 @@ from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.links import build_link
 from jentic_one.shared.web.openapi_responses import (
+    HELD_EXECUTION_PROBLEM_CONTENT,
     PROBLEM_JSON,
     conflict,
     not_found,
@@ -163,9 +164,11 @@ _JOB_RESULT_RESPONSE: Final[dict[int | str, dict[str, Any]]] = {
             "its approved run interrupted) carries an `application/problem+json` body in "
             "place of the execution document, with `type` `approval_denied`, "
             "`approval_expired`, `approval_required` or `approval_resume_failed`, plus "
-            "`error_origin` and a `held_execution` object (`id`, `state`). The HTTP status "
-            "stays `200`; the problem's own `status` member (403, or 409 for an interrupted "
-            "approved run) says why the call never happened.\n\n"
+            "`error_origin`. The first three of those carry a `held_execution` object "
+            "(`id`, `state`); `approval_required` names no held row, so it has none — read "
+            "`held_execution` only when it is present. The HTTP status stays `200`; the "
+            "problem's own `status` member (403, or 409 for an interrupted approved run) "
+            "says why the call never happened.\n\n"
             "`Content-Type` caveat: for a `kind=execution` result the header echoes the "
             "**upstream** response's content type, while the body is still the JSON "
             "execution document above — parse the body as JSON whatever the header says."
@@ -193,17 +196,7 @@ _JOB_RESULT_RESPONSE: Final[dict[int | str, dict[str, Any]]] = {
                     "body_b64": "eyJpZCI6ICJyZV8xMjMifQ==",
                 },
             },
-            PROBLEM_JSON: {
-                "schema": {"$ref": "#/components/schemas/ProblemDetail"},
-                "example": {
-                    "type": "approval_denied",
-                    "title": "Execution approval denied",
-                    "status": 403,
-                    "detail": "A reviewer denied this held execution: Not this account",
-                    "error_origin": "broker",
-                    "held_execution": {"id": ex.HELD_EXECUTION_ID, "state": "denied"},
-                },
-            },
+            PROBLEM_JSON: HELD_EXECUTION_PROBLEM_CONTENT,
         },
     }
 }
