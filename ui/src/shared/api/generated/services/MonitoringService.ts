@@ -10,7 +10,7 @@ import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class MonitoringService {
     /**
-     * Get Execution Stats
+     * Get execution statistics
      * Return aggregated execution statistics for the dashboard.
      * @returns ExecutionStatsResponse Successful Response
      * @throws ApiError
@@ -40,7 +40,7 @@ export class MonitoringService {
         });
     }
     /**
-     * Get Usage Stats
+     * Get usage statistics
      * Return detailed usage statistics for the monitoring overview.
      * @returns UsageResponse Successful Response
      * @throws ApiError

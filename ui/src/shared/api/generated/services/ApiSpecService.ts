@@ -7,7 +7,7 @@ import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class ApiSpecService {
     /**
-     * Get Api Spec
+     * Get an API's OpenAPI document
      * Download the OpenAPI spec for the API's current (live) revision.
      * @returns any The stored OpenAPI document, served as-is, with `Content-Disposition: attachment`. `application/json` is the default; request `application/openapi+yaml` or `application/yaml` via `Accept` for YAML.
      * @throws ApiError

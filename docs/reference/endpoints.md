@@ -38,12 +38,12 @@ _Total endpoints: **174**._
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| GET | `/apis` | `apis:read` | agent | List Apis |
-| GET | `/apis/{vendor}/{name}/{version}` | `apis:read` | agent | Get Api |
-| GET | `/apis/{vendor}/{name}/{version}/openapi` | `apis:read` | agent | Get Api Spec |
+| GET | `/apis` | `apis:read` | agent | List registered APIs |
+| GET | `/apis/{vendor}/{name}/{version}` | `apis:read` | agent | Get an API |
+| GET | `/apis/{vendor}/{name}/{version}/openapi` | `apis:read` | agent | Get an API's OpenAPI document |
 | GET | `/apis/{vendor}/{name}/{version}/operations` | `apis:read` | agent | List the operations an API currently serves |
 | GET | `/apis/{vendor}/{name}/{version}/overlays` | `apis:read` | agent | List an API's overlays |
-| GET | `/apis/{vendor}/{name}/{version}/overlays/{overlay_id}` | `apis:read` | agent | Get Overlay |
+| GET | `/apis/{vendor}/{name}/{version}/overlays/{overlay_id}` | `apis:read` | agent | Get an overlay |
 | GET | `/apis/{vendor}/{name}/{version}/revisions` | `apis:read` | agent | List an API's revisions |
 | GET | `/apis/{vendor}/{name}/{version}/revisions/{revision_id}` | `apis:read` | agent | Get an API revision |
 | GET | `/apis/{vendor}/{name}/{version}/revisions/{revision_id}/openapi` | `apis:read` | agent | Download an API revision's OpenAPI document |
@@ -64,25 +64,25 @@ _Total endpoints: **174**._
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| GET | `/catalog` | `capabilities:read` | agent | List Catalog |
-| GET | `/catalog/{api_id}` | `capabilities:read` | agent | Get Catalog Entry |
-| GET | `/catalog/{api_id}/operations` | `capabilities:read` | agent | Preview Catalog Operations |
-| POST | `/catalog/{api_id}:import` | `catalog:import` | agent | Import Catalog Entry |
+| GET | `/catalog` | `capabilities:read` | agent | List catalog entries |
+| GET | `/catalog/{api_id}` | `capabilities:read` | agent | Get a catalog entry |
+| GET | `/catalog/{api_id}/operations` | `capabilities:read` | agent | Preview a catalog entry's operations |
+| POST | `/catalog/{api_id}:import` | `catalog:import` | agent | Import a catalog entry |
 
 ### `events`
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| GET | `/events` | `events:read` | agent | List Events |
-| GET | `/events/stream` | `events:read` | agent | Stream Events |
-| GET | `/events/{event_id}` | `events:read` | agent | Get Event |
+| GET | `/events` | `events:read` | agent | List events |
+| GET | `/events/stream` | `events:read` | agent | Stream events over SSE |
+| GET | `/events/{event_id}` | `events:read` | agent | Get an event |
 
 ### `executions`
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| GET | `/executions` | `executions:read` | agent | List Executions |
-| GET | `/executions/{execution_id}` | `executions:read` | agent | Get Execution |
+| GET | `/executions` | `executions:read` | agent | List executions |
+| GET | `/executions/{execution_id}` | `executions:read` | agent | Get an execution |
 
 ### `inspect`
 
@@ -94,9 +94,9 @@ _Total endpoints: **174**._
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| GET | `/jobs` | `jobs:read` | agent | List Jobs |
-| GET | `/jobs/{job_id}` | `jobs:read` | agent | Get Job |
-| GET | `/jobs/{job_id}/result` | `jobs:read` | agent | Get Job Result |
+| GET | `/jobs` | `jobs:read` | agent | List jobs |
+| GET | `/jobs/{job_id}` | `jobs:read` | agent | Get a job |
+| GET | `/jobs/{job_id}/result` | `jobs:read` | agent | Get a job's result |
 
 ### `search`
 
@@ -126,23 +126,23 @@ _Total endpoints: **174**._
 |---|---|---|---|---|
 | GET | `/agents` | `agents:read` | operator | List visible agents |
 | POST | `/agents` | `agents:write` | operator | Create an agent |
-| DELETE | `/agents/{agent_id}` | `agents:write` | operator | Archive Agent |
+| DELETE | `/agents/{agent_id}` | `agents:write` | operator | Archive an agent |
 | PATCH | `/agents/{agent_id}` | `agents:write` | operator | Update an agent |
 | GET | `/agents/{agent_id}/api-key` | `agents:read` | operator | Get an agent's API key metadata |
 | GET | `/agents/{agent_id}/api-key/history` | `agents:read` | operator | Get an agent's API key history |
 | POST | `/agents/{agent_id}/credentials` | `agents:write` | operator | Bind a credential to an agent |
 | DELETE | `/agents/{agent_id}/credentials/{credential_id}` | `agents:write` | operator | Suspend or remove a credential binding |
 | POST | `/agents/{agent_id}/credentials/{credential_id}:resume` | `agents:write` | operator | Resume a suspended credential binding |
-| PUT | `/agents/{agent_id}/jwks` | `agents:write` | operator | Update Agent Jwks |
-| GET | `/agents/{agent_id}/permissions` | `agents:read` | operator | Get Agent Permissions |
-| PUT | `/agents/{agent_id}/permissions` | `agents:write` | operator | Replace Agent Permissions |
-| POST | `/agents/{agent_id}:approve` | `agents:write` | operator | Approve Agent |
-| POST | `/agents/{agent_id}:claim` | _any authenticated_ | operator | Claim Agent |
-| POST | `/agents/{agent_id}:deny` | `agents:write` | operator | Deny Agent |
-| POST | `/agents/{agent_id}:disable` | `agents:write` | operator | Disable Agent |
-| POST | `/agents/{agent_id}:enable` | `agents:write` | operator | Enable Agent |
-| POST | `/agents/{agent_id}:generate-api-key` | `agents:write` | operator | Generate Agent Api Key |
-| POST | `/agents/{agent_id}:revoke-api-key` | `agents:write` | operator | Revoke Agent Api Key |
+| PUT | `/agents/{agent_id}/jwks` | `agents:write` | operator | Replace an agent's JWKS |
+| GET | `/agents/{agent_id}/permissions` | `agents:read` | operator | List an agent's permissions |
+| PUT | `/agents/{agent_id}/permissions` | `agents:write` | operator | Replace an agent's permissions |
+| POST | `/agents/{agent_id}:approve` | `agents:write` | operator | Approve an agent |
+| POST | `/agents/{agent_id}:claim` | _any authenticated_ | operator | Claim an agent |
+| POST | `/agents/{agent_id}:deny` | `agents:write` | operator | Deny an agent |
+| POST | `/agents/{agent_id}:disable` | `agents:write` | operator | Disable an agent |
+| POST | `/agents/{agent_id}:enable` | `agents:write` | operator | Enable an agent |
+| POST | `/agents/{agent_id}:generate-api-key` | `agents:write` | operator | Generate an agent's API key |
+| POST | `/agents/{agent_id}:revoke-api-key` | `agents:write` | operator | Revoke an agent's API key |
 
 ### `apis`
 
@@ -155,8 +155,8 @@ _Total endpoints: **174**._
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| GET | `/audit` | `audit:read` | operator | List Audit Entries |
-| GET | `/audit/{audit_id}` | `audit:read` | operator | Get Audit Entry |
+| GET | `/audit` | `audit:read` | operator | List audit entries |
+| GET | `/audit/{audit_id}` | `audit:read` | operator | Get an audit entry |
 
 ### `auth`
 
@@ -168,21 +168,21 @@ _Total endpoints: **174**._
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| POST | `/catalog/{api_id}:snooze` | `events:write` | operator | Snooze Catalog Entry |
-| POST | `/catalog/{api_id}:unsnooze` | `events:write` | operator | Unsnooze Catalog Entry |
+| POST | `/catalog/{api_id}:snooze` | `events:write` | operator | Snooze a catalog entry's update notice |
+| POST | `/catalog/{api_id}:unsnooze` | `events:write` | operator | Clear a catalog entry's snooze |
 
 ### `catalog:refresh`
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| POST | `/catalog:refresh` | `org:admin` | operator | Refresh Catalog |
+| POST | `/catalog:refresh` | `org:admin` | operator | Refresh the catalog cache |
 
 ### `monitoring`
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| GET | `/monitoring/executions` | `org:admin` | operator | Get Execution Stats |
-| GET | `/monitoring/usage` | `org:admin` | operator | Get Usage Stats |
+| GET | `/monitoring/executions` | `org:admin` | operator | Get execution statistics |
+| GET | `/monitoring/usage` | `org:admin` | operator | Get usage statistics |
 
 ### `oauth-app-registrations`
 
@@ -193,21 +193,21 @@ _Total endpoints: **174**._
 | DELETE | `/oauth-app-registrations/{id}` | `org:admin` | operator | Delete an OAuth app registration |
 | GET | `/oauth-app-registrations/{id}` | `org:admin` | operator | Get an OAuth app registration |
 | PATCH | `/oauth-app-registrations/{id}` | `org:admin` | operator | Update an OAuth app registration |
-| POST | `/oauth-app-registrations/{id}:rotate-secret` | `org:admin` | operator | Rotate the client secret |
+| POST | `/oauth-app-registrations/{id}:rotate-secret` | `org:admin` | operator | Rotate an OAuth app registration's secret |
 
 ### `users`
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| GET | `/users` | `users:read` | operator | List Users |
-| POST | `/users` | `users:write` | operator | Create User |
-| DELETE | `/users/{user_id}` | `users:write` | operator | Delete User |
-| GET | `/users/{user_id}` | `users:read` | operator | Get User |
-| PATCH | `/users/{user_id}` | `users:write` | operator | Update User |
-| PUT | `/users/{user_id}/permissions` | `users:write` | operator | Set User Permissions |
-| POST | `/users/{user_id}:disable` | `users:write` | operator | Disable User |
-| POST | `/users/{user_id}:enable` | `users:write` | operator | Enable User |
-| POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue Invite |
+| GET | `/users` | `users:read` | operator | List users |
+| POST | `/users` | `users:write` | operator | Create a user and issue an invite |
+| DELETE | `/users/{user_id}` | `users:write` | operator | Delete a user |
+| GET | `/users/{user_id}` | `users:read` | operator | Get a user |
+| PATCH | `/users/{user_id}` | `users:write` | operator | Update a user |
+| PUT | `/users/{user_id}/permissions` | `users:write` | operator | Set a user's permissions |
+| POST | `/users/{user_id}:disable` | `users:write` | operator | Disable a user |
+| POST | `/users/{user_id}:enable` | `users:write` | operator | Enable a user |
+| POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue a user's invite |
 
 ## Any authenticated actor (82)
 
@@ -216,7 +216,7 @@ _Total endpoints: **174**._
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| GET | `/actors/lookup` | _any authenticated_ | any | Resolve actor names by id |
+| GET | `/actors/lookup` | _any authenticated_ | any | Resolve actor names by ID |
 
 ### `admin`
 
@@ -248,15 +248,15 @@ _Total endpoints: **174**._
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| POST | `/apis` | `apis:write` | any | Import Apis |
-| DELETE | `/apis/{vendor}/{name}/{version}` | `apis:write` | any | Delete Api |
-| PATCH | `/apis/{vendor}/{name}/{version}` | `apis:write` | any | Update Api |
+| POST | `/apis` | `apis:write` | any | Import OpenAPI or Arazzo specs |
+| DELETE | `/apis/{vendor}/{name}/{version}` | `apis:write` | any | Delete an API |
+| PATCH | `/apis/{vendor}/{name}/{version}` | `apis:write` | any | Update an API |
 | POST | `/apis/{vendor}/{name}/{version}/overlays` | `apis:write` | any | Submit an OpenAPI overlay |
 | DELETE | `/apis/{vendor}/{name}/{version}/overlays/{overlay_id}` | `apis:write` | any | Deprecate an overlay |
 | PATCH | `/apis/{vendor}/{name}/{version}/overlays/{overlay_id}` | `apis:write` | any | Edit an overlay |
 | DELETE | `/apis/{vendor}/{name}/{version}/revisions/{revision_id}` | `apis:write` | any | Delete an archived API revision |
 | POST | `/apis/{vendor}/{name}/{version}/revisions/{revision_id}:archive` | `apis:write` | any | Archive an API revision |
-| POST | `/apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote` | `apis:write` | any | Promote Revision |
+| POST | `/apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote` | `apis:write` | any | Promote an API revision |
 
 ### `connect-sessions`
 
@@ -304,7 +304,7 @@ _Total endpoints: **174**._
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| GET | `/governed-hosts` | `credentials:read`, `owner:credentials:read` | any | Get Governed Hosts |
+| GET | `/governed-hosts` | `credentials:read`, `owner:credentials:read` | any | Get the caller's governed host set |
 
 ### `integrations`
 
@@ -328,7 +328,7 @@ _Total endpoints: **174**._
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| POST | `/jobs/{job_id}:cancel` | `jobs:write` | any | Cancel Job |
+| POST | `/jobs/{job_id}:cancel` | `jobs:write` | any | Cancel a job |
 
 ### `mcp`
 
@@ -340,25 +340,25 @@ _Total endpoints: **174**._
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| GET | `/me` | _any authenticated_ | any | Get Me |
+| GET | `/me` | _any authenticated_ | any | Get the caller's identity |
 
 ### `notes`
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| GET | `/notes` | _any authenticated_ | any | List Notes |
-| POST | `/notes` | _any authenticated_ | any | Create Note |
-| DELETE | `/notes/{note_id}` | _any authenticated_ | any | Delete Note |
-| GET | `/notes/{note_id}` | _any authenticated_ | any | Get Note |
-| PATCH | `/notes/{note_id}` | _any authenticated_ | any | Update Note |
+| GET | `/notes` | _any authenticated_ | any | List notes |
+| POST | `/notes` | _any authenticated_ | any | Create a note |
+| DELETE | `/notes/{note_id}` | _any authenticated_ | any | Delete a note |
+| GET | `/notes/{note_id}` | _any authenticated_ | any | Get a note |
+| PATCH | `/notes/{note_id}` | _any authenticated_ | any | Update a note |
 
 ### `oauth`
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
 | POST | `/oauth/approval/decision` | `oauth-clients:write` | any | Approve or deny a pending client inline (approval-pending page) |
-| POST | `/oauth/introspect` | _any authenticated_ | any | Introspect Endpoint |
-| POST | `/oauth/revoke` | _any authenticated_ | any | Revoke Endpoint _(Dual-arm (RFC 7009): form-encoded requests authenticate by OAuth client_id lineage binding (public clients, auth method 'none' — the token is revoked only if it was issued to the supplied client_id); JSON requests keep the platform bearer-token contract.)_ |
+| POST | `/oauth/introspect` | _any authenticated_ | any | Introspect an OAuth token |
+| POST | `/oauth/revoke` | _any authenticated_ | any | Revoke an OAuth token _(Dual-arm (RFC 7009): form-encoded requests authenticate by OAuth client_id lineage binding (public clients, auth method 'none' — the token is revoked only if it was issued to the supplied client_id); JSON requests keep the platform bearer-token contract.)_ |
 
 ### `oauth-grants`
 
@@ -387,9 +387,9 @@ _Total endpoints: **174**._
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| DELETE | `/register/{agent_id}` | _any authenticated_ | any | Delete Registration Endpoint |
-| GET | `/register/{agent_id}` | _any authenticated_ | any | Poll Status Endpoint _(Authenticated with the Registration-Access-Token issued at registration (RFC 7592), not a platform bearer token.)_ |
-| PUT | `/register/{agent_id}` | _any authenticated_ | any | Update Registration Endpoint |
+| DELETE | `/register/{agent_id}` | _any authenticated_ | any | Delete a client registration (unsupported) |
+| GET | `/register/{agent_id}` | _any authenticated_ | any | Poll an agent registration's status _(Authenticated with the Registration-Access-Token issued at registration (RFC 7592), not a platform bearer token.)_ |
+| PUT | `/register/{agent_id}` | _any authenticated_ | any | Update a client registration (unsupported) |
 
 ### `system`
 
@@ -424,7 +424,7 @@ _Total endpoints: **174**._
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| GET | `/error` | _public — no auth_ | — | Error Page |
+| GET | `/error` | _public — no auth_ | — | Get a browser authorization error |
 
 ### `health`
 
@@ -445,7 +445,7 @@ _Total endpoints: **174**._
 | GET | `/oauth/approval/status` | _public — no auth_ | — | Poll client approval status (approval-pending page) |
 | POST | `/oauth/consent/agent` | _public — no auth_ | — | Create the consenting user's first agent inline (consent page) |
 | GET | `/oauth/consent/agent/status` | _public — no auth_ | — | Poll pending-agent approval status (consent awaiting page) |
-| POST | `/oauth/token` | _public — no auth_ | — | Token Endpoint |
+| POST | `/oauth/token` | _public — no auth_ | — | Exchange a grant for OAuth tokens |
 
 ### `oauth-clients`
 
@@ -463,7 +463,7 @@ _Total endpoints: **174**._
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| POST | `/register` | _public — no auth_ | — | Register Endpoint |
+| POST | `/register` | _public — no auth_ | — | Register an agent client |
 
 ### `users:create-admin`
 

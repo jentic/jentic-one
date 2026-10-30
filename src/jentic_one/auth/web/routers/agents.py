@@ -206,6 +206,7 @@ async def update_agent(
 
 @router.post(
     "/agents/{agent_id}:approve",
+    summary="Approve an agent",
     status_code=200,
     responses=with_responses(
         not_found(
@@ -233,7 +234,7 @@ async def approve_agent(
     return _agent_response(view)
 
 
-@router.post("/agents/{agent_id}:claim", status_code=200)
+@router.post("/agents/{agent_id}:claim", summary="Claim an agent", status_code=200)
 async def claim_agent(
     agent_id: AgentIdPath,
     body: ClaimRequest,
@@ -266,6 +267,7 @@ async def claim_agent(
 
 @router.post(
     "/agents/{agent_id}:deny",
+    summary="Deny an agent",
     status_code=200,
     responses=with_responses(
         not_found(
@@ -292,7 +294,7 @@ async def deny_agent(
     return _agent_response(view)
 
 
-@router.post("/agents/{agent_id}:disable", status_code=204)
+@router.post("/agents/{agent_id}:disable", summary="Disable an agent", status_code=204)
 async def disable_agent(
     agent_id: AgentIdPath,
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
@@ -303,7 +305,7 @@ async def disable_agent(
     return Response(status_code=204)
 
 
-@router.post("/agents/{agent_id}:enable", status_code=204)
+@router.post("/agents/{agent_id}:enable", summary="Enable an agent", status_code=204)
 async def enable_agent(
     agent_id: AgentIdPath,
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
@@ -316,6 +318,7 @@ async def enable_agent(
 
 @router.delete(
     "/agents/{agent_id}",
+    summary="Archive an agent",
     status_code=204,
     responses=with_responses(
         conflict(
@@ -361,7 +364,11 @@ async def archive_agent(
     return Response(status_code=204)
 
 
-@router.get("/agents/{agent_id}/permissions", operation_id="getAgentPermissions")
+@router.get(
+    "/agents/{agent_id}/permissions",
+    summary="List an agent's permissions",
+    operation_id="getAgentPermissions",
+)
 async def get_agent_permissions(
     agent_id: AgentIdPath,
     identity: Identity = get_current_identity(required_permissions=["agents:read"]),
@@ -372,7 +379,11 @@ async def get_agent_permissions(
     return AgentPermissionsResponse(permissions=permissions)
 
 
-@router.put("/agents/{agent_id}/permissions", operation_id="replaceAgentPermissions")
+@router.put(
+    "/agents/{agent_id}/permissions",
+    summary="Replace an agent's permissions",
+    operation_id="replaceAgentPermissions",
+)
 async def replace_agent_permissions(
     agent_id: AgentIdPath,
     body: AgentPermissionsRequest,
@@ -545,7 +556,11 @@ async def resume_credential_binding(
     return _credential_binding_response(binding)
 
 
-@router.post("/agents/{agent_id}:generate-api-key", status_code=200)
+@router.post(
+    "/agents/{agent_id}:generate-api-key",
+    summary="Generate an agent's API key",
+    status_code=200,
+)
 async def generate_agent_api_key(
     agent_id: AgentIdPath,
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
@@ -556,7 +571,7 @@ async def generate_agent_api_key(
     return ApiKeyResponse(key=key)
 
 
-@router.put("/agents/{agent_id}/jwks", status_code=200)
+@router.put("/agents/{agent_id}/jwks", summary="Replace an agent's JWKS", status_code=200)
 async def update_agent_jwks(
     agent_id: AgentIdPath,
     body: JwksUpdateRequest,
@@ -573,7 +588,11 @@ async def update_agent_jwks(
     return _agent_response(view)
 
 
-@router.post("/agents/{agent_id}:revoke-api-key", status_code=204)
+@router.post(
+    "/agents/{agent_id}:revoke-api-key",
+    summary="Revoke an agent's API key",
+    status_code=204,
+)
 async def revoke_agent_api_key(
     agent_id: AgentIdPath,
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),

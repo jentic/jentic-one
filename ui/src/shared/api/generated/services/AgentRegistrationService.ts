@@ -10,7 +10,7 @@ import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class AgentRegistrationService {
     /**
-     * Register Endpoint
+     * Register an agent client
      * Register a new agent client (RFC 7591).
      * @returns RegisterResponse Successful Response
      * @throws ApiError
@@ -37,7 +37,7 @@ export class AgentRegistrationService {
         });
     }
     /**
-     * Delete Registration Endpoint
+     * Delete a client registration (unsupported)
      * Client deletion not supported — returns 403.
      * @returns void
      * @throws ApiError
@@ -67,7 +67,7 @@ export class AgentRegistrationService {
         });
     }
     /**
-     * Poll Status Endpoint
+     * Poll an agent registration's status
      * Poll registration status (RFC 7592).
      * @returns RegistrationStatusResponse Successful Response
      * @throws ApiError
@@ -96,7 +96,7 @@ export class AgentRegistrationService {
         });
     }
     /**
-     * Update Registration Endpoint
+     * Update a client registration (unsupported)
      * Client update not supported — returns 403.
      * @returns void
      * @throws ApiError

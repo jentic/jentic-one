@@ -12063,7 +12063,7 @@ type ClientInterface interface {
 	// Corresponds with GET /actors (the `ListActors` operationId).
 	ListActors(ctx context.Context, params *ListActorsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// LookupActors Resolve actor names by id
+	// LookupActors Resolve actor names by ID
 	//
 	// Resolve user and agent ids to display names.
 	//
@@ -12339,7 +12339,7 @@ type ClientInterface interface {
 	// Corresponds with POST /agents (the `CreateAgent` operationId).
 	CreateAgent(ctx context.Context, body CreateAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ArchiveAgent Archive Agent
+	// ArchiveAgent Archive an agent
 	//
 	// Archive an agent — or, with ``purge=true``, hard-delete it.
 	//
@@ -12507,7 +12507,7 @@ type ClientInterface interface {
 	// Corresponds with POST /agents/{agent_id}/credentials/{credential_id}:resume (the `ResumeAgentCredentialBinding` operationId).
 	ResumeAgentCredentialBinding(ctx context.Context, agentId string, credentialId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdateAgentJwksWithBody Update Agent Jwks
+	// UpdateAgentJwksWithBody Replace an agent's JWKS
 	//
 	// Update an agent's JWKS (public keys for JWT-bearer authentication).
 	//
@@ -12520,7 +12520,7 @@ type ClientInterface interface {
 	// Corresponds with PUT /agents/{agent_id}/jwks (the `UpdateAgentJwks` operationId).
 	UpdateAgentJwksWithBody(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdateAgentJwks Update Agent Jwks
+	// UpdateAgentJwks Replace an agent's JWKS
 	//
 	// Update an agent's JWKS (public keys for JWT-bearer authentication).
 	//
@@ -12548,14 +12548,14 @@ type ClientInterface interface {
 	// Corresponds with GET /agents/{agent_id}/oauth-grants (the `ListAgentOauthGrants` operationId).
 	ListAgentOauthGrants(ctx context.Context, agentId string, params *ListAgentOauthGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetAgentPermissions Get Agent Permissions
+	// GetAgentPermissions List an agent's permissions
 	//
 	// List permissions granted to an agent.
 	//
 	// Corresponds with GET /agents/{agent_id}/permissions (the `GetAgentPermissions` operationId).
 	GetAgentPermissions(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ReplaceAgentPermissionsWithBody Replace Agent Permissions
+	// ReplaceAgentPermissionsWithBody Replace an agent's permissions
 	//
 	// Replace all permissions for an agent.
 	//
@@ -12564,7 +12564,7 @@ type ClientInterface interface {
 	// Corresponds with PUT /agents/{agent_id}/permissions (the `ReplaceAgentPermissions` operationId).
 	ReplaceAgentPermissionsWithBody(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ReplaceAgentPermissions Replace Agent Permissions
+	// ReplaceAgentPermissions Replace an agent's permissions
 	//
 	// Replace all permissions for an agent.
 	//
@@ -12573,7 +12573,7 @@ type ClientInterface interface {
 	// Corresponds with PUT /agents/{agent_id}/permissions (the `ReplaceAgentPermissions` operationId).
 	ReplaceAgentPermissions(ctx context.Context, agentId string, body ReplaceAgentPermissionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ApproveAgent Approve Agent
+	// ApproveAgent Approve an agent
 	//
 	// Approve a pending agent.
 	//
@@ -12586,7 +12586,7 @@ type ClientInterface interface {
 	// Corresponds with POST /agents/{agent_id}:approve (the `ApproveAgent` operationId).
 	ApproveAgent(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ClaimAgentWithBody Claim Agent
+	// ClaimAgentWithBody Claim an agent
 	//
 	// Claim ownership of a self-registered agent using its claim token.
 	//
@@ -12611,7 +12611,7 @@ type ClientInterface interface {
 	// Corresponds with POST /agents/{agent_id}:claim (the `ClaimAgent` operationId).
 	ClaimAgentWithBody(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ClaimAgent Claim Agent
+	// ClaimAgent Claim an agent
 	//
 	// Claim ownership of a self-registered agent using its claim token.
 	//
@@ -12636,7 +12636,7 @@ type ClientInterface interface {
 	// Corresponds with POST /agents/{agent_id}:claim (the `ClaimAgent` operationId).
 	ClaimAgent(ctx context.Context, agentId string, body ClaimAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DenyAgentWithBody Deny Agent
+	// DenyAgentWithBody Deny an agent
 	//
 	// Deny a pending agent.
 	//
@@ -12649,7 +12649,7 @@ type ClientInterface interface {
 	// Corresponds with POST /agents/{agent_id}:deny (the `DenyAgent` operationId).
 	DenyAgentWithBody(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DenyAgent Deny Agent
+	// DenyAgent Deny an agent
 	//
 	// Deny a pending agent.
 	//
@@ -12662,35 +12662,35 @@ type ClientInterface interface {
 	// Corresponds with POST /agents/{agent_id}:deny (the `DenyAgent` operationId).
 	DenyAgent(ctx context.Context, agentId string, body DenyAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DisableAgent Disable Agent
+	// DisableAgent Disable an agent
 	//
 	// Disable an active agent.
 	//
 	// Corresponds with POST /agents/{agent_id}:disable (the `DisableAgent` operationId).
 	DisableAgent(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// EnableAgent Enable Agent
+	// EnableAgent Enable an agent
 	//
 	// Enable a disabled agent.
 	//
 	// Corresponds with POST /agents/{agent_id}:enable (the `EnableAgent` operationId).
 	EnableAgent(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GenerateAgentApiKey Generate Agent Api Key
+	// GenerateAgentApiKey Generate an agent's API key
 	//
 	// Generate a new API key for an active agent. Rotates any existing key.
 	//
 	// Corresponds with POST /agents/{agent_id}:generate-api-key (the `GenerateAgentApiKey` operationId).
 	GenerateAgentApiKey(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RevokeAgentApiKey Revoke Agent Api Key
+	// RevokeAgentApiKey Revoke an agent's API key
 	//
 	// Revoke an agent's API key without generating a new one.
 	//
 	// Corresponds with POST /agents/{agent_id}:revoke-api-key (the `RevokeAgentApiKey` operationId).
 	RevokeAgentApiKey(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListApis List Apis
+	// ListApis List registered APIs
 	//
 	// List locally registered APIs with optional vendor filter and pagination.
 	//
@@ -12701,7 +12701,7 @@ type ClientInterface interface {
 	// Corresponds with GET /apis (the `ListApis` operationId).
 	ListApis(ctx context.Context, params *ListApisParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ImportApisWithBody Import Apis
+	// ImportApisWithBody Import OpenAPI or Arazzo specs
 	//
 	// Import OpenAPI/Arazzo content as new API revisions (async).
 	//
@@ -12715,7 +12715,7 @@ type ClientInterface interface {
 	// Corresponds with POST /apis (the `ImportApis` operationId).
 	ImportApisWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ImportApis Import Apis
+	// ImportApis Import OpenAPI or Arazzo specs
 	//
 	// Import OpenAPI/Arazzo content as new API revisions (async).
 	//
@@ -12729,21 +12729,21 @@ type ClientInterface interface {
 	// Corresponds with POST /apis (the `ImportApis` operationId).
 	ImportApis(ctx context.Context, body ImportApisJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DeleteApi Delete Api
+	// DeleteApi Delete an API
 	//
 	// Delete an API and all its revisions.
 	//
 	// Corresponds with DELETE /apis/{vendor}/{name}/{version} (the `DeleteApi` operationId).
 	DeleteApi(ctx context.Context, vendor PathVendor, name PathName, version PathVersion, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetApi Get Api
+	// GetApi Get an API
 	//
 	// Retrieve a single API by its (vendor, name, version) identity.
 	//
 	// Corresponds with GET /apis/{vendor}/{name}/{version} (the `GetApi` operationId).
 	GetApi(ctx context.Context, vendor PathVendor, name PathName, version PathVersion, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdateApiWithBody Update Api
+	// UpdateApiWithBody Update an API
 	//
 	// Partially update an API's presentation fields.
 	//
@@ -12752,7 +12752,7 @@ type ClientInterface interface {
 	// Corresponds with PATCH /apis/{vendor}/{name}/{version} (the `UpdateApi` operationId).
 	UpdateApiWithBody(ctx context.Context, vendor PathVendor, name PathName, version PathVersion, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdateApi Update Api
+	// UpdateApi Update an API
 	//
 	// Partially update an API's presentation fields.
 	//
@@ -12761,7 +12761,7 @@ type ClientInterface interface {
 	// Corresponds with PATCH /apis/{vendor}/{name}/{version} (the `UpdateApi` operationId).
 	UpdateApi(ctx context.Context, vendor PathVendor, name PathName, version PathVersion, body UpdateApiJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetApiSpec Get Api Spec
+	// GetApiSpec Get an API's OpenAPI document
 	//
 	// Download the OpenAPI spec for the API's current (live) revision.
 	//
@@ -12841,7 +12841,7 @@ type ClientInterface interface {
 	// Corresponds with DELETE /apis/{vendor}/{name}/{version}/overlays/{overlay_id} (the `DeprecateOverlay` operationId).
 	DeprecateOverlay(ctx context.Context, vendor PathVendor, name PathName, version PathVersion, overlayId PathOverlayId, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetOverlay Get Overlay
+	// GetOverlay Get an overlay
 	//
 	// Retrieve a single overlay by ID.
 	//
@@ -13029,7 +13029,7 @@ type ClientInterface interface {
 	// Corresponds with POST /apis/{vendor}/{name}/{version}/revisions/{revision_id}:archive (the `ArchiveRevision` operationId).
 	ArchiveRevision(ctx context.Context, vendor PathVendor, name PathName, version PathVersion, revisionId PathRevisionId, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// PromoteRevision Promote Revision
+	// PromoteRevision Promote an API revision
 	//
 	// Promote a draft revision to published, archiving the current one.
 	//
@@ -13049,7 +13049,7 @@ type ClientInterface interface {
 	// Corresponds with GET /apis/{vendor}/{name}/{version}/security-schemes (the `ListApiSecuritySchemes` operationId).
 	ListApiSecuritySchemes(ctx context.Context, vendor PathVendor, name PathName, version PathVersion, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListAuditEntries List Audit Entries
+	// ListAuditEntries List audit entries
 	//
 	// List audit entries with optional filters.
 	//
@@ -13059,7 +13059,7 @@ type ClientInterface interface {
 	// Corresponds with GET /audit (the `ListAuditEntries` operationId).
 	ListAuditEntries(ctx context.Context, params *ListAuditEntriesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetAuditEntry Get Audit Entry
+	// GetAuditEntry Get an audit entry
 	//
 	// Get a single audit entry by ID.
 	//
@@ -13110,7 +13110,7 @@ type ClientInterface interface {
 	// Corresponds with POST /auth/refresh (the `RefreshSession` operationId).
 	RefreshSession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListCatalog List Catalog
+	// ListCatalog List catalog entries
 	//
 	// List a keyset page of browsable catalog entries (search/filter aware).
 	//
@@ -13122,14 +13122,14 @@ type ClientInterface interface {
 	// Corresponds with GET /catalog (the `ListCatalog` operationId).
 	ListCatalog(ctx context.Context, params *ListCatalogParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetCatalogEntry Get Catalog Entry
+	// GetCatalogEntry Get a catalog entry
 	//
 	// Retrieve a single catalog entry by api_id.
 	//
 	// Corresponds with GET /catalog/{api_id} (the `GetCatalogEntry` operationId).
 	GetCatalogEntry(ctx context.Context, apiId PathApiId, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// PreviewCatalogOperations Preview Catalog Operations
+	// PreviewCatalogOperations Preview a catalog entry's operations
 	//
 	// Preview the operations of a catalog entry's spec (capped, offset-paginated).
 	//
@@ -13140,14 +13140,14 @@ type ClientInterface interface {
 	// Corresponds with GET /catalog/{api_id}/operations (the `PreviewCatalogOperations` operationId).
 	PreviewCatalogOperations(ctx context.Context, apiId PathApiId, params *PreviewCatalogOperationsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ImportCatalogEntry Import Catalog Entry
+	// ImportCatalogEntry Import a catalog entry
 	//
 	// Enqueue an async import of a catalog entry into the local registry.
 	//
 	// Corresponds with POST /catalog/{api_id}:import (the `ImportCatalogEntry` operationId).
 	ImportCatalogEntry(ctx context.Context, apiId PathApiId, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// SnoozeCatalogEntryWithBody Snooze Catalog Entry
+	// SnoozeCatalogEntryWithBody Snooze a catalog entry's update notice
 	//
 	// Snooze the outstanding update notification for a catalog entry (C1, #925).
 	//
@@ -13162,7 +13162,7 @@ type ClientInterface interface {
 	// Corresponds with POST /catalog/{api_id}:snooze (the `SnoozeCatalogEntry` operationId).
 	SnoozeCatalogEntryWithBody(ctx context.Context, apiId PathApiId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// SnoozeCatalogEntry Snooze Catalog Entry
+	// SnoozeCatalogEntry Snooze a catalog entry's update notice
 	//
 	// Snooze the outstanding update notification for a catalog entry (C1, #925).
 	//
@@ -13177,14 +13177,14 @@ type ClientInterface interface {
 	// Corresponds with POST /catalog/{api_id}:snooze (the `SnoozeCatalogEntry` operationId).
 	SnoozeCatalogEntry(ctx context.Context, apiId PathApiId, body SnoozeCatalogEntryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UnsnoozeCatalogEntry Unsnooze Catalog Entry
+	// UnsnoozeCatalogEntry Clear a catalog entry's snooze
 	//
 	// Clear a snooze for a catalog entry (C1). Operator action (``events:write``).
 	//
 	// Corresponds with POST /catalog/{api_id}:unsnooze (the `UnsnoozeCatalogEntry` operationId).
 	UnsnoozeCatalogEntry(ctx context.Context, apiId PathApiId, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RefreshCatalog Refresh Catalog
+	// RefreshCatalog Refresh the catalog cache
 	//
 	// Force a refresh of the catalog cache from the upstream manifest (org:admin).
 	//
@@ -13616,21 +13616,21 @@ type ClientInterface interface {
 	// Corresponds with POST /credentials/{credential_id}/connect (the `ConnectCredential` operationId).
 	ConnectCredential(ctx context.Context, credentialId PathCredentialId, body ConnectCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ErrorPage Error Page
+	// ErrorPage Get a browser authorization error
 	//
 	// Minimal error endpoint for browser-facing authorization failures.
 	//
 	// Corresponds with GET /error (the `ErrorPage` operationId).
 	ErrorPage(ctx context.Context, params *ErrorPageParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListEvents List Events
+	// ListEvents List events
 	//
 	// List events with optional filters.
 	//
 	// Corresponds with GET /events (the `ListEvents` operationId).
 	ListEvents(ctx context.Context, params *ListEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// StreamEvents Stream Events
+	// StreamEvents Stream events over SSE
 	//
 	// Stream events as Server-Sent Events.
 	//
@@ -13655,14 +13655,14 @@ type ClientInterface interface {
 	// Corresponds with GET /events/stream (the `StreamEvents` operationId).
 	StreamEvents(ctx context.Context, params *StreamEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetEvent Get Event
+	// GetEvent Get an event
 	//
 	// Get an event by ID.
 	//
 	// Corresponds with GET /events/{event_id} (the `GetEvent` operationId).
 	GetEvent(ctx context.Context, eventId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListExecutions List Executions
+	// ListExecutions List executions
 	//
 	// List execution records with optional filters.
 	//
@@ -13744,14 +13744,14 @@ type ClientInterface interface {
 	// Corresponds with POST /executions/holds/{held_execution_id}:withdraw (the `WithdrawHeldExecution` operationId).
 	WithdrawHeldExecution(ctx context.Context, heldExecutionId PathHeldExecutionId, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetExecution Get Execution
+	// GetExecution Get an execution
 	//
 	// Get an execution record by ID.
 	//
 	// Corresponds with GET /executions/{execution_id} (the `GetExecution` operationId).
 	GetExecution(ctx context.Context, executionId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetGovernedHosts Get Governed Hosts
+	// GetGovernedHosts Get the caller's governed host set
 	//
 	// The caller's governed host set (credential-bound hosts) with an ETag digest.
 	//
@@ -13911,28 +13911,28 @@ type ClientInterface interface {
 	// Corresponds with POST /integrations:edit-connection (the `IntegrationsEditConnection` operationId).
 	IntegrationsEditConnection(ctx context.Context, body IntegrationsEditConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListJobs List Jobs
+	// ListJobs List jobs
 	//
 	// List jobs with optional filters.
 	//
 	// Corresponds with GET /jobs (the `ListJobs` operationId).
 	ListJobs(ctx context.Context, params *ListJobsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetJob Get Job
+	// GetJob Get a job
 	//
 	// Get a job by ID.
 	//
 	// Corresponds with GET /jobs/{job_id} (the `GetJob` operationId).
 	GetJob(ctx context.Context, jobId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetJobResult Get Job Result
+	// GetJobResult Get a job's result
 	//
 	// Get the result of a completed job — polymorphic by kind.
 	//
 	// Corresponds with GET /jobs/{job_id}/result (the `GetJobResult` operationId).
 	GetJobResult(ctx context.Context, jobId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CancelJob Cancel Job
+	// CancelJob Cancel a job
 	//
 	// Cancel an active job.
 	//
@@ -13978,28 +13978,28 @@ type ClientInterface interface {
 	// Corresponds with POST /mcp/config-registrations (the `ReportMcpConfigRegistration` operationId).
 	ReportMcpConfigRegistration(ctx context.Context, body ReportMcpConfigRegistrationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetMe Get Me
+	// GetMe Get the caller's identity
 	//
 	// Return the caller's identity and context, discriminated by actor type.
 	//
 	// Corresponds with GET /me (the `GetMe` operationId).
 	GetMe(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetExecutionStats Get Execution Stats
+	// GetExecutionStats Get execution statistics
 	//
 	// Return aggregated execution statistics for the dashboard.
 	//
 	// Corresponds with GET /monitoring/executions (the `GetExecutionStats` operationId).
 	GetExecutionStats(ctx context.Context, params *GetExecutionStatsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetUsageStats Get Usage Stats
+	// GetUsageStats Get usage statistics
 	//
 	// Return detailed usage statistics for the monitoring overview.
 	//
 	// Corresponds with GET /monitoring/usage (the `GetUsageStats` operationId).
 	GetUsageStats(ctx context.Context, params *GetUsageStatsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListNotes List Notes
+	// ListNotes List notes
 	//
 	// List notes with optional filters and cursor pagination.
 	//
@@ -14008,7 +14008,7 @@ type ClientInterface interface {
 	// Corresponds with GET /notes (the `ListNotes` operationId).
 	ListNotes(ctx context.Context, params *ListNotesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateNoteWithBody Create Note
+	// CreateNoteWithBody Create a note
 	//
 	// Create a new note attached to a registry resource.
 	//
@@ -14017,7 +14017,7 @@ type ClientInterface interface {
 	// Corresponds with POST /notes (the `CreateNote` operationId).
 	CreateNoteWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateNote Create Note
+	// CreateNote Create a note
 	//
 	// Create a new note attached to a registry resource.
 	//
@@ -14026,14 +14026,14 @@ type ClientInterface interface {
 	// Corresponds with POST /notes (the `CreateNote` operationId).
 	CreateNote(ctx context.Context, body CreateNoteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DeleteNote Delete Note
+	// DeleteNote Delete a note
 	//
 	// Delete a note. Supports optimistic concurrency via If-Match.
 	//
 	// Corresponds with DELETE /notes/{note_id} (the `DeleteNote` operationId).
 	DeleteNote(ctx context.Context, noteId string, params *DeleteNoteParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetNote Get Note
+	// GetNote Get a note
 	//
 	// Retrieve a single note by ID.
 	//
@@ -14043,7 +14043,7 @@ type ClientInterface interface {
 	// Corresponds with GET /notes/{note_id} (the `GetNote` operationId).
 	GetNote(ctx context.Context, noteId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdateNoteWithBody Update Note
+	// UpdateNoteWithBody Update a note
 	//
 	// Update a note (partial). Supports optimistic concurrency via If-Match.
 	//
@@ -14052,7 +14052,7 @@ type ClientInterface interface {
 	// Corresponds with PATCH /notes/{note_id} (the `UpdateNote` operationId).
 	UpdateNoteWithBody(ctx context.Context, noteId string, params *UpdateNoteParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdateNote Update Note
+	// UpdateNote Update a note
 	//
 	// Update a note (partial). Supports optimistic concurrency via If-Match.
 	//
@@ -14141,7 +14141,7 @@ type ClientInterface interface {
 	// Corresponds with PATCH /oauth-app-registrations/{id} (the `UpdateOauthAppRegistration` operationId).
 	UpdateOauthAppRegistration(ctx context.Context, id string, body UpdateOauthAppRegistrationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RotateOauthAppRegistrationSecretWithBody Rotate the client secret
+	// RotateOauthAppRegistrationSecretWithBody Rotate an OAuth app registration's secret
 	//
 	// Replace the encrypted client secret. Existing tokens are unaffected;
 	// subsequent refreshes present the new secret.
@@ -14151,7 +14151,7 @@ type ClientInterface interface {
 	// Corresponds with POST /oauth-app-registrations/{id}:rotate-secret (the `RotateOauthAppRegistrationSecret` operationId).
 	RotateOauthAppRegistrationSecretWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RotateOauthAppRegistrationSecret Rotate the client secret
+	// RotateOauthAppRegistrationSecret Rotate an OAuth app registration's secret
 	//
 	// Replace the encrypted client secret. Existing tokens are unaffected;
 	// subsequent refreshes present the new secret.
@@ -14371,7 +14371,7 @@ type ClientInterface interface {
 	// Corresponds with GET /oauth/consent/agent/status (the `ConsentAgentStatus` operationId).
 	ConsentAgentStatus(ctx context.Context, params *ConsentAgentStatusParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// IntrospectEndpointWithBody Introspect Endpoint
+	// IntrospectEndpointWithBody Introspect an OAuth token
 	//
 	// Introspect a token (RFC 7662).
 	//
@@ -14388,7 +14388,7 @@ type ClientInterface interface {
 	// Corresponds with POST /oauth/introspect (the `IntrospectEndpoint` operationId).
 	IntrospectEndpointWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// IntrospectEndpoint Introspect Endpoint
+	// IntrospectEndpoint Introspect an OAuth token
 	//
 	// Introspect a token (RFC 7662).
 	//
@@ -14405,7 +14405,7 @@ type ClientInterface interface {
 	// Corresponds with POST /oauth/introspect (the `IntrospectEndpoint` operationId).
 	IntrospectEndpoint(ctx context.Context, body IntrospectEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// IntrospectEndpointWithFormdataBody Introspect Endpoint
+	// IntrospectEndpointWithFormdataBody Introspect an OAuth token
 	//
 	// Introspect a token (RFC 7662).
 	//
@@ -14422,7 +14422,7 @@ type ClientInterface interface {
 	// Corresponds with POST /oauth/introspect (the `IntrospectEndpoint` operationId).
 	IntrospectEndpointWithFormdataBody(ctx context.Context, body IntrospectEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RevokeEndpointWithBody Revoke Endpoint
+	// RevokeEndpointWithBody Revoke an OAuth token
 	//
 	// Revoke a token (RFC 7009). Always returns 200 for valid requests.
 	//
@@ -14459,7 +14459,7 @@ type ClientInterface interface {
 	// Corresponds with POST /oauth/revoke (the `RevokeEndpoint` operationId).
 	RevokeEndpointWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RevokeEndpoint Revoke Endpoint
+	// RevokeEndpoint Revoke an OAuth token
 	//
 	// Revoke a token (RFC 7009). Always returns 200 for valid requests.
 	//
@@ -14496,7 +14496,7 @@ type ClientInterface interface {
 	// Corresponds with POST /oauth/revoke (the `RevokeEndpoint` operationId).
 	RevokeEndpoint(ctx context.Context, body RevokeEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RevokeEndpointWithFormdataBody Revoke Endpoint
+	// RevokeEndpointWithFormdataBody Revoke an OAuth token
 	//
 	// Revoke a token (RFC 7009). Always returns 200 for valid requests.
 	//
@@ -14533,7 +14533,7 @@ type ClientInterface interface {
 	// Corresponds with POST /oauth/revoke (the `RevokeEndpoint` operationId).
 	RevokeEndpointWithFormdataBody(ctx context.Context, body RevokeEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// TokenEndpointWithBody Token Endpoint
+	// TokenEndpointWithBody Exchange a grant for OAuth tokens
 	//
 	// Exchange a refresh token, JWT assertion, or authorization code for tokens.
 	//
@@ -14551,7 +14551,7 @@ type ClientInterface interface {
 	// Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
 	TokenEndpointWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// TokenEndpoint Token Endpoint
+	// TokenEndpoint Exchange a grant for OAuth tokens
 	//
 	// Exchange a refresh token, JWT assertion, or authorization code for tokens.
 	//
@@ -14569,7 +14569,7 @@ type ClientInterface interface {
 	// Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
 	TokenEndpoint(ctx context.Context, body TokenEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// TokenEndpointWithFormdataBody Token Endpoint
+	// TokenEndpointWithFormdataBody Exchange a grant for OAuth tokens
 	//
 	// Exchange a refresh token, JWT assertion, or authorization code for tokens.
 	//
@@ -14728,7 +14728,7 @@ type ClientInterface interface {
 	// Corresponds with GET /permissions (the `ListPermissions` operationId).
 	ListPermissions(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RegisterEndpointWithBody Register Endpoint
+	// RegisterEndpointWithBody Register an agent client
 	//
 	// Register a new agent client (RFC 7591).
 	//
@@ -14737,7 +14737,7 @@ type ClientInterface interface {
 	// Corresponds with POST /register (the `RegisterEndpoint` operationId).
 	RegisterEndpointWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RegisterEndpoint Register Endpoint
+	// RegisterEndpoint Register an agent client
 	//
 	// Register a new agent client (RFC 7591).
 	//
@@ -14746,21 +14746,21 @@ type ClientInterface interface {
 	// Corresponds with POST /register (the `RegisterEndpoint` operationId).
 	RegisterEndpoint(ctx context.Context, body RegisterEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DeleteRegistrationEndpoint Delete Registration Endpoint
+	// DeleteRegistrationEndpoint Delete a client registration (unsupported)
 	//
 	// Client deletion not supported — returns 403.
 	//
 	// Corresponds with DELETE /register/{agent_id} (the `DeleteRegistrationEndpoint` operationId).
 	DeleteRegistrationEndpoint(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// PollStatusEndpoint Poll Status Endpoint
+	// PollStatusEndpoint Poll an agent registration's status
 	//
 	// Poll registration status (RFC 7592).
 	//
 	// Corresponds with GET /register/{agent_id} (the `PollStatusEndpoint` operationId).
 	PollStatusEndpoint(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdateRegistrationEndpoint Update Registration Endpoint
+	// UpdateRegistrationEndpoint Update a client registration (unsupported)
 	//
 	// Client update not supported — returns 403.
 	//
@@ -14798,7 +14798,7 @@ type ClientInterface interface {
 	// Corresponds with GET /system/version (the `GetVersion` operationId).
 	GetVersion(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListUsers List Users
+	// ListUsers List users
 	//
 	// List users with cursor-based pagination.
 	//
@@ -14807,7 +14807,7 @@ type ClientInterface interface {
 	// Corresponds with GET /users (the `ListUsers` operationId).
 	ListUsers(ctx context.Context, params *ListUsersParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateUserWithBody Create User
+	// CreateUserWithBody Create a user and issue an invite
 	//
 	// Create a new user and issue an invite token.
 	//
@@ -14816,7 +14816,7 @@ type ClientInterface interface {
 	// Corresponds with POST /users (the `CreateUser` operationId).
 	CreateUserWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateUser Create User
+	// CreateUser Create a user and issue an invite
 	//
 	// Create a new user and issue an invite token.
 	//
@@ -14858,7 +14858,7 @@ type ClientInterface interface {
 	// Corresponds with POST /users/me:change-password (the `ChangePassword` operationId).
 	ChangePassword(ctx context.Context, body ChangePasswordJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DeleteUser Delete User
+	// DeleteUser Delete a user
 	//
 	// Delete a user account (terminal-but-kept).
 	//
@@ -14874,7 +14874,7 @@ type ClientInterface interface {
 	// Corresponds with DELETE /users/{user_id} (the `DeleteUser` operationId).
 	DeleteUser(ctx context.Context, userId PathUserId, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetUser Get User
+	// GetUser Get a user
 	//
 	// Get a user by ID.
 	//
@@ -14884,7 +14884,7 @@ type ClientInterface interface {
 	// Corresponds with GET /users/{user_id} (the `GetUser` operationId).
 	GetUser(ctx context.Context, userId PathUserId, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdateUserWithBody Update User
+	// UpdateUserWithBody Update a user
 	//
 	// Update a user's profile fields.
 	//
@@ -14897,7 +14897,7 @@ type ClientInterface interface {
 	// Corresponds with PATCH /users/{user_id} (the `UpdateUser` operationId).
 	UpdateUserWithBody(ctx context.Context, userId PathUserId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdateUser Update User
+	// UpdateUser Update a user
 	//
 	// Update a user's profile fields.
 	//
@@ -14910,7 +14910,7 @@ type ClientInterface interface {
 	// Corresponds with PATCH /users/{user_id} (the `UpdateUser` operationId).
 	UpdateUser(ctx context.Context, userId PathUserId, body UpdateUserJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// SetUserPermissionsWithBody Set User Permissions
+	// SetUserPermissionsWithBody Set a user's permissions
 	//
 	// Set the assigned permissions for a user.
 	//
@@ -14925,7 +14925,7 @@ type ClientInterface interface {
 	// Corresponds with PUT /users/{user_id}/permissions (the `SetUserPermissions` operationId).
 	SetUserPermissionsWithBody(ctx context.Context, userId PathUserId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// SetUserPermissions Set User Permissions
+	// SetUserPermissions Set a user's permissions
 	//
 	// Set the assigned permissions for a user.
 	//
@@ -14940,7 +14940,7 @@ type ClientInterface interface {
 	// Corresponds with PUT /users/{user_id}/permissions (the `SetUserPermissions` operationId).
 	SetUserPermissions(ctx context.Context, userId PathUserId, body SetUserPermissionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DisableUser Disable User
+	// DisableUser Disable a user
 	//
 	// Disable a user account.
 	//
@@ -14949,7 +14949,7 @@ type ClientInterface interface {
 	// Corresponds with POST /users/{user_id}:disable (the `DisableUser` operationId).
 	DisableUser(ctx context.Context, userId PathUserId, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// EnableUser Enable User
+	// EnableUser Enable a user
 	//
 	// Enable a disabled user account.
 	//
@@ -14959,7 +14959,7 @@ type ClientInterface interface {
 	// Corresponds with POST /users/{user_id}:enable (the `EnableUser` operationId).
 	EnableUser(ctx context.Context, userId PathUserId, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ReissueInvite Reissue Invite
+	// ReissueInvite Reissue a user's invite
 	//
 	// Reissue an invite token for a user.
 	//
@@ -15065,7 +15065,7 @@ func (c *Client) ListActors(ctx context.Context, params *ListActorsParams, reqEd
 	return c.Client.Do(req)
 }
 
-// LookupActors Resolve actor names by id
+// LookupActors Resolve actor names by ID
 //
 // Resolve user and agent ids to display names.
 //
@@ -15561,7 +15561,7 @@ func (c *Client) CreateAgent(ctx context.Context, body CreateAgentJSONRequestBod
 	return c.Client.Do(req)
 }
 
-// ArchiveAgent Archive Agent
+// ArchiveAgent Archive an agent
 //
 // Archive an agent — or, with “purge=true“, hard-delete it.
 //
@@ -15839,7 +15839,7 @@ func (c *Client) ResumeAgentCredentialBinding(ctx context.Context, agentId strin
 	return c.Client.Do(req)
 }
 
-// UpdateAgentJwksWithBody Update Agent Jwks
+// UpdateAgentJwksWithBody Replace an agent's JWKS
 //
 // Update an agent's JWKS (public keys for JWT-bearer authentication).
 //
@@ -15862,7 +15862,7 @@ func (c *Client) UpdateAgentJwksWithBody(ctx context.Context, agentId string, co
 	return c.Client.Do(req)
 }
 
-// UpdateAgentJwks Update Agent Jwks
+// UpdateAgentJwks Replace an agent's JWKS
 //
 // Update an agent's JWKS (public keys for JWT-bearer authentication).
 //
@@ -15910,7 +15910,7 @@ func (c *Client) ListAgentOauthGrants(ctx context.Context, agentId string, param
 	return c.Client.Do(req)
 }
 
-// GetAgentPermissions Get Agent Permissions
+// GetAgentPermissions List an agent's permissions
 //
 // List permissions granted to an agent.
 //
@@ -15927,7 +15927,7 @@ func (c *Client) GetAgentPermissions(ctx context.Context, agentId string, reqEdi
 	return c.Client.Do(req)
 }
 
-// ReplaceAgentPermissionsWithBody Replace Agent Permissions
+// ReplaceAgentPermissionsWithBody Replace an agent's permissions
 //
 // Replace all permissions for an agent.
 //
@@ -15946,7 +15946,7 @@ func (c *Client) ReplaceAgentPermissionsWithBody(ctx context.Context, agentId st
 	return c.Client.Do(req)
 }
 
-// ReplaceAgentPermissions Replace Agent Permissions
+// ReplaceAgentPermissions Replace an agent's permissions
 //
 // Replace all permissions for an agent.
 //
@@ -15965,7 +15965,7 @@ func (c *Client) ReplaceAgentPermissions(ctx context.Context, agentId string, bo
 	return c.Client.Do(req)
 }
 
-// ApproveAgent Approve Agent
+// ApproveAgent Approve an agent
 //
 // Approve a pending agent.
 //
@@ -15988,7 +15988,7 @@ func (c *Client) ApproveAgent(ctx context.Context, agentId string, reqEditors ..
 	return c.Client.Do(req)
 }
 
-// ClaimAgentWithBody Claim Agent
+// ClaimAgentWithBody Claim an agent
 //
 // Claim ownership of a self-registered agent using its claim token.
 //
@@ -16023,7 +16023,7 @@ func (c *Client) ClaimAgentWithBody(ctx context.Context, agentId string, content
 	return c.Client.Do(req)
 }
 
-// ClaimAgent Claim Agent
+// ClaimAgent Claim an agent
 //
 // Claim ownership of a self-registered agent using its claim token.
 //
@@ -16058,7 +16058,7 @@ func (c *Client) ClaimAgent(ctx context.Context, agentId string, body ClaimAgent
 	return c.Client.Do(req)
 }
 
-// DenyAgentWithBody Deny Agent
+// DenyAgentWithBody Deny an agent
 //
 // Deny a pending agent.
 //
@@ -16081,7 +16081,7 @@ func (c *Client) DenyAgentWithBody(ctx context.Context, agentId string, contentT
 	return c.Client.Do(req)
 }
 
-// DenyAgent Deny Agent
+// DenyAgent Deny an agent
 //
 // Deny a pending agent.
 //
@@ -16104,7 +16104,7 @@ func (c *Client) DenyAgent(ctx context.Context, agentId string, body DenyAgentJS
 	return c.Client.Do(req)
 }
 
-// DisableAgent Disable Agent
+// DisableAgent Disable an agent
 //
 // Disable an active agent.
 //
@@ -16121,7 +16121,7 @@ func (c *Client) DisableAgent(ctx context.Context, agentId string, reqEditors ..
 	return c.Client.Do(req)
 }
 
-// EnableAgent Enable Agent
+// EnableAgent Enable an agent
 //
 // Enable a disabled agent.
 //
@@ -16138,7 +16138,7 @@ func (c *Client) EnableAgent(ctx context.Context, agentId string, reqEditors ...
 	return c.Client.Do(req)
 }
 
-// GenerateAgentApiKey Generate Agent Api Key
+// GenerateAgentApiKey Generate an agent's API key
 //
 // Generate a new API key for an active agent. Rotates any existing key.
 //
@@ -16155,7 +16155,7 @@ func (c *Client) GenerateAgentApiKey(ctx context.Context, agentId string, reqEdi
 	return c.Client.Do(req)
 }
 
-// RevokeAgentApiKey Revoke Agent Api Key
+// RevokeAgentApiKey Revoke an agent's API key
 //
 // Revoke an agent's API key without generating a new one.
 //
@@ -16172,7 +16172,7 @@ func (c *Client) RevokeAgentApiKey(ctx context.Context, agentId string, reqEdito
 	return c.Client.Do(req)
 }
 
-// ListApis List Apis
+// ListApis List registered APIs
 //
 // List locally registered APIs with optional vendor filter and pagination.
 //
@@ -16193,7 +16193,7 @@ func (c *Client) ListApis(ctx context.Context, params *ListApisParams, reqEditor
 	return c.Client.Do(req)
 }
 
-// ImportApisWithBody Import Apis
+// ImportApisWithBody Import OpenAPI or Arazzo specs
 //
 // Import OpenAPI/Arazzo content as new API revisions (async).
 //
@@ -16217,7 +16217,7 @@ func (c *Client) ImportApisWithBody(ctx context.Context, contentType string, bod
 	return c.Client.Do(req)
 }
 
-// ImportApis Import Apis
+// ImportApis Import OpenAPI or Arazzo specs
 //
 // Import OpenAPI/Arazzo content as new API revisions (async).
 //
@@ -16241,7 +16241,7 @@ func (c *Client) ImportApis(ctx context.Context, body ImportApisJSONRequestBody,
 	return c.Client.Do(req)
 }
 
-// DeleteApi Delete Api
+// DeleteApi Delete an API
 //
 // Delete an API and all its revisions.
 //
@@ -16258,7 +16258,7 @@ func (c *Client) DeleteApi(ctx context.Context, vendor PathVendor, name PathName
 	return c.Client.Do(req)
 }
 
-// GetApi Get Api
+// GetApi Get an API
 //
 // Retrieve a single API by its (vendor, name, version) identity.
 //
@@ -16275,7 +16275,7 @@ func (c *Client) GetApi(ctx context.Context, vendor PathVendor, name PathName, v
 	return c.Client.Do(req)
 }
 
-// UpdateApiWithBody Update Api
+// UpdateApiWithBody Update an API
 //
 // Partially update an API's presentation fields.
 //
@@ -16294,7 +16294,7 @@ func (c *Client) UpdateApiWithBody(ctx context.Context, vendor PathVendor, name 
 	return c.Client.Do(req)
 }
 
-// UpdateApi Update Api
+// UpdateApi Update an API
 //
 // Partially update an API's presentation fields.
 //
@@ -16313,7 +16313,7 @@ func (c *Client) UpdateApi(ctx context.Context, vendor PathVendor, name PathName
 	return c.Client.Do(req)
 }
 
-// GetApiSpec Get Api Spec
+// GetApiSpec Get an API's OpenAPI document
 //
 // Download the OpenAPI spec for the API's current (live) revision.
 //
@@ -16453,7 +16453,7 @@ func (c *Client) DeprecateOverlay(ctx context.Context, vendor PathVendor, name P
 	return c.Client.Do(req)
 }
 
-// GetOverlay Get Overlay
+// GetOverlay Get an overlay
 //
 // Retrieve a single overlay by ID.
 //
@@ -16761,7 +16761,7 @@ func (c *Client) ArchiveRevision(ctx context.Context, vendor PathVendor, name Pa
 	return c.Client.Do(req)
 }
 
-// PromoteRevision Promote Revision
+// PromoteRevision Promote an API revision
 //
 // Promote a draft revision to published, archiving the current one.
 //
@@ -16801,7 +16801,7 @@ func (c *Client) ListApiSecuritySchemes(ctx context.Context, vendor PathVendor, 
 	return c.Client.Do(req)
 }
 
-// ListAuditEntries List Audit Entries
+// ListAuditEntries List audit entries
 //
 // List audit entries with optional filters.
 //
@@ -16821,7 +16821,7 @@ func (c *Client) ListAuditEntries(ctx context.Context, params *ListAuditEntriesP
 	return c.Client.Do(req)
 }
 
-// GetAuditEntry Get Audit Entry
+// GetAuditEntry Get an audit entry
 //
 // Get a single audit entry by ID.
 //
@@ -16922,7 +16922,7 @@ func (c *Client) RefreshSession(ctx context.Context, reqEditors ...RequestEditor
 	return c.Client.Do(req)
 }
 
-// ListCatalog List Catalog
+// ListCatalog List catalog entries
 //
 // List a keyset page of browsable catalog entries (search/filter aware).
 //
@@ -16944,7 +16944,7 @@ func (c *Client) ListCatalog(ctx context.Context, params *ListCatalogParams, req
 	return c.Client.Do(req)
 }
 
-// GetCatalogEntry Get Catalog Entry
+// GetCatalogEntry Get a catalog entry
 //
 // Retrieve a single catalog entry by api_id.
 //
@@ -16961,7 +16961,7 @@ func (c *Client) GetCatalogEntry(ctx context.Context, apiId PathApiId, reqEditor
 	return c.Client.Do(req)
 }
 
-// PreviewCatalogOperations Preview Catalog Operations
+// PreviewCatalogOperations Preview a catalog entry's operations
 //
 // Preview the operations of a catalog entry's spec (capped, offset-paginated).
 //
@@ -16982,7 +16982,7 @@ func (c *Client) PreviewCatalogOperations(ctx context.Context, apiId PathApiId, 
 	return c.Client.Do(req)
 }
 
-// ImportCatalogEntry Import Catalog Entry
+// ImportCatalogEntry Import a catalog entry
 //
 // Enqueue an async import of a catalog entry into the local registry.
 //
@@ -16999,7 +16999,7 @@ func (c *Client) ImportCatalogEntry(ctx context.Context, apiId PathApiId, reqEdi
 	return c.Client.Do(req)
 }
 
-// SnoozeCatalogEntryWithBody Snooze Catalog Entry
+// SnoozeCatalogEntryWithBody Snooze a catalog entry's update notice
 //
 // Snooze the outstanding update notification for a catalog entry (C1, #925).
 //
@@ -17024,7 +17024,7 @@ func (c *Client) SnoozeCatalogEntryWithBody(ctx context.Context, apiId PathApiId
 	return c.Client.Do(req)
 }
 
-// SnoozeCatalogEntry Snooze Catalog Entry
+// SnoozeCatalogEntry Snooze a catalog entry's update notice
 //
 // Snooze the outstanding update notification for a catalog entry (C1, #925).
 //
@@ -17049,7 +17049,7 @@ func (c *Client) SnoozeCatalogEntry(ctx context.Context, apiId PathApiId, body S
 	return c.Client.Do(req)
 }
 
-// UnsnoozeCatalogEntry Unsnooze Catalog Entry
+// UnsnoozeCatalogEntry Clear a catalog entry's snooze
 //
 // Clear a snooze for a catalog entry (C1). Operator action (“events:write“).
 //
@@ -17066,7 +17066,7 @@ func (c *Client) UnsnoozeCatalogEntry(ctx context.Context, apiId PathApiId, reqE
 	return c.Client.Do(req)
 }
 
-// RefreshCatalog Refresh Catalog
+// RefreshCatalog Refresh the catalog cache
 //
 // Force a refresh of the catalog cache from the upstream manifest (org:admin).
 //
@@ -17818,7 +17818,7 @@ func (c *Client) ConnectCredential(ctx context.Context, credentialId PathCredent
 	return c.Client.Do(req)
 }
 
-// ErrorPage Error Page
+// ErrorPage Get a browser authorization error
 //
 // Minimal error endpoint for browser-facing authorization failures.
 //
@@ -17835,7 +17835,7 @@ func (c *Client) ErrorPage(ctx context.Context, params *ErrorPageParams, reqEdit
 	return c.Client.Do(req)
 }
 
-// ListEvents List Events
+// ListEvents List events
 //
 // List events with optional filters.
 //
@@ -17852,7 +17852,7 @@ func (c *Client) ListEvents(ctx context.Context, params *ListEventsParams, reqEd
 	return c.Client.Do(req)
 }
 
-// StreamEvents Stream Events
+// StreamEvents Stream events over SSE
 //
 // Stream events as Server-Sent Events.
 //
@@ -17887,7 +17887,7 @@ func (c *Client) StreamEvents(ctx context.Context, params *StreamEventsParams, r
 	return c.Client.Do(req)
 }
 
-// GetEvent Get Event
+// GetEvent Get an event
 //
 // Get an event by ID.
 //
@@ -17904,7 +17904,7 @@ func (c *Client) GetEvent(ctx context.Context, eventId string, reqEditors ...Req
 	return c.Client.Do(req)
 }
 
-// ListExecutions List Executions
+// ListExecutions List executions
 //
 // List execution records with optional filters.
 //
@@ -18056,7 +18056,7 @@ func (c *Client) WithdrawHeldExecution(ctx context.Context, heldExecutionId Path
 	return c.Client.Do(req)
 }
 
-// GetExecution Get Execution
+// GetExecution Get an execution
 //
 // Get an execution record by ID.
 //
@@ -18073,7 +18073,7 @@ func (c *Client) GetExecution(ctx context.Context, executionId string, reqEditor
 	return c.Client.Do(req)
 }
 
-// GetGovernedHosts Get Governed Hosts
+// GetGovernedHosts Get the caller's governed host set
 //
 // The caller's governed host set (credential-bound hosts) with an ETag digest.
 //
@@ -18323,7 +18323,7 @@ func (c *Client) IntegrationsEditConnection(ctx context.Context, body Integratio
 	return c.Client.Do(req)
 }
 
-// ListJobs List Jobs
+// ListJobs List jobs
 //
 // List jobs with optional filters.
 //
@@ -18340,7 +18340,7 @@ func (c *Client) ListJobs(ctx context.Context, params *ListJobsParams, reqEditor
 	return c.Client.Do(req)
 }
 
-// GetJob Get Job
+// GetJob Get a job
 //
 // Get a job by ID.
 //
@@ -18357,7 +18357,7 @@ func (c *Client) GetJob(ctx context.Context, jobId string, reqEditors ...Request
 	return c.Client.Do(req)
 }
 
-// GetJobResult Get Job Result
+// GetJobResult Get a job's result
 //
 // Get the result of a completed job — polymorphic by kind.
 //
@@ -18374,7 +18374,7 @@ func (c *Client) GetJobResult(ctx context.Context, jobId string, reqEditors ...R
 	return c.Client.Do(req)
 }
 
-// CancelJob Cancel Job
+// CancelJob Cancel a job
 //
 // Cancel an active job.
 //
@@ -18450,7 +18450,7 @@ func (c *Client) ReportMcpConfigRegistration(ctx context.Context, body ReportMcp
 	return c.Client.Do(req)
 }
 
-// GetMe Get Me
+// GetMe Get the caller's identity
 //
 // Return the caller's identity and context, discriminated by actor type.
 //
@@ -18467,7 +18467,7 @@ func (c *Client) GetMe(ctx context.Context, reqEditors ...RequestEditorFn) (*htt
 	return c.Client.Do(req)
 }
 
-// GetExecutionStats Get Execution Stats
+// GetExecutionStats Get execution statistics
 //
 // Return aggregated execution statistics for the dashboard.
 //
@@ -18484,7 +18484,7 @@ func (c *Client) GetExecutionStats(ctx context.Context, params *GetExecutionStat
 	return c.Client.Do(req)
 }
 
-// GetUsageStats Get Usage Stats
+// GetUsageStats Get usage statistics
 //
 // Return detailed usage statistics for the monitoring overview.
 //
@@ -18501,7 +18501,7 @@ func (c *Client) GetUsageStats(ctx context.Context, params *GetUsageStatsParams,
 	return c.Client.Do(req)
 }
 
-// ListNotes List Notes
+// ListNotes List notes
 //
 // List notes with optional filters and cursor pagination.
 //
@@ -18520,7 +18520,7 @@ func (c *Client) ListNotes(ctx context.Context, params *ListNotesParams, reqEdit
 	return c.Client.Do(req)
 }
 
-// CreateNoteWithBody Create Note
+// CreateNoteWithBody Create a note
 //
 // Create a new note attached to a registry resource.
 //
@@ -18539,7 +18539,7 @@ func (c *Client) CreateNoteWithBody(ctx context.Context, contentType string, bod
 	return c.Client.Do(req)
 }
 
-// CreateNote Create Note
+// CreateNote Create a note
 //
 // Create a new note attached to a registry resource.
 //
@@ -18558,7 +18558,7 @@ func (c *Client) CreateNote(ctx context.Context, body CreateNoteJSONRequestBody,
 	return c.Client.Do(req)
 }
 
-// DeleteNote Delete Note
+// DeleteNote Delete a note
 //
 // Delete a note. Supports optimistic concurrency via If-Match.
 //
@@ -18575,7 +18575,7 @@ func (c *Client) DeleteNote(ctx context.Context, noteId string, params *DeleteNo
 	return c.Client.Do(req)
 }
 
-// GetNote Get Note
+// GetNote Get a note
 //
 // Retrieve a single note by ID.
 //
@@ -18595,7 +18595,7 @@ func (c *Client) GetNote(ctx context.Context, noteId string, reqEditors ...Reque
 	return c.Client.Do(req)
 }
 
-// UpdateNoteWithBody Update Note
+// UpdateNoteWithBody Update a note
 //
 // Update a note (partial). Supports optimistic concurrency via If-Match.
 //
@@ -18614,7 +18614,7 @@ func (c *Client) UpdateNoteWithBody(ctx context.Context, noteId string, params *
 	return c.Client.Do(req)
 }
 
-// UpdateNote Update Note
+// UpdateNote Update a note
 //
 // Update a note (partial). Supports optimistic concurrency via If-Match.
 //
@@ -18783,7 +18783,7 @@ func (c *Client) UpdateOauthAppRegistration(ctx context.Context, id string, body
 	return c.Client.Do(req)
 }
 
-// RotateOauthAppRegistrationSecretWithBody Rotate the client secret
+// RotateOauthAppRegistrationSecretWithBody Rotate an OAuth app registration's secret
 //
 // Replace the encrypted client secret. Existing tokens are unaffected;
 // subsequent refreshes present the new secret.
@@ -18803,7 +18803,7 @@ func (c *Client) RotateOauthAppRegistrationSecretWithBody(ctx context.Context, i
 	return c.Client.Do(req)
 }
 
-// RotateOauthAppRegistrationSecret Rotate the client secret
+// RotateOauthAppRegistrationSecret Rotate an OAuth app registration's secret
 //
 // Replace the encrypted client secret. Existing tokens are unaffected;
 // subsequent refreshes present the new secret.
@@ -19123,7 +19123,7 @@ func (c *Client) ConsentAgentStatus(ctx context.Context, params *ConsentAgentSta
 	return c.Client.Do(req)
 }
 
-// IntrospectEndpointWithBody Introspect Endpoint
+// IntrospectEndpointWithBody Introspect an OAuth token
 //
 // Introspect a token (RFC 7662).
 //
@@ -19150,7 +19150,7 @@ func (c *Client) IntrospectEndpointWithBody(ctx context.Context, contentType str
 	return c.Client.Do(req)
 }
 
-// IntrospectEndpoint Introspect Endpoint
+// IntrospectEndpoint Introspect an OAuth token
 //
 // Introspect a token (RFC 7662).
 //
@@ -19177,7 +19177,7 @@ func (c *Client) IntrospectEndpoint(ctx context.Context, body IntrospectEndpoint
 	return c.Client.Do(req)
 }
 
-// IntrospectEndpointWithFormdataBody Introspect Endpoint
+// IntrospectEndpointWithFormdataBody Introspect an OAuth token
 //
 // Introspect a token (RFC 7662).
 //
@@ -19204,7 +19204,7 @@ func (c *Client) IntrospectEndpointWithFormdataBody(ctx context.Context, body In
 	return c.Client.Do(req)
 }
 
-// RevokeEndpointWithBody Revoke Endpoint
+// RevokeEndpointWithBody Revoke an OAuth token
 //
 // Revoke a token (RFC 7009). Always returns 200 for valid requests.
 //
@@ -19251,7 +19251,7 @@ func (c *Client) RevokeEndpointWithBody(ctx context.Context, contentType string,
 	return c.Client.Do(req)
 }
 
-// RevokeEndpoint Revoke Endpoint
+// RevokeEndpoint Revoke an OAuth token
 //
 // Revoke a token (RFC 7009). Always returns 200 for valid requests.
 //
@@ -19298,7 +19298,7 @@ func (c *Client) RevokeEndpoint(ctx context.Context, body RevokeEndpointJSONRequ
 	return c.Client.Do(req)
 }
 
-// RevokeEndpointWithFormdataBody Revoke Endpoint
+// RevokeEndpointWithFormdataBody Revoke an OAuth token
 //
 // Revoke a token (RFC 7009). Always returns 200 for valid requests.
 //
@@ -19345,7 +19345,7 @@ func (c *Client) RevokeEndpointWithFormdataBody(ctx context.Context, body Revoke
 	return c.Client.Do(req)
 }
 
-// TokenEndpointWithBody Token Endpoint
+// TokenEndpointWithBody Exchange a grant for OAuth tokens
 //
 // Exchange a refresh token, JWT assertion, or authorization code for tokens.
 //
@@ -19373,7 +19373,7 @@ func (c *Client) TokenEndpointWithBody(ctx context.Context, contentType string, 
 	return c.Client.Do(req)
 }
 
-// TokenEndpoint Token Endpoint
+// TokenEndpoint Exchange a grant for OAuth tokens
 //
 // Exchange a refresh token, JWT assertion, or authorization code for tokens.
 //
@@ -19401,7 +19401,7 @@ func (c *Client) TokenEndpoint(ctx context.Context, body TokenEndpointJSONReques
 	return c.Client.Do(req)
 }
 
-// TokenEndpointWithFormdataBody Token Endpoint
+// TokenEndpointWithFormdataBody Exchange a grant for OAuth tokens
 //
 // Exchange a refresh token, JWT assertion, or authorization code for tokens.
 //
@@ -19670,7 +19670,7 @@ func (c *Client) ListPermissions(ctx context.Context, reqEditors ...RequestEdito
 	return c.Client.Do(req)
 }
 
-// RegisterEndpointWithBody Register Endpoint
+// RegisterEndpointWithBody Register an agent client
 //
 // Register a new agent client (RFC 7591).
 //
@@ -19689,7 +19689,7 @@ func (c *Client) RegisterEndpointWithBody(ctx context.Context, contentType strin
 	return c.Client.Do(req)
 }
 
-// RegisterEndpoint Register Endpoint
+// RegisterEndpoint Register an agent client
 //
 // Register a new agent client (RFC 7591).
 //
@@ -19708,7 +19708,7 @@ func (c *Client) RegisterEndpoint(ctx context.Context, body RegisterEndpointJSON
 	return c.Client.Do(req)
 }
 
-// DeleteRegistrationEndpoint Delete Registration Endpoint
+// DeleteRegistrationEndpoint Delete a client registration (unsupported)
 //
 // Client deletion not supported — returns 403.
 //
@@ -19725,7 +19725,7 @@ func (c *Client) DeleteRegistrationEndpoint(ctx context.Context, agentId string,
 	return c.Client.Do(req)
 }
 
-// PollStatusEndpoint Poll Status Endpoint
+// PollStatusEndpoint Poll an agent registration's status
 //
 // Poll registration status (RFC 7592).
 //
@@ -19742,7 +19742,7 @@ func (c *Client) PollStatusEndpoint(ctx context.Context, agentId string, reqEdit
 	return c.Client.Do(req)
 }
 
-// UpdateRegistrationEndpoint Update Registration Endpoint
+// UpdateRegistrationEndpoint Update a client registration (unsupported)
 //
 // Client update not supported — returns 403.
 //
@@ -19820,7 +19820,7 @@ func (c *Client) GetVersion(ctx context.Context, reqEditors ...RequestEditorFn) 
 	return c.Client.Do(req)
 }
 
-// ListUsers List Users
+// ListUsers List users
 //
 // List users with cursor-based pagination.
 //
@@ -19839,7 +19839,7 @@ func (c *Client) ListUsers(ctx context.Context, params *ListUsersParams, reqEdit
 	return c.Client.Do(req)
 }
 
-// CreateUserWithBody Create User
+// CreateUserWithBody Create a user and issue an invite
 //
 // Create a new user and issue an invite token.
 //
@@ -19858,7 +19858,7 @@ func (c *Client) CreateUserWithBody(ctx context.Context, contentType string, bod
 	return c.Client.Do(req)
 }
 
-// CreateUser Create User
+// CreateUser Create a user and issue an invite
 //
 // Create a new user and issue an invite token.
 //
@@ -19940,7 +19940,7 @@ func (c *Client) ChangePassword(ctx context.Context, body ChangePasswordJSONRequ
 	return c.Client.Do(req)
 }
 
-// DeleteUser Delete User
+// DeleteUser Delete a user
 //
 // Delete a user account (terminal-but-kept).
 //
@@ -19966,7 +19966,7 @@ func (c *Client) DeleteUser(ctx context.Context, userId PathUserId, reqEditors .
 	return c.Client.Do(req)
 }
 
-// GetUser Get User
+// GetUser Get a user
 //
 // Get a user by ID.
 //
@@ -19986,7 +19986,7 @@ func (c *Client) GetUser(ctx context.Context, userId PathUserId, reqEditors ...R
 	return c.Client.Do(req)
 }
 
-// UpdateUserWithBody Update User
+// UpdateUserWithBody Update a user
 //
 // Update a user's profile fields.
 //
@@ -20009,7 +20009,7 @@ func (c *Client) UpdateUserWithBody(ctx context.Context, userId PathUserId, cont
 	return c.Client.Do(req)
 }
 
-// UpdateUser Update User
+// UpdateUser Update a user
 //
 // Update a user's profile fields.
 //
@@ -20032,7 +20032,7 @@ func (c *Client) UpdateUser(ctx context.Context, userId PathUserId, body UpdateU
 	return c.Client.Do(req)
 }
 
-// SetUserPermissionsWithBody Set User Permissions
+// SetUserPermissionsWithBody Set a user's permissions
 //
 // Set the assigned permissions for a user.
 //
@@ -20057,7 +20057,7 @@ func (c *Client) SetUserPermissionsWithBody(ctx context.Context, userId PathUser
 	return c.Client.Do(req)
 }
 
-// SetUserPermissions Set User Permissions
+// SetUserPermissions Set a user's permissions
 //
 // Set the assigned permissions for a user.
 //
@@ -20082,7 +20082,7 @@ func (c *Client) SetUserPermissions(ctx context.Context, userId PathUserId, body
 	return c.Client.Do(req)
 }
 
-// DisableUser Disable User
+// DisableUser Disable a user
 //
 // Disable a user account.
 //
@@ -20101,7 +20101,7 @@ func (c *Client) DisableUser(ctx context.Context, userId PathUserId, reqEditors 
 	return c.Client.Do(req)
 }
 
-// EnableUser Enable User
+// EnableUser Enable a user
 //
 // Enable a disabled user account.
 //
@@ -20121,7 +20121,7 @@ func (c *Client) EnableUser(ctx context.Context, userId PathUserId, reqEditors .
 	return c.Client.Do(req)
 }
 
-// ReissueInvite Reissue Invite
+// ReissueInvite Reissue a user's invite
 //
 // Reissue an invite token for a user.
 //
@@ -29112,7 +29112,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /actors (the `ListActors` operationId).
 	ListActorsWithResponse(ctx context.Context, params *ListActorsParams, reqEditors ...RequestEditorFn) (*ListActorsHTTPResp, error)
 
-	// LookupActorsWithResponse Resolve actor names by id
+	// LookupActorsWithResponse Resolve actor names by ID
 	//
 	// Resolve user and agent ids to display names.
 	//
@@ -29412,7 +29412,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /agents (the `CreateAgent` operationId).
 	CreateAgentWithResponse(ctx context.Context, body CreateAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateAgentHTTPResp, error)
 
-	// ArchiveAgentWithResponse Archive Agent
+	// ArchiveAgentWithResponse Archive an agent
 	//
 	// Archive an agent — or, with ``purge=true``, hard-delete it.
 	//
@@ -29594,7 +29594,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /agents/{agent_id}/credentials/{credential_id}:resume (the `ResumeAgentCredentialBinding` operationId).
 	ResumeAgentCredentialBindingWithResponse(ctx context.Context, agentId string, credentialId string, reqEditors ...RequestEditorFn) (*ResumeAgentCredentialBindingHTTPResp, error)
 
-	// UpdateAgentJwksWithBodyWithResponse Update Agent Jwks
+	// UpdateAgentJwksWithBodyWithResponse Replace an agent's JWKS
 	//
 	// Update an agent's JWKS (public keys for JWT-bearer authentication).
 	//
@@ -29607,7 +29607,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /agents/{agent_id}/jwks (the `UpdateAgentJwks` operationId).
 	UpdateAgentJwksWithBodyWithResponse(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateAgentJwksHTTPResp, error)
 
-	// UpdateAgentJwksWithResponse Update Agent Jwks
+	// UpdateAgentJwksWithResponse Replace an agent's JWKS
 	//
 	// Update an agent's JWKS (public keys for JWT-bearer authentication).
 	//
@@ -29637,7 +29637,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /agents/{agent_id}/oauth-grants (the `ListAgentOauthGrants` operationId).
 	ListAgentOauthGrantsWithResponse(ctx context.Context, agentId string, params *ListAgentOauthGrantsParams, reqEditors ...RequestEditorFn) (*ListAgentOauthGrantsHTTPResp, error)
 
-	// GetAgentPermissionsWithResponse Get Agent Permissions
+	// GetAgentPermissionsWithResponse List an agent's permissions
 	//
 	// List permissions granted to an agent.
 	//
@@ -29646,7 +29646,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /agents/{agent_id}/permissions (the `GetAgentPermissions` operationId).
 	GetAgentPermissionsWithResponse(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*GetAgentPermissionsHTTPResp, error)
 
-	// ReplaceAgentPermissionsWithBodyWithResponse Replace Agent Permissions
+	// ReplaceAgentPermissionsWithBodyWithResponse Replace an agent's permissions
 	//
 	// Replace all permissions for an agent.
 	//
@@ -29655,7 +29655,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /agents/{agent_id}/permissions (the `ReplaceAgentPermissions` operationId).
 	ReplaceAgentPermissionsWithBodyWithResponse(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReplaceAgentPermissionsHTTPResp, error)
 
-	// ReplaceAgentPermissionsWithResponse Replace Agent Permissions
+	// ReplaceAgentPermissionsWithResponse Replace an agent's permissions
 	//
 	// Replace all permissions for an agent.
 	//
@@ -29664,7 +29664,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /agents/{agent_id}/permissions (the `ReplaceAgentPermissions` operationId).
 	ReplaceAgentPermissionsWithResponse(ctx context.Context, agentId string, body ReplaceAgentPermissionsJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplaceAgentPermissionsHTTPResp, error)
 
-	// ApproveAgentWithResponse Approve Agent
+	// ApproveAgentWithResponse Approve an agent
 	//
 	// Approve a pending agent.
 	//
@@ -29679,7 +29679,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /agents/{agent_id}:approve (the `ApproveAgent` operationId).
 	ApproveAgentWithResponse(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*ApproveAgentHTTPResp, error)
 
-	// ClaimAgentWithBodyWithResponse Claim Agent
+	// ClaimAgentWithBodyWithResponse Claim an agent
 	//
 	// Claim ownership of a self-registered agent using its claim token.
 	//
@@ -29704,7 +29704,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /agents/{agent_id}:claim (the `ClaimAgent` operationId).
 	ClaimAgentWithBodyWithResponse(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimAgentHTTPResp, error)
 
-	// ClaimAgentWithResponse Claim Agent
+	// ClaimAgentWithResponse Claim an agent
 	//
 	// Claim ownership of a self-registered agent using its claim token.
 	//
@@ -29729,7 +29729,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /agents/{agent_id}:claim (the `ClaimAgent` operationId).
 	ClaimAgentWithResponse(ctx context.Context, agentId string, body ClaimAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimAgentHTTPResp, error)
 
-	// DenyAgentWithBodyWithResponse Deny Agent
+	// DenyAgentWithBodyWithResponse Deny an agent
 	//
 	// Deny a pending agent.
 	//
@@ -29742,7 +29742,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /agents/{agent_id}:deny (the `DenyAgent` operationId).
 	DenyAgentWithBodyWithResponse(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DenyAgentHTTPResp, error)
 
-	// DenyAgentWithResponse Deny Agent
+	// DenyAgentWithResponse Deny an agent
 	//
 	// Deny a pending agent.
 	//
@@ -29755,7 +29755,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /agents/{agent_id}:deny (the `DenyAgent` operationId).
 	DenyAgentWithResponse(ctx context.Context, agentId string, body DenyAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*DenyAgentHTTPResp, error)
 
-	// DisableAgentWithResponse Disable Agent
+	// DisableAgentWithResponse Disable an agent
 	//
 	// Disable an active agent.
 	//
@@ -29764,7 +29764,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /agents/{agent_id}:disable (the `DisableAgent` operationId).
 	DisableAgentWithResponse(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*DisableAgentHTTPResp, error)
 
-	// EnableAgentWithResponse Enable Agent
+	// EnableAgentWithResponse Enable an agent
 	//
 	// Enable a disabled agent.
 	//
@@ -29773,7 +29773,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /agents/{agent_id}:enable (the `EnableAgent` operationId).
 	EnableAgentWithResponse(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*EnableAgentHTTPResp, error)
 
-	// GenerateAgentApiKeyWithResponse Generate Agent Api Key
+	// GenerateAgentApiKeyWithResponse Generate an agent's API key
 	//
 	// Generate a new API key for an active agent. Rotates any existing key.
 	//
@@ -29782,7 +29782,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /agents/{agent_id}:generate-api-key (the `GenerateAgentApiKey` operationId).
 	GenerateAgentApiKeyWithResponse(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*GenerateAgentApiKeyHTTPResp, error)
 
-	// RevokeAgentApiKeyWithResponse Revoke Agent Api Key
+	// RevokeAgentApiKeyWithResponse Revoke an agent's API key
 	//
 	// Revoke an agent's API key without generating a new one.
 	//
@@ -29791,7 +29791,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /agents/{agent_id}:revoke-api-key (the `RevokeAgentApiKey` operationId).
 	RevokeAgentApiKeyWithResponse(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*RevokeAgentApiKeyHTTPResp, error)
 
-	// ListApisWithResponse List Apis
+	// ListApisWithResponse List registered APIs
 	//
 	// List locally registered APIs with optional vendor filter and pagination.
 	//
@@ -29804,7 +29804,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /apis (the `ListApis` operationId).
 	ListApisWithResponse(ctx context.Context, params *ListApisParams, reqEditors ...RequestEditorFn) (*ListApisHTTPResp, error)
 
-	// ImportApisWithBodyWithResponse Import Apis
+	// ImportApisWithBodyWithResponse Import OpenAPI or Arazzo specs
 	//
 	// Import OpenAPI/Arazzo content as new API revisions (async).
 	//
@@ -29818,7 +29818,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /apis (the `ImportApis` operationId).
 	ImportApisWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ImportApisHTTPResp, error)
 
-	// ImportApisWithResponse Import Apis
+	// ImportApisWithResponse Import OpenAPI or Arazzo specs
 	//
 	// Import OpenAPI/Arazzo content as new API revisions (async).
 	//
@@ -29832,7 +29832,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /apis (the `ImportApis` operationId).
 	ImportApisWithResponse(ctx context.Context, body ImportApisJSONRequestBody, reqEditors ...RequestEditorFn) (*ImportApisHTTPResp, error)
 
-	// DeleteApiWithResponse Delete Api
+	// DeleteApiWithResponse Delete an API
 	//
 	// Delete an API and all its revisions.
 	//
@@ -29841,7 +29841,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with DELETE /apis/{vendor}/{name}/{version} (the `DeleteApi` operationId).
 	DeleteApiWithResponse(ctx context.Context, vendor PathVendor, name PathName, version PathVersion, reqEditors ...RequestEditorFn) (*DeleteApiHTTPResp, error)
 
-	// GetApiWithResponse Get Api
+	// GetApiWithResponse Get an API
 	//
 	// Retrieve a single API by its (vendor, name, version) identity.
 	//
@@ -29850,7 +29850,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /apis/{vendor}/{name}/{version} (the `GetApi` operationId).
 	GetApiWithResponse(ctx context.Context, vendor PathVendor, name PathName, version PathVersion, reqEditors ...RequestEditorFn) (*GetApiHTTPResp, error)
 
-	// UpdateApiWithBodyWithResponse Update Api
+	// UpdateApiWithBodyWithResponse Update an API
 	//
 	// Partially update an API's presentation fields.
 	//
@@ -29859,7 +29859,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PATCH /apis/{vendor}/{name}/{version} (the `UpdateApi` operationId).
 	UpdateApiWithBodyWithResponse(ctx context.Context, vendor PathVendor, name PathName, version PathVersion, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateApiHTTPResp, error)
 
-	// UpdateApiWithResponse Update Api
+	// UpdateApiWithResponse Update an API
 	//
 	// Partially update an API's presentation fields.
 	//
@@ -29868,7 +29868,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PATCH /apis/{vendor}/{name}/{version} (the `UpdateApi` operationId).
 	UpdateApiWithResponse(ctx context.Context, vendor PathVendor, name PathName, version PathVersion, body UpdateApiJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateApiHTTPResp, error)
 
-	// GetApiSpecWithResponse Get Api Spec
+	// GetApiSpecWithResponse Get an API's OpenAPI document
 	//
 	// Download the OpenAPI spec for the API's current (live) revision.
 	//
@@ -29956,7 +29956,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with DELETE /apis/{vendor}/{name}/{version}/overlays/{overlay_id} (the `DeprecateOverlay` operationId).
 	DeprecateOverlayWithResponse(ctx context.Context, vendor PathVendor, name PathName, version PathVersion, overlayId PathOverlayId, reqEditors ...RequestEditorFn) (*DeprecateOverlayHTTPResp, error)
 
-	// GetOverlayWithResponse Get Overlay
+	// GetOverlayWithResponse Get an overlay
 	//
 	// Retrieve a single overlay by ID.
 	//
@@ -30160,7 +30160,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /apis/{vendor}/{name}/{version}/revisions/{revision_id}:archive (the `ArchiveRevision` operationId).
 	ArchiveRevisionWithResponse(ctx context.Context, vendor PathVendor, name PathName, version PathVersion, revisionId PathRevisionId, reqEditors ...RequestEditorFn) (*ArchiveRevisionHTTPResp, error)
 
-	// PromoteRevisionWithResponse Promote Revision
+	// PromoteRevisionWithResponse Promote an API revision
 	//
 	// Promote a draft revision to published, archiving the current one.
 	//
@@ -30184,7 +30184,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /apis/{vendor}/{name}/{version}/security-schemes (the `ListApiSecuritySchemes` operationId).
 	ListApiSecuritySchemesWithResponse(ctx context.Context, vendor PathVendor, name PathName, version PathVersion, reqEditors ...RequestEditorFn) (*ListApiSecuritySchemesHTTPResp, error)
 
-	// ListAuditEntriesWithResponse List Audit Entries
+	// ListAuditEntriesWithResponse List audit entries
 	//
 	// List audit entries with optional filters.
 	//
@@ -30196,7 +30196,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /audit (the `ListAuditEntries` operationId).
 	ListAuditEntriesWithResponse(ctx context.Context, params *ListAuditEntriesParams, reqEditors ...RequestEditorFn) (*ListAuditEntriesHTTPResp, error)
 
-	// GetAuditEntryWithResponse Get Audit Entry
+	// GetAuditEntryWithResponse Get an audit entry
 	//
 	// Get a single audit entry by ID.
 	//
@@ -30253,7 +30253,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /auth/refresh (the `RefreshSession` operationId).
 	RefreshSessionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RefreshSessionHTTPResp, error)
 
-	// ListCatalogWithResponse List Catalog
+	// ListCatalogWithResponse List catalog entries
 	//
 	// List a keyset page of browsable catalog entries (search/filter aware).
 	//
@@ -30267,7 +30267,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /catalog (the `ListCatalog` operationId).
 	ListCatalogWithResponse(ctx context.Context, params *ListCatalogParams, reqEditors ...RequestEditorFn) (*ListCatalogHTTPResp, error)
 
-	// GetCatalogEntryWithResponse Get Catalog Entry
+	// GetCatalogEntryWithResponse Get a catalog entry
 	//
 	// Retrieve a single catalog entry by api_id.
 	//
@@ -30276,7 +30276,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /catalog/{api_id} (the `GetCatalogEntry` operationId).
 	GetCatalogEntryWithResponse(ctx context.Context, apiId PathApiId, reqEditors ...RequestEditorFn) (*GetCatalogEntryHTTPResp, error)
 
-	// PreviewCatalogOperationsWithResponse Preview Catalog Operations
+	// PreviewCatalogOperationsWithResponse Preview a catalog entry's operations
 	//
 	// Preview the operations of a catalog entry's spec (capped, offset-paginated).
 	//
@@ -30289,7 +30289,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /catalog/{api_id}/operations (the `PreviewCatalogOperations` operationId).
 	PreviewCatalogOperationsWithResponse(ctx context.Context, apiId PathApiId, params *PreviewCatalogOperationsParams, reqEditors ...RequestEditorFn) (*PreviewCatalogOperationsHTTPResp, error)
 
-	// ImportCatalogEntryWithResponse Import Catalog Entry
+	// ImportCatalogEntryWithResponse Import a catalog entry
 	//
 	// Enqueue an async import of a catalog entry into the local registry.
 	//
@@ -30298,7 +30298,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /catalog/{api_id}:import (the `ImportCatalogEntry` operationId).
 	ImportCatalogEntryWithResponse(ctx context.Context, apiId PathApiId, reqEditors ...RequestEditorFn) (*ImportCatalogEntryHTTPResp, error)
 
-	// SnoozeCatalogEntryWithBodyWithResponse Snooze Catalog Entry
+	// SnoozeCatalogEntryWithBodyWithResponse Snooze a catalog entry's update notice
 	//
 	// Snooze the outstanding update notification for a catalog entry (C1, #925).
 	//
@@ -30313,7 +30313,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /catalog/{api_id}:snooze (the `SnoozeCatalogEntry` operationId).
 	SnoozeCatalogEntryWithBodyWithResponse(ctx context.Context, apiId PathApiId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SnoozeCatalogEntryHTTPResp, error)
 
-	// SnoozeCatalogEntryWithResponse Snooze Catalog Entry
+	// SnoozeCatalogEntryWithResponse Snooze a catalog entry's update notice
 	//
 	// Snooze the outstanding update notification for a catalog entry (C1, #925).
 	//
@@ -30328,7 +30328,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /catalog/{api_id}:snooze (the `SnoozeCatalogEntry` operationId).
 	SnoozeCatalogEntryWithResponse(ctx context.Context, apiId PathApiId, body SnoozeCatalogEntryJSONRequestBody, reqEditors ...RequestEditorFn) (*SnoozeCatalogEntryHTTPResp, error)
 
-	// UnsnoozeCatalogEntryWithResponse Unsnooze Catalog Entry
+	// UnsnoozeCatalogEntryWithResponse Clear a catalog entry's snooze
 	//
 	// Clear a snooze for a catalog entry (C1). Operator action (``events:write``).
 	//
@@ -30337,7 +30337,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /catalog/{api_id}:unsnooze (the `UnsnoozeCatalogEntry` operationId).
 	UnsnoozeCatalogEntryWithResponse(ctx context.Context, apiId PathApiId, reqEditors ...RequestEditorFn) (*UnsnoozeCatalogEntryHTTPResp, error)
 
-	// RefreshCatalogWithResponse Refresh Catalog
+	// RefreshCatalogWithResponse Refresh the catalog cache
 	//
 	// Force a refresh of the catalog cache from the upstream manifest (org:admin).
 	//
@@ -30797,7 +30797,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /credentials/{credential_id}/connect (the `ConnectCredential` operationId).
 	ConnectCredentialWithResponse(ctx context.Context, credentialId PathCredentialId, body ConnectCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*ConnectCredentialHTTPResp, error)
 
-	// ErrorPageWithResponse Error Page
+	// ErrorPageWithResponse Get a browser authorization error
 	//
 	// Minimal error endpoint for browser-facing authorization failures.
 	//
@@ -30806,7 +30806,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /error (the `ErrorPage` operationId).
 	ErrorPageWithResponse(ctx context.Context, params *ErrorPageParams, reqEditors ...RequestEditorFn) (*ErrorPageHTTPResp, error)
 
-	// ListEventsWithResponse List Events
+	// ListEventsWithResponse List events
 	//
 	// List events with optional filters.
 	//
@@ -30815,7 +30815,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /events (the `ListEvents` operationId).
 	ListEventsWithResponse(ctx context.Context, params *ListEventsParams, reqEditors ...RequestEditorFn) (*ListEventsHTTPResp, error)
 
-	// StreamEventsWithResponse Stream Events
+	// StreamEventsWithResponse Stream events over SSE
 	//
 	// Stream events as Server-Sent Events.
 	//
@@ -30842,7 +30842,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /events/stream (the `StreamEvents` operationId).
 	StreamEventsWithResponse(ctx context.Context, params *StreamEventsParams, reqEditors ...RequestEditorFn) (*StreamEventsHTTPResp, error)
 
-	// GetEventWithResponse Get Event
+	// GetEventWithResponse Get an event
 	//
 	// Get an event by ID.
 	//
@@ -30851,7 +30851,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /events/{event_id} (the `GetEvent` operationId).
 	GetEventWithResponse(ctx context.Context, eventId string, reqEditors ...RequestEditorFn) (*GetEventHTTPResp, error)
 
-	// ListExecutionsWithResponse List Executions
+	// ListExecutionsWithResponse List executions
 	//
 	// List execution records with optional filters.
 	//
@@ -30943,7 +30943,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /executions/holds/{held_execution_id}:withdraw (the `WithdrawHeldExecution` operationId).
 	WithdrawHeldExecutionWithResponse(ctx context.Context, heldExecutionId PathHeldExecutionId, reqEditors ...RequestEditorFn) (*WithdrawHeldExecutionHTTPResp, error)
 
-	// GetExecutionWithResponse Get Execution
+	// GetExecutionWithResponse Get an execution
 	//
 	// Get an execution record by ID.
 	//
@@ -30952,7 +30952,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /executions/{execution_id} (the `GetExecution` operationId).
 	GetExecutionWithResponse(ctx context.Context, executionId string, reqEditors ...RequestEditorFn) (*GetExecutionHTTPResp, error)
 
-	// GetGovernedHostsWithResponse Get Governed Hosts
+	// GetGovernedHostsWithResponse Get the caller's governed host set
 	//
 	// The caller's governed host set (credential-bound hosts) with an ETag digest.
 	//
@@ -31122,7 +31122,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /integrations:edit-connection (the `IntegrationsEditConnection` operationId).
 	IntegrationsEditConnectionWithResponse(ctx context.Context, body IntegrationsEditConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*IntegrationsEditConnectionHTTPResp, error)
 
-	// ListJobsWithResponse List Jobs
+	// ListJobsWithResponse List jobs
 	//
 	// List jobs with optional filters.
 	//
@@ -31131,7 +31131,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /jobs (the `ListJobs` operationId).
 	ListJobsWithResponse(ctx context.Context, params *ListJobsParams, reqEditors ...RequestEditorFn) (*ListJobsHTTPResp, error)
 
-	// GetJobWithResponse Get Job
+	// GetJobWithResponse Get a job
 	//
 	// Get a job by ID.
 	//
@@ -31140,7 +31140,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /jobs/{job_id} (the `GetJob` operationId).
 	GetJobWithResponse(ctx context.Context, jobId string, reqEditors ...RequestEditorFn) (*GetJobHTTPResp, error)
 
-	// GetJobResultWithResponse Get Job Result
+	// GetJobResultWithResponse Get a job's result
 	//
 	// Get the result of a completed job — polymorphic by kind.
 	//
@@ -31149,7 +31149,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /jobs/{job_id}/result (the `GetJobResult` operationId).
 	GetJobResultWithResponse(ctx context.Context, jobId string, reqEditors ...RequestEditorFn) (*GetJobResultHTTPResp, error)
 
-	// CancelJobWithResponse Cancel Job
+	// CancelJobWithResponse Cancel a job
 	//
 	// Cancel an active job.
 	//
@@ -31197,7 +31197,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /mcp/config-registrations (the `ReportMcpConfigRegistration` operationId).
 	ReportMcpConfigRegistrationWithResponse(ctx context.Context, body ReportMcpConfigRegistrationJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportMcpConfigRegistrationHTTPResp, error)
 
-	// GetMeWithResponse Get Me
+	// GetMeWithResponse Get the caller's identity
 	//
 	// Return the caller's identity and context, discriminated by actor type.
 	//
@@ -31206,7 +31206,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /me (the `GetMe` operationId).
 	GetMeWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetMeHTTPResp, error)
 
-	// GetExecutionStatsWithResponse Get Execution Stats
+	// GetExecutionStatsWithResponse Get execution statistics
 	//
 	// Return aggregated execution statistics for the dashboard.
 	//
@@ -31215,7 +31215,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /monitoring/executions (the `GetExecutionStats` operationId).
 	GetExecutionStatsWithResponse(ctx context.Context, params *GetExecutionStatsParams, reqEditors ...RequestEditorFn) (*GetExecutionStatsHTTPResp, error)
 
-	// GetUsageStatsWithResponse Get Usage Stats
+	// GetUsageStatsWithResponse Get usage statistics
 	//
 	// Return detailed usage statistics for the monitoring overview.
 	//
@@ -31224,7 +31224,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /monitoring/usage (the `GetUsageStats` operationId).
 	GetUsageStatsWithResponse(ctx context.Context, params *GetUsageStatsParams, reqEditors ...RequestEditorFn) (*GetUsageStatsHTTPResp, error)
 
-	// ListNotesWithResponse List Notes
+	// ListNotesWithResponse List notes
 	//
 	// List notes with optional filters and cursor pagination.
 	//
@@ -31235,7 +31235,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /notes (the `ListNotes` operationId).
 	ListNotesWithResponse(ctx context.Context, params *ListNotesParams, reqEditors ...RequestEditorFn) (*ListNotesHTTPResp, error)
 
-	// CreateNoteWithBodyWithResponse Create Note
+	// CreateNoteWithBodyWithResponse Create a note
 	//
 	// Create a new note attached to a registry resource.
 	//
@@ -31244,7 +31244,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /notes (the `CreateNote` operationId).
 	CreateNoteWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateNoteHTTPResp, error)
 
-	// CreateNoteWithResponse Create Note
+	// CreateNoteWithResponse Create a note
 	//
 	// Create a new note attached to a registry resource.
 	//
@@ -31253,7 +31253,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /notes (the `CreateNote` operationId).
 	CreateNoteWithResponse(ctx context.Context, body CreateNoteJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateNoteHTTPResp, error)
 
-	// DeleteNoteWithResponse Delete Note
+	// DeleteNoteWithResponse Delete a note
 	//
 	// Delete a note. Supports optimistic concurrency via If-Match.
 	//
@@ -31262,7 +31262,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with DELETE /notes/{note_id} (the `DeleteNote` operationId).
 	DeleteNoteWithResponse(ctx context.Context, noteId string, params *DeleteNoteParams, reqEditors ...RequestEditorFn) (*DeleteNoteHTTPResp, error)
 
-	// GetNoteWithResponse Get Note
+	// GetNoteWithResponse Get a note
 	//
 	// Retrieve a single note by ID.
 	//
@@ -31274,7 +31274,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /notes/{note_id} (the `GetNote` operationId).
 	GetNoteWithResponse(ctx context.Context, noteId string, reqEditors ...RequestEditorFn) (*GetNoteHTTPResp, error)
 
-	// UpdateNoteWithBodyWithResponse Update Note
+	// UpdateNoteWithBodyWithResponse Update a note
 	//
 	// Update a note (partial). Supports optimistic concurrency via If-Match.
 	//
@@ -31283,7 +31283,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PATCH /notes/{note_id} (the `UpdateNote` operationId).
 	UpdateNoteWithBodyWithResponse(ctx context.Context, noteId string, params *UpdateNoteParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateNoteHTTPResp, error)
 
-	// UpdateNoteWithResponse Update Note
+	// UpdateNoteWithResponse Update a note
 	//
 	// Update a note (partial). Supports optimistic concurrency via If-Match.
 	//
@@ -31378,7 +31378,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PATCH /oauth-app-registrations/{id} (the `UpdateOauthAppRegistration` operationId).
 	UpdateOauthAppRegistrationWithResponse(ctx context.Context, id string, body UpdateOauthAppRegistrationJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateOauthAppRegistrationHTTPResp, error)
 
-	// RotateOauthAppRegistrationSecretWithBodyWithResponse Rotate the client secret
+	// RotateOauthAppRegistrationSecretWithBodyWithResponse Rotate an OAuth app registration's secret
 	//
 	// Replace the encrypted client secret. Existing tokens are unaffected;
 	// subsequent refreshes present the new secret.
@@ -31388,7 +31388,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /oauth-app-registrations/{id}:rotate-secret (the `RotateOauthAppRegistrationSecret` operationId).
 	RotateOauthAppRegistrationSecretWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RotateOauthAppRegistrationSecretHTTPResp, error)
 
-	// RotateOauthAppRegistrationSecretWithResponse Rotate the client secret
+	// RotateOauthAppRegistrationSecretWithResponse Rotate an OAuth app registration's secret
 	//
 	// Replace the encrypted client secret. Existing tokens are unaffected;
 	// subsequent refreshes present the new secret.
@@ -31614,7 +31614,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /oauth/consent/agent/status (the `ConsentAgentStatus` operationId).
 	ConsentAgentStatusWithResponse(ctx context.Context, params *ConsentAgentStatusParams, reqEditors ...RequestEditorFn) (*ConsentAgentStatusHTTPResp, error)
 
-	// IntrospectEndpointWithBodyWithResponse Introspect Endpoint
+	// IntrospectEndpointWithBodyWithResponse Introspect an OAuth token
 	//
 	// Introspect a token (RFC 7662).
 	//
@@ -31631,7 +31631,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /oauth/introspect (the `IntrospectEndpoint` operationId).
 	IntrospectEndpointWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IntrospectEndpointHTTPResp, error)
 
-	// IntrospectEndpointWithResponse Introspect Endpoint
+	// IntrospectEndpointWithResponse Introspect an OAuth token
 	//
 	// Introspect a token (RFC 7662).
 	//
@@ -31648,7 +31648,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /oauth/introspect (the `IntrospectEndpoint` operationId).
 	IntrospectEndpointWithResponse(ctx context.Context, body IntrospectEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*IntrospectEndpointHTTPResp, error)
 
-	// IntrospectEndpointWithFormdataBodyWithResponse Introspect Endpoint
+	// IntrospectEndpointWithFormdataBodyWithResponse Introspect an OAuth token
 	//
 	// Introspect a token (RFC 7662).
 	//
@@ -31665,7 +31665,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /oauth/introspect (the `IntrospectEndpoint` operationId).
 	IntrospectEndpointWithFormdataBodyWithResponse(ctx context.Context, body IntrospectEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*IntrospectEndpointHTTPResp, error)
 
-	// RevokeEndpointWithBodyWithResponse Revoke Endpoint
+	// RevokeEndpointWithBodyWithResponse Revoke an OAuth token
 	//
 	// Revoke a token (RFC 7009). Always returns 200 for valid requests.
 	//
@@ -31702,7 +31702,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /oauth/revoke (the `RevokeEndpoint` operationId).
 	RevokeEndpointWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RevokeEndpointHTTPResp, error)
 
-	// RevokeEndpointWithResponse Revoke Endpoint
+	// RevokeEndpointWithResponse Revoke an OAuth token
 	//
 	// Revoke a token (RFC 7009). Always returns 200 for valid requests.
 	//
@@ -31739,7 +31739,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /oauth/revoke (the `RevokeEndpoint` operationId).
 	RevokeEndpointWithResponse(ctx context.Context, body RevokeEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*RevokeEndpointHTTPResp, error)
 
-	// RevokeEndpointWithFormdataBodyWithResponse Revoke Endpoint
+	// RevokeEndpointWithFormdataBodyWithResponse Revoke an OAuth token
 	//
 	// Revoke a token (RFC 7009). Always returns 200 for valid requests.
 	//
@@ -31776,7 +31776,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /oauth/revoke (the `RevokeEndpoint` operationId).
 	RevokeEndpointWithFormdataBodyWithResponse(ctx context.Context, body RevokeEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*RevokeEndpointHTTPResp, error)
 
-	// TokenEndpointWithBodyWithResponse Token Endpoint
+	// TokenEndpointWithBodyWithResponse Exchange a grant for OAuth tokens
 	//
 	// Exchange a refresh token, JWT assertion, or authorization code for tokens.
 	//
@@ -31794,7 +31794,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
 	TokenEndpointWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*TokenEndpointHTTPResp, error)
 
-	// TokenEndpointWithResponse Token Endpoint
+	// TokenEndpointWithResponse Exchange a grant for OAuth tokens
 	//
 	// Exchange a refresh token, JWT assertion, or authorization code for tokens.
 	//
@@ -31812,7 +31812,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
 	TokenEndpointWithResponse(ctx context.Context, body TokenEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*TokenEndpointHTTPResp, error)
 
-	// TokenEndpointWithFormdataBodyWithResponse Token Endpoint
+	// TokenEndpointWithFormdataBodyWithResponse Exchange a grant for OAuth tokens
 	//
 	// Exchange a refresh token, JWT assertion, or authorization code for tokens.
 	//
@@ -31979,7 +31979,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /permissions (the `ListPermissions` operationId).
 	ListPermissionsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListPermissionsHTTPResp, error)
 
-	// RegisterEndpointWithBodyWithResponse Register Endpoint
+	// RegisterEndpointWithBodyWithResponse Register an agent client
 	//
 	// Register a new agent client (RFC 7591).
 	//
@@ -31988,7 +31988,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /register (the `RegisterEndpoint` operationId).
 	RegisterEndpointWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterEndpointHTTPResp, error)
 
-	// RegisterEndpointWithResponse Register Endpoint
+	// RegisterEndpointWithResponse Register an agent client
 	//
 	// Register a new agent client (RFC 7591).
 	//
@@ -31997,7 +31997,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /register (the `RegisterEndpoint` operationId).
 	RegisterEndpointWithResponse(ctx context.Context, body RegisterEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterEndpointHTTPResp, error)
 
-	// DeleteRegistrationEndpointWithResponse Delete Registration Endpoint
+	// DeleteRegistrationEndpointWithResponse Delete a client registration (unsupported)
 	//
 	// Client deletion not supported — returns 403.
 	//
@@ -32006,7 +32006,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with DELETE /register/{agent_id} (the `DeleteRegistrationEndpoint` operationId).
 	DeleteRegistrationEndpointWithResponse(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*DeleteRegistrationEndpointHTTPResp, error)
 
-	// PollStatusEndpointWithResponse Poll Status Endpoint
+	// PollStatusEndpointWithResponse Poll an agent registration's status
 	//
 	// Poll registration status (RFC 7592).
 	//
@@ -32015,7 +32015,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /register/{agent_id} (the `PollStatusEndpoint` operationId).
 	PollStatusEndpointWithResponse(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*PollStatusEndpointHTTPResp, error)
 
-	// UpdateRegistrationEndpointWithResponse Update Registration Endpoint
+	// UpdateRegistrationEndpointWithResponse Update a client registration (unsupported)
 	//
 	// Client update not supported — returns 403.
 	//
@@ -32057,7 +32057,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /system/version (the `GetVersion` operationId).
 	GetVersionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetVersionHTTPResp, error)
 
-	// ListUsersWithResponse List Users
+	// ListUsersWithResponse List users
 	//
 	// List users with cursor-based pagination.
 	//
@@ -32068,7 +32068,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /users (the `ListUsers` operationId).
 	ListUsersWithResponse(ctx context.Context, params *ListUsersParams, reqEditors ...RequestEditorFn) (*ListUsersHTTPResp, error)
 
-	// CreateUserWithBodyWithResponse Create User
+	// CreateUserWithBodyWithResponse Create a user and issue an invite
 	//
 	// Create a new user and issue an invite token.
 	//
@@ -32077,7 +32077,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /users (the `CreateUser` operationId).
 	CreateUserWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateUserHTTPResp, error)
 
-	// CreateUserWithResponse Create User
+	// CreateUserWithResponse Create a user and issue an invite
 	//
 	// Create a new user and issue an invite token.
 	//
@@ -32121,7 +32121,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /users/me:change-password (the `ChangePassword` operationId).
 	ChangePasswordWithResponse(ctx context.Context, body ChangePasswordJSONRequestBody, reqEditors ...RequestEditorFn) (*ChangePasswordHTTPResp, error)
 
-	// DeleteUserWithResponse Delete User
+	// DeleteUserWithResponse Delete a user
 	//
 	// Delete a user account (terminal-but-kept).
 	//
@@ -32139,7 +32139,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with DELETE /users/{user_id} (the `DeleteUser` operationId).
 	DeleteUserWithResponse(ctx context.Context, userId PathUserId, reqEditors ...RequestEditorFn) (*DeleteUserHTTPResp, error)
 
-	// GetUserWithResponse Get User
+	// GetUserWithResponse Get a user
 	//
 	// Get a user by ID.
 	//
@@ -32151,7 +32151,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /users/{user_id} (the `GetUser` operationId).
 	GetUserWithResponse(ctx context.Context, userId PathUserId, reqEditors ...RequestEditorFn) (*GetUserHTTPResp, error)
 
-	// UpdateUserWithBodyWithResponse Update User
+	// UpdateUserWithBodyWithResponse Update a user
 	//
 	// Update a user's profile fields.
 	//
@@ -32164,7 +32164,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PATCH /users/{user_id} (the `UpdateUser` operationId).
 	UpdateUserWithBodyWithResponse(ctx context.Context, userId PathUserId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateUserHTTPResp, error)
 
-	// UpdateUserWithResponse Update User
+	// UpdateUserWithResponse Update a user
 	//
 	// Update a user's profile fields.
 	//
@@ -32177,7 +32177,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PATCH /users/{user_id} (the `UpdateUser` operationId).
 	UpdateUserWithResponse(ctx context.Context, userId PathUserId, body UpdateUserJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateUserHTTPResp, error)
 
-	// SetUserPermissionsWithBodyWithResponse Set User Permissions
+	// SetUserPermissionsWithBodyWithResponse Set a user's permissions
 	//
 	// Set the assigned permissions for a user.
 	//
@@ -32192,7 +32192,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /users/{user_id}/permissions (the `SetUserPermissions` operationId).
 	SetUserPermissionsWithBodyWithResponse(ctx context.Context, userId PathUserId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetUserPermissionsHTTPResp, error)
 
-	// SetUserPermissionsWithResponse Set User Permissions
+	// SetUserPermissionsWithResponse Set a user's permissions
 	//
 	// Set the assigned permissions for a user.
 	//
@@ -32207,7 +32207,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /users/{user_id}/permissions (the `SetUserPermissions` operationId).
 	SetUserPermissionsWithResponse(ctx context.Context, userId PathUserId, body SetUserPermissionsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetUserPermissionsHTTPResp, error)
 
-	// DisableUserWithResponse Disable User
+	// DisableUserWithResponse Disable a user
 	//
 	// Disable a user account.
 	//
@@ -32218,7 +32218,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /users/{user_id}:disable (the `DisableUser` operationId).
 	DisableUserWithResponse(ctx context.Context, userId PathUserId, reqEditors ...RequestEditorFn) (*DisableUserHTTPResp, error)
 
-	// EnableUserWithResponse Enable User
+	// EnableUserWithResponse Enable a user
 	//
 	// Enable a disabled user account.
 	//
@@ -32230,7 +32230,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /users/{user_id}:enable (the `EnableUser` operationId).
 	EnableUserWithResponse(ctx context.Context, userId PathUserId, reqEditors ...RequestEditorFn) (*EnableUserHTTPResp, error)
 
-	// ReissueInviteWithResponse Reissue Invite
+	// ReissueInviteWithResponse Reissue a user's invite
 	//
 	// Reissue an invite token for a user.
 	//
@@ -47684,7 +47684,7 @@ func (c *ClientWithResponses) ListActorsWithResponse(ctx context.Context, params
 	return ParseListActorsHTTPResp(rsp)
 }
 
-// LookupActorsWithResponse Resolve actor names by id
+// LookupActorsWithResponse Resolve actor names by ID
 //
 // Resolve user and agent ids to display names.
 //
@@ -48116,7 +48116,7 @@ func (c *ClientWithResponses) CreateAgentWithResponse(ctx context.Context, body 
 	return ParseCreateAgentHTTPResp(rsp)
 }
 
-// ArchiveAgentWithResponse Archive Agent
+// ArchiveAgentWithResponse Archive an agent
 //
 // Archive an agent — or, with “purge=true“, hard-delete it.
 //
@@ -48364,7 +48364,7 @@ func (c *ClientWithResponses) ResumeAgentCredentialBindingWithResponse(ctx conte
 	return ParseResumeAgentCredentialBindingHTTPResp(rsp)
 }
 
-// UpdateAgentJwksWithBodyWithResponse Update Agent Jwks
+// UpdateAgentJwksWithBodyWithResponse Replace an agent's JWKS
 //
 // Update an agent's JWKS (public keys for JWT-bearer authentication).
 //
@@ -48383,7 +48383,7 @@ func (c *ClientWithResponses) UpdateAgentJwksWithBodyWithResponse(ctx context.Co
 	return ParseUpdateAgentJwksHTTPResp(rsp)
 }
 
-// UpdateAgentJwksWithResponse Update Agent Jwks
+// UpdateAgentJwksWithResponse Replace an agent's JWKS
 //
 // Update an agent's JWKS (public keys for JWT-bearer authentication).
 //
@@ -48425,7 +48425,7 @@ func (c *ClientWithResponses) ListAgentOauthGrantsWithResponse(ctx context.Conte
 	return ParseListAgentOauthGrantsHTTPResp(rsp)
 }
 
-// GetAgentPermissionsWithResponse Get Agent Permissions
+// GetAgentPermissionsWithResponse List an agent's permissions
 //
 // List permissions granted to an agent.
 //
@@ -48440,7 +48440,7 @@ func (c *ClientWithResponses) GetAgentPermissionsWithResponse(ctx context.Contex
 	return ParseGetAgentPermissionsHTTPResp(rsp)
 }
 
-// ReplaceAgentPermissionsWithBodyWithResponse Replace Agent Permissions
+// ReplaceAgentPermissionsWithBodyWithResponse Replace an agent's permissions
 //
 // Replace all permissions for an agent.
 //
@@ -48455,7 +48455,7 @@ func (c *ClientWithResponses) ReplaceAgentPermissionsWithBodyWithResponse(ctx co
 	return ParseReplaceAgentPermissionsHTTPResp(rsp)
 }
 
-// ReplaceAgentPermissionsWithResponse Replace Agent Permissions
+// ReplaceAgentPermissionsWithResponse Replace an agent's permissions
 //
 // Replace all permissions for an agent.
 //
@@ -48470,7 +48470,7 @@ func (c *ClientWithResponses) ReplaceAgentPermissionsWithResponse(ctx context.Co
 	return ParseReplaceAgentPermissionsHTTPResp(rsp)
 }
 
-// ApproveAgentWithResponse Approve Agent
+// ApproveAgentWithResponse Approve an agent
 //
 // Approve a pending agent.
 //
@@ -48491,7 +48491,7 @@ func (c *ClientWithResponses) ApproveAgentWithResponse(ctx context.Context, agen
 	return ParseApproveAgentHTTPResp(rsp)
 }
 
-// ClaimAgentWithBodyWithResponse Claim Agent
+// ClaimAgentWithBodyWithResponse Claim an agent
 //
 // Claim ownership of a self-registered agent using its claim token.
 //
@@ -48522,7 +48522,7 @@ func (c *ClientWithResponses) ClaimAgentWithBodyWithResponse(ctx context.Context
 	return ParseClaimAgentHTTPResp(rsp)
 }
 
-// ClaimAgentWithResponse Claim Agent
+// ClaimAgentWithResponse Claim an agent
 //
 // Claim ownership of a self-registered agent using its claim token.
 //
@@ -48553,7 +48553,7 @@ func (c *ClientWithResponses) ClaimAgentWithResponse(ctx context.Context, agentI
 	return ParseClaimAgentHTTPResp(rsp)
 }
 
-// DenyAgentWithBodyWithResponse Deny Agent
+// DenyAgentWithBodyWithResponse Deny an agent
 //
 // Deny a pending agent.
 //
@@ -48572,7 +48572,7 @@ func (c *ClientWithResponses) DenyAgentWithBodyWithResponse(ctx context.Context,
 	return ParseDenyAgentHTTPResp(rsp)
 }
 
-// DenyAgentWithResponse Deny Agent
+// DenyAgentWithResponse Deny an agent
 //
 // Deny a pending agent.
 //
@@ -48591,7 +48591,7 @@ func (c *ClientWithResponses) DenyAgentWithResponse(ctx context.Context, agentId
 	return ParseDenyAgentHTTPResp(rsp)
 }
 
-// DisableAgentWithResponse Disable Agent
+// DisableAgentWithResponse Disable an agent
 //
 // Disable an active agent.
 //
@@ -48606,7 +48606,7 @@ func (c *ClientWithResponses) DisableAgentWithResponse(ctx context.Context, agen
 	return ParseDisableAgentHTTPResp(rsp)
 }
 
-// EnableAgentWithResponse Enable Agent
+// EnableAgentWithResponse Enable an agent
 //
 // Enable a disabled agent.
 //
@@ -48621,7 +48621,7 @@ func (c *ClientWithResponses) EnableAgentWithResponse(ctx context.Context, agent
 	return ParseEnableAgentHTTPResp(rsp)
 }
 
-// GenerateAgentApiKeyWithResponse Generate Agent Api Key
+// GenerateAgentApiKeyWithResponse Generate an agent's API key
 //
 // Generate a new API key for an active agent. Rotates any existing key.
 //
@@ -48636,7 +48636,7 @@ func (c *ClientWithResponses) GenerateAgentApiKeyWithResponse(ctx context.Contex
 	return ParseGenerateAgentApiKeyHTTPResp(rsp)
 }
 
-// RevokeAgentApiKeyWithResponse Revoke Agent Api Key
+// RevokeAgentApiKeyWithResponse Revoke an agent's API key
 //
 // Revoke an agent's API key without generating a new one.
 //
@@ -48651,7 +48651,7 @@ func (c *ClientWithResponses) RevokeAgentApiKeyWithResponse(ctx context.Context,
 	return ParseRevokeAgentApiKeyHTTPResp(rsp)
 }
 
-// ListApisWithResponse List Apis
+// ListApisWithResponse List registered APIs
 //
 // List locally registered APIs with optional vendor filter and pagination.
 //
@@ -48670,7 +48670,7 @@ func (c *ClientWithResponses) ListApisWithResponse(ctx context.Context, params *
 	return ParseListApisHTTPResp(rsp)
 }
 
-// ImportApisWithBodyWithResponse Import Apis
+// ImportApisWithBodyWithResponse Import OpenAPI or Arazzo specs
 //
 // Import OpenAPI/Arazzo content as new API revisions (async).
 //
@@ -48690,7 +48690,7 @@ func (c *ClientWithResponses) ImportApisWithBodyWithResponse(ctx context.Context
 	return ParseImportApisHTTPResp(rsp)
 }
 
-// ImportApisWithResponse Import Apis
+// ImportApisWithResponse Import OpenAPI or Arazzo specs
 //
 // Import OpenAPI/Arazzo content as new API revisions (async).
 //
@@ -48710,7 +48710,7 @@ func (c *ClientWithResponses) ImportApisWithResponse(ctx context.Context, body I
 	return ParseImportApisHTTPResp(rsp)
 }
 
-// DeleteApiWithResponse Delete Api
+// DeleteApiWithResponse Delete an API
 //
 // Delete an API and all its revisions.
 //
@@ -48725,7 +48725,7 @@ func (c *ClientWithResponses) DeleteApiWithResponse(ctx context.Context, vendor 
 	return ParseDeleteApiHTTPResp(rsp)
 }
 
-// GetApiWithResponse Get Api
+// GetApiWithResponse Get an API
 //
 // Retrieve a single API by its (vendor, name, version) identity.
 //
@@ -48740,7 +48740,7 @@ func (c *ClientWithResponses) GetApiWithResponse(ctx context.Context, vendor Pat
 	return ParseGetApiHTTPResp(rsp)
 }
 
-// UpdateApiWithBodyWithResponse Update Api
+// UpdateApiWithBodyWithResponse Update an API
 //
 // Partially update an API's presentation fields.
 //
@@ -48755,7 +48755,7 @@ func (c *ClientWithResponses) UpdateApiWithBodyWithResponse(ctx context.Context,
 	return ParseUpdateApiHTTPResp(rsp)
 }
 
-// UpdateApiWithResponse Update Api
+// UpdateApiWithResponse Update an API
 //
 // Partially update an API's presentation fields.
 //
@@ -48770,7 +48770,7 @@ func (c *ClientWithResponses) UpdateApiWithResponse(ctx context.Context, vendor 
 	return ParseUpdateApiHTTPResp(rsp)
 }
 
-// GetApiSpecWithResponse Get Api Spec
+// GetApiSpecWithResponse Get an API's OpenAPI document
 //
 // Download the OpenAPI spec for the API's current (live) revision.
 //
@@ -48894,7 +48894,7 @@ func (c *ClientWithResponses) DeprecateOverlayWithResponse(ctx context.Context, 
 	return ParseDeprecateOverlayHTTPResp(rsp)
 }
 
-// GetOverlayWithResponse Get Overlay
+// GetOverlayWithResponse Get an overlay
 //
 // Retrieve a single overlay by ID.
 //
@@ -49170,7 +49170,7 @@ func (c *ClientWithResponses) ArchiveRevisionWithResponse(ctx context.Context, v
 	return ParseArchiveRevisionHTTPResp(rsp)
 }
 
-// PromoteRevisionWithResponse Promote Revision
+// PromoteRevisionWithResponse Promote an API revision
 //
 // Promote a draft revision to published, archiving the current one.
 //
@@ -49206,7 +49206,7 @@ func (c *ClientWithResponses) ListApiSecuritySchemesWithResponse(ctx context.Con
 	return ParseListApiSecuritySchemesHTTPResp(rsp)
 }
 
-// ListAuditEntriesWithResponse List Audit Entries
+// ListAuditEntriesWithResponse List audit entries
 //
 // List audit entries with optional filters.
 //
@@ -49224,7 +49224,7 @@ func (c *ClientWithResponses) ListAuditEntriesWithResponse(ctx context.Context, 
 	return ParseListAuditEntriesHTTPResp(rsp)
 }
 
-// GetAuditEntryWithResponse Get Audit Entry
+// GetAuditEntryWithResponse Get an audit entry
 //
 // Get a single audit entry by ID.
 //
@@ -49311,7 +49311,7 @@ func (c *ClientWithResponses) RefreshSessionWithResponse(ctx context.Context, re
 	return ParseRefreshSessionHTTPResp(rsp)
 }
 
-// ListCatalogWithResponse List Catalog
+// ListCatalogWithResponse List catalog entries
 //
 // List a keyset page of browsable catalog entries (search/filter aware).
 //
@@ -49331,7 +49331,7 @@ func (c *ClientWithResponses) ListCatalogWithResponse(ctx context.Context, param
 	return ParseListCatalogHTTPResp(rsp)
 }
 
-// GetCatalogEntryWithResponse Get Catalog Entry
+// GetCatalogEntryWithResponse Get a catalog entry
 //
 // Retrieve a single catalog entry by api_id.
 //
@@ -49346,7 +49346,7 @@ func (c *ClientWithResponses) GetCatalogEntryWithResponse(ctx context.Context, a
 	return ParseGetCatalogEntryHTTPResp(rsp)
 }
 
-// PreviewCatalogOperationsWithResponse Preview Catalog Operations
+// PreviewCatalogOperationsWithResponse Preview a catalog entry's operations
 //
 // Preview the operations of a catalog entry's spec (capped, offset-paginated).
 //
@@ -49365,7 +49365,7 @@ func (c *ClientWithResponses) PreviewCatalogOperationsWithResponse(ctx context.C
 	return ParsePreviewCatalogOperationsHTTPResp(rsp)
 }
 
-// ImportCatalogEntryWithResponse Import Catalog Entry
+// ImportCatalogEntryWithResponse Import a catalog entry
 //
 // Enqueue an async import of a catalog entry into the local registry.
 //
@@ -49380,7 +49380,7 @@ func (c *ClientWithResponses) ImportCatalogEntryWithResponse(ctx context.Context
 	return ParseImportCatalogEntryHTTPResp(rsp)
 }
 
-// SnoozeCatalogEntryWithBodyWithResponse Snooze Catalog Entry
+// SnoozeCatalogEntryWithBodyWithResponse Snooze a catalog entry's update notice
 //
 // Snooze the outstanding update notification for a catalog entry (C1, #925).
 //
@@ -49401,7 +49401,7 @@ func (c *ClientWithResponses) SnoozeCatalogEntryWithBodyWithResponse(ctx context
 	return ParseSnoozeCatalogEntryHTTPResp(rsp)
 }
 
-// SnoozeCatalogEntryWithResponse Snooze Catalog Entry
+// SnoozeCatalogEntryWithResponse Snooze a catalog entry's update notice
 //
 // Snooze the outstanding update notification for a catalog entry (C1, #925).
 //
@@ -49422,7 +49422,7 @@ func (c *ClientWithResponses) SnoozeCatalogEntryWithResponse(ctx context.Context
 	return ParseSnoozeCatalogEntryHTTPResp(rsp)
 }
 
-// UnsnoozeCatalogEntryWithResponse Unsnooze Catalog Entry
+// UnsnoozeCatalogEntryWithResponse Clear a catalog entry's snooze
 //
 // Clear a snooze for a catalog entry (C1). Operator action (“events:write“).
 //
@@ -49437,7 +49437,7 @@ func (c *ClientWithResponses) UnsnoozeCatalogEntryWithResponse(ctx context.Conte
 	return ParseUnsnoozeCatalogEntryHTTPResp(rsp)
 }
 
-// RefreshCatalogWithResponse Refresh Catalog
+// RefreshCatalogWithResponse Refresh the catalog cache
 //
 // Force a refresh of the catalog cache from the upstream manifest (org:admin).
 //
@@ -50089,7 +50089,7 @@ func (c *ClientWithResponses) ConnectCredentialWithResponse(ctx context.Context,
 	return ParseConnectCredentialHTTPResp(rsp)
 }
 
-// ErrorPageWithResponse Error Page
+// ErrorPageWithResponse Get a browser authorization error
 //
 // Minimal error endpoint for browser-facing authorization failures.
 //
@@ -50104,7 +50104,7 @@ func (c *ClientWithResponses) ErrorPageWithResponse(ctx context.Context, params 
 	return ParseErrorPageHTTPResp(rsp)
 }
 
-// ListEventsWithResponse List Events
+// ListEventsWithResponse List events
 //
 // List events with optional filters.
 //
@@ -50119,7 +50119,7 @@ func (c *ClientWithResponses) ListEventsWithResponse(ctx context.Context, params
 	return ParseListEventsHTTPResp(rsp)
 }
 
-// StreamEventsWithResponse Stream Events
+// StreamEventsWithResponse Stream events over SSE
 //
 // Stream events as Server-Sent Events.
 //
@@ -50152,7 +50152,7 @@ func (c *ClientWithResponses) StreamEventsWithResponse(ctx context.Context, para
 	return ParseStreamEventsHTTPResp(rsp)
 }
 
-// GetEventWithResponse Get Event
+// GetEventWithResponse Get an event
 //
 // Get an event by ID.
 //
@@ -50167,7 +50167,7 @@ func (c *ClientWithResponses) GetEventWithResponse(ctx context.Context, eventId 
 	return ParseGetEventHTTPResp(rsp)
 }
 
-// ListExecutionsWithResponse List Executions
+// ListExecutionsWithResponse List executions
 //
 // List execution records with optional filters.
 //
@@ -50301,7 +50301,7 @@ func (c *ClientWithResponses) WithdrawHeldExecutionWithResponse(ctx context.Cont
 	return ParseWithdrawHeldExecutionHTTPResp(rsp)
 }
 
-// GetExecutionWithResponse Get Execution
+// GetExecutionWithResponse Get an execution
 //
 // Get an execution record by ID.
 //
@@ -50316,7 +50316,7 @@ func (c *ClientWithResponses) GetExecutionWithResponse(ctx context.Context, exec
 	return ParseGetExecutionHTTPResp(rsp)
 }
 
-// GetGovernedHostsWithResponse Get Governed Hosts
+// GetGovernedHostsWithResponse Get the caller's governed host set
 //
 // The caller's governed host set (credential-bound hosts) with an ETag digest.
 //
@@ -50540,7 +50540,7 @@ func (c *ClientWithResponses) IntegrationsEditConnectionWithResponse(ctx context
 	return ParseIntegrationsEditConnectionHTTPResp(rsp)
 }
 
-// ListJobsWithResponse List Jobs
+// ListJobsWithResponse List jobs
 //
 // List jobs with optional filters.
 //
@@ -50555,7 +50555,7 @@ func (c *ClientWithResponses) ListJobsWithResponse(ctx context.Context, params *
 	return ParseListJobsHTTPResp(rsp)
 }
 
-// GetJobWithResponse Get Job
+// GetJobWithResponse Get a job
 //
 // Get a job by ID.
 //
@@ -50570,7 +50570,7 @@ func (c *ClientWithResponses) GetJobWithResponse(ctx context.Context, jobId stri
 	return ParseGetJobHTTPResp(rsp)
 }
 
-// GetJobResultWithResponse Get Job Result
+// GetJobResultWithResponse Get a job's result
 //
 // Get the result of a completed job — polymorphic by kind.
 //
@@ -50585,7 +50585,7 @@ func (c *ClientWithResponses) GetJobResultWithResponse(ctx context.Context, jobI
 	return ParseGetJobResultHTTPResp(rsp)
 }
 
-// CancelJobWithResponse Cancel Job
+// CancelJobWithResponse Cancel a job
 //
 // Cancel an active job.
 //
@@ -50651,7 +50651,7 @@ func (c *ClientWithResponses) ReportMcpConfigRegistrationWithResponse(ctx contex
 	return ParseReportMcpConfigRegistrationHTTPResp(rsp)
 }
 
-// GetMeWithResponse Get Me
+// GetMeWithResponse Get the caller's identity
 //
 // Return the caller's identity and context, discriminated by actor type.
 //
@@ -50666,7 +50666,7 @@ func (c *ClientWithResponses) GetMeWithResponse(ctx context.Context, reqEditors 
 	return ParseGetMeHTTPResp(rsp)
 }
 
-// GetExecutionStatsWithResponse Get Execution Stats
+// GetExecutionStatsWithResponse Get execution statistics
 //
 // Return aggregated execution statistics for the dashboard.
 //
@@ -50681,7 +50681,7 @@ func (c *ClientWithResponses) GetExecutionStatsWithResponse(ctx context.Context,
 	return ParseGetExecutionStatsHTTPResp(rsp)
 }
 
-// GetUsageStatsWithResponse Get Usage Stats
+// GetUsageStatsWithResponse Get usage statistics
 //
 // Return detailed usage statistics for the monitoring overview.
 //
@@ -50696,7 +50696,7 @@ func (c *ClientWithResponses) GetUsageStatsWithResponse(ctx context.Context, par
 	return ParseGetUsageStatsHTTPResp(rsp)
 }
 
-// ListNotesWithResponse List Notes
+// ListNotesWithResponse List notes
 //
 // List notes with optional filters and cursor pagination.
 //
@@ -50713,7 +50713,7 @@ func (c *ClientWithResponses) ListNotesWithResponse(ctx context.Context, params 
 	return ParseListNotesHTTPResp(rsp)
 }
 
-// CreateNoteWithBodyWithResponse Create Note
+// CreateNoteWithBodyWithResponse Create a note
 //
 // Create a new note attached to a registry resource.
 //
@@ -50728,7 +50728,7 @@ func (c *ClientWithResponses) CreateNoteWithBodyWithResponse(ctx context.Context
 	return ParseCreateNoteHTTPResp(rsp)
 }
 
-// CreateNoteWithResponse Create Note
+// CreateNoteWithResponse Create a note
 //
 // Create a new note attached to a registry resource.
 //
@@ -50743,7 +50743,7 @@ func (c *ClientWithResponses) CreateNoteWithResponse(ctx context.Context, body C
 	return ParseCreateNoteHTTPResp(rsp)
 }
 
-// DeleteNoteWithResponse Delete Note
+// DeleteNoteWithResponse Delete a note
 //
 // Delete a note. Supports optimistic concurrency via If-Match.
 //
@@ -50758,7 +50758,7 @@ func (c *ClientWithResponses) DeleteNoteWithResponse(ctx context.Context, noteId
 	return ParseDeleteNoteHTTPResp(rsp)
 }
 
-// GetNoteWithResponse Get Note
+// GetNoteWithResponse Get a note
 //
 // Retrieve a single note by ID.
 //
@@ -50776,7 +50776,7 @@ func (c *ClientWithResponses) GetNoteWithResponse(ctx context.Context, noteId st
 	return ParseGetNoteHTTPResp(rsp)
 }
 
-// UpdateNoteWithBodyWithResponse Update Note
+// UpdateNoteWithBodyWithResponse Update a note
 //
 // Update a note (partial). Supports optimistic concurrency via If-Match.
 //
@@ -50791,7 +50791,7 @@ func (c *ClientWithResponses) UpdateNoteWithBodyWithResponse(ctx context.Context
 	return ParseUpdateNoteHTTPResp(rsp)
 }
 
-// UpdateNoteWithResponse Update Note
+// UpdateNoteWithResponse Update a note
 //
 // Update a note (partial). Supports optimistic concurrency via If-Match.
 //
@@ -50934,7 +50934,7 @@ func (c *ClientWithResponses) UpdateOauthAppRegistrationWithResponse(ctx context
 	return ParseUpdateOauthAppRegistrationHTTPResp(rsp)
 }
 
-// RotateOauthAppRegistrationSecretWithBodyWithResponse Rotate the client secret
+// RotateOauthAppRegistrationSecretWithBodyWithResponse Rotate an OAuth app registration's secret
 //
 // Replace the encrypted client secret. Existing tokens are unaffected;
 // subsequent refreshes present the new secret.
@@ -50950,7 +50950,7 @@ func (c *ClientWithResponses) RotateOauthAppRegistrationSecretWithBodyWithRespon
 	return ParseRotateOauthAppRegistrationSecretHTTPResp(rsp)
 }
 
-// RotateOauthAppRegistrationSecretWithResponse Rotate the client secret
+// RotateOauthAppRegistrationSecretWithResponse Rotate an OAuth app registration's secret
 //
 // Replace the encrypted client secret. Existing tokens are unaffected;
 // subsequent refreshes present the new secret.
@@ -51236,7 +51236,7 @@ func (c *ClientWithResponses) ConsentAgentStatusWithResponse(ctx context.Context
 	return ParseConsentAgentStatusHTTPResp(rsp)
 }
 
-// IntrospectEndpointWithBodyWithResponse Introspect Endpoint
+// IntrospectEndpointWithBodyWithResponse Introspect an OAuth token
 //
 // Introspect a token (RFC 7662).
 //
@@ -51259,7 +51259,7 @@ func (c *ClientWithResponses) IntrospectEndpointWithBodyWithResponse(ctx context
 	return ParseIntrospectEndpointHTTPResp(rsp)
 }
 
-// IntrospectEndpointWithResponse Introspect Endpoint
+// IntrospectEndpointWithResponse Introspect an OAuth token
 //
 // Introspect a token (RFC 7662).
 //
@@ -51282,7 +51282,7 @@ func (c *ClientWithResponses) IntrospectEndpointWithResponse(ctx context.Context
 	return ParseIntrospectEndpointHTTPResp(rsp)
 }
 
-// IntrospectEndpointWithFormdataBodyWithResponse Introspect Endpoint
+// IntrospectEndpointWithFormdataBodyWithResponse Introspect an OAuth token
 //
 // Introspect a token (RFC 7662).
 //
@@ -51305,7 +51305,7 @@ func (c *ClientWithResponses) IntrospectEndpointWithFormdataBodyWithResponse(ctx
 	return ParseIntrospectEndpointHTTPResp(rsp)
 }
 
-// RevokeEndpointWithBodyWithResponse Revoke Endpoint
+// RevokeEndpointWithBodyWithResponse Revoke an OAuth token
 //
 // Revoke a token (RFC 7009). Always returns 200 for valid requests.
 //
@@ -51348,7 +51348,7 @@ func (c *ClientWithResponses) RevokeEndpointWithBodyWithResponse(ctx context.Con
 	return ParseRevokeEndpointHTTPResp(rsp)
 }
 
-// RevokeEndpointWithResponse Revoke Endpoint
+// RevokeEndpointWithResponse Revoke an OAuth token
 //
 // Revoke a token (RFC 7009). Always returns 200 for valid requests.
 //
@@ -51391,7 +51391,7 @@ func (c *ClientWithResponses) RevokeEndpointWithResponse(ctx context.Context, bo
 	return ParseRevokeEndpointHTTPResp(rsp)
 }
 
-// RevokeEndpointWithFormdataBodyWithResponse Revoke Endpoint
+// RevokeEndpointWithFormdataBodyWithResponse Revoke an OAuth token
 //
 // Revoke a token (RFC 7009). Always returns 200 for valid requests.
 //
@@ -51434,7 +51434,7 @@ func (c *ClientWithResponses) RevokeEndpointWithFormdataBodyWithResponse(ctx con
 	return ParseRevokeEndpointHTTPResp(rsp)
 }
 
-// TokenEndpointWithBodyWithResponse Token Endpoint
+// TokenEndpointWithBodyWithResponse Exchange a grant for OAuth tokens
 //
 // Exchange a refresh token, JWT assertion, or authorization code for tokens.
 //
@@ -51458,7 +51458,7 @@ func (c *ClientWithResponses) TokenEndpointWithBodyWithResponse(ctx context.Cont
 	return ParseTokenEndpointHTTPResp(rsp)
 }
 
-// TokenEndpointWithResponse Token Endpoint
+// TokenEndpointWithResponse Exchange a grant for OAuth tokens
 //
 // Exchange a refresh token, JWT assertion, or authorization code for tokens.
 //
@@ -51482,7 +51482,7 @@ func (c *ClientWithResponses) TokenEndpointWithResponse(ctx context.Context, bod
 	return ParseTokenEndpointHTTPResp(rsp)
 }
 
-// TokenEndpointWithFormdataBodyWithResponse Token Endpoint
+// TokenEndpointWithFormdataBodyWithResponse Exchange a grant for OAuth tokens
 //
 // Exchange a refresh token, JWT assertion, or authorization code for tokens.
 //
@@ -51715,7 +51715,7 @@ func (c *ClientWithResponses) ListPermissionsWithResponse(ctx context.Context, r
 	return ParseListPermissionsHTTPResp(rsp)
 }
 
-// RegisterEndpointWithBodyWithResponse Register Endpoint
+// RegisterEndpointWithBodyWithResponse Register an agent client
 //
 // Register a new agent client (RFC 7591).
 //
@@ -51730,7 +51730,7 @@ func (c *ClientWithResponses) RegisterEndpointWithBodyWithResponse(ctx context.C
 	return ParseRegisterEndpointHTTPResp(rsp)
 }
 
-// RegisterEndpointWithResponse Register Endpoint
+// RegisterEndpointWithResponse Register an agent client
 //
 // Register a new agent client (RFC 7591).
 //
@@ -51745,7 +51745,7 @@ func (c *ClientWithResponses) RegisterEndpointWithResponse(ctx context.Context, 
 	return ParseRegisterEndpointHTTPResp(rsp)
 }
 
-// DeleteRegistrationEndpointWithResponse Delete Registration Endpoint
+// DeleteRegistrationEndpointWithResponse Delete a client registration (unsupported)
 //
 // Client deletion not supported — returns 403.
 //
@@ -51760,7 +51760,7 @@ func (c *ClientWithResponses) DeleteRegistrationEndpointWithResponse(ctx context
 	return ParseDeleteRegistrationEndpointHTTPResp(rsp)
 }
 
-// PollStatusEndpointWithResponse Poll Status Endpoint
+// PollStatusEndpointWithResponse Poll an agent registration's status
 //
 // Poll registration status (RFC 7592).
 //
@@ -51775,7 +51775,7 @@ func (c *ClientWithResponses) PollStatusEndpointWithResponse(ctx context.Context
 	return ParsePollStatusEndpointHTTPResp(rsp)
 }
 
-// UpdateRegistrationEndpointWithResponse Update Registration Endpoint
+// UpdateRegistrationEndpointWithResponse Update a client registration (unsupported)
 //
 // Client update not supported — returns 403.
 //
@@ -51841,7 +51841,7 @@ func (c *ClientWithResponses) GetVersionWithResponse(ctx context.Context, reqEdi
 	return ParseGetVersionHTTPResp(rsp)
 }
 
-// ListUsersWithResponse List Users
+// ListUsersWithResponse List users
 //
 // List users with cursor-based pagination.
 //
@@ -51858,7 +51858,7 @@ func (c *ClientWithResponses) ListUsersWithResponse(ctx context.Context, params 
 	return ParseListUsersHTTPResp(rsp)
 }
 
-// CreateUserWithBodyWithResponse Create User
+// CreateUserWithBodyWithResponse Create a user and issue an invite
 //
 // Create a new user and issue an invite token.
 //
@@ -51873,7 +51873,7 @@ func (c *ClientWithResponses) CreateUserWithBodyWithResponse(ctx context.Context
 	return ParseCreateUserHTTPResp(rsp)
 }
 
-// CreateUserWithResponse Create User
+// CreateUserWithResponse Create a user and issue an invite
 //
 // Create a new user and issue an invite token.
 //
@@ -51941,7 +51941,7 @@ func (c *ClientWithResponses) ChangePasswordWithResponse(ctx context.Context, bo
 	return ParseChangePasswordHTTPResp(rsp)
 }
 
-// DeleteUserWithResponse Delete User
+// DeleteUserWithResponse Delete a user
 //
 // Delete a user account (terminal-but-kept).
 //
@@ -51965,7 +51965,7 @@ func (c *ClientWithResponses) DeleteUserWithResponse(ctx context.Context, userId
 	return ParseDeleteUserHTTPResp(rsp)
 }
 
-// GetUserWithResponse Get User
+// GetUserWithResponse Get a user
 //
 // Get a user by ID.
 //
@@ -51983,7 +51983,7 @@ func (c *ClientWithResponses) GetUserWithResponse(ctx context.Context, userId Pa
 	return ParseGetUserHTTPResp(rsp)
 }
 
-// UpdateUserWithBodyWithResponse Update User
+// UpdateUserWithBodyWithResponse Update a user
 //
 // Update a user's profile fields.
 //
@@ -52002,7 +52002,7 @@ func (c *ClientWithResponses) UpdateUserWithBodyWithResponse(ctx context.Context
 	return ParseUpdateUserHTTPResp(rsp)
 }
 
-// UpdateUserWithResponse Update User
+// UpdateUserWithResponse Update a user
 //
 // Update a user's profile fields.
 //
@@ -52021,7 +52021,7 @@ func (c *ClientWithResponses) UpdateUserWithResponse(ctx context.Context, userId
 	return ParseUpdateUserHTTPResp(rsp)
 }
 
-// SetUserPermissionsWithBodyWithResponse Set User Permissions
+// SetUserPermissionsWithBodyWithResponse Set a user's permissions
 //
 // Set the assigned permissions for a user.
 //
@@ -52042,7 +52042,7 @@ func (c *ClientWithResponses) SetUserPermissionsWithBodyWithResponse(ctx context
 	return ParseSetUserPermissionsHTTPResp(rsp)
 }
 
-// SetUserPermissionsWithResponse Set User Permissions
+// SetUserPermissionsWithResponse Set a user's permissions
 //
 // Set the assigned permissions for a user.
 //
@@ -52063,7 +52063,7 @@ func (c *ClientWithResponses) SetUserPermissionsWithResponse(ctx context.Context
 	return ParseSetUserPermissionsHTTPResp(rsp)
 }
 
-// DisableUserWithResponse Disable User
+// DisableUserWithResponse Disable a user
 //
 // Disable a user account.
 //
@@ -52080,7 +52080,7 @@ func (c *ClientWithResponses) DisableUserWithResponse(ctx context.Context, userI
 	return ParseDisableUserHTTPResp(rsp)
 }
 
-// EnableUserWithResponse Enable User
+// EnableUserWithResponse Enable a user
 //
 // Enable a disabled user account.
 //
@@ -52098,7 +52098,7 @@ func (c *ClientWithResponses) EnableUserWithResponse(ctx context.Context, userId
 	return ParseEnableUserHTTPResp(rsp)
 }
 
-// ReissueInviteWithResponse Reissue Invite
+// ReissueInviteWithResponse Reissue a user's invite
 //
 // Reissue an invite token for a user.
 //

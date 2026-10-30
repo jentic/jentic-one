@@ -112,7 +112,7 @@ export class AgentsService {
         });
     }
     /**
-     * Archive Agent
+     * Archive an agent
      * Archive an agent — or, with ``purge=true``, hard-delete it.
      *
      * Archive keeps the row for history, but the action is not reversible and
@@ -499,7 +499,7 @@ export class AgentsService {
         });
     }
     /**
-     * Update Agent Jwks
+     * Replace an agent's JWKS
      * Update an agent's JWKS (public keys for JWT-bearer authentication).
      *
      * The JWKS must contain at least one Ed25519 public key and must not contain
@@ -602,7 +602,7 @@ export class AgentsService {
         });
     }
     /**
-     * Get Agent Permissions
+     * List an agent's permissions
      * List permissions granted to an agent.
      * @returns AgentPermissionsResponse Successful Response
      * @throws ApiError
@@ -632,7 +632,7 @@ export class AgentsService {
         });
     }
     /**
-     * Replace Agent Permissions
+     * Replace an agent's permissions
      * Replace all permissions for an agent.
      * @returns AgentPermissionsResponse Successful Response
      * @throws ApiError
@@ -669,7 +669,7 @@ export class AgentsService {
         });
     }
     /**
-     * Approve Agent
+     * Approve an agent
      * Approve a pending agent.
      *
      * Allowed for the agent's owner or an ``org:admin``. An agent with no owner
@@ -706,7 +706,7 @@ export class AgentsService {
         });
     }
     /**
-     * Claim Agent
+     * Claim an agent
      * Claim ownership of a self-registered agent using its claim token.
      *
      * Authenticated by the platform bearer token but requires **no** agent
@@ -759,7 +759,7 @@ export class AgentsService {
         });
     }
     /**
-     * Deny Agent
+     * Deny an agent
      * Deny a pending agent.
      *
      * Same authorization as approve: the agent's owner or an ``org:admin``, and
@@ -801,7 +801,7 @@ export class AgentsService {
         });
     }
     /**
-     * Disable Agent
+     * Disable an agent
      * Disable an active agent.
      * @returns void
      * @throws ApiError
@@ -831,7 +831,7 @@ export class AgentsService {
         });
     }
     /**
-     * Enable Agent
+     * Enable an agent
      * Enable a disabled agent.
      * @returns void
      * @throws ApiError
@@ -861,7 +861,7 @@ export class AgentsService {
         });
     }
     /**
-     * Generate Agent Api Key
+     * Generate an agent's API key
      * Generate a new API key for an active agent. Rotates any existing key.
      * @returns ApiKeyResponse Successful Response
      * @throws ApiError
@@ -891,7 +891,7 @@ export class AgentsService {
         });
     }
     /**
-     * Revoke Agent Api Key
+     * Revoke an agent's API key
      * Revoke an agent's API key without generating a new one.
      * @returns void
      * @throws ApiError

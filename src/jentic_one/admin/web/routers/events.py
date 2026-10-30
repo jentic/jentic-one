@@ -82,7 +82,7 @@ def _event_response(view: EventView, request: Request) -> EventResponse:
     )
 
 
-@router.get("/events")
+@router.get("/events", summary="List events")
 async def list_events(
     request: Request,
     identity: Identity = get_current_identity(required_permissions=["events:read"]),
@@ -239,7 +239,12 @@ _SSE_RESPONSE: Final[dict[int | str, dict[str, Any]]] = {
 }
 
 
-@router.get("/events/stream", response_class=StreamingResponse, responses=_SSE_RESPONSE)
+@router.get(
+    "/events/stream",
+    summary="Stream events over SSE",
+    response_class=StreamingResponse,
+    responses=_SSE_RESPONSE,
+)
 async def stream_events(
     request: Request,
     identity: Identity = get_current_identity(required_permissions=_STREAM_PERMISSIONS),
@@ -400,7 +405,7 @@ async def stream_events(
     )
 
 
-@router.get("/events/{event_id}")
+@router.get("/events/{event_id}", summary="Get an event")
 async def get_event(
     event_id: Annotated[
         str, Path(description="ID of the event.", openapi_examples=ex.example(ex.EVENT_ID))

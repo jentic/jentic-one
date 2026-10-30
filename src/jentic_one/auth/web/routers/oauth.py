@@ -296,6 +296,7 @@ token_router = APIRouter(route_class=_TokenRoute)
 
 @token_router.post(
     "/oauth/token",
+    summary="Exchange a grant for OAuth tokens",
     dependencies=[Depends(_check_token_rate_limit)],
     openapi_extra=_TOKEN_REQUEST_BODY,
     responses={
@@ -600,6 +601,7 @@ _REVOKE_FORM_BODY: dict[str, object] = {
 
 @revocation_router.post(
     "/oauth/revoke",
+    summary="Revoke an OAuth token",
     status_code=200,
     # Both arms answer ``Response(status_code=200)``: no body, which RFC 7009
     # §2.2 prescribes. ``response_class=Response`` keeps the generated ``200``
@@ -757,6 +759,7 @@ introspection_router = APIRouter(route_class=_IntrospectionRoute)
 
 @introspection_router.post(
     "/oauth/introspect",
+    summary="Introspect an OAuth token",
     openapi_extra=_INTROSPECT_REQUEST_BODY,
     responses={
         400: {

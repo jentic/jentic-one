@@ -9,7 +9,7 @@ import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class JobsService {
     /**
-     * List Jobs
+     * List jobs
      * List jobs with optional filters.
      * @returns JobListResponse Successful Response
      * @throws ApiError
@@ -69,7 +69,7 @@ export class JobsService {
         });
     }
     /**
-     * Get Job
+     * Get a job
      * Get a job by ID.
      * @returns JobResponse Successful Response
      * @throws ApiError
@@ -99,7 +99,7 @@ export class JobsService {
         });
     }
     /**
-     * Get Job Result
+     * Get a job's result
      * Get the result of a completed job — polymorphic by kind.
      * @returns any The completed job's result, polymorphic by the job's `kind` (read `kind` from `GET /jobs/{job_id}`). The body is always a JSON object — never an array or a scalar — but its members depend on the kind:
      *
@@ -135,7 +135,7 @@ export class JobsService {
         });
     }
     /**
-     * Cancel Job
+     * Cancel a job
      * Cancel an active job.
      *
      * A held execution answers ``409``: it settles only through its hold (decide,

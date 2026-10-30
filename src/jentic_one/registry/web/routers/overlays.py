@@ -214,7 +214,7 @@ async def list_overlays(
     return JSONResponse(content=resp.model_dump(mode="json", by_alias=True))
 
 
-@router.get("/{overlay_id}", response_model=OverlayResponse)
+@router.get("/{overlay_id}", response_model=OverlayResponse, summary="Get an overlay")
 async def get_overlay(
     request: Request,
     vendor: ApiVendorPath,

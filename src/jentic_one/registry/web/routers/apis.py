@@ -63,7 +63,12 @@ from jentic_one.shared.web.openapi_responses import conflict, not_found, problem
 router = APIRouter()
 
 
-@router.get("/apis", response_model=ApiListResponse, response_model_by_alias=True)
+@router.get(
+    "/apis",
+    response_model=ApiListResponse,
+    response_model_by_alias=True,
+    summary="List registered APIs",
+)
 async def list_apis(
     request: Request,
     identity: Identity = get_current_identity(required_permissions=["apis:read"]),
@@ -137,7 +142,7 @@ async def list_apis(
     return JSONResponse(content=resp.model_dump(mode="json", by_alias=True))
 
 
-@router.get("/apis/{vendor}/{name}/{version}", response_model=ApiResponse)
+@router.get("/apis/{vendor}/{name}/{version}", response_model=ApiResponse, summary="Get an API")
 async def get_api(
     request: Request,
     vendor: ApiVendorPath,
@@ -252,6 +257,7 @@ def _check_inline_source_sizes(body: ApiImportRequest, max_bytes: int, instance:
     "/apis",
     status_code=202,
     response_model=ApiImportResponse,
+    summary="Import OpenAPI or Arazzo specs",
     responses={
         413: problem(
             "The request body exceeds `ingest.max_import_request_bytes`, or an inline "
@@ -667,7 +673,11 @@ async def list_api_revision_operations(
     return JSONResponse(content=resp.model_dump(mode="json", by_alias=True))
 
 
-@router.patch("/apis/{vendor}/{name}/{version}", response_model=ApiResponse)
+@router.patch(
+    "/apis/{vendor}/{name}/{version}",
+    response_model=ApiResponse,
+    summary="Update an API",
+)
 async def update_api(
     request: Request,
     vendor: ApiVendorPath,
@@ -692,6 +702,7 @@ async def update_api(
 @router.delete(
     "/apis/{vendor}/{name}/{version}",
     status_code=204,
+    summary="Delete an API",
     responses={
         **not_found(),
         **conflict(
@@ -716,6 +727,7 @@ async def delete_api(
 @router.post(
     "/apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote",
     response_model=ApiResponse,
+    summary="Promote an API revision",
 )
 async def promote_revision(
     request: Request,
@@ -901,7 +913,11 @@ def _spec_response(request: Request, doc: SpecDocument) -> Response:
     )
 
 
-@router.get("/apis/{vendor}/{name}/{version}/openapi", responses=_SPEC_DOWNLOAD_RESPONSES)
+@router.get(
+    "/apis/{vendor}/{name}/{version}/openapi",
+    summary="Get an API's OpenAPI document",
+    responses=_SPEC_DOWNLOAD_RESPONSES,
+)
 async def get_api_spec(
     request: Request,
     vendor: ApiVendorPath,

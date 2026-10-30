@@ -190,7 +190,7 @@ export class OverlaysService {
         });
     }
     /**
-     * Get Overlay
+     * Get an overlay
      * Retrieve a single overlay by ID.
      * @returns OverlayResponse Successful Response
      * @throws ApiError

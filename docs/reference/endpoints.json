@@ -37,7 +37,7 @@
       "path": "/actors/lookup",
       "public": false,
       "required_permissions": [],
-      "summary": "Resolve actor names by id",
+      "summary": "Resolve actor names by ID",
       "surface": "actors",
       "typical_caller": "any"
     },
@@ -424,7 +424,7 @@
       "required_permissions": [
         "agents:write"
       ],
-      "summary": "Archive Agent",
+      "summary": "Archive an agent",
       "surface": "agents",
       "typical_caller": "operator"
     },
@@ -624,7 +624,7 @@
       "required_permissions": [
         "agents:write"
       ],
-      "summary": "Update Agent Jwks",
+      "summary": "Replace an agent's JWKS",
       "surface": "agents",
       "typical_caller": "operator"
     },
@@ -664,7 +664,7 @@
       "required_permissions": [
         "agents:read"
       ],
-      "summary": "Get Agent Permissions",
+      "summary": "List an agent's permissions",
       "surface": "agents",
       "typical_caller": "operator"
     },
@@ -688,7 +688,7 @@
       "required_permissions": [
         "agents:write"
       ],
-      "summary": "Replace Agent Permissions",
+      "summary": "Replace an agent's permissions",
       "surface": "agents",
       "typical_caller": "operator"
     },
@@ -712,7 +712,7 @@
       "required_permissions": [
         "agents:write"
       ],
-      "summary": "Approve Agent",
+      "summary": "Approve an agent",
       "surface": "agents",
       "typical_caller": "operator"
     },
@@ -729,7 +729,7 @@
       "path": "/agents/{agent_id}:claim",
       "public": false,
       "required_permissions": [],
-      "summary": "Claim Agent",
+      "summary": "Claim an agent",
       "surface": "agents",
       "typical_caller": "operator"
     },
@@ -753,7 +753,7 @@
       "required_permissions": [
         "agents:write"
       ],
-      "summary": "Deny Agent",
+      "summary": "Deny an agent",
       "surface": "agents",
       "typical_caller": "operator"
     },
@@ -777,7 +777,7 @@
       "required_permissions": [
         "agents:write"
       ],
-      "summary": "Disable Agent",
+      "summary": "Disable an agent",
       "surface": "agents",
       "typical_caller": "operator"
     },
@@ -801,7 +801,7 @@
       "required_permissions": [
         "agents:write"
       ],
-      "summary": "Enable Agent",
+      "summary": "Enable an agent",
       "surface": "agents",
       "typical_caller": "operator"
     },
@@ -825,7 +825,7 @@
       "required_permissions": [
         "agents:write"
       ],
-      "summary": "Generate Agent Api Key",
+      "summary": "Generate an agent's API key",
       "surface": "agents",
       "typical_caller": "operator"
     },
@@ -849,7 +849,7 @@
       "required_permissions": [
         "agents:write"
       ],
-      "summary": "Revoke Agent Api Key",
+      "summary": "Revoke an agent's API key",
       "surface": "agents",
       "typical_caller": "operator"
     },
@@ -871,7 +871,7 @@
       "required_permissions": [
         "apis:read"
       ],
-      "summary": "List Apis",
+      "summary": "List registered APIs",
       "surface": "apis",
       "typical_caller": "agent"
     },
@@ -896,7 +896,7 @@
       "required_permissions": [
         "apis:write"
       ],
-      "summary": "Import Apis",
+      "summary": "Import OpenAPI or Arazzo specs",
       "surface": "apis",
       "typical_caller": "any"
     },
@@ -921,7 +921,7 @@
       "required_permissions": [
         "apis:write"
       ],
-      "summary": "Delete Api",
+      "summary": "Delete an API",
       "surface": "apis",
       "typical_caller": "any"
     },
@@ -943,7 +943,7 @@
       "required_permissions": [
         "apis:read"
       ],
-      "summary": "Get Api",
+      "summary": "Get an API",
       "surface": "apis",
       "typical_caller": "agent"
     },
@@ -968,7 +968,7 @@
       "required_permissions": [
         "apis:write"
       ],
-      "summary": "Update Api",
+      "summary": "Update an API",
       "surface": "apis",
       "typical_caller": "any"
     },
@@ -990,7 +990,7 @@
       "required_permissions": [
         "apis:read"
       ],
-      "summary": "Get Api Spec",
+      "summary": "Get an API's OpenAPI document",
       "surface": "apis",
       "typical_caller": "agent"
     },
@@ -1106,7 +1106,7 @@
       "required_permissions": [
         "apis:read"
       ],
-      "summary": "Get Overlay",
+      "summary": "Get an overlay",
       "surface": "apis",
       "typical_caller": "agent"
     },
@@ -1342,7 +1342,7 @@
       "required_permissions": [
         "apis:write"
       ],
-      "summary": "Promote Revision",
+      "summary": "Promote an API revision",
       "surface": "apis",
       "typical_caller": "any"
     },
@@ -1386,7 +1386,7 @@
       "required_permissions": [
         "audit:read"
       ],
-      "summary": "List Audit Entries",
+      "summary": "List audit entries",
       "surface": "audit",
       "typical_caller": "operator"
     },
@@ -1408,7 +1408,7 @@
       "required_permissions": [
         "audit:read"
       ],
-      "summary": "Get Audit Entry",
+      "summary": "Get an audit entry",
       "surface": "audit",
       "typical_caller": "operator"
     },
@@ -1477,7 +1477,7 @@
       "required_permissions": [
         "capabilities:read"
       ],
-      "summary": "List Catalog",
+      "summary": "List catalog entries",
       "surface": "catalog",
       "typical_caller": "agent"
     },
@@ -1499,7 +1499,7 @@
       "required_permissions": [
         "capabilities:read"
       ],
-      "summary": "Get Catalog Entry",
+      "summary": "Get a catalog entry",
       "surface": "catalog",
       "typical_caller": "agent"
     },
@@ -1521,7 +1521,7 @@
       "required_permissions": [
         "capabilities:read"
       ],
-      "summary": "Preview Catalog Operations",
+      "summary": "Preview a catalog entry's operations",
       "surface": "catalog",
       "typical_caller": "agent"
     },
@@ -1545,7 +1545,7 @@
       "required_permissions": [
         "catalog:import"
       ],
-      "summary": "Import Catalog Entry",
+      "summary": "Import a catalog entry",
       "surface": "catalog",
       "typical_caller": "agent"
     },
@@ -1569,7 +1569,7 @@
       "required_permissions": [
         "events:write"
       ],
-      "summary": "Snooze Catalog Entry",
+      "summary": "Snooze a catalog entry's update notice",
       "surface": "catalog",
       "typical_caller": "operator"
     },
@@ -1593,7 +1593,7 @@
       "required_permissions": [
         "events:write"
       ],
-      "summary": "Unsnooze Catalog Entry",
+      "summary": "Clear a catalog entry's snooze",
       "surface": "catalog",
       "typical_caller": "operator"
     },
@@ -1639,7 +1639,7 @@
       "required_permissions": [
         "org:admin"
       ],
-      "summary": "Refresh Catalog",
+      "summary": "Refresh the catalog cache",
       "surface": "catalog:refresh",
       "typical_caller": "operator"
     },
@@ -2203,7 +2203,7 @@
       "path": "/error",
       "public": true,
       "required_permissions": [],
-      "summary": "Error Page",
+      "summary": "Get a browser authorization error",
       "surface": "error",
       "typical_caller": null
     },
@@ -2225,7 +2225,7 @@
       "required_permissions": [
         "events:read"
       ],
-      "summary": "List Events",
+      "summary": "List events",
       "surface": "events",
       "typical_caller": "agent"
     },
@@ -2247,7 +2247,7 @@
       "required_permissions": [
         "events:read"
       ],
-      "summary": "Stream Events",
+      "summary": "Stream events over SSE",
       "surface": "events",
       "typical_caller": "agent"
     },
@@ -2269,7 +2269,7 @@
       "required_permissions": [
         "events:read"
       ],
-      "summary": "Get Event",
+      "summary": "Get an event",
       "surface": "events",
       "typical_caller": "agent"
     },
@@ -2291,7 +2291,7 @@
       "required_permissions": [
         "executions:read"
       ],
-      "summary": "List Executions",
+      "summary": "List executions",
       "surface": "executions",
       "typical_caller": "agent"
     },
@@ -2403,7 +2403,7 @@
       "required_permissions": [
         "executions:read"
       ],
-      "summary": "Get Execution",
+      "summary": "Get an execution",
       "surface": "executions",
       "typical_caller": "agent"
     },
@@ -2427,7 +2427,7 @@
         "credentials:read",
         "owner:credentials:read"
       ],
-      "summary": "Get Governed Hosts",
+      "summary": "Get the caller's governed host set",
       "surface": "governed-hosts",
       "typical_caller": "any"
     },
@@ -2582,7 +2582,7 @@
       "required_permissions": [
         "jobs:read"
       ],
-      "summary": "List Jobs",
+      "summary": "List jobs",
       "surface": "jobs",
       "typical_caller": "agent"
     },
@@ -2604,7 +2604,7 @@
       "required_permissions": [
         "jobs:read"
       ],
-      "summary": "Get Job",
+      "summary": "Get a job",
       "surface": "jobs",
       "typical_caller": "agent"
     },
@@ -2626,7 +2626,7 @@
       "required_permissions": [
         "jobs:read"
       ],
-      "summary": "Get Job Result",
+      "summary": "Get a job's result",
       "surface": "jobs",
       "typical_caller": "agent"
     },
@@ -2650,7 +2650,7 @@
       "required_permissions": [
         "jobs:write"
       ],
-      "summary": "Cancel Job",
+      "summary": "Cancel a job",
       "surface": "jobs",
       "typical_caller": "any"
     },
@@ -2686,7 +2686,7 @@
       "path": "/me",
       "public": false,
       "required_permissions": [],
-      "summary": "Get Me",
+      "summary": "Get the caller's identity",
       "surface": "me",
       "typical_caller": "any"
     },
@@ -2732,7 +2732,7 @@
       "required_permissions": [
         "org:admin"
       ],
-      "summary": "Get Execution Stats",
+      "summary": "Get execution statistics",
       "surface": "monitoring",
       "typical_caller": "operator"
     },
@@ -2778,7 +2778,7 @@
       "required_permissions": [
         "org:admin"
       ],
-      "summary": "Get Usage Stats",
+      "summary": "Get usage statistics",
       "surface": "monitoring",
       "typical_caller": "operator"
     },
@@ -2796,7 +2796,7 @@
       "path": "/notes",
       "public": false,
       "required_permissions": [],
-      "summary": "List Notes",
+      "summary": "List notes",
       "surface": "notes",
       "typical_caller": "any"
     },
@@ -2814,7 +2814,7 @@
       "path": "/notes",
       "public": false,
       "required_permissions": [],
-      "summary": "Create Note",
+      "summary": "Create a note",
       "surface": "notes",
       "typical_caller": "any"
     },
@@ -2832,7 +2832,7 @@
       "path": "/notes/{note_id}",
       "public": false,
       "required_permissions": [],
-      "summary": "Delete Note",
+      "summary": "Delete a note",
       "surface": "notes",
       "typical_caller": "any"
     },
@@ -2850,7 +2850,7 @@
       "path": "/notes/{note_id}",
       "public": false,
       "required_permissions": [],
-      "summary": "Get Note",
+      "summary": "Get a note",
       "surface": "notes",
       "typical_caller": "any"
     },
@@ -2868,7 +2868,7 @@
       "path": "/notes/{note_id}",
       "public": false,
       "required_permissions": [],
-      "summary": "Update Note",
+      "summary": "Update a note",
       "surface": "notes",
       "typical_caller": "any"
     },
@@ -3144,7 +3144,7 @@
       "required_permissions": [
         "org:admin"
       ],
-      "summary": "Rotate the client secret",
+      "summary": "Rotate an OAuth app registration's secret",
       "surface": "oauth-app-registrations",
       "typical_caller": "operator"
     },
@@ -3264,7 +3264,7 @@
       "path": "/oauth/introspect",
       "public": false,
       "required_permissions": [],
-      "summary": "Introspect Endpoint",
+      "summary": "Introspect an OAuth token",
       "surface": "oauth",
       "typical_caller": "any"
     },
@@ -3282,7 +3282,7 @@
       "path": "/oauth/revoke",
       "public": false,
       "required_permissions": [],
-      "summary": "Revoke Endpoint",
+      "summary": "Revoke an OAuth token",
       "surface": "oauth",
       "typical_caller": "any"
     },
@@ -3297,7 +3297,7 @@
       "path": "/oauth/token",
       "public": true,
       "required_permissions": [],
-      "summary": "Token Endpoint",
+      "summary": "Exchange a grant for OAuth tokens",
       "surface": "oauth",
       "typical_caller": null
     },
@@ -3493,7 +3493,7 @@
       "path": "/register",
       "public": true,
       "required_permissions": [],
-      "summary": "Register Endpoint",
+      "summary": "Register an agent client",
       "surface": "register",
       "typical_caller": null
     },
@@ -3511,7 +3511,7 @@
       "path": "/register/{agent_id}",
       "public": false,
       "required_permissions": [],
-      "summary": "Delete Registration Endpoint",
+      "summary": "Delete a client registration (unsupported)",
       "surface": "register",
       "typical_caller": "any"
     },
@@ -3529,7 +3529,7 @@
       "path": "/register/{agent_id}",
       "public": false,
       "required_permissions": [],
-      "summary": "Poll Status Endpoint",
+      "summary": "Poll an agent registration's status",
       "surface": "register",
       "typical_caller": "any"
     },
@@ -3547,7 +3547,7 @@
       "path": "/register/{agent_id}",
       "public": false,
       "required_permissions": [],
-      "summary": "Update Registration Endpoint",
+      "summary": "Update a client registration (unsupported)",
       "surface": "register",
       "typical_caller": "any"
     },
@@ -3609,7 +3609,7 @@
       "required_permissions": [
         "users:read"
       ],
-      "summary": "List Users",
+      "summary": "List users",
       "surface": "users",
       "typical_caller": "operator"
     },
@@ -3633,7 +3633,7 @@
       "required_permissions": [
         "users:write"
       ],
-      "summary": "Create User",
+      "summary": "Create a user and issue an invite",
       "surface": "users",
       "typical_caller": "operator"
     },
@@ -3693,7 +3693,7 @@
       "required_permissions": [
         "users:write"
       ],
-      "summary": "Delete User",
+      "summary": "Delete a user",
       "surface": "users",
       "typical_caller": "operator"
     },
@@ -3715,7 +3715,7 @@
       "required_permissions": [
         "users:read"
       ],
-      "summary": "Get User",
+      "summary": "Get a user",
       "surface": "users",
       "typical_caller": "operator"
     },
@@ -3739,7 +3739,7 @@
       "required_permissions": [
         "users:write"
       ],
-      "summary": "Update User",
+      "summary": "Update a user",
       "surface": "users",
       "typical_caller": "operator"
     },
@@ -3763,7 +3763,7 @@
       "required_permissions": [
         "users:write"
       ],
-      "summary": "Set User Permissions",
+      "summary": "Set a user's permissions",
       "surface": "users",
       "typical_caller": "operator"
     },
@@ -3787,7 +3787,7 @@
       "required_permissions": [
         "users:write"
       ],
-      "summary": "Disable User",
+      "summary": "Disable a user",
       "surface": "users",
       "typical_caller": "operator"
     },
@@ -3811,7 +3811,7 @@
       "required_permissions": [
         "users:write"
       ],
-      "summary": "Enable User",
+      "summary": "Enable a user",
       "surface": "users",
       "typical_caller": "operator"
     },
@@ -3835,7 +3835,7 @@
       "required_permissions": [
         "users:write"
       ],
-      "summary": "Reissue Invite",
+      "summary": "Reissue a user's invite",
       "surface": "users",
       "typical_caller": "operator"
     },

@@ -11,7 +11,7 @@ import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class NotesService {
     /**
-     * List Notes
+     * List notes
      * List notes with optional filters and cursor pagination.
      *
      * Returns the caller's own notes; a user also sees the notes of agents they own.
@@ -85,7 +85,7 @@ export class NotesService {
         });
     }
     /**
-     * Create Note
+     * Create a note
      * Create a new note attached to a registry resource.
      * @returns NoteResponse Successful Response
      * @throws ApiError
@@ -114,7 +114,7 @@ export class NotesService {
         });
     }
     /**
-     * Delete Note
+     * Delete a note
      * Delete a note. Supports optimistic concurrency via If-Match.
      * @returns void
      * @throws ApiError
@@ -152,7 +152,7 @@ export class NotesService {
         });
     }
     /**
-     * Get Note
+     * Get a note
      * Retrieve a single note by ID.
      *
      * A user can read the notes of agents they own, but only a note's author (or
@@ -185,7 +185,7 @@ export class NotesService {
         });
     }
     /**
-     * Update Note
+     * Update a note
      * Update a note (partial). Supports optimistic concurrency via If-Match.
      * @returns NoteResponse Successful Response
      * @throws ApiError

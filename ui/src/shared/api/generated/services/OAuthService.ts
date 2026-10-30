@@ -84,7 +84,7 @@ export class OAuthService {
         });
     }
     /**
-     * Error Page
+     * Get a browser authorization error
      * Minimal error endpoint for browser-facing authorization failures.
      * @returns string Successful Response
      * @throws ApiError
@@ -337,7 +337,7 @@ export class OAuthService {
         });
     }
     /**
-     * Introspect Endpoint
+     * Introspect an OAuth token
      * Introspect a token (RFC 7662).
      *
      * Accepts both ``application/x-www-form-urlencoded`` (the §2.1 request
@@ -377,7 +377,7 @@ export class OAuthService {
         });
     }
     /**
-     * Revoke Endpoint
+     * Revoke an OAuth token
      * Revoke a token (RFC 7009). Always returns 200 for valid requests.
      *
      * Two client-authentication arms, negotiated on the request content type by
@@ -443,7 +443,7 @@ export class OAuthService {
         });
     }
     /**
-     * Token Endpoint
+     * Exchange a grant for OAuth tokens
      * Exchange a refresh token, JWT assertion, or authorization code for tokens.
      *
      * Error responses speak the RFC 6749 §5.2 dialect (top-level ``error`` +

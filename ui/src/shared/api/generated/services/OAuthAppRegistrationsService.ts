@@ -213,7 +213,7 @@ export class OAuthAppRegistrationsService {
         });
     }
     /**
-     * Rotate the client secret
+     * Rotate an OAuth app registration's secret
      * Replace the encrypted client secret. Existing tokens are unaffected;
      * subsequent refreshes present the new secret.
      * @returns OAuthAppRegistrationResponse Successful Response

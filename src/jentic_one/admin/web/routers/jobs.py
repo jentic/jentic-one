@@ -64,7 +64,7 @@ def _job_response(view: JobView, request: Request) -> JobResponse:
     )
 
 
-@router.get("/jobs")
+@router.get("/jobs", summary="List jobs")
 async def list_jobs(
     request: Request,
     identity: Identity = get_current_identity(required_permissions=["jobs:read"]),
@@ -118,7 +118,7 @@ async def list_jobs(
     )
 
 
-@router.get("/jobs/{job_id}")
+@router.get("/jobs/{job_id}", summary="Get a job")
 async def get_job(
     request: Request,
     job_id: Annotated[
@@ -197,7 +197,7 @@ _JOB_RESULT_RESPONSE: Final[dict[int | str, dict[str, Any]]] = {
 }
 
 
-@router.get("/jobs/{job_id}/result", responses=_JOB_RESULT_RESPONSE)
+@router.get("/jobs/{job_id}/result", summary="Get a job's result", responses=_JOB_RESULT_RESPONSE)
 async def get_job_result(
     job_id: Annotated[
         str, Path(description="ID of the job.", openapi_examples=ex.example(ex.JOB_ID))
@@ -212,7 +212,11 @@ async def get_job_result(
     return JSONResponse(content=view.body)
 
 
-@router.post("/jobs/{job_id}:cancel", responses=with_responses(not_found(), conflict()))
+@router.post(
+    "/jobs/{job_id}:cancel",
+    summary="Cancel a job",
+    responses=with_responses(not_found(), conflict()),
+)
 async def cancel_job(
     request: Request,
     job_id: Annotated[

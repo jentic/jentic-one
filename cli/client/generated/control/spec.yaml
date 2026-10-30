@@ -14124,7 +14124,7 @@ paths:
       - Actors
     summary: List users and agents
   /actors/lookup:
-    description: '`GET`: Resolve actor names by id.'
+    description: '`GET`: Resolve actor names by ID.'
     get:
       description: |-
         Resolve user and agent ids to display names.
@@ -14199,10 +14199,10 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Resolve actor names by id
+      summary: Resolve actor names by ID
       tags:
       - Actors
-    summary: Resolve actor names by id
+    summary: Resolve actor names by ID
   /admin/config/providers:
     description: '`GET`: List credential provider configs.'
     get:
@@ -15236,10 +15236,10 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Archive Agent
+      summary: Archive an agent
       tags:
       - Agents
-    description: '`GET`: Get an agent. `PATCH`: Update an agent. `DELETE`: Archive Agent.'
+    description: '`GET`: Get an agent. `PATCH`: Update an agent. `DELETE`: Archive an agent.'
     get:
       description: |-
         Get one agent's profile and lifecycle state.
@@ -15368,7 +15368,7 @@ paths:
       summary: Update an agent
       tags:
       - Agents
-    summary: Get an agent; Update an agent; Archive Agent
+    summary: Get an agent; Update an agent; Archive an agent
   /agents/{agent_id}/api-key:
     description: '`GET`: Get an agent''s API key metadata.'
     get:
@@ -15791,7 +15791,7 @@ paths:
       - Agents
     summary: Resume a suspended credential binding
   /agents/{agent_id}/jwks:
-    description: '`PUT`: Update Agent Jwks.'
+    description: '`PUT`: Replace an agent''s JWKS.'
     put:
       description: |-
         Update an agent's JWKS (public keys for JWT-bearer authentication).
@@ -15847,10 +15847,10 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Update Agent Jwks
+      summary: Replace an agent's JWKS
       tags:
       - Agents
-    summary: Update Agent Jwks
+    summary: Replace an agent's JWKS
   /agents/{agent_id}/oauth-grants:
     description: '`GET`: List an agent''s connected OAuth clients.'
     get:
@@ -15968,7 +15968,7 @@ paths:
       - Agents
     summary: List an agent's connected OAuth clients
   /agents/{agent_id}/permissions:
-    description: '`GET`: Get Agent Permissions. `PUT`: Replace Agent Permissions.'
+    description: '`GET`: List an agent''s permissions. `PUT`: Replace an agent''s permissions.'
     get:
       description: List permissions granted to an agent.
       operationId: getAgentPermissions
@@ -16012,7 +16012,7 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Get Agent Permissions
+      summary: List an agent's permissions
       tags:
       - Agents
     put:
@@ -16066,12 +16066,12 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Replace Agent Permissions
+      summary: Replace an agent's permissions
       tags:
       - Agents
-    summary: Get Agent Permissions; Replace Agent Permissions
+    summary: List an agent's permissions; Replace an agent's permissions
   /agents/{agent_id}:approve:
-    description: '`POST`: Approve Agent.'
+    description: '`POST`: Approve an agent.'
     post:
       description: |-
         Approve a pending agent.
@@ -16124,12 +16124,12 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Approve Agent
+      summary: Approve an agent
       tags:
       - Agents
-    summary: Approve Agent
+    summary: Approve an agent
   /agents/{agent_id}:claim:
-    description: '`POST`: Claim Agent.'
+    description: '`POST`: Claim an agent.'
     post:
       description: |-
         Claim ownership of a self-registered agent using its claim token.
@@ -16193,12 +16193,12 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Claim Agent
+      summary: Claim an agent
       tags:
       - Agents
-    summary: Claim Agent
+    summary: Claim an agent
   /agents/{agent_id}:deny:
-    description: '`POST`: Deny Agent.'
+    description: '`POST`: Deny an agent.'
     post:
       description: |-
         Deny a pending agent.
@@ -16257,12 +16257,12 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Deny Agent
+      summary: Deny an agent
       tags:
       - Agents
-    summary: Deny Agent
+    summary: Deny an agent
   /agents/{agent_id}:disable:
-    description: '`POST`: Disable Agent.'
+    description: '`POST`: Disable an agent.'
     post:
       description: Disable an active agent.
       operationId: disableAgent
@@ -16301,12 +16301,12 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Disable Agent
+      summary: Disable an agent
       tags:
       - Agents
-    summary: Disable Agent
+    summary: Disable an agent
   /agents/{agent_id}:enable:
-    description: '`POST`: Enable Agent.'
+    description: '`POST`: Enable an agent.'
     post:
       description: Enable a disabled agent.
       operationId: enableAgent
@@ -16345,12 +16345,12 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Enable Agent
+      summary: Enable an agent
       tags:
       - Agents
-    summary: Enable Agent
+    summary: Enable an agent
   /agents/{agent_id}:generate-api-key:
-    description: '`POST`: Generate Agent Api Key.'
+    description: '`POST`: Generate an agent''s API key.'
     post:
       description: Generate a new API key for an active agent. Rotates any existing key.
       operationId: generateAgentApiKey
@@ -16394,12 +16394,12 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Generate Agent Api Key
+      summary: Generate an agent's API key
       tags:
       - Agents
-    summary: Generate Agent Api Key
+    summary: Generate an agent's API key
   /agents/{agent_id}:revoke-api-key:
-    description: '`POST`: Revoke Agent Api Key.'
+    description: '`POST`: Revoke an agent''s API key.'
     post:
       description: Revoke an agent's API key without generating a new one.
       operationId: revokeAgentApiKey
@@ -16438,12 +16438,12 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Revoke Agent Api Key
+      summary: Revoke an agent's API key
       tags:
       - Agents
-    summary: Revoke Agent Api Key
+    summary: Revoke an agent's API key
   /apis:
-    description: '`GET`: List Apis. `POST`: Import Apis.'
+    description: '`GET`: List registered APIs. `POST`: Import OpenAPI or Arazzo specs.'
     get:
       description: |-
         List locally registered APIs with optional vendor filter and pagination.
@@ -16531,7 +16531,7 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: List Apis
+      summary: List registered APIs
       tags:
       - APIs
     post:
@@ -16588,10 +16588,10 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Import Apis
+      summary: Import OpenAPI or Arazzo specs
       tags:
       - APIs
-    summary: List Apis; Import Apis
+    summary: List registered APIs; Import OpenAPI or Arazzo specs
   /apis/{vendor}/{name}/{version}:
     delete:
       description: Delete an API and all its revisions.
@@ -16629,10 +16629,10 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Delete Api
+      summary: Delete an API
       tags:
       - APIs
-    description: '`GET`: Get Api. `PATCH`: Update Api. `DELETE`: Delete Api.'
+    description: '`GET`: Get an API. `PATCH`: Update an API. `DELETE`: Delete an API.'
     get:
       description: Retrieve a single API by its (vendor, name, version) identity.
       operationId: getApi
@@ -16665,7 +16665,7 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Get Api
+      summary: Get an API
       tags:
       - APIs
     patch:
@@ -16708,12 +16708,12 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Update Api
+      summary: Update an API
       tags:
       - APIs
-    summary: Get Api; Update Api; Delete Api
+    summary: Get an API; Update an API; Delete an API
   /apis/{vendor}/{name}/{version}/openapi:
-    description: '`GET`: Get Api Spec.'
+    description: '`GET`: Get an API''s OpenAPI document.'
     get:
       description: Download the OpenAPI spec for the API's current (live) revision.
       operationId: getApiSpec
@@ -16769,10 +16769,10 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Get Api Spec
+      summary: Get an API's OpenAPI document
       tags:
       - API Spec
-    summary: Get Api Spec
+    summary: Get an API's OpenAPI document
   /apis/{vendor}/{name}/{version}/operations:
     description: '`GET`: List the operations an API currently serves.'
     get:
@@ -17049,7 +17049,7 @@ paths:
       summary: Deprecate an overlay
       tags:
       - Overlays
-    description: '`GET`: Get Overlay. `PATCH`: Edit an overlay. `DELETE`: Deprecate an overlay.'
+    description: '`GET`: Get an overlay. `PATCH`: Edit an overlay. `DELETE`: Deprecate an overlay.'
     get:
       description: Retrieve a single overlay by ID.
       operationId: getOverlay
@@ -17083,7 +17083,7 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Get Overlay
+      summary: Get an overlay
       tags:
       - Overlays
     patch:
@@ -17151,7 +17151,7 @@ paths:
       summary: Edit an overlay
       tags:
       - Overlays
-    summary: Get Overlay; Edit an overlay; Deprecate an overlay
+    summary: Get an overlay; Edit an overlay; Deprecate an overlay
   /apis/{vendor}/{name}/{version}/overlays/{overlay_id}:confirm:
     description: '`POST`: Confirm an overlay and apply it to the served spec.'
     post:
@@ -17691,7 +17691,7 @@ paths:
       - APIs
     summary: Archive an API revision
   /apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote:
-    description: '`POST`: Promote Revision.'
+    description: '`POST`: Promote an API revision.'
     post:
       description: |-
         Promote a draft revision to published, archiving the current one.
@@ -17732,10 +17732,10 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Promote Revision
+      summary: Promote an API revision
       tags:
       - APIs
-    summary: Promote Revision
+    summary: Promote an API revision
   /apis/{vendor}/{name}/{version}/security-schemes:
     description: '`GET`: List security schemes for an API.'
     get:
@@ -17777,7 +17777,7 @@ paths:
       - APIs
     summary: List security schemes for an API
   /audit:
-    description: '`GET`: List Audit Entries.'
+    description: '`GET`: List audit entries.'
     get:
       description: |-
         List audit entries with optional filters.
@@ -17954,12 +17954,12 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: List Audit Entries
+      summary: List audit entries
       tags:
       - Audit
-    summary: List Audit Entries
+    summary: List audit entries
   /audit/{audit_id}:
-    description: '`GET`: Get Audit Entry.'
+    description: '`GET`: Get an audit entry.'
     get:
       description: Get a single audit entry by ID.
       operationId: getAuditEntry
@@ -18003,10 +18003,10 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Get Audit Entry
+      summary: Get an audit entry
       tags:
       - Audit
-    summary: Get Audit Entry
+    summary: Get an audit entry
   /auth/idp:
     description: '`GET`: External IdP login descriptor.'
     get:
@@ -18111,7 +18111,7 @@ paths:
       - Users
     summary: Refresh session token
   /catalog:
-    description: '`GET`: List Catalog.'
+    description: '`GET`: List catalog entries.'
     get:
       description: |-
         List a keyset page of browsable catalog entries (search/filter aware).
@@ -18261,12 +18261,12 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: List Catalog
+      summary: List catalog entries
       tags:
       - Catalog
-    summary: List Catalog
+    summary: List catalog entries
   /catalog/{api_id}:
-    description: '`GET`: Get Catalog Entry.'
+    description: '`GET`: Get a catalog entry.'
     get:
       description: Retrieve a single catalog entry by api_id.
       operationId: getCatalogEntry
@@ -18297,12 +18297,12 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Get Catalog Entry
+      summary: Get a catalog entry
       tags:
       - Catalog
-    summary: Get Catalog Entry
+    summary: Get a catalog entry
   /catalog/{api_id}/operations:
-    description: '`GET`: Preview Catalog Operations.'
+    description: '`GET`: Preview a catalog entry''s operations.'
     get:
       description: |-
         Preview the operations of a catalog entry's spec (capped, offset-paginated).
@@ -18408,12 +18408,12 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Preview Catalog Operations
+      summary: Preview a catalog entry's operations
       tags:
       - Catalog
-    summary: Preview Catalog Operations
+    summary: Preview a catalog entry's operations
   /catalog/{api_id}:import:
-    description: '`POST`: Import Catalog Entry.'
+    description: '`POST`: Import a catalog entry.'
     post:
       description: Enqueue an async import of a catalog entry into the local registry.
       operationId: importCatalogEntry
@@ -18444,12 +18444,12 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Import Catalog Entry
+      summary: Import a catalog entry
       tags:
       - Catalog
-    summary: Import Catalog Entry
+    summary: Import a catalog entry
   /catalog/{api_id}:snooze:
-    description: '`POST`: Snooze Catalog Entry.'
+    description: '`POST`: Snooze a catalog entry''s update notice.'
     post:
       description: |-
         Snooze the outstanding update notification for a catalog entry (C1, #925).
@@ -18498,12 +18498,12 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Snooze Catalog Entry
+      summary: Snooze a catalog entry's update notice
       tags:
       - Catalog
-    summary: Snooze Catalog Entry
+    summary: Snooze a catalog entry's update notice
   /catalog/{api_id}:unsnooze:
-    description: '`POST`: Unsnooze Catalog Entry.'
+    description: '`POST`: Clear a catalog entry''s snooze.'
     post:
       description: Clear a snooze for a catalog entry (C1). Operator action (``events:write``).
       operationId: unsnoozeCatalogEntry
@@ -18529,12 +18529,12 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Unsnooze Catalog Entry
+      summary: Clear a catalog entry's snooze
       tags:
       - Catalog
-    summary: Unsnooze Catalog Entry
+    summary: Clear a catalog entry's snooze
   /catalog:refresh:
-    description: '`POST`: Refresh Catalog.'
+    description: '`POST`: Refresh the catalog cache.'
     post:
       description: Force a refresh of the catalog cache from the upstream manifest (org:admin).
       operationId: refreshCatalog
@@ -18563,10 +18563,10 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Refresh Catalog
+      summary: Refresh the catalog cache
       tags:
       - Catalog
-    summary: Refresh Catalog
+    summary: Refresh the catalog cache
   /connect-sessions:
     description: '`GET`: List connect sessions.'
     get:
@@ -19887,7 +19887,7 @@ paths:
       - Credentials
     summary: Begin OAuth connect flow
   /error:
-    description: '`GET`: Error Page.'
+    description: '`GET`: Get a browser authorization error.'
     get:
       description: Minimal error endpoint for browser-facing authorization failures.
       operationId: errorPage
@@ -19928,12 +19928,12 @@ paths:
         default:
           $ref: '#/components/responses/UnexpectedError'
       security: []
-      summary: Error Page
+      summary: Get a browser authorization error
       tags:
       - OAuth
-    summary: Error Page
+    summary: Get a browser authorization error
   /events:
-    description: '`GET`: List Events.'
+    description: '`GET`: List events.'
     get:
       description: List events with optional filters.
       operationId: listEvents
@@ -20155,12 +20155,12 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: List Events
+      summary: List events
       tags:
       - Events
-    summary: List Events
+    summary: List events
   /events/stream:
-    description: '`GET`: Stream Events.'
+    description: '`GET`: Stream events over SSE.'
     get:
       description: |-
         Stream events as Server-Sent Events.
@@ -20383,12 +20383,12 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Stream Events
+      summary: Stream events over SSE
       tags:
       - Events
-    summary: Stream Events
+    summary: Stream events over SSE
   /events/{event_id}:
-    description: '`GET`: Get Event.'
+    description: '`GET`: Get an event.'
     get:
       description: Get an event by ID.
       operationId: getEvent
@@ -20432,12 +20432,12 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Get Event
+      summary: Get an event
       tags:
       - Events
-    summary: Get Event
+    summary: Get an event
   /executions:
-    description: '`GET`: List Executions.'
+    description: '`GET`: List executions.'
     get:
       description: List execution records with optional filters.
       operationId: listExecutions
@@ -20636,10 +20636,10 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: List Executions
+      summary: List executions
       tags:
       - Executions
-    summary: List Executions
+    summary: List executions
   /executions/holds:
     description: '`GET`: List held executions.'
     get:
@@ -20970,7 +20970,7 @@ paths:
       - Held Executions
     summary: Withdraw a held execution
   /executions/{execution_id}:
-    description: '`GET`: Get Execution.'
+    description: '`GET`: Get an execution.'
     get:
       description: Get an execution record by ID.
       operationId: getExecution
@@ -21014,12 +21014,12 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Get Execution
+      summary: Get an execution
       tags:
       - Executions
-    summary: Get Execution
+    summary: Get an execution
   /governed-hosts:
-    description: '`GET`: Get Governed Hosts.'
+    description: '`GET`: Get the caller''s governed host set.'
     get:
       description: |-
         The caller's governed host set (credential-bound hosts) with an ETag digest.
@@ -21099,10 +21099,10 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Get Governed Hosts
+      summary: Get the caller's governed host set
       tags:
       - Governed Hosts
-    summary: Get Governed Hosts
+    summary: Get the caller's governed host set
   /health:
     description: '`GET`: Liveness probe.'
     get:
@@ -21549,7 +21549,7 @@ paths:
       - Integrations
     summary: Ask to change a credential binding
   /jobs:
-    description: '`GET`: List Jobs.'
+    description: '`GET`: List jobs.'
     get:
       description: List jobs with optional filters.
       operationId: listJobs
@@ -21693,12 +21693,12 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: List Jobs
+      summary: List jobs
       tags:
       - Jobs
-    summary: List Jobs
+    summary: List jobs
   /jobs/{job_id}:
-    description: '`GET`: Get Job.'
+    description: '`GET`: Get a job.'
     get:
       description: Get a job by ID.
       operationId: getJob
@@ -21742,12 +21742,12 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Get Job
+      summary: Get a job
       tags:
       - Jobs
-    summary: Get Job
+    summary: Get a job
   /jobs/{job_id}/result:
-    description: '`GET`: Get Job Result.'
+    description: '`GET`: Get a job''s result.'
     get:
       description: Get the result of a completed job — polymorphic by kind.
       operationId: getJobResult
@@ -21816,12 +21816,12 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Get Job Result
+      summary: Get a job's result
       tags:
       - Jobs
-    summary: Get Job Result
+    summary: Get a job's result
   /jobs/{job_id}:cancel:
-    description: '`POST`: Cancel Job.'
+    description: '`POST`: Cancel a job.'
     post:
       description: |-
         Cancel an active job.
@@ -21873,10 +21873,10 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Cancel Job
+      summary: Cancel a job
       tags:
       - Jobs
-    summary: Cancel Job
+    summary: Cancel a job
   /mcp/config-registrations:
     description: '`POST`: Report MCP config registration.'
     post:
@@ -21930,7 +21930,7 @@ paths:
       - MCP
     summary: Report MCP config registration
   /me:
-    description: '`GET`: Get Me.'
+    description: '`GET`: Get the caller''s identity.'
     get:
       description: Return the caller's identity and context, discriminated by actor type.
       operationId: getMe
@@ -21966,12 +21966,12 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Get Me
+      summary: Get the caller's identity
       tags:
       - Identity
-    summary: Get Me
+    summary: Get the caller's identity
   /monitoring/executions:
-    description: '`GET`: Get Execution Stats.'
+    description: '`GET`: Get execution statistics.'
     get:
       description: Return aggregated execution statistics for the dashboard.
       operationId: getExecutionStats
@@ -22018,12 +22018,12 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Get Execution Stats
+      summary: Get execution statistics
       tags:
       - Monitoring
-    summary: Get Execution Stats
+    summary: Get execution statistics
   /monitoring/usage:
-    description: '`GET`: Get Usage Stats.'
+    description: '`GET`: Get usage statistics.'
     get:
       description: Return detailed usage statistics for the monitoring overview.
       operationId: getUsageStats
@@ -22176,12 +22176,12 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Get Usage Stats
+      summary: Get usage statistics
       tags:
       - Monitoring
-    summary: Get Usage Stats
+    summary: Get usage statistics
   /notes:
-    description: '`POST`: Create Note. `GET`: List Notes.'
+    description: '`POST`: Create a note. `GET`: List notes.'
     get:
       description: |-
         List notes with optional filters and cursor pagination.
@@ -22357,7 +22357,7 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: List Notes
+      summary: List notes
       tags:
       - Notes
     post:
@@ -22396,10 +22396,10 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Create Note
+      summary: Create a note
       tags:
       - Notes
-    summary: Create Note; List Notes
+    summary: Create a note; List notes
   /notes/{note_id}:
     delete:
       description: Delete a note. Supports optimistic concurrency via If-Match.
@@ -22457,10 +22457,10 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Delete Note
+      summary: Delete a note
       tags:
       - Notes
-    description: '`GET`: Get Note. `PATCH`: Update Note. `DELETE`: Delete Note.'
+    description: '`GET`: Get a note. `PATCH`: Update a note. `DELETE`: Delete a note.'
     get:
       description: |-
         Retrieve a single note by ID.
@@ -22508,7 +22508,7 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Get Note
+      summary: Get a note
       tags:
       - Notes
     patch:
@@ -22580,10 +22580,10 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Update Note
+      summary: Update a note
       tags:
       - Notes
-    summary: Get Note; Update Note; Delete Note
+    summary: Get a note; Update a note; Delete a note
   /oauth-app-registrations:
     description: '`POST`: Register a shared OAuth application. `GET`: List OAuth app registrations.'
     get:
@@ -22921,7 +22921,7 @@ paths:
       - OAuth App Registrations
     summary: Get an OAuth app registration; Update an OAuth app registration; Delete an OAuth app registration
   /oauth-app-registrations/{id}:rotate-secret:
-    description: '`POST`: Rotate the client secret.'
+    description: '`POST`: Rotate an OAuth app registration''s secret.'
     post:
       description: |-
         Replace the encrypted client secret. Existing tokens are unaffected;
@@ -22979,10 +22979,10 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Rotate the client secret
+      summary: Rotate an OAuth app registration's secret
       tags:
       - OAuth App Registrations
-    summary: Rotate the client secret
+    summary: Rotate an OAuth app registration's secret
   /oauth-clients:
     description: '`POST`: Register OAuth client (anonymous DCR).'
     post:
@@ -23352,7 +23352,7 @@ paths:
       - OAuth
     summary: Poll pending-agent approval status (consent awaiting page)
   /oauth/introspect:
-    description: '`POST`: Introspect Endpoint.'
+    description: '`POST`: Introspect an OAuth token.'
     post:
       description: |-
         Introspect a token (RFC 7662).
@@ -23429,12 +23429,12 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Introspect Endpoint
+      summary: Introspect an OAuth token
       tags:
       - OAuth
-    summary: Introspect Endpoint
+    summary: Introspect an OAuth token
   /oauth/revoke:
-    description: '`POST`: Revoke Endpoint.'
+    description: '`POST`: Revoke an OAuth token.'
     post:
       description: |-
         Revoke a token (RFC 7009). Always returns 200 for valid requests.
@@ -23535,12 +23535,12 @@ paths:
         default:
           $ref: '#/components/responses/UnexpectedError'
       security: []
-      summary: Revoke Endpoint
+      summary: Revoke an OAuth token
       tags:
       - OAuth
-    summary: Revoke Endpoint
+    summary: Revoke an OAuth token
   /oauth/token:
-    description: '`POST`: Token Endpoint.'
+    description: '`POST`: Exchange a grant for OAuth tokens.'
     post:
       description: |-
         Exchange a refresh token, JWT assertion, or authorization code for tokens.
@@ -23682,10 +23682,10 @@ paths:
         default:
           $ref: '#/components/responses/UnexpectedError'
       security: []
-      summary: Token Endpoint
+      summary: Exchange a grant for OAuth tokens
       tags:
       - OAuth
-    summary: Token Endpoint
+    summary: Exchange a grant for OAuth tokens
   /permission-rule-sets:
     description: '`GET`: List permission rule sets. `POST`: Create permission rule set.'
     get:
@@ -24041,7 +24041,7 @@ paths:
       - Permissions
     summary: List the permission catalogue
   /register:
-    description: '`POST`: Register Endpoint.'
+    description: '`POST`: Register an agent client.'
     post:
       description: Register a new agent client (RFC 7591).
       operationId: registerEndpoint
@@ -24072,10 +24072,10 @@ paths:
         default:
           $ref: '#/components/responses/UnexpectedError'
       security: []
-      summary: Register Endpoint
+      summary: Register an agent client
       tags:
       - Agent Registration
-    summary: Register Endpoint
+    summary: Register an agent client
   /register/{agent_id}:
     delete:
       description: Client deletion not supported — returns 403.
@@ -24118,10 +24118,10 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Delete Registration Endpoint
+      summary: Delete a client registration (unsupported)
       tags:
       - Agent Registration
-    description: '`GET`: Poll Status Endpoint. `PUT`: Update Registration Endpoint. `DELETE`: Delete Registration Endpoint.'
+    description: '`GET`: Poll an agent registration''s status. `PUT`: Update a client registration (unsupported). `DELETE`: Delete a client registration (unsupported).'
     get:
       description: Poll registration status (RFC 7592).
       operationId: pollStatusEndpoint
@@ -24161,7 +24161,7 @@ paths:
         default:
           $ref: '#/components/responses/UnexpectedError'
       security: []
-      summary: Poll Status Endpoint
+      summary: Poll an agent registration's status
       tags:
       - Agent Registration
     put:
@@ -24205,10 +24205,10 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Update Registration Endpoint
+      summary: Update a client registration (unsupported)
       tags:
       - Agent Registration
-    summary: Poll Status Endpoint; Update Registration Endpoint; Delete Registration Endpoint
+    summary: Poll an agent registration's status; Update a client registration (unsupported); Delete a client registration (unsupported)
   /search:
     description: '`POST`: Search operations.'
     post:
@@ -24281,7 +24281,7 @@ paths:
       - System
     summary: Running and latest-available app version
   /users:
-    description: '`GET`: List Users. `POST`: Create User.'
+    description: '`GET`: List users. `POST`: Create a user and issue an invite.'
     get:
       description: |-
         List users with cursor-based pagination.
@@ -24365,7 +24365,7 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: List Users
+      summary: List users
       tags:
       - Users
     post:
@@ -24404,10 +24404,10 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Create User
+      summary: Create a user and issue an invite
       tags:
       - Users
-    summary: List Users; Create User
+    summary: List users; Create a user and issue an invite
   /users/me:
     description: '`GET`: Get current user.'
     get:
@@ -24529,10 +24529,10 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Delete User
+      summary: Delete a user
       tags:
       - Users
-    description: '`GET`: Get User. `PATCH`: Update User. `DELETE`: Delete User.'
+    description: '`GET`: Get a user. `PATCH`: Update a user. `DELETE`: Delete a user.'
     get:
       description: |-
         Get a user by ID.
@@ -24569,7 +24569,7 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Get User
+      summary: Get a user
       tags:
       - Users
     patch:
@@ -24624,12 +24624,12 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Update User
+      summary: Update a user
       tags:
       - Users
-    summary: Get User; Update User; Delete User
+    summary: Get a user; Update a user; Delete a user
   /users/{user_id}/permissions:
-    description: '`PUT`: Set User Permissions.'
+    description: '`PUT`: Set a user''s permissions.'
     put:
       description: |-
         Set the assigned permissions for a user.
@@ -24684,12 +24684,12 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Set User Permissions
+      summary: Set a user's permissions
       tags:
       - Users
-    summary: Set User Permissions
+    summary: Set a user's permissions
   /users/{user_id}:disable:
-    description: '`POST`: Disable User.'
+    description: '`POST`: Disable a user.'
     post:
       description: |-
         Disable a user account.
@@ -24727,12 +24727,12 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Disable User
+      summary: Disable a user
       tags:
       - Users
-    summary: Disable User
+    summary: Disable a user
   /users/{user_id}:enable:
-    description: '`POST`: Enable User.'
+    description: '`POST`: Enable a user.'
     post:
       description: |-
         Enable a disabled user account.
@@ -24771,12 +24771,12 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Enable User
+      summary: Enable a user
       tags:
       - Users
-    summary: Enable User
+    summary: Enable a user
   /users/{user_id}:reissue-invite:
-    description: '`POST`: Reissue Invite.'
+    description: '`POST`: Reissue a user''s invite.'
     post:
       description: Reissue an invite token for a user.
       operationId: reissueInvite
@@ -24816,10 +24816,10 @@ paths:
       security:
       - BearerAuth: []
       - OAuth2: []
-      summary: Reissue Invite
+      summary: Reissue a user's invite
       tags:
       - Users
-    summary: Reissue Invite
+    summary: Reissue a user's invite
   /users:create-admin:
     description: '`POST`: Create first admin (one-time setup).'
     post:

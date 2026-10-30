@@ -10,7 +10,7 @@ import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class EventsService {
     /**
-     * List Events
+     * List events
      * List events with optional filters.
      * @returns EventListResponse Successful Response
      * @throws ApiError
@@ -94,7 +94,7 @@ export class EventsService {
         });
     }
     /**
-     * Stream Events
+     * Stream events over SSE
      * Stream events as Server-Sent Events.
      *
      * The open stream re-verifies the caller at the first poll or page after each
@@ -192,7 +192,7 @@ export class EventsService {
         });
     }
     /**
-     * Get Event
+     * Get an event
      * Get an event by ID.
      * @returns EventResponse Successful Response
      * @throws ApiError

@@ -9,7 +9,7 @@ import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class ExecutionsService {
     /**
-     * List Executions
+     * List executions
      * List execution records with optional filters.
      * @returns ExecutionListResponse Successful Response
      * @throws ApiError
@@ -87,7 +87,7 @@ export class ExecutionsService {
         });
     }
     /**
-     * Get Execution
+     * Get an execution
      * Get an execution record by ID.
      * @returns ExecutionResponse Successful Response
      * @throws ApiError

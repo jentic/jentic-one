@@ -51,6 +51,7 @@ def _etag_matches(if_none_match: str, etag: str) -> bool:
 
 @router.get(
     "/governed-hosts",
+    summary="Get the caller's governed host set",
     response_model=GovernedHostsResponse,
     responses={
         200: {"headers": {"ETag": _ETAG_HEADER_SPEC}},

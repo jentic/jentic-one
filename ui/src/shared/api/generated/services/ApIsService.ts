@@ -15,7 +15,7 @@ import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class ApIsService {
     /**
-     * List Apis
+     * List registered APIs
      * List locally registered APIs with optional vendor filter and pagination.
      *
      * This is the **imported** registry — APIs present in this deployment. The
@@ -61,7 +61,7 @@ export class ApIsService {
         });
     }
     /**
-     * Import Apis
+     * Import OpenAPI or Arazzo specs
      * Import OpenAPI/Arazzo content as new API revisions (async).
      *
      * The whole request body is capped at `ingest.max_import_request_bytes`
@@ -96,7 +96,7 @@ export class ApIsService {
         });
     }
     /**
-     * Delete Api
+     * Delete an API
      * Delete an API and all its revisions.
      * @returns void
      * @throws ApiError
@@ -140,7 +140,7 @@ export class ApIsService {
         });
     }
     /**
-     * Get Api
+     * Get an API
      * Retrieve a single API by its (vendor, name, version) identity.
      * @returns ApiResponse Successful Response
      * @throws ApiError
@@ -182,7 +182,7 @@ export class ApIsService {
         });
     }
     /**
-     * Update Api
+     * Update an API
      * Partially update an API's presentation fields.
      * @returns ApiResponse Successful Response
      * @throws ApiError
@@ -464,7 +464,7 @@ export class ApIsService {
         });
     }
     /**
-     * Promote Revision
+     * Promote an API revision
      * Promote a draft revision to published, archiving the current one.
      *
      * If the draft declares different server hosts than the API's current (or last

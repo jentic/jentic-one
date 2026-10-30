@@ -74,7 +74,7 @@ def _parse_api_filter(api: str) -> tuple[str | None, str | None, str | None]:
     return vendor, name, version
 
 
-@router.get("/executions")
+@router.get("/executions", summary="List executions")
 async def list_executions(
     request: Request,
     identity: Identity = get_current_identity(required_permissions=["executions:read"]),
@@ -171,7 +171,7 @@ async def list_executions(
     )
 
 
-@router.get("/executions/{execution_id}")
+@router.get("/executions/{execution_id}", summary="Get an execution")
 async def get_execution(
     execution_id: Annotated[
         str,

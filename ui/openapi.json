@@ -24124,7 +24124,7 @@
       "summary": "List users and agents"
     },
     "/actors/lookup": {
-      "description": "`GET`: Resolve actor names by id.",
+      "description": "`GET`: Resolve actor names by ID.",
       "get": {
         "description": "Resolve user and agent ids to display names.\n\nPass each id as a repeated `id` parameter. Returns `id`, `actor_type`,\n`name` and `active` for each id the caller may see. Any signed-in caller\nmay call it, so a UI can label the owners, approvers and actors it\nalready holds by id without `users:read`.\n\nAgents resolve when visible to the caller: itself, its own agents, its\nowner's agents with `owner:agents:read`, or every agent for `org:admin`.\nUsers resolve when the caller can already see them by id: itself; the\nowner, registrant, approver or denier of an agent it can see, and the\nAPI key creator and key rotation/revocation actor of an agent it owns\n(with `agents:read`); the actor on an event it can see (with\n`events:read`); the decider of a held execution it can see; the\nconsenting user of an OAuth grant bound to an agent it owns; the creator\nof a credential it can read (with `credentials:read` or\n`owner:credentials:read`); and, with `oauth-clients:read`, the\nconsenting user of a grant bound to the caller itself and the creator of\nany OAuth client. `org:admin` resolves every user.\nIds that match no visible actor are silently left\nout, exactly like unknown ids. Listing the whole directory needs\n`users:read` on `GET /actors`.",
         "operationId": "lookupActors",
@@ -24213,12 +24213,12 @@
             "OAuth2": []
           }
         ],
-        "summary": "Resolve actor names by id",
+        "summary": "Resolve actor names by ID",
         "tags": [
           "Actors"
         ]
       },
-      "summary": "Resolve actor names by id"
+      "summary": "Resolve actor names by ID"
     },
     "/admin/config/providers": {
       "description": "`GET`: List credential provider configs.",
@@ -25840,12 +25840,12 @@
             "OAuth2": []
           }
         ],
-        "summary": "Archive Agent",
+        "summary": "Archive an agent",
         "tags": [
           "Agents"
         ]
       },
-      "description": "`GET`: Get an agent. `PATCH`: Update an agent. `DELETE`: Archive Agent.",
+      "description": "`GET`: Get an agent. `PATCH`: Update an agent. `DELETE`: Archive an agent.",
       "get": {
         "description": "Get one agent's profile and lifecycle state.\n\nReturns the agent's name, description, owner, `status`, approval or\ndenial details, and whether it currently has an API key (`has_api_key`).\nReadable by the agent itself, its owner, `org:admin`, and a caller holding\n`agents:read` (implied by `agents:write`); an agent outside the caller's\nvisibility answers 404.",
         "operationId": "getAgent",
@@ -26035,7 +26035,7 @@
           "Agents"
         ]
       },
-      "summary": "Get an agent; Update an agent; Archive Agent"
+      "summary": "Get an agent; Update an agent; Archive an agent"
     },
     "/agents/{agent_id}/api-key": {
       "description": "`GET`: Get an agent's API key metadata.",
@@ -26693,7 +26693,7 @@
       "summary": "Resume a suspended credential binding"
     },
     "/agents/{agent_id}/jwks": {
-      "description": "`PUT`: Update Agent Jwks.",
+      "description": "`PUT`: Replace an agent's JWKS.",
       "put": {
         "description": "Update an agent's JWKS (public keys for JWT-bearer authentication).\n\nThe JWKS must contain at least one Ed25519 public key and must not contain\nany private key material. This enables the agent to authenticate via\nJWT-bearer assertions signed with the corresponding private key.",
         "operationId": "updateAgentJwks",
@@ -26773,12 +26773,12 @@
             "OAuth2": []
           }
         ],
-        "summary": "Update Agent Jwks",
+        "summary": "Replace an agent's JWKS",
         "tags": [
           "Agents"
         ]
       },
-      "summary": "Update Agent Jwks"
+      "summary": "Replace an agent's JWKS"
     },
     "/agents/{agent_id}/oauth-grants": {
       "description": "`GET`: List an agent's connected OAuth clients.",
@@ -26967,7 +26967,7 @@
       "summary": "List an agent's connected OAuth clients"
     },
     "/agents/{agent_id}/permissions": {
-      "description": "`GET`: Get Agent Permissions. `PUT`: Replace Agent Permissions.",
+      "description": "`GET`: List an agent's permissions. `PUT`: Replace an agent's permissions.",
       "get": {
         "description": "List permissions granted to an agent.",
         "operationId": "getAgentPermissions",
@@ -27037,7 +27037,7 @@
             "OAuth2": []
           }
         ],
-        "summary": "Get Agent Permissions",
+        "summary": "List an agent's permissions",
         "tags": [
           "Agents"
         ]
@@ -27128,15 +27128,15 @@
             "OAuth2": []
           }
         ],
-        "summary": "Replace Agent Permissions",
+        "summary": "Replace an agent's permissions",
         "tags": [
           "Agents"
         ]
       },
-      "summary": "Get Agent Permissions; Replace Agent Permissions"
+      "summary": "List an agent's permissions; Replace an agent's permissions"
     },
     "/agents/{agent_id}:approve": {
-      "description": "`POST`: Approve Agent.",
+      "description": "`POST`: Approve an agent.",
       "post": {
         "description": "Approve a pending agent.\n\nAllowed for the agent's owner or an ``org:admin``. An agent with no owner\n(an unclaimed self-registration) can be approved only by an ``org:admin``,\nwho becomes its owner. Any other caller gets a 404, whatever the agent's\nstatus, so the response does not reveal agents outside the caller's\nownership.",
         "operationId": "approveAgent",
@@ -27210,15 +27210,15 @@
             "OAuth2": []
           }
         ],
-        "summary": "Approve Agent",
+        "summary": "Approve an agent",
         "tags": [
           "Agents"
         ]
       },
-      "summary": "Approve Agent"
+      "summary": "Approve an agent"
     },
     "/agents/{agent_id}:claim": {
-      "description": "`POST`: Claim Agent.",
+      "description": "`POST`: Claim an agent.",
       "post": {
         "description": "Claim ownership of a self-registered agent using its claim token.\n\nAuthenticated by the platform bearer token but requires **no** agent\npermission — the single-use claim token minted at ``/register`` is the proof,\nso the registering human (even a plain member) can take ownership. Sets\n``owner_id`` to the caller; the existing scoping + approve paths then apply.\n\nRestricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so\nonly a human can own an agent. The ``require_actor_type`` gate rejects a\nnon-user actor (an agent) at the boundary with a 403;\n``AgentService.claim`` re-checks the same invariant as defense-in-depth.\n\n``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):\nclaiming is an onboarding step a brand-new user may hit before they have\nrotated a temporary password, so a must-change-password state must not block\nit. The claim only sets ownership — it grants no permissions and cannot act as the\nagent — so allowing it under an expired password is low-risk.",
         "operationId": "claimAgent",
@@ -27289,15 +27289,15 @@
             "OAuth2": []
           }
         ],
-        "summary": "Claim Agent",
+        "summary": "Claim an agent",
         "tags": [
           "Agents"
         ]
       },
-      "summary": "Claim Agent"
+      "summary": "Claim an agent"
     },
     "/agents/{agent_id}:deny": {
-      "description": "`POST`: Deny Agent.",
+      "description": "`POST`: Deny an agent.",
       "post": {
         "description": "Deny a pending agent.\n\nSame authorization as approve: the agent's owner or an ``org:admin``, and\nonly an ``org:admin`` for an agent with no owner. Any other caller gets a\n404.",
         "operationId": "denyAgent",
@@ -27385,15 +27385,15 @@
             "OAuth2": []
           }
         ],
-        "summary": "Deny Agent",
+        "summary": "Deny an agent",
         "tags": [
           "Agents"
         ]
       },
-      "summary": "Deny Agent"
+      "summary": "Deny an agent"
     },
     "/agents/{agent_id}:disable": {
-      "description": "`POST`: Disable Agent.",
+      "description": "`POST`: Disable an agent.",
       "post": {
         "description": "Disable an active agent.",
         "operationId": "disableAgent",
@@ -27450,15 +27450,15 @@
             "OAuth2": []
           }
         ],
-        "summary": "Disable Agent",
+        "summary": "Disable an agent",
         "tags": [
           "Agents"
         ]
       },
-      "summary": "Disable Agent"
+      "summary": "Disable an agent"
     },
     "/agents/{agent_id}:enable": {
-      "description": "`POST`: Enable Agent.",
+      "description": "`POST`: Enable an agent.",
       "post": {
         "description": "Enable a disabled agent.",
         "operationId": "enableAgent",
@@ -27515,15 +27515,15 @@
             "OAuth2": []
           }
         ],
-        "summary": "Enable Agent",
+        "summary": "Enable an agent",
         "tags": [
           "Agents"
         ]
       },
-      "summary": "Enable Agent"
+      "summary": "Enable an agent"
     },
     "/agents/{agent_id}:generate-api-key": {
-      "description": "`POST`: Generate Agent Api Key.",
+      "description": "`POST`: Generate an agent's API key.",
       "post": {
         "description": "Generate a new API key for an active agent. Rotates any existing key.",
         "operationId": "generateAgentApiKey",
@@ -27590,15 +27590,15 @@
             "OAuth2": []
           }
         ],
-        "summary": "Generate Agent Api Key",
+        "summary": "Generate an agent's API key",
         "tags": [
           "Agents"
         ]
       },
-      "summary": "Generate Agent Api Key"
+      "summary": "Generate an agent's API key"
     },
     "/agents/{agent_id}:revoke-api-key": {
-      "description": "`POST`: Revoke Agent Api Key.",
+      "description": "`POST`: Revoke an agent's API key.",
       "post": {
         "description": "Revoke an agent's API key without generating a new one.",
         "operationId": "revokeAgentApiKey",
@@ -27655,15 +27655,15 @@
             "OAuth2": []
           }
         ],
-        "summary": "Revoke Agent Api Key",
+        "summary": "Revoke an agent's API key",
         "tags": [
           "Agents"
         ]
       },
-      "summary": "Revoke Agent Api Key"
+      "summary": "Revoke an agent's API key"
     },
     "/apis": {
-      "description": "`GET`: List Apis. `POST`: Import Apis.",
+      "description": "`GET`: List registered APIs. `POST`: Import OpenAPI or Arazzo specs.",
       "get": {
         "description": "List locally registered APIs with optional vendor filter and pagination.\n\nThis is the **imported** registry — APIs present in this deployment. The\npublic catalog of importable-but-not-yet-imported APIs is a separate surface\n(``GET /catalog``); the two are not blended.",
         "operationId": "listApis",
@@ -27824,7 +27824,7 @@
             "OAuth2": []
           }
         ],
-        "summary": "List Apis",
+        "summary": "List registered APIs",
         "tags": [
           "APIs"
         ]
@@ -27917,12 +27917,12 @@
             "OAuth2": []
           }
         ],
-        "summary": "Import Apis",
+        "summary": "Import OpenAPI or Arazzo specs",
         "tags": [
           "APIs"
         ]
       },
-      "summary": "List Apis; Import Apis"
+      "summary": "List registered APIs; Import OpenAPI or Arazzo specs"
     },
     "/apis/{vendor}/{name}/{version}": {
       "delete": {
@@ -27990,12 +27990,12 @@
             "OAuth2": []
           }
         ],
-        "summary": "Delete Api",
+        "summary": "Delete an API",
         "tags": [
           "APIs"
         ]
       },
-      "description": "`GET`: Get Api. `PATCH`: Update Api. `DELETE`: Delete Api.",
+      "description": "`GET`: Get an API. `PATCH`: Update an API. `DELETE`: Delete an API.",
       "get": {
         "description": "Retrieve a single API by its (vendor, name, version) identity.",
         "operationId": "getApi",
@@ -28076,7 +28076,7 @@
             "OAuth2": []
           }
         ],
-        "summary": "Get Api",
+        "summary": "Get an API",
         "tags": [
           "APIs"
         ]
@@ -28177,15 +28177,15 @@
             "OAuth2": []
           }
         ],
-        "summary": "Update Api",
+        "summary": "Update an API",
         "tags": [
           "APIs"
         ]
       },
-      "summary": "Get Api; Update Api; Delete Api"
+      "summary": "Get an API; Update an API; Delete an API"
     },
     "/apis/{vendor}/{name}/{version}/openapi": {
-      "description": "`GET`: Get Api Spec.",
+      "description": "`GET`: Get an API's OpenAPI document.",
       "get": {
         "description": "Download the OpenAPI spec for the API's current (live) revision.",
         "operationId": "getApiSpec",
@@ -28272,12 +28272,12 @@
             "OAuth2": []
           }
         ],
-        "summary": "Get Api Spec",
+        "summary": "Get an API's OpenAPI document",
         "tags": [
           "API Spec"
         ]
       },
-      "summary": "Get Api Spec"
+      "summary": "Get an API's OpenAPI document"
     },
     "/apis/{vendor}/{name}/{version}/operations": {
       "description": "`GET`: List the operations an API currently serves.",
@@ -28804,7 +28804,7 @@
           "Overlays"
         ]
       },
-      "description": "`GET`: Get Overlay. `PATCH`: Edit an overlay. `DELETE`: Deprecate an overlay.",
+      "description": "`GET`: Get an overlay. `PATCH`: Edit an overlay. `DELETE`: Deprecate an overlay.",
       "get": {
         "description": "Retrieve a single overlay by ID.",
         "operationId": "getOverlay",
@@ -28898,7 +28898,7 @@
             "OAuth2": []
           }
         ],
-        "summary": "Get Overlay",
+        "summary": "Get an overlay",
         "tags": [
           "Overlays"
         ]
@@ -29047,7 +29047,7 @@
           "Overlays"
         ]
       },
-      "summary": "Get Overlay; Edit an overlay; Deprecate an overlay"
+      "summary": "Get an overlay; Edit an overlay; Deprecate an overlay"
     },
     "/apis/{vendor}/{name}/{version}/overlays/{overlay_id}:confirm": {
       "description": "`POST`: Confirm an overlay and apply it to the served spec.",
@@ -30020,7 +30020,7 @@
       "summary": "Archive an API revision"
     },
     "/apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote": {
-      "description": "`POST`: Promote Revision.",
+      "description": "`POST`: Promote an API revision.",
       "post": {
         "description": "Promote a draft revision to published, archiving the current one.\n\nIf the draft declares different server hosts than the API's current (or last\nlive) revision, or serves a host over plaintext http that was https-only, and\nthe API has credentials bound to agents, the caller must be an organisation\nadmin (``org:admin``); otherwise the promote is refused with 403\n``host_change_requires_operator``.",
         "operationId": "promoteRevision",
@@ -30104,12 +30104,12 @@
             "OAuth2": []
           }
         ],
-        "summary": "Promote Revision",
+        "summary": "Promote an API revision",
         "tags": [
           "APIs"
         ]
       },
-      "summary": "Promote Revision"
+      "summary": "Promote an API revision"
     },
     "/apis/{vendor}/{name}/{version}/security-schemes": {
       "description": "`GET`: List security schemes for an API.",
@@ -30202,7 +30202,7 @@
       "summary": "List security schemes for an API"
     },
     "/audit": {
-      "description": "`GET`: List Audit Entries.",
+      "description": "`GET`: List audit entries.",
       "get": {
         "description": "List audit entries with optional filters.\n\nScoped to the caller: their own entries plus those made by agents they own.\nOrg admins see every entry.",
         "operationId": "listAuditEntries",
@@ -30520,15 +30520,15 @@
             "OAuth2": []
           }
         ],
-        "summary": "List Audit Entries",
+        "summary": "List audit entries",
         "tags": [
           "Audit"
         ]
       },
-      "summary": "List Audit Entries"
+      "summary": "List audit entries"
     },
     "/audit/{audit_id}": {
-      "description": "`GET`: Get Audit Entry.",
+      "description": "`GET`: Get an audit entry.",
       "get": {
         "description": "Get a single audit entry by ID.",
         "operationId": "getAuditEntry",
@@ -30628,12 +30628,12 @@
             "OAuth2": []
           }
         ],
-        "summary": "Get Audit Entry",
+        "summary": "Get an audit entry",
         "tags": [
           "Audit"
         ]
       },
-      "summary": "Get Audit Entry"
+      "summary": "Get an audit entry"
     },
     "/auth/idp": {
       "description": "`GET`: External IdP login descriptor.",
@@ -30763,7 +30763,7 @@
       "summary": "Refresh session token"
     },
     "/catalog": {
-      "description": "`GET`: List Catalog.",
+      "description": "`GET`: List catalog entries.",
       "get": {
         "description": "List a keyset page of browsable catalog entries (search/filter aware).\n\nThe catalog holds thousands of entries, so this is cursor-paginated like\n``GET /apis``: follow ``next_cursor`` until ``has_more`` is false.\n``catalog_total``/``registered_count``/``outdated_count`` count the whole\nmanifest, not the page, so the Discover status row stays stable while scrolling.",
         "operationId": "listCatalog",
@@ -30983,15 +30983,15 @@
             "OAuth2": []
           }
         ],
-        "summary": "List Catalog",
+        "summary": "List catalog entries",
         "tags": [
           "Catalog"
         ]
       },
-      "summary": "List Catalog"
+      "summary": "List catalog entries"
     },
     "/catalog/{api_id}": {
-      "description": "`GET`: Get Catalog Entry.",
+      "description": "`GET`: Get a catalog entry.",
       "get": {
         "description": "Retrieve a single catalog entry by api_id.",
         "operationId": "getCatalogEntry",
@@ -31050,15 +31050,15 @@
             "OAuth2": []
           }
         ],
-        "summary": "Get Catalog Entry",
+        "summary": "Get a catalog entry",
         "tags": [
           "Catalog"
         ]
       },
-      "summary": "Get Catalog Entry"
+      "summary": "Get a catalog entry"
     },
     "/catalog/{api_id}/operations": {
-      "description": "`GET`: Preview Catalog Operations.",
+      "description": "`GET`: Preview a catalog entry's operations.",
       "get": {
         "description": "Preview the operations of a catalog entry's spec (capped, offset-paginated).\n\n``tag`` and ``q`` filter the spec's operations server-side before windowing,\nso the UI's search box covers every operation in the spec and pages the\nfiltered set via ``offset``/``limit`` (\"Load more\").",
         "operationId": "previewCatalogOperations",
@@ -31223,15 +31223,15 @@
             "OAuth2": []
           }
         ],
-        "summary": "Preview Catalog Operations",
+        "summary": "Preview a catalog entry's operations",
         "tags": [
           "Catalog"
         ]
       },
-      "summary": "Preview Catalog Operations"
+      "summary": "Preview a catalog entry's operations"
     },
     "/catalog/{api_id}:import": {
-      "description": "`POST`: Import Catalog Entry.",
+      "description": "`POST`: Import a catalog entry.",
       "post": {
         "description": "Enqueue an async import of a catalog entry into the local registry.",
         "operationId": "importCatalogEntry",
@@ -31285,15 +31285,15 @@
             "OAuth2": []
           }
         ],
-        "summary": "Import Catalog Entry",
+        "summary": "Import a catalog entry",
         "tags": [
           "Catalog"
         ]
       },
-      "summary": "Import Catalog Entry"
+      "summary": "Import a catalog entry"
     },
     "/catalog/{api_id}:snooze": {
-      "description": "`POST`: Snooze Catalog Entry.",
+      "description": "`POST`: Snooze a catalog entry's update notice.",
       "post": {
         "description": "Snooze the outstanding update notification for a catalog entry (C1, #925).\n\nOperator action (``events:write``): quiet the \"update available\" badge for a\nknown-and-accepted upstream change without adopting it. Body is optional — omit or send\n``{\"snoozed_until\": null}`` to mute until a newer upstream digest lands (the primary\nper-API affordance); send an ISO-8601 ``snoozed_until`` for a time-boxed snooze. A\ngenuinely newer upstream change re-lights the badge automatically.",
         "operationId": "snoozeCatalogEntry",
@@ -31368,15 +31368,15 @@
             "OAuth2": []
           }
         ],
-        "summary": "Snooze Catalog Entry",
+        "summary": "Snooze a catalog entry's update notice",
         "tags": [
           "Catalog"
         ]
       },
-      "summary": "Snooze Catalog Entry"
+      "summary": "Snooze a catalog entry's update notice"
     },
     "/catalog/{api_id}:unsnooze": {
-      "description": "`POST`: Unsnooze Catalog Entry.",
+      "description": "`POST`: Clear a catalog entry's snooze.",
       "post": {
         "description": "Clear a snooze for a catalog entry (C1). Operator action (``events:write``).",
         "operationId": "unsnoozeCatalogEntry",
@@ -31416,15 +31416,15 @@
             "OAuth2": []
           }
         ],
-        "summary": "Unsnooze Catalog Entry",
+        "summary": "Clear a catalog entry's snooze",
         "tags": [
           "Catalog"
         ]
       },
-      "summary": "Unsnooze Catalog Entry"
+      "summary": "Clear a catalog entry's snooze"
     },
     "/catalog:refresh": {
-      "description": "`POST`: Refresh Catalog.",
+      "description": "`POST`: Refresh the catalog cache.",
       "post": {
         "description": "Force a refresh of the catalog cache from the upstream manifest (org:admin).",
         "operationId": "refreshCatalog",
@@ -31470,12 +31470,12 @@
             "OAuth2": []
           }
         ],
-        "summary": "Refresh Catalog",
+        "summary": "Refresh the catalog cache",
         "tags": [
           "Catalog"
         ]
       },
-      "summary": "Refresh Catalog"
+      "summary": "Refresh the catalog cache"
     },
     "/connect-sessions": {
       "description": "`GET`: List connect sessions.",
@@ -33886,7 +33886,7 @@
       "summary": "Begin OAuth connect flow"
     },
     "/error": {
-      "description": "`GET`: Error Page.",
+      "description": "`GET`: Get a browser authorization error.",
       "get": {
         "description": "Minimal error endpoint for browser-facing authorization failures.",
         "operationId": "errorPage",
@@ -33942,15 +33942,15 @@
           }
         },
         "security": [],
-        "summary": "Error Page",
+        "summary": "Get a browser authorization error",
         "tags": [
           "OAuth"
         ]
       },
-      "summary": "Error Page"
+      "summary": "Get a browser authorization error"
     },
     "/events": {
-      "description": "`GET`: List Events.",
+      "description": "`GET`: List events.",
       "get": {
         "description": "List events with optional filters.",
         "operationId": "listEvents",
@@ -34344,15 +34344,15 @@
             "OAuth2": []
           }
         ],
-        "summary": "List Events",
+        "summary": "List events",
         "tags": [
           "Events"
         ]
       },
-      "summary": "List Events"
+      "summary": "List events"
     },
     "/events/stream": {
-      "description": "`GET`: Stream Events.",
+      "description": "`GET`: Stream events over SSE.",
       "get": {
         "description": "Stream events as Server-Sent Events.\n\nThe open stream re-verifies the caller at the first poll or page after each\n`admin.events.stream_recheck_seconds` interval (default 5 s) elapses. Each\npage is scoped by the caller's current permissions, so a narrower\npermission set narrows the stream. Permissions are those the credential\ncarries: API keys and `at_` access tokens resolve them live (an ephemeral\nagent `at_` keeps the subset it was minted with). A login session JWT\ncarries the set it was issued with, but removing any of a user's effective\npermissions revokes their login sessions, so a stream opened with one ends\n(`refused`) at the next check. The stream keeps re-verifying the token it\nwas opened with, so a permission added to a user reaches a login-session\nstream once the client reconnects with a newer login JWT. The stream ends\nwith a `stream_closed` frame (`{\"type\": \"stream_closed\", \"reason\": ...}`)\nonce the credential stops verifying (`refused`: expired, revoked, or its\nuser or agent disabled or deleted), the caller no longer holds\n`events:read` or `org:admin` or must rotate their password (`forbidden`),\nor the check or the event store cannot be answered (`unavailable`).\nA reconnect is authenticated afresh.",
         "operationId": "streamEvents",
@@ -34666,15 +34666,15 @@
             "OAuth2": []
           }
         ],
-        "summary": "Stream Events",
+        "summary": "Stream events over SSE",
         "tags": [
           "Events"
         ]
       },
-      "summary": "Stream Events"
+      "summary": "Stream events over SSE"
     },
     "/events/{event_id}": {
-      "description": "`GET`: Get Event.",
+      "description": "`GET`: Get an event.",
       "get": {
         "description": "Get an event by ID.",
         "operationId": "getEvent",
@@ -34760,15 +34760,15 @@
             "OAuth2": []
           }
         ],
-        "summary": "Get Event",
+        "summary": "Get an event",
         "tags": [
           "Events"
         ]
       },
-      "summary": "Get Event"
+      "summary": "Get an event"
     },
     "/executions": {
-      "description": "`GET`: List Executions.",
+      "description": "`GET`: List executions.",
       "get": {
         "description": "List execution records with optional filters.",
         "operationId": "listExecutions",
@@ -35130,12 +35130,12 @@
             "OAuth2": []
           }
         ],
-        "summary": "List Executions",
+        "summary": "List executions",
         "tags": [
           "Executions"
         ]
       },
-      "summary": "List Executions"
+      "summary": "List executions"
     },
     "/executions/holds": {
       "description": "`GET`: List held executions.",
@@ -35726,7 +35726,7 @@
       "summary": "Withdraw a held execution"
     },
     "/executions/{execution_id}": {
-      "description": "`GET`: Get Execution.",
+      "description": "`GET`: Get an execution.",
       "get": {
         "description": "Get an execution record by ID.",
         "operationId": "getExecution",
@@ -35822,15 +35822,15 @@
             "OAuth2": []
           }
         ],
-        "summary": "Get Execution",
+        "summary": "Get an execution",
         "tags": [
           "Executions"
         ]
       },
-      "summary": "Get Execution"
+      "summary": "Get an execution"
     },
     "/governed-hosts": {
-      "description": "`GET`: Get Governed Hosts.",
+      "description": "`GET`: Get the caller's governed host set.",
       "get": {
         "description": "The caller's governed host set (credential-bound hosts) with an ETag digest.\n\n**Always self-scoped** — derived from the authenticated identity's own\ncredential bindings; there is no cross-actor or admin variant. Credentials\nbind to agents, so agent-scoped tokens (the OAuth agent-consent flow's\noutput) and agent API keys are the callers this endpoint serves — a plain\nuser token yields an empty set. Suspended bindings and inactive\ncredentials still contribute their hosts: keep diverting that\ntraffic, so the broker can refuse it — dropping it from the list would\nsend it direct to the upstream, unbrokered. The ``digest`` covers exactly\nthe ``data`` list and is also emitted as a strong ``ETag``, so integrators\npoll with ``If-None-Match: \"<digest>\"`` and get an empty ``304`` until\ntheir host set actually changes (the change-poll seam that replaces\n``GET /apis`` enumeration for interception scoping). Poll at most once per\nminute; on any ``5xx`` retain the last known set — never fall back to an\nempty (intercept-nothing) list.\n\nResponses are identity-scoped and marked ``Cache-Control: private,\nno-store`` — a shared cache must never serve one actor's host set to\nanother.",
         "operationId": "getGovernedHosts",
@@ -35931,12 +35931,12 @@
             "OAuth2": []
           }
         ],
-        "summary": "Get Governed Hosts",
+        "summary": "Get the caller's governed host set",
         "tags": [
           "Governed Hosts"
         ]
       },
-      "summary": "Get Governed Hosts"
+      "summary": "Get the caller's governed host set"
     },
     "/health": {
       "description": "`GET`: Liveness probe.",
@@ -36784,7 +36784,7 @@
       "summary": "Ask to change a credential binding"
     },
     "/jobs": {
-      "description": "`GET`: List Jobs.",
+      "description": "`GET`: List jobs.",
       "get": {
         "description": "List jobs with optional filters.",
         "operationId": "listJobs",
@@ -37037,15 +37037,15 @@
             "OAuth2": []
           }
         ],
-        "summary": "List Jobs",
+        "summary": "List jobs",
         "tags": [
           "Jobs"
         ]
       },
-      "summary": "List Jobs"
+      "summary": "List jobs"
     },
     "/jobs/{job_id}": {
-      "description": "`GET`: Get Job.",
+      "description": "`GET`: Get a job.",
       "get": {
         "description": "Get a job by ID.",
         "operationId": "getJob",
@@ -37125,15 +37125,15 @@
             "OAuth2": []
           }
         ],
-        "summary": "Get Job",
+        "summary": "Get a job",
         "tags": [
           "Jobs"
         ]
       },
-      "summary": "Get Job"
+      "summary": "Get a job"
     },
     "/jobs/{job_id}/result": {
-      "description": "`GET`: Get Job Result.",
+      "description": "`GET`: Get a job's result.",
       "get": {
         "description": "Get the result of a completed job — polymorphic by kind.",
         "operationId": "getJobResult",
@@ -37221,15 +37221,15 @@
             "OAuth2": []
           }
         ],
-        "summary": "Get Job Result",
+        "summary": "Get a job's result",
         "tags": [
           "Jobs"
         ]
       },
-      "summary": "Get Job Result"
+      "summary": "Get a job's result"
     },
     "/jobs/{job_id}:cancel": {
-      "description": "`POST`: Cancel Job.",
+      "description": "`POST`: Cancel a job.",
       "post": {
         "description": "Cancel an active job.\n\nA held execution answers ``409``: it settles only through its hold (decide,\nwithdraw or expiry), never by cancelling the job.",
         "operationId": "cancelJob",
@@ -37315,12 +37315,12 @@
             "OAuth2": []
           }
         ],
-        "summary": "Cancel Job",
+        "summary": "Cancel a job",
         "tags": [
           "Jobs"
         ]
       },
-      "summary": "Cancel Job"
+      "summary": "Cancel a job"
     },
     "/mcp/config-registrations": {
       "description": "`POST`: Report MCP config registration.",
@@ -37391,7 +37391,7 @@
       "summary": "Report MCP config registration"
     },
     "/me": {
-      "description": "`GET`: Get Me.",
+      "description": "`GET`: Get the caller's identity.",
       "get": {
         "description": "Return the caller's identity and context, discriminated by actor type.",
         "operationId": "getMe",
@@ -37448,15 +37448,15 @@
             "OAuth2": []
           }
         ],
-        "summary": "Get Me",
+        "summary": "Get the caller's identity",
         "tags": [
           "Identity"
         ]
       },
-      "summary": "Get Me"
+      "summary": "Get the caller's identity"
     },
     "/monitoring/executions": {
-      "description": "`GET`: Get Execution Stats.",
+      "description": "`GET`: Get execution statistics.",
       "get": {
         "description": "Return aggregated execution statistics for the dashboard.",
         "operationId": "getExecutionStats",
@@ -37544,15 +37544,15 @@
             "OAuth2": []
           }
         ],
-        "summary": "Get Execution Stats",
+        "summary": "Get execution statistics",
         "tags": [
           "Monitoring"
         ]
       },
-      "summary": "Get Execution Stats"
+      "summary": "Get execution statistics"
     },
     "/monitoring/usage": {
-      "description": "`GET`: Get Usage Stats.",
+      "description": "`GET`: Get usage statistics.",
       "get": {
         "description": "Return detailed usage statistics for the monitoring overview.",
         "operationId": "getUsageStats",
@@ -37839,15 +37839,15 @@
             "OAuth2": []
           }
         ],
-        "summary": "Get Usage Stats",
+        "summary": "Get usage statistics",
         "tags": [
           "Monitoring"
         ]
       },
-      "summary": "Get Usage Stats"
+      "summary": "Get usage statistics"
     },
     "/notes": {
-      "description": "`POST`: Create Note. `GET`: List Notes.",
+      "description": "`POST`: Create a note. `GET`: List notes.",
       "get": {
         "description": "List notes with optional filters and cursor pagination.\n\nReturns the caller's own notes; a user also sees the notes of agents they own.",
         "operationId": "listNotes",
@@ -38150,7 +38150,7 @@
             "OAuth2": []
           }
         ],
-        "summary": "List Notes",
+        "summary": "List notes",
         "tags": [
           "Notes"
         ]
@@ -38244,12 +38244,12 @@
             "OAuth2": []
           }
         ],
-        "summary": "Create Note",
+        "summary": "Create a note",
         "tags": [
           "Notes"
         ]
       },
-      "summary": "Create Note; List Notes"
+      "summary": "Create a note; List notes"
     },
     "/notes/{note_id}": {
       "delete": {
@@ -38338,12 +38338,12 @@
             "OAuth2": []
           }
         ],
-        "summary": "Delete Note",
+        "summary": "Delete a note",
         "tags": [
           "Notes"
         ]
       },
-      "description": "`GET`: Get Note. `PATCH`: Update Note. `DELETE`: Delete Note.",
+      "description": "`GET`: Get a note. `PATCH`: Update a note. `DELETE`: Delete a note.",
       "get": {
         "description": "Retrieve a single note by ID.\n\nA user can read the notes of agents they own, but only a note's author (or\nan org admin) can update or delete it.",
         "operationId": "getNote",
@@ -38427,7 +38427,7 @@
             "OAuth2": []
           }
         ],
-        "summary": "Get Note",
+        "summary": "Get a note",
         "tags": [
           "Notes"
         ]
@@ -38563,12 +38563,12 @@
             "OAuth2": []
           }
         ],
-        "summary": "Update Note",
+        "summary": "Update a note",
         "tags": [
           "Notes"
         ]
       },
-      "summary": "Get Note; Update Note; Delete Note"
+      "summary": "Get a note; Update a note; Delete a note"
     },
     "/oauth-app-registrations": {
       "description": "`POST`: Register a shared OAuth application. `GET`: List OAuth app registrations.",
@@ -39165,7 +39165,7 @@
       "summary": "Get an OAuth app registration; Update an OAuth app registration; Delete an OAuth app registration"
     },
     "/oauth-app-registrations/{id}:rotate-secret": {
-      "description": "`POST`: Rotate the client secret.",
+      "description": "`POST`: Rotate an OAuth app registration's secret.",
       "post": {
         "description": "Replace the encrypted client secret. Existing tokens are unaffected;\nsubsequent refreshes present the new secret.",
         "operationId": "rotateOauthAppRegistrationSecret",
@@ -39273,12 +39273,12 @@
             "OAuth2": []
           }
         ],
-        "summary": "Rotate the client secret",
+        "summary": "Rotate an OAuth app registration's secret",
         "tags": [
           "OAuth App Registrations"
         ]
       },
-      "summary": "Rotate the client secret"
+      "summary": "Rotate an OAuth app registration's secret"
     },
     "/oauth-clients": {
       "description": "`POST`: Register OAuth client (anonymous DCR).",
@@ -39726,7 +39726,7 @@
       "summary": "Poll pending-agent approval status (consent awaiting page)"
     },
     "/oauth/introspect": {
-      "description": "`POST`: Introspect Endpoint.",
+      "description": "`POST`: Introspect an OAuth token.",
       "post": {
         "description": "Introspect a token (RFC 7662).\n\nAccepts both ``application/x-www-form-urlencoded`` (the §2.1 request\nencoding) and JSON (the platform's own contract) bodies. Both arms\nrequire a platform bearer identity, and both answer an unknown, invalid,\nor expired *token value* with 200 ``{\"active\": false}`` (§2.2) — only a\nmalformed request body (missing ``token``) is a 400 ``invalid_request``:\nProblem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the\nform arm.",
         "operationId": "introspectEndpoint",
@@ -39847,15 +39847,15 @@
             "OAuth2": []
           }
         ],
-        "summary": "Introspect Endpoint",
+        "summary": "Introspect an OAuth token",
         "tags": [
           "OAuth"
         ]
       },
-      "summary": "Introspect Endpoint"
+      "summary": "Introspect an OAuth token"
     },
     "/oauth/revoke": {
-      "description": "`POST`: Revoke Endpoint.",
+      "description": "`POST`: Revoke an OAuth token.",
       "post": {
         "description": "Revoke a token (RFC 7009). Always returns 200 for valid requests.\n\nTwo client-authentication arms, negotiated on the request content type by\n``_RevocationRoute`` (this function body IS the JSON arm — form-encoded\nrequests never reach it):\n\n- **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —\n  the shape MCP OAuth clients send, G11): `token` + optional\n  `token_type_hint` + `client_id`. Public (secret-less) clients\n  authenticate by client_id **lineage binding** — the call revokes\n  anything only when the token exists and was issued to that `client_id`;\n  everything else is a 200 no-op (no token-validity oracle). Revoking an\n  access token kills that token only; revoking a **refresh token is a full\n  disconnect** — every token of the consent grant AND the grant row itself\n  die, so reconnecting requires fresh consent (deliberately beyond the\n  RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm\n  is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at\n  64 KiB declared body length, and rate limited per client network\n  (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect\n  (RFC 7009 §2.2.1), not Problem Details.\n- **JSON** (any other content type — the pre-G11 contract, byte-identical\n  including 422 shapes): requires a platform bearer identity; revokes the\n  caller's own token (access → that token, refresh → its family). Used by\n  `jentic logout`.\n\nRevocation residual: a revoked **access** token dies on the control-plane\nresolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)\nmay honour an already-cached verdict for up to 30 s — the same residual as\nthe UI `:revoke` kill switch and the G10 transfer sweep.",
         "operationId": "revokeEndpoint",
@@ -39953,15 +39953,15 @@
           }
         },
         "security": [],
-        "summary": "Revoke Endpoint",
+        "summary": "Revoke an OAuth token",
         "tags": [
           "OAuth"
         ]
       },
-      "summary": "Revoke Endpoint"
+      "summary": "Revoke an OAuth token"
     },
     "/oauth/token": {
-      "description": "`POST`: Token Endpoint.",
+      "description": "`POST`: Exchange a grant for OAuth tokens.",
       "post": {
         "description": "Exchange a refresh token, JWT assertion, or authorization code for tokens.\n\nError responses speak the RFC 6749 §5.2 dialect (top-level ``error`` +\n``error_description``), NOT platform Problem Details — reshaped by\n``_TokenRoute``. Malformed/missing parameters answer ``invalid_request``;\nfailed client authentication answers ``invalid_client`` (status 401 with a\n``WWW-Authenticate: Basic`` challenge when the client attempted HTTP Basic,\n400 otherwise). On the refresh arm, a revoked consent grant answers\n``invalid_grant`` with ``error_description: \"consent grant has been\nrevoked\"`` — terminal; restart the authorization flow.",
         "operationId": "tokenEndpoint",
@@ -40216,12 +40216,12 @@
           }
         },
         "security": [],
-        "summary": "Token Endpoint",
+        "summary": "Exchange a grant for OAuth tokens",
         "tags": [
           "OAuth"
         ]
       },
-      "summary": "Token Endpoint"
+      "summary": "Exchange a grant for OAuth tokens"
     },
     "/permission-rule-sets": {
       "description": "`GET`: List permission rule sets. `POST`: Create permission rule set.",
@@ -40845,7 +40845,7 @@
       "summary": "List the permission catalogue"
     },
     "/register": {
-      "description": "`POST`: Register Endpoint.",
+      "description": "`POST`: Register an agent client.",
       "post": {
         "description": "Register a new agent client (RFC 7591).",
         "operationId": "registerEndpoint",
@@ -40914,12 +40914,12 @@
           }
         },
         "security": [],
-        "summary": "Register Endpoint",
+        "summary": "Register an agent client",
         "tags": [
           "Agent Registration"
         ]
       },
-      "summary": "Register Endpoint"
+      "summary": "Register an agent client"
     },
     "/register/{agent_id}": {
       "delete": {
@@ -40989,12 +40989,12 @@
             "OAuth2": []
           }
         ],
-        "summary": "Delete Registration Endpoint",
+        "summary": "Delete a client registration (unsupported)",
         "tags": [
           "Agent Registration"
         ]
       },
-      "description": "`GET`: Poll Status Endpoint. `PUT`: Update Registration Endpoint. `DELETE`: Delete Registration Endpoint.",
+      "description": "`GET`: Poll an agent registration's status. `PUT`: Update a client registration (unsupported). `DELETE`: Delete a client registration (unsupported).",
       "get": {
         "description": "Poll registration status (RFC 7592).",
         "operationId": "pollStatusEndpoint",
@@ -41056,7 +41056,7 @@
           }
         },
         "security": [],
-        "summary": "Poll Status Endpoint",
+        "summary": "Poll an agent registration's status",
         "tags": [
           "Agent Registration"
         ]
@@ -41128,12 +41128,12 @@
             "OAuth2": []
           }
         ],
-        "summary": "Update Registration Endpoint",
+        "summary": "Update a client registration (unsupported)",
         "tags": [
           "Agent Registration"
         ]
       },
-      "summary": "Poll Status Endpoint; Update Registration Endpoint; Delete Registration Endpoint"
+      "summary": "Poll an agent registration's status; Update a client registration (unsupported); Delete a client registration (unsupported)"
     },
     "/search": {
       "description": "`POST`: Search operations.",
@@ -41270,7 +41270,7 @@
       "summary": "Running and latest-available app version"
     },
     "/users": {
-      "description": "`GET`: List Users. `POST`: Create User.",
+      "description": "`GET`: List users. `POST`: Create a user and issue an invite.",
       "get": {
         "description": "List users with cursor-based pagination.\n\nScoped to the caller: org admins see every user; anyone else sees only themselves.",
         "operationId": "listUsers",
@@ -41426,7 +41426,7 @@
             "OAuth2": []
           }
         ],
-        "summary": "List Users",
+        "summary": "List users",
         "tags": [
           "Users"
         ]
@@ -41522,12 +41522,12 @@
             "OAuth2": []
           }
         ],
-        "summary": "Create User",
+        "summary": "Create a user and issue an invite",
         "tags": [
           "Users"
         ]
       },
-      "summary": "List Users; Create User"
+      "summary": "List users; Create a user and issue an invite"
     },
     "/users/me": {
       "description": "`GET`: Get current user.",
@@ -41712,12 +41712,12 @@
             "OAuth2": []
           }
         ],
-        "summary": "Delete User",
+        "summary": "Delete a user",
         "tags": [
           "Users"
         ]
       },
-      "description": "`GET`: Get User. `PATCH`: Update User. `DELETE`: Delete User.",
+      "description": "`GET`: Get a user. `PATCH`: Update a user. `DELETE`: Delete a user.",
       "get": {
         "description": "Get a user by ID.\n\nScoped to the caller: org admins can read any user; anyone else only themselves.\nAny other user answers 404.",
         "operationId": "getUser",
@@ -41793,7 +41793,7 @@
             "OAuth2": []
           }
         ],
-        "summary": "Get User",
+        "summary": "Get a user",
         "tags": [
           "Users"
         ]
@@ -41906,15 +41906,15 @@
             "OAuth2": []
           }
         ],
-        "summary": "Update User",
+        "summary": "Update a user",
         "tags": [
           "Users"
         ]
       },
-      "summary": "Get User; Update User; Delete User"
+      "summary": "Get a user; Update a user; Delete a user"
     },
     "/users/{user_id}/permissions": {
-      "description": "`PUT`: Set User Permissions.",
+      "description": "`PUT`: Set a user's permissions.",
       "put": {
         "description": "Set the assigned permissions for a user.\n\nA deleted user's permissions cannot be changed (409). When the new set\nremoves any of the user's effective permissions, their login sessions\nend: every login JWT issued before the change is refused (401), and the\nuser signs in again for a token with the narrower set. This includes a\ncaller narrowing their own permissions.",
         "operationId": "setUserPermissions",
@@ -42024,15 +42024,15 @@
             "OAuth2": []
           }
         ],
-        "summary": "Set User Permissions",
+        "summary": "Set a user's permissions",
         "tags": [
           "Users"
         ]
       },
-      "summary": "Set User Permissions"
+      "summary": "Set a user's permissions"
     },
     "/users/{user_id}:disable": {
-      "description": "`POST`: Disable User.",
+      "description": "`POST`: Disable a user.",
       "post": {
         "description": "Disable a user account.\n\nA deleted user is already permanently inactive and cannot be disabled (409).",
         "operationId": "disableUser",
@@ -42092,15 +42092,15 @@
             "OAuth2": []
           }
         ],
-        "summary": "Disable User",
+        "summary": "Disable a user",
         "tags": [
           "Users"
         ]
       },
-      "summary": "Disable User"
+      "summary": "Disable a user"
     },
     "/users/{user_id}:enable": {
-      "description": "`POST`: Enable User.",
+      "description": "`POST`: Enable a user.",
       "post": {
         "description": "Enable a disabled user account.\n\nA deleted user cannot be re-enabled (409). Login sessions issued before the\naccount was disabled stay revoked; the user signs in again.",
         "operationId": "enableUser",
@@ -42160,15 +42160,15 @@
             "OAuth2": []
           }
         ],
-        "summary": "Enable User",
+        "summary": "Enable a user",
         "tags": [
           "Users"
         ]
       },
-      "summary": "Enable User"
+      "summary": "Enable a user"
     },
     "/users/{user_id}:reissue-invite": {
-      "description": "`POST`: Reissue Invite.",
+      "description": "`POST`: Reissue a user's invite.",
       "post": {
         "description": "Reissue an invite token for a user.",
         "operationId": "reissueInvite",
@@ -42239,12 +42239,12 @@
             "OAuth2": []
           }
         ],
-        "summary": "Reissue Invite",
+        "summary": "Reissue a user's invite",
         "tags": [
           "Users"
         ]
       },
-      "summary": "Reissue Invite"
+      "summary": "Reissue a user's invite"
     },
     "/users:create-admin": {
       "description": "`POST`: Create first admin (one-time setup).",

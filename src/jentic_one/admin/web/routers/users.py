@@ -57,7 +57,7 @@ def _user_response(view: UserView) -> UserResponse:
     )
 
 
-@router.get("/users")
+@router.get("/users", summary="List users")
 async def list_users(
     identity: Identity = get_current_identity(required_permissions=["users:read"]),
     user_svc: UserService = Depends(get_user_service),
@@ -96,7 +96,7 @@ async def list_users(
     )
 
 
-@router.post("/users", status_code=201)
+@router.post("/users", summary="Create a user and issue an invite", status_code=201)
 async def create_user(
     body: UserCreateRequest,
     identity: Identity = get_current_identity(required_permissions=["users:write"]),
@@ -119,7 +119,7 @@ async def create_user(
     )
 
 
-@router.get("/users/{user_id}", responses=with_responses(not_found()))
+@router.get("/users/{user_id}", summary="Get a user", responses=with_responses(not_found()))
 async def get_user(
     user_id: Annotated[
         str, Path(description="ID of the user.", openapi_examples=ex.example(ex.USER_ID))
@@ -138,6 +138,7 @@ async def get_user(
 
 @router.patch(
     "/users/{user_id}",
+    summary="Update a user",
     responses=with_responses(
         not_found(), conflict("The email is already in use, or the user has been deleted")
     ),
@@ -170,6 +171,7 @@ async def update_user(
 
 @router.delete(
     "/users/{user_id}",
+    summary="Delete a user",
     status_code=204,
     responses=with_responses(not_found(), conflict(_LAST_ADMIN)),
 )
@@ -197,6 +199,7 @@ async def delete_user(
 
 @router.post(
     "/users/{user_id}:disable",
+    summary="Disable a user",
     status_code=204,
     responses=with_responses(not_found(), conflict(f"{_LAST_ADMIN}, or the user has been deleted")),
 )
@@ -217,6 +220,7 @@ async def disable_user(
 
 @router.post(
     "/users/{user_id}:enable",
+    summary="Enable a user",
     status_code=204,
     responses=with_responses(not_found(), conflict("The user has been deleted")),
 )
@@ -238,6 +242,7 @@ async def enable_user(
 
 @router.post(
     "/users/{user_id}:reissue-invite",
+    summary="Reissue a user's invite",
     responses=with_responses(
         not_found(), conflict("The user has already redeemed an invite, or has been deleted")
     ),
