@@ -23,7 +23,7 @@
 	"dependencies": {
 		"@tanstack/react-query": "^5.103.2",
 		"clsx": "^2.1.1",
-		"framer-motion": "^14.0.0",
+		"framer-motion": "^14.7.1",
 		"lucide-react": "^1.47.0",
 		"randexp": "^0.5.3",
 		"react": "^19.3.1",
